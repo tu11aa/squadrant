@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig, loadReactions } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { createGitHubDriver, TrackerRegistry } from "../trackers/index.js";
@@ -72,6 +72,20 @@ function nodeVersionOk(): boolean {
   const version = process.versions.node;
   const major = parseInt(version.split(".")[0], 10);
   return major >= 18;
+}
+
+function parsePollIntervalSeconds(s: string | undefined): number {
+  if (!s) return 300;
+  const m = String(s).match(/^(\d+)(m|h|d|s)$/);
+  if (!m) return 300;
+  const v = parseInt(m[1], 10);
+  switch (m[2]) {
+    case "s": return v;
+    case "m": return v * 60;
+    case "h": return v * 60 * 60;
+    case "d": return v * 60 * 60 * 24;
+    default:  return 300;
+  }
 }
 
 function check(label: string, pass: boolean): boolean {
@@ -210,6 +224,33 @@ export const doctorCommand = new Command("doctor")
         ),
       ),
     );
+
+    // Auto-status poller freshness — see #43
+    const reactions = loadReactions();
+    const autoStatus = reactions.auto_status;
+    if (autoStatus?.enabled !== false) {
+      const intervalSec = parsePollIntervalSeconds(reactions.engine?.poll_interval);
+      const staleThresholdMs = intervalSec * 2 * 1000;
+      for (const [name, proj] of Object.entries(config.projects)) {
+        const statusPath = path.join(
+          proj.spokeVault.startsWith("~")
+            ? proj.spokeVault.replace("~", process.env.HOME || "")
+            : proj.spokeVault,
+          "status.md",
+        );
+        let fresh = false;
+        try {
+          const st = await stat(statusPath);
+          fresh = (Date.now() - st.mtimeMs) <= staleThresholdMs;
+        } catch {
+          fresh = false;
+        }
+        results.push(check(
+          `Auto-status fresh — '${name}' status.md within 2× poll interval`,
+          fresh,
+        ));
+      }
+    }
 
     const passed = results.filter(Boolean).length;
     const total = results.length;
