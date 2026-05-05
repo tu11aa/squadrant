@@ -80,6 +80,16 @@ export const initCommand = new Command("init")
       console.log(chalk.yellow(`  ⚠ Hub template not found; created empty dir at ${hubPath}`));
     }
 
+    // 2b. Always refresh dashboard.md and ensure projects/ exists (idempotent — see #44)
+    const hubDashboardSrc = path.join(pkgRoot, "obsidian", "hub", "dashboard.md");
+    const hubDashboardDest = path.join(hubPath, "dashboard.md");
+    if (fs.existsSync(hubDashboardSrc)) {
+      fs.copyFileSync(hubDashboardSrc, hubDashboardDest);
+      console.log(chalk.green(`  ✔ Dashboard page refreshed at ${hubDashboardDest}`));
+    }
+    const projectsDir = path.join(hubPath, "projects");
+    fs.mkdirSync(projectsDir, { recursive: true });
+
     // 3. Copy scripts to ~/.config/cockpit/scripts/ and make executable
     const scriptsTemplate = path.join(pkgRoot, "scripts");
     const scriptsTarget = path.join(configDir, "scripts");

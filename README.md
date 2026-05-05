@@ -71,6 +71,9 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit projects remove <name>` | Unregister a project |
 | `cockpit reactor check` | Run one reactor poll cycle |
 | `cockpit reactor poll-status [--json]` | Run one auto-status poll across all registered projects (writes `{spokeVault}/status.md`). |
+| `cockpit dashboard [--once]` | Print a one-shot status grid for all projects to the terminal. |
+| `cockpit dashboard --pane [--direction <dir>] [--interval <s>]` | Open a refreshing sidebar pane in the current cmux workspace. |
+| `cockpit dashboard sync-hub [--json]` | Mirror spoke `status.md` files into `{hubVault}/projects/` for Obsidian Dataview. |
 | `cockpit reactor status` | Show reactor state |
 | `cockpit runtime status <project>` | Check if a project's captain workspace is running |
 | `cockpit runtime send <project> <msg>` | Send a message to a captain workspace (auto-Enter) |
@@ -137,6 +140,7 @@ Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit 
 ### Knowledge System (opt-in writes)
 
 - **Status (auto)** — every reactor cycle (`cockpit reactor poll-status`) reads each captain's cmux pane, classifies the tail into `idle | busy | blocked | errored | offline`, and writes `{spokeVault}/status.md`. No agent action required. Manual `write-status.sh` writes are opt-in and may be clobbered on the next poll.
+- **Dashboard** — `cockpit dashboard --pane` opens a refreshing sidebar pane in cmux that lists every project's auto-derived state. `cockpit dashboard sync-hub` mirrors each spoke `status.md` into `{hubVault}/projects/` so the hub vault's `dashboard.md` Dataview query renders the same data inside Obsidian. The reactor cycle calls `sync-hub` after every `poll-status`.
 - **Handoff files** — captain writes when in-flight work needs to survive into tomorrow; skipped on uneventful sessions.
 - **Daily logs** — captain writes when the day produced something worth a log; not on a schedule.
 - **Learnings** — recorded when a captain encounters a genuinely surprising or reusable pattern.
