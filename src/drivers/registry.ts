@@ -21,6 +21,10 @@ export class CapabilityRegistry {
     }
   }
 
+  get(name: string): AgentDriver | undefined {
+    return this.drivers[name];
+  }
+
   getDriver(name: string): AgentDriver {
     const driver = this.drivers[name];
     if (!driver) {
