@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -20,12 +23,15 @@ import { trackerCommand } from "./commands/tracker.js";
 import { notifyCommand } from "./commands/notify.js";
 import { projectionCommand } from "./commands/projection.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
+
 const program = new Command();
 
 program
   .name("cockpit")
   .description("Multi-project agent orchestration for Claude Code")
-  .version("0.1.0");
+  .version(pkg.version);
 
 program.addCommand(doctorCommand);
 program.addCommand(initCommand);
