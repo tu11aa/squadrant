@@ -52,9 +52,10 @@ reactorCommand
   .command("check")
   .description("Run one reaction cycle (poll → match → execute)")
   .option("--dry-run", "Show matched actions without executing them")
-  .action((opts: { dryRun?: boolean }) => {
+  .action(async (opts: { dryRun?: boolean }) => {
     if (!checkGhCli()) return;
 
+    const config = loadConfig();
     const reactions = loadReactions();
     const repos = reactions.github?.repos || {};
     const repoCount = Object.keys(repos).length;
@@ -65,6 +66,19 @@ reactorCommand
     }
 
     console.log(chalk.bold(`\n  ⚡ Running reaction cycle (${repoCount} repos)\n`));
+
+    if (Object.keys(config.projects).length > 0 && reactions.auto_status?.enabled !== false) {
+      console.log(chalk.dim("  Polling captain panes (auto-status)..."));
+      const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
+      const results = await runAutoStatus({
+        config,
+        reactions,
+        runtime: (project) => registry.forProject(project, config),
+      });
+      for (const r of results) {
+        console.log(chalk.dim(`    ${r.project.padEnd(16)} ${r.state}`));
+      }
+    }
 
     const scriptsDir = getScriptsDir();
     const cycleScript = path.join(scriptsDir, "reactor-cycle.sh");
