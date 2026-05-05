@@ -87,6 +87,12 @@ export interface ReactionRule {
   escalate_after?: string;  // e.g. "30m"
 }
 
+export interface AutoStatusConfig {
+  enabled: boolean;
+  lines: number;
+  excerpt_lines: number;
+}
+
 export interface ReactionsConfig {
   engine: {
     poll_interval: string;    // e.g. "5m"
@@ -98,6 +104,7 @@ export interface ReactionsConfig {
     project?: GitHubProjectConfig;
   };
   reactions: Record<string, ReactionRule>;
+  auto_status?: AutoStatusConfig;
 }
 
 export interface CockpitConfig {
