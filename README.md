@@ -7,18 +7,18 @@ Multi-project orchestration layer for coding agents. One command session control
 ## How It Works
 
 ```
-cockpit launch → Command session (Claude Code in cmux)
-                    ├── brove-captain (Agent Teams + worktrees)
-                    │   ├── crew-pvp (worktree: feat/pvp)
-                    │   └── crew-bridge (worktree: fix/bridge)
-                    └── scaffold-captain
-                        └── crew-migration
+cockpit launch <project>          → Captain (per project, in cmux)
+cockpit launch --all              → Reactor + every Captain
+cockpit command --task briefing   → One-shot Command session in a split pane
+                                       (also: --task learnings-review | wiki-aggregate)
+Captain → cockpit crew spawn …    → Crew (split pane, fresh agent CLI session)
 ```
 
 1. **`cockpit init`** — first-time setup
-2. **`cockpit launch`** — starts the command workspace in cmux
-3. **Talk to the command session** — "brove has a UI task" → it spawns a captain → captain spawns crew
-4. **`cockpit status`** — quick status check without Claude
+2. **`cockpit launch <project>`** — start the project's captain in cmux
+3. **`cockpit launch --all`** — start the reactor and every captain at once
+4. **`cockpit command --task briefing`** — on-demand Command session for cross-project work (optional; spawns in a split pane and exits when done)
+5. **`cockpit status`** — quick status check without spawning anything
 
 ## Install
 
@@ -60,9 +60,9 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | Command | Description |
 |---------|-------------|
 | `cockpit init` | First-time setup — config, hub vault, scripts |
-| `cockpit launch` | Start the command workspace |
 | `cockpit launch <project>` | Start a specific project captain |
-| `cockpit launch --all` | Launch command + reactor + all captains |
+| `cockpit launch --all` | Launch reactor + all captain workspaces |
+| `cockpit command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `cockpit status` | Show all project status (no Claude needed) |
 | `cockpit standup` | Daily standup summary (zero LLM tokens) |
 | `cockpit doctor` | Health check — verify dependencies |
@@ -92,7 +92,7 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 
 ### Roles
 
-- **Command** (Opus) — overseer, monitors all projects, spawns captains
+- **Command** (Opus) — *on-demand* cross-project session. Spawned by `cockpit command --task <briefing|learnings-review|wiki-aggregate>` in a split pane; exits when the task completes. No persistent Command process.
 - **Captain** (Opus) — project leader, uses Agent Teams + git worktrees
 - **Crew** (Sonnet by default) — fresh CLI session in a split pane next to the captain. Spawned via `cockpit crew spawn`. Works with any agent CLI (claude, codex, gemini, aider). Disposable; uses GSD for complex tasks.
 - **Reactor** (Sonnet) — always-on GitHub event poller, auto-delegates to captains (incl. auto-fix on CI failure, with escalation after max retries)
@@ -133,12 +133,15 @@ Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit 
 - **Hub vault** (`~/cockpit-hub`) — cross-project dashboard + hub wiki
 - **Spoke vaults** — per-project status, learnings, and wiki
 
-### Knowledge System
+### Knowledge System (opt-in writes)
 
-- **Learnings** — raw observations recorded by captains after tasks
-- **Wiki** — compiled, indexed knowledge pages in spoke vaults (`wiki/pages/`)
-- **Hub Wiki** — cross-project knowledge aggregated by command
-- Scripts: `wiki-ingest.sh`, `wiki-query.sh`, `wiki-log.sh`
+- **Status** — auto-derived by the reactor's poller from each captain's pane buffer (#43). Captains do not write status on every event.
+- **Handoff files** — captain writes when in-flight work needs to survive into tomorrow; skipped on uneventful sessions.
+- **Daily logs** — captain writes when the day produced something worth a log; not on a schedule.
+- **Learnings** — recorded when a captain encounters a genuinely surprising or reusable pattern.
+- **Wiki** — compiled, indexed knowledge pages in spoke vaults (`wiki/pages/`); promoted from learnings when worth maintaining.
+- **Hub Wiki** — cross-project knowledge aggregated by an on-demand `cockpit command --task wiki-aggregate` run.
+- Scripts: `wiki-ingest.sh`, `wiki-query.sh`, `wiki-log.sh`.
 
 ### Session Continuity
 

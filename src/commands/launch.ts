@@ -224,11 +224,11 @@ async function launchWorkspace(
 
 export const launchCommand = new Command("launch")
   .description(
-    "Launch command workspace (no args), a captain for a project, or --all for everything",
+    "Launch a project captain (with project arg) or reactor + all captains (--all). Use `cockpit command` for one-shot Command tasks.",
   )
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
-  .option("--all", "Launch command workspace + reactor + all captain workspaces")
+  .option("--all", "Launch reactor + all captain workspaces")
   .option("--reactor", "Also launch the reactor workspace")
   .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean; reactor?: boolean }) => {
     const config = loadConfig();
@@ -291,23 +291,18 @@ export const launchCommand = new Command("launch")
     }
 
     if (opts.all) {
-      // Launch command + all captains
-      const workspaceName = config.commandName || "command";
+      // Launch reactor + all captains. Command is no longer auto-launched (#42).
       const hubPath = resolveHome(config.hubVault);
       fs.mkdirSync(hubPath, { recursive: true });
 
-      console.log(chalk.bold("\nLaunching all cockpit workspaces\n"));
-      console.log(chalk.bold(`  Command: ${workspaceName}`));
-      await launchOne(workspaceName, "command", hubPath, config.defaults.permissions?.command || "auto", true, true);
+      console.log(chalk.bold("\nLaunching reactor + all captain workspaces\n"));
 
-      // Launch reactor (after command, before captains)
       const reactorName = "⚡ reactor";
-      console.log(chalk.bold(`\n  Reactor: ${reactorName}`));
-      await launchOne(reactorName, "reactor", hubPath, config.defaults.permissions?.reactor || "default", false, true);
+      console.log(chalk.bold(`  Reactor: ${reactorName}`));
+      await launchOne(reactorName, "reactor", hubPath, config.defaults.permissions?.reactor || "default", true, true);
 
       for (const [name, proj] of Object.entries(config.projects)) {
         const projPath = resolveHome(proj.path);
-        // Ensure spoke vault exists
         const spokePath = resolveHome(proj.spokeVault);
         if (!fs.existsSync(spokePath)) {
           const spokeDriver = new WorkspaceRegistry({ obsidian: createObsidianDriver }).forProject(name, config);
@@ -319,19 +314,13 @@ export const launchCommand = new Command("launch")
       }
       console.log("");
     } else if (!project) {
-      // Launch command workspace only (+ reactor if --reactor)
-      const workspaceName = config.commandName || "command";
-      const hubPath = resolveHome(config.hubVault);
-      fs.mkdirSync(hubPath, { recursive: true });
-
-      console.log(chalk.bold(`\nLaunching command workspace: ${workspaceName}\n`));
-      await launchOne(workspaceName, "command", hubPath, config.defaults.permissions?.command || "auto", true, true);
-
-      if (opts.reactor) {
-        const reactorName = "⚡ reactor";
-        console.log(chalk.bold(`\nLaunching reactor: ${reactorName}\n`));
-        await launchOne(reactorName, "reactor", hubPath, config.defaults.permissions?.reactor || "default", false, true);
-      }
+      console.error(
+        chalk.red(
+          "\n  ✘ Specify a project name, or pass --all to launch reactor + every captain.\n" +
+            "    For one-shot Command tasks, use `cockpit command --task <briefing|learnings-review|wiki-aggregate>`.\n",
+        ),
+      );
+      process.exit(1);
     } else {
       // Launch captain workspace for a project
       if (!config.projects[project]) {

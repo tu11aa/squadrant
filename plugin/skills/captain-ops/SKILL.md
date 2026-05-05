@@ -28,10 +28,7 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 ~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. Write active status:
-```bash
-~/.config/cockpit/scripts/write-status.sh "{spokeVaultPath}" "captain_session" "active" "Captain session started"
-```
+8. (Opt-in) Status writes are no longer required on every event. The reactor's auto-poller (#43) infers status from your pane content. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
 
 ## Crew Setup
 
@@ -147,13 +144,13 @@ After a crew task completes:
 
 The auto-poller updates `status.md` based on pane content; you don't need to write status manually after every event.
 
-## Session Shutdown — Write Handoff
+## Session Shutdown (Opt-In Writes)
 
-**When the user says "wrap up", "end of day", or "shutdown", OR when you have no more tasks:**
+End-of-session writes are **opt-in**, not on a schedule. Only write what is meaningful:
 
-1. First, write the daily log (use `cockpit:daily-log` skill).
-2. Review today's learnings — if any were marked useful or represent compiled knowledge, promote to wiki pages using `cockpit:wiki-ops`.
-3. Then, write a handoff file so tomorrow's session can resume instantly:
+1. **Daily log (opt-in):** if you accomplished something worth a daily log, use the `cockpit:daily-log` skill. Skip it if today was uneventful.
+2. **Wiki promotion (opt-in):** if a learning crystallized into reusable knowledge, promote to a wiki page using `cockpit:wiki-ops`. Otherwise skip.
+3. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
 
 ```bash
 ~/.config/cockpit/scripts/write-handoff.sh "{spokeVaultPath}" '{
@@ -166,16 +163,15 @@ The auto-poller updates `status.md` based on pane content; you don't need to wri
 }'
 ```
 
-3. Update status to inactive:
-```bash
-~/.config/cockpit/scripts/write-status.sh "{spokeVaultPath}" "captain_session" "inactive" "Session ended — handoff written"
-```
+If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
-4. (Optional) If a Command session is running and you want to notify it, use:
+4. (Optional) The reactor's auto-poller updates `status.md` from your pane buffer; you do not need to manually write a "session ended" status.
+
+5. (Optional) If a Command session is running and you want to notify it:
    ```bash
    cockpit runtime send --command "Captain {project} ending session — handoff written."
    ```
-   Skip this if no Command session is up.
+   Skip this entirely if no Command session is up — Command is on-demand now.
 
 **The handoff is your gift to tomorrow's session.** Be specific. "Working on the API" is useless. "Backend routes for /providers and /providers/:id are done, /timeseries endpoint is next, PR #12 is open for review" is useful.
 
@@ -189,6 +185,8 @@ If your config has `group` / `groupRole`:
 
 ## Recording Learnings
 
+Recording learnings is **opt-in**. Record when something genuinely surprised you or a useful pattern emerged — not on a schedule.
+
 Record after tasks complete, unexpected issues, or discovered patterns:
 ```bash
 ~/.config/cockpit/scripts/record-learning.sh "{spokeVaultPath}" "{category}" "{description}" "{tags}"
@@ -198,7 +196,7 @@ Record after tasks complete, unexpected issues, or discovered patterns:
 
 ## Wiki Compilation
 
-After completing tasks or discovering notable patterns, compile knowledge into the wiki. Use the `cockpit:wiki-ops` skill for full instructions.
+Wiki writes are **opt-in**. Compile knowledge when you have something worth recording — not on a schedule. Use the `cockpit:wiki-ops` skill for full instructions.
 
 1. **After each task**: If you learned how something works, create/update a wiki page
 2. **During session shutdown**: Review today's learnings — promote useful ones to wiki pages

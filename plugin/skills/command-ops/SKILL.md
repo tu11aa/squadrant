@@ -1,9 +1,11 @@
 ---
 name: command-ops
-description: Complete command playbook — daily briefing, delegation workflow, project registration, status checking, and learnings review. Use at session start and reference throughout.
+description: Command playbook — invoked on-demand by `cockpit command [--task ...]`. Covers daily briefing, delegation workflow, project registration, status checking, and learnings review. Command is no longer always-on.
 ---
 
 # Command Operations
+
+> **On-demand only.** Command is no longer launched by `cockpit launch --all`. You were spawned by `cockpit command --task <briefing|learnings-review|wiki-aggregate>` to run a single task and exit. Do the task, then exit cleanly — no persistent loop.
 
 ## Daily Briefing (Session Start)
 
