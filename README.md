@@ -132,6 +132,8 @@ Crew is no longer a Claude Agent Team member. The captain spawns a crew session 
 
 Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `cockpit projection emit`. User-level projection pushes cockpit's skills to `~/.cursor/rules/cockpit-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/cockpit.mdc`, `{project}/GEMINI.md` — zero cockpit-global content leaks into the project repo. Shared files use `<!-- cockpit:start --> ... <!-- cockpit:end -->` markers; dedicated files overwrite. See `docs/specs/2026-04-24-plugin-system-projection-design.md`.
 
+The user-level projection now also inlines `orchestrator/captain.generic.md` and `orchestrator/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the cockpit marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/2026-05-05-multi-agent-template-parity-plan.md` (#45).
+
 ### Obsidian Vaults (Hub-and-Spoke)
 
 - **Hub vault** (`~/cockpit-hub`) — cross-project dashboard + hub wiki
@@ -202,9 +204,9 @@ Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit 
 | Agent | Status | Notes |
 |---|---|---|
 | Claude Code | ✅ Shipping | Reference implementation; reads `CLAUDE.md`, Skill tool, MCP via settings.json |
-| Codex CLI | ✅ via cockpit projection | Runtime driver (feature branch); instructions via `AGENTS.md` needed |
-| Cursor | ✅ via cockpit projection | Runtime driver; rules via `.cursor/rules/*.mdc` via [#31](https://github.com/tu11aa/claude-cockpit/issues/31) |
-| Gemini CLI | ✅ via cockpit projection | Runtime driver; instructions via `GEMINI.md` |
+| Codex CLI | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.codex/AGENTS.md` (#45). First-class role identity is #35. |
+| Cursor | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.cursor/rules/cockpit-global.mdc` (#45). |
+| Gemini CLI | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.gemini/GEMINI.md` (#45). |
 | Aider | 📋 Planned | `CONVENTIONS.md`; MCP via external config |
 
 Cross-agent config sync (one canonical source → agent-specific formats) is tracked in [#31](https://github.com/tu11aa/claude-cockpit/issues/31).

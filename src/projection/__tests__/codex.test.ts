@@ -83,4 +83,20 @@ describe("CodexEmitter", () => {
     expect(result.diff).toBeDefined();
     expect(fsMock.writeFile).not.toHaveBeenCalled();
   });
+
+  it("emit writes role-template sections inside the cockpit marker block (#45)", async () => {
+    const roleSource: ProjectionSource = {
+      instructions: "## Captain Role\n\nC body\n\n## Crew Role\n\nW body",
+      skills: [],
+    };
+    const emitter = createCodexEmitter();
+    const [dest] = emitter.destinations("user");
+    await emitter.emit(roleSource, dest);
+    const written = fsMock.writeFile.mock.calls[0][1] as string;
+    expect(written).toContain(MARKER_START);
+    expect(written).toContain("## Captain Role");
+    expect(written).toContain("## Crew Role");
+    expect(written.indexOf("## Captain Role")).toBeLessThan(written.indexOf("## Crew Role"));
+    expect(written).toContain(MARKER_END);
+  });
 });

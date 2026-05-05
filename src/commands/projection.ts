@@ -1,5 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import {
   createCursorEmitter,
@@ -28,6 +31,15 @@ function parseScope(v: string): "user" | "project" {
     throw new Error("--scope must be 'user' or 'project'");
   }
   return v;
+}
+
+function findPackageRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  while (dir !== "/" && dir !== "") {
+    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    dir = path.dirname(dir);
+  }
+  return process.cwd();
 }
 
 function buildRegistry(): ProjectionRegistry {
@@ -89,7 +101,7 @@ async function runEmit(opts: Opts & { dryRun?: boolean }) {
   const wantProject = opts.scope === "project" || opts.all || !!opts.project;
 
   if (wantUser) {
-    const source = await readUserLevelSource(workspace);
+    const source = await readUserLevelSource(workspace, { pkgRoot: findPackageRoot() });
     for (const name of targets) {
       await emitForTarget(registry.get(name), "user", source);
     }

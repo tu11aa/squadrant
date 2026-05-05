@@ -33,8 +33,9 @@ vi.mock("../../projection/index.js", async () => {
   };
 });
 
+const readUserLevelSourceMock = vi.hoisted(() => vi.fn(async () => ({ instructions: "", skills: [] })));
 vi.mock("../../lib/canonical-source.js", () => ({
-  readUserLevelSource: vi.fn(async () => ({ instructions: "", skills: [] })),
+  readUserLevelSource: readUserLevelSourceMock,
   readProjectLevelSource: vi.fn(async () => null),
 }));
 
@@ -145,6 +146,17 @@ describe("projectionCommand", () => {
     expect(errOutput).toMatch(/cannot be combined/i);
     exitSpy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  it("emit --scope user passes pkgRoot to readUserLevelSource (#45)", async () => {
+    readUserLevelSourceMock.mockClear();
+    await projectionCommand.parseAsync(["node", "projection", "emit", "--target", "cursor", "--scope", "user"]);
+    expect(readUserLevelSourceMock).toHaveBeenCalledTimes(1);
+    const callArgs = readUserLevelSourceMock.mock.calls[0] as unknown as [unknown, { pkgRoot?: string }];
+    const opts = callArgs[1];
+    expect(opts).toBeDefined();
+    expect(typeof opts.pkgRoot).toBe("string");
+    expect((opts.pkgRoot ?? "").length).toBeGreaterThan(0);
   });
 
   it("emit --project unknown-name throws fatal error", async () => {

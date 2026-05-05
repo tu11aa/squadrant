@@ -84,4 +84,19 @@ describe("CursorEmitter", () => {
     const result = await emitter.emit(source, dest);
     expect(result.bytesWritten).toBeGreaterThan(0);
   });
+
+  it("emit writes role-template sections inside the .mdc body (#45)", async () => {
+    const roleSource: ProjectionSource = {
+      instructions: "## Captain Role\n\nC body\n\n## Crew Role\n\nW body",
+      skills: [],
+    };
+    const emitter = createCursorEmitter();
+    const [dest] = emitter.destinations("user");
+    await emitter.emit(roleSource, dest);
+    const written = fsMock.writeFile.mock.calls[0][1] as string;
+    expect(written).toMatch(/^---\n[\s\S]*?\n---\n/);
+    expect(written).toContain("## Captain Role");
+    expect(written).toContain("## Crew Role");
+    expect(written.indexOf("## Captain Role")).toBeLessThan(written.indexOf("## Crew Role"));
+  });
 });

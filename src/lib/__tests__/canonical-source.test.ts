@@ -101,3 +101,84 @@ describe("canonical-source", () => {
     expect(src.skills).toEqual([]);
   });
 });
+
+describe("readUserLevelSource — role template inlining (#45)", () => {
+  it("inlines captain.generic.md and crew.generic.md when pkgRoot is provided", async () => {
+    const driver = memDriver({
+      "plugin/skills/karpathy-principles/SKILL.md":
+        "---\nname: karpathy-principles\ndescription: K\n---\n\nK body",
+    });
+    const reads: string[] = [];
+    const readFile = (p: string): string => {
+      reads.push(p);
+      if (p.endsWith("captain.generic.md")) return "# Captain — Generic Agent\n\nrules...";
+      if (p.endsWith("crew.generic.md"))    return "# Crew Member — Generic Agent\n\nrules...";
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    };
+
+    const src = await readUserLevelSource(driver, { pkgRoot: "/pkg", readFile });
+
+    expect(src.instructions).toContain("## Captain Role");
+    expect(src.instructions).toContain("Captain — Generic Agent");
+    expect(src.instructions).toContain("## Crew Role");
+    expect(src.instructions).toContain("Crew Member — Generic Agent");
+    expect(src.skills.map((s) => s.name)).toEqual(["karpathy-principles"]);
+    expect(reads).toContain("/pkg/orchestrator/captain.generic.md");
+    expect(reads).toContain("/pkg/orchestrator/crew.generic.md");
+  });
+
+  it("emits role sections in fixed order: captain then crew", async () => {
+    const driver = memDriver({});
+    const readFile = (p: string): string => {
+      if (p.endsWith("captain.generic.md")) return "CAP";
+      if (p.endsWith("crew.generic.md"))    return "CRW";
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    };
+    const src = await readUserLevelSource(driver, { pkgRoot: "/pkg", readFile });
+    const capIdx = src.instructions.indexOf("## Captain Role");
+    const crwIdx = src.instructions.indexOf("## Crew Role");
+    expect(capIdx).toBeGreaterThanOrEqual(0);
+    expect(crwIdx).toBeGreaterThan(capIdx);
+  });
+
+  it("returns instructions='' when pkgRoot is omitted (back-compat)", async () => {
+    const driver = memDriver({
+      "plugin/skills/karpathy-principles/SKILL.md":
+        "---\nname: karpathy-principles\ndescription: K\n---\n\nK body",
+    });
+    const src = await readUserLevelSource(driver);
+    expect(src.instructions).toBe("");
+    expect(src.skills.map((s) => s.name)).toEqual(["karpathy-principles"]);
+  });
+
+  it("omits a role section when its template is missing on disk", async () => {
+    const driver = memDriver({});
+    const readFile = (p: string): string => {
+      if (p.endsWith("captain.generic.md")) return "CAP only";
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    };
+    const src = await readUserLevelSource(driver, { pkgRoot: "/pkg", readFile });
+    expect(src.instructions).toContain("## Captain Role");
+    expect(src.instructions).not.toContain("## Crew Role");
+  });
+
+  it("returns instructions='' when both templates are missing", async () => {
+    const driver = memDriver({});
+    const readFile = (): string => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    };
+    const src = await readUserLevelSource(driver, { pkgRoot: "/pkg", readFile });
+    expect(src.instructions).toBe("");
+  });
+
+  it("trims trailing whitespace inside each role section", async () => {
+    const driver = memDriver({});
+    const readFile = (p: string): string => {
+      if (p.endsWith("captain.generic.md")) return "captain body\n\n\n";
+      if (p.endsWith("crew.generic.md"))    return "crew body\n";
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    };
+    const src = await readUserLevelSource(driver, { pkgRoot: "/pkg", readFile });
+    expect(src.instructions).not.toMatch(/\n{4,}/);
+  });
+});
