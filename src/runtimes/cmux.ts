@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef } from "./types.js";
+import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 
 const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
 
@@ -90,6 +90,40 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         cmux(`close-workspace --workspace "${ref}"`);
       } catch { /* may already be closed */ }
+    },
+
+    async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
+      const titleArg = opts.title ? ` --title "${escape(opts.title)}"` : "";
+      const output = cmux(`new-pane --type terminal --direction ${opts.direction} --workspace "${opts.workspaceId}"`);
+      const surfaceId = output.match(/surface:\d+/)?.[0];
+      if (!surfaceId) {
+        throw new Error(`cmux new-pane did not return a surface id: ${output}`);
+      }
+      if (opts.title) {
+        try {
+          cmux(`rename-tab --workspace "${opts.workspaceId}" --surface "${surfaceId}"${titleArg}`);
+        } catch { /* rename is best-effort */ }
+      }
+      return { workspaceId: opts.workspaceId, surfaceId };
+    },
+
+    async closePane(pane: PaneRef): Promise<void> {
+      try {
+        cmux(`close-surface --workspace "${pane.workspaceId}" --surface "${pane.surfaceId}"`);
+      } catch { /* may already be closed */ }
+    },
+
+    async sendToPane(pane: PaneRef, message: string): Promise<void> {
+      cmux(`send --workspace "${pane.workspaceId}" --surface "${pane.surfaceId}" "${escape(message)}"`);
+      cmux(`send-key --workspace "${pane.workspaceId}" --surface "${pane.surfaceId}" Enter`);
+    },
+
+    async readPaneScreen(pane: PaneRef): Promise<string> {
+      try {
+        return cmux(`read-screen --workspace "${pane.workspaceId}" --surface "${pane.surfaceId}"`);
+      } catch {
+        return "";
+      }
     },
   };
 }

@@ -84,6 +84,7 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit projection emit [--scope user\|project] [--project <name>] [--target <name>] [--all]` | Emit cockpit rules + skills to Cursor/Codex/Gemini config files |
 | `cockpit projection diff [same flags]` | Preview projection changes without writing |
 | `cockpit projection list` | Show registered projection targets and their destinations |
+| `cockpit crew spawn <project> <task> [--direction <d>] [--agent <a>]` | Spawn a crew session in a split pane next to the project's captain |
 | `cockpit shutdown [project]` | Graceful shutdown |
 | `cockpit feedback` | Open opt-in feedback issue |
 
@@ -93,7 +94,7 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 
 - **Command** (Opus) — overseer, monitors all projects, spawns captains
 - **Captain** (Opus) — project leader, uses Agent Teams + git worktrees
-- **Crew** (Sonnet) — worker in a worktree, uses GSD for complex tasks
+- **Crew** (Sonnet by default) — fresh CLI session in a split pane next to the captain. Spawned via `cockpit crew spawn`. Works with any agent CLI (claude, codex, gemini, aider). Disposable; uses GSD for complex tasks.
 - **Reactor** (Sonnet) — always-on GitHub event poller, auto-delegates to captains (incl. auto-fix on CI failure, with escalation after max retries)
 
 ### Model Routing
@@ -118,6 +119,10 @@ Issue/PR operations run behind a pluggable **tracker driver** (currently only `g
 ### Notifier Abstraction
 
 User-facing notifications run behind a pluggable **notifier driver** (currently only `cmux`). Escalations, reactor alerts, and other "tell the user" events go through `cockpit notify <message>`. The default `CmuxNotifier` delegates to `cockpit runtime send --command` — the abstraction exists as a swap-point for future Slack/Discord/email/pager drivers. Notifier is global (no per-project override). See `docs/specs/2026-04-21-plugin-system-notifier-design.md`.
+
+### Crew Spawn (Split-Pane CLI)
+
+Crew is no longer a Claude Agent Team member. The captain spawns a crew session via `cockpit crew spawn <project> "<task>"`, which opens a split pane in the captain's cmux workspace and starts a fresh CLI session for the chosen agent (`--agent claude|codex|gemini|aider`). The crew session loads `crew.<agent>.md` as its system prompt and the task as its inline prompt — exactly the OpenAI-Swarm "handoff = next prompt" pattern. State lives in the pane buffer + git; the pane is disposable. See [`docs/specs/2026-05-05-cockpit-thin-redirect-design.md`](docs/specs/2026-05-05-cockpit-thin-redirect-design.md).
 
 ### Projection (Cross-Agent Config Sync)
 

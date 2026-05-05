@@ -122,4 +122,76 @@ describe("cmux driver", () => {
     expect(calls.some((c) => c.includes("rename-workspace") && c.includes("test-ws"))).toBe(true);
     expect(calls.some((c) => c.includes("workspace-action") && c.includes("--action pin"))).toBe(true);
   });
+
+  it("newPane calls cmux new-pane with direction and workspace, parses surface id", async () => {
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd.includes("new-pane")) return "OK surface:27 pane:25 workspace:1";
+      return "";
+    });
+    const pane = await driver.newPane({ workspaceId: "workspace:1", direction: "right" });
+    expect(pane).toEqual({ workspaceId: "workspace:1", surfaceId: "surface:27" });
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes("new-pane") && c.includes("--direction right") && c.includes("--workspace \"workspace:1\""))).toBe(true);
+  });
+
+  it("newPane with title also calls rename-tab on the new surface", async () => {
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd.includes("new-pane")) return "OK surface:9 pane:3 workspace:2";
+      return "";
+    });
+    await driver.newPane({ workspaceId: "workspace:2", direction: "down", title: "🔧 fix-bug" });
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes("rename-tab") && c.includes("--surface \"surface:9\"") && c.includes("\"🔧 fix-bug\""))).toBe(true);
+  });
+
+  it("newPane throws when cmux output has no surface id", async () => {
+    execMock.mockReturnValue("garbage output");
+    await expect(driver.newPane({ workspaceId: "workspace:1", direction: "right" }))
+      .rejects.toThrow(/did not return a surface/);
+  });
+
+  it("closePane calls cmux close-surface with workspace + surface", async () => {
+    execMock.mockReturnValue("");
+    await driver.closePane({ workspaceId: "workspace:1", surfaceId: "surface:9" });
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes("close-surface") && c.includes("--surface \"surface:9\"") && c.includes("--workspace \"workspace:1\""))).toBe(true);
+  });
+
+  it("closePane swallows errors (already closed is fine)", async () => {
+    execMock.mockImplementation(() => { throw new Error("not found"); });
+    await expect(driver.closePane({ workspaceId: "workspace:1", surfaceId: "surface:9" }))
+      .resolves.toBeUndefined();
+  });
+
+  it("sendToPane calls cmux send + send-key Enter scoped to surface", async () => {
+    execMock.mockReturnValue("");
+    await driver.sendToPane({ workspaceId: "workspace:1", surfaceId: "surface:9" }, "hello crew");
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes("send ") && c.includes("--surface \"surface:9\"") && c.includes("hello crew") && !c.includes("send-key"))).toBe(true);
+    expect(calls.some((c) => c.includes("send-key") && c.includes("--surface \"surface:9\"") && c.includes("Enter"))).toBe(true);
+  });
+
+  it("sendToPane escapes double quotes in the message", async () => {
+    execMock.mockReturnValue("");
+    await driver.sendToPane({ workspaceId: "workspace:1", surfaceId: "surface:9" }, 'task "X"');
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes('task \\"X\\"'))).toBe(true);
+  });
+
+  it("readPaneScreen calls cmux read-screen scoped to surface", async () => {
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd.includes("read-screen")) return "  some pane content  ";
+      return "";
+    });
+    const text = await driver.readPaneScreen({ workspaceId: "workspace:1", surfaceId: "surface:9" });
+    expect(text).toBe("some pane content");
+    const calls = execMock.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((c) => c.includes("read-screen") && c.includes("--surface \"surface:9\"") && c.includes("--workspace \"workspace:1\""))).toBe(true);
+  });
+
+  it("readPaneScreen returns empty string when cmux throws", async () => {
+    execMock.mockImplementation(() => { throw new Error("dead"); });
+    const text = await driver.readPaneScreen({ workspaceId: "workspace:1", surfaceId: "surface:9" });
+    expect(text).toBe("");
+  });
 });

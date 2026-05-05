@@ -4,12 +4,23 @@ export interface WorkspaceRef {
   status: "running" | "stopped" | "unknown";
 }
 
+export interface PaneRef {
+  workspaceId: string; // parent workspace ref ("workspace:42")
+  surfaceId: string;   // runtime-native surface ref (cmux: "surface:7")
+}
+
 export interface RuntimeSpawnOptions {
   name: string;
   workdir: string;
   command: string;  // the full agent CLI invocation
   icon?: string;
   pinToTop?: boolean;
+}
+
+export interface RuntimePaneOptions {
+  workspaceId: string;
+  direction: "right" | "left" | "up" | "down";
+  title?: string;
 }
 
 export interface RuntimeProbeResult {
@@ -28,4 +39,10 @@ export interface RuntimeDriver {
   sendKey(ref: string, key: string): Promise<void>;    // literal key press
   readScreen(ref: string): Promise<string>;
   stop(ref: string): Promise<void>;
+
+  // Pane operations — used for crew split-pane spawn (#41)
+  newPane(opts: RuntimePaneOptions): Promise<PaneRef>;
+  closePane(pane: PaneRef): Promise<void>;
+  sendToPane(pane: PaneRef, message: string): Promise<void>; // sends text + Enter
+  readPaneScreen(pane: PaneRef): Promise<string>;
 }

@@ -14,6 +14,10 @@ function stubDriver(name: string): RuntimeDriver {
     sendKey: vi.fn(async () => {}),
     readScreen: vi.fn(async () => ""),
     stop: vi.fn(async () => {}),
+    newPane: vi.fn(async () => ({ workspaceId: "workspace:1", surfaceId: "surface:1" })),
+    closePane: vi.fn(async () => {}),
+    sendToPane: vi.fn(async () => {}),
+    readPaneScreen: vi.fn(async () => ""),
   };
 }
 

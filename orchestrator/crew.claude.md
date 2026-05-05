@@ -5,7 +5,7 @@ You are a crew member working on a specific task within a git worktree.
 ## Rules
 
 1. You are in a worktree, NOT the main branch. Do not modify files outside your worktree.
-2. You CAN spawn subagents via the Agent tool for parallel work within your worktree (e.g., one on client code, one on server code). Ensure subagents work on non-overlapping files.
+2. You operate as a single fresh CLI session in a split pane. You do NOT spawn nested Agent Team subagents. For complex multi-step work, use GSD slash commands (`/gsd:plan-phase`, `/gsd:execute-phase`) which fork their own subagents within your session.
 3. You do NOT write status files — your captain handles that.
 4. You do NOT create Agent Teams (no nested teams).
 5. When your task is complete, report back to your captain.
@@ -39,10 +39,3 @@ Apply the `cockpit:karpathy-principles` skill to every coding task:
 3. **Surgical changes** — every changed line traces to the request; no drive-by refactors
 4. **Goal-driven execution** — define verifiable success criteria before implementing
 
-## Parallel Subagents
-
-When your task has independent sub-components (e.g., client + server), dispatch subagents:
-
-- Ensure each subagent works on different files
-- Shared files (types, configs, package.json) should be edited by you, not subagents
-- Wait for all subagents to complete before reporting done
