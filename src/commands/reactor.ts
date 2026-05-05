@@ -6,6 +6,8 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 import { loadConfig, loadReactions, saveReactions, resolveHome } from "../config.js";
+import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
+import { runAutoStatus } from "../reactor/auto-status.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -307,4 +309,53 @@ reactorCommand
     } else {
       console.log(chalk.dim("\n  No state file to clear.\n"));
     }
+  });
+
+// cockpit reactor poll-status — run one auto-status poll across registered projects
+reactorCommand
+  .command("poll-status")
+  .description("Read each captain's pane, classify state, write {spokeVault}/status.md")
+  .option("--json", "Emit results as JSON instead of human output")
+  .action(async (opts: { json?: boolean }) => {
+    const config = loadConfig();
+    const reactions = loadReactions();
+
+    if (Object.keys(config.projects).length === 0) {
+      if (opts.json) {
+        console.log("[]");
+      } else {
+        console.log(chalk.yellow("\n  No projects registered. Add one with: cockpit projects add <name> <path>\n"));
+      }
+      return;
+    }
+
+    const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
+    const results = await runAutoStatus({
+      config,
+      reactions,
+      runtime: (project) => registry.forProject(project, config),
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    if (results.length === 0) {
+      console.log(chalk.dim("\n  Auto-status disabled in reactions.json (auto_status.enabled = false).\n"));
+      return;
+    }
+
+    console.log(chalk.bold("\n  📊 Auto-status poll\n"));
+    for (const r of results) {
+      const icon = ({
+        idle: chalk.green("●"),
+        busy: chalk.cyan("◐"),
+        blocked: chalk.yellow("⏸"),
+        errored: chalk.red("✗"),
+        offline: chalk.dim("○"),
+      } as const)[r.state];
+      console.log(`  ${icon} ${chalk.cyan(r.project.padEnd(16))} ${r.state.padEnd(8)} → ${chalk.dim(r.vaultPath)}`);
+    }
+    console.log("");
   });
