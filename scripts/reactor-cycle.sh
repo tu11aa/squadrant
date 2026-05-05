@@ -25,6 +25,14 @@ fi
 EVENT_COUNT=$(python3 -c "import json; print(len(json.load(open('$EVENTS_FILE'))))" 2>/dev/null || echo "0")
 echo "   Found ${EVENT_COUNT} events"
 
+# Step 1.5: Auto-status poll — read captain panes, classify, write status.md
+echo "📡 Polling captain panes (auto-status)..."
+if command -v cockpit >/dev/null 2>&1; then
+  cockpit reactor poll-status 2>&1 | sed 's/^/   /' || echo "   ⚠️  Auto-status poll failed (continuing)"
+else
+  echo "   ⚠️  cockpit CLI not on PATH — skipping auto-status"
+fi
+
 if [ "$EVENT_COUNT" = "0" ]; then
   echo "   No events to process"
   rm -f "$EVENTS_FILE"
