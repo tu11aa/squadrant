@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { WorkspaceDriver } from "../workspaces/types.js";
 import type { ProjectionSource } from "../projection/types.js";
 
@@ -42,9 +44,36 @@ async function readSkills(
   return skills;
 }
 
-export async function readUserLevelSource(driver: WorkspaceDriver): Promise<ProjectionSource> {
+export interface UserSourceOptions {
+  pkgRoot?: string;
+  readFile?: (p: string) => string;
+}
+
+const ROLE_TEMPLATES: ReadonlyArray<{ file: string; heading: string }> = [
+  { file: "captain.generic.md", heading: "## Captain Role" },
+  { file: "crew.generic.md",    heading: "## Crew Role" },
+];
+
+function readRoleTemplates(opts: UserSourceOptions): string {
+  if (!opts.pkgRoot) return "";
+  const reader = opts.readFile ?? ((p: string) => fs.readFileSync(p, "utf-8"));
+  const sections: string[] = [];
+  for (const { file, heading } of ROLE_TEMPLATES) {
+    const full = path.join(opts.pkgRoot, "orchestrator", file);
+    let body = "";
+    try { body = reader(full); } catch { continue; }
+    sections.push(`${heading}\n\n${body.trim()}`);
+  }
+  return sections.join("\n\n");
+}
+
+export async function readUserLevelSource(
+  driver: WorkspaceDriver,
+  opts: UserSourceOptions = {},
+): Promise<ProjectionSource> {
   const skills = await readSkills(driver, "plugin/skills");
-  return { instructions: "", skills };
+  const instructions = readRoleTemplates(opts);
+  return { instructions, skills };
 }
 
 export async function readProjectLevelSource(
