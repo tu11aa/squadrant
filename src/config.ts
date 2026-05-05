@@ -233,6 +233,11 @@ export function loadReactions(reactionsPath = DEFAULT_REACTIONS_PATH): Reactions
       },
       github: { repos: {} },
       reactions: {},
+      auto_status: {
+        enabled: true,
+        lines: 50,
+        excerpt_lines: 15,
+      },
     };
   }
 }

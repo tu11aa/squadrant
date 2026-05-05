@@ -4,6 +4,11 @@
     "state_file": "~/.config/cockpit/reactor-state.json",
     "max_retries": 2
   },
+  "auto_status": {
+    "enabled": true,
+    "lines": 50,
+    "excerpt_lines": 15
+  },
   "github": {
     "repos": {},
     "project": null
