@@ -135,12 +135,20 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // don't yet honor `interactive` will keep their existing print-mode shape —
   // a known limitation tracked for future work.
   const interactive = agent.name === "claude";
+  // Honor configured model routing only when the spawn agent matches the
+  // configured role agent — model names are agent-specific (e.g. "sonnet" is
+  // a Claude alias; aider expects a fully-qualified name; codex/gemini have
+  // their own routing). Cross-agent crews fall back to the agent's own
+  // default to avoid passing an invalid model arg.
+  const crewRole = config.defaults.roles?.crew;
+  const crewModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
   const cliCommand = agent.buildCommand({
     prompt: input.task,
     workdir: proj.path,
     role: "crew",
     promptFile,
     interactive,
+    model: crewModel,
   });
 
   const direction: PanePlacement = input.direction ?? "tab";
