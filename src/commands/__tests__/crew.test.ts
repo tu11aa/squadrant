@@ -158,6 +158,58 @@ describe("cockpit crew spawn", () => {
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
+  it("passes the configured crew model when spawn agent matches role agent", async () => {
+    loadConfig.mockReturnValue({
+      ...baseConfig,
+      defaults: {
+        ...baseConfig.defaults,
+        roles: {
+          command: { agent: "claude", model: "opus" },
+          captain: { agent: "claude", model: "opus" },
+          crew: { agent: "claude", model: "sonnet" },
+          reactor: { agent: "claude", model: "sonnet" },
+          exploration: { agent: "claude", model: "haiku" },
+        },
+      },
+    });
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude --model sonnet ...");
+
+    const promise = runCrewSpawn({ project: "brove", task: "task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "sonnet" }));
+  });
+
+  it("does NOT pass crew model when spawn agent differs from configured role agent", async () => {
+    // role config says crew=claude/sonnet, but user spawns with --agent codex.
+    // Model names are agent-specific, so we must NOT pass "sonnet" to codex.
+    loadConfig.mockReturnValue({
+      ...baseConfig,
+      defaults: {
+        ...baseConfig.defaults,
+        roles: {
+          command: { agent: "claude", model: "opus" },
+          captain: { agent: "claude", model: "opus" },
+          crew: { agent: "claude", model: "sonnet" },
+          reactor: { agent: "claude", model: "sonnet" },
+          exploration: { agent: "claude", model: "haiku" },
+        },
+      },
+    });
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("codex exec 'task'");
+
+    await runCrewSpawn({ project: "brove", task: "task", agent: "codex" });
+
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
+  });
+
   it("respects --direction override", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });

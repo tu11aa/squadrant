@@ -5,6 +5,22 @@ All notable changes to claude-cockpit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-05-06
+
+### Fixed
+
+- **Crew now honors configured model routing.** `cockpit crew spawn` was not
+  passing `--model` to the agent CLI, so Claude crews silently fell back to
+  the user's global default (typically opus) instead of the configured
+  `defaults.roles.crew.model` (sonnet by default). Read the model from
+  config and pass it through `buildCommand`. Token spend for crew sessions
+  drops accordingly.
+- Model passthrough is **agent-aware**: only applied when the spawn agent
+  matches the role's configured agent (`defaults.roles.crew.agent`). Cross-
+  agent crews (e.g. `--agent codex` while config routes crew to claude) skip
+  the model arg, since model names are agent-specific (`sonnet` is a Claude
+  alias and would be invalid for codex / aider / gemini).
+
 ## [0.3.1] - 2026-05-06
 
 Crew sessions become **interactive sub-sessions** instead of one-shot print
