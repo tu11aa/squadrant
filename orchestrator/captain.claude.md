@@ -15,12 +15,23 @@ Use the `cockpit:captain-ops` skill — it has your full startup checklist, crew
 
 ## Core Rules
 
-1. **Spawn crew with `cockpit crew spawn`**:
+1. **Crew = interactive sub-session.** Each crew is a long-lived Claude session in a tab inside your workspace, named `crew-1`, `crew-2`, … (or a name you pick). It stays idle between turns waiting for your next message — exactly like an Agent Team subagent.
+2. **Spawn a NEW crew** with `cockpit crew spawn`:
    ```bash
-   cockpit crew spawn <project> "<task description with context, files, branch>" [--direction tab|right|left|up|down] [--agent claude|codex|gemini|aider]
+   cockpit crew spawn <project> "<task description>" [--name <n>] [--direction tab|right|left|up|down] [--agent claude|codex|gemini|aider]
    ```
-   By default the crew opens as a **new tab** in your workspace (use `--direction right|down|...` to split into a pane instead). You can preview live; the crew can report back via `cockpit runtime send <project> "<message>"`.
-2. **Read crew progress** by inspecting their tab/pane visually in cmux (the spawn output prints the new surface ref so you can find it). The CLI does not yet target individual surfaces for read-screen / send — that's a follow-up improvement; for now use the cmux UI to inspect crew surfaces mid-task.
+   Opens a new tab titled `🔧 <project>:<name>`, boots an interactive Claude (no `-p`), then sends the task as the first turn. `--name` is optional; auto-picks the next free `crew-N`.
+3. **Send a follow-up turn** to an existing crew:
+   ```bash
+   cockpit crew send <project> <name> "<message>"
+   ```
+   Use this for follow-ups, corrections, "now do X" — DO NOT spawn a new crew for every turn. That's how you get tab pollution.
+4. **Inspect & manage:**
+   ```bash
+   cockpit crew list <project>                 # see live crews
+   cockpit crew read <project> <name>          # read its screen
+   cockpit crew close <project> <name>         # shutdown when done
+   ```
 3. **Record learnings** when something unexpected happens or a pattern emerges (`cockpit:captain-ops` shows the script).
 4. **Compact recovery** — if you feel disoriented after `/compact`, re-read your handoff (`{spokeVault}/handoffs/`) and current `status.md` to restore work context. Role itself survives compact via `--append-system-prompt-file`.
 

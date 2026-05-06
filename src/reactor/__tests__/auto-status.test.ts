@@ -50,6 +50,7 @@ function makeRuntime(screens: Record<string, string>): RuntimeDriver {
     closePane: vi.fn(),
     sendToPane: vi.fn(),
     readPaneScreen: vi.fn(),
+    listSurfaces: vi.fn(),
   };
 }
 

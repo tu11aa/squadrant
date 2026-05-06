@@ -223,4 +223,32 @@ describe("cmux driver", () => {
     const text = await driver.readPaneScreen({ workspaceId: "workspace:1", surfaceId: "surface:9" });
     expect(text).toBe("");
   });
+
+  it("listSurfaces parses cmux tree output and returns surfaces with titles", async () => {
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd.includes("tree")) {
+        return [
+          'window window:1 [current] ◀ active',
+          '└── workspace workspace:10 "⚓ pact-network-captain"',
+          '    └── pane pane:29 [focused]',
+          '        ├── surface surface:29 [terminal] "✳ Run startup checklist" [selected]',
+          '        ├── surface surface:30 [terminal] "🔧 pact-network:crew-1"',
+          '        └── surface surface:31 [terminal] "🔧 pact-network:crew-2"',
+        ].join("\n");
+      }
+      return "";
+    });
+    const surfaces = await driver.listSurfaces("workspace:10");
+    expect(surfaces).toEqual([
+      { workspaceId: "workspace:10", surfaceId: "surface:29", title: "✳ Run startup checklist" },
+      { workspaceId: "workspace:10", surfaceId: "surface:30", title: "🔧 pact-network:crew-1" },
+      { workspaceId: "workspace:10", surfaceId: "surface:31", title: "🔧 pact-network:crew-2" },
+    ]);
+  });
+
+  it("listSurfaces returns empty array when cmux throws", async () => {
+    execMock.mockImplementation(() => { throw new Error("workspace not found"); });
+    const surfaces = await driver.listSurfaces("workspace:99");
+    expect(surfaces).toEqual([]);
+  });
 });
