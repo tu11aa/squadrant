@@ -129,5 +129,25 @@ export function createCmuxDriver(): RuntimeDriver {
         return "";
       }
     },
+
+    async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
+      let output: string;
+      try {
+        output = cmux(`tree --workspace "${workspaceId}"`);
+      } catch {
+        return [];
+      }
+      const surfaces: PaneRef[] = [];
+      // tree output line example:
+      //     ├── surface surface:30 [terminal] "🔧 pact-network:crew-1" [selected]
+      const re = /surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/;
+      for (const line of output.split("\n")) {
+        const match = line.match(re);
+        if (match) {
+          surfaces.push({ workspaceId, surfaceId: match[1], title: match[2] });
+        }
+      }
+      return surfaces;
+    },
   };
 }

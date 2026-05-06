@@ -7,6 +7,7 @@ export interface WorkspaceRef {
 export interface PaneRef {
   workspaceId: string; // parent workspace ref ("workspace:42")
   surfaceId: string;   // runtime-native surface ref (cmux: "surface:7")
+  title?: string;      // tab title — populated by listSurfaces, optional on spawn
 }
 
 export interface RuntimeSpawnOptions {
@@ -50,4 +51,7 @@ export interface RuntimeDriver {
   closePane(pane: PaneRef): Promise<void>;
   sendToPane(pane: PaneRef, message: string): Promise<void>; // sends text + Enter
   readPaneScreen(pane: PaneRef): Promise<string>;
+  // List all surfaces (tabs/panes) inside a workspace, with their titles.
+  // Used to find named crews by tab title (#56).
+  listSurfaces(workspaceId: string): Promise<PaneRef[]>;
 }

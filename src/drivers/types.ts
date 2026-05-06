@@ -24,6 +24,10 @@ export interface SpawnOptions {
   autoApprove?: boolean;
   jsonOutput?: boolean;
   promptFile?: string;
+  // Interactive crew sessions: drivers should NOT bake the prompt into the
+  // command (no `-p`). Caller will deliver the prompt via runtime.send after
+  // the CLI is ready, so the session stays alive between turns.
+  interactive?: boolean;
 }
 
 export interface AgentResult {

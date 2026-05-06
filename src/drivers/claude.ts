@@ -46,7 +46,9 @@ export function createClaudeDriver(): AgentDriver {
       const pluginDir = `${process.env.HOME}/.config/cockpit/plugin`;
       cmd += ` --plugin-dir ${pluginDir}`;
 
-      cmd += ` -p "${opts.prompt.replace(/"/g, '\\"')}"`;
+      if (!opts.interactive) {
+        cmd += ` -p "${opts.prompt.replace(/"/g, '\\"')}"`;
+      }
       return cmd;
     },
 

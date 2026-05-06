@@ -18,6 +18,7 @@ function stubDriver(name: string): RuntimeDriver {
     closePane: vi.fn(async () => {}),
     sendToPane: vi.fn(async () => {}),
     readPaneScreen: vi.fn(async () => ""),
+    listSurfaces: vi.fn(async () => []),
   };
 }
 

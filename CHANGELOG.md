@@ -5,6 +5,51 @@ All notable changes to claude-cockpit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-06
+
+Crew sessions become **interactive sub-sessions** instead of one-shot print
+runs — the captain's equivalent of a Claude Agent Team subagent. Each crew is
+named, addressable, stays idle between turns, and is driven by new
+`cockpit crew send/read/close/list` verbs. Closes #56.
+
+### Added
+
+- **Interactive Claude crews** — `cockpit crew spawn` boots Claude without
+  `-p`, then sends the task as the first turn after the CLI is ready. The
+  session stays alive between turns waiting for the captain's next message.
+- **Named crews** — `--name <n>` (or auto-generated `crew-1`, `crew-2`, …
+  picking the next free slot from existing tabs in the captain workspace).
+  Tab title becomes `🔧 <project>:<name>` so the surface itself is the
+  registry — no state file.
+- **`cockpit crew send <project> <name> "<message>"`** — send a follow-up
+  turn to an existing crew. Replaces the "spawn a new tab for every turn"
+  pattern.
+- **`cockpit crew read <project> <name>`** — read the crew's current screen
+  from the CLI (no need to flip into the cmux UI).
+- **`cockpit crew close <project> <name>`** — shutdown a crew (closes its
+  tab).
+- **`cockpit crew list <project>`** — list live crews for a project.
+- **`SpawnOptions.interactive`** flag — Claude driver omits `-p` when set so
+  callers can deliver the prompt over runtime.send.
+- **`RuntimeDriver.listSurfaces(workspaceId)`** — enumerate surfaces (tabs /
+  panes) inside a workspace with their titles. Cmux driver parses
+  `cmux tree --workspace`.
+
+### Changed
+
+- **Captain templates + `captain-ops` SKILL** rewritten — teach the new
+  spawn-once / send-follow-ups / close-when-done pattern. Stops the "tons of
+  tabs" growth seen pre-0.3.1.
+- **README + CLI help** updated with the new verbs.
+
+### Known limitations
+
+- Non-Claude agents (codex / gemini / aider) still launch in print-mode;
+  full interactive support per agent is a follow-up.
+- Crew tabs do not persist across `cockpit shutdown <project>` — they're
+  surfaces inside the captain workspace and die with it. Matches Agent Team
+  semantics.
+
 ## [0.3.0] - 2026-05-05
 
 The thin-redirect release. Cockpit becomes a thin multi-agent orchestration
