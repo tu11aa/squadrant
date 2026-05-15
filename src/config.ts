@@ -133,7 +133,7 @@ export interface CockpitConfig {
   };
 }
 
-const CONFIG_DIR = path.join(os.homedir(), ".config", "cockpit");
+export const CONFIG_DIR = path.join(os.homedir(), ".config", "cockpit");
 export const DEFAULT_CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
 export function getDefaultConfig(): CockpitConfig {
