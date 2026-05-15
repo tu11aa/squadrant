@@ -22,6 +22,7 @@ import { workspaceCommand } from "./commands/workspace.js";
 import { trackerCommand } from "./commands/tracker.js";
 import { notifyCommand } from "./commands/notify.js";
 import { projectionCommand } from "./commands/projection.js";
+import { crewSignalCommand } from "./commands/crew-signal.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -51,5 +52,6 @@ program.addCommand(workspaceCommand);
 program.addCommand(trackerCommand);
 program.addCommand(notifyCommand);
 program.addCommand(projectionCommand);
+program.addCommand(crewSignalCommand);
 
 program.parse();
