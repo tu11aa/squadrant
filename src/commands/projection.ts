@@ -8,6 +8,7 @@ import {
   createCursorEmitter,
   createCodexEmitter,
   createGeminiEmitter,
+  createOpencodeEmitter,
   ProjectionRegistry,
   type ProjectionEmitter,
   type ProjectionSource,
@@ -47,6 +48,7 @@ function buildRegistry(): ProjectionRegistry {
     cursor: createCursorEmitter,
     codex: createCodexEmitter,
     gemini: createGeminiEmitter,
+    opencode: createOpencodeEmitter,
   });
 }
 
@@ -149,7 +151,7 @@ projectionCommand
   .description("Emit projections to disk")
   .option("--scope <scope>", "user or project", parseScope)
   .option("--project <name>", "managed project name")
-  .option("--target <name>", "single target (cursor, codex, gemini)")
+  .option("--target <name>", "single target (cursor, codex, gemini, opencode)")
   .option("--all", "emit user-level + every managed project")
   .action(async (opts: Opts) => {
     try {
@@ -165,7 +167,7 @@ projectionCommand
   .description("Preview changes without writing")
   .option("--scope <scope>", "user or project", parseScope)
   .option("--project <name>", "managed project name")
-  .option("--target <name>", "single target (cursor, codex, gemini)")
+  .option("--target <name>", "single target (cursor, codex, gemini, opencode)")
   .option("--all", "dry-run across user-level + every managed project")
   .action(async (opts: Opts) => {
     try {

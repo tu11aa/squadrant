@@ -53,6 +53,7 @@ vi.mock("../../drivers/index.js", () => ({
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
   createAiderDriver: () => ({ ...claudeDriver, name: "aider", templateSuffix: "generic" }),
+  createOpencodeDriver: () => ({ ...claudeDriver, name: "opencode", templateSuffix: "generic" }),
   CapabilityRegistry: class {
     constructor(private drivers: Record<string, unknown>) {}
     get(name: string) { return this.drivers[name]; }

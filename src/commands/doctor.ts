@@ -13,6 +13,7 @@ import {
   createCursorEmitter,
   createCodexEmitter,
   createGeminiEmitter,
+  createOpencodeEmitter,
   ProjectionRegistry,
 } from "../projection/index.js";
 
@@ -199,6 +200,7 @@ export const doctorCommand = new Command("doctor")
       cursor: createCursorEmitter,
       codex: createCodexEmitter,
       gemini: createGeminiEmitter,
+      opencode: createOpencodeEmitter,
     });
     for (const name of projectionRegistry.list()) {
       const emitter = projectionRegistry.get(name);
@@ -266,13 +268,14 @@ export const doctorCommand = new Command("doctor")
     // --- Agent Probes ---
     console.log(chalk.bold("\nAgent Drivers\n"));
 
-    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, CapabilityRegistry } = await import("../drivers/index.js");
+    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, createOpencodeDriver, CapabilityRegistry } = await import("../drivers/index.js");
 
     const agentDrivers = {
       claude: createClaudeDriver(),
       codex: createCodexDriver(),
       gemini: createGeminiDriver(),
       aider: createAiderDriver(),
+      opencode: createOpencodeDriver(),
     };
 
     const registry = new CapabilityRegistry(agentDrivers);
