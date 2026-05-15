@@ -14,9 +14,24 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-function stateForEvent(event: string): CrewSignalState | null {
-  if (event === "Stop" || event === "SubagentStop") return "done";
-  if (event === "Notification") return "blocked";
+/**
+ * Map a Claude `Notification` payload to a crew state. Idle prompt = the crew
+ * has genuinely finished its turn (done); permission prompt = blocked waiting on
+ * the user. Defensive: prefer the documented `notification_type` field, fall
+ * back to the human message text only when the type is absent, and refuse to
+ * write a junk sentinel when neither is recognizable.
+ */
+function stateForNotification(payload: Record<string, unknown>): CrewSignalState | null {
+  const t = payload.notification_type;
+  if (typeof t === "string" && t) {
+    const tl = t.toLowerCase();
+    if (tl === "idle_prompt" || tl.includes("idle")) return "done";
+    if (tl === "permission_prompt" || tl.includes("permission")) return "blocked";
+    return null;
+  }
+  const msg = String(payload.message);
+  if (/waiting for (your )?input|idle/i.test(msg)) return "done";
+  if (/permission|approve|allow/i.test(msg)) return "blocked";
   return null;
 }
 
@@ -28,6 +43,9 @@ function excerptFromTranscript(transcriptPath: unknown): string {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const obj = JSON.parse(lines[i]);
+        // Only the crew's own (assistant) replies — never the user prompt,
+        // and skip trailing attachment/system lines from the real transcript.
+        if (obj?.type !== "assistant" && obj?.role !== "assistant") continue;
         const msg = obj?.message?.content ?? obj?.content ?? obj?.text;
         if (typeof msg === "string" && msg.trim()) return msg.trim().slice(0, 280);
         if (Array.isArray(msg)) {
@@ -67,7 +85,10 @@ export function handleCrewSignal(i: CrewSignalInput): CrewSentinel | null {
     return null;
   }
   const event = typeof payload.hook_event_name === "string" ? payload.hook_event_name : "";
-  const state = stateForEvent(event);
+  // Only the debounced idle/permission Notification is a reliable completion
+  // signal. Stop/SubagentStop fire after every turn → false "done".
+  if (event !== "Notification") return null;
+  const state = stateForNotification(payload);
   if (!state) return null;
 
   const sentinel: CrewSentinel = {
