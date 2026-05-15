@@ -102,7 +102,7 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 
 - **Command** (Opus) — *on-demand* cross-project session. Spawned by `cockpit command --task <briefing|learnings-review|wiki-aggregate>` in a split pane; exits when the task completes. No persistent Command process.
 - **Captain** (Opus) — project leader, uses Agent Teams + git worktrees
-- **Crew** (Sonnet by default) — interactive sub-session running as a new tab in the captain's workspace (or a split pane via `--direction`). Each crew is named (`crew-1`, `crew-2`, …) and stays idle between turns waiting for the captain's next message — same model as a Claude Agent Team subagent. Spawn with `cockpit crew spawn`, send follow-ups with `cockpit crew send`, close when done. Works with any agent CLI (claude is fully interactive; codex/gemini/aider currently print-mode). Uses GSD for complex tasks.
+- **Crew** (Sonnet by default) — interactive sub-session running as a new tab in the captain's workspace (or a split pane via `--direction`). Each crew is named (`crew-1`, `crew-2`, …) and stays idle between turns waiting for the captain's next message — same model as a Claude Agent Team subagent. Spawn with `cockpit crew spawn`, send follow-ups with `cockpit crew send`, close when done. Works with any agent CLI (claude is fully interactive; codex/gemini/aider/opencode currently print-mode). Uses GSD for complex tasks.
 - **Reactor** (Sonnet) — always-on GitHub event poller, auto-delegates to captains (incl. auto-fix on CI failure, with escalation after max retries)
 
 ### Model Routing
@@ -213,6 +213,7 @@ The user-level projection now also inlines `orchestrator/captain.generic.md` and
 | Codex CLI | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.codex/AGENTS.md` (#45). First-class role identity is #35. |
 | Cursor | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.cursor/rules/cockpit-global.mdc` (#45). |
 | Gemini CLI | ✅ projection (skills + roles) | Captain/crew roles inlined into `~/.gemini/GEMINI.md` (#45). |
+| opencode | ✅ driver + projection (print-mode) | `opencode run "<prompt>"` with `--format json` / `-m <model>`; AGENTS.md projects to `~/.config/opencode/AGENTS.md`. |
 | Aider | 📋 Planned | `CONVENTIONS.md`; MCP via external config |
 
 Cross-agent config sync (one canonical source → agent-specific formats) is tracked in [#31](https://github.com/tu11aa/claude-cockpit/issues/31).

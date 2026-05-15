@@ -5,6 +5,21 @@ All notable changes to claude-cockpit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **opencode CLI agent support.** New driver (`createOpencodeDriver`)
+  probes `opencode --version` and declares
+  `auto_approve / json_output / streaming / model_routing`
+  capabilities. `cockpit crew spawn ... --agent opencode` builds
+  `opencode run "<prompt>"` (plus `--format json` and `-m <model>`
+  when applicable). The matching projection emitter writes to
+  `~/.config/opencode/AGENTS.md` at user scope and `<root>/AGENTS.md`
+  at project scope, sharing the same marker-merge flow as codex.
+  Print-mode only in this PR (no interactive sub-session), matching
+  the existing policy for non-Claude agents.
+
 ## [0.3.2] - 2026-05-06
 
 ### Fixed
