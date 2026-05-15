@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig, resolveHome, type ModelRoutingConfig } from "../config.js";
-import { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, CapabilityRegistry } from "../drivers/index.js";
+import { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, createOpencodeDriver, CapabilityRegistry } from "../drivers/index.js";
 import type { AgentDriver, Role } from "../drivers/types.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
 import type { RuntimeDriver } from "../runtimes/index.js";
@@ -239,6 +239,7 @@ export const launchCommand = new Command("launch")
       codex: createCodexDriver(),
       gemini: createGeminiDriver(),
       aider: createAiderDriver(),
+      opencode: createOpencodeDriver(),
     };
     const registry = new CapabilityRegistry(drivers);
 

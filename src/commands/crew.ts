@@ -9,6 +9,7 @@ import {
   createCodexDriver,
   createGeminiDriver,
   createAiderDriver,
+  createOpencodeDriver,
   CapabilityRegistry,
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
@@ -122,11 +123,12 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     codex: createCodexDriver(),
     gemini: createGeminiDriver(),
     aider: createAiderDriver(),
+    opencode: createOpencodeDriver(),
   });
   const agentName = input.agent ?? "claude";
   const agent = agents.get(agentName);
   if (!agent) {
-    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, aider.`);
+    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, aider, opencode.`);
   }
 
   const promptFile = path.join(TEMPLATES_DIR, `crew.${agent.templateSuffix}.md`);
@@ -218,7 +220,7 @@ crewCommand
   .argument("<task>", "Initial task prompt for the crew session")
   .option("--name <name>", "Crew name (default: auto-generated crew-N)")
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
-  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|aider)", "claude")
+  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|aider|opencode)", "claude")
   .action(
     async (
       project: string,
