@@ -136,7 +136,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // turns; the task is sent via cmux after the CLI boots. Other agents that
   // don't yet honor `interactive` will keep their existing print-mode shape —
   // a known limitation tracked for future work.
-  const interactive = agent.name === "claude";
+  const interactive = agent.name === "claude" || agent.name === "opencode";
   // Honor configured model routing only when the spawn agent matches the
   // configured role agent — model names are agent-specific (e.g. "sonnet" is
   // a Claude alias; aider expects a fully-qualified name; codex/gemini have

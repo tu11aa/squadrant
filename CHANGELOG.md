@@ -17,8 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when applicable). The matching projection emitter writes to
   `~/.config/opencode/AGENTS.md` at user scope and `<root>/AGENTS.md`
   at project scope, sharing the same marker-merge flow as codex.
-  Print-mode only in this PR (no interactive sub-session), matching
-  the existing policy for non-Claude agents.
+  opencode crews run as interactive sub-sessions like claude crews —
+  `cockpit crew send` delivers follow-up turns to the live TUI.
+  Print-mode is still used for one-shot roles (reactor, exploration).
 
 ## [0.3.2] - 2026-05-06
 

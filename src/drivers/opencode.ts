@@ -20,6 +20,10 @@ export function createOpencodeDriver(): AgentDriver {
     },
 
     buildCommand(opts: SpawnOptions): string {
+      // Interactive crews: boot the TUI bare; the caller delivers opts.prompt
+      // as the first turn via runtime.send once the session is ready, so the
+      // crew stays alive for follow-up turns through `cockpit crew send`.
+      if (opts.interactive) return "opencode";
       let cmd = `opencode run "${opts.prompt.replace(/"/g, '\\"')}"`;
       if (opts.jsonOutput) cmd += " --format json";
       if (opts.model) cmd += ` -m ${opts.model}`;

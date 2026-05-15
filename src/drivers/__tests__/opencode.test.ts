@@ -47,6 +47,18 @@ describe("opencode driver", () => {
     expect(cmd).toContain('\\"hi\\"');
   });
 
+  it("buildCommand interactive returns bare opencode", () => {
+    const cmd = driver.buildCommand({
+      prompt: "first turn — delivered via runtime.send later",
+      workdir: "/tmp/test",
+      role: "crew",
+      interactive: true,
+      jsonOutput: true,
+      model: "anthropic/claude-sonnet-4-5",
+    });
+    expect(cmd).toBe("opencode");
+  });
+
   it("probes capabilities", async () => {
     const result = await driver.probe();
     expect(result.installed).toBe(true);

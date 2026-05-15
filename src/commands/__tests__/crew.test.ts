@@ -145,6 +145,28 @@ describe("cockpit crew spawn", () => {
       .rejects.toThrow(/already exists/);
   });
 
+  it("spawns an opencode crew interactively, then sends the task after the boot delay", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("opencode");
+
+    const promise = runCrewSpawn({ project: "brove", task: "do the thing", agent: "opencode" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }));
+    expect(sendToPane.mock.calls[0]).toEqual([
+      { workspaceId: "workspace:5", surfaceId: "surface:9" },
+      "opencode",
+    ]);
+    expect(sendToPane.mock.calls[1]).toEqual([
+      { workspaceId: "workspace:5", surfaceId: "surface:9" },
+      "do the thing",
+    ]);
+  });
+
   it("non-Claude agent crews stay print-mode (no boot delay, no second send)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
