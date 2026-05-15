@@ -36,6 +36,19 @@ export interface AgentResult {
   filesChanged?: string[];
 }
 
+export interface CrewSignalContext {
+  project: string;
+  crew: string;
+  stateDir: string;
+}
+
+export interface CrewSignalWiring {
+  /** Env vars injected into the crew process so its completion hook can self-identify. */
+  env: Record<string, string>;
+  /** Extra CLI args appended to the spawn command (non-Claude adapters, #68). */
+  argsSuffix?: string;
+}
+
 export interface AgentDriver {
   name: string;
   templateSuffix: string;
@@ -44,6 +57,14 @@ export interface AgentDriver {
   buildCommand(opts: SpawnOptions): string;
   parseOutput(raw: string): AgentResult;
   stop(pid: number): Promise<void>;
+
+  /**
+   * Optional crew-completion-signal contract (#64). Declares how this agent is
+   * wired so a finished/blocked crew turn produces a cockpit sentinel.
+   * Claude: env only — hooks ship via the cockpit plugin's hooks.json.
+   * Codex/Gemini/Aider: implemented in #68.
+   */
+  crewSignal?(ctx: CrewSignalContext): CrewSignalWiring;
 }
 
 export interface RoleRequirements {

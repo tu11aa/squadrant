@@ -84,4 +84,19 @@ describe("claude driver", () => {
     expect(result.status).toBe("success");
     expect(result.output).toBe("plain text output");
   });
+
+  it("crewSignal returns the identity env for a crew", () => {
+    const d = createClaudeDriver();
+    const wiring = d.crewSignal!({
+      project: "oneplan",
+      crew: "crew-3",
+      stateDir: "/home/u/.config/cockpit/state",
+    });
+    expect(wiring.env).toEqual({
+      COCKPIT_PROJECT: "oneplan",
+      COCKPIT_CREW: "crew-3",
+      COCKPIT_STATE_DIR: "/home/u/.config/cockpit/state",
+    });
+    expect(wiring.argsSuffix).toBeUndefined();
+  });
 });

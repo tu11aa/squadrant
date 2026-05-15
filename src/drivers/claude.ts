@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult } from "./types.js";
+import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult, CrewSignalContext, CrewSignalWiring } from "./types.js";
 
 export function createClaudeDriver(): AgentDriver {
   return {
@@ -71,6 +71,16 @@ export function createClaudeDriver(): AgentDriver {
       } catch {
         // process may already be gone
       }
+    },
+
+    crewSignal(ctx: CrewSignalContext): CrewSignalWiring {
+      return {
+        env: {
+          COCKPIT_PROJECT: ctx.project,
+          COCKPIT_CREW: ctx.crew,
+          COCKPIT_STATE_DIR: ctx.stateDir,
+        },
+      };
     },
   };
 }
