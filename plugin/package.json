@@ -1,6 +1,0 @@
-{
-  "name": "cockpit",
-  "version": "0.1.0",
-  "description": "Skills for claude-cockpit agent orchestration roles (captain, command, crew)",
-  "type": "module"
-}
