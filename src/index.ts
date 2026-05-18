@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced } from "./lib/runtime-sync.js";
+import { ensureDaemon } from "./control/launchd.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -35,6 +36,13 @@ ensureRuntimeSynced({
   sourceRoot: join(__dirname, ".."),
   runtimeRoot: join(homedir(), ".config", "cockpit"),
 });
+
+// Self-heal the control-plane daemon the same way we self-heal the runtime:
+// best-effort, never throws; the CLI fails loud later if the socket is unreachable.
+ensureDaemon(
+  process.execPath,
+  join(homedir(), ".config", "cockpit", "dist", "control", "cockpitd.js"),
+);
 
 const program = new Command();
 
