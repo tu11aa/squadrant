@@ -7,9 +7,9 @@ export function mergeClaudeHooks(settings: any, hookCmd: string): any {
   const next = structuredClone(settings ?? {});
   next.hooks ??= {};
   for (const ev of EVENTS) {
-    next.hooks[ev] ??= [];
+    if (!Array.isArray(next.hooks[ev])) next.hooks[ev] = [];
     const already = next.hooks[ev].some((m: any) =>
-      (m.hooks ?? []).some((h: any) => typeof h.command === "string" && h.command.includes(hookCmd)),
+      Array.isArray(m?.hooks) && m.hooks.some((h: any) => typeof h.command === "string" && h.command.includes(hookCmd)),
     );
     if (!already) {
       next.hooks[ev].push({ matcher: "", hooks: [{ type: "command", command: `${hookCmd} ${ev}`, timeout: 10 }] });
