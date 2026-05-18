@@ -14,7 +14,13 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
 
   switch (ev.type) {
     case "task.started":
-      return { ...base, state: "working", pid: ev.pid ?? rec.pid, sessionId: ev.sessionId ?? rec.sessionId };
+      return {
+        ...base,
+        state: "working",
+        pid: ev.pid ?? rec.pid,
+        sessionId: ev.sessionId ?? rec.sessionId,
+        question: undefined, // resuming after a blocked→reply clears the question
+      };
     case "task.progress":
     case "heartbeat":
       // Anti-#2576: liveness only. A turn-end is NOT completion.

@@ -34,4 +34,27 @@ describe("state-machine reduce", () => {
     expect(next.error).toBe("boom");
     expect(next.exitCode).toBe(1);
   });
+
+  it("blocked + task.progress does NOT auto-unblock (explicit reply required)", () => {
+    const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.progress", id: "t1" }, 4000);
+    expect(next.state).toBe("blocked");
+    expect(next.lastHeartbeat).toBe(4000); // liveness still updates
+  });
+
+  it("blocked + task.started (resume after reply) → working, clears question", () => {
+    const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.started", id: "t1" }, 5000);
+    expect(next.state).toBe("working");
+    expect(next.question).toBeUndefined();
+  });
+
+  it("terminal state absorbs late events idempotently", () => {
+    const done = rec({ state: "done", resultRef: "/r" });
+    const next = reduce(done, { type: "task.failed", id: "t1", error: "late" }, 6000);
+    expect(next).toBe(done); // same reference — no-op
+  });
+
+  it("bare Stop modelled as task.progress never yields done", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "Stop" }, 7000);
+    expect(next.state).toBe("working");
+  });
 });
