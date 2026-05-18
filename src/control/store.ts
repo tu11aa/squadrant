@@ -1,6 +1,7 @@
 // src/control/store.ts
 import {
   mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync,
+  statSync,
 } from "node:fs";
 import { join } from "node:path";
 import type { TaskRecord } from "./types.js";
@@ -38,7 +39,7 @@ export function createStore(root: string): Store {
       const d = projDir(project);
       if (!existsSync(d)) return [];
       return readdirSync(d)
-        .filter((n) => n.endsWith(".json") && !n.endsWith(".tmp"))
+        .filter((n) => n.endsWith(".json"))
         .map((n) => {
           try { return JSON.parse(readFileSync(join(d, n), "utf-8")) as TaskRecord; }
           catch { return undefined; }
@@ -48,11 +49,12 @@ export function createStore(root: string): Store {
     listAll() {
       if (!existsSync(root)) return [];
       return readdirSync(root)
-        .filter((p) => existsSync(projDir(p)))
+        .filter((p) => { try { return statSync(projDir(p)).isDirectory(); } catch { return false; } })
         .flatMap((p) => this.list(p));
     },
     quarantine(project, id) {
       const f = taskFile(project, id);
+      // suffix prevents clobber across process restarts
       if (existsSync(f)) renameSync(f, `${f}.corrupt.${Date.now()}`);
     },
   };

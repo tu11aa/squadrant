@@ -55,4 +55,11 @@ describe("store", () => {
     // listing still works, no throw
     expect(s.list("proj")).toEqual([]);
   });
+
+  it("listAll returns records across multiple projects", () => {
+    const s = createStore(dir);
+    s.put({ ...rec("t1"), project: "p1" });
+    s.put({ ...rec("t2"), project: "p2" });
+    expect(s.listAll().map((r) => r.id).sort()).toEqual(["t1", "t2"]);
+  });
 });
