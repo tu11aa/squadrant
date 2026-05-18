@@ -554,22 +554,24 @@ git commit -m "feat(control): heartbeat watchdog stall detection"
 
 - [ ] **Step 1: Write the failing test**
 
+Add `recoverStall` to the static import at the top of the file:
+`import { evaluateStall, recoverStall } from "../watchdog.js";`
+
 ```typescript
+describe("recoverStall", () => {
   it("recoverStall: stalled + fresh heartbeat → working", () => {
-    const { recoverStall } = await import("../watchdog.js");
     const stalled = rec({ state: "stalled" });
     const out = recoverStall(stalled, 7000);
     expect(out?.state).toBe("working");
     expect(out?.lastHeartbeat).toBe(7000);
+    expect(out?.lastEvent).toBe("watchdog.recover");
   });
 
   it("recoverStall: non-stalled → null", () => {
-    const { recoverStall } = await import("../watchdog.js");
     expect(recoverStall(rec({ state: "working" }), 7000)).toBeNull();
   });
+});
 ```
-
-Make the two new `it` callbacks `async`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
