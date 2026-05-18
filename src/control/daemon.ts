@@ -11,9 +11,12 @@ export interface DaemonDeps {
   deliverReply?: (rec: TaskRecord, message: string) => Promise<void>;
   /** Defaults to a real process.kill(pid,0) check at the call site (Task 17). */
   isPidAlive?: (pid: number) => boolean;
+  /** Wired in cockpitd to runHeadless; absent in pure unit tests. */
+  launchHeadless?: (rec: TaskRecord) => Promise<void>;
 }
 
 type Req =
+  | { kind: "dispatch"; record: TaskRecord }
   | { kind: "event"; project: string; event: ControlEvent }
   | { kind: "status"; project: string; id: string }
   | { kind: "list"; project: string }
@@ -24,6 +27,13 @@ export function createDaemon(deps: DaemonDeps) {
   return {
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
+        case "dispatch": {
+          store.put(req.record);
+          if (req.record.mode === "headless" && deps.launchHeadless) {
+            void deps.launchHeadless(req.record);
+          }
+          return req.record;
+        }
         case "event": {
           const cur = store.get(req.project, req.event.id);
           if (!cur) throw new Error(`unknown task ${req.event.id}`);

@@ -96,4 +96,33 @@ describe("daemon handler", () => {
     d.sweep();
     expect(store.get("p", "s3")?.state).toBe("stalled");
   });
+
+  it("dispatch persists submitted then (headless) triggers launch hook", async () => {
+    const store = createStore(dir);
+    const launched: string[] = [];
+    const d = createDaemon({
+      store, now: () => 1, isPidAlive: () => true,
+      launchHeadless: async (r) => { launched.push(r.id); },
+    });
+    const r: any = await d.handle({ kind: "dispatch", record: {
+      id: "h9", project: "p", provider: "claude", mode: "headless",
+      state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+    expect(r.state).toBe("submitted");
+    expect(store.get("p", "h9")).toBeTruthy();
+    expect(launched).toEqual(["h9"]);
+  });
+
+  it("dispatch interactive does NOT auto-launch headless", async () => {
+    const store = createStore(dir);
+    const launched: string[] = [];
+    const d = createDaemon({
+      store, now: () => 1, launchHeadless: async (r) => { launched.push(r.id); },
+    });
+    await d.handle({ kind: "dispatch", record: {
+      id: "i9", project: "p", provider: "claude", mode: "interactive",
+      state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+    expect(launched).toEqual([]);
+  });
 });
