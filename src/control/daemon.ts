@@ -2,6 +2,7 @@
 import type { Store } from "./store.js";
 import type { ControlEvent, TaskRecord } from "./types.js";
 import { reduce } from "./state-machine.js";
+import { evaluateStall, recoverStall } from "./watchdog.js";
 
 export interface DaemonDeps {
   store: Store;
@@ -45,6 +46,16 @@ export function createDaemon(deps: DaemonDeps) {
           const next = reduce(r, { type: "task.started", id: r.id }, now());
           store.put(next);
           return next;
+        }
+      }
+    },
+    sweep(): void {
+      for (const r of store.listAll()) {
+        const stalled = evaluateStall(r, now());
+        if (stalled) { store.put(stalled); continue; }
+        const recovered = recoverStall(r, now());
+        if (recovered && now() - r.lastHeartbeat <= r.heartbeatBudgetMs) {
+          store.put(recovered);
         }
       }
     },

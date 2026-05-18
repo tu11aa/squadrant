@@ -70,4 +70,29 @@ describe("daemon handler", () => {
     d.reconcile();
     expect(store.get("p", "h2")?.state).toBe("working");
   });
+
+  it("sweep: marks an over-budget working task stalled", async () => {
+    const store = createStore(dir);
+    store.put({ ...rec("s1"), state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 });
+    const d = createDaemon({ store, now: () => 1000 });
+    d.sweep();
+    expect(store.get("p", "s1")?.state).toBe("stalled");
+  });
+
+  it("sweep: recovers a stalled task that has a fresh heartbeat", async () => {
+    const store = createStore(dir);
+    store.put({ ...rec("s2"), state: "stalled", lastHeartbeat: 990, heartbeatBudgetMs: 100 });
+    const d = createDaemon({ store, now: () => 1000 });
+    d.sweep();
+    expect(store.get("p", "s2")?.state).toBe("working");
+  });
+
+  it("sweep: stalled task with old heartbeat is NOT recovered", async () => {
+    const store = createStore(dir);
+    // lastHeartbeat=0, budget=100, now=1000 → 1000-0=1000 > 100 → guard blocks recovery
+    store.put({ ...rec("s3"), state: "stalled", lastHeartbeat: 0, heartbeatBudgetMs: 100 });
+    const d = createDaemon({ store, now: () => 1000 });
+    d.sweep();
+    expect(store.get("p", "s3")?.state).toBe("stalled");
+  });
 });
