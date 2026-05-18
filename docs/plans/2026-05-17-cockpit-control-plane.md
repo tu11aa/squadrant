@@ -1410,9 +1410,11 @@ describe("runHeadless", () => {
     const child = fakeChild();
     const spawn = vi.fn(() => child);
     const events: any[] = [];
+    const writeResult = vi.fn(() => "/tmp/result/t1.txt");
     const p = runHeadless({
       provider: "claude", task: "x", id: "t1",
       spawn: spawn as any, emit: (e) => events.push(e),
+      writeResult,
     });
     expect(events[0]).toMatchObject({ type: "task.started", id: "t1", pid: 7777 });
     child.stdout.emit("data", '{"result":"ok","session_id":"s1"}');
@@ -1420,6 +1422,9 @@ describe("runHeadless", () => {
     await p;
     const done = events.find((e) => e.type === "task.done");
     expect(done).toBeTruthy();
+    expect(events.some((e) => e.type === "task.progress")).toBe(true);
+    expect(writeResult).toHaveBeenCalledWith("t1", "ok");
+    expect(done).toMatchObject({ resultRef: "/tmp/result/t1.txt" });
   });
 
   it("emits task.failed on non-zero exit", async () => {
@@ -1433,6 +1438,17 @@ describe("runHeadless", () => {
     child.emit("close", 2);
     await p;
     expect(events.find((e) => e.type === "task.failed")).toMatchObject({ exitCode: 2 });
+  });
+
+  it("emits task.failed and resolves when spawn emits error (ENOENT)", async () => {
+    const child = fakeChild();
+    const events: any[] = [];
+    const p = runHeadless({ provider: "claude", task: "x", id: "t3",
+      spawn: (() => child) as any, emit: (e) => events.push(e) });
+    child.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+    await p; // must not hang
+    expect(events.find((e) => e.type === "task.failed")).toMatchObject({ id: "t3" });
+    expect(events.find((e) => e.type === "task.failed")?.error).toMatch(/spawn error/);
   });
 });
 ```
@@ -1476,8 +1492,13 @@ export function runHeadless(opts: RunHeadlessOpts): Promise<void> {
   child.stderr?.on("data", (d) => { err += String(d); });
 
   return new Promise<void>((resolve) => {
+    child.once("error", (e: Error) => {
+      opts.emit({ type: "task.failed", id: opts.id, error: `spawn error: ${e.message}`, exitCode: undefined });
+      resolve(); // never hang the daemon; resolve() is idempotent
+    });
     child.on("close", (code) => {
-      const res = adapter.parseResult(out || err, code ?? 0);
+      const parseInput = (code !== 0 && err) ? err : (out || err);
+      const res = adapter.parseResult(parseInput, code ?? 0);
       if (res.outcome === "failed") {
         opts.emit({ type: "task.failed", id: opts.id, error: res.error ?? "non-zero exit", exitCode: res.exitCode });
       } else {

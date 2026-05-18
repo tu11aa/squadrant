@@ -29,8 +29,13 @@ export function runHeadless(opts: RunHeadlessOpts): Promise<void> {
   child.stderr?.on("data", (d) => { err += String(d); });
 
   return new Promise<void>((resolve) => {
+    child.once("error", (e: Error) => {
+      opts.emit({ type: "task.failed", id: opts.id, error: `spawn error: ${e.message}`, exitCode: undefined });
+      resolve(); // never hang the daemon; resolve() is idempotent
+    });
     child.on("close", (code) => {
-      const res = adapter.parseResult(out || err, code ?? 0);
+      const parseInput = (code !== 0 && err) ? err : (out || err);
+      const res = adapter.parseResult(parseInput, code ?? 0);
       if (res.outcome === "failed") {
         opts.emit({ type: "task.failed", id: opts.id, error: res.error ?? "non-zero exit", exitCode: res.exitCode });
       } else {
