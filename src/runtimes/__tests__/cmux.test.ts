@@ -76,6 +76,33 @@ describe("cmux driver", () => {
     expect(calls.some((c) => c.includes("send-key") && c.includes("Enter"))).toBe(true);
   });
 
+  it("send routes to surface named after workspace when one exists", async () => {
+    let callIndex = 0;
+    execMock.mockImplementation((cmd: string) => {
+      callIndex++;
+      if (cmd.includes("list-workspaces")) return "workspace:2  test-ws  (running)";
+      if (cmd.includes("tree"))           return '  └── surface surface:5 [terminal] "test-ws"';
+      return "";
+    });
+    await driver.send("workspace:2", "hello tab");
+    // First cmux calls: list → tree → send → send-key
+    const cmuxCalls = execMock.mock.calls.map((c) => c[0] as string).filter((c) => !c.includes("list-workspaces") && !c.includes("tree"));
+    expect(cmuxCalls.some((c) => c.includes("send ") && c.includes("--surface \"surface:5\"") && c.includes("hello tab") && !c.includes("send-key"))).toBe(true);
+    expect(cmuxCalls.some((c) => c.includes("send-key") && c.includes("--surface \"surface:5\"") && c.includes("Enter"))).toBe(true);
+  });
+
+  it("send falls back to workspace-level when no surface matches workspace name", async () => {
+    execMock.mockImplementation((cmd: string) => {
+      if (cmd.includes("list-workspaces")) return "workspace:2  test-ws  (running)";
+      if (cmd.includes("tree"))           return '  └── surface surface:5 [terminal] "crew-1"';
+      return "";
+    });
+    await driver.send("workspace:2", "fallback message");
+    const cmuxCalls = execMock.mock.calls.map((c) => c[0] as string).filter((c) => !c.includes("list-workspaces") && !c.includes("tree"));
+    expect(cmuxCalls.some((c) => c.includes("send ") && !c.includes("--surface") && c.includes("fallback message"))).toBe(true);
+    expect(cmuxCalls.some((c) => c.includes("send-key") && c.includes("Enter") && !c.includes("--surface"))).toBe(true);
+  });
+
   it("send escapes double-quotes in message", async () => {
     execMock.mockReturnValue("");
     await driver.send("workspace:2", 'say "hi"');
@@ -109,9 +136,10 @@ describe("cmux driver", () => {
     expect(out).toBe("screen contents");
   });
 
-  it("spawn creates workspace, renames it, optionally pins, returns WorkspaceRef", async () => {
+  it("spawn creates workspace, renames it, pins it, renames and pins its initial tab", async () => {
     execMock.mockImplementation((cmd: string) => {
       if (cmd.includes("new-workspace")) return "Created workspace:7\n";
+      if (cmd.includes("tree"))        return '  └── surface surface:1 [terminal] ""';
       return "";
     });
     const ref = await driver.spawn({ name: "test-ws", workdir: "/tmp", command: "echo hi", pinToTop: true });
@@ -120,7 +148,9 @@ describe("cmux driver", () => {
     const calls = execMock.mock.calls.map((c) => c[0] as string);
     expect(calls.some((c) => c.includes("new-workspace"))).toBe(true);
     expect(calls.some((c) => c.includes("rename-workspace") && c.includes("test-ws"))).toBe(true);
+    expect(calls.some((c) => c.includes("rename-tab") && c.includes("surface:1") && c.includes("test-ws"))).toBe(true);
     expect(calls.some((c) => c.includes("workspace-action") && c.includes("--action pin"))).toBe(true);
+    expect(calls.some((c) => c.includes("tab-action") && c.includes("--surface \"surface:1\"") && c.includes("--action pin"))).toBe(true);
   });
 
   it("newPane calls cmux new-pane with direction and workspace, parses surface id", async () => {

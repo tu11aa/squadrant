@@ -61,15 +61,46 @@ export function createCmuxDriver(): RuntimeDriver {
         throw new Error(`cmux spawn did not return a workspace id: ${output}`);
       }
       cmux(`rename-workspace --workspace "${id}" "${escape(opts.name)}"`);
+      // Rename the initial tab to the workspace name so send() can route to it
+      let initialSurface: string | undefined;
+      try {
+        const tree = cmux(`tree --workspace "${id}"`);
+        const m = tree.match(/surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/);
+        if (m) {
+          initialSurface = m[1];
+          cmux(`rename-tab --workspace "${id}" --surface "${m[1]}" "${escape(opts.name)}"`);
+        }
+      } catch { /* rename is best-effort */ }
       if (opts.pinToTop) {
         try {
           cmux(`workspace-action --workspace "${id}" --action pin`);
         } catch { /* pin is best-effort */ }
+        if (initialSurface) {
+          try {
+            cmux(`tab-action --workspace "${id}" --surface "${initialSurface}" --action pin`);
+          } catch { /* tab pin is best-effort */ }
+        }
       }
       return { id, name: opts.name, status: "running" };
     },
 
     async send(ref: string, message: string): Promise<void> {
+      // Route to the tab named after the workspace (e.g. ":captain" tab) so
+      // messages don't land on a focused crew tab by mistake.  Fall back to
+      // workspace-level send when no matching tab is found.
+      const allRefs = await this.list();
+      const ws = allRefs.find((r) => r.id === ref);
+      if (ws) {
+        try {
+          const surfaces = await this.listSurfaces(ws.id);
+          const target = surfaces.find((s) => s.title === ws.name);
+          if (target) {
+            cmux(`send --workspace "${ws.id}" --surface "${target.surfaceId}" "${escape(message)}"`);
+            cmux(`send-key --workspace "${ws.id}" --surface "${target.surfaceId}" Enter`);
+            return;
+          }
+        } catch { /* fall through to default */ }
+      }
       cmux(`send --workspace "${ref}" "${escape(message)}"`);
       cmux(`send-key --workspace "${ref}" Enter`);
     },
