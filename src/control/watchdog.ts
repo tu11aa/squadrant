@@ -10,3 +10,9 @@ export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (now - rec.lastHeartbeat <= rec.heartbeatBudgetMs) return null;
   return { ...rec, state: "stalled", lastEvent: "watchdog.stall" };
 }
+
+/** Pure. A stalled task that receives liveness returns to working. */
+export function recoverStall(rec: TaskRecord, now: number): TaskRecord | null {
+  if (rec.state !== "stalled") return null;
+  return { ...rec, state: "working", lastHeartbeat: now, lastEvent: "watchdog.recover" };
+}

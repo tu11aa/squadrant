@@ -26,3 +26,18 @@ describe("evaluateStall", () => {
     expect(evaluateStall(rec({ state: "done" }), 999999)).toBeNull();
   });
 });
+
+describe("recoverStall", () => {
+  it("recoverStall: stalled + fresh heartbeat → working", async () => {
+    const { recoverStall } = await import("../watchdog.js");
+    const stalled = rec({ state: "stalled" });
+    const out = recoverStall(stalled, 7000);
+    expect(out?.state).toBe("working");
+    expect(out?.lastHeartbeat).toBe(7000);
+  });
+
+  it("recoverStall: non-stalled → null", async () => {
+    const { recoverStall } = await import("../watchdog.js");
+    expect(recoverStall(rec({ state: "working" }), 7000)).toBeNull();
+  });
+});
