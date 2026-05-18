@@ -35,4 +35,29 @@ describe("claude headless adapter", () => {
     const out = claudeHeadless.parseResult("not json", 0);
     expect(out).toMatchObject({ outcome: "done", parseWarning: true });
   });
+
+  it("parseResult: object result → JSON-stringified payload (not [object Object])", () => {
+    const out = claudeHeadless.parseResult('{"result":{"key":"val"},"session_id":"s1","is_error":false}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.payload).toBe('{"key":"val"}');
+    expect(out.payload).not.toBe("[object Object]");
+  });
+
+  it("parseResult: null result → payload is empty string", () => {
+    const out = claudeHeadless.parseResult('{"result":null,"session_id":"s2","is_error":false}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.payload).toBe("");
+  });
+
+  it("parseResult: success JSON with no session_id → sessionId undefined", () => {
+    const out = claudeHeadless.parseResult('{"result":"hi","is_error":false}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.sessionId).toBeUndefined();
+  });
+
+  it("parseResult: is_error true with no result field → outcome failed with fallback error", () => {
+    const out = claudeHeadless.parseResult('{"is_error":true}', 0);
+    expect(out.outcome).toBe("failed");
+    expect(out.error).toBe("is_error");
+  });
 });

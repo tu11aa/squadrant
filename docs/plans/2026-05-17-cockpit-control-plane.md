@@ -1143,9 +1143,12 @@ Expected: FAIL — module not found.
 
 ```typescript
 // src/control/headless/types.ts
+export const HEADLESS_ERROR_TAIL = 2000;
+
 export interface HeadlessResult {
   outcome: "done" | "failed";
-  payload?: string;       // extracted result text → becomes resultRef contents
+  /** Always a string: result text, JSON-stringified non-string result, or raw stdout fallback. Becomes resultRef contents. */
+  payload?: string;
   sessionId?: string;
   error?: string;
   exitCode?: number;
@@ -1162,6 +1165,7 @@ export interface HeadlessAdapter {
 ```typescript
 // src/control/headless/claude.ts
 import type { HeadlessAdapter } from "./types.js";
+import { HEADLESS_ERROR_TAIL } from "./types.js";
 
 export const claudeHeadless: HeadlessAdapter = {
   provider: "claude",
@@ -1173,12 +1177,13 @@ export const claudeHeadless: HeadlessAdapter = {
   },
   parseResult(stdout, exitCode) {
     if (exitCode !== 0) {
-      return { outcome: "failed", exitCode, error: stdout.slice(-2000) };
+      return { outcome: "failed", exitCode, error: stdout.slice(-HEADLESS_ERROR_TAIL) };
     }
     try {
       const j = JSON.parse(stdout);
       if (j.is_error) return { outcome: "failed", error: String(j.result ?? "is_error"), sessionId: j.session_id };
-      return { outcome: "done", sessionId: j.session_id, payload: String(j.result ?? "") };
+      const payload = typeof j.result === "string" ? j.result : j.result == null ? "" : JSON.stringify(j.result);
+      return { outcome: "done", sessionId: j.session_id, payload };
     } catch {
       return { outcome: "done", parseWarning: true, payload: stdout };
     }
@@ -1189,7 +1194,7 @@ export const claudeHeadless: HeadlessAdapter = {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/control/__tests__/headless-claude.test.ts`
-Expected: PASS (6 passed).
+Expected: PASS (10 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -1205,6 +1210,7 @@ git commit -m "feat(control): HeadlessAdapter interface + Claude adapter"
 - Create: `src/control/headless/codex.ts`
 - Create: `src/control/headless/registry.ts`
 - Test: `src/control/__tests__/headless-registry.test.ts`
+- Test: `src/control/__tests__/headless-opencode.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1232,8 +1238,55 @@ describe("headless registry", () => {
     expect(a.parseResult("err", 3)).toMatchObject({ outcome: "failed", exitCode: 3 });
   });
 
+  it("codex parseResult: exit 0 success → sessionId is undefined", () => {
+    const a = getHeadlessAdapter("codex");
+    const out = a.parseResult("{}", 0);
+    expect(out.outcome).toBe("done");
+    expect(out.sessionId).toBeUndefined();
+  });
+
   it("unknown provider throws", () => {
     expect(() => getHeadlessAdapter("aider")).toThrow(/no headless adapter/i);
+  });
+});
+```
+
+```typescript
+// src/control/__tests__/headless-opencode.test.ts
+import { describe, it, expect } from "vitest";
+import { opencodeHeadless } from "../headless/opencode.js";
+
+describe("opencode headless adapter", () => {
+  it("parseResult: non-zero exit → failed with exitCode", () => {
+    const out = opencodeHeadless.parseResult("some error", 1);
+    expect(out).toMatchObject({ outcome: "failed", exitCode: 1 });
+  });
+
+  it("parseResult: clean JSON string result → done + string payload + sessionId from sessionID", () => {
+    const out = opencodeHeadless.parseResult('{"result":"done text","sessionID":"oc-1"}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.payload).toBe("done text");
+    expect(out.sessionId).toBe("oc-1");
+  });
+
+  it("parseResult: object result → JSON-stringified payload", () => {
+    const out = opencodeHeadless.parseResult('{"result":{"files":["a.ts"]},"sessionID":"oc-2"}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.payload).toBe('{"files":["a.ts"]}');
+  });
+
+  it("parseResult: session_id fallback key works", () => {
+    const out = opencodeHeadless.parseResult('{"result":"ok","session_id":"oc-3"}', 0);
+    expect(out.outcome).toBe("done");
+    expect(out.sessionId).toBe("oc-3");
+  });
+
+  it("parseResult: unparseable + exit 0 → done with parseWarning + payload=stdout", () => {
+    const raw = "not valid json";
+    const out = opencodeHeadless.parseResult(raw, 0);
+    expect(out.outcome).toBe("done");
+    expect(out.parseWarning).toBe(true);
+    expect(out.payload).toBe(raw);
   });
 });
 ```
@@ -1248,6 +1301,7 @@ Expected: FAIL — module not found.
 ```typescript
 // src/control/headless/opencode.ts
 import type { HeadlessAdapter } from "./types.js";
+import { HEADLESS_ERROR_TAIL } from "./types.js";
 
 // opencode `run` is used for one-shot; serve-session wiring is a later spec.
 // Process-exit is the done-signal here (foundational scope).
@@ -1260,10 +1314,11 @@ export const opencodeHeadless: HeadlessAdapter = {
     return argv;
   },
   parseResult(stdout, exitCode) {
-    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-2000) };
+    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-HEADLESS_ERROR_TAIL) };
     try {
       const j = JSON.parse(stdout);
-      return { outcome: "done", sessionId: j.sessionID ?? j.session_id, payload: stdout };
+      const payload = typeof j.result === "string" ? j.result : JSON.stringify(j.result ?? stdout);
+      return { outcome: "done", sessionId: j.sessionID ?? j.session_id, payload };
     } catch {
       return { outcome: "done", parseWarning: true, payload: stdout };
     }
@@ -1274,6 +1329,7 @@ export const opencodeHeadless: HeadlessAdapter = {
 ```typescript
 // src/control/headless/codex.ts
 import type { HeadlessAdapter } from "./types.js";
+import { HEADLESS_ERROR_TAIL } from "./types.js";
 
 export const codexHeadless: HeadlessAdapter = {
   provider: "codex",
@@ -1284,9 +1340,8 @@ export const codexHeadless: HeadlessAdapter = {
     return argv;
   },
   parseResult(stdout, exitCode) {
-    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-2000) };
-    // codex result payload format is less documented: keep raw, never guess failure.
-    try { JSON.parse(stdout.trim().split("\n").pop() ?? ""); } catch { /* tolerated */ }
+    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-HEADLESS_ERROR_TAIL) };
+    // codex result format undocumented; keep raw, never guess failure.
     return { outcome: "done", payload: stdout };
   },
 };
@@ -1314,8 +1369,8 @@ export function getHeadlessAdapter(provider: string): HeadlessAdapter {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run src/control/__tests__/headless-registry.test.ts`
-Expected: PASS (4 passed).
+Run: `npx vitest run src/control/__tests__/headless-registry.test.ts src/control/__tests__/headless-opencode.test.ts`
+Expected: PASS (5 + 5 = 10 passed).
 
 - [ ] **Step 5: Commit**
 

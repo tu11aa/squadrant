@@ -21,6 +21,13 @@ describe("headless registry", () => {
     expect(a.parseResult("err", 3)).toMatchObject({ outcome: "failed", exitCode: 3 });
   });
 
+  it("codex parseResult: exit 0 success → sessionId is undefined", () => {
+    const a = getHeadlessAdapter("codex");
+    const out = a.parseResult("{}", 0);
+    expect(out.outcome).toBe("done");
+    expect(out.sessionId).toBeUndefined();
+  });
+
   it("unknown provider throws", () => {
     expect(() => getHeadlessAdapter("aider")).toThrow(/no headless adapter/i);
   });

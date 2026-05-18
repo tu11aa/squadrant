@@ -1,5 +1,6 @@
 // src/control/headless/codex.ts
 import type { HeadlessAdapter } from "./types.js";
+import { HEADLESS_ERROR_TAIL } from "./types.js";
 
 export const codexHeadless: HeadlessAdapter = {
   provider: "codex",
@@ -10,9 +11,8 @@ export const codexHeadless: HeadlessAdapter = {
     return argv;
   },
   parseResult(stdout, exitCode) {
-    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-2000) };
-    // codex result payload format is less documented: keep raw, never guess failure.
-    try { JSON.parse(stdout.trim().split("\n").pop() ?? ""); } catch { /* tolerated */ }
+    if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-HEADLESS_ERROR_TAIL) };
+    // codex result format undocumented; keep raw, never guess failure.
     return { outcome: "done", payload: stdout };
   },
 };
