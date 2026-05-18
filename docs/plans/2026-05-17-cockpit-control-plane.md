@@ -818,11 +818,12 @@ import { createDaemon } from "../daemon.js";
 import { createStore } from "../store.js";
 import type { TaskRecord } from "../types.js";
 
-function rec(id: string): TaskRecord {
+function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
     id, project: "p", provider: "claude", mode: "interactive",
     state: "submitted", task: "t", createdAt: 1, lastHeartbeat: 1,
     lastEvent: "", heartbeatBudgetMs: 1000,
+    ...overrides,
   };
 }
 
@@ -836,7 +837,7 @@ describe("daemon handler", () => {
     store.put(rec("t1"));
     const d = createDaemon({ store, now: () => 2000 });
     const r = await d.handle({ kind: "event", event: { type: "task.started", id: "t1" }, project: "p" });
-    expect((r as any).state).toBe("working");
+    expect((r as TaskRecord).state).toBe("working");
     expect(store.get("p", "t1")?.state).toBe("working");
   });
 
@@ -845,12 +846,12 @@ describe("daemon handler", () => {
     store.put(rec("t1"));
     const d = createDaemon({ store, now: () => 2000 });
     const r = await d.handle({ kind: "status", project: "p", id: "t1" });
-    expect((r as any).id).toBe("t1");
+    expect((r as TaskRecord).id).toBe("t1");
   });
 
   it("rejects reply to a non-blocked task", async () => {
     const store = createStore(dir);
-    store.put({ ...rec("t1"), state: "working" });
+    store.put(rec("t1", { state: "working" }));
     const d = createDaemon({ store, now: () => 2000 });
     await expect(
       d.handle({ kind: "reply", project: "p", id: "t1", message: "x" }),
@@ -888,13 +889,13 @@ type Req =
 export function createDaemon(deps: DaemonDeps) {
   const { store, now } = deps;
   return {
-    async handle(req: Req): Promise<unknown> {
+    async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "event": {
           const cur = store.get(req.project, req.event.id);
           if (!cur) throw new Error(`unknown task ${req.event.id}`);
           const next = reduce(cur, req.event, now());
-          store.put(next);
+          if (next !== cur) store.put(next); // skip redundant write on terminal no-ops
           return next;
         }
         case "status": {
@@ -908,11 +909,12 @@ export function createDaemon(deps: DaemonDeps) {
           const r = store.get(req.project, req.id);
           if (!r) throw new Error(`unknown task ${req.id}`);
           if (r.state !== "blocked") throw new Error(`task ${req.id} is not blocked (state=${r.state})`);
-          if (deps.deliverReply) await deps.deliverReply(r, req.message);
           const next = reduce(r, { type: "task.started", id: r.id }, now());
-          store.put(next);
+          store.put(next); // persist the transition before delivering (durable first)
+          if (deps.deliverReply) await deps.deliverReply(r, req.message);
           return next;
         }
+        default: { const _exhaustive: never = req; throw new Error(`unhandled request kind`); }
       }
     },
   };
@@ -1055,13 +1057,13 @@ Add inside the returned object:
 
 ```typescript
     sweep(): void {
+      const t = now();
       for (const r of store.listAll()) {
-        const stalled = evaluateStall(r, now());
+        const stalled = evaluateStall(r, t);
         if (stalled) { store.put(stalled); continue; }
-        const recovered = recoverStall(r, now());
-        if (recovered && now() - r.lastHeartbeat <= r.heartbeatBudgetMs) {
-          store.put(recovered);
-        }
+        const recovered = recoverStall(r, t);
+        // recoverStall does NOT check heartbeat freshness — guard per its contract
+        if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
       }
     },
 ```

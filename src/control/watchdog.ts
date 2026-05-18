@@ -11,7 +11,14 @@ export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
   return { ...rec, state: "stalled", lastEvent: "watchdog.stall" };
 }
 
-/** Pure. A stalled task that receives liveness returns to working. */
+/**
+ * Pure. A stalled task that receives liveness returns to working.
+ *
+ * WARNING: this does NOT check heartbeat freshness — it returns a recovered
+ * record for ANY stalled task. Callers MUST guard with
+ * `now - rec.lastHeartbeat <= rec.heartbeatBudgetMs` before applying the
+ * result, or a permanently-stale task will be falsely revived.
+ */
 export function recoverStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (rec.state !== "stalled") return null;
   return { ...rec, state: "working", lastHeartbeat: now, lastEvent: "watchdog.recover" };

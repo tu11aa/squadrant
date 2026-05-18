@@ -22,13 +22,13 @@ type Req =
 export function createDaemon(deps: DaemonDeps) {
   const { store, now } = deps;
   return {
-    async handle(req: Req): Promise<unknown> {
+    async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "event": {
           const cur = store.get(req.project, req.event.id);
           if (!cur) throw new Error(`unknown task ${req.event.id}`);
           const next = reduce(cur, req.event, now());
-          store.put(next);
+          if (next !== cur) store.put(next); // skip redundant write on terminal no-ops
           return next;
         }
         case "status": {
@@ -42,21 +42,22 @@ export function createDaemon(deps: DaemonDeps) {
           const r = store.get(req.project, req.id);
           if (!r) throw new Error(`unknown task ${req.id}`);
           if (r.state !== "blocked") throw new Error(`task ${req.id} is not blocked (state=${r.state})`);
-          if (deps.deliverReply) await deps.deliverReply(r, req.message);
           const next = reduce(r, { type: "task.started", id: r.id }, now());
-          store.put(next);
+          store.put(next); // persist the transition before delivering (durable first)
+          if (deps.deliverReply) await deps.deliverReply(r, req.message);
           return next;
         }
+        default: { const _exhaustive: never = req; throw new Error(`unhandled request kind`); }
       }
     },
     sweep(): void {
+      const t = now();
       for (const r of store.listAll()) {
-        const stalled = evaluateStall(r, now());
+        const stalled = evaluateStall(r, t);
         if (stalled) { store.put(stalled); continue; }
-        const recovered = recoverStall(r, now());
-        if (recovered && now() - r.lastHeartbeat <= r.heartbeatBudgetMs) {
-          store.put(recovered);
-        }
+        const recovered = recoverStall(r, t);
+        // recoverStall does NOT check heartbeat freshness — guard per its contract
+        if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
       }
     },
     reconcile(): void {
