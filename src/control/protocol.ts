@@ -2,6 +2,28 @@
 import { createServer, createConnection, type Server } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 
+export function encodeMsg(obj: unknown): string {
+  return JSON.stringify(obj) + "\n";
+}
+
+export function createDecoder() {
+  let buf = "";
+  return {
+    push(chunk: string): unknown[] {
+      buf += chunk;
+      const out: unknown[] = [];
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        if (!line.trim()) continue;
+        try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
+      }
+      return out;
+    },
+  };
+}
+
 export type Handler = (msg: any) => Promise<unknown>;
 
 export function startServer(sockPath: string, handler: Handler): Server {
@@ -11,13 +33,15 @@ export function startServer(sockPath: string, handler: Handler): Server {
   const server = createServer((conn) => {
     const dec = createDecoder();
     conn.setEncoding("utf-8");
+    // One request per connection; handler() calls are not serialized. If pipelining is added, queue here.
     conn.on("data", async (chunk: string) => {
       for (const msg of dec.push(chunk)) {
         try {
           const reply = await handler(msg);
           conn.write(encodeMsg({ ok: true, reply }));
         } catch (e) {
-          conn.write(encodeMsg({ ok: false, error: String((e as Error).message ?? e) }));
+          const msg = e instanceof Error ? e.message : String(e);
+          conn.write(encodeMsg({ ok: false, error: msg }));
         }
       }
     });
@@ -40,7 +64,7 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
     conn.on("data", (chunk: string) => {
       for (const m of dec.push(chunk) as any[]) {
         clearTimeout(timer);
-        conn.end();
+        conn.destroy();
         if (m.ok) resolve(m.reply);
         else reject(new Error(m.error));
         return;
@@ -51,26 +75,4 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
       reject(new Error("control plane unavailable: cannot reach cockpitd socket"));
     });
   });
-}
-
-export function encodeMsg(obj: unknown): string {
-  return JSON.stringify(obj) + "\n";
-}
-
-export function createDecoder() {
-  let buf = "";
-  return {
-    push(chunk: string): unknown[] {
-      buf += chunk;
-      const out: unknown[] = [];
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-        if (!line.trim()) continue;
-        try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
-      }
-      return out;
-    },
-  };
 }

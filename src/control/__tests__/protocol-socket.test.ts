@@ -24,4 +24,12 @@ describe("unix socket", () => {
     cleanup = () => rmSync(dir, { recursive: true, force: true });
     await expect(sendRequest(sock, { ping: "x" })).rejects.toThrow(/control plane unavailable/i);
   });
+
+  it("client receives rejection when handler throws", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cp-sock-"));
+    const sock = join(dir, "err.sock");
+    const server = startServer(sock, async () => { throw new Error("handler failed"); });
+    cleanup = () => { server.close(); rmSync(dir, { recursive: true, force: true }); };
+    await expect(sendRequest(sock, { ping: "x" })).rejects.toThrow("handler failed");
+  });
 });
