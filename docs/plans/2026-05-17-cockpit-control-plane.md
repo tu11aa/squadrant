@@ -1334,10 +1334,13 @@ import { HEADLESS_ERROR_TAIL } from "./types.js";
 export const codexHeadless: HeadlessAdapter = {
   provider: "codex",
   buildCommand(task, sessionId) {
-    const argv = ["codex", "exec", "--json"];
-    if (sessionId) argv.push("--session", sessionId);
-    argv.push(task);
-    return argv;
+    // RECONCILED (verify-on-implement closed vs codex-cli 0.130.0 in real
+    // prod use): --skip-git-repo-check is REQUIRED (daemon cwd under launchd
+    // is not a git repo → codex aborts otherwise); resume is a SUBCOMMAND,
+    // there is no `--session` flag.
+    const opts = ["--json", "--skip-git-repo-check"];
+    if (sessionId) return ["codex", "exec", "resume", sessionId, ...opts, task];
+    return ["codex", "exec", ...opts, task];
   },
   parseResult(stdout, exitCode) {
     if (exitCode !== 0) return { outcome: "failed", exitCode, error: stdout.slice(-HEADLESS_ERROR_TAIL) };

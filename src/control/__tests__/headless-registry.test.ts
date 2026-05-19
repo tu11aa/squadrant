@@ -9,10 +9,23 @@ describe("headless registry", () => {
     expect(getHeadlessAdapter("codex").provider).toBe("codex");
   });
 
-  it("codex buildCommand uses `codex exec --json`", () => {
+  it("codex buildCommand: `codex exec --json --skip-git-repo-check <prompt>` (codex-cli 0.130.0)", () => {
     const argv = getHeadlessAdapter("codex").buildCommand("do x");
-    expect(argv.join(" ")).toContain("codex exec");
-    expect(argv.join(" ")).toContain("--json");
+    expect(argv.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(argv).toContain("--json");
+    // REQUIRED: daemon cwd under launchd is not a git repo (real prod failure).
+    expect(argv).toContain("--skip-git-repo-check");
+    // prompt is the trailing positional, not consumed by a flag.
+    expect(argv[argv.length - 1]).toBe("do x");
+    // no bogus `--session` flag (resume is a subcommand in real codex CLI).
+    expect(argv).not.toContain("--session");
+  });
+
+  it("codex buildCommand with sessionId uses the `resume` subcommand, not --session", () => {
+    const argv = getHeadlessAdapter("codex").buildCommand("more", "sess-9");
+    expect(argv.slice(0, 3)).toEqual(["codex", "exec", "resume"]);
+    expect(argv).toContain("sess-9");
+    expect(argv).not.toContain("--session");
   });
 
   it("codex parseResult: exit 0 → done; exit≠0 → failed", () => {
