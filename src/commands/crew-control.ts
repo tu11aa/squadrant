@@ -31,7 +31,7 @@ async function call(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
-    ensureDaemon(process.execPath, join(homedir(), ".config", "cockpit", "dist", "control", "cockpitd.js"));
+    ensureDaemon(); // resolves its own entrypoint — never pass a path here
     // kickstart→socket is racy; bounded backoff. If all attempts fail,
     // throw the last error (fail loud, no scrape fallback).
     let lastErr: unknown;

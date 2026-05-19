@@ -3,11 +3,23 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const LABEL = "com.cockpit.daemon";
 
 export function plistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
+}
+
+/**
+ * Canonical path to the compiled daemon entrypoint, resolved relative to THIS
+ * module (cockpitd.js is a sibling of launchd.js in <dist>/control/). This is
+ * the single source of truth — callers must NOT recompute it (a hardcoded
+ * ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
+ * because runtime-sync never mirrors compiled output there).
+ */
+export function daemonEntryPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
 }
 
 function xmlEscape(s: string): string {
@@ -32,12 +44,16 @@ export function renderPlist(nodeBin: string, daemonEntry: string): string {
 `;
 }
 
-/** Idempotent: (re)write plist and (re)load it. Never throws fatally. */
-export function ensureDaemon(nodeBin: string, daemonEntry: string): void {
+/**
+ * Idempotent: (re)write plist and (re)load it. Never throws fatally.
+ * The daemon entry is resolved internally (see daemonEntryPath) so no caller
+ * can pass a wrong path. `nodeBin` defaults to the running node.
+ */
+export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
     mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, renderPlist(nodeBin, daemonEntry));
+    writeFileSync(p, renderPlist(nodeBin, daemonEntryPath()));
     const uid = process.getuid?.() ?? 0;
     try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, p], { stdio: "ignore" }); }
     catch { /* already bootstrapped */ }

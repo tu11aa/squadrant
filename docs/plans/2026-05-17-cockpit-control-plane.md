@@ -1836,12 +1836,20 @@ export function renderPlist(nodeBin: string, daemonEntry: string): string {
 `;
 }
 
+// NOTE (PR #85 real-env reconciliation): also `import { fileURLToPath } from "node:url";`.
+// The daemon entry is resolved HERE (single source of truth), not at call sites —
+// a hardcoded ~/.config/cockpit/dist path crash-loops the agent (MODULE_NOT_FOUND;
+// runtime-sync never mirrors compiled output there).
+export function daemonEntryPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
+}
+
 /** Idempotent: (re)write plist and (re)load it. Never throws fatally. */
-export function ensureDaemon(nodeBin: string, daemonEntry: string): void {
+export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
     mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, renderPlist(nodeBin, daemonEntry));
+    writeFileSync(p, renderPlist(nodeBin, daemonEntryPath()));
     const uid = process.getuid?.() ?? 0;
     try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, p], { stdio: "ignore" }); }
     catch { /* already bootstrapped */ }
@@ -2092,7 +2100,7 @@ async function call(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
-    ensureDaemon(process.execPath, join(homedir(), ".config", "cockpit", "dist", "control", "cockpitd.js"));
+    ensureDaemon(); // resolves its own entrypoint — never pass a path here (PR #85)
     // one retry after kickstart; if still down, fail loud (no scrape fallback)
     return sendRequest(SOCK, req);
   }
@@ -2496,10 +2504,9 @@ Immediately after the existing `ensureRuntimeSynced({ ... });` call, add:
 ```typescript
 // Self-heal the control-plane daemon the same way we self-heal the runtime:
 // best-effort, never throws; the CLI fails loud later if the socket is unreachable.
-ensureDaemon(
-  process.execPath,
-  join(homedir(), ".config", "cockpit", "dist", "control", "cockpitd.js"),
-);
+// ensureDaemon resolves its own entrypoint (launchd.daemonEntryPath) so no
+// call site can get the path wrong (PR #85 real-env fix).
+ensureDaemon();
 ```
 
 - [ ] **Step 4: Run test + full suite**

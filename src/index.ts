@@ -39,10 +39,9 @@ ensureRuntimeSynced({
 
 // Self-heal the control-plane daemon the same way we self-heal the runtime:
 // best-effort, never throws; the CLI fails loud later if the socket is unreachable.
-ensureDaemon(
-  process.execPath,
-  join(homedir(), ".config", "cockpit", "dist", "control", "cockpitd.js"),
-);
+// ensureDaemon resolves its own entrypoint (see launchd.daemonEntryPath) — no
+// path is passed here so no call site can get it wrong.
+ensureDaemon();
 
 const program = new Command();
 
