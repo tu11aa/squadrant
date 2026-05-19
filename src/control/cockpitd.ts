@@ -54,6 +54,10 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     if (msg.kind === "seed") { store.put(msg.record as TaskRecord); return { ok: true }; }
     return d.handle(msg);
   });
+  // Minimal lifecycle logging (red-team #2: the log was a timestampless wall
+  // of crash stacks with no "started" marker).
+  const log = (m: string) => process.stderr.write(`[cockpitd] ${new Date().toISOString()} ${m}\n`);
+  log(`started pid=${process.pid} sock=${sockPath} stateRoot=${stateRoot}`);
 
   let timer: NodeJS.Timeout | undefined;
   if (opts.sweepMs && opts.sweepMs > 0) {
@@ -62,7 +66,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   }
 
   return {
-    stop() { if (timer) clearInterval(timer); server.close(); },
+    stop() { if (timer) clearInterval(timer); server.close(); log("stopped"); },
   };
 }
 

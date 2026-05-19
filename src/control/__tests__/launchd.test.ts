@@ -12,6 +12,11 @@ describe("launchd plist", () => {
     expect(xml).toContain("/opt/cockpit/dist/control/cockpitd.js");
   });
 
+  it("sets ThrottleInterval so a crash can't tight-respawn (red-team #2)", () => {
+    const xml = renderPlist("/usr/local/bin/node", "/opt/cockpit/dist/control/cockpitd.js");
+    expect(xml).toMatch(/<key>ThrottleInterval<\/key><integer>\d+<\/integer>/);
+  });
+
   it("XML-escapes interpolated values so a special-char home dir stays well-formed", () => {
     const xml = renderPlist("/Users/O&M/bin/node", "/x/<y>/cockpitd.js");
     expect(xml).toContain("/Users/O&amp;M/bin/node");

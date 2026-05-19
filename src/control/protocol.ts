@@ -26,7 +26,23 @@ export function createDecoder() {
 
 export type Handler = (msg: any) => Promise<unknown>;
 
-export function startServer(sockPath: string, handler: Handler): Server {
+/**
+ * Red-team #2 (High): an unhandled server `error` (e.g. listen EADDRINUSE when
+ * a second daemon races in) became an uncaughtException → process died →
+ * launchd KeepAlive (no ThrottleInterval) tight-respawned = the crash-loop.
+ * Default: log with timestamp and exit non-zero so launchd's ThrottleInterval
+ * paces the restart instead of tight-looping. Tests inject a spy.
+ */
+export function defaultListenError(e: Error): void {
+  process.stderr.write(`[cockpitd] ${new Date().toISOString()} server error: ${e.message}\n`);
+  process.exit(1);
+}
+
+export function startServer(
+  sockPath: string,
+  handler: Handler,
+  onListenError: (e: Error) => void = defaultListenError,
+): Server {
   if (existsSync(sockPath)) {
     try { unlinkSync(sockPath); } catch { /* stale socket */ }
   }
@@ -47,6 +63,7 @@ export function startServer(sockPath: string, handler: Handler): Server {
     });
     conn.on("error", () => { /* client vanished; ignore */ });
   });
+  server.on("error", onListenError); // never let a server error become uncaughtException
   server.listen(sockPath);
   return server;
 }

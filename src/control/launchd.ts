@@ -37,6 +37,7 @@ export function renderPlist(nodeBin: string, daemonEntry: string): string {
   <array><string>${xmlEscape(nodeBin)}</string><string>${xmlEscape(daemonEntry)}</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
   <key>StandardErrorPath</key><string>${xmlEscape(logPath)}</string>
   <key>StandardOutPath</key><string>${xmlEscape(logPath)}</string>
 </dict>
