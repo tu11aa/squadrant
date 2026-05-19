@@ -2350,17 +2350,17 @@ Expected: PASS (1 passed).
 
 - [ ] **Step 5: Register the command in the CLI**
 
-In `src/index.ts`, replace the existing crew import + registration. Change:
+**RECONCILED (PR #85 real-env fix):** the original "swap `crewCommand`→`crewControlCommand`" instruction broke every live captain (the real legacy surface is `spawn/send/read/close/list`, which captain-ops still invokes — not `dispatch/status/reply`). Do NOT swap. Instead **compose**: keep the legacy `crewCommand` registered verbatim and attach the control-plane verbs onto it.
 
+In `src/index.ts`:
 ```typescript
 import { crewCommand } from "./commands/crew.js";
+import { addControlPlaneCrewCommands } from "./commands/crew-control.js";
+// ...
+addControlPlaneCrewCommands(crewCommand); // adds dispatch/status/tasks/reply/_hook
+program.addCommand(crewCommand);
 ```
-to:
-```typescript
-import { crewControlCommand } from "./commands/crew-control.js";
-```
-
-and change `program.addCommand(crewCommand);` to `program.addCommand(crewControlCommand);`.
+`crew-control.ts` exports `addControlPlaneCrewCommands(crew: Command)` (control-plane listing is `tasks`, not `list`, to avoid colliding with legacy `list`). Both verb sets coexist on `cockpit crew` — the deferred-legacy state. Retiring `crew.ts` + migrating captain-ops is the deferred legacy-re-pointing spec.
 
 Also replace `program.parse();` with a clean fail-loud handler so async
 action errors print one line to stderr instead of a raw unhandled rejection:

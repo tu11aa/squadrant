@@ -47,48 +47,66 @@ async function call(req: unknown): Promise<unknown> {
   }
 }
 
+/**
+ * Attach the control-plane verbs onto an existing `cockpit crew` command so
+ * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
+ * The control-plane task listing is `tasks` (not `list`) to avoid colliding
+ * with the legacy `list` that captains' playbook still uses. This is the
+ * deferred-legacy coexistence state — wired so PR #85 does not break live
+ * captains. Migrating captain-ops to the control-plane verbs is the deferred
+ * legacy-re-pointing spec's job.
+ */
+export function addControlPlaneCrewCommands(crew: Command): void {
+  crew
+    .command("dispatch <project> <task>")
+    .description("Dispatch a crew task via the control-plane daemon")
+    .requiredOption("--provider <p>", "claude|opencode|codex (gemini: experimental, headless not supported)")
+    .option("--mode <m>", "headless|interactive", "interactive")
+    .action(async (project: string, task: string, opts: { provider: Provider; mode: Mode }) => {
+      const req = buildDispatchRequest({ project, task, provider: opts.provider, mode: opts.mode });
+      const r = await call(req);
+      process.stdout.write(JSON.stringify(r) + "\n");
+    });
+
+  crew
+    .command("status <project> <id>")
+    .description("Read a control-plane task's state")
+    .action(async (project: string, id: string) => {
+      const r = await call(buildStatusRequest(project, id));
+      process.stdout.write(JSON.stringify(r) + "\n");
+    });
+
+  crew
+    .command("tasks <project>")
+    .description("List control-plane tasks for a project (control-plane analogue of legacy `list`)")
+    .action(async (project: string) => {
+      const r = await call({ kind: "list", project });
+      process.stdout.write(JSON.stringify(r) + "\n");
+    });
+
+  // TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
+  // cockpitd, so this transitions task state but never reaches the agent. Deferred.
+  crew
+    .command("reply <project> <id> <message>")
+    .description("Reply to a blocked control-plane task (delivery deferred)")
+    .action(async (project: string, id: string, message: string) => {
+      process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
+      const r = await call({ kind: "reply", project, id, message });
+      process.stdout.write(JSON.stringify(r) + "\n");
+    });
+
+  // TODO(downstream interactive-wiring spec): not yet functional — no-op stub.
+  crew
+    .command("_hook <event>", { hidden: true })
+    .description("internal: invoked by injected agent hooks (deferred — not yet functional)")
+    .action(async (event: string) => {
+      // hook payload arrives on stdin (Claude hook JSON); minimal: emit progress.
+      process.stdout.write(`hook:${event}\n`);
+    });
+}
+
+// Standalone control-plane-only command (kept for back-compat / direct use;
+// the CLI composes these onto the legacy `crew` command via the function above).
 export const crewControlCommand = new Command("crew")
   .description("Dispatch and track crew via the cockpit control plane");
-
-crewControlCommand
-  .command("dispatch <project> <task>")
-  .requiredOption("--provider <p>", "claude|opencode|codex (gemini: experimental, headless not supported)")
-  .option("--mode <m>", "headless|interactive", "interactive")
-  .action(async (project: string, task: string, opts: { provider: Provider; mode: Mode }) => {
-    const req = buildDispatchRequest({ project, task, provider: opts.provider, mode: opts.mode });
-    const r = await call(req);
-    process.stdout.write(JSON.stringify(r) + "\n");
-  });
-
-crewControlCommand
-  .command("status <project> <id>")
-  .action(async (project: string, id: string) => {
-    const r = await call(buildStatusRequest(project, id));
-    process.stdout.write(JSON.stringify(r) + "\n");
-  });
-
-crewControlCommand
-  .command("list <project>")
-  .action(async (project: string) => {
-    const r = await call({ kind: "list", project });
-    process.stdout.write(JSON.stringify(r) + "\n");
-  });
-
-// TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
-// cockpitd, so this transitions task state but never reaches the agent. Deferred.
-crewControlCommand
-  .command("reply <project> <id> <message>")
-  .action(async (project: string, id: string, message: string) => {
-    process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
-    const r = await call({ kind: "reply", project, id, message });
-    process.stdout.write(JSON.stringify(r) + "\n");
-  });
-
-// TODO(downstream interactive-wiring spec): not yet functional — no-op stub.
-crewControlCommand
-  .command("_hook <event>", { hidden: true })
-  .description("internal: invoked by injected agent hooks (deferred — not yet functional)")
-  .action(async (event: string) => {
-    // hook payload arrives on stdin (Claude hook JSON); minimal: emit progress.
-    process.stdout.write(`hook:${event}\n`);
-  });
+addControlPlaneCrewCommands(crewControlCommand);

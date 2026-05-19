@@ -12,7 +12,8 @@ import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
 import { statusCommand } from "./commands/status.js";
 import { commandCommand } from "./commands/command.js";
-import { crewControlCommand } from "./commands/crew-control.js";
+import { crewCommand } from "./commands/crew.js";
+import { addControlPlaneCrewCommands } from "./commands/crew-control.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { launchCommand } from "./commands/launch.js";
 import { shutdownCommand } from "./commands/shutdown.js";
@@ -54,7 +55,11 @@ program.addCommand(doctorCommand);
 program.addCommand(initCommand);
 program.addCommand(projectsCommand);
 program.addCommand(statusCommand);
-program.addCommand(crewControlCommand);
+// Legacy crew verbs (spawn/send/read/close/list) stay intact for live captains;
+// control-plane verbs (dispatch/status/tasks/reply) are attached onto the same
+// `cockpit crew` command so PR #85 doesn't break the captain-ops playbook.
+addControlPlaneCrewCommands(crewCommand);
+program.addCommand(crewCommand);
 program.addCommand(commandCommand);
 program.addCommand(dashboardCommand);
 program.addCommand(launchCommand);

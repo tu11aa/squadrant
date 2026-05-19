@@ -73,7 +73,7 @@ Only per-provider surface = the interactive-hook adapter. Headless is uniform PI
 
 **Definitions / migration notes:**
 - `result_ref` = a filesystem path (under `~/.config/cockpit/state/<proj>/`) to the task's captured output/artifact (headless stdout, or crew-written result file). The state file stores the *reference*, not the payload.
-- The existing `cockpit crew` command surface (`dispatch`/`status`/`reply`/`list`/`close`) is **preserved**; its internals are rewired from cmux scraping to the socket. This spec **supersedes** the current scraping-based dispatch/completion implementation in `src/commands/crew.ts` + `src/reactor/auto-status.ts` (those become socket clients / are retired by the deferred legacy-re-pointing spec).
+- **CORRECTION (PR #85 real-env finding):** the *actual* legacy `cockpit crew` surface is `spawn`/`send`/`read`/`close`/`list` (cmux-scrape), NOT `dispatch`/`status`/`reply` — this spec's original assumption was wrong, and naively swapping the registered command broke every live captain (captain-ops still invokes `spawn`). Resolution: the legacy `crewCommand` is **kept registered verbatim** (captains unbroken, no restart) and the control-plane verbs (`dispatch`/`status`/`tasks`/`reply`/`_hook`) are **attached onto the same `cockpit crew`** via `addControlPlaneCrewCommands` (control-plane listing is `tasks`, not `list`, to avoid colliding with the legacy `list`). Both code paths coexist — exactly the deferred-legacy state. `src/commands/crew.ts` + `src/reactor/auto-status.ts` are retired, and captain-ops migrated to the new verbs, by the **deferred legacy-re-pointing spec** (NOT in foundational scope).
 
 ## Event Vocabulary & Task State Machine
 
