@@ -1,6 +1,6 @@
 // src/control/__tests__/launchd.test.ts
 import { describe, it, expect } from "vitest";
-import { renderPlist, LABEL } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -28,6 +28,20 @@ describe("launchd plist", () => {
     const xml = renderPlist("/n", "/d/cockpitd.js", "/a&b:/c<d>");
     expect(xml).toContain("<string>/a&amp;b:/c&lt;d&gt;</string>");
     expect(xml).not.toContain("/a&b:/c<d>");
+  });
+
+  // Follow-up bug: ensureDaemon ran on EVERY cockpit invocation and
+  // `kickstart -k` killed+restarted a healthy daemon each time (orphaning
+  // in-flight headless crew). -k must be used ONLY when the plist changed.
+  it("kickstartArgv: no -k when plist unchanged (don't bounce a healthy daemon)", () => {
+    const t = `gui/501/${LABEL}`;
+    expect(kickstartArgv(t, false)).toEqual(["kickstart", t]);
+    expect(kickstartArgv(t, false)).not.toContain("-k");
+  });
+
+  it("kickstartArgv: -k only when plist changed (force reload of new config)", () => {
+    const t = `gui/501/${LABEL}`;
+    expect(kickstartArgv(t, true)).toEqual(["kickstart", "-k", t]);
   });
 
   it("XML-escapes interpolated values so a special-char home dir stays well-formed", () => {

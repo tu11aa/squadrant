@@ -1,6 +1,6 @@
 // src/control/launchd.ts
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,19 +55,44 @@ export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""):
 }
 
 /**
- * Idempotent: (re)write plist and (re)load it. Never throws fatally.
- * The daemon entry is resolved internally (see daemonEntryPath) so no caller
- * can pass a wrong path. `nodeBin` defaults to the running node.
+ * Pure: which kickstart argv to use. `-k` (kill-then-restart) ONLY when the
+ * plist changed. A plain `kickstart` starts a down daemon and is a no-op for a
+ * healthy one — so a routine CLI call never bounces a running daemon (this was
+ * a real bug: ensureDaemon ran on every `cockpit` invocation and `kickstart -k`
+ * killed+restarted the daemon each time, orphaning in-flight headless crew).
+ */
+export function kickstartArgv(target: string, plistChanged: boolean): string[] {
+  return plistChanged ? ["kickstart", "-k", target] : ["kickstart", target];
+}
+
+/**
+ * Idempotent & cheap. Never throws fatally. Writes/reloads the plist ONLY when
+ * its content actually changed; otherwise it ensures the daemon is running
+ * without killing a healthy one. The daemon entry is resolved internally
+ * (see daemonEntryPath) so no caller can pass a wrong path.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, renderPlist(nodeBin, daemonEntryPath(), process.env.PATH ?? ""));
+    const desired = renderPlist(nodeBin, daemonEntryPath(), process.env.PATH ?? "");
+    const current = existsSync(p) ? readFileSync(p, "utf-8") : null;
+    const changed = current !== desired;
+    if (changed) {
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, desired);
+    }
     const uid = process.getuid?.() ?? 0;
+    const target = `gui/${uid}/${LABEL}`;
+    if (changed) {
+      // plist changed → drop the old instance so the new config takes effect
+      try { execFileSync("launchctl", ["bootout", target], { stdio: "ignore" }); }
+      catch { /* not loaded */ }
+    }
     try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, p], { stdio: "ignore" }); }
     catch { /* already bootstrapped */ }
-    execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/${LABEL}`], { stdio: "ignore" });
+    // -k only when the plist changed: a routine CLI call must not restart a
+    // healthy daemon (would orphan its in-flight headless children).
+    execFileSync("launchctl", kickstartArgv(target, changed), { stdio: "ignore" });
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
     process.stderr.write(`[cockpit] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
