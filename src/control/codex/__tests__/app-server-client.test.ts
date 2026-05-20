@@ -182,3 +182,36 @@ describe("AppServerClient.sendTurn", () => {
     await expect(p).resolves.toMatchObject({ turnId: "TURN-1" });
   });
 });
+
+describe("AppServerClient steer/interrupt/inject", () => {
+  it("steerTurn → turn/steer with threadId+text", async () => {
+    const proc = fakeChild(); const c = new AppServerClient({ spawn: () => proc });
+    c.start(); (c as any)._handshakeDone = true;
+    const p = c.steerTurn("T1", "actually do X");
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("turn/steer");
+    expect(req.params).toEqual({ threadId: "T1", input: [{ type: "text", text: "actually do X" }] });
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: {} }) + "\n");
+    await p;
+  });
+  it("interruptTurn → turn/interrupt", async () => {
+    const proc = fakeChild(); const c = new AppServerClient({ spawn: () => proc });
+    c.start(); (c as any)._handshakeDone = true;
+    const p = c.interruptTurn("T1");
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("turn/interrupt");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: {} }) + "\n");
+    await p;
+  });
+  it("injectItems → thread/inject_items with threadId+items", async () => {
+    const proc = fakeChild(); const c = new AppServerClient({ spawn: () => proc });
+    c.start(); (c as any)._handshakeDone = true;
+    const items = [{ type: "text", text: "injected" }];
+    const p = c.injectItems("T1", items);
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("thread/inject_items");
+    expect(req.params).toEqual({ threadId: "T1", items });
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: {} }) + "\n");
+    await p;
+  });
+});

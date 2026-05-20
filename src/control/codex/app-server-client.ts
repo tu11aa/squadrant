@@ -92,6 +92,18 @@ export class AppServerClient extends EventEmitter {
     });
   }
 
+  steerTurn(threadId: string, text: string): Promise<unknown> {
+    return this._sendRequest("turn/steer", { threadId, input: [{ type: "text", text }] });
+  }
+
+  interruptTurn(threadId: string): Promise<unknown> {
+    return this._sendRequest("turn/interrupt", { threadId });
+  }
+
+  injectItems(threadId: string, items: unknown[]): Promise<unknown> {
+    return this._sendRequest("thread/inject_items", { threadId, items });
+  }
+
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   protected _handshakeDone = false;
