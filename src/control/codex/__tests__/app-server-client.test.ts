@@ -157,3 +157,28 @@ describe("AppServerClient thread lifecycle", () => {
     await p;
   });
 });
+
+describe("AppServerClient.sendTurn", () => {
+  it("resolves when TurnCompleted notification arrives for this turn", async () => {
+    const proc = fakeChild();
+    const c = new AppServerClient({ spawn: () => proc });
+    c.start();
+    (c as any)._handshakeDone = true;
+    const p = c.sendTurn("T1", "hello");
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("turn/start");
+    expect(req.params.threadId).toBe("T1");
+    // Schedule notifications for next tick to allow listener to be registered
+    Promise.resolve().then(() => {
+      // ack
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { turnId: "TURN-1" } }) + "\n");
+    }).then(() => {
+      // streaming
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "agentMessageDelta", params: { turnId: "TURN-1", text: "h" } }) + "\n");
+    }).then(() => {
+      // done
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "turn/completed", params: { turnId: "TURN-1" } }) + "\n");
+    });
+    await expect(p).resolves.toMatchObject({ turnId: "TURN-1" });
+  });
+});

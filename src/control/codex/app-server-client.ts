@@ -77,6 +77,21 @@ export class AppServerClient extends EventEmitter {
     return this._sendRequest("thread/read", params);
   }
 
+  async sendTurn(threadId: string, text: string): Promise<{ turnId: string }> {
+    const ack = await this._sendRequest("turn/start", {
+      threadId, input: [{ type: "text", text }],
+    }) as { turnId: string };
+    return new Promise((resolve, reject) => {
+      const onNote = (n: { method: string; params?: any }) => {
+        if (n.params?.turnId !== ack.turnId) return;
+        if (n.method === "turn/completed") { cleanup(); resolve(ack); }
+        if (n.method === "turn/failed") { cleanup(); reject(new Error(n.params?.error ?? "turn failed")); }
+      };
+      const cleanup = () => this.off("notification", onNote);
+      this.on("notification", onNote);
+    });
+  }
+
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   protected _handshakeDone = false;
