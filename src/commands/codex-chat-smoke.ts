@@ -35,7 +35,20 @@ export const codexChatSmokeCommand = new Command("codex-chat-smoke")
         c.kill();
         return;
       }
-      // Approval round-trip lands in Task 1.12.
+
+      // Approval round-trip — Phase-1 GATE.
+      const pendingApprovals: Array<{ id: number; method: string }> = [];
+      c.on("serverRequest", (r) => {
+        pendingApprovals.push({ id: r.id, method: r.method });
+        // Approve every approval-shaped request automatically (PASS-by-affirm).
+        c.respondToServerRequest(r.id, { decision: "approve" });
+      });
+      // Ask codex to do something that needs approval (writing a file).
+      await c.sendTurn(threadId, `Write the text "approval-ok" to a file at ${resolve(opts.cwd)}/.cockpit-smoke.txt`);
+      if (pendingApprovals.length === 0) {
+        throw new Error("approval gate: expected at least one server-request (approval/input) during the turn");
+      }
+      process.stdout.write(`smoke: APPROVAL ok (${pendingApprovals.length} request(s) handled)\n`);
       c.kill();
     } catch (e) {
       process.stderr.write(
