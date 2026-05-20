@@ -81,7 +81,11 @@ export class AppServerClient extends EventEmitter {
 
   private _dispatch(msg: unknown): void {
     if (this._dispatchResponse(msg)) return;
-    // Notifications (id-less) handled in Task 1.5.
+    if (typeof (msg as any)?.method === "string" && (msg as any).id === undefined) {
+      this.emit("notification", { method: (msg as any).method, params: (msg as any).params });
+      return;
+    }
+    // Server requests (have method AND id) handled in Task 1.10.
   }
 }
 

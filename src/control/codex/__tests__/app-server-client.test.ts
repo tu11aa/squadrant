@@ -81,3 +81,16 @@ describe("AppServerClient.sendRequest (correlation by id)", () => {
     await expect(p).rejects.toThrow(/boom/);
   });
 });
+
+describe("AppServerClient notifications", () => {
+  it("emits 'notification' with method+params for id-less messages", async () => {
+    const proc = fakeChild();
+    const c = new AppServerClient({ spawn: () => proc });
+    c.start();
+    const got: any[] = [];
+    c.on("notification", (n) => got.push(n));
+    proc.stdout.emit("data",
+      JSON.stringify({ jsonrpc: "2.0", method: "agentMessageDelta", params: { text: "hi" } }) + "\n");
+    expect(got).toEqual([{ method: "agentMessageDelta", params: { text: "hi" } }]);
+  });
+});
