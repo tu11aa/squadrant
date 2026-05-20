@@ -129,7 +129,7 @@ describe("AppServerClient thread lifecycle", () => {
     const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
     expect(req.method).toBe("thread/start");
     expect(req.params.cwd).toBe("/tmp/x");
-    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { threadId: "T1" } }) + "\n");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { thread: { id: "T1" } } }) + "\n");
     await expect(p).resolves.toEqual({ threadId: "T1" });
   });
   it("resumeThread → thread/resume with threadId", async () => {
@@ -171,13 +171,13 @@ describe("AppServerClient.sendTurn", () => {
     // Schedule notifications for next tick to allow listener to be registered
     Promise.resolve().then(() => {
       // ack
-      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { turnId: "TURN-1" } }) + "\n");
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { turn: { id: "TURN-1" } } }) + "\n");
     }).then(() => {
       // streaming
-      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "agentMessageDelta", params: { turnId: "TURN-1", text: "h" } }) + "\n");
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "agentMessageDelta", params: { turn: { id: "TURN-1" }, text: "h" } }) + "\n");
     }).then(() => {
       // done
-      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "turn/completed", params: { turnId: "TURN-1" } }) + "\n");
+      proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: "T1", turn: { id: "TURN-1" } } }) + "\n");
     });
     await expect(p).resolves.toMatchObject({ turnId: "TURN-1" });
   });
@@ -251,7 +251,7 @@ describe("AppServerClient lifecycle cleanup", () => {
     const p = c.sendTurn("T1", "hi");
     // Mirror back the ack so we're past the await; now we're waiting on the notification
     const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
-    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { turnId: "TURN-X" } }) + "\n");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { turn: { id: "TURN-X" } } }) + "\n");
     // Yield so the await completes and the notification listener is attached
     await new Promise((res) => setImmediate(res));
     proc.emit("exit", 0, null);

@@ -68,8 +68,11 @@ export class AppServerClient extends EventEmitter {
     return res;
   }
 
-  startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string }): Promise<{ threadId: string }> {
-    return this._sendRequest("thread/start", params) as Promise<{ threadId: string }>;
+  async startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string }): Promise<{ threadId: string }> {
+    const res = await this._sendRequest("thread/start", params) as { thread?: { id?: string } };
+    const id = res?.thread?.id;
+    if (typeof id !== "string") throw new Error(`thread/start: unexpected response shape (no thread.id): ${JSON.stringify(res).slice(0, 200)}`);
+    return { threadId: id };
   }
 
   resumeThread(params: { threadId: string; cwd?: string }): Promise<unknown> {
@@ -83,11 +86,13 @@ export class AppServerClient extends EventEmitter {
   async sendTurn(threadId: string, text: string): Promise<{ turnId: string }> {
     const ack = await this._sendRequest("turn/start", {
       threadId, input: [{ type: "text", text }],
-    }) as { turnId: string };
+    }) as { turn?: { id?: string } };
+    const turnId = ack?.turn?.id;
+    if (typeof turnId !== "string") throw new Error(`turn/start: unexpected ack shape (no turn.id): ${JSON.stringify(ack).slice(0, 200)}`);
     return new Promise((resolve, reject) => {
       const onNote = (n: { method: string; params?: any }) => {
-        if (n.params?.turnId !== ack.turnId) return;
-        if (n.method === "turn/completed") { cleanup(); resolve(ack); }
+        if (n.params?.turn?.id !== turnId) return;
+        if (n.method === "turn/completed") { cleanup(); resolve({ turnId }); }
         if (n.method === "turn/failed") { cleanup(); reject(new Error(n.params?.error ?? "turn failed")); }
       };
       const onClientClosed = () => { cleanup(); reject(new Error("AppServerClient: client closed before turn completed")); };
