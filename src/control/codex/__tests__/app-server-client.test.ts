@@ -118,3 +118,42 @@ describe("AppServerClient handshake", () => {
     expect(last.id).toBeUndefined();
   });
 });
+
+describe("AppServerClient thread lifecycle", () => {
+  it("startThread → thread/start with cwd; returns threadId", async () => {
+    const proc = fakeChild();
+    const c = new AppServerClient({ spawn: () => proc });
+    c.start();
+    (c as any)._handshakeDone = true;
+    const p = c.startThread({ cwd: "/tmp/x" });
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("thread/start");
+    expect(req.params.cwd).toBe("/tmp/x");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { threadId: "T1" } }) + "\n");
+    await expect(p).resolves.toEqual({ threadId: "T1" });
+  });
+  it("resumeThread → thread/resume with threadId", async () => {
+    const proc = fakeChild();
+    const c = new AppServerClient({ spawn: () => proc });
+    c.start();
+    (c as any)._handshakeDone = true;
+    const p = c.resumeThread({ threadId: "T1", cwd: "/tmp/x" });
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("thread/resume");
+    expect(req.params.threadId).toBe("T1");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: {} }) + "\n");
+    await p;
+  });
+  it("readThread → thread/read with threadId", async () => {
+    const proc = fakeChild();
+    const c = new AppServerClient({ spawn: () => proc });
+    c.start();
+    (c as any)._handshakeDone = true;
+    const p = c.readThread({ threadId: "T1" });
+    const req = JSON.parse((proc.stdin as any)._written.trim().split("\n").pop()!);
+    expect(req.method).toBe("thread/read");
+    expect(req.params.threadId).toBe("T1");
+    proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { messages: [] } }) + "\n");
+    await p;
+  });
+});

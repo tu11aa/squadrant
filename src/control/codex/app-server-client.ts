@@ -65,6 +65,18 @@ export class AppServerClient extends EventEmitter {
     return res;
   }
 
+  startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string }): Promise<{ threadId: string }> {
+    return this._sendRequest("thread/start", params) as Promise<{ threadId: string }>;
+  }
+
+  resumeThread(params: { threadId: string; cwd?: string }): Promise<unknown> {
+    return this._sendRequest("thread/resume", params);
+  }
+
+  readThread(params: { threadId: string; lastN?: number }): Promise<unknown> {
+    return this._sendRequest("thread/read", params);
+  }
+
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   protected _handshakeDone = false;
