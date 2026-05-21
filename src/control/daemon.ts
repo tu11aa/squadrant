@@ -19,6 +19,11 @@ export interface DaemonDeps {
    * black-holing in `submitted` forever.
    */
   launchInteractive?: (rec: TaskRecord) => Promise<void>;
+  /**
+   * Wired in cockpitd to codexDriver.answer(). Delivers the captain's gate
+   * resolution payload back to the interactive session (spec §4.9).
+   */
+  resolveInteractiveGate?: (taskId: string, payload: unknown) => Promise<void> | void;
 }
 
 type Req =
@@ -26,7 +31,8 @@ type Req =
   | { kind: "event"; project: string; event: ControlEvent }
   | { kind: "status"; project: string; id: string }
   | { kind: "list"; project: string }
-  | { kind: "reply"; project: string; id: string; message: string };
+  | { kind: "reply"; project: string; id: string; message: string }
+  | { kind: "gate-resolve"; project: string; gateId: string; resolvedBy: string; payload: unknown };
 
 export function createDaemon(deps: DaemonDeps) {
   const { store, now } = deps;
@@ -86,6 +92,20 @@ export function createDaemon(deps: DaemonDeps) {
           store.put(next); // persist the transition before delivering (durable first)
           if (deps.deliverReply) await deps.deliverReply(r, req.message);
           return next;
+        }
+        case "gate-resolve": {
+          // Find the task that owns this gate.
+          const owning = deps.store.listAll().find((r) => r.gates?.some((g) => g.gateId === req.gateId));
+          if (!owning || !owning.gates) throw new Error(`gate ${req.gateId} not found`);
+          const updatedGates = owning.gates.map((g) =>
+            g.gateId === req.gateId
+              ? { ...g, state: "resolved" as const, resolvedBy: req.resolvedBy, resolution: req.payload }
+              : g,
+          );
+          deps.store.put({ ...owning, gates: updatedGates });
+          // Driver answers via the saved requestId (it tracks it per-task internally).
+          if (deps.resolveInteractiveGate) await deps.resolveInteractiveGate(owning.id, req.payload);
+          return { ...owning, gates: updatedGates };
         }
         default: { const _exhaustive: never = req; throw new Error(`unhandled request kind`); }
       }

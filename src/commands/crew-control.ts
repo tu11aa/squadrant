@@ -91,10 +91,23 @@ export function addControlPlaneCrewCommands(crew: Command): void {
 
   // TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
   // cockpitd, so this transitions task state but never reaches the agent. Deferred.
+  // --gate <gateId> routes through the gate-resolve verb instead (spec §4.9).
   crew
     .command("reply <project> <id> <message>")
-    .description("Reply to a blocked control-plane task (delivery deferred)")
-    .action(async (project: string, id: string, message: string) => {
+    .description("Reply to a blocked control-plane task (delivery deferred), or resolve a gate via --gate")
+    .option("--gate <gateId>", "resolve a pending gate by id (codex interactive, spec §4.9)")
+    .action(async (project: string, id: string, message: string, opts: { gate?: string }) => {
+      if (opts.gate) {
+        const r = await cockpitdCall({
+          kind: "gate-resolve",
+          project,
+          gateId: opts.gate,
+          resolvedBy: "captain",
+          payload: { text: message },
+        });
+        process.stdout.write(JSON.stringify(r) + "\n");
+        return;
+      }
       process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
       const r = await cockpitdCall({ kind: "reply", project, id, message });
       process.stdout.write(JSON.stringify(r) + "\n");

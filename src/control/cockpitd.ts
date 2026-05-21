@@ -149,6 +149,10 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       }
       await codexDriver.dispatch(rec as any);
     },
+    resolveInteractiveGate: async (taskId, payload) => {
+      try { await codexDriver.answer(taskId, payload); }
+      catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
+    },
   });
 
   d.reconcile(); // crash recovery on boot
