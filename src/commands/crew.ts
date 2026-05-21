@@ -13,7 +13,7 @@ import {
   CapabilityRegistry,
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
-import { buildDispatchRequest, cockpitdCall } from "./crew-control.js";
+import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import type { TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -217,6 +217,16 @@ async function runCodexInteractiveSpawn(o: {
     title,
   });
   await o.runtime.sendToPane(pane, `cockpit crew attach ${rec.id}`);
+  // Match the claude UX where the task arg becomes the first turn. The codex
+  // dispatch only opens the thread; the task text never reaches the model
+  // unless we send it. Fire-and-forget: the renderer in the tab will pick up
+  // streamed deltas once it attaches. Skip the deprecated "(interactive)"
+  // placeholder which `crew chat` passes when no task was provided.
+  if (o.task && o.task !== "(interactive)") {
+    void sendCodexFirstTurn(rec.id, o.task).catch((e: unknown) => {
+      process.stderr.write(`(first-turn delivery failed: ${(e as Error).message})\n`);
+    });
+  }
   return { ...pane, title };
 }
 

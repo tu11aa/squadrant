@@ -62,9 +62,11 @@ vi.mock("../../drivers/index.js", () => ({
 
 const cockpitdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
+const sendCodexFirstTurn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../crew-control.js", () => ({
   cockpitdCall,
   buildDispatchRequest,
+  sendCodexFirstTurn,
 }));
 
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
@@ -92,6 +94,8 @@ describe("cockpit crew spawn", () => {
     loadConfig.mockReset();
     cockpitdCall.mockReset();
     buildDispatchRequest.mockReset();
+    sendCodexFirstTurn.mockReset();
+    sendCodexFirstTurn.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -202,13 +206,28 @@ describe("cockpit crew spawn", () => {
       direction: "tab",
       title: "🔧 brove:crew-1",
     }));
-    // single send: the attach command — no boot delay, no separate task send
+    // sendToPane only opens the renderer; the task arg is delivered to the
+    // daemon via sendCodexFirstTurn (attach-socket `say` op), not the tab.
     expect(sendToPane).toHaveBeenCalledTimes(1);
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "cockpit crew attach task-abc",
     );
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "do the thing");
     expect(result.title).toBe("🔧 brove:crew-1");
+  });
+
+  it("--agent codex skips the first-turn say when task is the legacy '(interactive)' placeholder", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-noop" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-noop" });
+
+    await runCrewSpawn({ project: "brove", task: "(interactive)", agent: "codex" });
+
+    expect(sendCodexFirstTurn).not.toHaveBeenCalled();
   });
 
   it("--agent codex --approval propagates approvalPolicy='untrusted' into the dispatch", async () => {
