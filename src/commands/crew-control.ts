@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { sendRequest } from "../control/protocol.js";
 import { ensureDaemon } from "../control/launchd.js";
 import type { Mode, Provider, TaskRecord } from "../control/types.js";
+import { crewAttachCommand } from "./crew-attach.js";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 
@@ -106,6 +107,8 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       // hook payload arrives on stdin (Claude hook JSON); minimal: emit progress.
       process.stdout.write(`hook:${event}\n`);
     });
+
+  crew.addCommand(crewAttachCommand);
 }
 
 // Standalone control-plane-only command (kept for back-compat / direct use;
