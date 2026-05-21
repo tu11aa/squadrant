@@ -22,7 +22,8 @@ describe("cockpitd headless wiring", () => {
     const disp: any = await sendRequest(sock, { kind: "dispatch", record: {
       id: "h1", project: "p", provider: "claude", mode: "headless",
       state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "dispatch", heartbeatBudgetMs: 10000 } });
+      lastEvent: "dispatch", heartbeatBudgetMs: 10000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     expect(disp.state).toBe("submitted");
     child.stdout.emit("data", '{"result":"done","session_id":"s1"}');
     child.emit("close", 0);

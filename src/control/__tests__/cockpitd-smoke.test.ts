@@ -28,7 +28,8 @@ describe("cockpitd smoke", () => {
     await sendRequest(sock, { kind: "seed", record: {
       id: "t1", project: "p", provider: "claude", mode: "interactive",
       state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "", heartbeatBudgetMs: 1000 } });
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     const r: any = await sendRequest(sock, { kind: "event", project: "p", event: { type: "task.started", id: "t1" } });
     expect(r.state).toBe("working");
   });
@@ -41,6 +42,7 @@ describe("cockpitd smoke", () => {
       id: "h1", project: "p", provider: "claude", mode: "headless",
       state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
       lastEvent: "", heartbeatBudgetMs: 1000, pid: 4242,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
     };
 
     // Seed a working headless task via a first daemon instance, then stop it.

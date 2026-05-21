@@ -10,6 +10,28 @@ export type TaskState =
   | "failed"
   | "stalled";
 
+export interface DispatchAttempt {
+  attemptId: string;
+  startedAt: number;
+  pid?: number;
+  resumeRef?: string;       // opaque, hashed-treated, NEVER parsed (orca #1148)
+  lastHeartbeatAt: number;
+  error?: string;
+  exitCode?: number;
+  circuitBroken?: boolean;
+}
+
+export interface Gate {
+  gateId: string;
+  taskId: string;
+  kind: "input" | "approval";
+  question: string;
+  state: "pending" | "resolved" | "timeout";
+  createdAt: number;
+  resolvedBy?: string;
+  resolution?: unknown;
+}
+
 export interface TaskRecord {
   id: string;
   project: string;
@@ -29,6 +51,10 @@ export interface TaskRecord {
   lastHeartbeat: number;   // epoch ms
   lastEvent: string;       // last event type applied
   heartbeatBudgetMs: number; // per-task stall threshold
+  /** Append-only dispatch attempt history. Current attempt = at(-1). */
+  attempts: DispatchAttempt[];
+  /** Interactive-codex HITL slice (spec §4.9). */
+  gates?: Gate[];
 }
 
 export type ControlEvent =

@@ -12,6 +12,7 @@ function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
     id, project: "p", provider: "claude", mode: "interactive",
     state: "submitted", task: "t", createdAt: 1, lastHeartbeat: 1,
     lastEvent: "", heartbeatBudgetMs: 1000,
+    attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
     ...overrides,
   };
 }
@@ -107,7 +108,8 @@ describe("daemon handler", () => {
     const r: any = await d.handle({ kind: "dispatch", record: {
       id: "h9", project: "p", provider: "claude", mode: "headless",
       state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     expect(r.state).toBe("submitted");
     expect(store.get("p", "h9")).toBeTruthy();
     expect(launched).toEqual(["h9"]);
@@ -124,7 +126,8 @@ describe("daemon handler", () => {
     const r: any = await d.handle({ kind: "dispatch", record: {
       id: "i9", project: "p", provider: "claude", mode: "interactive",
       state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     expect(launched).toEqual([]);                 // headless launcher untouched
     expect(r.state).toBe("failed");               // loud, not black-hole
     expect(r.lastEvent).toBe("no-launcher");
@@ -141,7 +144,8 @@ describe("daemon handler", () => {
     const r: any = await d.handle({ kind: "dispatch", record: {
       id: "i10", project: "p", provider: "claude", mode: "interactive",
       state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     expect(launched).toEqual(["i10"]);
     expect(r.state).toBe("submitted"); // launcher owns the lifecycle, not failed
   });
@@ -155,7 +159,8 @@ describe("daemon handler", () => {
     const r: any = await d.handle({ kind: "dispatch", record: {
       id: "g9", project: "p", provider: "gemini", mode: "headless",
       state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "dispatch", heartbeatBudgetMs: 1000 } });
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     expect(r.state).toBe("submitted"); // dispatch returns immediately
     await new Promise((res) => setTimeout(res, 10)); // let the rejection settle
     const after = store.get("p", "g9");

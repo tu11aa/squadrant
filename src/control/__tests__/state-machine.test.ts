@@ -1,13 +1,14 @@
 // src/control/__tests__/state-machine.test.ts
 import { describe, it, expect } from "vitest";
 import { reduce } from "../state-machine.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord, DispatchAttempt } from "../types.js";
 
 function rec(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
     id: "t1", project: "p", provider: "claude", mode: "headless",
     state: "submitted", task: "do x", createdAt: 1000,
     lastHeartbeat: 1000, lastEvent: "", heartbeatBudgetMs: 300000,
+    attempts: [{ attemptId: "a0", startedAt: 1000, lastHeartbeatAt: 1000 }],
     ...overrides,
   };
 }
@@ -69,5 +70,18 @@ describe("state-machine reduce", () => {
   it("bare Stop modelled as task.progress never yields done", () => {
     const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "Stop" }, 7000);
     expect(next.state).toBe("working");
+  });
+});
+
+describe("DispatchAttempt schema", () => {
+  it("a fresh TaskRecord has a single attempt with attemptId, startedAt, lastHeartbeatAt", () => {
+    const rec: TaskRecord = {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    expect(rec.attempts.length).toBe(1);
+    expect(rec.attempts[0]?.attemptId).toBe("a1");
   });
 });

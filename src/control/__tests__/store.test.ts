@@ -11,6 +11,7 @@ function rec(id: string): TaskRecord {
     id, project: "proj", provider: "claude", mode: "headless",
     state: "submitted", task: "t", createdAt: 1, lastHeartbeat: 1,
     lastEvent: "", heartbeatBudgetMs: 1000,
+    attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
   };
 }
 

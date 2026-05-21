@@ -7,7 +7,9 @@ function rec(o: Partial<TaskRecord> = {}): TaskRecord {
   return {
     id: "t1", project: "p", provider: "claude", mode: "headless",
     state: "working", task: "t", createdAt: 0, lastHeartbeat: 1000,
-    lastEvent: "", heartbeatBudgetMs: 5000, ...o,
+    lastEvent: "", heartbeatBudgetMs: 5000,
+    attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 1000 }],
+    ...o,
   };
 }
 

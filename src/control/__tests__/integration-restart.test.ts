@@ -24,7 +24,8 @@ describe("integration: daemon restart mid-task (success criterion)", () => {
     await sendRequest(sock, { kind: "seed", record: {
       id: "t1", project: "p", provider: "claude", mode: "interactive",
       state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
-      lastEvent: "task.started", heartbeatBudgetMs: 999999 } });
+      lastEvent: "task.started", heartbeatBudgetMs: 999999,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
 
     // crash the daemon mid-task
     h.stop();
@@ -51,6 +52,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
         id: "h1", project: "p", provider: "claude", mode: "headless",
         state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
         lastEvent: "", heartbeatBudgetMs: 1000, pid: 99999,
+        attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
       } });
       first.stop();
 
@@ -81,6 +83,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
         id: "h2", project: "p", provider: "claude", mode: "headless",
         state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
         lastEvent: "", heartbeatBudgetMs: 1000, pid: 99999,
+        attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
       } });
       first.stop();
 

@@ -13,12 +13,14 @@ export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
 }): { kind: "dispatch"; record: TaskRecord } {
   const now = Date.now();
+  const attemptId = randomUUID();
   return {
     kind: "dispatch",
     record: {
       id: randomUUID(), project: o.project, provider: o.provider, mode: o.mode,
       state: "submitted", task: o.task, cwd: o.cwd, createdAt: now, lastHeartbeat: now,
       lastEvent: "dispatch", heartbeatBudgetMs: o.budgetMs ?? 300000,
+      attempts: [{ attemptId, startedAt: now, lastHeartbeatAt: now }],
     },
   };
 }
