@@ -27,6 +27,27 @@ function xmlEscape(s: string): string {
 }
 
 /**
+ * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
+ * dedupe so the plist content is stable across cockpit invocations from
+ * different shells. Without this, a captain shell (PATH includes
+ * ~/.claude/plugins/cache/* bin dirs) vs a fresh login shell would each
+ * rewrite the plist and kickstart -k the daemon, killing in-flight tasks
+ * (incident 2026-05-21, observations 8704/8707/8711).
+ */
+export function sanitizePathForPlist(path: string): string {
+  const seen = new Set<string>();
+  const stable: string[] = [];
+  for (const p of path.split(":")) {
+    if (!p) continue;
+    if (p.includes("/.claude/plugins/")) continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    stable.push(p);
+  }
+  return stable.join(":");
+}
+
+/**
  * Red-team #3 (High): launchd starts the daemon with a minimal PATH that does
  * NOT include where `claude`/`codex`/`opencode` live (nvm/cmux dirs), so every
  * headless `spawn` failed `ENOENT` in the real deployment (shell tests + fake
@@ -74,7 +95,7 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
 export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
-    const desired = renderPlist(nodeBin, daemonEntryPath(), process.env.PATH ?? "");
+    const desired = renderPlist(nodeBin, daemonEntryPath(), sanitizePathForPlist(process.env.PATH ?? ""));
     const current = existsSync(p) ? readFileSync(p, "utf-8") : null;
     const changed = current !== desired;
     if (changed) {

@@ -1,6 +1,6 @@
 // src/control/__tests__/launchd.test.ts
 import { describe, it, expect } from "vitest";
-import { renderPlist, LABEL, kickstartArgv } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -42,6 +42,22 @@ describe("launchd plist", () => {
   it("kickstartArgv: -k only when plist changed (force reload of new config)", () => {
     const t = `gui/501/${LABEL}`;
     expect(kickstartArgv(t, true)).toEqual(["kickstart", "-k", t]);
+  });
+
+  // Hotfix 2026-05-21: ensureDaemon was killing the running daemon on every
+  // CLI invocation because Claude Code shells inject ~/.claude/plugins/cache/*
+  // bin dirs into PATH, making renderPlist's output differ from a fresh shell's
+  // → plistChanged=true → kickstart -k. The fix strips those ephemeral entries
+  // before baking PATH into the plist.
+  it("sanitizePathForPlist: produces identical output across captain vs fresh shells", () => {
+    const fresh = "/Users/me/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin";
+    const captain =
+      "/Users/me/.claude/plugins/cache/foo/bin:/Users/me/.nvm/versions/node/v24/bin:/Users/me/.claude/plugins/cache/bar/bin:/usr/local/bin:/usr/bin";
+    expect(sanitizePathForPlist(captain)).toBe(sanitizePathForPlist(fresh));
+  });
+
+  it("sanitizePathForPlist: dedupes while preserving first-occurrence order", () => {
+    expect(sanitizePathForPlist("/a:/b:/a:/c::/b")).toBe("/a:/b:/c");
   });
 
   it("XML-escapes interpolated values so a special-char home dir stays well-formed", () => {
