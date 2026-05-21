@@ -8,7 +8,8 @@ export type TaskState =
   | "blocked"
   | "done"
   | "failed"
-  | "stalled";
+  | "stalled"
+  | "awaiting-input";
 
 export interface DispatchAttempt {
   attemptId: string;
@@ -63,7 +64,14 @@ export type ControlEvent =
   | { type: "heartbeat"; id: string }
   | { type: "task.blocked"; id: string; reason: string; question: string }
   | { type: "task.done"; id: string; resultRef: string; parseWarning?: boolean }
-  | { type: "task.failed"; id: string; error: string; exitCode?: number };
+  | { type: "task.failed"; id: string; error: string; exitCode?: number }
+  | { type: "task.session"; id: string; resumeRef: string }
+  | { type: "task.turn.started"; id: string; turnId: string }
+  | { type: "task.turn.completed"; id: string; turnId: string }
+  | { type: "task.delta"; id: string; turnId: string; chunk: string }
+  | { type: "task.input.requested"; id: string; requestId: number; question: string }
+  | { type: "task.approval.requested"; id: string; requestId: number; question: string; kind: string }
+  | { type: "task.reattached"; id: string };
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
 export const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([

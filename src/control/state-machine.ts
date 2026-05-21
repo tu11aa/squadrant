@@ -1,6 +1,22 @@
 // src/control/state-machine.ts
-import type { ControlEvent, TaskRecord } from "./types.js";
+import type { ControlEvent, TaskRecord, DispatchAttempt } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
+
+/**
+ * Pure helper: merges `patch` into the last attempt and updates lastHeartbeatAt.
+ * Returns a new TaskRecord; never mutates the input.
+ */
+function stampAttempt(
+  rec: TaskRecord,
+  patch: Partial<DispatchAttempt>,
+  now: number,
+): TaskRecord {
+  const attempts = rec.attempts.slice();
+  const last = attempts.at(-1) ?? { attemptId: "a0", startedAt: now, lastHeartbeatAt: now };
+  attempts[attempts.length === 0 ? 0 : attempts.length - 1] = { ...last, ...patch, lastHeartbeatAt: now };
+  if (attempts.length === 0) attempts.push(last);
+  return { ...rec, attempts };
+}
 
 /**
  * Pure transition. `now` is injected (epoch ms) so callers control time.
@@ -15,7 +31,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
   switch (ev.type) {
     case "task.started":
       return {
-        ...base,
+        ...stampAttempt(base, { pid: ev.pid }, now),
         state: "working",
         pid: ev.pid ?? rec.pid,
         sessionId: ev.sessionId ?? rec.sessionId,
@@ -40,5 +56,19 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
+    case "task.session":
+      return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
+    case "task.turn.started":
+      return { ...stampAttempt(base, {}, now), state: "working" };
+    case "task.turn.completed":
+      // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
+      return { ...stampAttempt(base, {}, now), state: "awaiting-input" };
+    case "task.delta":
+      return stampAttempt(base, {}, now);  // heartbeat-only
+    case "task.input.requested":
+    case "task.approval.requested":
+      return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question };
+    case "task.reattached":
+      return stampAttempt(base, {}, now);
   }
 }

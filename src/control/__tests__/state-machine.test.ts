@@ -85,3 +85,26 @@ describe("DispatchAttempt schema", () => {
     expect(rec.attempts[0]?.attemptId).toBe("a1");
   });
 });
+
+describe("reducer · resumeRef-on-every-transition", () => {
+  function base(): TaskRecord {
+    return {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 60000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+  }
+  it("task.session stamps resumeRef on the current attempt", () => {
+    const r = reduce(base(), { type: "task.session", id: "t1", resumeRef: "TH-1" }, 100);
+    expect(r.attempts.at(-1)?.resumeRef).toBe("TH-1");
+    expect(r.attempts.length).toBe(1);
+  });
+  it("task.started updates pid on current attempt without losing resumeRef", () => {
+    let r = reduce(base(), { type: "task.session", id: "t1", resumeRef: "TH-1" }, 100);
+    r = reduce(r, { type: "task.started", id: "t1", pid: 1234 }, 200);
+    expect(r.attempts.at(-1)?.resumeRef).toBe("TH-1");
+    expect(r.attempts.at(-1)?.pid).toBe(1234);
+    expect(r.state).toBe("working");
+  });
+});
