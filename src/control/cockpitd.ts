@@ -19,6 +19,15 @@ export interface CockpitdOpts {
   sweepMs?: number; // 0 disables the interval (tests)
   isPidAlive?: (pid: number) => boolean; // injectable for the headless reconcile path (tests)
   spawn?: typeof realSpawn;
+  /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
+  codexDriver?: import("./codex/driver.js").CodexInteractiveDriver | {
+    dispatch: (rec: any) => Promise<void>;
+    reattach: (rec: any) => Promise<void>;
+    say: (taskId: string, text: string) => Promise<void>;
+    steer: (taskId: string, text: string) => Promise<void>;
+    interrupt: (taskId: string) => Promise<void>;
+    answer: (taskId: string, payload: unknown) => Promise<void>;
+  };
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
@@ -105,7 +114,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // The driver holds the single AppServerClient child. Each task maps to a
   // thread inside that child. Events emitted here (a) update the state-machine
   // via daemon.handle and (b) broadcast streaming AttachFrames to cmux clients.
-  const codexDriver = new CodexInteractiveDriver({
+  const codexDriver = opts.codexDriver ?? new CodexInteractiveDriver({
     emit: (ev) => {
       // Resolve the project so we can call daemon.handle with {kind:"event"}.
       // store.listAll() is O(tasks) but tasks are few; acceptable for events.
@@ -156,6 +165,19 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   });
 
   d.reconcile(); // crash recovery on boot
+
+  // Restart-reattach (spec §5; closes interactive slice of #86):
+  // For each non-terminal interactive-codex task that has a resumeRef, fire
+  // reattach() against the driver. Fire-and-forget; failures are logged only.
+  for (const rec of store.listAll()) {
+    if (rec.provider !== "codex" || rec.mode !== "interactive") continue;
+    if (rec.state === "done" || rec.state === "failed") continue;
+    const ref = rec.attempts.at(-1)?.resumeRef;
+    if (!ref) continue;
+    codexDriver.reattach(rec).catch((e: unknown) => {
+      log(`reattach failed for ${rec.id}: ${(e as Error).message}`);
+    });
+  }
 
   const server = startServer(sockPath, {
     handler: async (msg: any) => {
