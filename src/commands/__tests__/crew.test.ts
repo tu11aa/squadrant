@@ -60,6 +60,13 @@ vi.mock("../../drivers/index.js", () => ({
   },
 }));
 
+const cockpitdCall = vi.hoisted(() => vi.fn());
+const buildDispatchRequest = vi.hoisted(() => vi.fn());
+vi.mock("../crew-control.js", () => ({
+  cockpitdCall,
+  buildDispatchRequest,
+}));
+
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
 
 const baseConfig = {
@@ -83,6 +90,8 @@ describe("cockpit crew spawn", () => {
     status.mockReset();
     buildCommand.mockReset();
     loadConfig.mockReset();
+    cockpitdCall.mockReset();
+    buildDispatchRequest.mockReset();
   });
 
   afterEach(() => {
@@ -167,18 +176,54 @@ describe("cockpit crew spawn", () => {
     ]);
   });
 
-  it("non-Claude agent crews stay print-mode (no boot delay, no second send)", async () => {
+  it("--agent codex routes through the control-plane daemon and opens an attach tab in the captain", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
-    buildCommand.mockReturnValue("codex exec 'task'");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-abc" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-abc", project: "brove", provider: "codex", mode: "interactive" });
 
-    const result = await runCrewSpawn({ project: "brove", task: "task", agent: "codex" });
+    const result = await runCrewSpawn({ project: "brove", task: "do the thing", agent: "codex" });
 
-    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: false }));
+    // dispatch routed via daemon, not buildCommand
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "codex",
+      mode: "interactive",
+      project: "brove",
+      cwd: "/tmp/brove",
+      task: "do the thing",
+    }));
+    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(buildCommand).not.toHaveBeenCalled();
+    // tab placed in captain with crew-1 title (same UX as claude)
+    expect(newPane).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace:5",
+      direction: "tab",
+      title: "🔧 brove:crew-1",
+    }));
+    // single send: the attach command — no boot delay, no separate task send
     expect(sendToPane).toHaveBeenCalledTimes(1);
+    expect(sendToPane).toHaveBeenCalledWith(
+      { workspaceId: "workspace:5", surfaceId: "surface:9" },
+      "cockpit crew attach task-abc",
+    );
     expect(result.title).toBe("🔧 brove:crew-1");
+  });
+
+  it("--agent codex --approval propagates approvalPolicy='untrusted' into the dispatch", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-xyz" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-xyz" });
+
+    await runCrewSpawn({ project: "brove", task: "task", agent: "codex", approvalPolicy: "untrusted" });
+
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({
+      approvalPolicy: "untrusted",
+    }));
   });
 
   it("passes the configured crew model when spawn agent matches role agent", async () => {
@@ -208,8 +253,9 @@ describe("cockpit crew spawn", () => {
   });
 
   it("does NOT pass crew model when spawn agent differs from configured role agent", async () => {
-    // role config says crew=claude/sonnet, but user spawns with --agent codex.
-    // Model names are agent-specific, so we must NOT pass "sonnet" to codex.
+    // role config says crew=claude/sonnet, but user spawns with --agent gemini.
+    // Model names are agent-specific, so we must NOT pass "sonnet" to gemini.
+    // (Codex is excluded — it bypasses buildCommand via the interactive daemon path.)
     loadConfig.mockReturnValue({
       ...baseConfig,
       defaults: {
@@ -226,9 +272,9 @@ describe("cockpit crew spawn", () => {
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
-    buildCommand.mockReturnValue("codex exec 'task'");
+    buildCommand.mockReturnValue("gemini exec 'task'");
 
-    await runCrewSpawn({ project: "brove", task: "task", agent: "codex" });
+    await runCrewSpawn({ project: "brove", task: "task", agent: "gemini" });
 
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
   });
