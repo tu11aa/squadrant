@@ -1,5 +1,5 @@
 // src/control/__tests__/daemon.test.ts
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -166,5 +166,31 @@ describe("daemon handler", () => {
     const after = store.get("p", "g9");
     expect(after?.state).toBe("failed");
     expect(after?.error).toBe("no adapter for gemini");
+  });
+
+  // Regression: daemon must route provider=codex interactive dispatch to the
+  // injected launchInteractive hook (which cockpitd wires to CodexInteractiveDriver).
+  it("daemon routes codex interactive dispatch to the driver", async () => {
+    const calls: any[] = [];
+    const fakeDriver = {
+      dispatch: vi.fn().mockImplementation(async (rec: any) => { calls.push(["dispatch", rec.id]); }),
+      reattach: vi.fn(),
+      say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn(),
+    } as any;
+    const store = createStore(dir);
+    const d = createDaemon({
+      store, now: () => 1,
+      launchInteractive: (rec) =>
+        rec.provider === "codex"
+          ? fakeDriver.dispatch(rec)
+          : Promise.reject(new Error("unhandled")),
+    });
+    const record: any = {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "hi", createdAt: 1, lastHeartbeat: 1, lastEvent: "",
+      heartbeatBudgetMs: 1000, attempts: [{ attemptId: "a", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    await d.handle({ kind: "dispatch", record });
+    expect(calls).toEqual([["dispatch", "t1"]]);
   });
 });
