@@ -47,3 +47,30 @@ describe("recoverStall", () => {
     expect(recoverStall(rec({ state: "working" }), 7000)).toBeNull();
   });
 });
+
+describe("stalled = warn-don't-autofail for interactive-codex (spec §4.8, #90 slice)", () => {
+  function rec(overrides: Partial<TaskRecord> = {}): TaskRecord {
+    return {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "working", task: "x", createdAt: 1000, lastHeartbeat: 1000,
+      lastEvent: "task.started", heartbeatBudgetMs: 5000,
+      attempts: [{ attemptId: "a0", startedAt: 1000, lastHeartbeatAt: 1000 }],
+      ...overrides,
+    };
+  }
+
+  it("a stalled interactive-codex task is non-terminal (never failed)", () => {
+    const stalled = evaluateStall(rec(), 100_000);
+    expect(stalled).not.toBeNull();
+    expect(stalled!.state).toBe("stalled");
+    expect(stalled!.state).not.toBe("failed");
+    expect(stalled!.state).not.toBe("done");
+  });
+
+  it("a stalled interactive-codex task recovers to working on next liveness", () => {
+    const stalled = evaluateStall(rec(), 100_000)!;
+    const recovered = recoverStall(stalled, 101_000);
+    expect(recovered).not.toBeNull();
+    expect(recovered!.state).toBe("working");
+  });
+});

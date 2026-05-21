@@ -4,6 +4,11 @@ import type { TaskRecord } from "./types.js";
 /**
  * Pure. Returns a stalled record if a `working` task has exceeded its
  * heartbeat budget at time `now` (epoch ms), else null. No I/O, no clock.
+ *
+ * Policy: `stalled` is RECOVERABLE, not terminal (spec §4.8, #90).
+ * Interactive-codex tasks in particular surface to the Captain via the
+ * 'stalled' state and remain answerable; this function never produces
+ * `failed` directly.
  */
 export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (rec.state !== "working") return null;
