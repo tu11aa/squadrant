@@ -56,6 +56,10 @@ export interface TaskRecord {
   attempts: DispatchAttempt[];
   /** Interactive-codex HITL slice (spec §4.9). */
   gates?: Gate[];
+  /** Codex AskForApproval policy forwarded to startThread (interactive only).
+   *  When set to "untrusted", codex requests approval for tool/shell calls,
+   *  exercising the gate-promotion flow end-to-end. */
+  approvalPolicy?: string;
 }
 
 export type ControlEvent =

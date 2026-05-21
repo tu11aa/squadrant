@@ -13,6 +13,7 @@ const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 
 export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
+  approvalPolicy?: string;
 }): { kind: "dispatch"; record: TaskRecord } {
   const now = Date.now();
   const attemptId = randomUUID();
@@ -23,6 +24,7 @@ export function buildDispatchRequest(o: {
       state: "submitted", task: o.task, cwd: o.cwd, createdAt: now, lastHeartbeat: now,
       lastEvent: "dispatch", heartbeatBudgetMs: o.budgetMs ?? 300000,
       attempts: [{ attemptId, startedAt: now, lastHeartbeatAt: now }],
+      ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
     },
   };
 }

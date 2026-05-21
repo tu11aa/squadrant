@@ -52,6 +52,7 @@ export class CodexInteractiveDriver {
         cwd: rec.cwd ?? process.cwd(),
         model: rec.model,
         sandbox: "workspace-write",
+        ...(rec.approvalPolicy ? { approvalPolicy: rec.approvalPolicy } : {}),
       });
       this.threadByTask.set(rec.id, threadId);
       this.taskByThread.set(threadId, rec.id);

@@ -28,4 +28,17 @@ describe("crew-control request builders", () => {
   it("status request targets a task id", () => {
     expect(buildStatusRequest("p", "t9")).toEqual({ kind: "status", project: "p", id: "t9" });
   });
+
+  it("carries approvalPolicy onto the record when set (--approval gate-primitive flow)", () => {
+    const r = buildDispatchRequest({
+      project: "p", provider: "codex", mode: "interactive", task: "(interactive)",
+      approvalPolicy: "untrusted",
+    });
+    expect(r.record.approvalPolicy).toBe("untrusted");
+  });
+
+  it("approvalPolicy is omitted when not provided (default auto-approve)", () => {
+    const r = buildDispatchRequest({ project: "p", provider: "codex", mode: "interactive", task: "t" });
+    expect(r.record.approvalPolicy).toBeUndefined();
+  });
 });
