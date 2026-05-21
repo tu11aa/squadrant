@@ -14,7 +14,7 @@ describe("config", () => {
 
   it("returns default config", () => {
     const config = getDefaultConfig();
-    expect(config.commandName).toBe("command");
+    expect(config.commandName).toBe("🏛️ command");
     expect(config.projects).toEqual({});
     expect(config.defaults.maxCrew).toBe(5);
     expect(config.defaults.worktreeDir).toBe(".worktrees");
@@ -38,7 +38,7 @@ describe("config", () => {
 
   it("returns default config when file does not exist", () => {
     const loaded = loadConfig(path.join(tmpDir, "nonexistent.json"));
-    expect(loaded.commandName).toBe("command");
+    expect(loaded.commandName).toBe("🏛️ command");
   });
 
   it("supports new agents config", () => {

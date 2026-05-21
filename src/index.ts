@@ -26,6 +26,7 @@ import { workspaceCommand } from "./commands/workspace.js";
 import { trackerCommand } from "./commands/tracker.js";
 import { notifyCommand } from "./commands/notify.js";
 import { projectionCommand } from "./commands/projection.js";
+import { codexChatSmokeCommand } from "./commands/codex-chat-smoke.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -73,6 +74,7 @@ program.addCommand(workspaceCommand);
 program.addCommand(trackerCommand);
 program.addCommand(notifyCommand);
 program.addCommand(projectionCommand);
+program.addCommand(codexChatSmokeCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

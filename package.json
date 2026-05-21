@@ -10,7 +10,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "codex:gen-types": "bash scripts/gen-codex-types.sh"
   },
   "keywords": [
     "claude-code",
