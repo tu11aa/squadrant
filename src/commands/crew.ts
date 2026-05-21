@@ -13,6 +13,8 @@ import {
   CapabilityRegistry,
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
+import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
+import type { TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 
@@ -89,6 +91,7 @@ export interface CrewSpawnInput {
   name?: string;
   direction?: PanePlacement;
   agent?: string;
+  approvalPolicy?: string;
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
@@ -131,6 +134,23 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, aider, opencode.`);
   }
 
+  // Codex: route through the interactive control-plane daemon (PR #98) instead
+  // of the print-mode CLI path. The dispatched task is driven via the
+  // crew-attach renderer running in the captain tab, so 'crew send' / 'crew
+  // read' / 'crew close' work identically to the Claude crew UX.
+  if (agentName === "codex") {
+    return runCodexInteractiveSpawn({
+      project: input.project,
+      task: input.task,
+      cwd: proj.path,
+      runtime,
+      workspaceId: captain.id,
+      name,
+      direction: input.direction ?? "tab",
+      approvalPolicy: input.approvalPolicy,
+    });
+  }
+
   const promptFile = path.join(TEMPLATES_DIR, `crew.${agent.templateSuffix}.md`);
   // Claude crews run interactively (no -p) so the session stays alive between
   // turns; the task is sent via cmux after the CLI boots. Other agents that
@@ -168,6 +188,45 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     await runtime.sendToPane(pane, input.task);
   }
 
+  return { ...pane, title };
+}
+
+async function runCodexInteractiveSpawn(o: {
+  project: string;
+  task: string;
+  cwd: string;
+  runtime: RuntimeDriver;
+  workspaceId: string;
+  name: string;
+  direction: PanePlacement;
+  approvalPolicy?: string;
+}): Promise<PaneRef> {
+  const req = buildDispatchRequest({
+    provider: "codex",
+    mode: "interactive",
+    project: o.project,
+    cwd: o.cwd,
+    task: o.task,
+    ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
+  });
+  const rec = (await cockpitdCall(req)) as TaskRecord;
+  const title = titleFor(o.project, o.name);
+  const pane = await o.runtime.newPane({
+    workspaceId: o.workspaceId,
+    direction: o.direction,
+    title,
+  });
+  await o.runtime.sendToPane(pane, `cockpit crew attach ${rec.id}`);
+  // Match the claude UX where the task arg becomes the first turn. The codex
+  // dispatch only opens the thread; the task text never reaches the model
+  // unless we send it. Fire-and-forget: the renderer in the tab will pick up
+  // streamed deltas once it attaches. Skip the deprecated "(interactive)"
+  // placeholder which `crew chat` passes when no task was provided.
+  if (o.task && o.task !== "(interactive)") {
+    void sendCodexFirstTurn(rec.id, o.task).catch((e: unknown) => {
+      process.stderr.write(`(first-turn delivery failed: ${(e as Error).message})\n`);
+    });
+  }
   return { ...pane, title };
 }
 
@@ -221,11 +280,12 @@ crewCommand
   .option("--name <name>", "Crew name (default: auto-generated crew-N)")
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
   .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|aider|opencode)", "claude")
+  .option("--approval", "force codex approvalPolicy='untrusted' (codex only; exercises gate primitive)", false)
   .action(
     async (
       project: string,
       task: string,
-      opts: { name?: string; direction: PanePlacement; agent: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean },
     ) => {
       try {
         const pane = await runCrewSpawn({
@@ -234,6 +294,7 @@ crewCommand
           name: opts.name,
           direction: opts.direction,
           agent: opts.agent,
+          ...(opts.approval ? { approvalPolicy: "untrusted" } : {}),
         });
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));
       } catch (err) {

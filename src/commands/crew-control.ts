@@ -1,5 +1,6 @@
 // src/commands/crew-control.ts
 import { Command } from "commander";
+import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,43 @@ import { crewAttachCommand } from "./crew-attach.js";
 import { crewChatCommand } from "./crew-chat.js";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+
+// Codex thread setup is async after `dispatch` returns; let startThread finish
+// before sending the first turn. Empirically codex handshake completes in well
+// under a second; 1.5s is a safe margin without blocking the spawn return for
+// long (this function is invoked fire-and-forget).
+const CODEX_FIRST_TURN_DELAY_MS = 1500;
+
+/**
+ * Send the spawn task arg to a freshly-dispatched codex interactive task as
+ * the first turn — mirrors how `cockpit crew spawn --agent claude "<task>"`
+ * sends the task arg into the claude CLI's first prompt.
+ *
+ * Reuses the existing attach-socket `say` op (same one used by `crew send` and
+ * `crew attach` follow-ups). Opens a transient socket, attaches, sends say,
+ * closes. The renderer running in the captain tab attaches independently and
+ * receives the streamed reply.
+ */
+export async function sendCodexFirstTurn(taskId: string, text: string): Promise<void> {
+  await new Promise((r) => setTimeout(r, CODEX_FIRST_TURN_DELAY_MS));
+  await new Promise<void>((resolve, reject) => {
+    const conn = createConnection(SOCK);
+    conn.setEncoding("utf-8");
+    conn.on("data", () => { /* drain attach frames; we just want to send */ });
+    conn.on("error", reject);
+    conn.once("connect", () => {
+      try {
+        conn.write(JSON.stringify({ op: "attach", taskId }) + "\n");
+        conn.write(JSON.stringify({ op: "say", taskId, text }) + "\n");
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      // Brief flush window before close so the daemon processes both frames.
+      setTimeout(() => { conn.end(); resolve(); }, 100);
+    });
+  });
+}
 
 export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;

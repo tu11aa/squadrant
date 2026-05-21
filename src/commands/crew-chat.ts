@@ -1,42 +1,36 @@
 // src/commands/crew-chat.ts
-// `cockpit crew chat --provider codex` — opens a live human↔codex chat in
-// a cmux workspace. Spec §4.2.
+// DEPRECATED alias for `cockpit crew spawn --agent codex`. Kept so external
+// callers don't break; prints a warning and delegates to runCrewSpawn so the
+// session opens as a tab in the captain (same UX as `--agent claude`).
 import { Command } from "commander";
-import { buildDispatchRequest, cockpitdCall } from "./crew-control.js";
-import { createCmuxDriver } from "../runtimes/cmux.js";
-import type { TaskRecord } from "../control/types.js";
+import { runCrewSpawn } from "./crew.js";
 
 export const crewChatCommand = new Command("chat")
-  .description("Open a live human↔codex chat in a cmux workspace (spec §4.2).")
+  .description("[DEPRECATED] alias for `cockpit crew spawn <project> '(interactive)' --agent codex`.")
   .requiredOption("--provider <p>", "provider (codex only today)")
   .requiredOption("--project <name>", "project name")
-  .option("--cwd <dir>", "working dir for the codex thread", process.cwd())
-  .option("--model <m>", "model id (optional)")
+  .option("--cwd <dir>", "(ignored; project cwd is used)", process.cwd())
+  .option("--model <m>", "(unused; reserved for future codex model routing)")
   .option(
     "--approval",
-    "force codex approvalPolicy='untrusted' so tool/shell calls request approval (exercises the gate primitive)",
+    "force codex approvalPolicy='untrusted' so tool/shell calls request approval",
     false
   )
   .action(async (opts: { provider: string; project: string; cwd: string; model?: string; approval: boolean }) => {
+    process.stderr.write(
+      "⚠️  `cockpit crew chat --provider codex` is deprecated. " +
+      "Use: cockpit crew spawn <project> '(interactive)' --agent codex" +
+      (opts.approval ? " --approval" : "") +
+      "\n"
+    );
     if (opts.provider !== "codex") {
       throw new Error(`crew chat is implemented for provider=codex only (got '${opts.provider}')`);
     }
-    const req = buildDispatchRequest({
-      provider: "codex",
-      mode: "interactive",
+    const pane = await runCrewSpawn({
       project: opts.project,
-      cwd: opts.cwd,
       task: "(interactive)",
+      agent: "codex",
       ...(opts.approval ? { approvalPolicy: "untrusted" } : {}),
     });
-    const rec = (await cockpitdCall(req)) as TaskRecord;
-    process.stdout.write(`task ${rec.id} dispatched\n`);
-
-    const driver = createCmuxDriver();
-    const ws = await driver.spawn({
-      name: `chat-${rec.id.slice(0, 8)}`,
-      command: `cockpit crew attach ${rec.id}`,
-      workdir: opts.cwd,
-    });
-    process.stdout.write(`workspace ${ws.id} (${ws.name}) opened for chat\n`);
+    process.stdout.write(`Crew '${pane.title}' spawned (${pane.surfaceId})\n`);
   });
