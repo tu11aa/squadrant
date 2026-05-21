@@ -69,6 +69,14 @@ vi.mock("../crew-control.js", () => ({
   sendCodexFirstTurn,
 }));
 
+const existsSyncMock = vi.hoisted(() => vi.fn());
+const readFileSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const merged = { ...actual, existsSync: existsSyncMock, readFileSync: readFileSyncMock };
+  return { ...merged, default: merged };
+});
+
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
 
 const baseConfig = {
@@ -96,6 +104,11 @@ describe("cockpit crew spawn", () => {
     buildDispatchRequest.mockReset();
     sendCodexFirstTurn.mockReset();
     sendCodexFirstTurn.mockResolvedValue(undefined);
+    existsSyncMock.mockReset();
+    readFileSyncMock.mockReset();
+    // Default: pretend the codex role template is absent so older tests that
+    // don't care about role injection still pass unchanged.
+    existsSyncMock.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -228,6 +241,31 @@ describe("cockpit crew spawn", () => {
     await runCrewSpawn({ project: "brove", task: "(interactive)", agent: "codex" });
 
     expect(sendCodexFirstTurn).not.toHaveBeenCalled();
+  });
+
+  it("--agent codex forwards crew.generic.md role content as roleInstructions on dispatch", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-role" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-role" });
+
+    existsSyncMock.mockReturnValue(true);
+    readFileSyncMock.mockReturnValue(
+      "# Crew Member — Generic Agent\n\nYou are a crew member working on a specific task in a git worktree.\n",
+    );
+
+    await runCrewSpawn({ project: "brove", task: "do the thing", agent: "codex" });
+
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "codex",
+      roleInstructions: expect.stringContaining("You are a crew member"),
+    }));
+    expect(readFileSyncMock).toHaveBeenCalledWith(
+      expect.stringContaining("crew.generic.md"),
+      "utf8",
+    );
   });
 
   it("--agent codex --approval propagates approvalPolicy='untrusted' into the dispatch", async () => {

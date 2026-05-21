@@ -68,7 +68,7 @@ export class AppServerClient extends EventEmitter {
     return res;
   }
 
-  async startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string }): Promise<{ threadId: string }> {
+  async startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string; developerInstructions?: string }): Promise<{ threadId: string }> {
     const res = await this._sendRequest("thread/start", params) as { thread?: { id?: string } };
     const id = res?.thread?.id;
     if (typeof id !== "string") throw new Error(`thread/start: unexpected response shape (no thread.id): ${JSON.stringify(res).slice(0, 200)}`);

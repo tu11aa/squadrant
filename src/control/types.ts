@@ -60,6 +60,10 @@ export interface TaskRecord {
    *  When set to "untrusted", codex requests approval for tool/shell calls,
    *  exercising the gate-promotion flow end-to-end. */
   approvalPolicy?: string;
+  /** Role-priming content forwarded to startThread's developerInstructions
+   *  (interactive only). Parity with claude's --append-system-prompt-file:
+   *  injects crew rules / Karpathy discipline before the first user turn. */
+  roleInstructions?: string;
 }
 
 export type ControlEvent =

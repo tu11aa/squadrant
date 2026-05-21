@@ -51,7 +51,7 @@ export async function sendCodexFirstTurn(taskId: string, text: string): Promise<
 
 export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
-  approvalPolicy?: string;
+  approvalPolicy?: string; roleInstructions?: string;
 }): { kind: "dispatch"; record: TaskRecord } {
   const now = Date.now();
   const attemptId = randomUUID();
@@ -63,6 +63,7 @@ export function buildDispatchRequest(o: {
       lastEvent: "dispatch", heartbeatBudgetMs: o.budgetMs ?? 300000,
       attempts: [{ attemptId, startedAt: now, lastHeartbeatAt: now }],
       ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
+      ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
     },
   };
 }

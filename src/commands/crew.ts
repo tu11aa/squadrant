@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
@@ -139,6 +140,13 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // crew-attach renderer running in the captain tab, so 'crew send' / 'crew
   // read' / 'crew close' work identically to the Claude crew UX.
   if (agentName === "codex") {
+    // Mirror claude's --append-system-prompt-file: read the crew role template
+    // and forward it to codex via thread/start.developerInstructions so the
+    // session knows it's a crew member, not a bare shell.
+    const codexRoleFile = path.join(TEMPLATES_DIR, `crew.${agent.templateSuffix}.md`);
+    const roleInstructions = fs.existsSync(codexRoleFile)
+      ? fs.readFileSync(codexRoleFile, "utf8")
+      : undefined;
     return runCodexInteractiveSpawn({
       project: input.project,
       task: input.task,
@@ -148,6 +156,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       name,
       direction: input.direction ?? "tab",
       approvalPolicy: input.approvalPolicy,
+      roleInstructions,
     });
   }
 
@@ -200,6 +209,7 @@ async function runCodexInteractiveSpawn(o: {
   name: string;
   direction: PanePlacement;
   approvalPolicy?: string;
+  roleInstructions?: string;
 }): Promise<PaneRef> {
   const req = buildDispatchRequest({
     provider: "codex",
@@ -208,6 +218,7 @@ async function runCodexInteractiveSpawn(o: {
     cwd: o.cwd,
     task: o.task,
     ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
+    ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
   });
   const rec = (await cockpitdCall(req)) as TaskRecord;
   const title = titleFor(o.project, o.name);
