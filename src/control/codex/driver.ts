@@ -45,17 +45,23 @@ export class CodexInteractiveDriver {
   }
 
   async dispatch(rec: TaskRecord & { cwd?: string; model?: string }): Promise<void> {
-    await this.ensureHandshake();
-    const c = this.client!;
-    const { threadId } = await c.startThread({
-      cwd: rec.cwd ?? process.cwd(),
-      model: rec.model,
-      sandbox: "workspace-write",
-    });
-    this.threadByTask.set(rec.id, threadId);
-    this.taskByThread.set(threadId, rec.id);
-    this.deps.emit({ type: "task.session", id: rec.id, resumeRef: threadId });
-    this.deps.emit({ type: "task.started", id: rec.id });
+    try {
+      const c = await this.ensureClient();
+      await withTimeout(this.ensureHandshake(), 10_000, "handshake timed out");
+      const { threadId } = await c.startThread({
+        cwd: rec.cwd ?? process.cwd(),
+        model: rec.model,
+        sandbox: "workspace-write",
+      });
+      this.threadByTask.set(rec.id, threadId);
+      this.taskByThread.set(threadId, rec.id);
+      this.deps.emit({ type: "task.session", id: rec.id, resumeRef: threadId });
+      this.deps.emit({ type: "task.started", id: rec.id });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.deps.emit({ type: "task.failed", id: rec.id, error: `handshake/start failed: ${msg}` });
+      throw e;
+    }
   }
 
   async say(taskId: string, text: string): Promise<void> {
@@ -129,4 +135,14 @@ export class CodexInteractiveDriver {
       });
     }
   }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
 }

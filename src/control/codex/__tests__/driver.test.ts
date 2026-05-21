@@ -40,4 +40,21 @@ describe("CodexInteractiveDriver.dispatch", () => {
       { type: "task.started", id: "t1" },
     ]);
   });
+
+  it("if initialize rejects, emits task.failed with a clear handshake error", async () => {
+    const client = fakeClient();
+    client.initialize = vi.fn().mockRejectedValue(new Error("Not initialized"));
+    const events: any[] = [];
+    const drv = new CodexInteractiveDriver({
+      makeClient: () => client,
+      emit: (ev) => events.push(ev),
+    });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+    } as any).catch(() => {});
+    expect(events.some((e) => e.type === "task.failed" && /handshake/i.test(e.error))).toBe(true);
+  });
 });
