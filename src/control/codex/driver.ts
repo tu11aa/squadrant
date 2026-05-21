@@ -115,7 +115,19 @@ export class CodexInteractiveDriver {
 
   private onServerRequest(r: { id: number; method: string; params?: any }): void {
     const tid = r.params?.threadId ?? r.params?.thread_id;
-    const taskId = tid ? this.taskByThread.get(tid) : undefined;
+    let taskId = tid ? this.taskByThread.get(tid) : undefined;
+    if (!taskId && !tid) {
+      // Codex approval-shaped server-requests don't reliably carry threadId.
+      // Fall back to the sole active task if exactly one exists; otherwise drop.
+      if (this.taskByThread.size === 1) {
+        taskId = this.taskByThread.values().next().value;
+      } else {
+        process.stderr.write(
+          `[codex/driver] serverRequest ${r.method} dropped: no threadId and ${this.taskByThread.size} active tasks\n`,
+        );
+        return;
+      }
+    }
     if (!taskId) return;
     this.serverRequestByTask.set(taskId, r.id);
     const isApproval = r.method.includes("Approval") || r.method.includes("approval");
