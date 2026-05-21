@@ -7,6 +7,7 @@ import { sendRequest } from "../control/protocol.js";
 import { ensureDaemon } from "../control/launchd.js";
 import type { Mode, Provider, TaskRecord } from "../control/types.js";
 import { crewAttachCommand } from "./crew-attach.js";
+import { crewChatCommand } from "./crew-chat.js";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 
@@ -30,7 +31,7 @@ export function buildStatusRequest(project: string, id: string) {
   return { kind: "status" as const, project, id };
 }
 
-async function call(req: unknown): Promise<unknown> {
+export async function cockpitdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
@@ -68,7 +69,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--cwd <dir>", "working dir for the crew (project/worktree); required for codex to edit code")
     .action(async (project: string, task: string, opts: { provider: Provider; mode: Mode; cwd?: string }) => {
       const req = buildDispatchRequest({ project, task, provider: opts.provider, mode: opts.mode, cwd: opts.cwd });
-      const r = await call(req);
+      const r = await cockpitdCall(req);
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -76,7 +77,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .command("status <project> <id>")
     .description("Read a control-plane task's state")
     .action(async (project: string, id: string) => {
-      const r = await call(buildStatusRequest(project, id));
+      const r = await cockpitdCall(buildStatusRequest(project, id));
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -84,7 +85,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .command("tasks <project>")
     .description("List control-plane tasks for a project (control-plane analogue of legacy `list`)")
     .action(async (project: string) => {
-      const r = await call({ kind: "list", project });
+      const r = await cockpitdCall({ kind: "list", project });
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -95,7 +96,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .description("Reply to a blocked control-plane task (delivery deferred)")
     .action(async (project: string, id: string, message: string) => {
       process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
-      const r = await call({ kind: "reply", project, id, message });
+      const r = await cockpitdCall({ kind: "reply", project, id, message });
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -109,6 +110,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     });
 
   crew.addCommand(crewAttachCommand);
+  crew.addCommand(crewChatCommand);
 }
 
 // Standalone control-plane-only command (kept for back-compat / direct use;
