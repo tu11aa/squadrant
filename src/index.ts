@@ -25,6 +25,7 @@ import { runtimeCommand } from "./commands/runtime.js";
 import { workspaceCommand } from "./commands/workspace.js";
 import { trackerCommand } from "./commands/tracker.js";
 import { notifyCommand } from "./commands/notify.js";
+import { notifyRelayCommand } from "./commands/notify-relay.js";
 import { projectionCommand } from "./commands/projection.js";
 import { codexChatSmokeCommand } from "./commands/codex-chat-smoke.js";
 
@@ -73,6 +74,7 @@ program.addCommand(runtimeCommand);
 program.addCommand(workspaceCommand);
 program.addCommand(trackerCommand);
 program.addCommand(notifyCommand);
+program.addCommand(notifyRelayCommand);
 program.addCommand(projectionCommand);
 program.addCommand(codexChatSmokeCommand);
 

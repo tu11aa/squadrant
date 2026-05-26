@@ -44,6 +44,17 @@ export interface ServerCallbacks {
   onAttachInbound?: (conn: NetConn, frame: AttachInbound) => void;
   /** Called when a claimed attach connection closes. */
   onAttachClose?: (conn: NetConn) => void;
+  /**
+   * Called once when a connection sends {op:"subscribe-notify",project}.
+   * The conn is claimed for push-broadcast (no further inbound frames are
+   * expected on it). See #111: cmux's CLI rejects any caller not in cmux's
+   * process tree, so the daemon (launchd) can't shell out to cmux send;
+   * instead it broadcasts push frames here and an in-cmux relay tab forwards
+   * them to the captain pane.
+   */
+  onSubscribeNotify?: (conn: NetConn, frame: { op: "subscribe-notify"; project: string }) => void;
+  /** Called when a claimed notify-subscriber connection closes. */
+  onSubscribeNotifyClose?: (conn: NetConn) => void;
 }
 
 /**
@@ -68,7 +79,7 @@ export function startServer(
     typeof handlerOrCallbacks === "function"
       ? { handler: handlerOrCallbacks }
       : handlerOrCallbacks;
-  const { handler, onAttach, onAttachInbound, onAttachClose } = callbacks;
+  const { handler, onAttach, onAttachInbound, onAttachClose, onSubscribeNotify, onSubscribeNotifyClose } = callbacks;
 
   if (existsSync(sockPath)) {
     try { unlinkSync(sockPath); } catch { /* stale socket */ }
@@ -76,16 +87,18 @@ export function startServer(
   const server = createServer((conn) => {
     const dec = createDecoder();
     conn.setEncoding("utf-8");
-    let attachClaimed = false;
+    let claimType: "none" | "attach" | "notify" = "none";
 
     conn.on("data", async (chunk: string) => {
       for (const msg of dec.push(chunk)) {
         // If already claimed by attach, route all frames to the inbound handler.
-        if (attachClaimed) {
+        if (claimType === "attach") {
           onAttachInbound?.(conn, msg as AttachInbound);
           continue;
         }
-        // Check if this is an attach-claim frame BEFORE falling through to req/res.
+        // Notify subscribers send no inbound frames; ignore any that slip through.
+        if (claimType === "notify") continue;
+        // Check for attach-claim frame BEFORE falling through to req/res.
         if (
           onAttach &&
           msg != null &&
@@ -93,8 +106,20 @@ export function startServer(
           (msg as any).op === "attach" &&
           typeof (msg as any).taskId === "string"
         ) {
-          attachClaimed = true;
+          claimType = "attach";
           onAttach(conn, msg as { op: "attach"; taskId: string });
+          continue;
+        }
+        // Check for subscribe-notify-claim frame (#111).
+        if (
+          onSubscribeNotify &&
+          msg != null &&
+          typeof msg === "object" &&
+          (msg as any).op === "subscribe-notify" &&
+          typeof (msg as any).project === "string"
+        ) {
+          claimType = "notify";
+          onSubscribeNotify(conn, msg as { op: "subscribe-notify"; project: string });
           continue;
         }
         // Normal request/response path.
@@ -109,7 +134,8 @@ export function startServer(
     });
     conn.on("error", () => { /* client vanished; ignore */ });
     conn.on("close", () => {
-      if (attachClaimed) onAttachClose?.(conn);
+      if (claimType === "attach") onAttachClose?.(conn);
+      else if (claimType === "notify") onSubscribeNotifyClose?.(conn);
     });
   });
   server.on("error", onListenError); // never let a server error become uncaughtException
@@ -156,6 +182,8 @@ export type AttachFrame =
   | { type: "gate-promoted"; taskId: string; gateId: string }
   | { type: "reattached"; taskId: string }
   | { type: "closed"; taskId: string; reason: string }
+  // #111: pushed by daemon to subscribe-notify claimants.
+  | { type: "push"; project: string; message: string; ts: number }
   | { type: "_keepalive" };
 
 export type AttachInbound =
