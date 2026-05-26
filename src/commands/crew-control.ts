@@ -4,9 +4,10 @@ import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest } from "../control/protocol.js";
 import { ensureDaemon } from "../control/launchd.js";
-import type { Mode, Provider, TaskRecord } from "../control/types.js";
+import type { ControlEvent, Mode, Provider, TaskRecord } from "../control/types.js";
 import { mapClaudeHookToEvent } from "../control/interactive/claude.js";
 import { crewAttachCommand } from "./crew-attach.js";
 import { crewChatCommand } from "./crew-chat.js";
@@ -106,6 +107,53 @@ export async function cockpitdCall(req: unknown): Promise<unknown> {
 }
 
 /**
+ * Build an explicit terminal/blocked event request from a crew's `signal`
+ * verb. Reads `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT` from env so
+ * the crew template can run e.g. `cockpit crew signal done --message "…"`
+ * without having to know its own task id or project.
+ *
+ * Anti-#2576 invariant lives at the OTHER end (the hook bridge in
+ * `_hook`). This builder is the *explicit* path: a crew running this verb
+ * has *intentionally* declared terminal state after its own settle-check.
+ */
+export function buildSignalRequest(
+  signal: "done" | "blocked" | "failed",
+  o: {
+    message?: string;
+    question?: string;
+    error?: string;
+    /** Injectable for tests; defaults to writing under ~/.config/cockpit/state/_results. */
+    writeResult?: (id: string, payload: string) => string;
+  },
+): { kind: "event"; project: string; event: ControlEvent } {
+  const taskId = process.env.COCKPIT_CREW_TASK_ID;
+  const project = process.env.COCKPIT_CREW_PROJECT;
+  if (!taskId)
+    throw new Error("not running under a crew (COCKPIT_CREW_TASK_ID unset)");
+  if (!project)
+    throw new Error("not running under a crew (COCKPIT_CREW_PROJECT unset)");
+  let event: ControlEvent;
+  if (signal === "done") {
+    const resultRef = o.writeResult ? o.writeResult(taskId, o.message ?? "") : "";
+    event = { type: "task.done", id: taskId, resultRef };
+  } else if (signal === "blocked") {
+    event = { type: "task.blocked", id: taskId, reason: "crew signaled blocked", question: o.question ?? "" };
+  } else {
+    event = { type: "task.failed", id: taskId, error: o.error ?? "crew signaled failed" };
+  }
+  return { kind: "event", project, event };
+}
+
+/** Default writer used by the `signal done` subcommand. Tests inject their own. */
+function defaultWriteResult(id: string, payload: string): string {
+  const dir = join(homedir(), ".config", "cockpit", "state", "_results");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${id}.txt`);
+  writeFileSync(file, payload);
+  return file;
+}
+
+/**
  * Attach the control-plane verbs onto an existing `cockpit crew` command so
  * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
  * The control-plane task listing is `tasks` (not `list`) to avoid colliding
@@ -192,6 +240,35 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         // a non-zero exit would block the conversation.
       }
       process.exit(0);
+    });
+
+  // The explicit done/blocked/failed signal — the anti-#2576 escape from
+  // liveness-only Stop hooks. The crew runs this AFTER its own settle-check
+  // (git status clean, etc.) to declare terminal state to the captain.
+  crew
+    .command("signal <state>")
+    .description("Emit explicit terminal signal from a crew session: done|blocked|failed (reads COCKPIT_CREW_* env)")
+    .option("--message <m>", "Summary written to resultRef (done)")
+    .option("--question <q>", "Question to surface to captain (blocked)")
+    .option("--error <e>", "Error message (failed)")
+    .action(async (state: string, opts: { message?: string; question?: string; error?: string }) => {
+      if (state !== "done" && state !== "blocked" && state !== "failed") {
+        process.stderr.write(`unknown signal '${state}' (expected: done|blocked|failed)\n`);
+        process.exit(2);
+      }
+      try {
+        const req = buildSignalRequest(state as "done" | "blocked" | "failed", {
+          ...(opts.message !== undefined ? { message: opts.message } : {}),
+          ...(opts.question !== undefined ? { question: opts.question } : {}),
+          ...(opts.error !== undefined ? { error: opts.error } : {}),
+          writeResult: defaultWriteResult,
+        });
+        await cockpitdCall(req);
+        process.exit(0);
+      } catch (e) {
+        process.stderr.write(`${(e as Error).message}\n`);
+        process.exit(1);
+      }
     });
 
   crew.addCommand(crewAttachCommand);
