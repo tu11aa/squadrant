@@ -167,6 +167,36 @@ function buildAgentCmd(
   });
 }
 
+const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
+
+/**
+ * #111: idempotently add the notify-relay tab to a captain workspace. The
+ * relay subscribes to daemon push notifications for <project> and forwards
+ * each one to the captain pane via the runtime driver — required because
+ * cmux refuses any caller not descended from its app process, so the daemon
+ * itself cannot deliver. Safe to call repeatedly; skips if the tab already
+ * exists.
+ */
+async function ensureNotifyRelayTab(
+  runtime: RuntimeDriver,
+  workspaceId: string,
+  project: string,
+): Promise<void> {
+  try {
+    const surfaces = await runtime.listSurfaces(workspaceId);
+    if (surfaces.some((s) => s.title === NOTIFY_RELAY_TAB_TITLE)) return;
+    const pane = await runtime.newPane({
+      workspaceId,
+      direction: "tab",
+      title: NOTIFY_RELAY_TAB_TITLE,
+    });
+    await runtime.sendToPane(pane, `cockpit notify-relay ${project}`);
+    console.log(chalk.cyan(`  ✔ Added notify-relay tab for '${project}'`));
+  } catch (e) {
+    console.error(chalk.yellow(`  ⚠ notify-relay tab setup failed: ${(e as Error).message}`));
+  }
+}
+
 async function launchWorkspace(
   runtime: RuntimeDriver,
   name: string,
@@ -176,6 +206,7 @@ async function launchWorkspace(
   forceFresh = false,
   pinToTop = false,
   initialPrompt?: string,
+  notifyRelayProject?: string,
 ): Promise<void> {
   ensureCmuxReady();
 
@@ -185,6 +216,7 @@ async function launchWorkspace(
     await runtime.stop(existing.id);
   } else if (existing) {
     console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
+    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing.id, notifyRelayProject);
     // TODO(runtime): select/focus not yet abstracted; direct cmux call retained intentionally
     execSync(`"${CMUX_BIN}" select-workspace --workspace "${existing.id}"`);
     return;
@@ -210,6 +242,8 @@ async function launchWorkspace(
       runtime.send(ref.id, initialPrompt).catch(() => { /* best-effort */ });
     }, 3000);
   }
+
+  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref.id, notifyRelayProject);
 
   if (navigate) {
     // TODO(runtime): select not yet abstracted
@@ -285,7 +319,11 @@ export const launchCommand = new Command("launch")
         : runtimes.global(config);
 
       try {
-        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt);
+        // #111: only captain workspaces need the notify-relay tab — they're the
+        // ones that receive crew terminal-event push notifications. Reactor and
+        // command don't supervise crews.
+        const notifyRelayProject = role === "captain" ? projectName : undefined;
+        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt, notifyRelayProject);
       } catch (err) {
         console.error(chalk.red(`  ✘ Failed: ${(err as Error).message}`));
       }
