@@ -153,10 +153,23 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       });
     },
     launchInteractive: async (rec) => {
-      if (rec.provider !== "codex") {
-        throw new Error(`interactive mode is not yet implemented for provider '${rec.provider}'; only 'codex' is supported`);
+      if (rec.provider === "codex") {
+        await codexDriver.dispatch(rec as any);
+        return;
       }
-      await codexDriver.dispatch(rec as any);
+      if (rec.provider === "claude") {
+        // Claude interactive crews run in a cmux tab — the daemon does NOT
+        // own a Claude process. The tab does the actual launch. The daemon's
+        // only role for Claude is the state ledger: emit task.started so the
+        // record transitions submitted → working, then wait for task.progress
+        // / task.done events from the injected hook bridge + explicit
+        // `cockpit crew signal` (see claude-interactive spec, §4.4).
+        ingest(rec.project)({ type: "task.started", id: rec.id });
+        return;
+      }
+      throw new Error(
+        `interactive mode is not yet implemented for provider '${rec.provider}'; only 'codex' and 'claude' are supported`,
+      );
     },
     resolveInteractiveGate: async (taskId, payload) => {
       try { await codexDriver.answer(taskId, payload); }
