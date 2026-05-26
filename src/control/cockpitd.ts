@@ -1,7 +1,7 @@
 // src/control/cockpitd.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { spawn as realSpawn } from "node:child_process";
+import { spawn as realSpawn, execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createStore } from "./store.js";
@@ -19,6 +19,13 @@ export interface CockpitdOpts {
   sweepMs?: number; // 0 disables the interval (tests)
   isPidAlive?: (pid: number) => boolean; // injectable for the headless reconcile path (tests)
   spawn?: typeof realSpawn;
+  /**
+   * Push-notification hook (#109). Defaults to shelling out to
+   * `cockpit runtime send <project> <message>` (which already does the
+   * project→captain workspace lookup via NotifierRegistry + config).
+   * Tests inject a fake to assert call shape without spawning.
+   */
+  notify?: (args: { project: string; message: string }) => Promise<void> | void;
   /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
   codexDriver?: import("./codex/driver.js").CodexInteractiveDriver | {
     dispatch: (rec: any) => Promise<void>;
@@ -144,8 +151,27 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const ingest = (project: string) => (e: import("./types.js").ControlEvent) =>
     void d.handle({ kind: "event", project, event: e });
 
+  // Default push-notification wiring (#109): shell out to the existing
+  // `cockpit runtime send <project> <msg>` which resolves <project> →
+  // captainName via the loaded config and writes to the cmux pane. This
+  // reuses the production code path (config lookup + cmux driver) without
+  // re-implementing it inside the daemon. The daemon already wraps the
+  // call in try/catch+swallow, so a failed shell-out can never break the
+  // event-ingest path; we additionally log for diagnostics.
+  const defaultNotify = (args: { project: string; message: string }): void => {
+    try {
+      execFileSync("cockpit", ["runtime", "send", args.project, args.message], {
+        encoding: "utf-8",
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (e) {
+      log(`notify failed project=${args.project}: ${(e as Error).message}`);
+    }
+  };
+  const notify = opts.notify ?? defaultNotify;
+
   const d = createDaemon({
-    store, now: () => Date.now(), isPidAlive,
+    store, now: () => Date.now(), isPidAlive, notify,
     launchHeadless: async (rec) => {
       await runHeadless({
         provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
