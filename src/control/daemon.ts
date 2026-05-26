@@ -1,6 +1,6 @@
 // src/control/daemon.ts
 import type { Store } from "./store.js";
-import type { ControlEvent, TaskRecord } from "./types.js";
+import type { ControlEvent, TaskRecord, TaskState } from "./types.js";
 import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
 
@@ -24,6 +24,60 @@ export interface DaemonDeps {
    * resolution payload back to the interactive session (spec §4.9).
    */
   resolveInteractiveGate?: (taskId: string, payload: unknown) => Promise<void> | void;
+  /**
+   * Push notification hook (#109). Called on every state transition into
+   * {done, blocked, failed, stalled}. The implementation in cockpitd shells
+   * out to the runtime so the captain's pane shows the message inline.
+   * Errors are caught + swallowed here so an unhealthy notifier never
+   * breaks the event-ingest path.
+   */
+  notify?: (args: { project: string; message: string }) => Promise<void> | void;
+}
+
+const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled"]);
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
+function formatMessage(rec: TaskRecord): string | null {
+  const tag = `[${rec.provider}/${shortId(rec.id)}]`;
+  switch (rec.state) {
+    case "done": {
+      // Spec: "<resultRef-content-first-line-or-the-task-snippet>".
+      // resultRef content lives on disk; for daemon-purity we don't read it
+      // here. The task snippet is the documented fallback and gives the
+      // captain enough context to know which crew finished.
+      const snippet = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
+      return `CREW DONE ${tag}: ${snippet}`;
+    }
+    case "blocked":
+      return `CREW BLOCKED ${tag}: ${(rec.question ?? "(no question)").trim()}`;
+    case "failed":
+      return `CREW FAILED ${tag}: ${(rec.error ?? "(no error)").trim()}`;
+    case "stalled":
+      return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
+    default:
+      return null;
+  }
+}
+
+function firePush(deps: DaemonDeps, project: string, prev: TaskState, next: TaskRecord): void {
+  if (!deps.notify) return;
+  if (prev === next.state) return;
+  if (!ATTENTION_STATES.has(next.state)) return;
+  const message = formatMessage(next);
+  if (!message) return;
+  // Fire-and-forget; swallow errors so the daemon never trips on a flaky
+  // notifier. Sync throws and async rejections both land here.
+  try {
+    const r = deps.notify({ project, message });
+    if (r && typeof (r as Promise<void>).catch === "function") {
+      (r as Promise<void>).catch(() => {});
+    }
+  } catch {
+    // intentionally swallowed
+  }
 }
 
 type Req =
@@ -74,7 +128,10 @@ export function createDaemon(deps: DaemonDeps) {
           const cur = store.get(req.project, req.event.id);
           if (!cur) throw new Error(`unknown task ${req.event.id}`);
           const next = reduce(cur, req.event, now());
-          if (next !== cur) store.put(next); // skip redundant write on terminal no-ops
+          if (next !== cur) {
+            store.put(next); // skip redundant write on terminal no-ops
+            firePush(deps, req.project, cur.state, next);
+          }
           return next;
         }
         case "status": {
@@ -114,7 +171,7 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       for (const r of store.listAll()) {
         const stalled = evaluateStall(r, t);
-        if (stalled) { store.put(stalled); continue; }
+        if (stalled) { store.put(stalled); firePush(deps, r.project, r.state, stalled); continue; }
         const recovered = recoverStall(r, t);
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
@@ -126,12 +183,16 @@ export function createDaemon(deps: DaemonDeps) {
         if (r.state !== "working" && r.state !== "submitted") continue;
         if (r.mode === "headless") {
           if (r.pid != null && alive(r.pid)) continue; // still running, keep watching
-          store.put({
+          const failed: TaskRecord = {
             ...r, state: "failed", lastEvent: "reconcile",
             error: "orphaned by daemon restart; exit unobserved (conservative fail)",
-          });
+          };
+          store.put(failed);
+          firePush(deps, r.project, r.state, failed);
         } else {
-          store.put({ ...r, state: "stalled", lastEvent: "reconcile" });
+          const stalled: TaskRecord = { ...r, state: "stalled", lastEvent: "reconcile" };
+          store.put(stalled);
+          firePush(deps, r.project, r.state, stalled);
         }
       }
     },
