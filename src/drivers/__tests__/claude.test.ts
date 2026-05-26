@@ -59,6 +59,17 @@ describe("claude driver", () => {
     expect(cmd).toContain("--append-system-prompt-file /tmp/captain.claude.md");
   });
 
+  it("adds --settings when settingsPath specified", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      interactive: true,
+      settingsPath: "/tmp/per-crew/settings.json",
+    });
+    expect(cmd).toContain("--settings /tmp/per-crew/settings.json");
+  });
+
   it("probes and reports capabilities", async () => {
     const result = await driver.probe();
     expect(result.installed).toBe(true);

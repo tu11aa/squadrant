@@ -28,6 +28,11 @@ export interface SpawnOptions {
   // command (no `-p`). Caller will deliver the prompt via runtime.send after
   // the CLI is ready, so the session stays alive between turns.
   interactive?: boolean;
+  // Per-invocation settings file (Claude's --settings flag). The
+  // daemon-supervised claude crew spawn writes a per-crew settings.json
+  // containing the cockpit Stop hook and passes the path here so the hook
+  // is scoped to this session only (no global ~/.claude/settings.json edit).
+  settingsPath?: string;
 }
 
 export interface AgentResult {

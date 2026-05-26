@@ -42,6 +42,10 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --append-system-prompt-file ${opts.promptFile}`;
       }
 
+      if (opts.settingsPath) {
+        cmd += ` --settings ${opts.settingsPath}`;
+      }
+
       // Load cockpit plugin for skills
       const pluginDir = `${process.env.HOME}/.config/cockpit/plugin`;
       cmd += ` --plugin-dir ${pluginDir}`;
