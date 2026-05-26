@@ -237,7 +237,7 @@ A captain spawns a crew: `cockpit crew spawn alpha "fix the typo in README.md" -
 - **Does not depend on** #87 (protocol schema validation), #92 (`PROTOCOL_VERSION`), #94 (keepalive framing). No new socket verbs — uses existing `{kind:"event"}` and `{kind:"dispatch"}`.
 - **Follow-up spec:** captain-ops migration (consume `cockpit crew status` instead of `crew read` polling).
 - **Follow-up spec:** `task.done` payload schema (today: free-text `resultRef`. Future: structured `{summary, branch, commits[]}` so reactor/Telegram can render nicely without re-parsing).
-- **Open question, decided by Plan Task 1's CLI probe:** which Claude CLI flag enables per-crew settings (`--settings <path>` vs project-scoped `.claude/settings.json` via `cd`). This spec assumes `--settings`; if the probe fails the plan adjusts mechanically.
+- **~~Open question, decided by Plan Task 1's CLI probe:~~ RESOLVED 2026-05-26:** `claude --help` confirms `--settings <file-or-json>` is supported on the local CLI (claude-cli probe via `probeClaudeSettingsFlag()` returns `"flag"`). All subsequent tasks use the happy path: per-invocation `--settings <per-crew-file>`. The `"project-dir"` fallback branch in the plan is dead code for this implementation.
 
 ---
 
