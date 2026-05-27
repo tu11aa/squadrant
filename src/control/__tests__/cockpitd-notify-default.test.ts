@@ -80,6 +80,32 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     expect(lines.map((l) => l.seq)).toEqual([1, 2, 3]);
   });
 
+  it("rotates oversize mailbox files automatically via background timer", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const handle = startCockpitd({
+      stateRoot,
+      sockPath: sock,
+      sweepMs: 0,
+      rotationIntervalMs: 50,
+      mailboxConfig: { maxBytes: 100, maxAgeMs: 999_999_999, keepCount: 3 },
+    });
+    stop = handle.stop;
+
+    for (let i = 0; i < 5; i++) {
+      const id = `task-rot-${i}`;
+      await sendRequest(sock, { kind: "seed", record: seedRec(id) });
+      await sendRequest(sock, {
+        kind: "event",
+        project: "p",
+        event: { type: "task.done", id, resultRef: `/tmp/r${i}` },
+      });
+    }
+    await new Promise((r) => setTimeout(r, 250));
+    expect(existsSync(join(stateRoot, "inbox", "p.log.1"))).toBe(true);
+  });
+
   it("does not crash when no captain is reachable (no subprocess invoked)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");

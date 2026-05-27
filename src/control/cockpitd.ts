@@ -10,7 +10,8 @@ import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver } from "./codex/driver.js";
 import { makeGate } from "./codex/gate.js";
-import { appendToMailbox } from "./mailbox.js";
+import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
+import { readdir } from "node:fs/promises";
 import type { Gate, TaskRecord, ControlEvent } from "./types.js";
 import type { Socket } from "node:net";
 
@@ -32,6 +33,14 @@ export interface CockpitdOpts {
     record: TaskRecord;
     event: ControlEvent;
   }) => Promise<void> | void;
+  /** Background rotation timer interval (ms). 0 disables. Default 60_000. */
+  rotationIntervalMs?: number;
+  /** Mailbox rotation thresholds (size/age/retention). */
+  mailboxConfig?: {
+    maxBytes?: number;
+    maxAgeMs?: number;
+    keepCount?: number;
+  };
   /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
   codexDriver?: import("./codex/driver.js").CodexInteractiveDriver | {
     dispatch: (rec: any) => Promise<void>;
