@@ -132,3 +132,30 @@ export async function writeCursor(opts: CursorOpts & { lastAckedSeq: number }): 
   }
   await fs.rename(tmp, dest);
 }
+
+interface ReadFromCursorOpts {
+  stateRoot: string;
+  project: string;
+  fromSeq: number;
+}
+
+export async function* readFromCursor(opts: ReadFromCursorOpts): AsyncIterable<MailboxEntry> {
+  const file = logPath(opts.stateRoot, opts.project);
+  let buf: string;
+  try {
+    buf = await fs.readFile(file, "utf-8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw e;
+  }
+  for (const line of buf.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: MailboxEntry;
+    try {
+      entry = JSON.parse(line) as MailboxEntry;
+    } catch {
+      continue;
+    }
+    if (entry.seq >= opts.fromSeq) yield entry;
+  }
+}

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox } from "../mailbox.js";
 import { readCursor, writeCursor } from "../mailbox.js";
+import { readFromCursor } from "../mailbox.js";
 import type { TaskRecord, ControlEvent } from "../types.js";
 
 function freshState(): string {
@@ -132,5 +133,44 @@ describe("cursor read/write", () => {
     const tg = await readCursor({ stateRoot, project: "demo", subscriber: "telegram" });
     expect(cap?.lastAckedSeq).toBe(10);
     expect(tg?.lastAckedSeq).toBe(5);
+  });
+});
+
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iter) out.push(item);
+  return out;
+}
+
+describe("readFromCursor", () => {
+  it("returns empty iterable when file does not exist", async () => {
+    const stateRoot = freshState();
+    const items = await collect(readFromCursor({ stateRoot, project: "demo", fromSeq: 1 }));
+    expect(items).toEqual([]);
+  });
+
+  it("returns all entries with seq >= fromSeq", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const items = await collect(readFromCursor({ stateRoot, project: "demo", fromSeq: 2 }));
+    expect(items.map((i) => i.seq)).toEqual([2, 3]);
+  });
+
+  it("skips entries with seq < fromSeq", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const items = await collect(readFromCursor({ stateRoot, project: "demo", fromSeq: 100 }));
+    expect(items).toEqual([]);
+  });
+
+  it("tolerates a partial last line (mid-write crash)", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const file = join(stateRoot, "inbox", "demo.log");
+    await (await import("node:fs/promises")).appendFile(file, '{"seq":2,"ts":"2026', "utf-8");
+    const items = await collect(readFromCursor({ stateRoot, project: "demo", fromSeq: 1 }));
+    expect(items.map((i) => i.seq)).toEqual([1]);
   });
 });
