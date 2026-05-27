@@ -6,10 +6,10 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay } from "../notify-relay.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT } from "../notify-relay.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
 function freshState(): string {
@@ -41,6 +41,16 @@ function fakeRuntime(sendSpy: ReturnType<typeof vi.fn>): unknown {
     ]),
   };
 }
+
+describe("notify-relay default stateRoot", () => {
+  it("matches the daemon's default stateRoot so writer/reader agree", () => {
+    // Daemon writes mailbox to <homedir>/.config/cockpit/state/inbox/<project>.log
+    // (see src/control/cockpitd.ts startCockpitd). The relay's default MUST
+    // resolve to the same root, otherwise no events are ever delivered.
+    const daemonDefault = join(homedir(), ".config", "cockpit", "state");
+    expect(DEFAULT_STATE_ROOT).toBe(daemonDefault);
+  });
+});
 
 describe("notify-relay file-tailer", () => {
   it("starts from seq 1 when cursor missing — delivers first event", async () => {

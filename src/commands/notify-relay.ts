@@ -21,7 +21,7 @@ import {
   type MailboxEntry,
 } from "../control/mailbox.js";
 
-const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit");
+export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
 
 function shortId(id: string): string {
   return id.slice(0, 8);
