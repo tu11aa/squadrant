@@ -2,7 +2,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn as realSpawn } from "node:child_process";
-import { writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createStore } from "./store.js";
 import { createDaemon } from "./daemon.js";
@@ -22,10 +22,10 @@ export interface CockpitdOpts {
   isPidAlive?: (pid: number) => boolean; // injectable for the headless reconcile path (tests)
   spawn?: typeof realSpawn;
   /**
-   * Push-notification hook (#109). Defaults to shelling out to
-   * `cockpit runtime send <project> <message>` (which already does the
-   * project→captain workspace lookup via NotifierRegistry + config).
-   * Tests inject a fake to assert call shape without spawning.
+   * Push-notification hook (#109). Defaults to appending a structured event
+   * to the mailbox file at <stateRoot>/inbox/<project>.log; an injector
+   * process inside the captain workspace tails the file and delivers entries
+   * to the captain pane. Tests inject a fake to assert call shape.
    */
   notify?: (args: {
     project: string;
@@ -78,33 +78,6 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // Per-task set of live attach connections. Populated in onAttach, cleaned up
   // in onAttachClose. Not exposed outside this closure.
   const attachConns = new Map<string, Set<Socket>>();
-
-  // ── Notify subscribers (#111) ────────────────────────────────────────────
-  // Per-project set of live subscribe-notify connections. The daemon cannot
-  // shell out to `cmux send` directly because cmux refuses any caller not
-  // descended from its app process; instead it pushes frames here and an
-  // in-cmux relay tab (cockpit notify-relay) forwards to the captain pane.
-  const notifySubs = new Map<string, Set<Socket>>();
-  const inboxDir = join(stateRoot, "..", "inbox");
-  mkdirSync(inboxDir, { recursive: true });
-  function pushNotify(project: string, message: string): void {
-    const ts = Date.now();
-    // Durable record (debug/inspection) — even if no subscriber is live, the
-    // file persists what would have been delivered.
-    try {
-      const line = `${new Date(ts).toISOString()}\t${message.replace(/\n/g, " ")}\n`;
-      appendFileSync(join(inboxDir, `${project}.log`), line);
-    } catch (e) {
-      log(`inbox append failed project=${project}: ${(e as Error).message}`);
-    }
-    // Live broadcast to any subscribed relay.
-    const conns = notifySubs.get(project);
-    if (!conns || conns.size === 0) return;
-    const wire = encodeFrame({ type: "push", project, message, ts });
-    for (const conn of conns) {
-      try { conn.write(wire); } catch { /* relay vanished; close handler will clean up */ }
-    }
-  }
 
   function broadcast(taskId: string, f: AttachFrame): void {
     const conns = attachConns.get(taskId);
@@ -215,9 +188,6 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     } catch (e) {
       log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
     }
-    // Legacy push-frame broadcast preserved for PR #112's relay tab during the
-    // bridge state. Removed in Task 8 once the file-tailer injector replaces it.
-    pushNotify(args.project, args.message);
   };
   const notify = opts.notify ?? defaultNotify;
 
@@ -300,15 +270,6 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       // Remove the conn from every task's set (the conn only exists in one set,
       // but a linear scan over a small map is fine).
       for (const set of attachConns.values()) set.delete(conn);
-    },
-    onSubscribeNotify: (conn, frame) => {
-      let set = notifySubs.get(frame.project);
-      if (!set) { set = new Set(); notifySubs.set(frame.project, set); }
-      set.add(conn);
-      log(`notify subscribed project=${frame.project}`);
-    },
-    onSubscribeNotifyClose: (conn) => {
-      for (const set of notifySubs.values()) set.delete(conn);
     },
   });
   log(`started pid=${process.pid} sock=${sockPath} stateRoot=${stateRoot}`);
