@@ -1,125 +1,139 @@
 // src/commands/__tests__/notify-relay.test.ts
 //
-// #111: the in-cmux relay subscribes to the daemon and forwards each pushed
-// message to the project's captain via the runtime driver. This test stands
-// up a one-shot daemon-like UDS server, runs the relay against it, and
-// asserts each push frame produces a matching driver.send() call.
+// Mailbox-injector refactor: notify-relay is now a file tailer that reads
+// from the per-project mailbox using a per-subscriber cursor, then forwards
+// each delivered event to the captain's surface via the runtime driver.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, type Server, type Socket } from "node:net";
+import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
 import { runNotifyRelay } from "../notify-relay.js";
-import { encodeMsg, createDecoder, encodeFrame } from "../../control/protocol.js";
-import type { AttachFrame } from "../../control/protocol.js";
+import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
-function startFakeDaemon(sockPath: string): { server: Server; firstConn: Promise<Socket>; subscribed: Promise<string> } {
-  let resolveFirst!: (s: Socket) => void;
-  let resolveSubscribed!: (p: string) => void;
-  const firstConn = new Promise<Socket>((r) => { resolveFirst = r; });
-  const subscribed = new Promise<string>((r) => { resolveSubscribed = r; });
-  const server = createServer((conn) => {
-    resolveFirst(conn);
-    const dec = createDecoder();
-    conn.setEncoding("utf-8");
-    conn.on("data", (chunk: string) => {
-      for (const msg of dec.push(chunk)) {
-        const m = msg as { op?: string; project?: string };
-        if (m.op === "subscribe-notify" && m.project) resolveSubscribed(m.project);
-      }
-    });
-  });
-  server.listen(sockPath);
-  return { server, firstConn, subscribed };
+function freshState(): string {
+  return mkdtempSync(join(tmpdir(), "nr-"));
 }
 
-describe("notify-relay (#111)", () => {
-  let dir: string;
-  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+const rec: TaskRecord = {
+  id: "deadbeefcafebabe1234567890abcdef",
+  project: "demo",
+  provider: "claude",
+  mode: "interactive",
+  state: "done",
+  task: "task body",
+  cwd: "/",
+  createdAt: 1,
+  lastHeartbeat: 1,
+  lastEvent: "task.done",
+  heartbeatBudgetMs: 60000,
+  attempts: [],
+};
+const doneEvent: ControlEvent = { type: "task.done", id: rec.id, resultRef: "/r" };
 
-  it("subscribes to the daemon for the given project and forwards each push to driver.send", async () => {
-    dir = mkdtempSync(join(tmpdir(), "cp-relay-"));
-    const sock = join(dir, "c.sock");
-    const fake = startFakeDaemon(sock);
+function fakeRuntime(sendSpy: ReturnType<typeof vi.fn>): unknown {
+  return {
+    sendToSurface: sendSpy,
+    status: vi.fn().mockResolvedValue({ id: "ws1", name: "captain", status: "running" }),
+    listSurfaces: vi.fn().mockResolvedValue([
+      { workspaceId: "ws1", surfaceId: "s1", title: "captain" },
+    ]),
+  };
+}
 
-    const sent: string[] = [];
-    // Run the relay against the fake daemon. opts.once = true makes it return
-    // after the daemon closes the connection (so the test can deterministically
-    // await completion).
-    const relayDone = runNotifyRelay("proj-x", {
-      sockPath: sock,
-      once: true,
-      resolve: async () => ({
-        captainName: "⚓ proj-x-captain",
-        send: async (msg) => { sent.push(msg); },
-      }),
-      log: () => { /* silence */ },
+describe("notify-relay file-tailer", () => {
+  it("starts from seq 1 when cursor missing — delivers first event", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
     });
-
-    // Wait until the relay has sent the subscribe-notify claim.
-    const project = await fake.subscribed;
-    expect(project).toBe("proj-x");
-
-    // Push three frames at the relay.
-    const conn = await fake.firstConn;
-    const push = (msg: string): void => {
-      const frame: AttachFrame = { type: "push", project: "proj-x", message: msg, ts: Date.now() };
-      conn.write(encodeFrame(frame));
-    };
-    push("CREW DONE [claude/abc12345]: done");
-    push("CREW BLOCKED [claude/def67890]: which db?");
-    push("CREW FAILED [claude/ghijklmn]: boom");
-
-    // Give the relay an event-loop turn or two to process all three.
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Close the conn so once-mode relay returns.
-    conn.end();
-    await relayDone;
-
-    expect(sent).toEqual([
-      "CREW DONE [claude/abc12345]: done",
-      "CREW BLOCKED [claude/def67890]: which db?",
-      "CREW FAILED [claude/ghijklmn]: boom",
-    ]);
-
-    fake.server.close();
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][1] as string).toContain("CREW DONE");
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
   });
 
-  it("ignores push frames for other projects", async () => {
-    dir = mkdtempSync(join(tmpdir(), "cp-relay-"));
-    const sock = join(dir, "c.sock");
-    const fake = startFakeDaemon(sock);
-
-    const sent: string[] = [];
-    const relayDone = runNotifyRelay("proj-a", {
-      sockPath: sock,
-      once: true,
-      resolve: async () => ({
-        captainName: "⚓ proj-a-captain",
-        send: async (msg) => { sent.push(msg); },
-      }),
-      log: () => { /* silence */ },
+  it("starts from seq+1 when cursor exists — delivers only newer events", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 1 });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
     });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    // Only seq 2 should be delivered.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(2);
+  });
 
-    await fake.subscribed;
-    const conn = await fake.firstConn;
+  it("does NOT advance cursor when sendToSurface throws", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    const sendSpy = vi.fn().mockRejectedValue(new Error("send failed"));
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor).toBeNull(); // never written
+    expect(sendSpy.mock.calls.length).toBeGreaterThan(0); // attempted
+  });
 
-    // Push frame for the WRONG project — relay should skip it.
-    conn.write(encodeFrame({ type: "push", project: "proj-b", message: "not mine", ts: 1 }));
-    // Push frame for the right project — relay should deliver it.
-    conn.write(encodeFrame({ type: "push", project: "proj-a", message: "mine", ts: 2 }));
-
-    await new Promise((r) => setTimeout(r, 50));
-    conn.end();
-    await relayDone;
-
-    expect(sent).toEqual(["mine"]);
-    fake.server.close();
+  it("formats task.done/blocked/failed with provider + short id + payload", async () => {
+    const stateRoot = freshState();
+    const blockedEvent: ControlEvent = {
+      type: "task.blocked",
+      id: rec.id,
+      question: "what now?",
+    } as ControlEvent;
+    const failedEvent: ControlEvent = {
+      type: "task.failed",
+      id: rec.id,
+      error: "boom",
+    } as ControlEvent;
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: blockedEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: failedEvent });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(sendSpy).toHaveBeenCalledTimes(3);
+    const msgs = sendSpy.mock.calls.map((c) => c[1] as string);
+    expect(msgs[0]).toMatch(/^CREW DONE \[claude\/deadbeef\]:/);
+    expect(msgs[1]).toMatch(/^CREW BLOCKED \[claude\/deadbeef\]: what now\?/);
+    expect(msgs[2]).toMatch(/^CREW FAILED \[claude\/deadbeef\]: boom/);
   });
 });
-
-// Sanity check on the encoder so the test's encodeMsg import isn't unused
-// (and to keep tree-shaking from dropping it).
-void encodeMsg;
