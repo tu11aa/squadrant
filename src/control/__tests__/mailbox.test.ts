@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox } from "../mailbox.js";
+import { readCursor, writeCursor } from "../mailbox.js";
 import type { TaskRecord, ControlEvent } from "../types.js";
 
 function freshState(): string {
@@ -96,5 +97,40 @@ describe("appendToMailbox", () => {
     expect(lines).toHaveLength(20);
     const seqs = lines.map((l) => JSON.parse(l).seq as number).sort((a, b) => a - b);
     expect(seqs).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+});
+
+describe("cursor read/write", () => {
+  it("readCursor returns null when file does not exist", async () => {
+    const stateRoot = freshState();
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c).toBeNull();
+  });
+
+  it("writeCursor then readCursor round-trips lastAckedSeq", async () => {
+    const stateRoot = freshState();
+    await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 42 });
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c?.lastAckedSeq).toBe(42);
+  });
+
+  it("writeCursor uses atomic rename (no leftover .tmp file)", async () => {
+    const stateRoot = freshState();
+    await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 1 });
+    await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 2 });
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c?.lastAckedSeq).toBe(2);
+    const tmpExists = existsSync(join(stateRoot, "inbox", "demo.captain.cursor.tmp"));
+    expect(tmpExists).toBe(false);
+  });
+
+  it("isolates cursors per subscriber", async () => {
+    const stateRoot = freshState();
+    await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 10 });
+    await writeCursor({ stateRoot, project: "demo", subscriber: "telegram", lastAckedSeq: 5 });
+    const cap = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    const tg = await readCursor({ stateRoot, project: "demo", subscriber: "telegram" });
+    expect(cap?.lastAckedSeq).toBe(10);
+    expect(tg?.lastAckedSeq).toBe(5);
   });
 });

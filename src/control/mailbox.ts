@@ -87,3 +87,48 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
     return seq;
   });
 }
+
+function cursorPath(stateRoot: string, project: string, subscriber: string): string {
+  return join(inboxDir(stateRoot), `${project}.${subscriber}.cursor`);
+}
+
+interface CursorOpts {
+  stateRoot: string;
+  project: string;
+  subscriber: string;
+}
+
+export interface CursorState {
+  lastAckedSeq: number;
+  subscriber: string;
+  updatedAt: string;
+}
+
+export async function readCursor(opts: CursorOpts): Promise<CursorState | null> {
+  try {
+    const buf = await fs.readFile(cursorPath(opts.stateRoot, opts.project, opts.subscriber), "utf-8");
+    return JSON.parse(buf) as CursorState;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export async function writeCursor(opts: CursorOpts & { lastAckedSeq: number }): Promise<void> {
+  await fs.mkdir(inboxDir(opts.stateRoot), { recursive: true });
+  const dest = cursorPath(opts.stateRoot, opts.project, opts.subscriber);
+  const tmp = dest + ".tmp";
+  const data: CursorState = {
+    lastAckedSeq: opts.lastAckedSeq,
+    subscriber: opts.subscriber,
+    updatedAt: new Date().toISOString(),
+  };
+  const handle = await fs.open(tmp, "w");
+  try {
+    await handle.writeFile(JSON.stringify(data), { encoding: "utf-8" });
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(tmp, dest);
+}
