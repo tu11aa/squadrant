@@ -70,5 +70,10 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question };
     case "task.reattached":
       return stampAttempt(base, {}, now);
+    case "task.stalled":
+    case "task.reconcile-failed":
+      // Synthetic notify-only events; the daemon has already updated state
+      // directly via the watchdog/reconcile paths. Reducer is a no-op.
+      return rec;
   }
 }

@@ -9,7 +9,7 @@ import { loadConfig, resolveHome, type ModelRoutingConfig } from "../config.js";
 import { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, createOpencodeDriver, CapabilityRegistry } from "../drivers/index.js";
 import type { AgentDriver, Role } from "../drivers/types.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import type { RuntimeDriver } from "../runtimes/index.js";
+import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 
@@ -170,30 +170,35 @@ function buildAgentCmd(
 const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
 
 /**
- * #111: idempotently add the notify-relay tab to a captain workspace. The
- * relay subscribes to daemon push notifications for <project> and forwards
- * each one to the captain pane via the runtime driver — required because
- * cmux refuses any caller not descended from its app process, so the daemon
- * itself cannot deliver. Safe to call repeatedly; skips if the tab already
- * exists.
+ * Add the notify-relay to a captain workspace as a hidden split-pane. The
+ * relay tails the daemon's per-project mailbox and forwards each new event to
+ * the captain pane via runtime.sendToSurface — required because cmux refuses
+ * any caller not descended from its app process, so the daemon itself cannot
+ * deliver. Dedups by closing any pre-existing relay surface (visible tab or
+ * hidden split) before respawning, so the relay always boots fresh with the
+ * current cockpit binary.
  */
 async function ensureNotifyRelayTab(
   runtime: RuntimeDriver,
-  workspaceId: string,
+  workspace: WorkspaceRef,
   project: string,
 ): Promise<void> {
   try {
-    const surfaces = await runtime.listSurfaces(workspaceId);
-    if (surfaces.some((s) => s.title === NOTIFY_RELAY_TAB_TITLE)) return;
-    const pane = await runtime.newPane({
-      workspaceId,
-      direction: "tab",
+    const surfaces = await runtime.listSurfaces(workspace.id);
+    for (const s of surfaces) {
+      if (s.title === NOTIFY_RELAY_TAB_TITLE) {
+        try { await runtime.closePane(s); } catch { /* best effort */ }
+      }
+    }
+    await runtime.spawnInjector({
+      captainWorkspace: workspace,
+      command: `cockpit notify-relay ${project} --as captain`,
       title: NOTIFY_RELAY_TAB_TITLE,
+      placement: "hidden",
     });
-    await runtime.sendToPane(pane, `cockpit notify-relay ${project}`);
-    console.log(chalk.cyan(`  ✔ Added notify-relay tab for '${project}'`));
+    console.log(chalk.cyan(`  ✔ Added hidden notify-relay for '${project}'`));
   } catch (e) {
-    console.error(chalk.yellow(`  ⚠ notify-relay tab setup failed: ${(e as Error).message}`));
+    console.error(chalk.yellow(`  ⚠ notify-relay setup failed: ${(e as Error).message}`));
   }
 }
 
@@ -216,7 +221,7 @@ async function launchWorkspace(
     await runtime.stop(existing.id);
   } else if (existing) {
     console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
-    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing.id, notifyRelayProject);
+    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing, notifyRelayProject);
     // TODO(runtime): select/focus not yet abstracted; direct cmux call retained intentionally
     execSync(`"${CMUX_BIN}" select-workspace --workspace "${existing.id}"`);
     return;
@@ -243,7 +248,7 @@ async function launchWorkspace(
     }, 3000);
   }
 
-  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref.id, notifyRelayProject);
+  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref, notifyRelayProject);
 
   if (navigate) {
     // TODO(runtime): select not yet abstracted

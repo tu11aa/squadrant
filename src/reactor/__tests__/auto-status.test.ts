@@ -51,6 +51,8 @@ function makeRuntime(screens: Record<string, string>): RuntimeDriver {
     sendToPane: vi.fn(),
     readPaneScreen: vi.fn(),
     listSurfaces: vi.fn(),
+    spawnInjector: vi.fn(),
+    sendToSurface: vi.fn(),
   };
 }
 

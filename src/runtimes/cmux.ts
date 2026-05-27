@@ -161,6 +161,46 @@ export function createCmuxDriver(): RuntimeDriver {
       }
     },
 
+    async spawnInjector(opts: {
+      captainWorkspace: WorkspaceRef;
+      command: string;
+      title?: string;
+      placement: "hidden" | "visible";
+    }): Promise<PaneRef> {
+      // Use a split-pane for "hidden" (shares a tab, can be resized small) and
+      // a new tab for "visible" (debug ergonomics). The resize-pane verb is
+      // best-effort; if cmux rejects it, the default split size is acceptable.
+      const wsId = opts.captainWorkspace.id;
+      const titleArg = opts.title ? ` --title "${escape(opts.title)}"` : "";
+      const verb =
+        opts.placement === "visible"
+          ? `new-surface --type terminal --workspace "${wsId}"`
+          : `new-pane --type terminal --direction down --workspace "${wsId}"`;
+      const output = cmux(verb);
+      const surfaceId = output.match(/surface:\d+/)?.[0];
+      if (!surfaceId) {
+        throw new Error(`cmux spawnInjector did not return a surface id: ${output}`);
+      }
+      if (opts.title) {
+        try {
+          cmux(`rename-tab --workspace "${wsId}" --surface "${surfaceId}"${titleArg}`);
+        } catch { /* rename is best-effort */ }
+      }
+      cmux(`send --workspace "${wsId}" --surface "${surfaceId}" "${escape(opts.command)}"`);
+      cmux(`send-key --workspace "${wsId}" --surface "${surfaceId}" Enter`);
+      if (opts.placement === "hidden") {
+        try {
+          cmux(`resize-pane --workspace "${wsId}" --surface "${surfaceId}" --rows 1`);
+        } catch { /* resize is best-effort; default split size is the fallback */ }
+      }
+      return { workspaceId: wsId, surfaceId, title: opts.title };
+    },
+
+    async sendToSurface(surface: PaneRef, text: string): Promise<void> {
+      cmux(`send --workspace "${surface.workspaceId}" --surface "${surface.surfaceId}" "${escape(text)}"`);
+      cmux(`send-key --workspace "${surface.workspaceId}" --surface "${surface.surfaceId}" Enter`);
+    },
+
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
       let output: string;
       try {

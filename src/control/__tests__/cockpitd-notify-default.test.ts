@@ -1,40 +1,18 @@
 // src/control/__tests__/cockpitd-notify-default.test.ts
 //
-// #111: cover the default-notify path (broadcast push frame + append inbox
-// file). Existing cockpitd-push.test.ts covers the daemon's decision to
-// notify; this file covers what `defaultNotify` actually does once it fires.
+// Mailbox-injector: cover the default-notify path which now appends a JSON
+// entry to the mailbox file. Replaces the prior subscribe-notify broadcast
+// path (PR #112). The daemon's decision to notify is covered separately by
+// cockpitd-push.test.ts; this file covers what defaultNotify writes once it
+// fires.
 
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection } from "node:net";
 import { startCockpitd } from "../cockpitd.js";
-import { sendRequest, encodeMsg, createDecoder } from "../protocol.js";
-import type { AttachFrame } from "../protocol.js";
+import { sendRequest } from "../protocol.js";
 import type { TaskRecord } from "../types.js";
-
-function awaitFrame(sockPath: string, project: string): Promise<AttachFrame> {
-  return new Promise((resolve, reject) => {
-    const conn = createConnection(sockPath);
-    const dec = createDecoder();
-    const t = setTimeout(() => { conn.destroy(); reject(new Error("timeout waiting for push")); }, 2000);
-    conn.setEncoding("utf-8");
-    conn.on("connect", () => conn.write(encodeMsg({ op: "subscribe-notify", project })));
-    conn.on("data", (chunk: string) => {
-      for (const raw of dec.push(chunk)) {
-        const f = raw as AttachFrame;
-        if ((f as any).type === "push") {
-          clearTimeout(t);
-          conn.destroy();
-          resolve(f);
-          return;
-        }
-      }
-    });
-    conn.on("error", (e: Error) => { clearTimeout(t); reject(e); });
-  });
-}
 
 function seedRec(id: string): TaskRecord {
   return {
@@ -45,76 +23,104 @@ function seedRec(id: string): TaskRecord {
   };
 }
 
-describe("cockpitd defaultNotify (#111)", () => {
+describe("cockpitd defaultNotify writes to mailbox", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-  it("broadcasts a push frame to a subscribe-notify client when a task transitions to done", async () => {
+  it("appends a task.done event to <stateRoot>/inbox/<project>.log as JSON", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
     const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
-    // Seed a working task.
-    await sendRequest(sock, { kind: "seed", record: seedRec("task-push-1") });
-
-    // Subscribe FIRST (before the event), then fire the event.
-    const framePromise = awaitFrame(sock, "p");
-    // Tiny delay to let subscribe-claim register before we fire the event.
-    await new Promise((r) => setTimeout(r, 50));
+    await sendRequest(sock, { kind: "seed", record: seedRec("task-mbx-1") });
     await sendRequest(sock, {
       kind: "event",
       project: "p",
-      event: { type: "task.done", id: "task-push-1", resultRef: "/tmp/x" },
+      event: { type: "task.done", id: "task-mbx-1", resultRef: "/tmp/result" },
     });
+    // Allow the async append to flush.
+    await new Promise((r) => setTimeout(r, 100));
 
-    const frame = (await framePromise) as { type: "push"; project: string; message: string; ts: number };
-    expect(frame.type).toBe("push");
-    expect(frame.project).toBe("p");
-    expect(frame.message).toMatch(/^CREW DONE \[claude\/task-pus/);
-    expect(typeof frame.ts).toBe("number");
-  });
-
-  it("appends the notification to an inbox log file", async () => {
-    dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
-    const sock = join(dir, "c.sock");
-    const stateRoot = join(dir, "state");
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
-    stop = handle.stop;
-
-    await sendRequest(sock, { kind: "seed", record: seedRec("task-inbox-1") });
-    await sendRequest(sock, {
-      kind: "event",
-      project: "p",
-      event: { type: "task.done", id: "task-inbox-1", resultRef: "/tmp/x" },
-    });
-
-    // Inbox lives next to stateRoot in <root>/inbox/<project>.log.
-    const inboxPath = join(stateRoot, "..", "inbox", "p.log");
+    const inboxPath = join(stateRoot, "inbox", "p.log");
     expect(existsSync(inboxPath)).toBe(true);
-    const contents = readFileSync(inboxPath, "utf-8");
-    expect(contents).toMatch(/CREW DONE \[claude\/task-inb/);
+    const lines = readFileSync(inboxPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    // Only the terminal event triggers a notify (firePush gate).
+    expect(lines).toHaveLength(1);
+    expect(lines[0].kind).toBe("task.done");
+    expect(lines[0].provider).toBe("claude");
+    expect(lines[0].taskId).toBe("task-mbx-1");
+    expect(lines[0].payload.resultRef).toBe("/tmp/result");
+    expect(lines[0].seq).toBe(1);
+    expect(typeof lines[0].ts).toBe("string");
   });
 
-  it("does not throw when no subscriber is connected (drop on the broadcast, persist in inbox)", async () => {
+  it("assigns monotonic seq across multiple notifies in the same project", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
     const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
-    await sendRequest(sock, { kind: "seed", record: seedRec("task-no-sub-1") });
-    // No subscriber. Daemon must still apply the event and write inbox.
+    for (let i = 0; i < 3; i++) {
+      const id = `task-mbx-multi-${i}`;
+      await sendRequest(sock, { kind: "seed", record: seedRec(id) });
+      await sendRequest(sock, {
+        kind: "event",
+        project: "p",
+        event: { type: "task.done", id, resultRef: `/tmp/r${i}` },
+      });
+    }
+    await new Promise((r) => setTimeout(r, 100));
+
+    const inboxPath = join(stateRoot, "inbox", "p.log");
+    const lines = readFileSync(inboxPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.seq)).toEqual([1, 2, 3]);
+  });
+
+  it("rotates oversize mailbox files automatically via background timer", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const handle = startCockpitd({
+      stateRoot,
+      sockPath: sock,
+      sweepMs: 0,
+      rotationIntervalMs: 50,
+      mailboxConfig: { maxBytes: 100, maxAgeMs: 999_999_999, keepCount: 3 },
+    });
+    stop = handle.stop;
+
+    for (let i = 0; i < 5; i++) {
+      const id = `task-rot-${i}`;
+      await sendRequest(sock, { kind: "seed", record: seedRec(id) });
+      await sendRequest(sock, {
+        kind: "event",
+        project: "p",
+        event: { type: "task.done", id, resultRef: `/tmp/r${i}` },
+      });
+    }
+    await new Promise((r) => setTimeout(r, 250));
+    expect(existsSync(join(stateRoot, "inbox", "p.log.1"))).toBe(true);
+  });
+
+  it("does not crash when no captain is reachable (no subprocess invoked)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    stop = handle.stop;
+
+    await sendRequest(sock, { kind: "seed", record: seedRec("task-mbx-quiet") });
     const r: any = await sendRequest(sock, {
       kind: "event",
       project: "p",
-      event: { type: "task.done", id: "task-no-sub-1", resultRef: "/tmp/x" },
+      event: { type: "task.done", id: "task-mbx-quiet", resultRef: "/tmp/x" },
     });
     expect(r.state).toBe("done");
-
-    const inboxPath = join(stateRoot, "..", "inbox", "p.log");
-    expect(existsSync(inboxPath)).toBe(true);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(join(stateRoot, "inbox", "p.log"))).toBe(true);
   });
 });

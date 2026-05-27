@@ -35,6 +35,10 @@ export interface Gate {
 
 export interface TaskRecord {
   id: string;
+  /** Human-readable crew name (e.g. the `--name` arg to `cockpit crew spawn`).
+   *  Optional for backward-compat with records written before this field
+   *  existed; relay/daemon fall back to the short id when absent. */
+  name?: string;
   project: string;
   provider: Provider;
   mode: Mode;
@@ -71,7 +75,7 @@ export type ControlEvent =
   | { type: "task.progress"; id: string; note?: string }
   | { type: "heartbeat"; id: string }
   | { type: "task.blocked"; id: string; reason: string; question: string }
-  | { type: "task.done"; id: string; resultRef: string; parseWarning?: boolean }
+  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean }
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }
@@ -79,7 +83,12 @@ export type ControlEvent =
   | { type: "task.delta"; id: string; turnId: string; chunk: string }
   | { type: "task.input.requested"; id: string; requestId: number; question: string }
   | { type: "task.approval.requested"; id: string; requestId: number; question: string; kind: string }
-  | { type: "task.reattached"; id: string };
+  | { type: "task.reattached"; id: string }
+  // Synthetic events: emitted by the daemon (watchdog / reconcile) purely as
+  // notify payloads. They are never sent over the wire and the reducer treats
+  // them as no-ops; the watchdog has already updated state directly.
+  | { type: "task.stalled"; id: string; heartbeatBudgetMs: number }
+  | { type: "task.reconcile-failed"; id: string; reason: string };
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
 export const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([

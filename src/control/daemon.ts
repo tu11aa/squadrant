@@ -25,13 +25,17 @@ export interface DaemonDeps {
    */
   resolveInteractiveGate?: (taskId: string, payload: unknown) => Promise<void> | void;
   /**
-   * Push notification hook (#109). Called on every state transition into
-   * {done, blocked, failed, stalled}. The implementation in cockpitd shells
-   * out to the runtime so the captain's pane shows the message inline.
-   * Errors are caught + swallowed here so an unhealthy notifier never
-   * breaks the event-ingest path.
+   * Push notification hook (#109, refactored under mailbox-injector spec).
+   * Called on every state transition into {done, blocked, failed, stalled}.
+   * Implementations append to the mailbox; errors are caught + swallowed here
+   * so an unhealthy notifier never breaks the event-ingest path.
    */
-  notify?: (args: { project: string; message: string }) => Promise<void> | void;
+  notify?: (args: {
+    project: string;
+    message: string;
+    record: TaskRecord;
+    event: ControlEvent;
+  }) => Promise<void> | void;
 }
 
 const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled"]);
@@ -41,7 +45,7 @@ function shortId(id: string): string {
 }
 
 function formatMessage(rec: TaskRecord): string | null {
-  const tag = `[${rec.provider}/${shortId(rec.id)}]`;
+  const tag = `[${rec.provider}/${rec.name != null ? rec.name : shortId(rec.id)}]`;
   switch (rec.state) {
     case "done": {
       // Spec: "<resultRef-content-first-line-or-the-task-snippet>".
@@ -62,7 +66,13 @@ function formatMessage(rec: TaskRecord): string | null {
   }
 }
 
-function firePush(deps: DaemonDeps, project: string, prev: TaskState, next: TaskRecord): void {
+function firePush(
+  deps: DaemonDeps,
+  project: string,
+  prev: TaskState,
+  next: TaskRecord,
+  event: ControlEvent,
+): void {
   if (!deps.notify) return;
   if (prev === next.state) return;
   if (!ATTENTION_STATES.has(next.state)) return;
@@ -71,7 +81,7 @@ function firePush(deps: DaemonDeps, project: string, prev: TaskState, next: Task
   // Fire-and-forget; swallow errors so the daemon never trips on a flaky
   // notifier. Sync throws and async rejections both land here.
   try {
-    const r = deps.notify({ project, message });
+    const r = deps.notify({ project, message, record: next, event });
     if (r && typeof (r as Promise<void>).catch === "function") {
       (r as Promise<void>).catch(() => {});
     }
@@ -130,7 +140,7 @@ export function createDaemon(deps: DaemonDeps) {
           const next = reduce(cur, req.event, now());
           if (next !== cur) {
             store.put(next); // skip redundant write on terminal no-ops
-            firePush(deps, req.project, cur.state, next);
+            firePush(deps, req.project, cur.state, next, req.event);
           }
           return next;
         }
@@ -171,7 +181,16 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       for (const r of store.listAll()) {
         const stalled = evaluateStall(r, t);
-        if (stalled) { store.put(stalled); firePush(deps, r.project, r.state, stalled); continue; }
+        if (stalled) {
+          store.put(stalled);
+          const synthEvent: ControlEvent = {
+            type: "task.stalled",
+            id: r.id,
+            heartbeatBudgetMs: r.heartbeatBudgetMs,
+          };
+          firePush(deps, r.project, r.state, stalled, synthEvent);
+          continue;
+        }
         const recovered = recoverStall(r, t);
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
@@ -188,11 +207,21 @@ export function createDaemon(deps: DaemonDeps) {
             error: "orphaned by daemon restart; exit unobserved (conservative fail)",
           };
           store.put(failed);
-          firePush(deps, r.project, r.state, failed);
+          const synthEvent: ControlEvent = {
+            type: "task.failed",
+            id: r.id,
+            error: failed.error ?? "reconcile",
+          };
+          firePush(deps, r.project, r.state, failed, synthEvent);
         } else {
           const stalled: TaskRecord = { ...r, state: "stalled", lastEvent: "reconcile" };
           store.put(stalled);
-          firePush(deps, r.project, r.state, stalled);
+          const synthEvent: ControlEvent = {
+            type: "task.reconcile-failed",
+            id: r.id,
+            reason: "interactive task lost on daemon restart",
+          };
+          firePush(deps, r.project, r.state, stalled, synthEvent);
         }
       }
     },

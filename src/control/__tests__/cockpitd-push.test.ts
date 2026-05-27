@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDaemon } from "../daemon.js";
 import { createStore } from "../store.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord, ControlEvent } from "../types.js";
 
 function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -31,7 +31,7 @@ function fakeNotify() {
   const calls: NotifyCall[] = [];
   return {
     calls,
-    notify: (args: { project: string; message: string }) => {
+    notify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => {
       calls.push({ project: args.project, message: args.message });
     },
   };

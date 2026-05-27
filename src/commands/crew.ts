@@ -189,6 +189,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       project: input.project,
       cwd: proj.path,
       task: input.task,
+      name,
     });
     // Fail loud if daemon unreachable — refusal-to-degrade.
     const rec = (await cockpitdCall(req)) as TaskRecord;
@@ -263,6 +264,7 @@ async function runCodexInteractiveSpawn(o: {
     project: o.project,
     cwd: o.cwd,
     task: o.task,
+    name: o.name,
     ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
     ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
   });

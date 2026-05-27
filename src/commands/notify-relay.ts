@@ -1,132 +1,172 @@
 // src/commands/notify-relay.ts
 //
-// #111: in-cmux relay for daemon push notifications. Runs in a captain-workspace
-// tab so that cmux's process-lineage check allows it to call `cmux send` (the
-// daemon itself cannot — it's a launchd child, not a cmux descendant).
-//
-// Long-running process. Subscribes to the daemon socket via the
-// `subscribe-notify` claim frame; for each pushed message, forwards it to the
-// project's captain workspace using the runtime driver. Reconnects with
-// backoff if the daemon restarts.
+// Mailbox-injector refactor: notify-relay is now a file-tailing process that
+// reads from a project's mailbox (.config/cockpit/inbox/<project>.log) using a
+// durable per-subscriber cursor. Each delivered event is forwarded to the
+// captain's primary surface via the runtime driver's sendToSurface. The
+// cursor only advances after a successful send, so failed deliveries are
+// naturally retried on the next poll.
 
 import { Command } from "commander";
-import { createConnection, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import type { AttachFrame } from "../control/protocol.js";
-import { createDecoder, encodeMsg } from "../control/protocol.js";
+import type { RuntimeDriver } from "../runtimes/types.js";
+import {
+  readCursor,
+  writeCursor,
+  readFromCursor,
+  type MailboxEntry,
+} from "../control/mailbox.js";
 
-const SOCK_PATH = join(homedir(), ".config", "cockpit", "cockpit.sock");
+export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
 
-interface RunOpts {
-  sockPath?: string;
-  // Test injection: builds the runtime + resolves captain name. Defaults to the
-  // production config loader + cmux driver. The returned `send` must already
-  // be bound to the captain's runtime-native ref (workspace ID), because
-  // cmux's driver.send() expects an ID, not a name.
-  resolve?: (project: string) => Promise<{ captainName: string; send: (msg: string) => Promise<void> }>;
-  // Test injection: when true, exit after the first daemon-end (no reconnect loop).
-  once?: boolean;
-  // Test injection: backoff override (ms). Production uses 1s/2s/4s capped at 30s.
-  backoffMs?: (attempt: number) => number;
-  log?: (m: string) => void;
+function shortId(id: string): string {
+  return id.slice(0, 8);
 }
 
-function defaultBackoff(attempt: number): number {
-  return Math.min(30_000, 1_000 * Math.pow(2, attempt));
-}
-
-export async function runNotifyRelay(project: string, opts: RunOpts = {}): Promise<void> {
-  const sockPath = opts.sockPath ?? SOCK_PATH;
-  const log = opts.log ?? ((m: string) => process.stdout.write(`[notify-relay ${project}] ${m}\n`));
-  const backoff = opts.backoffMs ?? defaultBackoff;
-
-  const resolve = opts.resolve ?? (async () => {
-    const config = loadConfig();
-    const proj = config.projects[project];
-    if (!proj) throw new Error(`Project '${project}' not found in config`);
-    const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
-    const driver = registry.forProject(project, config);
-    // RuntimeDriver.send() expects the runtime-native ref (e.g. cmux's
-    // "workspace:N"), not the human name — resolve once at startup.
-    const ref = await driver.status(proj.captainName);
-    if (!ref) {
-      throw new Error(`Captain workspace '${proj.captainName}' not found in runtime '${driver.name}'`);
+export function formatEntry(entry: MailboxEntry): string | null {
+  const tag = `[${entry.provider}/${entry.name != null ? entry.name : shortId(entry.taskId)}]`;
+  switch (entry.kind) {
+    case "task.started":
+    case "task.progress":
+      return null; // suppress liveness/start
+    case "task.done": {
+      const msg =
+        (entry.payload.message as string | undefined) ??
+        (entry.payload.resultRef as string | undefined) ??
+        "(no message)";
+      return `CREW DONE ${tag}: ${msg.toString().split(/\r?\n/)[0].slice(0, 200)}`;
     }
-    return {
-      captainName: proj.captainName,
-      send: (msg: string) => driver.send(ref.id, msg),
-    };
-  });
-
-  const r = await resolve(project);
-  log(`relaying to captain '${r.captainName}' via socket ${sockPath}`);
-
-  let attempt = 0;
-  while (true) {
-    const ended = await connectOnce(sockPath, project, r.send, log);
-    if (opts.once) return;
-    if (ended === "fatal") return;
-    const wait = backoff(attempt++);
-    log(`daemon connection lost; reconnecting in ${wait}ms`);
-    await new Promise((res) => setTimeout(res, wait));
+    case "task.blocked":
+      return `CREW BLOCKED ${tag}: ${(entry.payload.question as string | undefined) ?? "(no question)"}`;
+    case "task.failed":
+      return `CREW FAILED ${tag}: ${(entry.payload.error as string | undefined) ?? "(no error)"}`;
+    case "task.stalled":
+      return `CREW STALLED ${tag}: no heartbeat`;
+    default:
+      return null;
   }
 }
 
-function connectOnce(
-  sockPath: string,
-  project: string,
-  send: (msg: string) => Promise<void>,
-  log: (m: string) => void,
-): Promise<"end" | "fatal"> {
-  return new Promise((resolve) => {
-    let conn: Socket;
-    try {
-      conn = createConnection(sockPath);
-    } catch (e) {
-      log(`connect threw: ${(e as Error).message}`);
-      resolve("end");
-      return;
-    }
-    const dec = createDecoder();
-    conn.setEncoding("utf-8");
-    conn.on("connect", () => {
-      conn.write(encodeMsg({ op: "subscribe-notify", project }));
-      log("subscribed");
-    });
-    conn.on("data", (chunk: string) => {
-      for (const raw of dec.push(chunk)) {
-        const frame = raw as AttachFrame;
-        if (frame && (frame as any).type === "push" && (frame as any).project === project) {
-          const message = (frame as any).message as string;
-          // Fire-and-forget; runtime.send failures are logged but don't tear down the relay.
-          send(message).catch((e: Error) => log(`send failed: ${e.message}`));
-        }
-      }
-    });
-    conn.on("error", (e: Error) => {
-      log(`socket error: ${e.message}`);
-    });
-    conn.on("close", () => {
-      resolve("end");
-    });
+interface RunOpts {
+  project: string;
+  subscriber: string;
+  stateRoot: string;
+  runtime: RuntimeDriver;
+  captainName: string;
+  pollMs?: number;
+  log?: (m: string) => void;
+}
+
+export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
+  const log =
+    opts.log ?? ((m: string) => process.stdout.write(`[notify-relay ${opts.project}] ${m}\n`));
+
+  // Resolve captain workspace + primary surface once at boot.
+  const ws = await opts.runtime.status(opts.captainName);
+  if (!ws) throw new Error(`captain workspace '${opts.captainName}' not running`);
+  const surfaces =
+    (await (opts.runtime as RuntimeDriver & {
+      listSurfaces?: (id: string) => Promise<Array<{ title?: string }>>;
+    }).listSurfaces?.(ws.id)) ?? [];
+  const captainSurface =
+    (surfaces.find((s) => s.title === opts.captainName) ?? surfaces[0]) as {
+      workspaceId?: string;
+      surfaceId?: string;
+      title?: string;
+    } | undefined;
+  if (!captainSurface) throw new Error("no surfaces in captain workspace");
+
+  const cursor = await readCursor({
+    stateRoot: opts.stateRoot,
+    project: opts.project,
+    subscriber: opts.subscriber,
   });
+  let lastAcked = cursor?.lastAckedSeq ?? 0;
+  let stopped = false;
+  let draining = false;
+
+  async function drain(): Promise<void> {
+    if (draining) return;
+    draining = true;
+    try {
+      for await (const entry of readFromCursor({
+        stateRoot: opts.stateRoot,
+        project: opts.project,
+        fromSeq: lastAcked + 1,
+      })) {
+        if (stopped) return;
+        const msg = formatEntry(entry);
+        if (msg) {
+          try {
+            await (opts.runtime as RuntimeDriver & {
+              sendToSurface: (s: unknown, m: string) => Promise<void>;
+            }).sendToSurface(captainSurface, msg);
+          } catch (e) {
+            log(`sendToSurface failed seq=${entry.seq}: ${(e as Error).message}`);
+            // Don't advance cursor; the next poll will retry from the same seq.
+            return;
+          }
+        }
+        await writeCursor({
+          stateRoot: opts.stateRoot,
+          project: opts.project,
+          subscriber: opts.subscriber,
+          lastAckedSeq: entry.seq,
+        });
+        lastAcked = entry.seq;
+      }
+    } finally {
+      draining = false;
+    }
+  }
+
+  const interval = setInterval(() => {
+    if (!stopped) drain().catch((e) => log(`drain error: ${(e as Error).message}`));
+  }, opts.pollMs ?? 1000);
+
+  await drain(); // initial drain
+
+  return () => {
+    stopped = true;
+    clearInterval(interval);
+  };
 }
 
 export const notifyRelayCommand = new Command("notify-relay")
   .description(
-    "In-cmux relay: subscribes to daemon push notifications for <project> and " +
-      "forwards them to the project's captain pane via the runtime driver. " +
-      "Spawned automatically as a tab in each captain workspace; not intended " +
-      "to be invoked manually.",
+    "Subscribe to a project's mailbox and deliver events to the captain pane. " +
+      "Long-running tailer; reads from .config/cockpit/inbox/<project>.log " +
+      "using a per-subscriber cursor.",
   )
-  .argument("<project>", "Project to relay push notifications for")
-  .action(async (project: string) => {
+  .argument("<project>", "Project to relay mailbox events for")
+  .option("--as <subscriber>", "subscriber name", "captain")
+  .option("--state-root <path>", "override state root", DEFAULT_STATE_ROOT)
+  .action(async (project: string, opts: { as: string; stateRoot: string }) => {
     try {
-      await runNotifyRelay(project);
+      const config = loadConfig();
+      const projCfg = config.projects[project];
+      if (!projCfg) {
+        console.error(chalk.red(`notify-relay: unknown project '${project}'`));
+        process.exit(1);
+      }
+      const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
+      const runtime = registry.forProject(project, config);
+      process.stdout.write(
+        `[notify-relay ${project}] subscriber=${opts.as} stateRoot=${opts.stateRoot}\n`,
+      );
+      await runNotifyRelay({
+        project,
+        subscriber: opts.as,
+        stateRoot: opts.stateRoot,
+        runtime,
+        captainName: projCfg.captainName,
+        pollMs: 1000,
+      });
+      process.on("SIGTERM", () => process.exit(0));
     } catch (err) {
       console.error(chalk.red(`notify-relay: ${(err as Error).message}`));
       process.exit(1);

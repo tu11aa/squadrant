@@ -54,4 +54,23 @@ export interface RuntimeDriver {
   // List all surfaces (tabs/panes) inside a workspace, with their titles.
   // Used to find named crews by tab title (#56).
   listSurfaces(workspaceId: string): Promise<PaneRef[]>;
+
+  // Spawn a long-running process INSIDE the captain workspace's process tree,
+  // so any IPC/socket constraints of the runtime (e.g. cmux's parent-lineage
+  // check) are satisfied. Returns a PaneRef the caller can inspect/clean up.
+  //
+  // placement: "hidden" produces a non-distracting surface (zero/minimal-size
+  // split, off-screen tab — runtime decides). "visible" produces a normal pane.
+  spawnInjector(opts: {
+    captainWorkspace: WorkspaceRef;
+    command: string;
+    title?: string;
+    placement: "hidden" | "visible";
+  }): Promise<PaneRef>;
+
+  // Send text to a specific surface. Unlike `send` (workspace-level) this
+  // targets one surface directly. Used by the notify-relay injector to
+  // deliver messages to the captain's primary surface. Throws if the surface
+  // no longer exists.
+  sendToSurface(surface: PaneRef, text: string): Promise<void>;
 }
