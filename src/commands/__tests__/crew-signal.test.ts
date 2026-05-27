@@ -13,7 +13,7 @@ describe("buildSignalRequest", () => {
     process.env = { ...SAVED };
   });
 
-  it("done + message → task.done event with resultRef from writer", () => {
+  it("done + message → task.done event with resultRef from writer AND message field for relay display", () => {
     const writes: Array<{ id: string; payload: string }> = [];
     const writeResult = (id: string, payload: string) => {
       writes.push({ id, payload });
@@ -26,6 +26,7 @@ describe("buildSignalRequest", () => {
       type: "task.done",
       id: "task-xyz",
       resultRef: "/tmp/results/task-xyz.txt",
+      message: "all green",
     });
     expect(writes).toEqual([{ id: "task-xyz", payload: "all green" }]);
   });
@@ -38,7 +39,7 @@ describe("buildSignalRequest", () => {
 
   it("done without writeResult → resultRef is empty string", () => {
     const req = buildSignalRequest("done", { message: "x" });
-    expect(req.event).toEqual({ type: "task.done", id: "task-xyz", resultRef: "" });
+    expect(req.event).toEqual({ type: "task.done", id: "task-xyz", resultRef: "", message: "x" });
   });
 
   it("blocked + question → task.blocked event", () => {

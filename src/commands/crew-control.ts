@@ -135,7 +135,12 @@ export function buildSignalRequest(
   let event: ControlEvent;
   if (signal === "done") {
     const resultRef = o.writeResult ? o.writeResult(taskId, o.message ?? "") : "";
-    event = { type: "task.done", id: taskId, resultRef };
+    event = {
+      type: "task.done",
+      id: taskId,
+      resultRef,
+      ...(o.message !== undefined ? { message: o.message } : {}),
+    };
   } else if (signal === "blocked") {
     event = { type: "task.blocked", id: taskId, reason: "crew signaled blocked", question: o.question ?? "" };
   } else {

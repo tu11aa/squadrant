@@ -71,7 +71,7 @@ export type ControlEvent =
   | { type: "task.progress"; id: string; note?: string }
   | { type: "heartbeat"; id: string }
   | { type: "task.blocked"; id: string; reason: string; question: string }
-  | { type: "task.done"; id: string; resultRef: string; parseWarning?: boolean }
+  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean }
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }

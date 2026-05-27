@@ -146,4 +146,30 @@ describe("notify-relay file-tailer", () => {
     expect(msgs[1]).toMatch(/^CREW BLOCKED \[claude\/deadbeef\]: what now\?/);
     expect(msgs[2]).toMatch(/^CREW FAILED \[claude\/deadbeef\]: boom/);
   });
+
+  it("task.done with payload.message prefers message over resultRef in display", async () => {
+    const stateRoot = freshState();
+    const doneWithMessage: ControlEvent = {
+      type: "task.done",
+      id: rec.id,
+      resultRef: "/some/result/file.txt",
+      message: "hello world",
+    };
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneWithMessage });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const out = sendSpy.mock.calls[0][1] as string;
+    expect(out).toBe("CREW DONE [claude/deadbeef]: hello world");
+    expect(out).not.toContain("/some/result/file.txt");
+  });
 });
