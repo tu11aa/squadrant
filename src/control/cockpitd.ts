@@ -319,8 +319,42 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     timer.unref?.();
   }
 
+  const rotationInterval = opts.rotationIntervalMs ?? 60_000;
+  const mboxCfg = {
+    maxBytes: opts.mailboxConfig?.maxBytes ?? 5 * 1024 * 1024,
+    maxAgeMs: opts.mailboxConfig?.maxAgeMs ?? 7 * 24 * 60 * 60 * 1000,
+    keepCount: opts.mailboxConfig?.keepCount ?? 3,
+  };
+  let rotationTimer: NodeJS.Timeout | undefined;
+  if (rotationInterval > 0) {
+    const inboxPath = join(stateRoot, "inbox");
+    rotationTimer = setInterval(async () => {
+      try {
+        let entries: string[];
+        try { entries = await readdir(inboxPath); }
+        catch { return; }
+        const projects = new Set(
+          entries
+            .filter((e) => e.endsWith(".log"))
+            .map((e) => e.slice(0, -".log".length)),
+        );
+        for (const project of projects) {
+          await rotateIfNeeded({ stateRoot, project, ...mboxCfg });
+        }
+      } catch (e) {
+        log(`rotation timer error: ${(e as Error).message}`);
+      }
+    }, rotationInterval);
+    rotationTimer.unref?.();
+  }
+
   return {
-    stop() { if (timer) clearInterval(timer); server.close(); log("stopped"); },
+    stop() {
+      if (timer) clearInterval(timer);
+      if (rotationTimer) clearInterval(rotationTimer);
+      server.close();
+      log("stopped");
+    },
   };
 }
 
