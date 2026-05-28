@@ -16,6 +16,11 @@ vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
 }));
 
+vi.mock("../../lib/cmux-bin.js", () => ({
+  resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux",
+  resetCmuxBinCache: vi.fn(),
+}));
+
 import { cmuxLocal } from "../launch.js";
 
 describe("cmuxLocal (launch.ts direct-cmux helper)", () => {
