@@ -203,11 +203,9 @@ li { margin-bottom: 4px; }
   <a href="#command" class="toc-h3">Command</a>
   <a href="#captain" class="toc-h3">Captain</a>
   <a href="#crew" class="toc-h3">Crew</a>
-  <a href="#reactor" class="toc-h3">Reactor</a>
   <a href="#plugin-slots" class="toc-h2">3. Khe Cắm Plugin</a>
   <a href="#runtime" class="toc-h3">Runtime</a>
   <a href="#workspace" class="toc-h3">Workspace</a>
-  <a href="#tracker" class="toc-h3">Tracker</a>
   <a href="#notifier" class="toc-h3">Notifier</a>
   <a href="#agent-drivers" class="toc-h2">4. Driver Tác nhân</a>
   <a href="#control-plane" class="toc-h2">5. Mặt phẳng Điều khiển</a>
@@ -234,7 +232,7 @@ li { margin-bottom: 4px; }
 <div class="header-meta">
   <span>Ngày: 2026-05-28</span>
   <span>Nhánh: develop</span>
-  <span>Commit: <code>50edf94</code></span>
+  <span>Commit: <code>75c8d38</code></span>
   <span><span class="badge badge-green">767 tệp</span> <span class="badge badge-blue">91 quy trình</span> <span class="badge badge-purple">6.011 cạnh</span></span>
 </div>
 
@@ -244,11 +242,11 @@ li { margin-bottom: 4px; }
 <h2 id="overview">1. Cockpit là gì</h2>
 
 <p>
-Cockpit là một <strong>lớp điều phối đa tác nhân</strong> (multi-agent orchestration layer) để quản lý các tác nhân AI viết mã trên nhiều dự án phần mềm. Nó không phải là một công cụ Claude Code &mdash; Claude Code là <em>triển khai tham chiếu</em>; hệ thống hỗ trợ Codex, OpenCode, Gemini CLI và Aider thông qua lớp trừu tượng driver có thể cắm thêm.
+Cockpit là một <strong>lớp điều phối đa tác nhân</strong> (multi-agent orchestration layer) để quản lý các tác nhân AI viết mã trên nhiều dự án phần mềm. Nó không phải là một công cụ Claude Code &mdash; Claude Code là <em>triển khai tham chiếu</em>; hệ thống hỗ trợ Codex, OpenCode và Gemini CLI thông qua lớp trừu tượng driver có thể cắm thêm.
 </p>
 
 <p>
-Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<a href="#runtime">cmux</a>) với hệ thống phân công dựa trên vai trò: một phiên <strong>Command</strong> phân phối công việc đến các phiên <strong>Captain</strong> (mỗi dự án một phiên), các phiên này ủy thác tác vụ viết mã cho các phiên <strong>Crew</strong> tạm thời chạy trong các git worktree cách ly. Một engine <strong>Reactor</strong> rà soát GitHub và trạng thái captain một cách khai báo, đối sánh sự kiện với các luật phản ứng.
+Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<a href="#runtime">cmux</a>) với hệ thống phân công dựa trên vai trò: một phiên <strong>Command</strong> phân phối công việc đến các phiên <strong>Captain</strong> (mỗi dự án một phiên), các phiên này ủy thác tác vụ viết mã cho các phiên <strong>Crew</strong> tạm thời chạy trong các git worktree cách ly.
 </p>
 
 <div class="diagram">
@@ -316,11 +314,6 @@ Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<
   <line x1="400" y1="164" x2="400" y2="190" stroke="#bb9af7" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="410" y="180" fill="#565f89" font-size="9">điều phối đến</text>
 
-  <!-- Reactor (right side) -->
-  <rect x="620" y="130" width="140" height="34" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1"/>
-  <text x="690" y="151" text-anchor="middle" fill="#e0af68" font-size="11" font-weight="600">Reactor</text>
-  <line x1="590" y1="147" x2="620" y2="147" stroke="#e0af68" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-orange)"/>
-
   <!-- Captains (3 boxes) -->
   <rect x="100" y="196" width="180" height="34" rx="6" fill="url(#grad-cap)" stroke="#7aa2f7" stroke-width="1.2"/>
   <text x="190" y="217" text-anchor="middle" fill="#7aa2f7" font-size="11" font-weight="600">Captain (Dự án A)</text>
@@ -380,7 +373,7 @@ Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<
   <!-- Link control plane to captains -->
   <line x1="400" y1="425" x2="400" y2="445" stroke="#f7768e" stroke-width="1" stroke-dasharray="3,3"/>
 
-  <!-- 4 Plugin Slots -->
+  <!-- 3 Plugin Slots -->
   <rect x="50" y="455" width="160" height="36" rx="6" fill="#1a1a2a" stroke="#7aa2f7" stroke-width="1.2"/>
   <text x="130" y="468" text-anchor="middle" fill="#7aa2f7" font-size="10" font-weight="600">Runtime</text>
   <text x="130" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / tmux (tương lai)</text>
@@ -389,10 +382,6 @@ Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<
   <text x="310" y="468" text-anchor="middle" fill="#9ece6a" font-size="10" font-weight="600">Workspace</text>
   <text x="310" y="483" text-anchor="middle" fill="#565f89" font-size="9">Obsidian / Notion (tương lai)</text>
 
-  <rect x="410" y="455" width="160" height="36" rx="6" fill="#2a1a1a" stroke="#f7768e" stroke-width="1.2"/>
-  <text x="490" y="468" text-anchor="middle" fill="#f7768e" font-size="10" font-weight="600">Tracker</text>
-  <text x="490" y="483" text-anchor="middle" fill="#565f89" font-size="9">GitHub / Linear (tương lai)</text>
-
   <rect x="590" y="455" width="160" height="36" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1.2"/>
   <text x="670" y="468" text-anchor="middle" fill="#e0af68" font-size="10" font-weight="600">Notifier</text>
   <text x="670" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / Slack (tương lai)</text>
@@ -400,16 +389,14 @@ Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<
   <!-- Agent drivers (bottom) -->
   <rect x="50" y="506" width="700" height="38" rx="6" fill="#1a1b26" stroke="#3b4261" stroke-width="1"/>
   <text x="400" y="520" text-anchor="middle" fill="#565f89" font-size="9">Driver Tác nhân:</text>
-  <rect x="140" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="180" y="527" text-anchor="middle" fill="#7aa2f7" font-size="10">claude</text>
-  <rect x="230" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="270" y="527" text-anchor="middle" fill="#9ece6a" font-size="10">codex</text>
-  <rect x="320" y="511" width="90" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="365" y="527" text-anchor="middle" fill="#e0af68" font-size="10">opencode</text>
-  <rect x="420" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="460" y="527" text-anchor="middle" fill="#bb9af7" font-size="10">gemini</text>
-  <rect x="510" y="511" width="70" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="545" y="527" text-anchor="middle" fill="#ff9e64" font-size="10">aider</text>
+  <rect x="160" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="200" y="527" text-anchor="middle" fill="#7aa2f7" font-size="10">claude</text>
+  <rect x="270" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="310" y="527" text-anchor="middle" fill="#9ece6a" font-size="10">codex</text>
+  <rect x="380" y="511" width="90" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="425" y="527" text-anchor="middle" fill="#e0af68" font-size="10">opencode</text>
+  <rect x="500" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="540" y="527" text-anchor="middle" fill="#bb9af7" font-size="10">gemini</text>
   <rect x="{280}" y="{440}" width="0" height="0"/>
 </svg>
 </div>
@@ -420,7 +407,7 @@ Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<
 <h2 id="role-hierarchy">2. Phân cấp Vai trò</h2>
 
 <p>
-Cockpit định nghĩa bốn vai trò tạo thành một hệ thống phân cấp chặt chẽ. Mỗi vai trò ánh xạ đến một loại phiên tác nhân riêng, với tệp mẫu riêng trong thư mục <code>orchestrator/</code> và cấu hình riêng trong <code>~/.config/cockpit/</code>.
+Cockpit định nghĩa ba vai trò tạo thành một hệ thống phân cấp chặt chẽ. Mỗi vai trò ánh xạ đến một loại phiên tác nhân riêng, với tệp mẫu riêng trong thư mục <code>orchestrator/</code> và cấu hình riêng trong <code>~/.config/cockpit/</code>.
 </p>
 
 <h3 id="command">Command — Giám sát Điều phối</h3>
@@ -466,7 +453,7 @@ Crew là các tác nhân tạm thời, chỉ một phiên. Mỗi Crew chạy tro
 Tất cả tín hiệu được định tuyến qua máy trạng thái daemon (xem <a href="#control-plane">Mặt phẳng Điều khiển</a>).
 </p>
 <p>
-Crew có thể được hỗ trợ bởi bất kỳ loại tác nhân nào (<code>--agent claude|codex|opencode|gemini|aider</code>).
+Crew có thể được hỗ trợ bởi bất kỳ loại tác nhân nào (<code>--agent claude|codex|opencode|gemini</code>).
 Mẫu <code>crew.generic.md</code> cung cấp các quy tắc tương tự cho tác nhân không phải Claude. Crew Claude
 nhận thêm tệp <code>settings.local.json</code> riêng với các hook Stop/SubagentStop/PostToolUse
 được kết nối cho việc theo dõi trạng thái và sự sống.
@@ -477,27 +464,6 @@ nhận thêm tệp <code>settings.local.json</code> riêng với các hook Stop/
 ngữ cảnh 200K token mới.
 </p>
 
-<h3 id="reactor">Reactor — Engine Phản ứng</h3>
-<p>
-<strong>Mẫu:</strong> <code>orchestrator/reactor.claude.md</code><br>
-<strong>Sinh bởi:</strong> <code>cockpit reactor</code><br>
-<strong>Skill:</strong> <code>cockpit:reactor-ops</code>
-</p>
-<p>
-Reactor là một engine rà soát GitHub khai báo. Nó chạy theo lịch có thể cấu hình (mặc định 5 phút), rà soát GitHub để tìm sự kiện (issue, PR, check run, quyết định review), đối sánh chúng với luật trong <code>~/.config/cockpit/reactions.json</code>, và thực thi các hành động đã cấu hình:
-</p>
-<ul>
-  <li><strong>delegate-to-captain</strong> — điều hướng một issue có nhãn đến Captain của dự án</li>
-  <li><strong>send-to-captain</strong> — gửi thông báo CI lỗi đến Captain hiện có</li>
-  <li><strong>auto-merge</strong> — hợp nhất PR khi được phê duyệt + checks đạt (opt-in)</li>
-  <li><strong>escalate</strong> — thông báo Command khi Captain bị chặn/không hoạt động</li>
-  <li><strong>update-project-status</strong> — di chuyển thẻ GitHub Project qua các cột</li>
-  <li><strong>send-to-command</strong> — thông báo thông tin đến Command</li>
-</ul>
-<p>
-Reactor là một "bộ định tuyến tín hiệu, không phải người ra quyết định" — nó không bao giờ quyết định <em>nên xây dựng gì</em>, chỉ <em>điều hướng đến đâu</em> dựa trên các luật đã cấu hình.
-</p>
-
 <div class="info">
 <strong>Nguyên tắc:</strong> Captain không bao giờ viết mã. Captain sinh Crew cho mọi tác vụ viết mã. Dù chỉ là sửa một dòng cũng có phiên Crew riêng. Điều này được thực thi trong các mẫu Captain.
 </div>
@@ -505,10 +471,10 @@ Reactor là một "bộ định tuyến tín hiệu, không phải người ra q
 <!-- ============================================================ -->
 <!-- 3. PLUGIN SLOTS -->
 <!-- ============================================================ -->
-<h2 id="plugin-slots">3. Bốn Khe cắm Plugin</h2>
+<h2 id="plugin-slots">3. Ba Khe cắm Plugin</h2>
 
 <p>
-Bốn khe cắm plugin (runtime, workspace, tracker, notifier) tuân theo cùng một <strong>mẫu đăng ký</strong> (registry pattern). Mỗi khe cắm có:
+Ba khe cắm plugin (runtime, workspace, notifier) tuân theo cùng một <strong>mẫu đăng ký</strong> (registry pattern). Mỗi khe cắm có:
 </p>
 <ul>
   <li><code>types.ts</code> — định nghĩa interface driver</li>
@@ -519,7 +485,7 @@ Bốn khe cắm plugin (runtime, workspace, tracker, notifier) tuân theo cùng 
 
 <p>
 Cấu hình trong <code>~/.config/cockpit/config.json</code> chọn driver sử dụng toàn cục
-(<code>config.runtime</code>, <code>config.workspace</code>, v.v.) hoặc theo dự án
+(<code>config.runtime</code>, <code>config.workspace</code>, <code>config.notifier</code>) hoặc theo dự án
 (<code>config.projects[].runtime</code>, v.v.).
 </p>
 
@@ -543,13 +509,6 @@ Cấu hình trong <code>~/.config/cockpit/config.json</code> chọn driver sử 
   <td>obsidian</td>
 </tr>
 <tr>
-  <td><strong id="tracker">Tracker</strong></td>
-  <td><code>TrackerDriver</code></td>
-  <td><code>probe, listIssues, createIssue, listPullRequests, getPullRequestChecks, getPullRequestReviewDecision, getRunLog, mergePullRequest</code></td>
-  <td>github (gh CLI)</td>
-  <td>github</td>
-</tr>
-<tr>
   <td><strong id="notifier">Notifier</strong></td>
   <td><code>NotifierDriver</code></td>
   <td><code>probe, notify</code></td>
@@ -570,11 +529,6 @@ Runtime là interface plugin dày nhất: nó quản lý workspace (phiên capta
 <h3>Workspace Driver (src/workspaces/)</h3>
 <p>
 Workspace trừu tượng hóa bộ nhớ liên tục cho các kho kiến thức của cockpit (wiki, learnings, daily logs, handoffs). Hiện tại chỉ có <strong>Obsidian</strong> được triển khai, một driver hệ thống tệp cục bộ với bảo vệ path-escape. <code>WorkspaceRegistry</code> phân giải cả driver <code>hub()</code> (từ <code>config.hubVault</code>) và <code>forProject()</code> (từ <code>config.projects[].spokeVault</code>). Mẫu factory cho phép các nhà cung cấp tương lai (ví dụ: Obsidian Remote, Notion API, S3).
-</p>
-
-<h3>Tracker Driver (src/trackers/)</h3>
-<p>
-Tracker trừu tượng hóa quản lý issue/PR. Hiện tại chỉ có <strong>GitHub</strong> được triển khai (<code>src/trackers/github.ts</code>), bao bọc CLI <code>gh</code> qua <code>execSync</code>. <code>TrackerRegistry</code> đọc <code>reactions.json</code> để xác định owner/repo cho mỗi dự án, sau đó tạo driver. Các tracker tương lai có thể hỗ trợ Linear, Jira hoặc GitLab.
 </p>
 
 <h3>Notifier Driver (src/notifiers/)</h3>
@@ -624,13 +578,6 @@ Driver tác nhân (<code>src/drivers/</code>) trừu tượng hóa CLI của tá
   <td>qua cờ prompt</td>
   <td>qua cấu hình driver</td>
 </tr>
-<tr>
-  <td><strong>Aider</strong></td>
-  <td><code>src/drivers/aider.ts</code></td>
-  <td>sinh lệnh tương tác Aider CLI</td>
-  <td>qua cờ prompt</td>
-  <td>qua cấu hình driver</td>
-</tr>
 </tbody>
 </table>
 
@@ -643,7 +590,6 @@ Mỗi driver tác nhân công bố một tập giá trị <code>AgentCapability<
   <li>Command ưu tiên thêm <code>teams</code> và <code>json_output</code></li>
   <li>Captain ưu tiên <code>teams</code>, <code>model_routing</code>, <code>skills</code></li>
   <li>Crew ưu tiên <code>json_output</code>, <code>sandbox</code></li>
-  <li>Reactor yêu cầu <code>json_output</code></li>
 </ul>
 
 <!-- ============================================================ -->
@@ -864,7 +810,6 @@ Tất cả emitter sử dụng chiến lược <strong>hợp nhất dựa trên 
 <tr><td><code>cockpit command --task &lt;type&gt;</code></td><td><code>commands/command.ts</code></td><td>Sinh phiên Command một lần</td></tr>
 <tr><td><code>cockpit dashboard</code></td><td><code>commands/dashboard.ts</code></td><td>Xem dashboard dự án</td></tr>
 <tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>Chẩn đoán hệ thống</td></tr>
-<tr><td><code>cockpit reactor</code></td><td><code>commands/reactor.ts</code></td><td>Quản lý thao tác reactor</td></tr>
 <tr><td><code>cockpit projection</code></td><td><code>commands/projection.ts</code></td><td>Phát tệp chiếu đa tác nhân</td></tr>
 <tr><td><code>cockpit runtime send &lt;project&gt;</code></td><td><code>commands/runtime.ts</code></td><td>Gửi tin nhắn giữa các workspace</td></tr>
 <tr><td><code>cockpit notify</code></td><td><code>commands/notify.ts</code></td><td>Gửi thông báo</td></tr>
@@ -884,12 +829,12 @@ Interface <code>CockpitConfig</code> (<code>src/config.ts:110-134</code>) địn
   <li><strong>commandName</strong> — tên workspace cho phiên command</li>
   <li><strong>hubVault</strong> — đường dẫn đến kho hub đa dự án (~/cockpit-hub mặc định)</li>
   <li><strong>projects</strong> — <code>Record&lt;string, ProjectConfig&gt;</code> ánh xạ tên dự án
-  đến đường dẫn, tên captain, spoke vault, host, nhóm, runtime, workspace và ghi đè tracker</li>
+  đến đường dẫn, tên captain, spoke vault, host, nhóm, runtime, workspace và ghi đè notifier</li>
   <li><strong>agents</strong> — CLI tác nhân đã đăng ký và ánh xạ driver của chúng</li>
   <li><strong>defaults</strong> — <code>maxCrew</code>, <code>worktreeDir</code>,
   <code>teammateMode</code>, <code>permissions</code> (tự động phê duyệt theo vai trò),
   <code>models</code> (định tuyến mô hình theo vai trò), <code>roles</code> (tác nhân + mô hình theo vai trò)</li>
-  <li><strong>runtime / workspace / tracker / notifier</strong> — lựa chọn khe cắm plugin mặc định</li>
+  <li><strong>runtime / workspace / notifier</strong> — lựa chọn khe cắm plugin mặc định</li>
   <li><strong>projection</strong> — danh sách mục tiêu chiếu</li>
   <li><strong>metrics</strong> — cờ + đường dẫn tệp metrics</li>
 </ul>
@@ -899,19 +844,11 @@ Interface <code>CockpitConfig</code> (<code>src/config.ts:110-134</code>) địn
 Ba tệp triển khai dashboard đầu cuối:
 </p>
 <ul>
-  <li><code>read-status.ts</code> — đọc tất cả tệp <code>status.md</code> của dự án từ spoke
-  vault, phân tích YAML frontmatter + đoạn trích có rào chắn</li>
+  <li><code>read-status.ts</code> — truy vấn trạng thái tác vụ của mỗi dự án từ daemon qua
+  thông báo giao thức <code>{kind:"list"}</code>, trả về trạng thái tác vụ trực tiếp theo thời gian thực</li>
   <li><code>render.ts</code> — hiển thị đầu cuối mã màu với biểu tượng trạng thái</li>
   <li><code>sync-hub.ts</code> — phản chiếu trạng thái dự án lên hub vault tại
   <code>{hubVault}/projects/{project}.md</code></li>
-</ul>
-
-<h3>Mô-đun Reactor (src/reactor/)</h3>
-<ul>
-  <li><code>auto-status.ts</code> — rà soát màn hình mỗi captain qua runtime, phân loại nội dung,
-  ghi <code>status.md</code></li>
-  <li><code>status-classifier.ts</code> — bộ phân loại dựa trên regex trả về
-  <code>idle | busy | blocked | errored | offline</code></li>
 </ul>
 
 <h3>Thư viện (src/lib/)</h3>
@@ -957,24 +894,21 @@ Cockpit có ba khu vực lưu trữ riêng biệt:
     headless/            # Bộ chuyển đổi headless theo từng nhà cung cấp
     interactive/         # Bộ chuyển đổi hook tương tác
   dashboard/             # Trình đọc trạng thái, trình hiển thị, đồng bộ hub
-  drivers/               # 5 driver tác nhân + đăng ký khả năng
+  drivers/               # 4 driver tác nhân + đăng ký khả năng
   lib/                   # Tiện ích (cmux-bin, runtime-sync, per-crew-settings…)
   notifiers/             # Khe cắm plugin thông báo
   projection/            # Chiếu hướng dẫn đa tác nhân
-  reactor/               # Trình rà soát trạng thái tự động + phân loại
   runtimes/              # Khe cắm plugin runtime
-  trackers/              # Khe cắm plugin tracker
   workspaces/            # Khe cắm plugin workspace
 docs/                    # Đặc tả và tài liệu
   specs/                 # 25 tài liệu đặc tả
-orchestrator/            # Mẫu vai trò (8 tệp)
+orchestrator/            # Mẫu vai trò (7 tệp)
   command.claude.md      # Mẫu Command (Claude)
   captain.claude.md      # Mẫu Captain (Claude)
   captain.generic.md     # Mẫu Captain (generic)
   crew.claude.md         # Mẫu Crew (Claude)
   crew.generic.md        # Mẫu Crew (generic / Codex / Gemini)
   crew.opencode.md       # Mẫu Crew (OpenCode)
-  reactor.claude.md      # Mẫu Reactor
   learnings.claude.md    # Mẫu Learnings
 plugin/skills/           # Kỹ năng markdown di động (Karpathy, v.v.)
 scripts/                 # Script shell (read-handoff, write-status, v.v.)
@@ -982,7 +916,6 @@ scripts/                 # Script shell (read-handoff, write-status, v.v.)
 
 <h3>Runtime / Trạng thái (~/.config/cockpit)</h3>
 <pre><code>config.json              # Cấu hình dự án
-reactions.json           # Luật phản ứng reactor
 state/                   # Bản ghi tác vụ mặt phẳng điều khiển (tệp JSON theo dự án/id)
 inbox/                   # Nhật ký thông báo đẩy hộp thư (*.log theo dự án)
 cockpit.sock             # Unix domain socket cho daemon RPC
@@ -990,7 +923,6 @@ plugin/                  # Phản chiếu từ nguồn (plugin/skills/)
 scripts/                 # Phản chiếu từ nguồn (tệp .sh)
 orchestrator/            # Phản chiếu từ nguồn (mẫu vai trò)
 dist/                    # JS đã biên dịch
-reactor-state.json       # Trình theo dõi sự kiện đã xử lý của reactor
 metrics.json             # Dữ liệu metrics
 </code></pre>
 
@@ -1006,7 +938,7 @@ spokes/{project}/        # Kho spoke riêng cho từng dự án
   daily-logs/            # Nhật ký hàng ngày dự án
   wiki/                  # Trang wiki dự án
   learnings/             # Bài học dự án
-  status.md              # Trạng thái tự động sinh (bởi reactor)
+  status.md              # Tóm tắt trạng thái dự án
 </code></pre>
 
 <p>
@@ -1022,14 +954,14 @@ Các kho hub và spoke là các workspace dựa trên hệ thống tệp đượ
 <tbody>
 <tr><td><strong>Sinh ngày</strong></td><td>2026-05-28</td></tr>
 <tr><td><strong>Nhánh</strong></td><td>develop</td></tr>
-<tr><td><strong>Commit</strong></td><td><code>50edf94</code></td></tr>
+<tr><td><strong>Commit</strong></td><td><code>75c8d38</code></td></tr>
 <tr><td><strong>Nguồn</strong></td><td>~/me/claude-cockpit</td></tr>
 <tr><td><strong>Chỉ mục</strong></td><td>767 tệp, 3.651 ký hiệu mã, 75 cụm, 91 quy trình</td></tr>
 <tr><td><strong>Đặc tả</strong></td><td>25 tài liệu đặc tả trong <code>docs/specs/</code></td></tr>
 </tbody>
 </table>
 <p>
-Báo cáo này phản ánh trạng thái của nhánh <code>develop</code> tại commit <code>50edf94</code>.
+Báo cáo này phản ánh trạng thái của nhánh <code>develop</code> tại commit <code>75c8d38</code>.
 Mọi khẳng định đều dựa trên mã nguồn thực tế: cây src/, docs/specs/, mẫu orchestrator/
 và đồ thị tri thức mã GitNexus (cụm, quy trình, truy vấn).
 </p>

@@ -203,11 +203,9 @@ li { margin-bottom: 4px; }
   <a href="#command" class="toc-h3">Command</a>
   <a href="#captain" class="toc-h3">Captain</a>
   <a href="#crew" class="toc-h3">Crew</a>
-  <a href="#reactor" class="toc-h3">Reactor</a>
   <a href="#plugin-slots" class="toc-h2">3. Plugin Slots</a>
   <a href="#runtime" class="toc-h3">Runtime</a>
   <a href="#workspace" class="toc-h3">Workspace</a>
-  <a href="#tracker" class="toc-h3">Tracker</a>
   <a href="#notifier" class="toc-h3">Notifier</a>
   <a href="#agent-drivers" class="toc-h2">4. Agent Drivers</a>
   <a href="#control-plane" class="toc-h2">5. Control Plane</a>
@@ -234,7 +232,7 @@ li { margin-bottom: 4px; }
 <div class="header-meta">
   <span>Date: 2026-05-28</span>
   <span>Branch: develop</span>
-  <span>Commit: <code>50edf94</code></span>
+  <span>Commit: <code>75c8d38</code></span>
   <span><span class="badge badge-green">767 files</span> <span class="badge badge-blue">91 processes</span> <span class="badge badge-purple">6,011 edges</span></span>
 </div>
 
@@ -246,7 +244,7 @@ li { margin-bottom: 4px; }
 <p>
 Cockpit is a <strong>multi-agent orchestration layer</strong> for managing AI coding agents across
 multiple software projects. It is not a Claude Code tool &mdash; Claude Code is the <em>reference
-implementation</em>; the system supports Codex, OpenCode, Gemini CLI, and Aider through a pluggable
+implementation</em>; the system supports Codex, OpenCode, and Gemini CLI through a pluggable
 driver abstraction.
 </p>
 
@@ -254,8 +252,7 @@ driver abstraction.
 Conceptually, Cockpit wraps a terminal multiplexer (<a href="#runtime">cmux</a>) with a role-based
 delegation system: a <strong>Command</strong> session dispatches work to <strong>Captain</strong>
 sessions (one per project), which delegate coding tasks to ephemeral <strong>Crew</strong> sessions
-running in isolated git worktrees. A <strong>Reactor</strong> engine polls GitHub and captain status
-declaratively, matching events against reaction rules.
+running in isolated git worktrees.
 </p>
 
 <div class="diagram">
@@ -323,11 +320,6 @@ declaratively, matching events against reaction rules.
   <line x1="400" y1="164" x2="400" y2="190" stroke="#bb9af7" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="410" y="180" fill="#565f89" font-size="9">dispatches to</text>
 
-  <!-- Reactor (right side) -->
-  <rect x="620" y="130" width="140" height="34" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1"/>
-  <text x="690" y="151" text-anchor="middle" fill="#e0af68" font-size="11" font-weight="600">Reactor</text>
-  <line x1="590" y1="147" x2="620" y2="147" stroke="#e0af68" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-orange)"/>
-
   <!-- Captains (3 boxes) -->
   <rect x="100" y="196" width="180" height="34" rx="6" fill="url(#grad-cap)" stroke="#7aa2f7" stroke-width="1.2"/>
   <text x="190" y="217" text-anchor="middle" fill="#7aa2f7" font-size="11" font-weight="600">Captain (Project A)</text>
@@ -387,7 +379,7 @@ declaratively, matching events against reaction rules.
   <!-- Link control plane to captains -->
   <line x1="400" y1="425" x2="400" y2="445" stroke="#f7768e" stroke-width="1" stroke-dasharray="3,3"/>
 
-  <!-- 4 Plugin Slots -->
+  <!-- 3 Plugin Slots -->
   <rect x="50" y="455" width="160" height="36" rx="6" fill="#1a1a2a" stroke="#7aa2f7" stroke-width="1.2"/>
   <text x="130" y="468" text-anchor="middle" fill="#7aa2f7" font-size="10" font-weight="600">Runtime</text>
   <text x="130" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / future tmux</text>
@@ -396,10 +388,6 @@ declaratively, matching events against reaction rules.
   <text x="310" y="468" text-anchor="middle" fill="#9ece6a" font-size="10" font-weight="600">Workspace</text>
   <text x="310" y="483" text-anchor="middle" fill="#565f89" font-size="9">Obsidian / future Notion</text>
 
-  <rect x="410" y="455" width="160" height="36" rx="6" fill="#2a1a1a" stroke="#f7768e" stroke-width="1.2"/>
-  <text x="490" y="468" text-anchor="middle" fill="#f7768e" font-size="10" font-weight="600">Tracker</text>
-  <text x="490" y="483" text-anchor="middle" fill="#565f89" font-size="9">GitHub / future Linear</text>
-
   <rect x="590" y="455" width="160" height="36" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1.2"/>
   <text x="670" y="468" text-anchor="middle" fill="#e0af68" font-size="10" font-weight="600">Notifier</text>
   <text x="670" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / future Slack</text>
@@ -407,16 +395,14 @@ declaratively, matching events against reaction rules.
   <!-- Agent drivers (bottom) -->
   <rect x="50" y="506" width="700" height="38" rx="6" fill="#1a1b26" stroke="#3b4261" stroke-width="1"/>
   <text x="400" y="520" text-anchor="middle" fill="#565f89" font-size="9">Agent Drivers:</text>
-  <rect x="140" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="180" y="527" text-anchor="middle" fill="#7aa2f7" font-size="10">claude</text>
-  <rect x="230" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="270" y="527" text-anchor="middle" fill="#9ece6a" font-size="10">codex</text>
-  <rect x="320" y="511" width="90" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="365" y="527" text-anchor="middle" fill="#e0af68" font-size="10">opencode</text>
-  <rect x="420" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="460" y="527" text-anchor="middle" fill="#bb9af7" font-size="10">gemini</text>
-  <rect x="510" y="511" width="70" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
-  <text x="545" y="527" text-anchor="middle" fill="#ff9e64" font-size="10">aider</text>
+  <rect x="160" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="200" y="527" text-anchor="middle" fill="#7aa2f7" font-size="10">claude</text>
+  <rect x="270" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="310" y="527" text-anchor="middle" fill="#9ece6a" font-size="10">codex</text>
+  <rect x="380" y="511" width="90" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="425" y="527" text-anchor="middle" fill="#e0af68" font-size="10">opencode</text>
+  <rect x="500" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="540" y="527" text-anchor="middle" fill="#bb9af7" font-size="10">gemini</text>
   <rect x="{280}" y="{440}" width="0" height="0"/>
 </svg>
 </div>
@@ -427,7 +413,7 @@ declaratively, matching events against reaction rules.
 <h2 id="role-hierarchy">2. Role Hierarchy</h2>
 
 <p>
-Cockpit defines four roles that form a strict hierarchy. Each role maps to a distinct agent session
+Cockpit defines three roles that form a strict hierarchy. Each role maps to a distinct agent session
 type, with its own template file in <code>orchestrator/</code> and its own configuration in
 <code>~/.config/cockpit/</code>.
 </p>
@@ -481,7 +467,7 @@ exiting. If blocked, it signals <code>crew signal blocked</code>; if unrecoverab
 All signals are routed through the daemon state machine (see <a href="#control-plane">Control Plane</a>).
 </p>
 <p>
-Crews may be backed by any agent type (<code>--agent claude|codex|opencode|gemini|aider</code>).
+Crews may be backed by any agent type (<code>--agent claude|codex|opencode|gemini</code>).
 The <code>crew.generic.md</code> template provides the same rules for non-Claude agents. Claude crews
 additionally receive per-crew <code>settings.local.json</code> with Stop/SubagentStop/PostToolUse hooks
 wired for liveness and state tracking.
@@ -492,30 +478,6 @@ For complex multi-step tasks, Claude Crews may use GSD (Global Step Dispatch) wa
 fresh 200K-token contexts.
 </p>
 
-<h3 id="reactor">Reactor — Reaction Engine</h3>
-<p>
-<strong>Template:</strong> <code>orchestrator/reactor.claude.md</code><br>
-<strong>Spawned by:</strong> <code>cockpit reactor</code><br>
-<strong>Skill:</strong> <code>cockpit:reactor-ops</code>
-</p>
-<p>
-The Reactor is a declarative GitHub polling engine. It runs on a configurable schedule (default 5
-minutes), polls GitHub for events (issues, PRs, check runs, review decisions), matches them against
-<code>~/.config/cockpit/reactions.json</code> rules, and executes configured actions:
-</p>
-<ul>
-  <li><strong>delegate-to-captain</strong> — route a labeled issue to the project's Captain</li>
-  <li><strong>send-to-captain</strong> — send CI failure notification to an existing Captain</li>
-  <li><strong>auto-merge</strong> — merge PR when approved + checks pass (opt-in)</li>
-  <li><strong>escalate</strong> — notify Command when Captains are stale/blocked</li>
-  <li><strong>update-project-status</strong> — move GitHub Project cards through columns</li>
-  <li><strong>send-to-command</strong> — informational notifications to Command</li>
-</ul>
-<p>
-The Reactor is a "signal router, not a decision maker" — it never decides <em>what</em> to build,
-only <em>where</em> to route based on configured rules.
-</p>
-
 <div class="info">
 <strong>Rule:</strong> Captains never code. Captains spawn Crews for every coding task. Even a
 one-line fix gets a Crew session. This is enforced in the Captain templates.
@@ -524,10 +486,10 @@ one-line fix gets a Crew session. This is enforced in the Captain templates.
 <!-- ============================================================ -->
 <!-- 3. PLUGIN SLOTS -->
 <!-- ============================================================ -->
-<h2 id="plugin-slots">3. Four Pluggable Slots</h2>
+<h2 id="plugin-slots">3. Three Pluggable Slots</h2>
 
 <p>
-The four plugin slots (runtime, workspace, tracker, notifier) follow an identical
+The three plugin slots (runtime, workspace, notifier) follow an identical
 <strong>registry pattern</strong>. Each slot has:
 </p>
 <ul>
@@ -539,7 +501,7 @@ The four plugin slots (runtime, workspace, tracker, notifier) follow an identica
 
 <p>
 The configuration in <code>~/.config/cockpit/config.json</code> selects which driver to use globally
-(<code>config.runtime</code>, <code>config.workspace</code>, etc.) or per-project
+(<code>config.runtime</code>, <code>config.workspace</code>, <code>config.notifier</code>) or per-project
 (<code>config.projects[].runtime</code>, etc.).
 </p>
 
@@ -561,13 +523,6 @@ The configuration in <code>~/.config/cockpit/config.json</code> selects which dr
   <td><code>probe, read, write, exists, list, mkdir</code></td>
   <td>obsidian (local fs)</td>
   <td>obsidian</td>
-</tr>
-<tr>
-  <td><strong id="tracker">Tracker</strong></td>
-  <td><code>TrackerDriver</code></td>
-  <td><code>probe, listIssues, createIssue, listPullRequests, getPullRequestChecks, getPullRequestReviewDecision, getRunLog, mergePullRequest</code></td>
-  <td>github (gh CLI)</td>
-  <td>github</td>
 </tr>
 <tr>
   <td><strong id="notifier">Notifier</strong></td>
@@ -600,14 +555,6 @@ driver with path-escape protection. The <code>WorkspaceRegistry</code> resolves 
 (from <code>config.hubVault</code>) and <code>forProject()</code> (from
 <code>config.projects[].spokeVault</code>) drivers. The factory pattern allows future providers
 (e.g., Obsidian Remote, Notion API, S3).
-</p>
-
-<h3>Tracker Driver (src/trackers/)</h3>
-<p>
-The tracker abstracts issue/PR management. Today only <strong>GitHub</strong> is implemented
-(<code>src/trackers/github.ts</code>), wrapping the <code>gh</code> CLI via <code>execSync</code>.
-The <code>TrackerRegistry</code> reads <code>reactions.json</code> to determine owner/repo per
-project, then creates the driver. Future trackers may support Linear, Jira, or GitLab.
 </p>
 
 <h3>Notifier Driver (src/notifiers/)</h3>
@@ -663,13 +610,6 @@ version/capabilities, and validates agent suitability per role.
   <td>via prompt flag</td>
   <td>via driver config</td>
 </tr>
-<tr>
-  <td><strong>Aider</strong></td>
-  <td><code>src/drivers/aider.ts</code></td>
-  <td>generates Aider CLI interactive command</td>
-  <td>via prompt flag</td>
-  <td>via driver config</td>
-</tr>
 </tbody>
 </table>
 
@@ -685,7 +625,6 @@ map in <code>src/drivers/types.ts:59</code> defines which capabilities each role
   <li>Command additionally prefers <code>teams</code> and <code>json_output</code></li>
   <li>Captain prefers <code>teams</code>, <code>model_routing</code>, <code>skills</code></li>
   <li>Crew prefers <code>json_output</code>, <code>sandbox</code></li>
-  <li>Reactor requires <code>json_output</code></li>
 </ul>
 
 <!-- ============================================================ -->
@@ -952,7 +891,6 @@ markdown — Claude reads via Skill tool, others via AGENTS.md inclusion.
 <tr><td><code>cockpit command --task &lt;type&gt;</code></td><td><code>commands/command.ts</code></td><td>Spawn one-shot Command sessions</td></tr>
 <tr><td><code>cockpit dashboard</code></td><td><code>commands/dashboard.ts</code></td><td>View project dashboard</td></tr>
 <tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>System diagnostics</td></tr>
-<tr><td><code>cockpit reactor</code></td><td><code>commands/reactor.ts</code></td><td>Manage/reactor operations</td></tr>
 <tr><td><code>cockpit projection</code></td><td><code>commands/projection.ts</code></td><td>Emit cross-agent projection files</td></tr>
 <tr><td><code>cockpit runtime send &lt;project&gt;</code></td><td><code>commands/runtime.ts</code></td><td>Send messages between workspaces</td></tr>
 <tr><td><code>cockpit notify</code></td><td><code>commands/notify.ts</code></td><td>Send notification</td></tr>
@@ -973,13 +911,13 @@ configuration shape:
   <li><strong>commandName</strong> — workspace name for the command session</li>
   <li><strong>hubVault</strong> — path to the cross-project hub vault (~/cockpit-hub by default)</li>
   <li><strong>projects</strong> — <code>Record&lt;string, ProjectConfig&gt;</code> mapping project
-  names to their path, captain name, spoke vault, host, group, runtime, workspace, and tracker
+  names to their path, captain name, spoke vault, host, group, runtime, workspace, and notifier
   overrides</li>
   <li><strong>agents</strong> — registered agent CLIs and their driver mappings</li>
   <li><strong>defaults</strong> — <code>maxCrew</code>, <code>worktreeDir</code>,
   <code>teammateMode</code>, <code>permissions</code> (auto-approve per role),
   <code>models</code> (model routing per role), <code>roles</code> (agent + model per role)</li>
-  <li><strong>runtime / workspace / tracker / notifier</strong> — default plugin slot selections</li>
+  <li><strong>runtime / workspace / notifier</strong> — default plugin slot selections</li>
   <li><strong>projection</strong> — projection target list</li>
   <li><strong>metrics</strong> — flag + metrics file path</li>
 </ul>
@@ -989,19 +927,11 @@ configuration shape:
 Three files implementing the terminal dashboard:
 </p>
 <ul>
-  <li><code>read-status.ts</code> — reads all project <code>status.md</code> files from spoke
-  vaults, parses YAML frontmatter + fenced excerpts</li>
+  <li><code>read-status.ts</code> — queries each project's task state from the daemon via the
+  <code>{kind:"list"}</code> protocol message, returning live per-task status</li>
   <li><code>render.ts</code> — color-coded terminal rendering with state icons</li>
   <li><code>sync-hub.ts</code> — mirrors project status to hub vault at
   <code>{hubVault}/projects/{project}.md</code></li>
-</ul>
-
-<h3>Reactor Module (src/reactor/)</h3>
-<ul>
-  <li><code>auto-status.ts</code> — polls each captain's screen via the runtime, classifies content,
-  writes <code>status.md</code></li>
-  <li><code>status-classifier.ts</code> — regex-based classifier returning
-  <code>idle | busy | blocked | errored | offline</code></li>
 </ul>
 
 <h3>Library (src/lib/)</h3>
@@ -1050,24 +980,21 @@ Cockpit has three distinct storage areas:
     headless/            # Headless adapters per provider
     interactive/         # Interactive hook adapters
   dashboard/             # Status reader, renderer, hub sync
-  drivers/               # 5 agent drivers + capability registry
+  drivers/               # 4 agent drivers + capability registry
   lib/                   # Utilities (cmux-bin, runtime-sync, per-crew-settings…)
   notifiers/             # Notification plugin slot
   projection/            # Cross-agent instruction projection
-  reactor/               # Auto-status poller + classifier
   runtimes/              # Runtime plugin slot
-  trackers/              # Tracker plugin slot
   workspaces/            # Workspace plugin slot
 docs/                    # Specs and documentation
   specs/                 # 25 spec documents
-orchestrator/            # Role templates (8 files)
+orchestrator/            # Role templates (7 files)
   command.claude.md      # Command template (Claude)
   captain.claude.md      # Captain template (Claude)
   captain.generic.md     # Captain template (generic)
   crew.claude.md         # Crew template (Claude)
   crew.generic.md        # Crew template (generic / Codex / Gemini)
   crew.opencode.md       # Crew template (OpenCode)
-  reactor.claude.md      # Reactor template
   learnings.claude.md    # Learnings template
 plugin/skills/           # Portable markdown skills (Karpathy, etc.)
 scripts/                 # Shell scripts (read-handoff, write-status, etc.)
@@ -1075,7 +1002,6 @@ scripts/                 # Shell scripts (read-handoff, write-status, etc.)
 
 <h3>Runtime / State (~/.config/cockpit)</h3>
 <pre><code>config.json              # Project configuration
-reactions.json           # Reactor reaction rules
 state/                   # Control-plane task records (JSON files per project/id)
 inbox/                   # Mailbox push notification logs (*.log per project)
 cockpit.sock             # Unix domain socket for daemon RPC
@@ -1083,7 +1009,6 @@ plugin/                  # Mirrored from source (plugin/skills/)
 scripts/                 # Mirrored from source (.sh files)
 orchestrator/            # Mirrored from source (role templates)
 dist/                    # Compiled JS
-reactor-state.json       # Reactor's processed event tracker
 metrics.json             # Metrics data
 </code></pre>
 
@@ -1099,7 +1024,7 @@ spokes/{project}/        # Per-project spoke vaults
   daily-logs/            # Project daily logs
   wiki/                  # Project wiki pages
   learnings/             # Project learnings
-  status.md              # Auto-generated status (by reactor)
+  status.md              # Project status summary
 </code></pre>
 
 <p>
@@ -1119,14 +1044,14 @@ structure when a project is registered.
 <tbody>
 <tr><td><strong>Generated</strong></td><td>2026-05-28</td></tr>
 <tr><td><strong>Branch</strong></td><td>develop</td></tr>
-<tr><td><strong>Commit</strong></td><td><code>50edf94</code></td></tr>
+<tr><td><strong>Commit</strong></td><td><code>75c8d38</code></td></tr>
 <tr><td><strong>Source</strong></td><td>~/me/claude-cockpit</td></tr>
 <tr><td><strong>Index</strong></td><td>767 files, 3,651 code symbols, 75 communities, 91 processes</td></tr>
 <tr><td><strong>Specs</strong></td><td>25 spec documents in <code>docs/specs/</code></td></tr>
 </tbody>
 </table>
 <p>
-This report reflects the state of the <code>develop</code> branch at commit <code>50edf94</code>.
+This report reflects the state of the <code>develop</code> branch at commit <code>75c8d38</code>.
 Every claim is grounded in the actual source code: src/ tree, docs/specs/, orchestrator/ templates,
 and the GitNexus code knowledge graph (clusters, processes, queries).
 </p>
