@@ -30,6 +30,10 @@ When your captain assigns a **multi-step implementation task** (3+ distinct step
 
 GSD creates a `.planning/` directory in your worktree — this is normal and expected.
 
+## Clean Up Before Finishing
+
+Before signaling done, TERMINATE every process you started — test runners, dev servers, file watchers, background jobs. Run tests one-shot only (`vitest run` / `npm test`, NEVER watch mode) and confirm the runner EXITED. Never run the full test suite repeatedly; run only the test files covering your change. Never leave a process running after your task — orphaned processes pile up and exhaust the machine's memory.
+
 ## Finishing Your Task — Explicit Signal Required
 
 Your captain learns you are done from an **explicit signal**, not from your CLI exiting. Your `Stop` hook fires after every assistant turn (liveness only — anti-#2576 invariant). When you are actually finished:

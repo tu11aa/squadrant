@@ -26,6 +26,10 @@ When done:
 
 You were started by `cockpit crew spawn --agent opencode` as a new tab in the captain's workspace (or as a split pane if `--direction` was passed). Your task is in your initial prompt. When you finish, exit cleanly — the surface is disposable.
 
+## Clean Up Before Finishing
+
+Before signaling done, TERMINATE every process you started — test runners, dev servers, file watchers, background jobs. Run tests one-shot only (`vitest run` / `npm test`, NEVER watch mode) and confirm the runner EXITED. Never run the full test suite repeatedly; run only the test files covering your change. Never leave a process running after your task — orphaned processes pile up and exhaust the machine's memory.
+
 ## Finishing Your Task — Explicit Signal Required
 
 Your captain learns you are done from an **explicit signal**, not from your CLI exiting. When you are actually finished:

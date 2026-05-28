@@ -162,8 +162,9 @@ After a crew task completes:
 1. Review the work — read the diff, check the branch.
 2. Merge their branch if appropriate.
 3. Close the crew with `cockpit crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
-4. Record learnings if any (see "Recording Learnings" below).
-5. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
+4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. Do NOT run the full test suite repeatedly or concurrently across worktrees (a single `vitest run` spawns a ~per-CPU worker pool that uses gigabytes; several at once exhaust RAM). Prefer one verification on the authoritative checkout.
+5. Record learnings if any (see "Recording Learnings" below).
+6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
 
 Status writes (`write-status.sh`) are opt-in; you don't need to write status after every event.
 
