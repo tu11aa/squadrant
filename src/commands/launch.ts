@@ -170,13 +170,12 @@ function buildAgentCmd(
 const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
 
 /**
- * Add the notify-relay to a captain workspace as a hidden split-pane. The
+ * Add the notify-relay to a captain workspace as a hidden background tab. The
  * relay tails the daemon's per-project mailbox and forwards each new event to
  * the captain pane via runtime.sendToSurface — required because cmux refuses
  * any caller not descended from its app process, so the daemon itself cannot
- * deliver. Dedups by closing any pre-existing relay surface (visible tab or
- * hidden split) before respawning, so the relay always boots fresh with the
- * current cockpit binary.
+ * deliver. Dedups by closing any pre-existing relay surface before respawning,
+ * so the relay always boots fresh with the current cockpit binary.
  */
 async function ensureNotifyRelayTab(
   runtime: RuntimeDriver,

@@ -25,6 +25,20 @@ function parseList(output: string): WorkspaceRef[] {
   return refs;
 }
 
+// Parse `cmux tree` into the ordered list of surfaces in a workspace, marking
+// which one is currently selected. Order matches the tab strip, so the array
+// index doubles as the surface's position for move-surface --index.
+function parseSurfaceOrder(tree: string): { id: string; selected: boolean }[] {
+  const surfaces: { id: string; selected: boolean }[] = [];
+  for (const line of tree.split("\n")) {
+    const match = line.match(/surface\s+(surface:\d+)/);
+    if (match) {
+      surfaces.push({ id: match[1], selected: line.includes("[selected]") });
+    }
+  }
+  return surfaces;
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",
@@ -166,15 +180,27 @@ export function createCmuxDriver(): RuntimeDriver {
       title?: string;
       placement: "hidden" | "visible";
     }): Promise<PaneRef> {
-      // Use a split-pane for "hidden" (shares a tab, can be resized small) and
-      // a new tab for "visible" (debug ergonomics). The resize-pane verb is
-      // best-effort; if cmux rejects it, the default split size is acceptable.
+      // Both placements use a background tab (new-surface) in the captain's
+      // existing pane — full-height, NO split. A split-pane is wrong here:
+      // cmux 0.62.2 has no resize/hide verb, so a `new-pane` split can never be
+      // shrunk and stays an ugly full-height 50/50 split forever (#117). The
+      // relay still runs as a cmux descendant in the same workspace, preserving
+      // the in-cmux delivery requirement (#112).
+      //
+      // "hidden" then re-selects whatever surface was focused before, in its
+      // original position, so the relay tab never steals focus from the
+      // captain. "visible" leaves the new tab focused for debug ergonomics.
       const wsId = opts.captainWorkspace.id;
-      const verb =
-        opts.placement === "visible"
-          ? ["new-surface", "--type", "terminal", "--workspace", wsId]
-          : ["new-pane", "--type", "terminal", "--direction", "down", "--workspace", wsId];
-      const output = cmux(verb);
+      let priorSurface: string | undefined;
+      let priorIndex = -1;
+      if (opts.placement === "hidden") {
+        try {
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId]));
+          priorIndex = before.findIndex((s) => s.selected);
+          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
+        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
+      }
+      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId]);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
         throw new Error(`cmux spawnInjector did not return a surface id: ${output}`);
@@ -186,10 +212,10 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
       cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
-      if (opts.placement === "hidden") {
+      if (opts.placement === "hidden" && priorSurface) {
         try {
-          cmux(["resize-pane", "--workspace", wsId, "--surface", surfaceId, "--rows", "1"]);
-        } catch { /* resize is best-effort; default split size is the fallback */ }
+          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
+        } catch { /* refocus is best-effort */ }
       }
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
