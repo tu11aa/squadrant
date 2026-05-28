@@ -281,11 +281,11 @@ describe("cmux driver", () => {
     expect(cmds.some((c) => c.includes("send-key") && c.includes("--surface surface:8") && c.includes("Enter"))).toBe(true);
   });
 
-  // #117: hidden placement must NOT create a split-pane. cmux 0.62.2 has no
+  // #117: background placement must NOT create a split-pane. cmux 0.62.2 has no
   // resize-pane verb, so a `new-pane --direction down` split can never be
   // shrunk and stays a full-height 50/50 split forever. A background tab
   // (new-surface) keeps the captain pane full-height with no split.
-  it("spawnInjector hidden uses new-surface (no split-pane, no resize-pane)", async () => {
+  it("spawnInjector background uses new-surface (no split-pane, no resize-pane)", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
       if (cmd.includes("tree")) return 'surface surface:5 [terminal] "cap" [selected]';
@@ -296,7 +296,7 @@ describe("cmux driver", () => {
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
       command: "cockpit notify-relay proj --as captain",
       title: "✉ notify-relay",
-      placement: "hidden",
+      placement: "background",
     });
     expect(pane).toEqual({ workspaceId: "workspace:1", surfaceId: "surface:8", title: "✉ notify-relay" });
     const cmds = execFileMock.mock.calls.map(cmdOf);
@@ -306,7 +306,7 @@ describe("cmux driver", () => {
     expect(cmds.every((c) => !c.includes("resize-pane"))).toBe(true);
   });
 
-  it("spawnInjector hidden sends the command + Enter to the new surface", async () => {
+  it("spawnInjector background sends the command + Enter to the new surface", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
       if (cmd.includes("tree")) return 'surface surface:5 [terminal] "cap" [selected]';
@@ -316,16 +316,17 @@ describe("cmux driver", () => {
     await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
       command: "cockpit notify-relay proj --as captain",
-      placement: "hidden",
+      placement: "background",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
     expect(cmds.some((c) => c.includes("send ") && c.includes("--surface surface:8") && c.includes("cockpit notify-relay proj") && !c.includes("send-key"))).toBe(true);
     expect(cmds.some((c) => c.includes("send-key") && c.includes("--surface surface:8") && c.includes("Enter"))).toBe(true);
   });
 
-  // The relay tab must never steal focus from the captain: after spawning it we
-  // re-select whichever surface was selected before, in its original position.
-  it("spawnInjector hidden restores focus to the previously-selected surface", async () => {
+  // The background relay tab must never steal focus from the captain: after
+  // spawning it we re-select whichever surface was selected before, in its
+  // original position.
+  it("spawnInjector background restores focus to the previously-selected surface", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
       if (cmd.includes("tree")) {
@@ -340,7 +341,7 @@ describe("cmux driver", () => {
     await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
       command: "cockpit notify-relay proj --as captain",
-      placement: "hidden",
+      placement: "background",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
     expect(cmds.some((c) =>
@@ -375,7 +376,7 @@ describe("cmux driver", () => {
     await expect(driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
       command: "x",
-      placement: "hidden",
+      placement: "background",
     })).rejects.toThrow(/did not return a surface/);
   });
 

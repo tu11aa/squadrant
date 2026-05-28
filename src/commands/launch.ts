@@ -181,7 +181,7 @@ function buildAgentCmd(
 const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
 
 /**
- * Add the notify-relay to a captain workspace as a hidden background tab. The
+ * Add the notify-relay to a captain workspace as a background tab. The
  * relay tails the daemon's per-project mailbox and forwards each new event to
  * the captain pane via runtime.sendToSurface — required because cmux refuses
  * any caller not descended from its app process, so the daemon itself cannot
@@ -204,9 +204,9 @@ async function ensureNotifyRelayTab(
       captainWorkspace: workspace,
       command: `cockpit notify-relay ${project} --as captain`,
       title: NOTIFY_RELAY_TAB_TITLE,
-      placement: "hidden",
+      placement: "background",
     });
-    console.log(chalk.cyan(`  ✔ Added hidden notify-relay for '${project}'`));
+    console.log(chalk.cyan(`  ✔ Added background notify-relay for '${project}'`));
   } catch (e) {
     console.error(chalk.yellow(`  ⚠ notify-relay setup failed: ${(e as Error).message}`));
   }

@@ -177,7 +177,7 @@ export function createCmuxDriver(): RuntimeDriver {
       captainWorkspace: WorkspaceRef;
       command: string;
       title?: string;
-      placement: "hidden" | "visible";
+      placement: "background" | "visible";
     }): Promise<PaneRef> {
       // Both placements use a background tab (new-surface) in the captain's
       // existing pane — full-height, NO split. A split-pane is wrong here:
@@ -186,13 +186,13 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // "hidden" then re-selects whatever surface was focused before, in its
+      // "background" then re-selects whatever surface was focused before, in its
       // original position, so the relay tab never steals focus from the
       // captain. "visible" leaves the new tab focused for debug ergonomics.
       const wsId = opts.captainWorkspace.id;
       let priorSurface: string | undefined;
       let priorIndex = -1;
-      if (opts.placement === "hidden") {
+      if (opts.placement === "background") {
         try {
           const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId]));
           priorIndex = before.findIndex((s) => s.selected);
@@ -211,7 +211,7 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
       cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
-      if (opts.placement === "hidden" && priorSurface) {
+      if (opts.placement === "background" && priorSurface) {
         try {
           cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
         } catch { /* refocus is best-effort */ }
