@@ -45,9 +45,12 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // Anti-#2576: liveness only. A turn-end is NOT completion.
       // From blocked, a bare progress/heartbeat does not auto-unblock
       // (state stays "blocked"); only lastEvent + lastHeartbeat update.
-      return rec.state === "blocked"
-        ? { ...rec, lastHeartbeat: now, lastEvent: ev.type }
-        : base;
+      // From awaiting-input, transition back to working — the Stop hook
+      // puts the task into awaiting-input between turns (fixes #131 false
+      // stall); PostToolUse on the next turn resumes the working state.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      if (rec.state === "awaiting-input") return { ...base, state: "working" };
+      return base;
     case "task.blocked":
       // ev.reason is protocol/logging-only and intentionally not persisted;
       // only `question` is stored on the record.

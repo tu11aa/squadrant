@@ -3,9 +3,13 @@ import type { InteractiveHookAdapter } from "./types.js";
 import type { ControlEvent } from "../types.js";
 
 // PostToolUse fires after EVERY tool call mid-turn — it is the only liveness
-// signal that refreshes the heartbeat while a crew is still working. Stop/
-// SubagentStop/SessionEnd fire only at turn boundaries, so a long working turn
-// would otherwise exceed heartbeatBudgetMs and trip a false CREW STALLED alert.
+// signal that refreshes the heartbeat while a crew is still working.
+// Stop fires at turn completion and maps to task.turn.completed so the task
+// transitions to awaiting-input (immune to stall detection) — without this,
+// a captain AFK for >heartbeatBudgetMs would get a false CREW STALLED.
+// SubagentStop/SessionEnd fire only at turn boundaries but are liveness-only:
+// SubagentStop fires while the parent agent still owns the turn, and SessionEnd
+// is an unreliable signal (crash / Ctrl-C / /exit).
 const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse"] as const;
 
 /**
@@ -45,10 +49,15 @@ export function mergeClaudeHooks(settings: any, hookCmd: string): any {
  * Map a Claude hook event name to a cockpit ControlEvent. Pure function —
  * isolated for testability and to codify the anti-#2576 invariant in one
  * place: NO Claude hook ever maps to `task.done`/`task.failed`/`task.blocked`.
- * Stop/SubagentStop/SessionEnd/PostToolUse = liveness only. Terminal state
- * comes exclusively from explicit `cockpit crew signal` (Task 4).
- * PostToolUse is the mid-turn heartbeat (fires per tool call); the others are
- * turn-boundary liveness.
+ * PostToolUse/SubagentStop/SessionEnd = liveness only (task.progress).
+ * Stop = turn boundary (task.turn.completed → awaiting-input, stall-immune).
+ * Terminal state comes exclusively from explicit `cockpit crew signal`.
+ *
+ * Stop is remapped to task.turn.completed so the task leaves the working
+ * state between turns — no hooks fire while the captain reviews output,
+ * so the previous liveness-only mapping would heartbeat-expire after
+ * heartbeatBudgetMs and fire a false CREW STALLED alert. The awaiting-input
+ * state is immune to evaluateStall (fixes #131).
  */
 export function mapClaudeHookToEvent(
   event: string,
@@ -57,6 +66,7 @@ export function mapClaudeHookToEvent(
 ): ControlEvent | null {
   switch (event) {
     case "Stop":
+      return { type: "task.turn.completed", id: taskId, turnId: "hook-stop" };
     case "SubagentStop":
     case "SessionEnd":
     case "PostToolUse":

@@ -4,9 +4,9 @@ import { mapClaudeHookToEvent } from "../interactive/claude.js";
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
 
-  it("maps Stop → task.progress with note 'stop'", () => {
+  it("maps Stop → task.turn.completed (turn boundary → awaiting-input, #131)", () => {
     const ev = mapClaudeHookToEvent("Stop", { session_id: "x" }, TID);
-    expect(ev).toEqual({ type: "task.progress", id: TID, note: "stop" });
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("maps SubagentStop → task.progress with note 'subagentstop'", () => {

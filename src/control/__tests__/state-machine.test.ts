@@ -67,9 +67,35 @@ describe("state-machine reduce", () => {
     expect(next).toBe(done); // same reference — no-op
   });
 
-  it("bare Stop modelled as task.progress never yields done", () => {
-    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "Stop" }, 7000);
+  it("task.progress on working stays working (liveness tick, never terminal)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "PostToolUse" }, 7000);
     expect(next.state).toBe("working");
+    expect(next.lastHeartbeat).toBe(7000);
+  });
+
+  it("task.turn.completed transitions working → awaiting-input (#131 false-stall fix)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.turn.completed", id: "t1", turnId: "hook-stop" }, 8000);
+    expect(next.state).toBe("awaiting-input");
+    expect(next.lastHeartbeat).toBe(8000);
+  });
+
+  it("task.progress on awaiting-input transitions back to working (#131 fix: next turn resumes)", () => {
+    const taskTurnEnd = reduce(rec({ state: "working" }), { type: "task.turn.completed", id: "t1", turnId: "hook-stop" }, 8000);
+    expect(taskTurnEnd.state).toBe("awaiting-input");
+    const postToolUse = reduce(taskTurnEnd, { type: "task.progress", id: "t1", note: "posttooluse" }, 9000);
+    expect(postToolUse.state).toBe("working");
+    expect(postToolUse.lastHeartbeat).toBe(9000);
+    expect(postToolUse.lastEvent).toBe("task.progress");
+  });
+
+  it("awaiting-input + task.done still transitions to done (terminal not blocked)", () => {
+    const next = reduce(rec({ state: "awaiting-input" }), { type: "task.done", id: "t1", resultRef: "/r" }, 10000);
+    expect(next.state).toBe("done");
+  });
+
+  it("awaiting-input + task.failed still transitions to failed", () => {
+    const next = reduce(rec({ state: "awaiting-input" }), { type: "task.failed", id: "t1", error: "boom" }, 11000);
+    expect(next.state).toBe("failed");
   });
 });
 
