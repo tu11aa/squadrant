@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCmuxDriver } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend } from "../cmux.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
@@ -238,6 +238,36 @@ describe("cmux driver", () => {
     expect(cmds.some((c) => c.includes("send-key") && c.includes("--surface surface:9") && c.includes("Enter"))).toBe(true);
   });
 
+  // Regression for #136: multi-line message must be sanitized before cmux send
+  // so newline bytes don't trigger premature Enter submissions.
+  it("sendToPane sanitizes multi-line messages", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.sendToPane({ workspaceId: "workspace:1", surfaceId: "surface:9" }, "line one\nline two\nline three");
+    const sendCall = execFileMock.mock.calls.find((c) => argvOf(c)[0] === "send");
+    expect(sendCall).toBeDefined();
+    expect(argvOf(sendCall!)).toContain("line one line two line three");
+    expect(argvOf(sendCall!)).not.toContain("\n");
+  });
+
+  it("send sanitizes multi-line messages", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.send("workspace:2", "hello\nworld\\nfoo");
+    const sendCall = execFileMock.mock.calls.find((c) => argvOf(c)[0] === "send");
+    expect(sendCall).toBeDefined();
+    expect(argvOf(sendCall!)).toContain("hello world foo");
+    expect(argvOf(sendCall!)).not.toContain("\n");
+  });
+
+  it("sendToSurface sanitizes multi-line messages", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "multi\nline\r\ntext");
+    const sendCall = execFileMock.mock.calls.find((c) => argvOf(c)[0] === "send");
+    expect(sendCall).toBeDefined();
+    expect(argvOf(sendCall!)).toContain("multi line text");
+    // No real newlines in argv
+    expect(argvOf(sendCall!).every((s: string) => !s.includes("\n") && !s.includes("\r"))).toBe(true);
+  });
+
   // Regression for #118: a crew prompt containing a backtick-wrapped destructive
   // command must reach cmux as ONE literal argv element, never parsed by a shell.
   it("sendToPane delivers backtick/$ shell metacharacters as literal text, not executed", async () => {
@@ -406,5 +436,51 @@ describe("cmux driver", () => {
     execFileMock.mockImplementation(() => { throw new Error("workspace not found"); });
     const surfaces = await driver.listSurfaces("workspace:99");
     expect(surfaces).toEqual([]);
+  });
+});
+
+describe("sanitizeForCmuxSend", () => {
+  it("collapses real newline bytes to single space", () => {
+    expect(sanitizeForCmuxSend("line one\nline two")).toBe("line one line two");
+  });
+
+  it("collapses real CRLF to single space", () => {
+    expect(sanitizeForCmuxSend("line one\r\nline two")).toBe("line one line two");
+  });
+
+  it("collapses real tab to single space", () => {
+    expect(sanitizeForCmuxSend("col1\tcol2")).toBe("col1 col2");
+  });
+
+  it("collapses literal backslash-n escape to single space", () => {
+    expect(sanitizeForCmuxSend("line one\\nline two")).toBe("line one line two");
+  });
+
+  it("collapses literal backslash-r escape to single space", () => {
+    expect(sanitizeForCmuxSend("line one\\rline two")).toBe("line one line two");
+  });
+
+  it("collapses literal backslash-t escape to single space", () => {
+    expect(sanitizeForCmuxSend("col1\\tcol2")).toBe("col1 col2");
+  });
+
+  it("handles mixed escapes and real whitespace", () => {
+    expect(sanitizeForCmuxSend("a\\nb\\nc\r\nd\te")).toBe("a b c d e");
+  });
+
+  it("collapses multiple consecutive spaces from collapsed whitespace", () => {
+    expect(sanitizeForCmuxSend("a\n\n\nb")).toBe("a b");
+  });
+
+  it("trims leading/trailing whitespace", () => {
+    expect(sanitizeForCmuxSend("\n  hello world\n  ")).toBe("hello world");
+  });
+
+  it("preserves normal text without whitespace", () => {
+    expect(sanitizeForCmuxSend("hello world")).toBe("hello world");
+  });
+
+  it("handles empty string", () => {
+    expect(sanitizeForCmuxSend("")).toBe("");
   });
 });

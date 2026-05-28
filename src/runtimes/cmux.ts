@@ -38,6 +38,18 @@ function parseSurfaceOrder(tree: string): { id: string; selected: boolean }[] {
   return surfaces;
 }
 
+// cmux `send` treats \n, \r (and \t) as Enter/Tab keystrokes, so any newline in a
+// multi-line message would submit it line-by-line. Collapse all newline/CR/tab
+// (real bytes AND literal backslash-escapes) to single spaces so the whole message
+// is delivered as one line, then the explicit send-key Enter submits it once.
+export function sanitizeForCmuxSend(text: string): string {
+  return text
+    .replace(/\\[nrt]/g, " ")
+    .replace(/[\n\r\t]+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",
@@ -108,13 +120,13 @@ export function createCmuxDriver(): RuntimeDriver {
           const surfaces = await this.listSurfaces(ws.id);
           const target = surfaces.find((s) => s.title === ws.name);
           if (target) {
-            cmux(["send", "--workspace", ws.id, "--surface", target.surfaceId, message]);
+            cmux(["send", "--workspace", ws.id, "--surface", target.surfaceId, sanitizeForCmuxSend(message)]);
             cmux(["send-key", "--workspace", ws.id, "--surface", target.surfaceId, "Enter"]);
             return;
           }
         } catch { /* fall through to default */ }
       }
-      cmux(["send", "--workspace", ref, message]);
+      cmux(["send", "--workspace", ref, sanitizeForCmuxSend(message)]);
       cmux(["send-key", "--workspace", ref, "Enter"]);
     },
 
@@ -161,7 +173,7 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async sendToPane(pane: PaneRef, message: string): Promise<void> {
-      cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, message]);
+      cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(message)]);
       cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, "Enter"]);
     },
 
@@ -220,7 +232,7 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async sendToSurface(surface: PaneRef, text: string): Promise<void> {
-      cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, text]);
+      cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
       cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
     },
 
