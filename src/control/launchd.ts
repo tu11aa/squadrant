@@ -47,7 +47,7 @@ export function sanitizePathForPlist(path: string): string {
   return stable.join(":");
 }
 
-export const AGENT_BINS = ["cmux", "claude", "opencode", "codex", "gemini", "aider", "node"];
+export const AGENT_BINS = ["cmux", "claude", "opencode", "codex", "gemini", "node"];
 
 /**
  * Resolve absolute directories for known agent + tool binaries via `which`, so

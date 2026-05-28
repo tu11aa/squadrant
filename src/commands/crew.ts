@@ -10,7 +10,6 @@ import {
   createClaudeDriver,
   createCodexDriver,
   createGeminiDriver,
-  createAiderDriver,
   createOpencodeDriver,
   CapabilityRegistry,
 } from "../drivers/index.js";
@@ -128,13 +127,12 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     claude: createClaudeDriver(),
     codex: createCodexDriver(),
     gemini: createGeminiDriver(),
-    aider: createAiderDriver(),
     opencode: createOpencodeDriver(),
   });
   const agentName = input.agent ?? "claude";
   const agent = agents.get(agentName);
   if (!agent) {
-    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, aider, opencode.`);
+    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
   }
 
   // Codex: route through the interactive control-plane daemon (PR #98) instead
@@ -170,9 +168,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   const interactive = agent.name === "claude" || agent.name === "opencode";
   // Honor configured model routing only when the spawn agent matches the
   // configured role agent — model names are agent-specific (e.g. "sonnet" is
-  // a Claude alias; aider expects a fully-qualified name; codex/gemini have
-  // their own routing). Cross-agent crews fall back to the agent's own
-  // default to avoid passing an invalid model arg.
+  // a Claude alias; codex/gemini have their own routing). Cross-agent crews
+  // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
   const crewModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
 
@@ -393,7 +390,7 @@ crewCommand
   .argument("<task>", "Initial task prompt for the crew session")
   .option("--name <name>", "Crew name (default: auto-generated crew-N)")
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
-  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|aider|opencode)", "claude")
+  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|opencode)", "claude")
   .option("--approval", "force codex approvalPolicy='untrusted' (codex only; exercises gate primitive)", false)
   .action(
     async (

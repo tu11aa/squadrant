@@ -86,7 +86,7 @@ A crew is an **interactive Claude sub-session** running in a tab inside your wor
 cockpit crew spawn <project> "<task description>" \
     [--name <name>] \
     [--direction tab|right|left|up|down] \
-    [--agent claude|codex|gemini|aider]
+    [--agent claude|codex|gemini|opencode]
 ```
 
 What it does:
@@ -143,7 +143,7 @@ cockpit crew spawn brove "Fix typo in README" --direction right
 - **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
 - **For simple tasks**, don't mention GSD — the crew will handle it directly.
 
-> Non-Claude agents (codex / gemini / aider) currently still launch in print-mode (one-shot) rather than as interactive sessions; `send` won't reach them yet. Prefer Claude crews when you want multi-turn dialogue.
+> Non-Claude agents (codex / gemini) currently still launch in print-mode (one-shot) rather than as interactive sessions; `send` won't reach them yet. Prefer Claude crews when you want multi-turn dialogue.
 
 ## Task Coordination
 
