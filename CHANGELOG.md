@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Reactor engine.** The always-on GitHub poller / auto-delegation engine has
+  been retired — reaction rules (`reactions.json`), the polling and matching
+  scripts, the auto-status poller and status classifier, the `reactor` role and
+  its skill, and the `cockpit reactor` command are all gone. Event-driven
+  auto-delegation is no longer part of cockpit; agents are launched explicitly.
 - **Aider runtime driver and support.** The `aider` driver, its tests, and all
   spawn/launch/doctor/template wiring have been removed. Aider was never wired
   into `src/config.ts` and saw no active use; cockpit's supported agents are now

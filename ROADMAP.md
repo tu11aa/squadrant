@@ -7,11 +7,10 @@
 
 Cockpit v0.1.x is a working multi-project agent orchestration system with:
 - 3-tier hierarchy (Command → Captain → Crew) via cmux + Agent Teams
-- GitHub reactor engine (event polling → auto-delegation)
 - Obsidian hub/spoke vaults for offline status dashboards
 - Session freshness logic (daily + template hash)
 - Self-enhancement via learnings system
-- CLI: init, launch, status, doctor, projects, shutdown, reactor, feedback
+- CLI: init, launch, status, doctor, projects, shutdown, feedback
 
 ## Roadmap
 
@@ -55,10 +54,10 @@ Cockpit v0.1.x is a working multi-project agent orchestration system with:
 **What:**
 - Add to config.json: `"models": { "exploration": "haiku", "planning": "opus", "execution": "sonnet", "review": "opus" }`
 - Captain passes `model` param when spawning crew via Agent tool
-- Command uses Opus (always), Reactor uses Sonnet
+- Command uses Opus (always)
 **Effort:** ~1-2 hours (config + template changes)
 
-#### 5. CI Feedback Reactor Extension
+#### 5. CI Feedback Reactor Extension — **OBSOLETE** (reactor engine removed; would need a new auto-delegation mechanism)
 **Why:** Composio AO auto-routes CI failures back to agents. Cockpit reactor detects CI failure but only notifies — doesn't auto-fix.
 **What:**
 - New reaction action: `auto-fix-ci` — on CI failure, re-delegate to captain with failure logs
@@ -106,7 +105,7 @@ Cockpit v0.1.x is a working multi-project agent orchestration system with:
 - Output: formatted markdown for sharing
 **Effort:** ~2-3 hours
 
-#### 9. Linear Integration
+#### 9. Linear Integration — **OBSOLETE as specified** (depended on the now-removed reactor engine)
 **Why:** Composio AO supports Linear+GitHub+GitLab. Cockpit only has GitHub reactor. Some projects may use Linear for tracking.
 **What:**
 - New reactor source: `linear-issues` (poll via Linear MCP tools already available)
