@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cockpit — Tổng quan Kiến trúc</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --bg2: #1a1b26;
+  --bg3: #24283b;
+  --fg: #c0caf5;
+  --fg2: #a9b1d6;
+  --accent: #7aa2f7;
+  --accent2: #bb9af7;
+  --green: #9ece6a;
+  --orange: #ff9e64;
+  --red: #f7768e;
+  --cyan: #73daca;
+  --yellow: #e0af68;
+  --border: #3b4261;
+  --header-bg: #1a1b26;
+  --code-bg: #1d1f2e;
+  --sidebar-width: 260px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.7;
+  font-size: 15px;
+  display: flex;
+  min-height: 100vh;
+}
+/* ── Sidebar ── */
+nav.toc {
+  position: fixed; top: 0; left: 0;
+  width: var(--sidebar-width); height: 100vh;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  padding: 24px 16px;
+  overflow-y: auto;
+  z-index: 10;
+}
+nav.toc h2 {
+  font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--fg2);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+nav.toc a {
+  display: block; color: var(--fg2); text-decoration: none;
+  font-size: 13px; padding: 4px 8px; border-radius: 4px;
+  transition: background .15s, color .15s;
+}
+nav.toc a:hover { background: var(--bg3); color: var(--accent); }
+nav.toc a.toc-h2 { padding-left: 20px; font-size: 12px; color: var(--fg2); opacity: .8; }
+nav.toc a.toc-h3 { padding-left: 32px; font-size: 11px; color: var(--fg2); opacity: .65; }
+
+/* ── Main ── */
+main {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  padding: 48px 56px;
+  max-width: 960px;
+}
+h1 {
+  font-size: 32px; font-weight: 700; margin-bottom: 6px;
+  color: var(--fg);
+}
+h1 .subtitle {
+  display: block; font-size: 15px; font-weight: 400;
+  color: var(--fg2); margin-top: 4px;
+}
+.header-meta {
+  font-size: 13px; color: var(--fg2);
+  margin-bottom: 40px; padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.header-meta span { display: inline-block; margin-right: 20px; }
+.header-meta code { color: var(--accent); }
+
+h2 {
+  font-size: 22px; font-weight: 600; margin-top: 48px; margin-bottom: 16px;
+  color: var(--fg); border-bottom: 1px solid var(--border); padding-bottom: 8px;
+}
+h3 {
+  font-size: 17px; font-weight: 600; margin-top: 28px; margin-bottom: 10px;
+  color: var(--accent2);
+}
+p { margin-bottom: 14px; color: var(--fg2); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--cyan);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 14px 0 20px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+pre code {
+  background: none; padding: 0;
+  color: var(--fg);
+}
+
+/* ── Tables ── */
+table {
+  width: 100%; border-collapse: collapse;
+  margin: 14px 0 20px 0;
+  font-size: 13px;
+}
+th {
+  background: var(--bg3); color: var(--fg);
+  text-align: left; padding: 8px 12px;
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  color: var(--fg2);
+}
+tr:nth-child(even) td { background: var(--bg2); }
+
+/* ── State diagram / SVG ── */
+.diagram {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  text-align: center;
+}
+.diagram svg { max-width: 100%; height: auto; }
+
+/* ── Info boxes ── */
+.info {
+  background: var(--bg3);
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  margin: 14px 0 20px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  color: var(--fg2);
+}
+.info strong { color: var(--accent); }
+
+ul, ol { margin: 8px 0 16px 20px; color: var(--fg2); }
+li { margin-bottom: 4px; }
+
+.footer {
+  margin-top: 60px; padding-top: 20px;
+  border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--fg2);
+}
+
+/* ── Badges ── */
+.badge {
+  display: inline-block;
+  font-size: 11px; font-weight: 600;
+  padding: 1px 8px; border-radius: 10px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.badge-green { background: #1a3a1a; color: var(--green); }
+.badge-blue { background: #1a243a; color: var(--accent); }
+.badge-purple { background: #241a3a; color: var(--accent2); }
+.badge-orange { background: #3a2a1a; color: var(--orange); }
+
+.tag {
+  display: inline-block;
+  font-size: 11px; padding: 1px 7px; border-radius: 4px;
+  background: var(--bg3); color: var(--fg2);
+  margin-right: 4px; font-family: monospace;
+}
+
+/* ── Responsive ── */
+@media (max-width: 800px) {
+  body { flex-direction: column; }
+  nav.toc { position: static; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  main { margin-left: 0; padding: 24px 20px; }
+}
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <h2>Mục lục</h2>
+  <a href="#overview">1. Cockpit là gì</a>
+  <a href="#role-hierarchy" class="toc-h2">2. Phân cấp Vai trò</a>
+  <a href="#command" class="toc-h3">Command</a>
+  <a href="#captain" class="toc-h3">Captain</a>
+  <a href="#crew" class="toc-h3">Crew</a>
+  <a href="#reactor" class="toc-h3">Reactor</a>
+  <a href="#plugin-slots" class="toc-h2">3. Khe Cắm Plugin</a>
+  <a href="#runtime" class="toc-h3">Runtime</a>
+  <a href="#workspace" class="toc-h3">Workspace</a>
+  <a href="#tracker" class="toc-h3">Tracker</a>
+  <a href="#notifier" class="toc-h3">Notifier</a>
+  <a href="#agent-drivers" class="toc-h2">4. Driver Tác nhân</a>
+  <a href="#control-plane" class="toc-h2">5. Mặt phẳng Điều khiển</a>
+  <a href="#state-machine" class="toc-h3">Máy trạng thái Tác vụ</a>
+  <a href="#watchdog" class="toc-h3">Watchdog / Heartbeat</a>
+  <a href="#hook-bridge" class="toc-h3">Cầu nối Hook</a>
+  <a href="#codex" class="toc-h3">Codex Interactive Driver</a>
+  <a href="#projection" class="toc-h2">6. Chiếu Đa tác nhân</a>
+  <a href="#other-modules" class="toc-h2">7. Các Mô-đun Khác</a>
+  <a href="#commands" class="toc-h3">Lệnh CLI</a>
+  <a href="#config" class="toc-h3">Cấu hình</a>
+  <a href="#dashboard" class="toc-h3">Dashboard</a>
+  <a href="#fs-layout" class="toc-h2">8. Cấu trúc Thư mục</a>
+  <a href="#footer" class="toc-h2">9. Thông tin Sinh tài liệu</a>
+</nav>
+
+<main>
+
+<h1>
+  Kiến trúc Cockpit
+  <span class="subtitle">Lớp điều phối đa tác nhân &mdash; tham chiếu hệ thống và mô-đun</span>
+</h1>
+
+<div class="header-meta">
+  <span>Ngày: 2026-05-28</span>
+  <span>Nhánh: develop</span>
+  <span>Commit: <code>50edf94</code></span>
+  <span><span class="badge badge-green">767 tệp</span> <span class="badge badge-blue">91 quy trình</span> <span class="badge badge-purple">6.011 cạnh</span></span>
+</div>
+
+<!-- ============================================================ -->
+<!-- 1. OVERVIEW -->
+<!-- ============================================================ -->
+<h2 id="overview">1. Cockpit là gì</h2>
+
+<p>
+Cockpit là một <strong>lớp điều phối đa tác nhân</strong> (multi-agent orchestration layer) để quản lý các tác nhân AI viết mã trên nhiều dự án phần mềm. Nó không phải là một công cụ Claude Code &mdash; Claude Code là <em>triển khai tham chiếu</em>; hệ thống hỗ trợ Codex, OpenCode, Gemini CLI và Aider thông qua lớp trừu tượng driver có thể cắm thêm.
+</p>
+
+<p>
+Về mặt khái niệm, Cockpit bọc một trình ghép kênh đầu cuối (<a href="#runtime">cmux</a>) với hệ thống phân công dựa trên vai trò: một phiên <strong>Command</strong> phân phối công việc đến các phiên <strong>Captain</strong> (mỗi dự án một phiên), các phiên này ủy thác tác vụ viết mã cho các phiên <strong>Crew</strong> tạm thời chạy trong các git worktree cách ly. Một engine <strong>Reactor</strong> rà soát GitHub và trạng thái captain một cách khai báo, đối sánh sự kiện với các luật phản ứng.
+</p>
+
+<div class="diagram">
+<svg viewBox="0 0 800 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7aa2f7"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9ece6a"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#ff9e64"/>
+    </marker>
+    <linearGradient id="grad-user" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#bb9af7;stop-opacity:.3"/>
+      <stop offset="100%" style="stop-color:#7aa2f7;stop-opacity:.3"/>
+    </linearGradient>
+    <linearGradient id="grad-cap" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7aa2f7;stop-opacity:.2"/>
+      <stop offset="100%" style="stop-color:#73daca;stop-opacity:.2"/>
+    </linearGradient>
+    <linearGradient id="grad-crew" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#73daca;stop-opacity:.15"/>
+      <stop offset="100%" style="stop-color:#9ece6a;stop-opacity:.15"/>
+    </linearGradient>
+    <linearGradient id="grad-cp" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f7768e;stop-opacity:.12"/>
+      <stop offset="100%" style="stop-color:#ff9e64;stop-opacity:.12"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="560" rx="8" fill="#1a1b26"/>
+
+  <!-- Title -->
+  <text x="400" y="28" text-anchor="middle" fill="#c0caf5" font-size="14" font-weight="600">Kiến trúc Cockpit &mdash; Phân cấp Vai trò + Khe cắm Plugin</text>
+
+  <!-- Layer labels -->
+  <text x="20" y="62" fill="#565f89" font-size="10" font-weight="600" text-transform="uppercase">Lớp Người dùng</text>
+  <line x1="20" y1="66" x2="780" y2="66" stroke="#3b4261" stroke-width="1"/>
+
+  <text x="20" y="172" fill="#565f89" font-size="10" font-weight="600">Lớp Điều phối</text>
+  <line x1="20" y1="176" x2="780" y2="176" stroke="#3b4261" stroke-width="1"/>
+
+  <text x="20" y="290" fill="#565f89" font-size="10" font-weight="600">Lớp Thực thi</text>
+  <line x1="20" y1="294" x2="780" y2="294" stroke="#3b4261" stroke-width="1"/>
+
+  <text x="20" y="440" fill="#565f89" font-size="10" font-weight="600">Hạ tầng (Khe cắm Plugin)</text>
+  <line x1="20" y1="444" x2="780" y2="444" stroke="#3b4261" stroke-width="1"/>
+
+  <!-- User / Terminal -->
+  <rect x="320" y="76" width="160" height="40" rx="8" fill="url(#grad-user)" stroke="#bb9af7" stroke-width="1.5"/>
+  <text x="400" y="101" text-anchor="middle" fill="#c0caf5" font-size="12" font-weight="600">Người dùng (Terminal)</text>
+
+  <!-- Command -->
+  <rect x="320" y="130" width="160" height="34" rx="6" fill="#2a1a3a" stroke="#bb9af7" stroke-width="1"/>
+  <text x="400" y="151" text-anchor="middle" fill="#bb9af7" font-size="11" font-weight="600">Command</text>
+
+  <!-- Arrows: User->Command, Command->Captains -->
+  <line x1="400" y1="116" x2="400" y2="130" stroke="#bb9af7" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="126" fill="#565f89" font-size="9">ủy thác</text>
+
+  <!-- Command -> Captain arrow -->
+  <line x1="400" y1="164" x2="400" y2="190" stroke="#bb9af7" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="180" fill="#565f89" font-size="9">điều phối đến</text>
+
+  <!-- Reactor (right side) -->
+  <rect x="620" y="130" width="140" height="34" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1"/>
+  <text x="690" y="151" text-anchor="middle" fill="#e0af68" font-size="11" font-weight="600">Reactor</text>
+  <line x1="590" y1="147" x2="620" y2="147" stroke="#e0af68" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-orange)"/>
+
+  <!-- Captains (3 boxes) -->
+  <rect x="100" y="196" width="180" height="34" rx="6" fill="url(#grad-cap)" stroke="#7aa2f7" stroke-width="1.2"/>
+  <text x="190" y="217" text-anchor="middle" fill="#7aa2f7" font-size="11" font-weight="600">Captain (Dự án A)</text>
+
+  <rect x="310" y="196" width="180" height="34" rx="6" fill="url(#grad-cap)" stroke="#7aa2f7" stroke-width="1.2"/>
+  <text x="400" y="217" text-anchor="middle" fill="#7aa2f7" font-size="11" font-weight="600">Captain (Dự án B)</text>
+
+  <rect x="520" y="196" width="180" height="34" rx="6" fill="url(#grad-cap)" stroke="#7aa2f7" stroke-width="1.2"/>
+  <text x="610" y="217" text-anchor="middle" fill="#7aa2f7" font-size="11" font-weight="600">Captain (Dự án …)</text>
+
+  <!-- Captains -> Crews -->
+  <line x1="190" y1="230" x2="190" y2="260" stroke="#73daca" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+  <line x1="400" y1="230" x2="400" y2="260" stroke="#73daca" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+  <line x1="610" y1="230" x2="610" y2="260" stroke="#73daca" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+  <text x="280" y="250" fill="#565f89" font-size="9">sinh crew</text>
+
+  <!-- Crews -->
+  <rect x="50" y="266" width="140" height="28" rx="5" fill="url(#grad-crew)" stroke="#73daca" stroke-width="1"/>
+  <text x="120" y="284" text-anchor="middle" fill="#73daca" font-size="10">crew-1</text>
+
+  <rect x="210" y="266" width="140" height="28" rx="5" fill="url(#grad-crew)" stroke="#73daca" stroke-width="1"/>
+  <text x="280" y="284" text-anchor="middle" fill="#73daca" font-size="10">crew-2</text>
+
+  <rect x="370" y="266" width="140" height="28" rx="5" fill="url(#grad-crew)" stroke="#73daca" stroke-width="1"/>
+  <text x="440" y="284" text-anchor="middle" fill="#73daca" font-size="10">crew-N</text>
+
+  <rect x="530" y="266" width="140" height="28" rx="5" fill="url(#grad-crew)" stroke="#73daca" stroke-width="1"/>
+  <text x="600" y="284" text-anchor="middle" fill="#73daca" font-size="10">codex crew</text>
+
+  <rect x="690" y="266" width="90" height="28" rx="5" fill="url(#grad-crew)" stroke="#73daca" stroke-width="1"/>
+  <text x="735" y="284" text-anchor="middle" fill="#73daca" font-size="10">opencode</text>
+
+  <!-- Control Plane (spanning across) -->
+  <rect x="50" y="315" width="700" height="110" rx="8" fill="url(#grad-cp)" stroke="#f7768e" stroke-width="1.2" stroke-dasharray="6,4"/>
+  <text x="400" y="334" text-anchor="middle" fill="#f7768e" font-size="12" font-weight="600">Mặt phẳng Điều khiển (cockpitd daemon)</text>
+
+  <!-- State Machine -->
+  <rect x="80" y="346" width="200" height="32" rx="5" fill="#3a1a1a" stroke="#f7768e" stroke-width="1"/>
+  <text x="180" y="365" text-anchor="middle" fill="#f7768e" font-size="10">Máy trạng thái Tác vụ (reducer)</text>
+
+  <!-- Watchdog -->
+  <rect x="310" y="346" width="180" height="32" rx="5" fill="#3a2a1a" stroke="#ff9e64" stroke-width="1"/>
+  <text x="400" y="365" text-anchor="middle" fill="#ff9e64" font-size="10">Watchdog / Heartbeat</text>
+
+  <!-- Mailbox -->
+  <rect x="520" y="346" width="200" height="32" rx="5" fill="#1a2a3a" stroke="#7aa2f7" stroke-width="1"/>
+  <text x="620" y="365" text-anchor="middle" fill="#7aa2f7" font-size="10">Thông báo đẩy Mailbox</text>
+
+  <!-- Codex Interactive -->
+  <rect x="80" y="386" width="300" height="30" rx="5" fill="#1a1a3a" stroke="#bb9af7" stroke-width="1"/>
+  <text x="230" y="405" text-anchor="middle" fill="#bb9af7" font-size="10">Codex Interactive Driver (AppServer)</text>
+
+  <!-- Unix Socket RPC -->
+  <rect x="420" y="386" width="300" height="30" rx="5" fill="#1a3a2a" stroke="#73daca" stroke-width="1"/>
+  <text x="570" y="405" text-anchor="middle" fill="#73daca" font-size="10">Giao thức Unix Socket JSON-RPC</text>
+
+  <!-- Link control plane to captains -->
+  <line x1="400" y1="425" x2="400" y2="445" stroke="#f7768e" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- 4 Plugin Slots -->
+  <rect x="50" y="455" width="160" height="36" rx="6" fill="#1a1a2a" stroke="#7aa2f7" stroke-width="1.2"/>
+  <text x="130" y="468" text-anchor="middle" fill="#7aa2f7" font-size="10" font-weight="600">Runtime</text>
+  <text x="130" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / tmux (tương lai)</text>
+
+  <rect x="230" y="455" width="160" height="36" rx="6" fill="#1a2a1a" stroke="#9ece6a" stroke-width="1.2"/>
+  <text x="310" y="468" text-anchor="middle" fill="#9ece6a" font-size="10" font-weight="600">Workspace</text>
+  <text x="310" y="483" text-anchor="middle" fill="#565f89" font-size="9">Obsidian / Notion (tương lai)</text>
+
+  <rect x="410" y="455" width="160" height="36" rx="6" fill="#2a1a1a" stroke="#f7768e" stroke-width="1.2"/>
+  <text x="490" y="468" text-anchor="middle" fill="#f7768e" font-size="10" font-weight="600">Tracker</text>
+  <text x="490" y="483" text-anchor="middle" fill="#565f89" font-size="9">GitHub / Linear (tương lai)</text>
+
+  <rect x="590" y="455" width="160" height="36" rx="6" fill="#2a2a1a" stroke="#e0af68" stroke-width="1.2"/>
+  <text x="670" y="468" text-anchor="middle" fill="#e0af68" font-size="10" font-weight="600">Notifier</text>
+  <text x="670" y="483" text-anchor="middle" fill="#565f89" font-size="9">cmux / Slack (tương lai)</text>
+
+  <!-- Agent drivers (bottom) -->
+  <rect x="50" y="506" width="700" height="38" rx="6" fill="#1a1b26" stroke="#3b4261" stroke-width="1"/>
+  <text x="400" y="520" text-anchor="middle" fill="#565f89" font-size="9">Driver Tác nhân:</text>
+  <rect x="140" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="180" y="527" text-anchor="middle" fill="#7aa2f7" font-size="10">claude</text>
+  <rect x="230" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="270" y="527" text-anchor="middle" fill="#9ece6a" font-size="10">codex</text>
+  <rect x="320" y="511" width="90" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="365" y="527" text-anchor="middle" fill="#e0af68" font-size="10">opencode</text>
+  <rect x="420" y="511" width="80" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="460" y="527" text-anchor="middle" fill="#bb9af7" font-size="10">gemini</text>
+  <rect x="510" y="511" width="70" height="24" rx="4" fill="#24283b" stroke="#3b4261" stroke-width="1"/>
+  <text x="545" y="527" text-anchor="middle" fill="#ff9e64" font-size="10">aider</text>
+  <rect x="{280}" y="{440}" width="0" height="0"/>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. ROLE HIERARCHY -->
+<!-- ============================================================ -->
+<h2 id="role-hierarchy">2. Phân cấp Vai trò</h2>
+
+<p>
+Cockpit định nghĩa bốn vai trò tạo thành một hệ thống phân cấp chặt chẽ. Mỗi vai trò ánh xạ đến một loại phiên tác nhân riêng, với tệp mẫu riêng trong thư mục <code>orchestrator/</code> và cấu hình riêng trong <code>~/.config/cockpit/</code>.
+</p>
+
+<h3 id="command">Command — Giám sát Điều phối</h3>
+<p>
+<strong>Mẫu:</strong> <code>orchestrator/command.claude.md</code><br>
+<strong>Sinh bởi:</strong> <code>cockpit command --task &lt;briefing|learnings-review|wiki-aggregate&gt;</code><br>
+<strong>Skill:</strong> <code>cockpit:command-ops</code>
+</p>
+<p>
+Command là bộ điều phối cấp cao nhất. Nó được sinh <strong>theo nhu cầu</strong> cho một tác vụ duy nhất (không có phiên Command liên tục). Công việc duy nhất của nó là ủy thác công việc cho các Captain dự án và báo cáo trạng thái cho người dùng. Nó không bao giờ được đọc, ghi hay tìm kiếm mã nguồn dự án. Nó có quyền truy cập vào <code>~/.config/cockpit/config.json</code>, hub vault, và các lệnh cockpit CLI / cmux.
+</p>
+
+<h3 id="captain">Captain — Trưởng Dự án</h3>
+<p>
+<strong>Mẫu:</strong> <code>orchestrator/captain.claude.md</code> (Claude),
+<code>orchestrator/captain.generic.md</code> (tác nhân không phải Claude)<br>
+<strong>Sinh bởi:</strong> <code>cockpit launch &lt;project&gt;</code><br>
+<strong>Skill:</strong> <code>cockpit:captain-ops</code>
+</p>
+<p>
+Mỗi dự án đã đăng ký có một Captain. Captain là <strong>người điều phối, không phải người viết mã</strong>. Trách nhiệm của nó:
+</p>
+<ul>
+  <li>Sinh phiên Crew qua <code>cockpit crew spawn</code> cho mọi tác vụ viết mã</li>
+  <li>Gửi lượt tương tác tiếp theo cho Crew hiện có qua <code>cockpit crew send</code></li>
+  <li>Kiểm tra màn hình Crew qua <code>cockpit crew read</code></li>
+  <li>Xem xét và hợp nhất công việc của Crew đã hoàn thành</li>
+  <li>Ghi lại bài học (learnings); viết tệp bàn giao (handoff) khi kết thúc phiên</li>
+  <li>Áp dụng các nguyên tắc Karpathy trong quá trình xem xét mã</li>
+</ul>
+
+<h3 id="crew">Crew — Ngữ cảnh Công nhân</h3>
+<p>
+<strong>Mẫu:</strong> <code>orchestrator/crew.claude.md</code> (Claude),
+<code>orchestrator/crew.generic.md</code> (generic), <code>orchestrator/crew.opencode.md</code>
+(OpenCode)<br>
+<strong>Sinh bởi:</strong> <code>cockpit crew spawn &lt;project&gt; "&lt;task&gt;" [--agent &lt;agent&gt;]</code><br>
+<strong>Vòng đời:</strong> được sinh dưới dạng tab cmux, nhận đề bài tác vụ, hoạt động trong một git worktree,
+báo hiệu hoàn thành qua <code>cockpit crew signal done</code>.
+</p>
+<p>
+Crew là các tác nhân tạm thời, chỉ một phiên. Mỗi Crew chạy trong một git worktree (nhánh cách ly với nhánh chính). Crew phải commit công việc và gửi tín hiệu <code>cockpit crew signal done</code> rõ ràng trước khi thoát. Nếu bị chặn, nó gửi tín hiệu <code>crew signal blocked</code>; nếu không thể phục hồi, <code>crew signal failed</code>.
+Tất cả tín hiệu được định tuyến qua máy trạng thái daemon (xem <a href="#control-plane">Mặt phẳng Điều khiển</a>).
+</p>
+<p>
+Crew có thể được hỗ trợ bởi bất kỳ loại tác nhân nào (<code>--agent claude|codex|opencode|gemini|aider</code>).
+Mẫu <code>crew.generic.md</code> cung cấp các quy tắc tương tự cho tác nhân không phải Claude. Crew Claude
+nhận thêm tệp <code>settings.local.json</code> riêng với các hook Stop/SubagentStop/PostToolUse
+được kết nối cho việc theo dõi trạng thái và sự sống.
+</p>
+<p>
+Đối với các tác vụ phức tạp nhiều bước, Crew Claude có thể sử dụng thực thi theo đợt GSD (Global Step Dispatch)
+(<code>/gsd:plan-phase</code>, <code>/gsd:execute-phase</code>) để sinh tác nhân phụ cho mỗi bước với
+ngữ cảnh 200K token mới.
+</p>
+
+<h3 id="reactor">Reactor — Engine Phản ứng</h3>
+<p>
+<strong>Mẫu:</strong> <code>orchestrator/reactor.claude.md</code><br>
+<strong>Sinh bởi:</strong> <code>cockpit reactor</code><br>
+<strong>Skill:</strong> <code>cockpit:reactor-ops</code>
+</p>
+<p>
+Reactor là một engine rà soát GitHub khai báo. Nó chạy theo lịch có thể cấu hình (mặc định 5 phút), rà soát GitHub để tìm sự kiện (issue, PR, check run, quyết định review), đối sánh chúng với luật trong <code>~/.config/cockpit/reactions.json</code>, và thực thi các hành động đã cấu hình:
+</p>
+<ul>
+  <li><strong>delegate-to-captain</strong> — điều hướng một issue có nhãn đến Captain của dự án</li>
+  <li><strong>send-to-captain</strong> — gửi thông báo CI lỗi đến Captain hiện có</li>
+  <li><strong>auto-merge</strong> — hợp nhất PR khi được phê duyệt + checks đạt (opt-in)</li>
+  <li><strong>escalate</strong> — thông báo Command khi Captain bị chặn/không hoạt động</li>
+  <li><strong>update-project-status</strong> — di chuyển thẻ GitHub Project qua các cột</li>
+  <li><strong>send-to-command</strong> — thông báo thông tin đến Command</li>
+</ul>
+<p>
+Reactor là một "bộ định tuyến tín hiệu, không phải người ra quyết định" — nó không bao giờ quyết định <em>nên xây dựng gì</em>, chỉ <em>điều hướng đến đâu</em> dựa trên các luật đã cấu hình.
+</p>
+
+<div class="info">
+<strong>Nguyên tắc:</strong> Captain không bao giờ viết mã. Captain sinh Crew cho mọi tác vụ viết mã. Dù chỉ là sửa một dòng cũng có phiên Crew riêng. Điều này được thực thi trong các mẫu Captain.
+</div>
+
+<!-- ============================================================ -->
+<!-- 3. PLUGIN SLOTS -->
+<!-- ============================================================ -->
+<h2 id="plugin-slots">3. Bốn Khe cắm Plugin</h2>
+
+<p>
+Bốn khe cắm plugin (runtime, workspace, tracker, notifier) tuân theo cùng một <strong>mẫu đăng ký</strong> (registry pattern). Mỗi khe cắm có:
+</p>
+<ul>
+  <li><code>types.ts</code> — định nghĩa interface driver</li>
+  <li><code>registry.ts</code> — đăng ký factory với phân giải theo dự án</li>
+  <li><code>index.ts</code> — xuất barrel</li>
+  <li>Một hoặc nhiều triển khai cụ thể dưới dạng hàm factory</li>
+</ul>
+
+<p>
+Cấu hình trong <code>~/.config/cockpit/config.json</code> chọn driver sử dụng toàn cục
+(<code>config.runtime</code>, <code>config.workspace</code>, v.v.) hoặc theo dự án
+(<code>config.projects[].runtime</code>, v.v.).
+</p>
+
+<table>
+<thead>
+<tr><th>Khe cắm</th><th>Interface</th><th>Phương thức</th><th>Triển khai</th><th>Mặc định</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong id="runtime">Runtime</strong></td>
+  <td><code>RuntimeDriver</code></td>
+  <td><code>probe, list, spawn, send, readScreen, stop, newPane, closePane, spawnInjector, listSurfaces</code></td>
+  <td>cmux</td>
+  <td>cmux</td>
+</tr>
+<tr>
+  <td><strong id="workspace">Workspace</strong></td>
+  <td><code>WorkspaceDriver</code></td>
+  <td><code>probe, read, write, exists, list, mkdir</code></td>
+  <td>obsidian (hệ thống tệp cục bộ)</td>
+  <td>obsidian</td>
+</tr>
+<tr>
+  <td><strong id="tracker">Tracker</strong></td>
+  <td><code>TrackerDriver</code></td>
+  <td><code>probe, listIssues, createIssue, listPullRequests, getPullRequestChecks, getPullRequestReviewDecision, getRunLog, mergePullRequest</code></td>
+  <td>github (gh CLI)</td>
+  <td>github</td>
+</tr>
+<tr>
+  <td><strong id="notifier">Notifier</strong></td>
+  <td><code>NotifierDriver</code></td>
+  <td><code>probe, notify</code></td>
+  <td>cmux (định tuyến đến Command workspace)</td>
+  <td>cmux</td>
+</tr>
+</tbody>
+</table>
+
+<h3>Runtime Driver (src/runtimes/)</h3>
+<p>
+Runtime trừu tượng hóa trình ghép kênh đầu cuối. Hiện tại chỉ có <strong>cmux</strong> được triển khai (<code>src/runtimes/cmux.ts</code>). Nó bao bọc nhị phân <code>cmux</code> bằng <code>execFileSync</code> với mảng argv (không có shell injection). <code>RuntimeRegistry</code> phân giải driver nào sẽ dùng cho mỗi dự án từ cấu hình.
+</p>
+<p>
+Runtime là interface plugin dày nhất: nó quản lý workspace (phiên captain), pane/tab (phiên crew), tiến trình injector (mailbox tailer), và danh sách surface. Driver cmux triển khai tất cả 10 phương thức của interface.
+</p>
+
+<h3>Workspace Driver (src/workspaces/)</h3>
+<p>
+Workspace trừu tượng hóa bộ nhớ liên tục cho các kho kiến thức của cockpit (wiki, learnings, daily logs, handoffs). Hiện tại chỉ có <strong>Obsidian</strong> được triển khai, một driver hệ thống tệp cục bộ với bảo vệ path-escape. <code>WorkspaceRegistry</code> phân giải cả driver <code>hub()</code> (từ <code>config.hubVault</code>) và <code>forProject()</code> (từ <code>config.projects[].spokeVault</code>). Mẫu factory cho phép các nhà cung cấp tương lai (ví dụ: Obsidian Remote, Notion API, S3).
+</p>
+
+<h3>Tracker Driver (src/trackers/)</h3>
+<p>
+Tracker trừu tượng hóa quản lý issue/PR. Hiện tại chỉ có <strong>GitHub</strong> được triển khai (<code>src/trackers/github.ts</code>), bao bọc CLI <code>gh</code> qua <code>execSync</code>. <code>TrackerRegistry</code> đọc <code>reactions.json</code> để xác định owner/repo cho mỗi dự án, sau đó tạo driver. Các tracker tương lai có thể hỗ trợ Linear, Jira hoặc GitLab.
+</p>
+
+<h3>Notifier Driver (src/notifiers/)</h3>
+<p>
+Notifier là khe cắm plugin đơn giản nhất: một lệnh gọi <code>notify(message)</code> duy nhất. Hiện tại chỉ có <strong>cmux</strong> được triển khai, nó định tuyến thông báo qua CLI <code>cockpit runtime send --command</code> trở về Command workspace.
+</p>
+
+<!-- ============================================================ -->
+<!-- 4. AGENT DRIVERS -->
+<!-- ============================================================ -->
+<h2 id="agent-drivers">4. Driver Tác nhân</h2>
+
+<p>
+Driver tác nhân (<code>src/drivers/</code>) trừu tượng hóa CLI của tác nhân viết mã. Mỗi driver là một hàm factory trả về interface <code>AgentDriver</code> với bốn phương thức: <code>probe</code>, <code>buildCommand</code>, <code>parseOutput</code> và <code>stop</code>. <code>CapabilityRegistry</code> chứa tất cả driver đã đăng ký, kiểm tra từng driver để tìm phiên bản/khả năng đã cài đặt, và xác thực sự phù hợp của tác nhân cho từng vai trò.
+</p>
+
+<table>
+<thead>
+<tr><th>Driver</th><th>Tệp</th><th>Chế độ tương tác</th><th>Chế độ không đầu</th><th>Tự động phê duyệt</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Claude</strong></td>
+  <td><code>src/drivers/claude.ts</code></td>
+  <td><code>claude</code> (TUI thuần, không <code>-p</code>)</td>
+  <td><code>claude -p "..." --print</code></td>
+  <td><code>--dangerously-skip-permissions</code></td>
+</tr>
+<tr>
+  <td><strong>Codex</strong></td>
+  <td><code>src/drivers/codex.ts</code></td>
+  <td><code>codex</code> (qua daemon AppServer)</td>
+  <td><code>codex exec "..." --json --full-auto</code></td>
+  <td><code>--full-auto</code></td>
+</tr>
+<tr>
+  <td><strong>OpenCode</strong></td>
+  <td><code>src/drivers/opencode.ts</code></td>
+  <td><code>opencode</code> (TUI thuần)</td>
+  <td><code>opencode run "..."</code></td>
+  <td>qua cấu hình <code>opencode.json</code> riêng cho từng crew (all-permissions)</td>
+</tr>
+<tr>
+  <td><strong>Gemini</strong></td>
+  <td><code>src/drivers/gemini.ts</code></td>
+  <td>sinh lệnh tương tác Gemini CLI</td>
+  <td>qua cờ prompt</td>
+  <td>qua cấu hình driver</td>
+</tr>
+<tr>
+  <td><strong>Aider</strong></td>
+  <td><code>src/drivers/aider.ts</code></td>
+  <td>sinh lệnh tương tác Aider CLI</td>
+  <td>qua cờ prompt</td>
+  <td>qua cấu hình driver</td>
+</tr>
+</tbody>
+</table>
+
+<h3>Định tuyến dựa trên Khả năng</h3>
+<p>
+Mỗi driver tác nhân công bố một tập giá trị <code>AgentCapability</code>: <code>teams</code>, <code>json_output</code>, <code>sandbox</code>, <code>model_routing</code>, <code>skills</code>, <code>auto_approve</code>, <code>streaming</code>, <code>prompt_file</code>. Bảng <code>ROLE_REQUIREMENTS</code> trong <code>src/drivers/types.ts:59</code> định nghĩa khả năng mà mỗi vai trò yêu cầu:
+</p>
+<ul>
+  <li>Tất cả vai trò yêu cầu <strong>auto_approve</strong></li>
+  <li>Command ưu tiên thêm <code>teams</code> và <code>json_output</code></li>
+  <li>Captain ưu tiên <code>teams</code>, <code>model_routing</code>, <code>skills</code></li>
+  <li>Crew ưu tiên <code>json_output</code>, <code>sandbox</code></li>
+  <li>Reactor yêu cầu <code>json_output</code></li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- 5. CONTROL PLANE -->
+<!-- ============================================================ -->
+<h2 id="control-plane">5. Mặt phẳng Điều khiển (cockpitd Daemon)</h2>
+
+<p>
+Daemon mặt phẳng điều khiển (<code>src/control/</code>, 14 tệp) là một tiến trình nền macOS do launchd quản lý, giám sát tất cả thực thi crew. Nó cung cấp máy trạng thái tác vụ, watchdog/heartbeat, hộp thư thông báo đẩy, cầu nối hook tương tác, và Codex interactive driver.
+</p>
+
+<p>
+Daemon được định nghĩa trong <code>src/control/launchd.ts</code> dưới dạng agent launchd (<code>com.cockpit.daemon</code>) với <code>KeepAlive</code> + <code>ThrottleInterval</code> (10s) để ngăn vòng lặp crash. <code>ensureDaemon()</code> viết plist và khởi động service. Khi khởi động (<code>src/index.ts:47</code>), <code>ensureDaemon()</code> chạy trước bất kỳ lệnh nào.
+</p>
+
+<p>
+Daemon lắng nghe trên một Unix domain socket tại <code>~/.config/cockpit/cockpit.sock</code> sử dụng giao thức dòng JSON (<code>src/control/protocol.ts</code>). Giao tiếp bao gồm RPC yêu cầu/phản hồi và các kết nối luồng attach dài hạn cho phiên Codex tương tác.
+</p>
+
+<h3 id="state-machine">Máy trạng thái Tác vụ</h3>
+<p>
+Máy trạng thái (<code>src/control/state-machine.ts</code>) là một <strong>hàm reducer thuần túy</strong>: <code>reduce(record: TaskRecord, event: ControlEvent, now: number) =&gt; TaskRecord</code>. Nó hoàn toàn có thể kiểm thử được mà không cần I/O. Daemon (<code>src/control/daemon.ts</code>) tiêm các tác dụng phụ (store, clock, process launcher, notifier).
+</p>
+
+<div class="diagram">
+<svg viewBox="0 0 760 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7aa2f7"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#f7768e"/>
+    </marker>
+    <marker id="arrow-cyan" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#73daca"/>
+    </marker>
+    <marker id="arrow-yellow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#e0af68"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="260" rx="8" fill="#1a1b26"/>
+  <text x="380" y="22" text-anchor="middle" fill="#c0caf5" font-size="13" font-weight="600">Máy trạng thái Tác vụ</text>
+
+  <!-- Submitted -->
+  <ellipse cx="120" cy="90" rx="60" ry="24" fill="#1a1a2a" stroke="#7aa2f7" stroke-width="1.5"/>
+  <text x="120" y="94" text-anchor="middle" fill="#7aa2f7" font-size="11">submitted</text>
+
+  <!-- Working -->
+  <ellipse cx="320" cy="90" rx="55" ry="24" fill="#1a2a1a" stroke="#9ece6a" stroke-width="1.5"/>
+  <text x="320" y="94" text-anchor="middle" fill="#9ece6a" font-size="11">working</text>
+
+  <!-- Blocked -->
+  <ellipse cx="320" cy="180" rx="50" ry="22" fill="#2a1a1a" stroke="#f7768e" stroke-width="1.5"/>
+  <text x="320" y="184" text-anchor="middle" fill="#f7768e" font-size="11">blocked</text>
+
+  <!-- Awaiting Input -->
+  <ellipse cx="500" cy="90" rx="65" ry="22" fill="#1a1a2a" stroke="#bb9af7" stroke-width="1.5"/>
+  <text x="500" y="94" text-anchor="middle" fill="#bb9af7" font-size="11">awaiting-input</text>
+
+  <!-- Stalled -->
+  <ellipse cx="500" cy="180" rx="45" ry="22" fill="#2a2a1a" stroke="#e0af68" stroke-width="1.5"/>
+  <text x="500" y="184" text-anchor="middle" fill="#e0af68" font-size="11">stalled</text>
+
+  <!-- Done / Failed -->
+  <ellipse cx="680" cy="90" rx="45" ry="22" fill="#1a1a1a" stroke="#565f89" stroke-width="1.5"/>
+  <text x="680" y="90" text-anchor="middle" fill="#565f89" font-size="10">done</text>
+  <text x="680" y="100" text-anchor="middle" fill="#565f89" font-size="10">/ failed</text>
+
+  <!-- Transitions: submitted -> working -->
+  <line x1="180" y1="90" x2="263" y2="90" stroke="#7aa2f7" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <text x="222" y="82" fill="#565f89" font-size="9">task.started</text>
+
+  <!-- working -> blocked -->
+  <line x1="300" y1="114" x2="300" y2="158" stroke="#f7768e" stroke-width="1.2" marker-end="url(#arrow-red)"/>
+  <text x="240" y="140" fill="#565f89" font-size="9">task.blocked / .input/.approval.requested</text>
+
+  <!-- blocked -> working (resume) -->
+  <line x1="345" y1="158" x2="345" y2="114" stroke="#73daca" stroke-width="1.2" marker-end="url(#arrow-cyan)"/>
+  <text x="380" y="140" fill="#565f89" font-size="9">task.started</text>
+
+  <!-- working -> awaiting-input -->
+  <line x1="375" y1="90" x2="433" y2="90" stroke="#bb9af7" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <text x="404" y="82" fill="#565f89" font-size="9">task.turn.completed</text>
+
+  <!-- awaiting-input -> working -->
+  <line x1="500" y1="112" x2="320" y2="114" stroke="#73daca" stroke-width="1.2" marker-end="url(#arrow-cyan)" stroke-dasharray="5,3"/>
+  <text x="370" y="122" fill="#565f89" font-size="9">heartbeat / task.turn.started</text>
+
+  <!-- working -> stalled -->
+  <line x1="340" y1="114" x2="490" y2="162" stroke="#e0af68" stroke-width="1.2" marker-end="url(#arrow-yellow)" stroke-dasharray="5,3"/>
+  <text x="420" y="142" fill="#565f89" font-size="9">watchdog (heartbeat hết hạn)</text>
+
+  <!-- stalled -> working (recoverable) -->
+  <line x1="530" y1="158" x2="350" y2="114" stroke="#73daca" stroke-width="1" marker-end="url(#arrow-cyan)" stroke-dasharray="3,3"/>
+  <text x="520" y="134" fill="#565f89" font-size="9">watchdog.recover</text>
+
+  <!-- working -> done/failed -->
+  <line x1="375" y1="82" x2="633" y2="82" stroke="#565f89" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <text x="504" y="73" fill="#565f89" font-size="9">task.done / task.failed</text>
+
+  <!-- blocked -> done/failed -->
+  <line x1="370" y1="180" x2="640" y2="105" stroke="#565f89" stroke-width="1" marker-end="url(#arrow2)" stroke-dasharray="4,3"/>
+</svg>
+</div>
+
+<p>
+Các thuộc tính chính của máy trạng thái (<code>src/control/state-machine.ts</code>):
+</p>
+<ul>
+  <li><strong>Trạng thái cuối</strong> (<code>TERMINAL_STATES</code>): chỉ <code>done</code> và <code>failed</code> là trạng thái hấp thụ — mọi sự kiện muộn hoặc trùng lặp đều bị bỏ qua.</li>
+  <li><strong>Phục hồi stall:</strong> <code>stalled</code> <em>không phải</em> trạng thái cuối. Watchdog có thể phục hồi một tác vụ bị stall về <code>working</code> nếu heartbeat đến.</li>
+  <li><strong>awaiting-input:</strong> trạng thái giống PostToolUse, phân tách hoàn thành lượt (turn) khỏi hoàn thành tác vụ (bất biến anti-#2576).</li>
+  <li><strong>Hàm thuần túy:</strong> reducer không bao giờ biến đổi đầu vào; nó luôn trả về một bản ghi mới (spread + ghi đè có mục tiêu).</li>
+</ul>
+
+<h3 id="watchdog">Watchdog / Heartbeat</h3>
+<p>
+Watchdog (<code>src/control/watchdog.ts</code>) triển khai phát hiện stall dưới dạng hàm thuần túy:
+</p>
+<ul>
+  <li><code>evaluateStall(rec, now)</code> — nếu một tác vụ đang <em>working</em> không nhận được heartbeat trong <code>heartbeatBudgetMs</code>, tạo ra một bản ghi <code>stalled</code>.</li>
+  <li><code>recoverStall(rec, now)</code> — tạo ra bản ghi <code>working</code> từ bản ghi <code>stalled</code> (người gọi phải xác minh heartbeat còn mới).</li>
+</ul>
+<p>
+Daemon quét tất cả tác vụ trên khoảng 30 giây (<code>src/control/cockpitd.ts:287-290</code>).
+Tác vụ tương tác (Claude, OpenCode, Codex) nhận heartbeat từ hook PostToolUse (Claude), từ sổ cái trạng thái daemon (OpenCode), hoặc từ luồng sự kiện AppServer (Codex).
+</p>
+
+<h3 id="hook-bridge">Cầu nối Hook (Crew Claude Tương tác)</h3>
+<p>
+Đối với crew tương tác Claude, daemon KHÔNG sở hữu tiến trình. Crew chạy trong tab cmux.
+Vai trò của daemon thuần túy là <strong>sổ cái trạng thái</strong>:
+</p>
+<ul>
+  <li>Khi điều phối, phát <code>task.started</code> để chuyển <code>submitted → working</code></li>
+  <li>Khi mỗi lượt Claude kết thúc, <strong>hook Stop</strong> kích hoạt (được nhúng trong tệp <code>settings.local.json</code> riêng của crew), phát <code>task.turn.completed</code> → <code>awaiting-input</code></li>
+  <li>Ở lượt tiếp theo, <code>PostToolUse</code> phát <code>heartbeat</code> → trở về <code>working</code></li>
+  <li>Khi tác vụ thực sự hoàn thành, <code>cockpit crew signal done</code> phát <code>task.done</code> → <code>done</code></li>
+</ul>
+<p>
+Các hook được tiêm riêng cho từng crew qua <code>src/lib/per-crew-settings.ts</code>: <code>writePerCrewSettings()</code> ghi tệp JSON tương thích <code>--settings</code> với các hook Stop/SubagentStop/SessionEnd đã hợp nhất. <code>writePerCrewSettingsLocal()</code> ghi <code>.claude/settings.local.json</code> ở cấp dự án (tự động tải, không bị ghi đè bởi cài đặt wrapper cmux).
+</p>
+
+<h3 id="codex">Codex Interactive Driver</h3>
+<p>
+Crew tương tác Codex sử dụng một kiến trúc khác cơ bản: daemon <strong>sở hữu tiến trình con Codex</strong> qua <code>CodexInteractiveDriver</code> (<code>src/control/codex/</code>), quản lý một thể hiện <code>AppServerClient</code> duy nhất. Mỗi tác vụ ánh xạ đến một luồng bên trong tiến trình con đó.
+</p>
+<p>
+Kiến trúc Codex hỗ trợ:
+</p>
+<ul>
+  <li><strong>Luồng Attach</strong> — client cmux có thể <code>attach</code> vào một tác vụ Codex và nhận khung delta thời gian thực qua Unix socket.</li>
+  <li><strong>Thăng cấp Gate</strong> — khi Codex yêu cầu phê duyệt hoặc đầu vào và không có client nào được attach, bộ đếm thời gian 5 giây thăng cấp yêu cầu thành <code>Gate</code> liên tục trong store. Client attach sau có thể xem và giải quyết gate.</li>
+  <li><strong>Thao tác Inbound</strong> — client đã attach có thể <code>say</code>, <code>steer</code>, <code>interrupt</code> và <code>answer</code> trên tác vụ Codex.</li>
+  <li><strong>Khởi động lại và Reattach</strong> — khi daemon khởi động lại, các tác vụ Codex tương tác chưa kết thúc có <code>resumeRef</code> sẽ tự động được reattach.</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- 6. CROSS-AGENT PROJECTION -->
+<!-- ============================================================ -->
+<h2 id="projection">6. Lớp Chiếu Đa tác nhân</h2>
+
+<p>
+Lớp chiếu (<code>src/projection/</code>, 9 tệp) triển khai <strong>issue #31</strong>: đồng bộ hóa các mẫu hướng dẫn của cockpit sang định dạng cấu hình gốc của từng tác nhân.
+</p>
+
+<p>
+Mỗi loại tác nhân được hỗ trợ có một <strong>emitter</strong> biết nơi ghi các tệp cấu hình (cấp người dùng và cấp dự án):
+</p>
+
+<table>
+<thead>
+<tr><th>Mục tiêu</th><th>Tệp</th><th>Đích đến</th><th>Định dạng</th></tr>
+</thead>
+<tbody>
+<tr><td>Cursor</td><td><code>src/projection/cursor.ts</code></td><td><code>.cursor/rules/*.mdc</code></td><td>Định dạng quy tắc <code>.mdc</code></td></tr>
+<tr><td>Codex</td><td><code>src/projection/codex.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (hợp nhất marker)</td></tr>
+<tr><td>Gemini CLI</td><td><code>src/projection/gemini.ts</code></td><td><code>GEMINI.md</code></td><td>Markdown (hợp nhất marker)</td></tr>
+<tr><td>OpenCode</td><td><code>src/projection/opencode.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (hợp nhất marker)</td></tr>
+</tbody>
+</table>
+
+<p>
+Lưu ý: Claude <strong>không phải</strong> là mục tiêu chiếu. <code>CLAUDE.md</code> là định dạng hướng dẫn chuẩn/nguồn của cockpit mà Claude Code đọc thuần túy — các tác nhân khác được chiếu <em>từ</em> nó, không phải chiếu đến nó.
+</p>
+
+<p>
+Tất cả emitter sử dụng chiến lược <strong>hợp nhất dựa trên marker</strong> (<code>src/projection/marker.ts</code>): nội dung được chèn giữa các marker <code>&lt;!-- cockpit:start --&gt;</code> và <code>&lt;!-- cockpit:end --&gt;</code>. Điều này cho phép cập nhật phẫu thuật mà không ghi đè nội dung người dùng bên ngoài marker.
+</p>
+
+<p>
+<code>ProjectionRegistry</code> (<code>src/projection/registry.ts</code>) chứa các factory emitter và tạo emitter chính xác theo tên. Lệnh CLI <code>cockpit projection</code> (<code>src/commands/projection.ts</code>) điều khiển việc này: nó đọc nguồn cấp người dùng (mẫu <code>orchestrator/</code> + <code>plugin/skills/</code>) và nguồn cấp dự án (<code>AGENTS.md</code> của dự án), sau đó phát đến tất cả mục tiêu đã cấu hình qua <code>ProjectionEmitter.emit()</code>.
+</p>
+
+<div class="info">
+<strong>Hướng theo đặc tả đa tác nhân (2026-04-24):</strong> <code>AGENTS.md</code> là định dạng hướng dẫn chuẩn. <code>CLAUDE.md</code> trở thành một lớp bao mỏng. Các skill vẫn là markdown di động — Claude đọc qua Skill tool, các tác nhân khác đọc qua AGENTS.md.
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. OTHER MODULES -->
+<!-- ============================================================ -->
+<h2 id="other-modules">7. Các Mô-đun Khác</h2>
+
+<h3 id="commands">Lệnh CLI (src/commands/)</h3>
+<p>
+25 tệp triển khai CLI dựa trên Commander. Các lệnh chính:
+</p>
+
+<table>
+<thead>
+<tr><th>Lệnh</th><th>Tệp</th><th>Mô tả</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cockpit init</code></td><td><code>commands/init.ts</code></td><td>Khởi tạo dự án cockpit mới</td></tr>
+<tr><td><code>cockpit launch &lt;project&gt;</code></td><td><code>commands/launch.ts</code></td><td>Sinh captain workspace cho một dự án</td></tr>
+<tr><td><code>cockpit crew spawn/send/read/close/list</code></td><td><code>commands/crew.ts</code></td><td>Quản lý phiên crew (lệnh lớn nhất, 473 dòng)</td></tr>
+<tr><td><code>cockpit crew dispatch/status/tasks/reply/signal</code></td><td><code>commands/crew-control.ts</code></td><td>Hành động crew mặt phẳng điều khiển (giao thức daemon)</td></tr>
+<tr><td><code>cockpit command --task &lt;type&gt;</code></td><td><code>commands/command.ts</code></td><td>Sinh phiên Command một lần</td></tr>
+<tr><td><code>cockpit dashboard</code></td><td><code>commands/dashboard.ts</code></td><td>Xem dashboard dự án</td></tr>
+<tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>Chẩn đoán hệ thống</td></tr>
+<tr><td><code>cockpit reactor</code></td><td><code>commands/reactor.ts</code></td><td>Quản lý thao tác reactor</td></tr>
+<tr><td><code>cockpit projection</code></td><td><code>commands/projection.ts</code></td><td>Phát tệp chiếu đa tác nhân</td></tr>
+<tr><td><code>cockpit runtime send &lt;project&gt;</code></td><td><code>commands/runtime.ts</code></td><td>Gửi tin nhắn giữa các workspace</td></tr>
+<tr><td><code>cockpit notify</code></td><td><code>commands/notify.ts</code></td><td>Gửi thông báo</td></tr>
+<tr><td><code>cockpit standup</code></td><td><code>commands/standup.ts</code></td><td>Điểm danh hàng ngày</td></tr>
+<tr><td><code>cockpit retro</code></td><td><code>commands/retro.ts</code></td><td>Tổng kết phiên</td></tr>
+<tr><td><code>cockpit status</code></td><td><code>commands/status.ts</code></td><td>Xem trạng thái</td></tr>
+<tr><td><code>cockpit shutdown</code></td><td><code>commands/shutdown.ts</code></td><td>Tắt</td></tr>
+<tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>Chẩn đoán hệ thống</td></tr>
+</tbody>
+</table>
+
+<h3 id="config">Cấu hình (src/config.ts)</h3>
+<p>
+Interface <code>CockpitConfig</code> (<code>src/config.ts:110-134</code>) định nghĩa hình dạng cấu hình cấp cao:
+</p>
+<ul>
+  <li><strong>commandName</strong> — tên workspace cho phiên command</li>
+  <li><strong>hubVault</strong> — đường dẫn đến kho hub đa dự án (~/cockpit-hub mặc định)</li>
+  <li><strong>projects</strong> — <code>Record&lt;string, ProjectConfig&gt;</code> ánh xạ tên dự án
+  đến đường dẫn, tên captain, spoke vault, host, nhóm, runtime, workspace và ghi đè tracker</li>
+  <li><strong>agents</strong> — CLI tác nhân đã đăng ký và ánh xạ driver của chúng</li>
+  <li><strong>defaults</strong> — <code>maxCrew</code>, <code>worktreeDir</code>,
+  <code>teammateMode</code>, <code>permissions</code> (tự động phê duyệt theo vai trò),
+  <code>models</code> (định tuyến mô hình theo vai trò), <code>roles</code> (tác nhân + mô hình theo vai trò)</li>
+  <li><strong>runtime / workspace / tracker / notifier</strong> — lựa chọn khe cắm plugin mặc định</li>
+  <li><strong>projection</strong> — danh sách mục tiêu chiếu</li>
+  <li><strong>metrics</strong> — cờ + đường dẫn tệp metrics</li>
+</ul>
+
+<h3 id="dashboard">Dashboard (src/dashboard/)</h3>
+<p>
+Ba tệp triển khai dashboard đầu cuối:
+</p>
+<ul>
+  <li><code>read-status.ts</code> — đọc tất cả tệp <code>status.md</code> của dự án từ spoke
+  vault, phân tích YAML frontmatter + đoạn trích có rào chắn</li>
+  <li><code>render.ts</code> — hiển thị đầu cuối mã màu với biểu tượng trạng thái</li>
+  <li><code>sync-hub.ts</code> — phản chiếu trạng thái dự án lên hub vault tại
+  <code>{hubVault}/projects/{project}.md</code></li>
+</ul>
+
+<h3>Mô-đun Reactor (src/reactor/)</h3>
+<ul>
+  <li><code>auto-status.ts</code> — rà soát màn hình mỗi captain qua runtime, phân loại nội dung,
+  ghi <code>status.md</code></li>
+  <li><code>status-classifier.ts</code> — bộ phân loại dựa trên regex trả về
+  <code>idle | busy | blocked | errored | offline</code></li>
+</ul>
+
+<h3>Thư viện (src/lib/)</h3>
+<p>Bảy tệp tiện ích:</p>
+<ul>
+  <li><code>runtime-sync.ts</code> — phản chiếu <code>plugin/</code>, <code>scripts/</code>,
+  <code>orchestrator/</code> từ nguồn sang <code>~/.config/cockpit/</code></li>
+  <li><code>cmux-bin.ts</code> — phân giải đường dẫn nhị phân cmux (env → config → PATH → fallback)</li>
+  <li><code>per-crew-settings.ts</code> — ghi cài đặt Claude riêng cho từng crew và cấu hình OpenCode</li>
+  <li><code>canonical-source.ts</code> — đọc skill và AGENTS.md cho projection</li>
+  <li><code>vault-layout.ts</code> — đảm bảo cấu trúc thư mục spoke vault</li>
+  <li><code>daily-logs.ts</code> — đọc/ghi tệp nhật ký hàng ngày</li>
+</ul>
+
+<h3>Điểm vào (src/index.ts)</h3>
+<p>
+Điểm vào CLI (<code>src/index.ts</code>) làm hai việc trước khi đăng ký bất kỳ lệnh nào:
+</p>
+<ul>
+  <li>Gọi <code>ensureRuntimeSynced()</code> — phản chiếu đẳng năng các thư mục do nguồn quản lý sang runtime (<code>~/.config/cockpit/</code>), để skill, mẫu vai trò và script không bao giờ lệch một cách âm thầm.</li>
+  <li>Gọi <code>ensureDaemon()</code> — quản lý plist launchd đẳng năng, đảm bảo daemon mặt phẳng điều khiển đang chạy.</li>
+</ul>
+<p>
+Cả hai đều là best-effort và không bao giờ ném lỗi — CLI sẽ báo lỗi rõ ràng sau nếu socket không truy cập được.
+</p>
+
+<!-- ============================================================ -->
+<!-- 8. FILESYSTEM LAYOUT -->
+<!-- ============================================================ -->
+<h2 id="fs-layout">8. Cấu trúc Thư mục</h2>
+
+<p>
+Cockpit có ba khu vực lưu trữ riêng biệt:
+</p>
+
+<h3>Cây Nguồn (~/me/claude-cockpit)</h3>
+<pre><code>src/                      # Mã nguồn TypeScript
+  index.ts                # Điểm vào CLI
+  config.ts               # Interface cấu hình + load/save
+  commands/               # 25 tệp lệnh CLI
+  control/               # Daemon, máy trạng thái, giao thức, watchdog, mailbox
+    codex/               # Codex interactive driver
+    headless/            # Bộ chuyển đổi headless theo từng nhà cung cấp
+    interactive/         # Bộ chuyển đổi hook tương tác
+  dashboard/             # Trình đọc trạng thái, trình hiển thị, đồng bộ hub
+  drivers/               # 5 driver tác nhân + đăng ký khả năng
+  lib/                   # Tiện ích (cmux-bin, runtime-sync, per-crew-settings…)
+  notifiers/             # Khe cắm plugin thông báo
+  projection/            # Chiếu hướng dẫn đa tác nhân
+  reactor/               # Trình rà soát trạng thái tự động + phân loại
+  runtimes/              # Khe cắm plugin runtime
+  trackers/              # Khe cắm plugin tracker
+  workspaces/            # Khe cắm plugin workspace
+docs/                    # Đặc tả và tài liệu
+  specs/                 # 25 tài liệu đặc tả
+orchestrator/            # Mẫu vai trò (8 tệp)
+  command.claude.md      # Mẫu Command (Claude)
+  captain.claude.md      # Mẫu Captain (Claude)
+  captain.generic.md     # Mẫu Captain (generic)
+  crew.claude.md         # Mẫu Crew (Claude)
+  crew.generic.md        # Mẫu Crew (generic / Codex / Gemini)
+  crew.opencode.md       # Mẫu Crew (OpenCode)
+  reactor.claude.md      # Mẫu Reactor
+  learnings.claude.md    # Mẫu Learnings
+plugin/skills/           # Kỹ năng markdown di động (Karpathy, v.v.)
+scripts/                 # Script shell (read-handoff, write-status, v.v.)
+</code></pre>
+
+<h3>Runtime / Trạng thái (~/.config/cockpit)</h3>
+<pre><code>config.json              # Cấu hình dự án
+reactions.json           # Luật phản ứng reactor
+state/                   # Bản ghi tác vụ mặt phẳng điều khiển (tệp JSON theo dự án/id)
+inbox/                   # Nhật ký thông báo đẩy hộp thư (*.log theo dự án)
+cockpit.sock             # Unix domain socket cho daemon RPC
+plugin/                  # Phản chiếu từ nguồn (plugin/skills/)
+scripts/                 # Phản chiếu từ nguồn (tệp .sh)
+orchestrator/            # Phản chiếu từ nguồn (mẫu vai trò)
+dist/                    # JS đã biên dịch
+reactor-state.json       # Trình theo dõi sự kiện đã xử lý của reactor
+metrics.json             # Dữ liệu metrics
+</code></pre>
+
+<h3>Hub + Spoke Vaults (~/cockpit-hub)</h3>
+<pre><code>cockpit-hub/             # Kho hub đa dự án
+  daily-logs/            # Nhật ký hàng ngày cấp Command
+  wiki/                  # Wiki đa dự án
+  projects/{project}.md  # Trạng thái dự án đã phản chiếu
+  learnings/             # Bài học đa dự án
+
+spokes/{project}/        # Kho spoke riêng cho từng dự án
+  handoffs/              # Tệp bàn giao phiên
+  daily-logs/            # Nhật ký hàng ngày dự án
+  wiki/                  # Trang wiki dự án
+  learnings/             # Bài học dự án
+  status.md              # Trạng thái tự động sinh (bởi reactor)
+</code></pre>
+
+<p>
+Các kho hub và spoke là các workspace dựa trên hệ thống tệp được quản lý qua <a href="#workspace">khe cắm plugin workspace</a>. Kho hub chứa kiến thức đa dự án; kho spoke của mỗi dự án chứa kiến thức riêng của dự án đó. Hàm <code>ensureSpokeLayout()</code> trong <code>src/lib/vault-layout.ts</code> tạo cấu trúc thư mục spoke một cách đẳng năng khi một dự án được đăng ký.
+</p>
+
+<!-- ============================================================ -->
+<!-- 9. GENERATION METADATA -->
+<!-- ============================================================ -->
+<h2 id="footer">9. Thông tin Sinh tài liệu</h2>
+<div class="footer">
+<table style="max-width: 500px;">
+<tbody>
+<tr><td><strong>Sinh ngày</strong></td><td>2026-05-28</td></tr>
+<tr><td><strong>Nhánh</strong></td><td>develop</td></tr>
+<tr><td><strong>Commit</strong></td><td><code>50edf94</code></td></tr>
+<tr><td><strong>Nguồn</strong></td><td>~/me/claude-cockpit</td></tr>
+<tr><td><strong>Chỉ mục</strong></td><td>767 tệp, 3.651 ký hiệu mã, 75 cụm, 91 quy trình</td></tr>
+<tr><td><strong>Đặc tả</strong></td><td>25 tài liệu đặc tả trong <code>docs/specs/</code></td></tr>
+</tbody>
+</table>
+<p>
+Báo cáo này phản ánh trạng thái của nhánh <code>develop</code> tại commit <code>50edf94</code>.
+Mọi khẳng định đều dựa trên mã nguồn thực tế: cây src/, docs/specs/, mẫu orchestrator/
+và đồ thị tri thức mã GitNexus (cụm, quy trình, truy vấn).
+</p>
+<p>
+Được sinh từ <code>docs/architecture.html</code> trên nhánh <code>docs/architecture-report</code>.
+</p>
+<p>
+<em>Bản dịch tiếng Việt của <code>docs/architecture.html</code> — được tạo từ commit <code>0dda90a</code> trên nhánh <code>docs/architecture-report-vi</code>.</em>
+</p>
+</div>
+
+</main>
+</body>
+</html>
