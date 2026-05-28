@@ -19,6 +19,14 @@ describe("mapClaudeHookToEvent", () => {
     expect(ev).toEqual({ type: "task.progress", id: TID, note: "sessionend" });
   });
 
+  // PostToolUse fires after every tool call MID-turn, so it keeps the
+  // heartbeat fresh during long working turns (fixes false CREW STALLED).
+  // It must map to liveness, never a terminal state.
+  it("maps PostToolUse → task.progress with note 'posttooluse' (mid-turn liveness, NOT terminal)", () => {
+    const ev = mapClaudeHookToEvent("PostToolUse", { tool_name: "Bash" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "posttooluse" });
+  });
+
   it("unknown event → null", () => {
     expect(mapClaudeHookToEvent("UserPromptSubmit", {}, TID)).toBeNull();
     expect(mapClaudeHookToEvent("PreToolUse", {}, TID)).toBeNull();

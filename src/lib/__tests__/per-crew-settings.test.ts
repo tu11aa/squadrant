@@ -34,6 +34,15 @@ describe("writePerCrewSettings", () => {
     expect(stopCmd).toContain("Stop");
   });
 
+  it("includes a PostToolUse liveness hook (mid-turn heartbeat → fixes false CREW STALLED)", () => {
+    const out = writePerCrewSettings({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    const json = JSON.parse(fs.readFileSync(out, "utf-8"));
+    expect(Array.isArray(json.hooks.PostToolUse)).toBe(true);
+    const cmd = json.hooks.PostToolUse[0].hooks[0].command;
+    expect(cmd).toContain("cockpit crew _hook");
+    expect(cmd).toContain("PostToolUse");
+  });
+
   it("custom hookCmd is honored", () => {
     const out = writePerCrewSettings({
       stateRoot: tmp,

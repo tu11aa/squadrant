@@ -2,7 +2,11 @@ import { execSync } from "node:child_process";
 import type { InteractiveHookAdapter } from "./types.js";
 import type { ControlEvent } from "../types.js";
 
-const EVENTS = ["Stop", "SubagentStop", "SessionEnd"] as const;
+// PostToolUse fires after EVERY tool call mid-turn — it is the only liveness
+// signal that refreshes the heartbeat while a crew is still working. Stop/
+// SubagentStop/SessionEnd fire only at turn boundaries, so a long working turn
+// would otherwise exceed heartbeatBudgetMs and trip a false CREW STALLED alert.
+const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse"] as const;
 
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
@@ -41,8 +45,10 @@ export function mergeClaudeHooks(settings: any, hookCmd: string): any {
  * Map a Claude hook event name to a cockpit ControlEvent. Pure function —
  * isolated for testability and to codify the anti-#2576 invariant in one
  * place: NO Claude hook ever maps to `task.done`/`task.failed`/`task.blocked`.
- * Bare Stop/SubagentStop/SessionEnd = liveness only. Terminal state comes
- * exclusively from explicit `cockpit crew signal` (Task 4).
+ * Stop/SubagentStop/SessionEnd/PostToolUse = liveness only. Terminal state
+ * comes exclusively from explicit `cockpit crew signal` (Task 4).
+ * PostToolUse is the mid-turn heartbeat (fires per tool call); the others are
+ * turn-boundary liveness.
  */
 export function mapClaudeHookToEvent(
   event: string,
@@ -53,6 +59,7 @@ export function mapClaudeHookToEvent(
     case "Stop":
     case "SubagentStop":
     case "SessionEnd":
+    case "PostToolUse":
       return { type: "task.progress", id: taskId, note: event.toLowerCase() };
     default:
       return null;

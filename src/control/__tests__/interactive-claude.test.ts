@@ -12,6 +12,12 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.SessionEnd[0].hooks[0].command).toContain(HOOK_CMD);
   });
 
+  it("adds a PostToolUse hook (mid-turn liveness) so the heartbeat stays fresh during long turns", () => {
+    const out = mergeClaudeHooks({}, HOOK_CMD);
+    expect(out.hooks.PostToolUse[0].hooks[0].command).toContain(HOOK_CMD);
+    expect(out.hooks.PostToolUse[0].hooks[0].command).toContain("PostToolUse");
+  });
+
   it("is idempotent — merging twice yields one cockpit entry per event", () => {
     const once = mergeClaudeHooks({}, HOOK_CMD);
     const twice = mergeClaudeHooks(once, HOOK_CMD);
