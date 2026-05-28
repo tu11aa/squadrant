@@ -234,6 +234,10 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       cwd: proj.path,
       task: input.task,
       name,
+      // opencode has no heartbeat hook, so a normal budget would false-stall
+      // every crew after 5min; use a 24h budget to effectively disable stall
+      // detection until a plugin-based liveness bridge exists.
+      budgetMs: 86400000,
     });
     const rec = (await cockpitdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({

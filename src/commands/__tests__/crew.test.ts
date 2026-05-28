@@ -224,6 +224,7 @@ describe("cockpit crew spawn", () => {
       project: "brove",
       cwd: "/tmp/brove",
       task: "do the thing",
+      budgetMs: 86400000,
     }));
     expect(cockpitdCall).toHaveBeenCalledTimes(1);
     // Per-crew opencode config uses the daemon-assigned taskId.
