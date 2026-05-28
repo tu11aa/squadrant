@@ -47,6 +47,50 @@ export function sanitizePathForPlist(path: string): string {
   return stable.join(":");
 }
 
+export const AGENT_BINS = ["cmux", "claude", "opencode", "codex", "gemini", "aider", "node"];
+
+/**
+ * Resolve absolute directories for known agent + tool binaries via `which`, so
+ * the launchd daemon's PATH includes them regardless of the install-time shell.
+ * Missing binaries are skipped silently.
+ */
+export function resolveAgentBinDirs(): string[] {
+  const dirs: string[] = [];
+  for (const bin of AGENT_BINS) {
+    try {
+      const out = execFileSync("which", [bin], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      const resolved = out.trim();
+      if (resolved) dirs.push(dirname(resolved));
+    } catch {
+      // binary not found on this machine — skip
+    }
+  }
+  const seen = new Set<string>();
+  return dirs.filter(d => {
+    if (seen.has(d)) return false;
+    seen.add(d);
+    return true;
+  });
+}
+
+/**
+ * Compose a stable daemon PATH by prepending resolved agent bin dirs to the
+ * sanitized install-shell PATH.  Agent dirs take priority (prepended) and are
+ * deduped against the sanitized entries so the output is deterministic.
+ */
+export function buildDaemonPath(shellPath: string): string {
+  const agentDirs = resolveAgentBinDirs();
+  const sanitized = sanitizePathForPlist(shellPath);
+  if (agentDirs.length === 0) return sanitized;
+  const parts = [...agentDirs, ...sanitized.split(":")];
+  const seen = new Set<string>();
+  return parts.filter(p => {
+    if (!p || seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  }).join(":");
+}
+
 /**
  * Red-team #3 (High): launchd starts the daemon with a minimal PATH that does
  * NOT include where `claude`/`codex`/`opencode` live (nvm/cmux dirs), so every
@@ -109,7 +153,7 @@ export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
     const entry = daemonEntryPath();
-    const desired = renderPlist(nodeBin, entry, sanitizePathForPlist(process.env.PATH ?? ""));
+    const desired = renderPlist(nodeBin, entry, buildDaemonPath(process.env.PATH ?? ""));
     const current = existsSync(p) ? readFileSync(p, "utf-8") : null;
     const uid = process.getuid?.() ?? 0;
     const target = `gui/${uid}/${LABEL}`;

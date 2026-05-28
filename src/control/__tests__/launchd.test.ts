@@ -1,6 +1,8 @@
 // src/control/__tests__/launchd.test.ts
-import { describe, it, expect } from "vitest";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock } from "../launchd.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+import { execFileSync } from "node:child_process";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -88,5 +90,88 @@ describe("launchd plist", () => {
   it("programArgsBlock matches the actual array emitted by renderPlist", () => {
     const xml = renderPlist("/nvm/v24/bin/node", "/dist/cockpitd.js");
     expect(xml).toContain(programArgsBlock("/nvm/v24/bin/node", "/dist/cockpitd.js"));
+  });
+});
+
+describe("resolveAgentBinDirs", () => {
+  beforeEach(() => {
+    vi.mocked(execFileSync).mockReset();
+  });
+
+  it("resolves available agent binaries and returns their dirnames", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "cmux") return "/Applications/cmux.app/Contents/Resources/bin/cmux\n";
+      if (cmd === "which" && args?.[0] === "claude") return "/Users/me/.npm-global/bin/claude\n";
+      if (cmd === "which" && args?.[0] === "opencode") return "/Users/me/.npm-global/bin/opencode\n";
+      throw new Error("not found");
+    });
+    const dirs = resolveAgentBinDirs();
+    expect(dirs).toContain("/Applications/cmux.app/Contents/Resources/bin");
+    expect(dirs).toContain("/Users/me/.npm-global/bin");
+    // codex, gemini, aider, node — not found, skipped
+    expect(dirs.length).toBe(2);
+  });
+
+  it("skips missing binaries without error", () => {
+    vi.mocked(execFileSync).mockImplementation(() => { throw new Error("not found"); });
+    expect(resolveAgentBinDirs()).toEqual([]);
+  });
+
+  it("dedupes when multiple binaries resolve to the same directory", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (args?.[0] === "node" || args?.[0] === "opencode") return "/Users/me/.npm-global/bin/node\n";
+      throw new Error("not found");
+    });
+    const dirs = resolveAgentBinDirs();
+    expect(dirs).toEqual(["/Users/me/.npm-global/bin"]);
+  });
+});
+
+describe("buildDaemonPath", () => {
+  beforeEach(() => {
+    vi.mocked(execFileSync).mockReset();
+  });
+
+  it("prepends agent bin dirs to sanitized path", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "claude") return "/opt/homebrew/bin/claude\n";
+      if (cmd === "which" && args?.[0] === "node") return "/Users/me/.nvm/versions/node/v24/bin/node\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/usr/bin:/bin");
+    expect(result).toContain("/opt/homebrew/bin");
+    expect(result).toContain("/Users/me/.nvm/versions/node/v24/bin");
+    expect(result).toContain("/usr/bin");
+    expect(result).toContain("/bin");
+    expect(result.startsWith("/opt/homebrew/bin")).toBe(true);
+  });
+
+  it("still strips plugin-cache directories from shell PATH", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "node") return "/usr/local/bin/node\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/usr/bin:/Users/me/.claude/plugins/cache/foo/bin:/bin");
+    expect(result).not.toContain(".claude/plugins");
+    expect(result).toContain("/usr/bin");
+    expect(result).toContain("/bin");
+  });
+
+  it("returns sanitized path unchanged when no agent binaries found", () => {
+    vi.mocked(execFileSync).mockImplementation(() => { throw new Error("not found"); });
+    expect(buildDaemonPath("/usr/bin:/bin")).toBe("/usr/bin:/bin");
+  });
+
+  it("output is deterministic (stable order, deduped)", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "cmux") return "/opt/bin/cmux\n";
+      if (cmd === "which" && args?.[0] === "node") return "/usr/local/bin/node\n";
+      throw new Error("not found");
+    });
+    const a = buildDaemonPath("/usr/bin:/opt/bin:/bin");
+    const b = buildDaemonPath("/usr/bin:/opt/bin:/bin");
+    expect(a).toBe(b);
+    // /opt/bin from shell PATH is deduped against the cmux agent dir
+    expect(a).toBe("/opt/bin:/usr/local/bin:/usr/bin:/bin");
   });
 });
