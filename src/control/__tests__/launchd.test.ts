@@ -108,7 +108,7 @@ describe("resolveAgentBinDirs", () => {
     const dirs = resolveAgentBinDirs();
     expect(dirs).toContain("/Applications/cmux.app/Contents/Resources/bin");
     expect(dirs).toContain("/Users/me/.npm-global/bin");
-    // codex, gemini, aider, node — not found, skipped
+    // codex, gemini, node — not found, skipped
     expect(dirs.length).toBe(2);
   });
 

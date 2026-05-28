@@ -9,7 +9,6 @@ import {
   createClaudeDriver,
   createCodexDriver,
   createGeminiDriver,
-  createAiderDriver,
   createOpencodeDriver,
   CapabilityRegistry,
 } from "../drivers/index.js";
@@ -59,13 +58,12 @@ export async function runCommandSpawn(input: CommandSpawnInput): Promise<PaneRef
     claude: createClaudeDriver(),
     codex: createCodexDriver(),
     gemini: createGeminiDriver(),
-    aider: createAiderDriver(),
     opencode: createOpencodeDriver(),
   });
   const agentName = input.agent ?? "claude";
   const agent = agents.get(agentName);
   if (!agent) {
-    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, aider, opencode.`);
+    throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
   }
 
   const promptFile = path.join(TEMPLATES_DIR, `command.${agent.templateSuffix}.md`);
@@ -87,7 +85,7 @@ export const commandCommand = new Command("command")
   .description("Spawn a one-shot Command session in a split pane (briefing | learnings-review | wiki-aggregate)")
   .option("--task <name>", "Task prompt to bake in (briefing|learnings-review|wiki-aggregate)", "briefing")
   .option("--direction <dir>", "Split direction (right|left|up|down)", "right")
-  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|aider|opencode)", "claude")
+  .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|opencode)", "claude")
   .action(async (opts: { task: CommandTask; direction: "right" | "left" | "up" | "down"; agent: string }) => {
     try {
       const pane = await runCommandSpawn({ task: opts.task, direction: opts.direction, agent: opts.agent });

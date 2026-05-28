@@ -45,6 +45,6 @@ describe("headless registry", () => {
   });
 
   it("unknown provider throws", () => {
-    expect(() => getHeadlessAdapter("aider")).toThrow(/no headless adapter/i);
+    expect(() => getHeadlessAdapter("nonexistent")).toThrow(/no headless adapter/i);
   });
 });

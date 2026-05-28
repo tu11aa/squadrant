@@ -268,13 +268,12 @@ export const doctorCommand = new Command("doctor")
     // --- Agent Probes ---
     console.log(chalk.bold("\nAgent Drivers\n"));
 
-    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, createOpencodeDriver, CapabilityRegistry } = await import("../drivers/index.js");
+    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } = await import("../drivers/index.js");
 
     const agentDrivers = {
       claude: createClaudeDriver(),
       codex: createCodexDriver(),
       gemini: createGeminiDriver(),
-      aider: createAiderDriver(),
       opencode: createOpencodeDriver(),
     };
 
