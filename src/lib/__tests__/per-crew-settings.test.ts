@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { writePerCrewSettings } from "../per-crew-settings.js";
+import { writePerCrewSettings, writePerCrewOpencodeConfig } from "../per-crew-settings.js";
 
 describe("writePerCrewSettings", () => {
   let tmp: string;
@@ -66,6 +66,52 @@ describe("writePerCrewSettings", () => {
   it("creates intermediate directories", () => {
     const deep = path.join(tmp, "missing", "deeper");
     const out = writePerCrewSettings({ stateRoot: deep, project: "x", taskId: "y" });
+    expect(fs.existsSync(out)).toBe(true);
+    expect(fs.statSync(path.dirname(out)).isDirectory()).toBe(true);
+  });
+});
+
+describe("writePerCrewOpencodeConfig", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-per-crew-opencode-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes opencode.json to <stateRoot>/<project>/<taskId>/opencode.json", () => {
+    const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    expect(out).toBe(path.join(tmp, "alpha", "tid-1", "opencode.json"));
+    expect(fs.existsSync(out)).toBe(true);
+  });
+
+  it("emits permission block with edit/bash/webfetch allowed", () => {
+    const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    const json = JSON.parse(fs.readFileSync(out, "utf-8"));
+    expect(json).toEqual({
+      permission: {
+        edit: "allow",
+        bash: "allow",
+        webfetch: "allow",
+      },
+    });
+  });
+
+  it("is idempotent — same inputs produce identical file content", () => {
+    const out1 = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    const first = fs.readFileSync(out1, "utf-8");
+    const out2 = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    const second = fs.readFileSync(out2, "utf-8");
+    expect(out1).toBe(out2);
+    expect(first).toBe(second);
+  });
+
+  it("creates intermediate directories", () => {
+    const deep = path.join(tmp, "missing", "deeper");
+    const out = writePerCrewOpencodeConfig({ stateRoot: deep, project: "x", taskId: "y" });
     expect(fs.existsSync(out)).toBe(true);
     expect(fs.statSync(path.dirname(out)).isDirectory()).toBe(true);
   });

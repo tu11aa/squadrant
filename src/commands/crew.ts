@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -15,7 +16,7 @@ import {
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
-import { writePerCrewSettings } from "../lib/per-crew-settings.js";
+import { writePerCrewSettings, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 import type { TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -229,12 +230,27 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     model: crewModel,
   });
 
+  // Opencode crews get a per-crew permission config so edit/bash/webfetch
+  // are auto-approved (no manual permission prompt). The OPENCODE_CONFIG
+  // env var points opencode at the per-crew file; opencode merges it with
+  // the global config so model/plugin/mcp are preserved.
+  const opencodeConfigPath = agentName === "opencode"
+    ? writePerCrewOpencodeConfig({
+        stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
+        project: input.project,
+        taskId: crypto.randomUUID(),
+      })
+    : undefined;
+
   const direction: PanePlacement = input.direction ?? "tab";
   const title = titleFor(input.project, name);
   const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
 
   // Step 1: launch the CLI in the new tab.
-  await runtime.sendToPane(pane, cliCommand);
+  const cmdToSend = opencodeConfigPath
+    ? `OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`
+    : cliCommand;
+  await runtime.sendToPane(pane, cmdToSend);
 
   // Step 2: for interactive sessions, wait for the CLI to boot, then send the
   // task as the first prompt. For non-interactive (legacy) the prompt is
