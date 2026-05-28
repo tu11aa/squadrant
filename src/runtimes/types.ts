@@ -59,8 +59,9 @@ export interface RuntimeDriver {
   // so any IPC/socket constraints of the runtime (e.g. cmux's parent-lineage
   // check) are satisfied. Returns a PaneRef the caller can inspect/clean up.
   //
-  // placement: "hidden" produces a non-distracting surface (zero/minimal-size
-  // split, off-screen tab — runtime decides). "visible" produces a normal pane.
+  // placement: "hidden" produces a non-distracting background tab that does not
+  // steal focus from the captain (runtime decides how). "visible" produces a
+  // normal focused tab for debug ergonomics.
   spawnInjector(opts: {
     captainWorkspace: WorkspaceRef;
     command: string;
