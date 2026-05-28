@@ -76,6 +76,15 @@ export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""):
 }
 
 /**
+ * Semantic fingerprint of the <array> block inside the rendered plist. Used by
+ * ensureDaemon to distinguish program-argument changes (merit a full restart)
+ * from PATH-only changes (write updated plist, don't bounce the daemon).
+ */
+export function programArgsBlock(nodeBin: string, daemonEntry: string): string {
+  return `<array><string>${xmlEscape(nodeBin)}</string><string>${xmlEscape(daemonEntry)}</string></array>`;
+}
+
+/**
  * Pure: which kickstart argv to use. `-k` (kill-then-restart) ONLY when the
  * plist changed. A plain `kickstart` starts a down daemon and is a no-op for a
  * healthy one — so a routine CLI call never bounces a running daemon (this was
@@ -88,32 +97,50 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
 
 /**
  * Idempotent & cheap. Never throws fatally. Writes/reloads the plist ONLY when
- * its content actually changed; otherwise it ensures the daemon is running
- * without killing a healthy one. The daemon entry is resolved internally
- * (see daemonEntryPath) so no caller can pass a wrong path.
+ * its content actually changed; Distinguishes program-argument drift (warrants
+ * a full restart via bootout + bootstrap + kickstart) from PATH-only drift
+ * (write the plist for the next natural restart but never bounce a healthy
+ * daemon). Uses plain `kickstart` (never -k) to avoid the race between -k and
+ * bootout's exit handler that produced exit-113 "service not loaded" errors.
+ * The daemon entry is resolved internally (see daemonEntryPath) so no caller
+ * can pass a wrong path.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
   try {
     const p = plistPath();
-    const desired = renderPlist(nodeBin, daemonEntryPath(), sanitizePathForPlist(process.env.PATH ?? ""));
+    const entry = daemonEntryPath();
+    const desired = renderPlist(nodeBin, entry, sanitizePathForPlist(process.env.PATH ?? ""));
     const current = existsSync(p) ? readFileSync(p, "utf-8") : null;
+    const uid = process.getuid?.() ?? 0;
+    const target = `gui/${uid}/${LABEL}`;
+
     const changed = current !== desired;
+    // Semantic comparison: was the program-arg block itself different (not just
+    // PATH)?  Program-arg changes are rare (rebuild/reinstall) and merit a full
+    // bootout+reload; PATH varies across terminals so it must NOT trigger a
+    // bounce (would orphan in-flight RPCs).
+    const programChanged = current !== null && changed
+      && !current.includes(programArgsBlock(nodeBin, entry));
+
     if (changed) {
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, desired);
     }
-    const uid = process.getuid?.() ?? 0;
-    const target = `gui/${uid}/${LABEL}`;
-    if (changed) {
-      // plist changed → drop the old instance so the new config takes effect
+
+    if (programChanged) {
+      // unload the old instance so bootstrap picks up the new program args
       try { execFileSync("launchctl", ["bootout", target], { stdio: "ignore" }); }
       catch { /* not loaded */ }
     }
+
     try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, p], { stdio: "ignore" }); }
     catch { /* already bootstrapped */ }
-    // -k only when the plist changed: a routine CLI call must not restart a
-    // healthy daemon (would orphan its in-flight headless children).
-    execFileSync("launchctl", kickstartArgv(target, changed), { stdio: "ignore" });
+
+    // Plain kickstart (never -k): no-op on a healthy daemon, starts one that
+    // was booted-out above or that stopped for other reasons.  -k is avoided
+    // because it races with bootout's exit handler and produces exit-113 when
+    // the service hasn't finished unloading.
+    execFileSync("launchctl", ["kickstart", target], { stdio: "ignore" });
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
     process.stderr.write(`[cockpit] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);

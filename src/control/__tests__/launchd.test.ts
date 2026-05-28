@@ -1,6 +1,6 @@
 // src/control/__tests__/launchd.test.ts
 import { describe, it, expect } from "vitest";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -69,5 +69,24 @@ describe("launchd plist", () => {
     expect(xml).not.toContain("/x/<y>/cockpitd.js");
     // The only `&` occurrences are well-formed entities.
     expect(xml.replace(/&(amp|lt|gt|quot);/g, "")).not.toContain("&");
+  });
+
+  // programArgsBlock: used by ensureDaemon to detect semantic drift (PATH vs
+  // program-args changes). Only program-arg changes warrant a full restart.
+  it("programArgsBlock renders an XML array with both escaped entries", () => {
+    expect(programArgsBlock("/usr/local/bin/node", "/opt/cockpit/dist/control/cockpitd.js")).toBe(
+      "<array><string>/usr/local/bin/node</string><string>/opt/cockpit/dist/control/cockpitd.js</string></array>"
+    );
+  });
+
+  it("programArgsBlock escapes special chars like renderPlist does", () => {
+    expect(programArgsBlock("/u&s/r/bin/<node>", "/x/y/z.js")).toBe(
+      "<array><string>/u&amp;s/r/bin/&lt;node&gt;</string><string>/x/y/z.js</string></array>"
+    );
+  });
+
+  it("programArgsBlock matches the actual array emitted by renderPlist", () => {
+    const xml = renderPlist("/nvm/v24/bin/node", "/dist/cockpitd.js");
+    expect(xml).toContain(programArgsBlock("/nvm/v24/bin/node", "/dist/cockpitd.js"));
   });
 });
