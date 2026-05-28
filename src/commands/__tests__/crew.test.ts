@@ -70,9 +70,11 @@ vi.mock("../crew-control.js", () => ({
 }));
 
 const writePerCrewSettings = vi.hoisted(() => vi.fn());
+const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
 const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
+  writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
 }));
 
@@ -112,7 +114,8 @@ describe("cockpit crew spawn", () => {
     sendCodexFirstTurn.mockReset();
     sendCodexFirstTurn.mockResolvedValue(undefined);
     writePerCrewSettings.mockReset();
-    writePerCrewSettings.mockReturnValue("/tmp/per-crew/settings.json");
+    writePerCrewSettingsLocal.mockReset();
+    writePerCrewSettingsLocal.mockReturnValue("/tmp/brove/.claude/settings.local.json");
     writePerCrewOpencodeConfig.mockReset();
     writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
     existsSyncMock.mockReset();
@@ -131,7 +134,7 @@ describe("cockpit crew spawn", () => {
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
-    buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md --settings /tmp/per-crew/settings.json");
+    buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-cl1" } }));
     cockpitdCall.mockResolvedValue({ id: "task-cl1", project: "brove", provider: "claude", mode: "interactive" });
 
@@ -148,14 +151,16 @@ describe("cockpit crew spawn", () => {
       task: "do the thing",
     }));
     expect(cockpitdCall).toHaveBeenCalledTimes(1);
-    // Per-crew settings.json written under the daemon-assigned taskId.
-    expect(writePerCrewSettings).toHaveBeenCalledWith(expect.objectContaining({
-      project: "brove",
-      taskId: "task-cl1",
+    // Cockpit hooks written to .claude/settings.local.json (auto-loaded source).
+    expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
+      projectCwd: "/tmp/brove",
     }));
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({
       interactive: true,
-      settingsPath: "/tmp/per-crew/settings.json",
+    }));
+    // No --settings flag — hooks come from .claude/settings.local.json.
+    expect(buildCommand).not.toHaveBeenCalledWith(expect.objectContaining({
+      settingsPath: expect.any(String),
     }));
     expect(newPane).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: "workspace:5",

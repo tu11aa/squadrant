@@ -16,7 +16,7 @@ import {
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
-import { writePerCrewSettings, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
+import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 import type { TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -194,12 +194,13 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     });
     // Fail loud if daemon unreachable — refusal-to-degrade.
     const rec = (await cockpitdCall(req)) as TaskRecord;
-    const stateRoot = path.join(os.homedir(), ".config", "cockpit", "state");
-    const settingsPath = writePerCrewSettings({
-      stateRoot,
-      project: input.project,
-      taskId: rec.id,
-    });
+    // Write cockpit hooks to <cwd>/.claude/settings.local.json so they are
+    // auto-loaded as a project-local settings source. The cmux claude wrapper
+    // injects its own hooks via --settings (level 2 precedence), but hooks
+    // merge across *different* settings sources — only multiple --settings
+    // flags collide. .claude/settings.local.json is gitignored and merges
+    // with any existing user hooks (#134).
+    writePerCrewSettingsLocal({ projectCwd: proj.path });
     const cliCommand = agent.buildCommand({
       prompt: input.task,
       workdir: proj.path,
@@ -207,7 +208,6 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       promptFile,
       interactive: true,
       ...(crewModel ? { model: crewModel } : {}),
-      settingsPath,
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
