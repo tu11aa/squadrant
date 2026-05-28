@@ -12,7 +12,6 @@ export interface ProjectConfig {
   groupRole?: string;
   runtime?: string;
   workspace?: string;
-  tracker?: string;
 }
 
 export interface PermissionConfig {
@@ -114,7 +113,6 @@ export interface CockpitConfig {
   agents?: Record<string, AgentEntry>;
   runtime?: string;
   workspace?: string;
-  tracker?: string;
   notifier?: string;
   projection?: {
     targets?: string[];

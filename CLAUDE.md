@@ -107,7 +107,7 @@ Cockpit is a **multi-agent orchestration layer**, not a Claude-Code-only tool. C
 When working on cockpit:
 - Prefer **`AGENTS.md`** as the canonical instruction format. `CLAUDE.md` is becoming a thin wrapper.
 - When adding agent-facing features, ask: *"does this work for non-Claude agents too?"* If not, file a follow-up issue to generalize it.
-- Don't add Claude-only surface area without a migration path. The four plugin slots (runtime / workspace / tracker / notifier) exist specifically to avoid this.
+- Don't add Claude-only surface area without a migration path. The three plugin slots (runtime / workspace / notifier) exist specifically to avoid this.
 - Skills in `plugin/skills/` are portable markdown — Claude Code reads them via the Skill tool; other agents read them via `AGENTS.md` inclusion.
 
 Full direction statement: [`docs/specs/2026-04-24-multi-agent-direction.md`](docs/specs/2026-04-24-multi-agent-direction.md).

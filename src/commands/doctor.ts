@@ -7,7 +7,6 @@ import chalk from "chalk";
 import { loadConfig, loadReactions } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
-import { createGitHubDriver, TrackerRegistry } from "../trackers/index.js";
 import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
 import {
   createCursorEmitter,
@@ -160,22 +159,6 @@ export const doctorCommand = new Command("doctor")
         `Workspace — spoke '${name}' reachable`,
         probe.installed && probe.rootExists,
       ));
-    }
-
-    // Probe tracker providers
-    const trackers = new TrackerRegistry({ github: createGitHubDriver });
-    const trackerProbes = await trackers.probeAll();
-    for (const [name, probe] of Object.entries(trackerProbes)) {
-      results.push(check(
-        `Tracker '${name}' installed`,
-        probe.installed,
-      ));
-      if (probe.installed) {
-        results.push(check(
-          `Tracker '${name}' authenticated`,
-          probe.authenticated,
-        ));
-      }
     }
 
     // Probe notifier providers

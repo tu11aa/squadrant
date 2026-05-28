@@ -81,9 +81,6 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit workspace read <project> <path>` | Read a scope-relative file from the project's spoke vault |
 | `cockpit workspace list <project> <dir>` | List entries in a spoke vault directory |
 | `cockpit workspace read --hub <path>` | Read from the hub vault |
-| `cockpit tracker create-issue <project> <title>` | Create an issue in the project's tracker repo |
-| `cockpit tracker merge-pr <project> <num>` | Enable auto-merge on a PR |
-| `cockpit tracker get-checks <project> <num>` | Print PR check runs |
 | `cockpit notify <message>` | Send a message to the user via the configured notifier |
 | `cockpit projection emit [--scope user\|project] [--project <name>] [--target <name>] [--all]` | Emit cockpit rules + skills to Cursor/Codex/Gemini config files |
 | `cockpit projection diff [same flags]` | Preview projection changes without writing |
@@ -119,10 +116,6 @@ Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each p
 ### Workspace Abstraction
 
 Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `cockpit workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `src/workspaces/` — see `docs/specs/2026-04-21-plugin-system-workspace-design.md`.
-
-### Tracker Abstraction
-
-Issue/PR operations run behind a pluggable **tracker driver** (currently only `github`). One-shot ops — create-issue, merge-pr, get-checks, get-run-log, list-issues — go through the driver instead of `gh` CLI directly. Bash scripts call `cockpit tracker <op>`. Polling stays provider-specific (`scripts/poll-github.sh`); future providers add their own poll scripts. Each project may override the global default via its `tracker` field. New backends (Linear, Jira, GitLab) are added as driver files in `src/trackers/` — see `docs/specs/2026-04-21-plugin-system-tracker-design.md`.
 
 ### Notifier Abstraction
 
@@ -172,7 +165,6 @@ The user-level projection now also inlines `orchestrator/captain.generic.md` and
   "hubVault": "~/cockpit-hub",
   "runtime": "cmux",
   "workspace": "obsidian",
-  "tracker": "github",
   "notifier": "cmux",
   "projects": {
     "brove": {
@@ -182,7 +174,6 @@ The user-level projection now also inlines `orchestrator/captain.generic.md` and
       "host": "local",
       "runtime": "cmux",
       "workspace": "obsidian",
-      "tracker": "github"
     }
   },
   "defaults": {
