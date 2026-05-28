@@ -33,7 +33,7 @@ cockpit doctor
 - [Claude Code](https://claude.ai/code) >= 2.1.32
 - [cmux](https://cmux.dev) (macOS terminal for coding agents)
 - [Obsidian](https://obsidian.md) (status tracking)
-- Node.js >= 22
+- Node.js >= 18
 
 ### Required Integrations
 
