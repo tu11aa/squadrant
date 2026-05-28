@@ -18,7 +18,7 @@ Use the `cockpit:captain-ops` skill — it has your full startup checklist, crew
 1. **Crew = interactive sub-session.** Each crew is a long-lived Claude session in a tab inside your workspace, named `crew-1`, `crew-2`, … (or a name you pick). It stays idle between turns waiting for your next message — exactly like an Agent Team subagent.
 2. **Spawn a NEW crew** with `cockpit crew spawn`:
    ```bash
-   cockpit crew spawn <project> "<task description>" [--name <n>] [--direction tab|right|left|up|down] [--agent claude|codex|gemini|aider]
+   cockpit crew spawn <project> "<task description>" [--name <n>] [--direction tab|right|left|up|down] [--agent claude|codex|gemini|aider|opencode]
    ```
    Opens a new tab titled `🔧 <project>:<name>`, boots an interactive Claude (no `-p`), then sends the task as the first turn. `--name` is optional; auto-picks the next free `crew-N`.
 3. **Send a follow-up turn** to an existing crew:
