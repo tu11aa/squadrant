@@ -154,14 +154,6 @@ case "$AGENT" in
     fi
     ;;
 
-  aider)
-    ROLE_FILE="${TEMPLATES_DIR}/${ROLE}.generic.md"
-    AGENT_CMD="aider --yes --no-stream"
-    if [ -n "$MODEL" ]; then
-      AGENT_CMD="${AGENT_CMD} --model ${MODEL}"
-    fi
-    ;;
-
   *)
     echo "ERROR: Unknown agent '${AGENT}' for role '${ROLE}'"
     exit 1

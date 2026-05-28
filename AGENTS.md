@@ -102,7 +102,7 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 ## Project Direction: Multi-Agent
 
-Cockpit is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, Gemini CLI, and Aider are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
+Cockpit is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
 
 When working on cockpit:
 - Prefer **`AGENTS.md`** as the canonical instruction format. `CLAUDE.md` is becoming a thin wrapper.

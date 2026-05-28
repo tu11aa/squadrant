@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Aider runtime driver and support.** The `aider` driver, its tests, and all
+  spawn/launch/doctor/template wiring have been removed. Aider was never wired
+  into `src/config.ts` and saw no active use; cockpit's supported agents are now
+  Claude Code, Codex, Gemini CLI, and opencode. The `--agent aider` option no
+  longer exists.
+
 ## [0.3.3] - 2026-05-15
 
 ### Added
