@@ -214,8 +214,17 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         ingest(rec.project)({ type: "task.started", id: rec.id });
         return;
       }
+      if (rec.provider === "opencode") {
+        // Opencode interactive crews run in a cmux tab — same approach as
+        // claude. The daemon owns the state ledger, not the process. Emit
+        // task.started so the record transitions submitted → working, then
+        // the watchdog sweeps for stalls if no heartbeat arrives. Terminal
+        // state comes from explicit `cockpit crew signal` in the template.
+        ingest(rec.project)({ type: "task.started", id: rec.id });
+        return;
+      }
       throw new Error(
-        `interactive mode is not yet implemented for provider '${rec.provider}'; only 'codex' and 'claude' are supported`,
+        `interactive mode is not yet implemented for provider '${rec.provider}'; only 'codex', 'claude', and 'opencode' are supported`,
       );
     },
     resolveInteractiveGate: async (taskId, payload) => {

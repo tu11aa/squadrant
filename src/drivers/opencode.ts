@@ -4,7 +4,7 @@ import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult } from ".
 export function createOpencodeDriver(): AgentDriver {
   return {
     name: "opencode",
-    templateSuffix: "generic",
+    templateSuffix: "opencode",
 
     async probe(): Promise<AgentProbeResult> {
       try {

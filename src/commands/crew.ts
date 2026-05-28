@@ -221,6 +221,44 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     return { ...pane, title };
   }
 
+  // Opencode crews route through the control-plane daemon so the captain
+  // learns terminal state via `cockpit crew status` instead of scraping the
+  // pane. Same approach as claude: daemon owns the state ledger, cmux tab
+  // does the actual CLI launch. No hook bridge (opencode has no hooks); the
+  // crew template instructs explicit `cockpit crew signal done|blocked|failed`.
+  if (agentName === "opencode") {
+    const req = buildDispatchRequest({
+      provider: "opencode",
+      mode: "interactive",
+      project: input.project,
+      cwd: proj.path,
+      task: input.task,
+      name,
+    });
+    const rec = (await cockpitdCall(req)) as TaskRecord;
+    const opencodeConfigPath = writePerCrewOpencodeConfig({
+      stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
+      project: input.project,
+      taskId: rec.id,
+    });
+    const cliCommand = agent.buildCommand({
+      prompt: input.task,
+      workdir: proj.path,
+      role: "crew",
+      promptFile,
+      interactive: true,
+      model: crewModel,
+    });
+    const direction: PanePlacement = input.direction ?? "tab";
+    const title = titleFor(input.project, name);
+    const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
+    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
+    await new Promise((r) => setTimeout(r, CLI_BOOT_DELAY_MS));
+    await runtime.sendToPane(pane, input.task);
+    return { ...pane, title };
+  }
+
   const cliCommand = agent.buildCommand({
     prompt: input.task,
     workdir: proj.path,
@@ -230,27 +268,12 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     model: crewModel,
   });
 
-  // Opencode crews get a per-crew permission config so edit/bash/webfetch
-  // are auto-approved (no manual permission prompt). The OPENCODE_CONFIG
-  // env var points opencode at the per-crew file; opencode merges it with
-  // the global config so model/plugin/mcp are preserved.
-  const opencodeConfigPath = agentName === "opencode"
-    ? writePerCrewOpencodeConfig({
-        stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
-        project: input.project,
-        taskId: crypto.randomUUID(),
-      })
-    : undefined;
-
   const direction: PanePlacement = input.direction ?? "tab";
   const title = titleFor(input.project, name);
   const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
 
   // Step 1: launch the CLI in the new tab.
-  const cmdToSend = opencodeConfigPath
-    ? `OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`
-    : cliCommand;
-  await runtime.sendToPane(pane, cmdToSend);
+  await runtime.sendToPane(pane, cliCommand);
 
   // Step 2: for interactive sessions, wait for the CLI to boot, then send the
   // task as the first prompt. For non-interactive (legacy) the prompt is
