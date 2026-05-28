@@ -12,10 +12,9 @@ import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
 import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 const CMUX_APP = "/Applications/cmux.app";
-// Retained for the select-workspace / current-workspace calls that are not yet abstracted by RuntimeDriver.
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.json");
 
@@ -28,7 +27,7 @@ const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.js
 // terminal, which is exactly the #121 Issue B leak. Capturing fd 2 here
 // swallows it. Returns trimmed stdout for callers that need it.
 export function cmuxLocal(args: string[]): string {
-  return execFileSync(CMUX_BIN, args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 interface SessionRecord {

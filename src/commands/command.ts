@@ -14,10 +14,9 @@ import {
   CapabilityRegistry,
 } from "../drivers/index.js";
 import type { PaneRef } from "../runtimes/types.js";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
-// TODO(runtime): current-workspace not yet abstracted by RuntimeDriver — direct cmux call retained.
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
 
 type CommandTask = "briefing" | "learnings-review" | "wiki-aggregate";
 
@@ -37,7 +36,7 @@ export interface CommandSpawnInput {
 }
 
 function detectCurrentWorkspace(): string {
-  const out = execSync(`"${CMUX_BIN}" current-workspace`, { encoding: "utf-8" }).trim();
+  const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
     throw new Error("Could not detect current cmux workspace. Run `cockpit command` from inside a cmux workspace.");

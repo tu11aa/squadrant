@@ -1,13 +1,12 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
-
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
 // literal argument — backticks, $(), quotes are never parsed. See #118.
 function cmux(args: string[]): string {
-  return execFileSync(CMUX_BIN, args, { encoding: "utf-8" }).trim();
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8" }).trim();
 }
 
 function parseList(output: string): WorkspaceRef[] {

@@ -8,13 +8,12 @@ import { readAllStatuses } from "../dashboard/read-status.js";
 import { renderDashboard } from "../dashboard/render.js";
 import { syncHub, type SyncHubResult } from "../dashboard/sync-hub.js";
 import type { PaneRef } from "../runtimes/types.js";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 // TODO(runtime): current-workspace not yet abstracted by RuntimeDriver — direct cmux call retained,
 // matching the existing pattern in src/commands/command.ts.
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
-
 function detectCurrentWorkspace(): string {
-  const out = execSync(`"${CMUX_BIN}" current-workspace`, { encoding: "utf-8" }).trim();
+  const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
     throw new Error("Could not detect current cmux workspace. Run `cockpit dashboard --pane` from inside a cmux workspace.");
