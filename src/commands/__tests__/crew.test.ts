@@ -85,7 +85,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady } from "../crew.js";
 
 const baseConfig = {
   commandName: "command",
@@ -104,6 +104,7 @@ describe("cockpit crew spawn", () => {
     sendToPane.mockReset();
     closePane.mockReset();
     readPaneScreen.mockReset();
+    readPaneScreen.mockResolvedValue("> ");
     listSurfaces.mockReset();
     status.mockReset();
     buildCommand.mockReset();
@@ -424,6 +425,78 @@ describe("cockpit crew spawn", () => {
     status.mockResolvedValue(null);
     await expect(runCrewSpawn({ project: "brove", task: "x" }))
       .rejects.toThrow(/captain workspace 'brove-captain' is not running/i);
+  });
+});
+
+describe("sendFirstTurnWhenReady", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen.mockReset();
+    sendToPane.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("polls until pane stabilizes then sends the task once", async () => {
+    let callCount = 0;
+    readPaneScreen.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 1) return "";
+      return "> do the thing";
+    });
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+    );
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await promise;
+
+    expect(sendToPane).toHaveBeenCalledTimes(1);
+    expect(sendToPane).toHaveBeenCalledWith(pane, "do the thing");
+  });
+
+  it("falls back to sending even if pane never stabilises", async () => {
+    readPaneScreen.mockResolvedValue("");
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+    );
+
+    await vi.advanceTimersByTimeAsync(21000);
+    await promise;
+
+    // Two calls: fallback send + one re-send (post-send check sees empty screen)
+    expect(sendToPane).toHaveBeenCalledTimes(2);
+    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
+    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
+  }, 15000);
+
+  it("re-sends once when the first send is not reflected on screen", async () => {
+    readPaneScreen.mockResolvedValue("> ");
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+    );
+
+    await vi.advanceTimersByTimeAsync(3500);
+    await promise;
+
+    // Two calls: initial send + one re-send
+    expect(sendToPane).toHaveBeenCalledTimes(2);
+    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
+    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
   });
 });
 

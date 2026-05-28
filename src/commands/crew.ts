@@ -20,10 +20,14 @@ import { TERMINAL_STATES, type TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 
-// Time to wait between launching the crew CLI and sending the first prompt.
-// The CLI needs a moment to initialize plugins / load the system prompt before
-// it's ready to accept input. 3s matches the captain launch path.
-const CLI_BOOT_DELAY_MS = 3000;
+// Poll-based first-turn delivery: after launching the CLI, poll the pane
+// until the agent is ready to accept input. Replaces a fixed delay (was 3s).
+// The stabilised-screen check is heuristic: non-empty + unchanged between two
+// consecutive reads suggests the TUI finished booting and is idle at its prompt.
+const SEND_FIRST_TURN_FLOOR_MS = 1500;
+const POLL_INTERVAL_MS = 750;
+const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
+const POST_SEND_CHECK_MS = 750;
 
 function titleFor(project: string, name: string): string {
   return `🔧 ${project}:${name}`;
@@ -85,6 +89,38 @@ async function resolveCaptainWorkspace(project: string): Promise<{
     );
   }
   return { runtime, workspaceId: captain.id };
+}
+
+export async function sendFirstTurnWhenReady(
+  runtime: RuntimeDriver,
+  pane: PaneRef,
+  task: string,
+): Promise<void> {
+  await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
+
+  const maxPolls = Math.floor(
+    (SEND_FIRST_TURN_TIMEOUT_MS - SEND_FIRST_TURN_FLOOR_MS) / POLL_INTERVAL_MS,
+  );
+  let previousScreen = "";
+  let stable = false;
+
+  for (let i = 0; i < maxPolls && !stable; i++) {
+    const screen = (await runtime.readPaneScreen(pane)) ?? "";
+    if (screen.length > 0 && screen === previousScreen) {
+      stable = true;
+    } else {
+      previousScreen = screen;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+  }
+
+  await runtime.sendToPane(pane, task);
+
+  await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+  const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+  if (!afterScreen.includes(task)) {
+    await runtime.sendToPane(pane, task);
+  }
 }
 
 export interface CrewSpawnInput {
@@ -213,8 +249,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     // running inside the crew's cmux tab can identify their task.
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
-    await new Promise((r) => setTimeout(r, CLI_BOOT_DELAY_MS));
-    await runtime.sendToPane(pane, input.task);
+    await sendFirstTurnWhenReady(runtime, pane, input.task);
     return { ...pane, title };
   }
 
@@ -255,8 +290,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
-    await new Promise((r) => setTimeout(r, CLI_BOOT_DELAY_MS));
-    await runtime.sendToPane(pane, input.task);
+    await sendFirstTurnWhenReady(runtime, pane, input.task);
     return { ...pane, title };
   }
 
@@ -276,12 +310,11 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // Step 1: launch the CLI in the new tab.
   await runtime.sendToPane(pane, cliCommand);
 
-  // Step 2: for interactive sessions, wait for the CLI to boot, then send the
-  // task as the first prompt. For non-interactive (legacy) the prompt is
+  // Step 2: for interactive sessions, poll until the CLI is ready, then send
+  // the task as the first prompt. For non-interactive (legacy) the prompt is
   // already baked into cliCommand, so we're done.
   if (interactive) {
-    await new Promise((r) => setTimeout(r, CLI_BOOT_DELAY_MS));
-    await runtime.sendToPane(pane, input.task);
+    await sendFirstTurnWhenReady(runtime, pane, input.task);
   }
 
   return { ...pane, title };
