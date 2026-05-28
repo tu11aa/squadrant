@@ -47,16 +47,36 @@ describe("opencode driver", () => {
     expect(cmd).toContain('\\"hi\\"');
   });
 
-  it("buildCommand interactive returns bare opencode", () => {
+  it("buildCommand interactive respects autoApprove and model", () => {
     const cmd = driver.buildCommand({
       prompt: "first turn — delivered via runtime.send later",
       workdir: "/tmp/test",
       role: "crew",
       interactive: true,
-      jsonOutput: true,
+      autoApprove: true,
       model: "anthropic/claude-sonnet-4-5",
     });
+    expect(cmd).toBe("opencode --dangerously-skip-permissions -m anthropic/claude-sonnet-4-5");
+  });
+
+  it("buildCommand interactive omits flags when not requested", () => {
+    const cmd = driver.buildCommand({
+      prompt: "first turn",
+      workdir: "/tmp/test",
+      role: "crew",
+      interactive: true,
+    });
     expect(cmd).toBe("opencode");
+  });
+
+  it("buildCommand non-interactive respects autoApprove", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      autoApprove: true,
+    });
+    expect(cmd).toContain("--dangerously-skip-permissions");
   });
 
   it("probes capabilities", async () => {

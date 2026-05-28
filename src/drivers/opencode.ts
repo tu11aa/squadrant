@@ -23,10 +23,16 @@ export function createOpencodeDriver(): AgentDriver {
       // Interactive crews: boot the TUI bare; the caller delivers opts.prompt
       // as the first turn via runtime.send once the session is ready, so the
       // crew stays alive for follow-up turns through `cockpit crew send`.
-      if (opts.interactive) return "opencode";
+      if (opts.interactive) {
+        let cmd = "opencode";
+        if (opts.autoApprove) cmd += " --dangerously-skip-permissions";
+        if (opts.model) cmd += ` -m ${opts.model}`;
+        return cmd;
+      }
       let cmd = `opencode run "${opts.prompt.replace(/"/g, '\\"')}"`;
       if (opts.jsonOutput) cmd += " --format json";
       if (opts.model) cmd += ` -m ${opts.model}`;
+      if (opts.autoApprove) cmd += " --dangerously-skip-permissions";
       return cmd;
     },
 
