@@ -13,7 +13,7 @@ describe("opencode driver", () => {
 
   it("has name 'opencode'", () => {
     expect(driver.name).toBe("opencode");
-    expect(driver.templateSuffix).toBe("generic");
+    expect(driver.templateSuffix).toBe("opencode");
   });
 
   it("builds command with run, --format json, and -m model", () => {

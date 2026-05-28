@@ -102,7 +102,7 @@ export const MANAGED_TARGETS: ManagedTarget[] = [
     name: "templates",
     srcRel: "orchestrator",
     mode: "flat",
-    match: /\.(claude\.md|generic\.md|CLAUDE\.md)$/,
+    match: /\.(claude\.md|generic\.md|opencode\.md|CLAUDE\.md)$/,
   },
 ];
 

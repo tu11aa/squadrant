@@ -53,7 +53,7 @@ vi.mock("../../drivers/index.js", () => ({
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
   createAiderDriver: () => ({ ...claudeDriver, name: "aider", templateSuffix: "generic" }),
-  createOpencodeDriver: () => ({ ...claudeDriver, name: "opencode", templateSuffix: "generic" }),
+  createOpencodeDriver: () => ({ ...claudeDriver, name: "opencode", templateSuffix: "opencode" }),
   CapabilityRegistry: class {
     constructor(private drivers: Record<string, unknown>) {}
     get(name: string) { return this.drivers[name]; }
@@ -204,25 +204,46 @@ describe("cockpit crew spawn", () => {
       .rejects.toThrow(/already exists/);
   });
 
-  it("spawns an opencode crew interactively with per-crew permission config", async () => {
+  it("spawns an opencode crew through the daemon, sets env vars + OPENCODE_CONFIG, sends task after boot", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("opencode");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-oc1" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-oc1", project: "brove", provider: "opencode", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "do the thing", agent: "opencode" });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }));
-    // Per-crew opencode config was written with the correct project.
+    // Daemon dispatched FIRST, before the cmux tab.
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "opencode",
+      mode: "interactive",
+      project: "brove",
+      cwd: "/tmp/brove",
+      task: "do the thing",
+      budgetMs: 86400000,
+    }));
+    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    // Per-crew opencode config uses the daemon-assigned taskId.
     expect(writePerCrewOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({
       project: "brove",
+      taskId: "task-oc1",
     }));
-    // The CLI command has OPENCODE_CONFIG env var prefixed.
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }));
+    expect(newPane).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "workspace:5",
+      direction: "tab",
+      title: "🔧 brove:crew-1",
+    }));
+    // First sendToPane carries env-prefix + CLI command.
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_TASK_ID=task-oc1");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("OPENCODE_CONFIG=/tmp/per-crew/opencode.json");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("opencode");
+    // Second sendToPane delivers the task as the first prompt.
     expect(sendToPane.mock.calls[1]).toEqual([
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "do the thing",
