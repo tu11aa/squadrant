@@ -28,7 +28,7 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 ~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. (Opt-in) Status writes are no longer required on every event. The reactor's auto-poller (#43) infers status from your pane content. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
+8. (Opt-in) Status writes are not required on every event. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
 
 ## Crew Setup
 
@@ -151,8 +151,7 @@ You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were C
 1. `cockpit crew read <project> <name>` — read the crew's screen directly from CLI.
 2. `cockpit crew list <project>` — see all live crews and pick the right one.
 3. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
-4. Watching the auto-poller's `{spokeVault}/status.md` (written by the reactor — see issue #43).
-5. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+4. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
 
 When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
@@ -166,7 +165,7 @@ After a crew task completes:
 4. Record learnings if any (see "Recording Learnings" below).
 5. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
 
-The auto-poller updates `status.md` based on pane content; you don't need to write status manually after every event.
+Status writes (`write-status.sh`) are opt-in; you don't need to write status after every event.
 
 ## Session Shutdown (Opt-In Writes)
 
@@ -189,9 +188,7 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
-4. (Optional) The reactor's auto-poller updates `status.md` from your pane buffer; you do not need to manually write a "session ended" status.
-
-5. (Optional) If a Command session is running and you want to notify it:
+4. (Optional) If a Command session is running and you want to notify it:
    ```bash
    cockpit runtime send --command "Captain {project} ending session — handoff written."
    ```

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: spawn-workspace.sh <name> <cwd> [role] [--fresh]
-# role: "captain" | "crew" | "command" | "reactor" (default: "captain")
+# role: "captain" | "crew" | "command" (default: "captain")
 # --fresh: force a new session instead of resuming
 set -euo pipefail
 
@@ -76,7 +76,7 @@ PERM_MODE=$(python3 -c "
 import json
 try:
     cfg = json.load(open('${HOME}/.config/cockpit/config.json'))
-    role_key = '$ROLE' if '$ROLE' in ('captain', 'command', 'reactor') else 'captain'
+    role_key = '$ROLE' if '$ROLE' in ('captain', 'command') else 'captain'
     print(cfg.get('defaults', {}).get('permissions', {}).get(role_key, 'default'))
 except: print('default')
 " 2>/dev/null)
@@ -190,7 +190,7 @@ fi
 CURRENT=$("$CMUX" current-workspace 2>&1 | awk '{print $1}')
 NEW_UUID=$("$CMUX" new-workspace --command "$AGENT_CMD" --cwd "$CWD" 2>&1 | awk '{print $2}')
 "$CMUX" rename-workspace --workspace "$NEW_UUID" "$NAME" 2>&1
-if [ "$ROLE" = "command" ] || [ "$ROLE" = "captain" ] || [ "$ROLE" = "reactor" ]; then
+if [ "$ROLE" = "command" ] || [ "$ROLE" = "captain" ]; then
   "$CMUX" workspace-action --workspace "$NEW_UUID" --action pin 2>/dev/null || true
 fi
 # Send initial prompt to trigger startup checklist (Claude agents only)
@@ -199,8 +199,6 @@ if [ "$AGENT" = "claude" ]; then
     (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the cockpit:captain-ops skill, complete all startup steps, then report ready." 2>/dev/null) &
   elif [ "$ROLE" = "command" ]; then
     (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the cockpit:command-ops skill, complete your daily briefing, then report ready." 2>/dev/null) &
-  elif [ "$ROLE" = "reactor" ]; then
-    (sleep 3 && "$CMUX" send --workspace "$NEW_UUID" "Run your startup checklist: use the cockpit:reactor-ops skill, verify gh auth, read reactions.json, then start your poll loop." 2>/dev/null) &
   fi
 fi
 

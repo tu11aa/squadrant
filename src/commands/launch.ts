@@ -273,13 +273,12 @@ async function launchWorkspace(
 
 export const launchCommand = new Command("launch")
   .description(
-    "Launch a project captain (with project arg) or reactor + all captains (--all). Use `cockpit command` for one-shot Command tasks.",
+    "Launch a project captain (with project arg) or all captains (--all). Use `cockpit command` for one-shot Command tasks.",
   )
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
-  .option("--all", "Launch reactor + all captain workspaces")
-  .option("--reactor", "Also launch the reactor workspace")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean; reactor?: boolean }) => {
+  .option("--all", "Launch all captain workspaces")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean }) => {
     const config = loadConfig();
 
     // Build agent driver registry
@@ -324,8 +323,6 @@ export const launchCommand = new Command("launch")
         initialPrompt = "Run your startup checklist: use the cockpit:captain-ops skill, complete all startup steps, then report ready.";
       } else if (role === "command") {
         initialPrompt = "Run your startup checklist: use the cockpit:command-ops skill, complete your daily briefing, then report ready.";
-      } else if (role === "reactor") {
-        initialPrompt = "Run your startup checklist: use the cockpit:reactor-ops skill, verify gh auth, read reactions.json, then start your poll loop.";
       }
 
       const runtime = projectName
@@ -334,8 +331,8 @@ export const launchCommand = new Command("launch")
 
       try {
         // #111: only captain workspaces need the notify-relay tab — they're the
-        // ones that receive crew terminal-event push notifications. Reactor and
-        // command don't supervise crews.
+        // ones that receive crew terminal-event push notifications. Command
+        // doesn't supervise crews.
         const notifyRelayProject = role === "captain" ? projectName : undefined;
         await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt, notifyRelayProject);
       } catch (err) {
@@ -344,15 +341,11 @@ export const launchCommand = new Command("launch")
     }
 
     if (opts.all) {
-      // Launch reactor + all captains. Command is no longer auto-launched (#42).
+      // Launch all captains. Command is no longer auto-launched (#42).
       const hubPath = resolveHome(config.hubVault);
       fs.mkdirSync(hubPath, { recursive: true });
 
-      console.log(chalk.bold("\nLaunching reactor + all captain workspaces\n"));
-
-      const reactorName = "⚡ reactor";
-      console.log(chalk.bold(`  Reactor: ${reactorName}`));
-      await launchOne(reactorName, "reactor", hubPath, config.defaults.permissions?.reactor || "default", true, true);
+      console.log(chalk.bold("\nLaunching all captain workspaces\n"));
 
       for (const [name, proj] of Object.entries(config.projects)) {
         const projPath = resolveHome(proj.path);
@@ -369,7 +362,7 @@ export const launchCommand = new Command("launch")
     } else if (!project) {
       console.error(
         chalk.red(
-          "\n  ✘ Specify a project name, or pass --all to launch reactor + every captain.\n" +
+          "\n  ✘ Specify a project name, or pass --all to launch every captain.\n" +
             "    For one-shot Command tasks, use `cockpit command --task <briefing|learnings-review|wiki-aggregate>`.\n",
         ),
       );

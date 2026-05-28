@@ -64,7 +64,7 @@ describe("config", () => {
         worktreeDir: ".worktrees",
         teammateMode: "in-process",
         permissions: { command: "default", captain: "acceptEdits" },
-        models: { command: "opus", captain: "opus", crew: "sonnet", reactor: "sonnet", exploration: "haiku", review: "opus" },
+        models: { command: "opus", captain: "opus", crew: "sonnet", exploration: "haiku", review: "opus" },
       },
       metrics: { enabled: true, path: "/tmp/metrics.json" },
     };
@@ -93,7 +93,6 @@ describe("config", () => {
           command: { agent: "claude", model: "opus" },
           captain: { agent: "claude", model: "opus" },
           crew: { agent: "codex", model: "o3" },
-          reactor: { agent: "claude", model: "sonnet" },
           exploration: { agent: "claude", model: "haiku" },
         },
       },

@@ -17,7 +17,6 @@ export interface ProjectConfig {
 export interface PermissionConfig {
   command: string;   // permission mode for the command session
   captain: string;   // permission mode for captain sessions
-  reactor?: string;  // permission mode for reactor session
 }
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
@@ -26,7 +25,6 @@ export interface ModelRoutingConfig {
   command: ModelAlias;
   captain: ModelAlias;
   crew: ModelAlias;
-  reactor: ModelAlias;
   exploration: ModelAlias;
   review: ModelAlias;
 }
@@ -41,70 +39,7 @@ export interface RoleAssignment {
   model?: string;
 }
 
-export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "reactor" | "exploration", RoleAssignment>>;
-
-// --- Reaction Engine Types ---
-
-export interface GitHubRepoConfig {
-  owner: string;
-  repo: string;
-}
-
-export interface GitHubProjectConfig {
-  owner: string;
-  number: number;
-  status_field: string;
-  columns: {
-    ready: string;
-    in_progress: string;
-    review: string;
-    done: string;
-  };
-}
-
-export interface ReactionTrigger {
-  label?: string;
-  state?: string;
-  not_assigned?: boolean;
-  checks?: "success" | "failure" | "pending";
-  review_decision?: "approved" | "changes_requested" | "review_required";
-  no_update_for?: string;   // e.g. "2h", "30m"
-  status_contains?: string;
-  event?: string;
-}
-
-export interface ReactionRule {
-  enabled: boolean;
-  source: "github-issues" | "github-prs" | "captain-status";
-  trigger: ReactionTrigger;
-  action: "delegate-to-captain" | "send-to-captain" | "auto-merge" | "escalate" | "update-project-status" | "send-to-command";
-  message?: string;
-  priority?: "normal" | "high";
-  project_status?: string;
-  merge_method?: "merge" | "squash" | "rebase";
-  retries?: number;
-  escalate_after?: string;  // e.g. "30m"
-}
-
-export interface AutoStatusConfig {
-  enabled: boolean;
-  lines: number;
-  excerpt_lines: number;
-}
-
-export interface ReactionsConfig {
-  engine: {
-    poll_interval: string;    // e.g. "5m"
-    state_file: string;
-    max_retries: number;
-  };
-  github: {
-    repos: Record<string, GitHubRepoConfig>;
-    project?: GitHubProjectConfig;
-  };
-  reactions: Record<string, ReactionRule>;
-  auto_status?: AutoStatusConfig;
-}
+export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration", RoleAssignment>>;
 
 export interface CockpitConfig {
   commandName: string;
@@ -154,7 +89,6 @@ export function getDefaultConfig(): CockpitConfig {
         command: "opus",
         captain: "opus",
         crew: "sonnet",
-        reactor: "sonnet",
         exploration: "haiku",
         review: "opus",
       },
@@ -162,7 +96,6 @@ export function getDefaultConfig(): CockpitConfig {
         command: { agent: "claude", model: "opus" },
         captain: { agent: "claude", model: "opus" },
         crew: { agent: "claude", model: "sonnet" },
-        reactor: { agent: "claude", model: "sonnet" },
         exploration: { agent: "claude", model: "haiku" },
       },
     },
@@ -185,7 +118,6 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
         command: { agent: "claude", model: m.command },
         captain: { agent: "claude", model: m.captain },
         crew: { agent: "claude", model: m.crew },
-        reactor: { agent: "claude", model: m.reactor },
         exploration: { agent: "claude", model: m.exploration },
       };
     }
@@ -212,39 +144,4 @@ export function saveConfig(
 
 export function resolveHome(p: string): string {
   return p.startsWith("~") ? p.replace("~", os.homedir()) : p;
-}
-
-// --- Reactions Config ---
-
-export const DEFAULT_REACTIONS_PATH = path.join(CONFIG_DIR, "reactions.json");
-
-export function loadReactions(reactionsPath = DEFAULT_REACTIONS_PATH): ReactionsConfig {
-  try {
-    const raw = fs.readFileSync(reactionsPath, "utf-8");
-    return JSON.parse(raw) as ReactionsConfig;
-  } catch {
-    return {
-      engine: {
-        poll_interval: "5m",
-        state_file: path.join(CONFIG_DIR, "reactor-state.json"),
-        max_retries: 2,
-      },
-      github: { repos: {} },
-      reactions: {},
-      auto_status: {
-        enabled: true,
-        lines: 50,
-        excerpt_lines: 15,
-      },
-    };
-  }
-}
-
-export function saveReactions(
-  reactions: ReactionsConfig,
-  reactionsPath = DEFAULT_REACTIONS_PATH,
-): void {
-  const dir = path.dirname(reactionsPath);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(reactionsPath, JSON.stringify(reactions, null, 2) + "\n");
 }

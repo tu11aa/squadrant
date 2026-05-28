@@ -41,12 +41,12 @@ describe("CapabilityRegistry", () => {
   });
 
   it("validates required capabilities — blocks when missing", async () => {
-    const gemini = mockDriver("gemini", ["auto_approve", "model_routing"]);
+    const gemini = mockDriver("gemini", ["model_routing"]);
     const registry = new CapabilityRegistry({ gemini });
     await registry.probeAll();
-    const result = registry.validateRole("gemini", "reactor");
+    const result = registry.validateRole("gemini", "command");
     expect(result.allowed).toBe(false);
-    expect(result.missingRequired).toContain("json_output");
+    expect(result.missingRequired).toContain("auto_approve");
   });
 
   it("validates preferred capabilities — warns when missing", async () => {
