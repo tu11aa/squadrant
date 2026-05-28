@@ -22,3 +22,31 @@ export function writePerCrewSettings(o: {
   writeFileSync(file, JSON.stringify(merged, null, 2));
   return file;
 }
+
+/**
+ * Write an opencode config file that auto-approves edit/bash/webfetch so
+ * cockpit-spawned opencode crews never block on a manual permission prompt.
+ * OPENCODE_CONFIG merges with (does not replace) the global config, so only
+ * the permission block is needed — model/plugin/mcp flow through from
+ * ~/.config/opencode/opencode.json automatically.
+ *
+ * Returns the absolute path to the written file.
+ */
+export function writePerCrewOpencodeConfig(o: {
+  stateRoot: string;
+  project: string;
+  taskId: string;
+}): string {
+  const dir = join(o.stateRoot, o.project, o.taskId);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "opencode.json");
+  const config = {
+    permission: {
+      edit: "allow",
+      bash: "allow",
+      webfetch: "allow",
+    },
+  };
+  writeFileSync(file, JSON.stringify(config, null, 2));
+  return file;
+}

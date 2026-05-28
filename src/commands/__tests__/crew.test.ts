@@ -70,8 +70,10 @@ vi.mock("../crew-control.js", () => ({
 }));
 
 const writePerCrewSettings = vi.hoisted(() => vi.fn());
+const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
+  writePerCrewOpencodeConfig,
 }));
 
 const existsSyncMock = vi.hoisted(() => vi.fn());
@@ -111,6 +113,8 @@ describe("cockpit crew spawn", () => {
     sendCodexFirstTurn.mockResolvedValue(undefined);
     writePerCrewSettings.mockReset();
     writePerCrewSettings.mockReturnValue("/tmp/per-crew/settings.json");
+    writePerCrewOpencodeConfig.mockReset();
+    writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
     existsSyncMock.mockReset();
     readFileSyncMock.mockReset();
     // Default: pretend the codex role template is absent so older tests that
@@ -200,7 +204,7 @@ describe("cockpit crew spawn", () => {
       .rejects.toThrow(/already exists/);
   });
 
-  it("spawns an opencode crew interactively, then sends the task after the boot delay", async () => {
+  it("spawns an opencode crew interactively with per-crew permission config", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -212,10 +216,13 @@ describe("cockpit crew spawn", () => {
     await promise;
 
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }));
-    expect(sendToPane.mock.calls[0]).toEqual([
-      { workspaceId: "workspace:5", surfaceId: "surface:9" },
-      "opencode",
-    ]);
+    // Per-crew opencode config was written with the correct project.
+    expect(writePerCrewOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({
+      project: "brove",
+    }));
+    // The CLI command has OPENCODE_CONFIG env var prefixed.
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("OPENCODE_CONFIG=/tmp/per-crew/opencode.json");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("opencode");
     expect(sendToPane.mock.calls[1]).toEqual([
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "do the thing",
