@@ -88,14 +88,21 @@ describe("writePerCrewOpencodeConfig", () => {
     expect(fs.existsSync(out)).toBe(true);
   });
 
-  it("emits permission block with edit/bash/webfetch allowed", () => {
+  it("emits comprehensive permission block for autonomous crews", () => {
     const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
     const json = JSON.parse(fs.readFileSync(out, "utf-8"));
     expect(json).toEqual({
       permission: {
+        read: "allow",
         edit: "allow",
+        glob: "allow",
+        grep: "allow",
         bash: "allow",
         webfetch: "allow",
+        websearch: "allow",
+        task: "allow",
+        lsp: "allow",
+        external_directory: { "**": "allow" },
       },
     });
   });

@@ -42,9 +42,16 @@ export function writePerCrewOpencodeConfig(o: {
   const file = join(dir, "opencode.json");
   const config = {
     permission: {
+      read: "allow",
       edit: "allow",
+      glob: "allow",
+      grep: "allow",
       bash: "allow",
       webfetch: "allow",
+      websearch: "allow",
+      task: "allow",
+      lsp: "allow",
+      external_directory: { "**": "allow" },
     },
   };
   writeFileSync(file, JSON.stringify(config, null, 2));
