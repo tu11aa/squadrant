@@ -16,7 +16,7 @@ import {
 } from "../drivers/index.js";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
-import { writePerCrewSettings, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
+import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 import type { TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -194,12 +194,13 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     });
     // Fail loud if daemon unreachable — refusal-to-degrade.
     const rec = (await cockpitdCall(req)) as TaskRecord;
-    const stateRoot = path.join(os.homedir(), ".config", "cockpit", "state");
-    const settingsPath = writePerCrewSettings({
-      stateRoot,
-      project: input.project,
-      taskId: rec.id,
-    });
+    // Write cockpit hooks to <cwd>/.claude/settings.local.json so they are
+    // auto-loaded as a project-local settings source. The cmux claude wrapper
+    // injects its own hooks via --settings (level 2 precedence), but hooks
+    // merge across *different* settings sources — only multiple --settings
+    // flags collide. .claude/settings.local.json is gitignored and merges
+    // with any existing user hooks (#134).
+    writePerCrewSettingsLocal({ projectCwd: proj.path });
     const cliCommand = agent.buildCommand({
       prompt: input.task,
       workdir: proj.path,
@@ -207,20 +208,13 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       promptFile,
       interactive: true,
       ...(crewModel ? { model: crewModel } : {}),
-      settingsPath,
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     // Prefix the CLI command with env so the hook bridge + signal verb
     // running inside the crew's cmux tab can identify their task.
-    // CMUX_CLAUDE_HOOKS_DISABLED=1 prevents the cmux claude wrapper
-    // (/Applications/cmux.app/Contents/Resources/bin/claude) from
-    // injecting --settings <inline-json> before the per-crew --settings
-    // <file>. Under --session-id, claude silently ignores a file-path
-    // --settings when preceded by an inline-JSON --settings, dropping
-    // all cockpit hooks (#134).
-    const envPrefix = `CMUX_CLAUDE_HOOKS_DISABLED=1 COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
     await new Promise((r) => setTimeout(r, CLI_BOOT_DELAY_MS));
     await runtime.sendToPane(pane, input.task);
