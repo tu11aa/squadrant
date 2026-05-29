@@ -36,6 +36,8 @@ export function createClaudeDriver(): AgentDriver {
 
       if (opts.autoApprove) {
         cmd += " --dangerously-skip-permissions";
+      } else if (opts.permissionMode) {
+        cmd += ` --permission-mode ${opts.permissionMode}`;
       }
 
       if (opts.promptFile) {
