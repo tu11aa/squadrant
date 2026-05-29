@@ -95,6 +95,7 @@ export async function sendFirstTurnWhenReady(
   runtime: RuntimeDriver,
   pane: PaneRef,
   task: string,
+  preLaunchScreen: string,
 ): Promise<void> {
   await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
 
@@ -106,7 +107,13 @@ export async function sendFirstTurnWhenReady(
 
   for (let i = 0; i < maxPolls && !stable; i++) {
     const screen = (await runtime.readPaneScreen(pane)) ?? "";
-    if (screen.length > 0 && screen === previousScreen) {
+    // Ready = the agent prompt is actually up: screen is non-empty, settled
+    // (unchanged between two consecutive reads), AND has advanced past the
+    // un-entered launch command line. The last condition prevents sending the
+    // task onto the shell line before the TUI takes over — which concatenates
+    // onto the launch command and triggers a shell parse error (opencode
+    // boot-race). A momentarily static launch line is not readiness.
+    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen) {
       stable = true;
     } else {
       previousScreen = screen;
@@ -114,11 +121,18 @@ export async function sendFirstTurnWhenReady(
     }
   }
 
+  // Snapshot the screen immediately before sending so the post-send check can
+  // tell whether the keystrokes were received. Comparing against the raw task
+  // text is unreliable: sendToPane collapses newlines to spaces (#136), so a
+  // multi-line task never appears verbatim in the single-line pane render and
+  // the check would always re-send a duplicate first turn (#168).
+  const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.sendToPane(pane, task);
 
   await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
   const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-  if (!afterScreen.includes(task)) {
+  if (afterScreen === preSendScreen) {
+    // Screen unchanged after sending → nothing was received at all; re-send once.
     await runtime.sendToPane(pane, task);
   }
 }
@@ -249,7 +263,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     // running inside the crew's cmux tab can identify their task.
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -290,7 +305,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -314,7 +330,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // the task as the first prompt. For non-interactive (legacy) the prompt is
   // already baked into cliCommand, so we're done.
   if (interactive) {
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
   }
 
   return { ...pane, title };
