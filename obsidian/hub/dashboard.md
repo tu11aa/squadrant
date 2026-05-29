@@ -4,7 +4,7 @@ title: Cockpit Dashboard
 
 # Cockpit Dashboard
 
-Auto-derived state of every registered project. Mirrored from each spoke's `status.md` by `cockpit dashboard sync-hub` (#44), which the reactor runs every cycle alongside `cockpit reactor poll-status` (#43).
+State of every registered project, mirrored from each spoke's `status.md` by `cockpit dashboard sync-hub` (#44).
 
 ```dataview
 TABLE WITHOUT ID
@@ -28,6 +28,5 @@ SORT auto_last_checked DESC
 
 ## Refresh
 
-- Reactor cycle (default 5 min) re-polls all captain panes and re-mirrors here.
-- Run a one-shot refresh manually: `cockpit reactor poll-status && cockpit dashboard sync-hub`.
+- Run a one-shot refresh manually: `cockpit dashboard sync-hub`.
 - For a live in-terminal view: `cockpit dashboard --pane` (sidebar pane in cmux, refreshes every 10s).

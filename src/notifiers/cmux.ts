@@ -1,13 +1,9 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import type {
   NotifierDriver,
   NotifierProbeResult,
   NotifierScope,
 } from "./types.js";
-
-function escape(s: string): string {
-  return s.replace(/"/g, '\\"');
-}
 
 export function createCmuxNotifier(_scope: NotifierScope): NotifierDriver {
   return {
@@ -29,7 +25,10 @@ export function createCmuxNotifier(_scope: NotifierScope): NotifierDriver {
     },
 
     async notify(message: string): Promise<void> {
-      execSync(`cockpit runtime send --command "${escape(message)}"`, { encoding: "utf-8" });
+      // execFileSync with an argv array and NO shell: the message is one literal
+      // argv element, so backticks / $() in notification text are never parsed
+      // by a shell. See #120 (same class as #118/#119).
+      execFileSync("cockpit", ["runtime", "send", "--command", message], { encoding: "utf-8" });
     },
   };
 }

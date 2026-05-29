@@ -5,6 +5,190 @@ All notable changes to claude-cockpit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-05-29
+
+### Added
+
+- **Control-plane daemon (cockpitd).** A new background daemon provides an
+  AF_UNIX socket server with newline-JSON framing, a task state machine, atomic
+  per-task JSON state store, heartbeat watchdog with stall detection and
+  automatic recovery, startup crash-reconciliation, and self-healing daemon
+  management on every `cockpit` invocation. A launchd plist target is included
+  for macOS service integration. (PR #85 and the full control-plane series)
+- **Codex interactive crews.** An `AppServerClient` speaking the codex app-server
+  v2 protocol (mandatory handshake, thread start/resume/read, id-correlated
+  requests, notification fanout), a `CodexInteractiveDriver` owning the
+  app-server child process, an approval/gate primitive, a `cockpit crew attach`
+  cmux-tab renderer, and `cockpit crew chat --provider codex` / `--approval` /
+  `reply --gate` verbs. (#86 interactive slice, #96–#104)
+- **Claude interactive crews routed through the daemon.** Claude crew sessions
+  now flow through cockpitd rather than bypassing it, unifying the session
+  lifecycle under the daemon's state machine. (#108, #64 slice)
+- **opencode interactive crews wired through the daemon.** opencode crews gain
+  a dedicated crew template, per-crew permission configuration, and
+  `autoApprove`/model passthrough, all served through the daemon. (#127, #128,
+  #129)
+- **Daemon push-notifications to the captain.** Terminal task events are
+  delivered to the captain via an in-cmux relay, keeping the captain informed
+  without polling. (#109, #110, #111, #112)
+- **Mailbox + injector foundational refactor.** A new mailbox abstraction and
+  injector layer underpin the daemon's communication channels. (#113, #116)
+- **Dashboard status grid now reads live daemon task state.** The dashboard no
+  longer depends on `status.md` — it queries the daemon directly for current
+  task state. (#154)
+- **Self-contained architecture HTML report**, with a Vietnamese translation.
+  (#147, #149)
+- **Process-cleanup rule** added to crew templates and the `captain-ops` skill
+  to ensure child processes are cleaned up on session exit. (#164)
+- **Release automation.** A GitHub Actions workflow tags `vX.Y.Z` from
+  `package.json`, publishes a GitHub Release with notes from the `CHANGELOG`
+  section, and (when an `NPM_TOKEN` secret is set) publishes to npm — on every
+  push to `main`. (#170)
+
+### Changed
+
+- **Crew sessions use an identity-first generic template** with a no-nested-subagents
+  rule, replacing agent-specific templates. (#105, #106)
+- **Source-managed directories self-heal on every cockpit invocation.** Missing
+  directories under source control are re-created automatically. (#74)
+- **Plugin manifest registers the cockpit skill namespace.** Dead
+  `plugin/package.json` removed. (#72, #73)
+
+### Fixed
+
+- **Multi-line crew prompts no longer fragment.** Newlines are collapsed before
+  the cmux send, preventing truncated prompts. (#136, #166)
+- **First-turn crew dispatch no longer drops on slow CLI boot.** Fixed delays
+  have been replaced with pane-readiness polling for reliable first-turn
+  delivery. (#165, #167)
+- **False `CREW STALLED` alerts eliminated.** The `Stop` map now correctly
+  resolves to `awaiting-input`, and the heartbeat refreshes mid-turn via a
+  `PostToolUse` hook. (#124, #131, #133)
+- **cmux shell-injection closed** in `sendToPane`/`sendToSurface` and the notify
+  path. (#119, #122)
+- **notify-relay now runs as a hidden background tab** rather than a split pane,
+  preventing accidental interference. (#117, #123, #161, #162)
+- **Daemon-bounce loop fixed** by separating `PATH` drift detection from
+  program-arg changes. (#126)
+- **cmux stderr no longer leaks into the captain terminal.** (#121, #125)
+- **Fresh-install gaps closed:** cmux binary path resolution cascade (issues #1,
+  #144), launchd plist `PATH` baking (issues #5, #143), and a reconciled
+  Node >=18 floor across README, `cockpit doctor`, and `package.json` (#142).
+- **Cockpit hooks delivered via `.claude/settings.local.json`** instead of
+  `--settings`, aligning with Claude Code's recommended hook mechanism. (#134,
+  #137)
+- **codex `approvalPolicy` defaults to `'never'`** for unattended crews. (#132)
+- **`task.reopened` semantic fixed.** Re-tasking a done crew now fires
+  `CREW DONE` again as expected. (#148, #150)
+- **vitest scoped to `src/**/*.test.ts`** to avoid picking up non-source test
+  files. (#157, #158)
+- **Captain tab renamed and pinned** so crew reports route to the correct
+  surface. (#83, #84)
+- **Projection reads the canonical project source** outside the `cwd` sandbox.
+  (#63)
+- **Control-plane red-team hardening:** path-traversal sanitization, fail-loud
+  interactive dispatch, and `PATH` baked into the launchd plist.
+- **Captain is notified when a crew goes idle.** An idle interactive crew now
+  transitions to `awaiting-input` and fires a single accurate `CREW IDLE` notice
+  instead of a misleading `CREW STALLED`; the explicit `signal done` path still
+  fires `CREW DONE`. (#172)
+- **codex crews can report terminal state.** `cockpit crew signal` accepts
+  `--task-id`/`--project` flags, and codex threads receive their concrete task
+  id + project via `developerInstructions`, so codex crews can signal
+  done/blocked/failed like claude/opencode. (#173)
+
+### Removed
+
+- **Reactor engine.** The always-on GitHub poller / auto-delegation engine has
+  been retired — reaction rules (`reactions.json`), the polling and matching
+  scripts, the auto-status poller and status classifier, the `reactor` role and
+  its skill, and the `cockpit reactor` command are all gone. Event-driven
+  auto-delegation is no longer part of cockpit; agents are launched explicitly.
+- **Aider runtime driver and support.** The `aider` driver, its tests, and all
+  spawn/launch/doctor/template wiring have been removed. Aider was never wired
+  into `src/config.ts` and saw no active use; cockpit's supported agents are now
+  Claude Code, Codex, Gemini CLI, and opencode. The `--agent aider` option no
+  longer exists.
+
+## [0.3.3] - 2026-05-15
+
+### Added
+
+- **opencode CLI agent support.** New driver (`createOpencodeDriver`)
+  probes `opencode --version` and declares
+  `auto_approve / json_output / streaming / model_routing`
+  capabilities. `cockpit crew spawn ... --agent opencode` builds
+  `opencode run "<prompt>"` (plus `--format json` and `-m <model>`
+  when applicable). The matching projection emitter writes to
+  `~/.config/opencode/AGENTS.md` at user scope and `<root>/AGENTS.md`
+  at project scope, sharing the same marker-merge flow as codex.
+  opencode crews run as interactive sub-sessions like claude crews —
+  `cockpit crew send` delivers follow-up turns to the live TUI.
+  Print-mode is still used for one-shot roles (reactor, exploration).
+
+## [0.3.2] - 2026-05-06
+
+### Fixed
+
+- **Crew now honors configured model routing.** `cockpit crew spawn` was not
+  passing `--model` to the agent CLI, so Claude crews silently fell back to
+  the user's global default (typically opus) instead of the configured
+  `defaults.roles.crew.model` (sonnet by default). Read the model from
+  config and pass it through `buildCommand`. Token spend for crew sessions
+  drops accordingly.
+- Model passthrough is **agent-aware**: only applied when the spawn agent
+  matches the role's configured agent (`defaults.roles.crew.agent`). Cross-
+  agent crews (e.g. `--agent codex` while config routes crew to claude) skip
+  the model arg, since model names are agent-specific (`sonnet` is a Claude
+  alias and would be invalid for codex / aider / gemini).
+
+## [0.3.1] - 2026-05-06
+
+Crew sessions become **interactive sub-sessions** instead of one-shot print
+runs — the captain's equivalent of a Claude Agent Team subagent. Each crew is
+named, addressable, stays idle between turns, and is driven by new
+`cockpit crew send/read/close/list` verbs. Closes #56.
+
+### Added
+
+- **Interactive Claude crews** — `cockpit crew spawn` boots Claude without
+  `-p`, then sends the task as the first turn after the CLI is ready. The
+  session stays alive between turns waiting for the captain's next message.
+- **Named crews** — `--name <n>` (or auto-generated `crew-1`, `crew-2`, …
+  picking the next free slot from existing tabs in the captain workspace).
+  Tab title becomes `🔧 <project>:<name>` so the surface itself is the
+  registry — no state file.
+- **`cockpit crew send <project> <name> "<message>"`** — send a follow-up
+  turn to an existing crew. Replaces the "spawn a new tab for every turn"
+  pattern.
+- **`cockpit crew read <project> <name>`** — read the crew's current screen
+  from the CLI (no need to flip into the cmux UI).
+- **`cockpit crew close <project> <name>`** — shutdown a crew (closes its
+  tab).
+- **`cockpit crew list <project>`** — list live crews for a project.
+- **`SpawnOptions.interactive`** flag — Claude driver omits `-p` when set so
+  callers can deliver the prompt over runtime.send.
+- **`RuntimeDriver.listSurfaces(workspaceId)`** — enumerate surfaces (tabs /
+  panes) inside a workspace with their titles. Cmux driver parses
+  `cmux tree --workspace`.
+
+### Changed
+
+- **Captain templates + `captain-ops` SKILL** rewritten — teach the new
+  spawn-once / send-follow-ups / close-when-done pattern. Stops the "tons of
+  tabs" growth seen pre-0.3.1.
+- **README + CLI help** updated with the new verbs.
+
+### Known limitations
+
+- Non-Claude agents (codex / gemini / aider) still launch in print-mode;
+  full interactive support per agent is a follow-up.
+- Crew tabs do not persist across `cockpit shutdown <project>` — they're
+  surfaces inside the captain workspace and die with it. Matches Agent Team
+  semantics.
+
 ## [0.3.0] - 2026-05-05
 
 The thin-redirect release. Cockpit becomes a thin multi-agent orchestration

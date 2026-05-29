@@ -1,25 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { CockpitConfig } from "../../config.js";
-import { parseStatusFile, readAllStatuses } from "../read-status.js";
-
-const SAMPLE = [
-  "---",
-  "project: brove",
-  "auto_state: idle",
-  'auto_last_checked: "2026-05-05T12:00:00.000Z"',
-  "captain_workspace: brove-captain",
-  "---",
-  "",
-  "# Status (auto-derived)",
-  "",
-  "## Last activity excerpt",
-  "",
-  "```",
-  "alpha",
-  "│ > ",
-  "```",
-  "",
-].join("\n");
+import type { TaskRecord } from "../../control/types.js";
+import { readAllStatuses } from "../read-status.js";
 
 function makeConfig(): CockpitConfig {
   return {
@@ -34,85 +16,190 @@ function makeConfig(): CockpitConfig {
   };
 }
 
-describe("parseStatusFile", () => {
-  it("extracts frontmatter + excerpt", () => {
-    const out = parseStatusFile(SAMPLE);
-    expect(out).toEqual({
-      project: "brove",
-      state: "idle",
-      lastChecked: "2026-05-05T12:00:00.000Z",
-      captainWorkspace: "brove-captain",
-      excerpt: "alpha\n│ > ",
-    });
-  });
-
-  it("strips quotes around frontmatter values", () => {
-    const text = SAMPLE.replace("captain_workspace: brove-captain", 'captain_workspace: "brove-captain"');
-    expect(parseStatusFile(text)?.captainWorkspace).toBe("brove-captain");
-  });
-
-  it("returns null when the file has no frontmatter", () => {
-    expect(parseStatusFile("# random\nno fm here\n")).toBeNull();
-  });
-
-  it("falls back to empty excerpt when no fenced block", () => {
-    const text = [
-      "---",
-      "project: x",
-      "auto_state: busy",
-      'auto_last_checked: "2026-05-05T12:00:00.000Z"',
-      "captain_workspace: x-captain",
-      "---",
-      "",
-      "no excerpt here",
-    ].join("\n");
-    expect(parseStatusFile(text)?.excerpt).toBe("");
-  });
-
-  it("treats unknown auto_state as 'unknown'", () => {
-    const text = SAMPLE.replace("auto_state: idle", "auto_state: weird-value");
-    expect(parseStatusFile(text)?.state).toBe("unknown");
-  });
-});
+function mkTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
+  return {
+    id: "t1",
+    project: "brove",
+    provider: "claude",
+    mode: "headless",
+    state: "done",
+    task: "some task",
+    createdAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    lastEvent: "task.done",
+    heartbeatBudgetMs: 300000,
+    attempts: [],
+    ...overrides,
+  };
+}
 
 describe("readAllStatuses", () => {
-  it("returns one row per registered project", () => {
-    const reads: string[] = [];
-    const readFile = (p: string) => {
-      reads.push(p);
-      if (p.includes("brove"))  return SAMPLE;
-      if (p.includes("solder")) return SAMPLE.replace("project: brove", "project: solder")
-                                            .replace("auto_state: idle", "auto_state: busy")
-                                            .replace("brove-captain", "solder-captain");
-      throw new Error("not found");
-    };
+  it("returns one row per registered project", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [],
+    });
 
-    const rows = readAllStatuses({ config: makeConfig(), readFile });
-
-    expect(rows.map((r) => r.project)).toEqual(["brove", "solder"]);
-    expect(rows[0].state).toBe("idle");
-    expect(rows[1].state).toBe("busy");
-    expect(reads).toEqual(["/tmp/spokes/brove/status.md", "/tmp/spokes/solder/status.md"]);
-  });
-
-  it("yields state='unknown' when status.md is missing", () => {
-    const readFile = () => { throw new Error("ENOENT"); };
-    const rows = readAllStatuses({ config: makeConfig(), readFile });
     expect(rows).toHaveLength(2);
-    expect(rows[0].state).toBe("unknown");
-    expect(rows[0].lastChecked).toBe("");
-  });
-
-  it("yields state='unknown' when status.md has no parseable frontmatter", () => {
-    const readFile = () => "# garbage\n";
-    const rows = readAllStatuses({ config: makeConfig(), readFile });
-    expect(rows[0].state).toBe("unknown");
-  });
-
-  it("preserves the project name from config even when the file uses a different one", () => {
-    const readFile = () => SAMPLE; // file says project: brove for both reads
-    const rows = readAllStatuses({ config: makeConfig(), readFile });
     expect(rows[0].project).toBe("brove");
     expect(rows[1].project).toBe("solder");
+  });
+
+  it("maps state to idle when no tasks or all done", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "done" }), mkTask({ state: "submitted" })],
+    });
+
+    expect(rows[0].state).toBe("idle");
+  });
+
+  it("maps state to busy when any task is working", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "working" })],
+    });
+
+    expect(rows[0].state).toBe("busy");
+  });
+
+  it("maps state to blocked when any task is blocked", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "blocked" })],
+    });
+
+    expect(rows[0].state).toBe("blocked");
+  });
+
+  it("maps state to blocked when any task is awaiting-input", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "awaiting-input" })],
+    });
+
+    expect(rows[0].state).toBe("blocked");
+  });
+
+  it("maps state to errored when any task has failed", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "failed" })],
+    });
+
+    expect(rows[0].state).toBe("errored");
+  });
+
+  it("maps state to errored when any task is stalled", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "stalled" })],
+    });
+
+    expect(rows[0].state).toBe("errored");
+  });
+
+  it("state precedence: blocked beats errored", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [
+        mkTask({ state: "blocked" }),
+        mkTask({ state: "failed" }),
+        mkTask({ state: "working" }),
+      ],
+    });
+
+    expect(rows[0].state).toBe("blocked");
+  });
+
+  it("state precedence: errored beats busy", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [
+        mkTask({ state: "failed" }),
+        mkTask({ state: "working" }),
+      ],
+    });
+
+    expect(rows[0].state).toBe("errored");
+  });
+
+  it("yields offline when daemon rejects", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => { throw new Error("daemon unreachable"); },
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].state).toBe("offline");
+    expect(rows[0].lastChecked).toBeTruthy();
+    expect(rows[0].captainWorkspace).toBe("brove-captain");
+  });
+
+  it("preserves project name from config", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async (project) => {
+        if (project === "brove") return [mkTask({ state: "working", task: "brove task" })];
+        return [mkTask({ state: "done", task: "solder task" })];
+      },
+    });
+
+    expect(rows[0].project).toBe("brove");
+    expect(rows[1].project).toBe("solder");
+  });
+
+  it("builds excerpt with active task titles", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [
+        mkTask({ state: "working", name: "feat-x", task: "build feature x" }),
+        mkTask({ state: "blocked", name: "fix-y", task: "fix bug y" }),
+      ],
+    });
+
+    expect(rows[0].excerpt).toContain("1 working");
+    expect(rows[0].excerpt).toContain("1 blocked");
+    expect(rows[0].excerpt).toContain("feat-x");
+    expect(rows[0].excerpt).toContain("fix-y");
+  });
+
+  it("builds summary-only excerpt when no active tasks", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [mkTask({ state: "done" })],
+    });
+
+    expect(rows[0].excerpt).toBe("idle");
+  });
+
+  it("sets lastChecked to current ISO timestamp", async () => {
+    const before = Date.now();
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async () => [],
+    });
+    const after = Date.now();
+    const ts = Date.parse(rows[0].lastChecked);
+
+    expect(ts).not.toBeNaN();
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  });
+
+  it("per-project daemon isolation: one offline, one busy", async () => {
+    let callCount = 0;
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      listTasks: async (project) => {
+        callCount++;
+        if (project === "brove") throw new Error("down");
+        return [mkTask({ state: "working" })];
+      },
+    });
+
+    expect(rows[0].state).toBe("offline");
+    expect(rows[1].state).toBe("busy");
+    expect(callCount).toBe(2);
   });
 });

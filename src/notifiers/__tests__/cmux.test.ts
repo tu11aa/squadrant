@@ -2,37 +2,49 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createCmuxNotifier } from "../cmux.js";
 
 const execMock = vi.hoisted(() => vi.fn());
+const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   execSync: execMock,
+  execFileSync: execFileMock,
 }));
 
 describe("CmuxNotifier", () => {
   beforeEach(() => {
     execMock.mockReset();
+    execFileMock.mockReset();
   });
 
   it("has name 'cmux'", () => {
     expect(createCmuxNotifier({}).name).toBe("cmux");
   });
 
-  it("notify shells out to 'cockpit runtime send --command'", async () => {
-    execMock.mockReturnValue("");
+  it("notify invokes 'cockpit runtime send --command' with the message as one argv element", async () => {
+    execFileMock.mockReturnValue("");
     await createCmuxNotifier({}).notify("hello world");
-    const calls = execMock.mock.calls.map((c) => c[0] as string);
-    expect(calls[0]).toContain("cockpit runtime send");
-    expect(calls[0]).toContain("--command");
-    expect(calls[0]).toContain("hello world");
+    expect(execFileMock).toHaveBeenCalledWith(
+      "cockpit",
+      ["runtime", "send", "--command", "hello world"],
+      expect.anything(),
+    );
   });
 
-  it("notify escapes double-quotes in the message", async () => {
-    execMock.mockReturnValue("");
-    await createCmuxNotifier({}).notify('say "hi"');
-    const calls = execMock.mock.calls.map((c) => c[0] as string);
-    expect(calls[0]).toContain('\\"hi\\"');
+  // Regression for #120: notification text containing backtick-wrapped or $()
+  // commands must reach the spawn as a single literal argv element, never parsed
+  // by a shell. Same class as #118/#119.
+  it("notify delivers backtick/$() shell metacharacters as a literal argv element, not executed", async () => {
+    execFileMock.mockReturnValue("");
+    const malicious = 'done `cmux close-workspace` and $(rm -rf /)';
+    await createCmuxNotifier({}).notify(malicious);
+    const call = execFileMock.mock.calls[0];
+    expect(call[0]).toBe("cockpit");
+    const argv = call[1] as string[];
+    // The entire message — backticks, $(), and all — is one untouched argv element.
+    expect(argv).toEqual(["runtime", "send", "--command", malicious]);
+    expect(argv[argv.length - 1]).toBe(malicious);
   });
 
   it("notify throws when cockpit runtime send fails", async () => {
-    execMock.mockImplementation(() => { throw new Error("send failed"); });
+    execFileMock.mockImplementation(() => { throw new Error("send failed"); });
     await expect(createCmuxNotifier({}).notify("x")).rejects.toThrow(/send failed/);
   });
 

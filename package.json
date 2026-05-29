@@ -1,6 +1,6 @@
 {
   "name": "claude-cockpit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Multi-project agent orchestration for Claude Code",
   "type": "module",
   "bin": {
@@ -10,7 +10,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "codex:gen-types": "bash scripts/gen-codex-types.sh"
   },
   "keywords": [
     "claude-code",
@@ -21,6 +22,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "chalk": "^5.4.0",
     "commander": "^13.0.0",

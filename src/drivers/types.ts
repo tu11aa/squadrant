@@ -8,7 +8,7 @@ export type AgentCapability =
   | "streaming"
   | "prompt_file";
 
-export type Role = "command" | "captain" | "crew" | "reactor" | "exploration";
+export type Role = "command" | "captain" | "crew" | "exploration";
 
 export interface AgentProbeResult {
   installed: boolean;
@@ -24,6 +24,15 @@ export interface SpawnOptions {
   autoApprove?: boolean;
   jsonOutput?: boolean;
   promptFile?: string;
+  // Interactive crew sessions: drivers should NOT bake the prompt into the
+  // command (no `-p`). Caller will deliver the prompt via runtime.send after
+  // the CLI is ready, so the session stays alive between turns.
+  interactive?: boolean;
+  // Per-invocation settings file (Claude's --settings flag). The
+  // daemon-supervised claude crew spawn writes a per-crew settings.json
+  // containing the cockpit Stop hook and passes the path here so the hook
+  // is scoped to this session only (no global ~/.claude/settings.json edit).
+  settingsPath?: string;
 }
 
 export interface AgentResult {
@@ -51,6 +60,5 @@ export const ROLE_REQUIREMENTS: Record<Role, RoleRequirements> = {
   command:     { required: ["auto_approve"], preferred: ["teams", "json_output"] },
   captain:     { required: ["auto_approve"], preferred: ["teams", "model_routing", "skills"] },
   crew:        { required: ["auto_approve"], preferred: ["json_output", "sandbox"] },
-  reactor:     { required: ["auto_approve", "json_output"], preferred: [] },
   exploration: { required: ["auto_approve"], preferred: [] },
 };

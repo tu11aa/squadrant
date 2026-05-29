@@ -14,7 +14,7 @@ describe("config", () => {
 
   it("returns default config", () => {
     const config = getDefaultConfig();
-    expect(config.commandName).toBe("command");
+    expect(config.commandName).toBe("🏛️ command");
     expect(config.projects).toEqual({});
     expect(config.defaults.maxCrew).toBe(5);
     expect(config.defaults.worktreeDir).toBe(".worktrees");
@@ -38,7 +38,7 @@ describe("config", () => {
 
   it("returns default config when file does not exist", () => {
     const loaded = loadConfig(path.join(tmpDir, "nonexistent.json"));
-    expect(loaded.commandName).toBe("command");
+    expect(loaded.commandName).toBe("🏛️ command");
   });
 
   it("supports new agents config", () => {
@@ -64,7 +64,7 @@ describe("config", () => {
         worktreeDir: ".worktrees",
         teammateMode: "in-process",
         permissions: { command: "default", captain: "acceptEdits" },
-        models: { command: "opus", captain: "opus", crew: "sonnet", reactor: "sonnet", exploration: "haiku", review: "opus" },
+        models: { command: "opus", captain: "opus", crew: "sonnet", exploration: "haiku", review: "opus" },
       },
       metrics: { enabled: true, path: "/tmp/metrics.json" },
     };
@@ -93,7 +93,6 @@ describe("config", () => {
           command: { agent: "claude", model: "opus" },
           captain: { agent: "claude", model: "opus" },
           crew: { agent: "codex", model: "o3" },
-          reactor: { agent: "claude", model: "sonnet" },
           exploration: { agent: "claude", model: "haiku" },
         },
       },

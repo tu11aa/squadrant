@@ -1,23 +1,34 @@
 import { Command } from "commander";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig, resolveHome, type ModelRoutingConfig } from "../config.js";
-import { createClaudeDriver, createCodexDriver, createGeminiDriver, createAiderDriver, CapabilityRegistry } from "../drivers/index.js";
+import { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } from "../drivers/index.js";
 import type { AgentDriver, Role } from "../drivers/types.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import type { RuntimeDriver } from "../runtimes/index.js";
+import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 const CMUX_APP = "/Applications/cmux.app";
-// Retained for the select-workspace / current-workspace calls that are not yet abstracted by RuntimeDriver.
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.json");
+
+// Direct cmux invocation for the select-workspace / current-workspace calls
+// not yet abstracted behind RuntimeDriver. Uses execFileSync (no shell) with
+// stderr piped, NOT inherited — cmux prints diagnostics like
+// "Error: not_found: Pane not found" to stderr and exits 0 when focusing a
+// surface that vanished mid-launch (e.g. --fresh closes a stale workspace).
+// The default execSync/execFileSync stdio forwards that stderr to the parent
+// terminal, which is exactly the #121 Issue B leak. Capturing fd 2 here
+// swallows it. Returns trimmed stdout for callers that need it.
+export function cmuxLocal(args: string[]): string {
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
 
 interface SessionRecord {
   lastLaunched: string; // YYYY-MM-DD
@@ -167,6 +178,40 @@ function buildAgentCmd(
   });
 }
 
+const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
+
+/**
+ * Add the notify-relay to a captain workspace as a background tab. The
+ * relay tails the daemon's per-project mailbox and forwards each new event to
+ * the captain pane via runtime.sendToSurface — required because cmux refuses
+ * any caller not descended from its app process, so the daemon itself cannot
+ * deliver. Dedups by closing any pre-existing relay surface before respawning,
+ * so the relay always boots fresh with the current cockpit binary.
+ */
+async function ensureNotifyRelayTab(
+  runtime: RuntimeDriver,
+  workspace: WorkspaceRef,
+  project: string,
+): Promise<void> {
+  try {
+    const surfaces = await runtime.listSurfaces(workspace.id);
+    for (const s of surfaces) {
+      if (s.title === NOTIFY_RELAY_TAB_TITLE) {
+        try { await runtime.closePane(s); } catch { /* best effort */ }
+      }
+    }
+    await runtime.spawnInjector({
+      captainWorkspace: workspace,
+      command: `cockpit notify-relay ${project} --as captain`,
+      title: NOTIFY_RELAY_TAB_TITLE,
+      placement: "background",
+    });
+    console.log(chalk.cyan(`  ✔ Added background notify-relay for '${project}'`));
+  } catch (e) {
+    console.error(chalk.yellow(`  ⚠ notify-relay setup failed: ${(e as Error).message}`));
+  }
+}
+
 async function launchWorkspace(
   runtime: RuntimeDriver,
   name: string,
@@ -176,6 +221,7 @@ async function launchWorkspace(
   forceFresh = false,
   pinToTop = false,
   initialPrompt?: string,
+  notifyRelayProject?: string,
 ): Promise<void> {
   ensureCmuxReady();
 
@@ -185,15 +231,16 @@ async function launchWorkspace(
     await runtime.stop(existing.id);
   } else if (existing) {
     console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
+    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing, notifyRelayProject);
     // TODO(runtime): select/focus not yet abstracted; direct cmux call retained intentionally
-    execSync(`"${CMUX_BIN}" select-workspace --workspace "${existing.id}"`);
+    cmuxLocal(["select-workspace", "--workspace", existing.id]);
     return;
   }
 
   let currentRef: string | undefined;
   try {
     // TODO(runtime): current-workspace not yet abstracted
-    const cur = execSync(`"${CMUX_BIN}" current-workspace`, { encoding: "utf-8" }).trim();
+    const cur = cmuxLocal(["current-workspace"]);
     currentRef = cur.match(/workspace:\d+/)?.[0];
   } catch { /* ignore */ }
 
@@ -211,12 +258,14 @@ async function launchWorkspace(
     }, 3000);
   }
 
+  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref, notifyRelayProject);
+
   if (navigate) {
     // TODO(runtime): select not yet abstracted
-    execSync(`"${CMUX_BIN}" select-workspace --workspace "${ref.id}"`);
+    cmuxLocal(["select-workspace", "--workspace", ref.id]);
   } else if (currentRef) {
     // TODO(runtime): select not yet abstracted
-    execSync(`"${CMUX_BIN}" select-workspace --workspace "${currentRef}"`);
+    cmuxLocal(["select-workspace", "--workspace", currentRef]);
   }
 
   console.log(chalk.green(`  ✔ Workspace '${name}' created`));
@@ -224,13 +273,12 @@ async function launchWorkspace(
 
 export const launchCommand = new Command("launch")
   .description(
-    "Launch a project captain (with project arg) or reactor + all captains (--all). Use `cockpit command` for one-shot Command tasks.",
+    "Launch a project captain (with project arg) or all captains (--all). Use `cockpit command` for one-shot Command tasks.",
   )
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
-  .option("--all", "Launch reactor + all captain workspaces")
-  .option("--reactor", "Also launch the reactor workspace")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean; reactor?: boolean }) => {
+  .option("--all", "Launch all captain workspaces")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean }) => {
     const config = loadConfig();
 
     // Build agent driver registry
@@ -238,7 +286,7 @@ export const launchCommand = new Command("launch")
       claude: createClaudeDriver(),
       codex: createCodexDriver(),
       gemini: createGeminiDriver(),
-      aider: createAiderDriver(),
+      opencode: createOpencodeDriver(),
     };
     const registry = new CapabilityRegistry(drivers);
 
@@ -275,8 +323,6 @@ export const launchCommand = new Command("launch")
         initialPrompt = "Run your startup checklist: use the cockpit:captain-ops skill, complete all startup steps, then report ready.";
       } else if (role === "command") {
         initialPrompt = "Run your startup checklist: use the cockpit:command-ops skill, complete your daily briefing, then report ready.";
-      } else if (role === "reactor") {
-        initialPrompt = "Run your startup checklist: use the cockpit:reactor-ops skill, verify gh auth, read reactions.json, then start your poll loop.";
       }
 
       const runtime = projectName
@@ -284,22 +330,22 @@ export const launchCommand = new Command("launch")
         : runtimes.global(config);
 
       try {
-        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt);
+        // #111: only captain workspaces need the notify-relay tab — they're the
+        // ones that receive crew terminal-event push notifications. Command
+        // doesn't supervise crews.
+        const notifyRelayProject = role === "captain" ? projectName : undefined;
+        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt, notifyRelayProject);
       } catch (err) {
         console.error(chalk.red(`  ✘ Failed: ${(err as Error).message}`));
       }
     }
 
     if (opts.all) {
-      // Launch reactor + all captains. Command is no longer auto-launched (#42).
+      // Launch all captains. Command is no longer auto-launched (#42).
       const hubPath = resolveHome(config.hubVault);
       fs.mkdirSync(hubPath, { recursive: true });
 
-      console.log(chalk.bold("\nLaunching reactor + all captain workspaces\n"));
-
-      const reactorName = "⚡ reactor";
-      console.log(chalk.bold(`  Reactor: ${reactorName}`));
-      await launchOne(reactorName, "reactor", hubPath, config.defaults.permissions?.reactor || "default", true, true);
+      console.log(chalk.bold("\nLaunching all captain workspaces\n"));
 
       for (const [name, proj] of Object.entries(config.projects)) {
         const projPath = resolveHome(proj.path);
@@ -316,7 +362,7 @@ export const launchCommand = new Command("launch")
     } else if (!project) {
       console.error(
         chalk.red(
-          "\n  ✘ Specify a project name, or pass --all to launch reactor + every captain.\n" +
+          "\n  ✘ Specify a project name, or pass --all to launch every captain.\n" +
             "    For one-shot Command tasks, use `cockpit command --task <briefing|learnings-review|wiki-aggregate>`.\n",
         ),
       );

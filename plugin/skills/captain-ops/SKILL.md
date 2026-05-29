@@ -28,13 +28,13 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 ~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. (Opt-in) Status writes are no longer required on every event. The reactor's auto-poller (#43) infers status from your pane content. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
+8. (Opt-in) Status writes are not required on every event. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
 
 ## Crew Setup
 
-You do NOT create an Agent Team. You spawn each crew session on demand as a split pane next to your workspace via `cockpit crew spawn`. The pane is a fresh CLI session with the crew template loaded as system prompt — disposable, restartable, runtime-agnostic.
+You do NOT create an Agent Team. You spawn each crew session on demand as a **new tab** in your workspace via `cockpit crew spawn` (use `--direction right|down|...` to split into a pane instead). The surface is a fresh CLI session with the crew template loaded as system prompt — disposable, restartable, runtime-agnostic.
 
-You don't need to create or persist anything up front. Each `cockpit crew spawn` call creates the pane.
+You don't need to create or persist anything up front. Each `cockpit crew spawn` call creates a new surface.
 
 ## Task Decomposition with Task Master
 
@@ -78,57 +78,80 @@ mcp__task-master-ai__expand_task(id: "1", projectRoot: "{projectPath}")
 
 **You MUST spawn a crew session for ANY coding task** — even a one-line change. You are a coordinator. You plan, delegate, review, and merge. You do NOT write code yourself.
 
-Use `cockpit crew spawn`:
+A crew is an **interactive Claude sub-session** running in a tab inside your workspace, named `crew-1`, `crew-2`, … (or a name you pick). It stays idle between turns waiting for your next message — same model as a Claude Agent Team subagent.
+
+### Spawn a NEW crew
 
 ```bash
 cockpit crew spawn <project> "<task description>" \
-    [--direction right|left|up|down] \
-    [--agent claude|codex|gemini|aider]
+    [--name <name>] \
+    [--direction tab|right|left|up|down] \
+    [--agent claude|codex|gemini|opencode]
 ```
 
 What it does:
-1. Opens a split pane next to the project's captain workspace.
-2. Renames the tab to `🔧 <project>-crew` so you can identify it visually.
-3. Starts a fresh CLI session for the chosen agent (default: `claude`) with `crew.<agent>.md` loaded as the system prompt and the task as the inline prompt.
-4. Prints the new pane's surface ref — capture it if you want to read its screen later.
+1. Opens a new **tab** in the captain workspace (use `--direction right|left|up|down` to split into a pane instead).
+2. Names the tab `🔧 <project>:<name>` — `--name` is optional; auto-picks the next free `crew-N`.
+3. Boots an interactive Claude session (no `-p`) with `crew.<agent>.md` loaded as system prompt.
+4. Sends your task as the first turn. The crew works on it and then **stays idle** waiting for follow-ups.
 
-**Examples:**
+### Send a FOLLOW-UP to an existing crew
 
-Simple coding task (default agent claude, default direction right):
+DO NOT spawn a new crew for every turn — that's how you get tab pollution. Use `send`:
+
+```bash
+cockpit crew send <project> <name> "<message>"
+```
+
+### Inspect & shutdown
+
+```bash
+cockpit crew list <project>                 # see all live crews for the project
+cockpit crew read <project> <name>          # read the crew's current screen
+cockpit crew close <project> <name>         # shutdown the crew (closes its tab)
+```
+
+### Examples
+
+Spawn a fresh crew (auto-named `crew-1`):
 ```bash
 cockpit crew spawn brove "Add preinstall hook to package.json. Branch: feat/preinstall."
 ```
 
-Use Codex for a complex refactor:
+Named crew for a specific work track:
 ```bash
-cockpit crew spawn brove "Refactor src/api/handlers.ts: extract validation into validators.ts. Branch: refactor/handlers." --agent codex
+cockpit crew spawn brove "Refactor src/api/handlers.ts" --name api-refactor --agent codex
 ```
 
-Use a downward split when the workspace is already busy on the right:
+Send a follow-up turn:
 ```bash
-cockpit crew spawn brove "Fix typo in README" --direction down
+cockpit crew send brove crew-1 "Also wire that into the install script"
 ```
 
-**Rules:**
-- Do NOT manually run `git worktree add`. The crew operates in the captain's checkout — the CLI does not create worktrees by default. If a task genuinely requires worktree isolation, ask the user before doing so.
+Open as a side-by-side pane when you want live preview:
+```bash
+cockpit crew spawn brove "Fix typo in README" --direction right
+```
+
+### Rules
+
+- **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.
+- **Close crews you're done with** (`cockpit crew close ...`) so they don't accumulate.
+- Do NOT manually run `git worktree add`. The crew operates in the captain's checkout. If a task genuinely requires worktree isolation, ask the user.
 - Do NOT edit source code yourself — always delegate to crew.
 - Respect `maxCrew` — don't exceed the configured concurrent crew count.
-- **Model routing is per-agent:** the agent driver decides; if you want a specific model, pass it through the agent's CLI flags inside the task prompt.
-- **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the spawn prompt — add to the prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
+- **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
 - **For simple tasks**, don't mention GSD — the crew will handle it directly.
 
-## Sending Follow-up Instructions
-
-The crew session keeps running in its split pane until it exits. There is no per-pane CLI send yet — multi-turn follow-up is a follow-up improvement. For now, either:
-- Send the entire context up front in the initial `cockpit crew spawn` task prompt, or
-- Type follow-up instructions directly into the crew's pane via the cmux UI.
+> Non-Claude agents (codex / gemini) currently still launch in print-mode (one-shot) rather than as interactive sessions; `send` won't reach them yet. Prefer Claude crews when you want multi-turn dialogue.
 
 ## Task Coordination
 
 You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. Track crew progress by:
-1. Inspecting the crew pane visually in cmux (you have its surface ref from the spawn output).
-2. Watching the auto-poller's `{spokeVault}/status.md` (written by the reactor — see issue #43).
-3. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+1. `cockpit crew read <project> <name>` — read the crew's screen directly from CLI.
+2. `cockpit crew list <project>` — see all live crews and pick the right one.
+3. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
+4. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
 
 When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
@@ -138,11 +161,12 @@ After a crew task completes:
 
 1. Review the work — read the diff, check the branch.
 2. Merge their branch if appropriate.
-3. Close the crew pane: it closes naturally when the agent session exits. If you need to force-close, use the cmux UI directly. (A `cockpit runtime close-pane` CLI is a follow-up improvement.)
-4. Record learnings if any (see "Recording Learnings" below).
-5. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
+3. Close the crew with `cockpit crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
+4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. Do NOT run the full test suite repeatedly or concurrently across worktrees (a single `vitest run` spawns a ~per-CPU worker pool that uses gigabytes; several at once exhaust RAM). Prefer one verification on the authoritative checkout.
+5. Record learnings if any (see "Recording Learnings" below).
+6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
 
-The auto-poller updates `status.md` based on pane content; you don't need to write status manually after every event.
+Status writes (`write-status.sh`) are opt-in; you don't need to write status after every event.
 
 ## Session Shutdown (Opt-In Writes)
 
@@ -165,9 +189,7 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
-4. (Optional) The reactor's auto-poller updates `status.md` from your pane buffer; you do not need to manually write a "session ended" status.
-
-5. (Optional) If a Command session is running and you want to notify it:
+4. (Optional) If a Command session is running and you want to notify it:
    ```bash
    cockpit runtime send --command "Captain {project} ending session — handoff written."
    ```

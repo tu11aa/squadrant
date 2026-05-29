@@ -1,82 +1,74 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { CockpitConfig } from "../config.js";
-import { resolveHome } from "../config.js";
+import type { TaskRecord } from "../control/types.js";
+import { cockpitdCall } from "../commands/crew-control.js";
 
 export type DashboardState = "idle" | "busy" | "blocked" | "errored" | "offline" | "unknown";
-
-const KNOWN_STATES: ReadonlyArray<DashboardState> = [
-  "idle", "busy", "blocked", "errored", "offline", "unknown",
-];
 
 export interface ProjectStatus {
   project: string;
   state: DashboardState;
-  lastChecked: string;       // ISO-8601 string, "" if unknown
-  captainWorkspace: string;  // "" if unknown
-  excerpt: string;           // multi-line, possibly ""
+  lastChecked: string;
+  captainWorkspace: string;
+  excerpt: string;
 }
 
 export interface ReadStatusDeps {
   config: CockpitConfig;
-  readFile?: (path: string) => string;
+  listTasks?: (project: string) => Promise<TaskRecord[]>;
 }
 
-function unquote(s: string): string {
-  const t = s.trim();
-  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
-    return t.slice(1, -1);
-  }
-  return t;
+function deriveState(tasks: TaskRecord[]): DashboardState {
+  if (tasks.some(t => t.state === "blocked" || t.state === "awaiting-input")) return "blocked";
+  if (tasks.some(t => t.state === "failed" || t.state === "stalled")) return "errored";
+  if (tasks.some(t => t.state === "working")) return "busy";
+  return "idle";
 }
 
-export function parseStatusFile(text: string): ProjectStatus | null {
-  const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
+function buildExcerpt(tasks: TaskRecord[]): string {
+  const working = tasks.filter(t => t.state === "working").length;
+  const blocked = tasks.filter(t => t.state === "blocked" || t.state === "awaiting-input").length;
+  const parts: string[] = [];
+  if (working > 0) parts.push(`${working} working`);
+  if (blocked > 0) parts.push(`${blocked} blocked`);
+  const summary = parts.length > 0 ? parts.join(", ") : "idle";
 
-  const fm: Record<string, string> = {};
-  let i = 1;
-  for (; i < lines.length; i++) {
-    if (lines[i].trim() === "---") { i++; break; }
-    const m = lines[i].match(/^([a-z_]+):\s*(.*)$/i);
-    if (m) fm[m[1]] = unquote(m[2]);
-  }
-  if (!fm.auto_state) return null;
+  const active = tasks.filter(t =>
+    ["working", "blocked", "awaiting-input", "submitted"].includes(t.state)
+  );
+  const titles = active.slice(0, 3).map(t => {
+    const firstLine = t.task ? t.task.split("\n")[0] : "";
+    return t.name ?? (firstLine || t.id.slice(0, 8));
+  }).join("; ");
 
-  // Find the first fenced block after "## Last activity excerpt"
-  let excerpt = "";
-  const headerIdx = lines.findIndex((l, idx) => idx >= i && /##\s+Last activity excerpt/i.test(l));
-  if (headerIdx >= 0) {
-    const fenceStart = lines.findIndex((l, idx) => idx > headerIdx && l.trim() === "```");
-    if (fenceStart >= 0) {
-      const fenceEnd = lines.findIndex((l, idx) => idx > fenceStart && l.trim() === "```");
-      if (fenceEnd > fenceStart) excerpt = lines.slice(fenceStart + 1, fenceEnd).join("\n");
-    }
-  }
-
-  const rawState = (fm.auto_state || "unknown") as DashboardState;
-  const state = KNOWN_STATES.includes(rawState) ? rawState : "unknown";
-
-  return {
-    project: fm.project ?? "",
-    state,
-    lastChecked: fm.auto_last_checked ?? "",
-    captainWorkspace: fm.captain_workspace ?? "",
-    excerpt,
-  };
+  return titles ? `${summary} — ${titles}` : summary;
 }
 
-export function readAllStatuses(deps: ReadStatusDeps): ProjectStatus[] {
-  const readFile = deps.readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
+export async function readAllStatuses(deps: ReadStatusDeps): Promise<ProjectStatus[]> {
+  const listTasks = deps.listTasks ?? (async (project: string) => {
+    const result = await cockpitdCall({ kind: "list", project });
+    return result as TaskRecord[];
+  });
+
   const rows: ProjectStatus[] = [];
   for (const [name, project] of Object.entries(deps.config.projects)) {
-    const statusPath = path.join(resolveHome(project.spokeVault), "status.md");
-    let text = "";
-    try { text = readFile(statusPath); } catch { /* missing — leave text empty */ }
-    const parsed = text ? parseStatusFile(text) : null;
-    rows.push(parsed
-      ? { ...parsed, project: name }
-      : { project: name, state: "unknown", lastChecked: "", captainWorkspace: project.captainName, excerpt: "" });
+    try {
+      const tasks = await listTasks(name);
+      rows.push({
+        project: name,
+        state: deriveState(tasks),
+        lastChecked: new Date().toISOString(),
+        captainWorkspace: project.captainName,
+        excerpt: buildExcerpt(tasks),
+      });
+    } catch {
+      rows.push({
+        project: name,
+        state: "offline",
+        lastChecked: new Date().toISOString(),
+        captainWorkspace: project.captainName,
+        excerpt: "",
+      });
+    }
   }
   return rows;
 }

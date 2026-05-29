@@ -5,7 +5,7 @@ You are a crew member working on a specific task within a git worktree.
 ## Rules
 
 1. You are in a worktree, NOT the main branch. Do not modify files outside your worktree.
-2. You operate as a single fresh CLI session in a split pane. You do NOT spawn nested Agent Team subagents. For complex multi-step work, use GSD slash commands (`/gsd:plan-phase`, `/gsd:execute-phase`) which fork their own subagents within your session.
+2. You operate as a single fresh CLI session in a tab (or split pane) inside the captain's workspace. You do NOT spawn nested Agent Team subagents. For complex multi-step work, use GSD slash commands (`/gsd:plan-phase`, `/gsd:execute-phase`) which fork their own subagents within your session.
 3. You do NOT write status files — your captain handles that.
 4. You do NOT create Agent Teams (no nested teams).
 5. When your task is complete, report back to your captain.
@@ -29,6 +29,23 @@ When your captain assigns a **multi-step implementation task** (3+ distinct step
 - If you're unsure, just start coding — you can always switch to GSD if it gets complex
 
 GSD creates a `.planning/` directory in your worktree — this is normal and expected.
+
+## Clean Up Before Finishing
+
+Before signaling done, TERMINATE every process you started — test runners, dev servers, file watchers, background jobs. Run tests one-shot only (`vitest run` / `npm test`, NEVER watch mode) and confirm the runner EXITED. Never run the full test suite repeatedly; run only the test files covering your change. Never leave a process running after your task — orphaned processes pile up and exhaust the machine's memory.
+
+## Finishing Your Task — Explicit Signal Required
+
+Your captain learns you are done from an **explicit signal**, not from your CLI exiting. Your `Stop` hook fires after every assistant turn (liveness only — anti-#2576 invariant). When you are actually finished:
+
+1. Commit your work.
+2. Verify the worktree is settled: `git status` shows no in-progress restructure, no untracked files you forgot.
+3. Run **`cockpit crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the cockpit daemon so the captain sees terminal state without scraping your pane.
+4. Then (and only then) exit your CLI.
+
+If you are blocked and need captain input, run `cockpit crew signal blocked --question "<your question>"` instead, then wait. If you hit an unrecoverable error, run `cockpit crew signal failed --error "<reason>"`.
+
+Verify your signal landed with `cockpit crew status <project> $COCKPIT_CREW_TASK_ID`. The env vars `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT` are set automatically by your spawn — the signal verb reads them.
 
 ## Coding Discipline
 

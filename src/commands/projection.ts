@@ -8,6 +8,7 @@ import {
   createCursorEmitter,
   createCodexEmitter,
   createGeminiEmitter,
+  createOpencodeEmitter,
   ProjectionRegistry,
   type ProjectionEmitter,
   type ProjectionSource,
@@ -47,6 +48,7 @@ function buildRegistry(): ProjectionRegistry {
     cursor: createCursorEmitter,
     codex: createCodexEmitter,
     gemini: createGeminiEmitter,
+    opencode: createOpencodeEmitter,
   });
 }
 
@@ -120,7 +122,9 @@ async function runEmit(opts: Opts & { dryRun?: boolean }) {
         console.error(chalk.yellow(`⚠ unknown project: ${projectName}`));
         continue;
       }
-      const source = await readProjectLevelSource(workspace, proj.path);
+      const source = await readProjectLevelSource(
+        createObsidianDriver({ root: proj.path }),
+      );
       if (!source) {
         console.log(chalk.gray(`- ${projectName}: no AGENTS.md, skipping`));
         continue;
@@ -149,7 +153,7 @@ projectionCommand
   .description("Emit projections to disk")
   .option("--scope <scope>", "user or project", parseScope)
   .option("--project <name>", "managed project name")
-  .option("--target <name>", "single target (cursor, codex, gemini)")
+  .option("--target <name>", "single target (cursor, codex, gemini, opencode)")
   .option("--all", "emit user-level + every managed project")
   .action(async (opts: Opts) => {
     try {
@@ -165,7 +169,7 @@ projectionCommand
   .description("Preview changes without writing")
   .option("--scope <scope>", "user or project", parseScope)
   .option("--project <name>", "managed project name")
-  .option("--target <name>", "single target (cursor, codex, gemini)")
+  .option("--target <name>", "single target (cursor, codex, gemini, opencode)")
   .option("--all", "dry-run across user-level + every managed project")
   .action(async (opts: Opts) => {
     try {

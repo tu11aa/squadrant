@@ -1,0 +1,5 @@
+{
+  "name": "cockpit",
+  "description": "Skills for claude-cockpit agent orchestration roles (captain, command, crew)",
+  "skills": "./skills/"
+}

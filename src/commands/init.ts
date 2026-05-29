@@ -11,6 +11,7 @@ import {
   resolveHome,
 } from "../config.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import { ensureRuntimeSynced } from "../lib/runtime-sync.js";
 
 function findPackageRoot(): string {
   let dir = path.dirname(new URL(import.meta.url).pathname);
@@ -90,50 +91,11 @@ export const initCommand = new Command("init")
     const projectsDir = path.join(hubPath, "projects");
     fs.mkdirSync(projectsDir, { recursive: true });
 
-    // 3. Copy scripts to ~/.config/cockpit/scripts/ and make executable
-    const scriptsTemplate = path.join(pkgRoot, "scripts");
-    const scriptsTarget = path.join(configDir, "scripts");
-    if (fs.existsSync(scriptsTemplate)) {
-      fs.mkdirSync(scriptsTarget, { recursive: true });
-      for (const file of fs.readdirSync(scriptsTemplate)) {
-        if (file.endsWith(".sh")) {
-          const src = path.join(scriptsTemplate, file);
-          const dest = path.join(scriptsTarget, file);
-          fs.copyFileSync(src, dest);
-          fs.chmodSync(dest, 0o755);
-        }
-      }
-      console.log(chalk.green(`  ✔ Scripts copied to ${scriptsTarget}`));
-    } else {
-      console.log(chalk.yellow("  ⚠ Scripts directory not found in package"));
-    }
-
-    // 4. Copy CLAUDE.md role templates to ~/.config/cockpit/templates/
-    const orchestratorDir = path.join(pkgRoot, "orchestrator");
-    const templatesTarget = path.join(configDir, "templates");
-    if (fs.existsSync(orchestratorDir)) {
-      fs.mkdirSync(templatesTarget, { recursive: true });
-      for (const file of fs.readdirSync(orchestratorDir)) {
-        if (file.endsWith(".claude.md") || file.endsWith(".generic.md") || file.endsWith(".CLAUDE.md")) {
-          const src = path.join(orchestratorDir, file);
-          const dest = path.join(templatesTarget, file);
-          fs.copyFileSync(src, dest);
-        }
-      }
-      console.log(chalk.green(`  ✔ Role templates copied to ${templatesTarget}`));
-    } else {
-      console.log(chalk.yellow("  ⚠ Orchestrator templates not found in package"));
-    }
-
-    // 5. Copy cockpit plugin (skills) to ~/.config/cockpit/plugin/
-    const pluginSrc = path.join(pkgRoot, "plugin");
-    const pluginTarget = path.join(configDir, "plugin");
-    if (fs.existsSync(pluginSrc)) {
-      copyDirRecursive(pluginSrc, pluginTarget);
-      console.log(chalk.green(`  ✔ Cockpit plugin (skills) copied to ${pluginTarget}`));
-    } else {
-      console.log(chalk.yellow("  ⚠ Plugin directory not found in package"));
-    }
+    // 3. Sync source-managed runtime dirs (plugin, scripts, templates) via
+    // the same self-heal path the CLI runs on every invocation: copy +
+    // prune + chmod, so a re-init never leaves stale files behind.
+    ensureRuntimeSynced({ sourceRoot: pkgRoot, runtimeRoot: configDir });
+    console.log(chalk.green(`  ✔ Runtime assets synced to ${configDir}`));
 
     // 6. Enable Agent Teams in settings.json if not set
     const settingsPath = path.join(os.homedir(), ".claude", "settings.json");

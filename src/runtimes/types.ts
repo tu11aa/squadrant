@@ -7,6 +7,7 @@ export interface WorkspaceRef {
 export interface PaneRef {
   workspaceId: string; // parent workspace ref ("workspace:42")
   surfaceId: string;   // runtime-native surface ref (cmux: "surface:7")
+  title?: string;      // tab title — populated by listSurfaces, optional on spawn
 }
 
 export interface RuntimeSpawnOptions {
@@ -17,9 +18,14 @@ export interface RuntimeSpawnOptions {
   pinToTop?: boolean;
 }
 
+// "tab" creates a new top-level surface (cmux: new-surface) inside the
+// workspace; the cardinal directions split the current surface into a pane
+// (cmux: new-pane). Both produce a PaneRef with a fresh surfaceId.
+export type PanePlacement = "tab" | "right" | "left" | "up" | "down";
+
 export interface RuntimePaneOptions {
   workspaceId: string;
-  direction: "right" | "left" | "up" | "down";
+  direction: PanePlacement;
   title?: string;
 }
 
@@ -45,4 +51,27 @@ export interface RuntimeDriver {
   closePane(pane: PaneRef): Promise<void>;
   sendToPane(pane: PaneRef, message: string): Promise<void>; // sends text + Enter
   readPaneScreen(pane: PaneRef): Promise<string>;
+  // List all surfaces (tabs/panes) inside a workspace, with their titles.
+  // Used to find named crews by tab title (#56).
+  listSurfaces(workspaceId: string): Promise<PaneRef[]>;
+
+  // Spawn a long-running process INSIDE the captain workspace's process tree,
+  // so any IPC/socket constraints of the runtime (e.g. cmux's parent-lineage
+  // check) are satisfied. Returns a PaneRef the caller can inspect/clean up.
+  //
+  // placement: "background" produces a non-distracting background tab that does
+  // not steal focus from the captain (runtime decides how). "visible" produces
+  // a normal focused tab for debug ergonomics.
+  spawnInjector(opts: {
+    captainWorkspace: WorkspaceRef;
+    command: string;
+    title?: string;
+    placement: "background" | "visible";
+  }): Promise<PaneRef>;
+
+  // Send text to a specific surface. Unlike `send` (workspace-level) this
+  // targets one surface directly. Used by the notify-relay injector to
+  // deliver messages to the captain's primary surface. Throws if the surface
+  // no longer exists.
+  sendToSurface(surface: PaneRef, text: string): Promise<void>;
 }

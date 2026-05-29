@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Cockpit System Audit &amp; Orchestration Advice</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="/tmp/cockpit-audit-pdf-style.css" />
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Cockpit System Audit &amp; Orchestration Advice</h1>
+</header>
+<h1 id="cockpit-system-audit-orchestration-advice">Cockpit System Audit
+&amp; Orchestration Advice</h1>
+<p><strong>Date:</strong> 2026-05-17 · <strong>Repo:</strong>
+claude-cockpit @ <code>develop</code> (<code>9129743</code>) ·
+<strong>Audience:</strong> project owner</p>
+<p>This report answers one question: <em>which cockpit features actually
+work, why the ones that don’t never did, and what to do to reach the
+stated goal — a reliable multi-provider orchestrator where one captain
+(any provider) controls many crew (any provider), that auto-recovers and
+auto-learns.</em></p>
+<p>It combines a state-level empirical sweep, two deep code audits
+(multi-provider spawn path; captain↔︎crew control loop), and the prior
+idle-detection research report.</p>
+<hr />
+<h2 id="executive-summary">Executive Summary</h2>
+<p>The codebase is <strong>green</strong> (318/320 tests pass; the 2
+failures are a known stale assertion, #70/#76). Synchronous CLI commands
+work well. But <strong>every autonomous, periodic, or cross-agent
+behavior is either broken or never ran</strong>, and they all share
+<strong>one root cause</strong>:</p>
+<blockquote>
+<p>Cockpit has no always-running, cockpit-owned process. Every
+reliability-critical behavior depends on an agent voluntarily
+remembering to act, observed via terminal scraping. When no agent is
+babysitting a <code>/loop</code>, everything silently freezes — with no
+detection and no recovery.</p>
+</blockquote>
+<p>The four goals — reliable orchestration, multi-provider,
+auto-recovery, auto-learn — are <strong>not four problems. They are one
+missing architectural layer.</strong></p>
+<hr />
+<h2 id="method">Method</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Angle</th>
+<th>What was done</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Empirical state sweep</td>
+<td>Ran every safe CLI command; inspected runtime state files, mtimes,
+and run history under <code>~/.config/cockpit</code> and
+<code>~/cockpit-hub</code></td>
+</tr>
+<tr>
+<td>Code audit A</td>
+<td>Deep audit of the multi-provider spawn path
+(<code>src/drivers</code>, <code>src/runtimes</code>,
+<code>src/commands/launch.ts</code>, <code>crew.ts</code>,
+<code>config.ts</code>, <code>src/projection</code>)</td>
+</tr>
+<tr>
+<td>Code audit B</td>
+<td>Deep audit of the captain↔︎crew control loop (dispatch → work →
+completion → collection), <code>src/reactor</code>, classifier, handoff
+scripts</td>
+</tr>
+<tr>
+<td>Prior research</td>
+<td><code>docs/research/2026-05-16-idle-detection-and-inter-agent-orchestration.md</code>
+(notchi/cmux/A2A patterns)</td>
+</tr>
+<tr>
+<td>Test suite</td>
+<td>Full <code>vitest run</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="part-1-feature-inventory">Part 1 — Feature Inventory</h1>
+<h2 id="working-verified-by-execution">Working (verified by
+execution)</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Status</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>doctor</code></td>
+<td>Works</td>
+<td>Runs 39 checks; the FAILs it reports are <em>accurate</em></td>
+</tr>
+<tr>
+<td><code>init</code></td>
+<td>Works</td>
+<td>Runtime self-heal verified (PR #74)</td>
+</tr>
+<tr>
+<td><code>projects</code> / <code>status</code></td>
+<td>Works</td>
+<td>Render correctly</td>
+</tr>
+<tr>
+<td><code>standup</code></td>
+<td>Works</td>
+<td>Real git data, zero-token (9 real commits when scoped to
+cockpit)</td>
+</tr>
+<tr>
+<td><code>retro</code></td>
+<td>Works well</td>
+<td>Aggregated 30 commits / 9 merged PRs from a real project</td>
+</tr>
+<tr>
+<td><code>dashboard --once/--pane</code></td>
+<td>Works</td>
+<td>Renders grid (data stale — see Part 1.3)</td>
+</tr>
+<tr>
+<td><code>projection</code> (list/diff/emit)</td>
+<td>Works</td>
+<td>Targets writable, diffs render</td>
+</tr>
+<tr>
+<td><code>tracker</code> (gh issues/PRs/checks)</td>
+<td>Works</td>
+<td>gh authenticated</td>
+</tr>
+<tr>
+<td><code>workspace</code> / <code>runtime</code> bridges</td>
+<td>Works</td>
+<td><code>runtime</code> correctly reports command session
+<em>stopped</em></td>
+</tr>
+<tr>
+<td>Test suite</td>
+<td>Green</td>
+<td>318/320 pass; 2 fails = stale config test (#70/#76)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="never-worked-never-used-zero-history-on-disk">Never worked /
+never used (zero history on disk)</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reactor engine</strong></td>
+<td><code>reactor status</code> → “Last poll: <strong>never
+run</strong>”, “Repos watched: <strong>0</strong>”. One 3-byte empty
+event file from May 5. Never configured.</td>
+</tr>
+<tr>
+<td><strong>Learnings / self-improvement</strong></td>
+<td><code>~/cockpit-hub/learnings/</code> <strong>empty since Mar
+31</strong>. Zero learnings ever recorded despite 4 scripts +
+<code>command learnings-review</code>.</td>
+</tr>
+<tr>
+<td><strong>Wiki knowledge system</strong></td>
+<td><code>~/cockpit-hub/wiki/pages/</code> <strong>empty since Apr
+7</strong>. Zero pages ingested despite 3 scripts +
+<code>command wiki-aggregate</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="worked-once-then-decayed-live-session-dependent">Worked once,
+then decayed (live-session dependent)</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Auto-status (<code>poll-status</code>)</td>
+<td>Single batch write <strong>May 15 22:31</strong>, frozen since. All
+12 spokes stale in <code>doctor</code>.</td>
+</tr>
+<tr>
+<td>Dashboard data</td>
+<td>Renders, but every project shows <code>offline/stale</code> —
+reading 2-day-old <code>status.md</code>.</td>
+</tr>
+<tr>
+<td>Daily briefing</td>
+<td>Last <code>daily-logs/</code> entry <strong>May 5</strong> — 12 days
+dark.</td>
+</tr>
+<tr>
+<td>Notifications</td>
+<td>Code is correct; cmux healthy (<code>PONG</code>). But the command
+workspace is <strong>stopped</strong>, so notifications have no
+destination. The <code>doctor</code> “Notifier FAIL” is a <em>correct
+report</em>, not a bug.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>The pattern:</strong> every feature in the bottom two tables
+assumes “an agent will be alive and will remember to drive me.” None
+owns its own execution. Adding more features on this substrate
+reproduces the same outcome.</p>
+</blockquote>
+<hr />
+<h1 id="part-2-audit-a-captain-crew-control-loop">Part 2 — Audit A:
+Captain → Crew Control Loop</h1>
+<p>The loop today: <strong>dispatch works; completion/collection does
+not exist.</strong></p>
+<pre><code>  DISPATCH (works)              WORK (opaque)             COMPLETION (broken)        COLLECTION (manual)
+  ────────────────              ─────────────             ──────────────────         ──────────────────
+  cockpit crew spawn            independent Claude         regex-scrape the           captain manually
+   → cmux new tab               CLI in a cmux tab          *captain&#39;s* pane           runs `crew read`
+   → type cmd + Enter           no PID, no exit code,      (not the crew&#39;s!)          or eyeballs the tab
+   → sleep 3000ms (!)           no env markers, no         no &quot;done&quot; pattern          then reviews diff
+   → type task + Enter          transcript handle          exists at all</code></pre>
+<h3 id="what-works">What works</h3>
+<p><code>cockpit crew spawn</code> creates a cmux surface, renames the
+tab <code>🔧 &lt;project&gt;:&lt;name&gt;</code>, and does a two-step
+terminal send (launch command, <strong>hardcoded 3000 ms sleep</strong>,
+then task text). Crew identity lives <strong>only in the cmux tab
+title</strong> (<code>crew.ts:24-34</code>); the rename is best-effort
+and swallows errors (<code>cmux.ts:107-109</code>) — if it fails, the
+crew is unfindable forever.</p>
+<h3 id="what-does-not-work">What does not work</h3>
+<ul>
+<li><strong>Completion detection = one heuristic.</strong>
+<code>auto-status.ts:73</code> reads
+<code>driver.readScreen(captainWorkspace)</code> — the
+<strong>captain’s</strong> pane, never the crew’s.
+<code>status-classifier.ts</code> regex-classifies the last 50 lines
+into <code>offline/errored/blocked/busy/idle</code>. <strong>There is no
+“done” / “task complete” pattern — <code>idle</code> is just the
+no-match fallback (<code>status-classifier.ts:92</code>).</strong> A
+finished crew is indistinguishable from an idle prompt.</li>
+<li><strong>No reverse channel.</strong> <code>crew_signals</code>
+frontmatter: grep returns nothing — it does not exist in code. Handoff
+scripts are captain day-to-day continuity, unrelated to crew. The only
+crew→captain path is the crew agent <em>choosing</em> to type
+<code>cockpit runtime send</code> — in no enforced template.</li>
+<li><strong>No scheduler.</strong>
+<code>grep cron|launchd|setInterval</code> → nothing. The “always-on”
+reactor loop is a <em>manual instruction to an agent</em> in
+<code>reactor-ops/SKILL.md:155</code> to use <code>/loop</code>, not
+infrastructure.</li>
+<li><strong>No timeout / watchdog / heartbeat / retry</strong> anywhere
+(grep-confirmed absent).</li>
+</ul>
+<h3 id="failure-modes-concrete">Failure modes (concrete)</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>What actually happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Crew hangs</td>
+<td>No timeout. Tab sits forever. Classifier shows <code>busy</code>
+(spinner) or <code>idle</code>. Nothing escalates.</td>
+</tr>
+<tr>
+<td>Crew crashes</td>
+<td>Only detectable if reactor polled the <em>crew</em> pane — it polls
+the <em>captain</em> pane, so never. Dead tab persists.</td>
+</tr>
+<tr>
+<td>Captain not looking</td>
+<td>Result lost until captain manually runs <code>crew read</code>. No
+push, no notification.</td>
+</tr>
+<tr>
+<td>cmux unresponsive</td>
+<td><code>execSync</code> has no timeout → a hung call blocks the whole
+<code>cockpit</code> process indefinitely; reads silently misclassify as
+<code>offline</code>.</td>
+</tr>
+<tr>
+<td>Crew finishes during captain compaction</td>
+<td>Completion never recorded anywhere; no sentinel persists it. Status
+drifts permanently (this is issue #19).</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>#64 (the reliability fix) is fully designed but the
+implementation was scrapped on 2026-05-16</strong> (PRs #71/#69/#67
+abandoned). The design + 1032-line plan exist as docs only. <strong>None
+of it is in the codebase.</strong> You have been here before — this
+matters for the recommendation.</p>
+</blockquote>
+<hr />
+<h1 id="part-3-audit-b-multi-provider-reality">Part 3 — Audit B:
+Multi-Provider Reality</h1>
+<p>The abstraction surface (driver / runtime / projection interfaces,
+capability registry) is <strong>clean and extensible</strong>.
+Functionally, cockpit is <strong>Claude-only</strong>.</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Driver</th>
+<th>Probe</th>
+<th>Captain spawn</th>
+<th>Crew spawn</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>claude</strong></td>
+<td>Yes</td>
+<td>Real</td>
+<td>Wired, special-cased</td>
+<td>Wired, interactive</td>
+<td><strong>End-to-end</strong></td>
+</tr>
+<tr>
+<td><strong>opencode</strong></td>
+<td>Yes</td>
+<td>Real</td>
+<td>Absent (generic branch)</td>
+<td>Interactive, but global identity leak (#61)</td>
+<td><strong>Partial (crew only)</strong></td>
+</tr>
+<tr>
+<td><strong>codex</strong></td>
+<td>Yes</td>
+<td>Real</td>
+<td>Broken</td>
+<td>Print-mode, dies after 1 turn</td>
+<td><strong>Stub-grade</strong></td>
+</tr>
+<tr>
+<td><strong>gemini</strong></td>
+<td>Yes</td>
+<td>Real</td>
+<td>Broken</td>
+<td>Print-mode, dies after 1 turn</td>
+<td><strong>Stub-grade</strong></td>
+</tr>
+<tr>
+<td><strong>aider</strong></td>
+<td>Yes</td>
+<td>Real</td>
+<td>Broken</td>
+<td>Print-mode, no role file</td>
+<td><strong>Stub-grade</strong></td>
+</tr>
+<tr>
+<td><strong>cursor</strong></td>
+<td>No driver</td>
+<td>—</td>
+<td>Impossible</td>
+<td>Impossible (<code>crew.ts</code> throws)</td>
+<td><strong>Projection-only</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-hardcoded-to-claude-assumptions">The hardcoded-to-Claude
+assumptions</h3>
+<ul>
+<li><code>launch.ts:128</code> hard-branches
+<code>if (driver.name === "claude")</code>. Only Claude gets: persistent
+interactive session, role via <code>--append-system-prompt-file</code>,
+<code>--plugin-dir</code> skills, and <code>claude -c</code> resume.
+Everything else falls through to a <strong>one-shot print-mode
+command</strong> with the role as a prompt string — it dies after one
+turn and cannot orchestrate or be orchestrated.</li>
+<li><code>scripts/spawn-workspace.sh</code> <code>case "$AGENT"</code>:
+<strong>opencode is not handled → <code>exit 1</code></strong>. Startup
+checklist injection is gated
+<code>if [ "$AGENT" = "claude" ]</code>.</li>
+<li><code>crew.ts:139</code>:
+<code>interactive = agent.name === "claude" || agent.name === "opencode"</code>.
+codex/gemini/aider crews are non-interactive and unmanageable.</li>
+<li><strong>Capability gating is dead code.</strong>
+<code>validateRole()</code> / <code>probeAll()</code> exist
+(<code>registry.ts:40-67</code>) but <strong>no spawn path ever calls
+them</strong>. A captain is spawned with whatever the config names, zero
+validation.</li>
+<li>Plugin/skills (<code>cockpit:captain-ops</code>, etc.) are
+Claude-Skill-tool namespaced. A non-Claude captain has a 45-line generic
+file and <strong>none of the operational playbook</strong>.</li>
+<li>Config schema <em>can</em> express <code>captain: {agent: X}</code>,
+but <strong>crew provider is CLI-flag only</strong>
+(<code>--agent</code>), never config-driven per project/role.</li>
+</ul>
+<blockquote>
+<p><strong>Heterogeneous captain(X) → crew(Y) is not expressible
+today</strong>, capability gating is unenforced, and a non-Claude
+captain has no working orchestration runtime. Issues #35 and #61 (both
+OPEN) are the blocking tracked work. opencode is the only viable
+non-Claude provider, and even it leaks role identity globally.</p>
+</blockquote>
+<hr />
+<h1 id="part-4-research-synthesis-idle-detection-orchestration">Part 4 —
+Research Synthesis (Idle Detection &amp; Orchestration)</h1>
+<p>From the prior research report (notchi, cmux, A2A, opencode):</p>
+<blockquote>
+<p><strong>Both notchi and cmux — the two tools cockpit’s environment is
+built around — independently converged on the same answer: do not scrape
+terminals. Install agent-native lifecycle hooks that emit a structured
+event over a local socket; normalize all agents into one event
+vocabulary.</strong></p>
+</blockquote>
+<pre><code>            RELIABILITY OF &quot;DONE&quot; SIGNAL
+  low  ────────────────────────────────────────────►  high
+
+  Pattern A            Pattern B / C            Pattern D
+  tmux scrape          child-exit / MCP return  A2A explicit
+  (must remember       (OS/protocol event,      state machine
+   to poll)            no polling)              + push webhook
+
+  ▲ cockpit is HERE                              ▲ conceptual target</code></pre>
+<p>Key levers identified by the research:</p>
+<ul>
+<li><strong>Hook-based completion</strong> (notchi/cmux model): merged,
+idempotent
+<code>Stop</code>/<code>SubagentStop</code>/<code>SessionEnd</code>
+hooks POST a normalized JSON envelope to a local socket. Zero polling
+for Claude.</li>
+<li><strong>Invocation-based</strong> (Pattern B/C): run delegated work
+headless — <code>claude -p --output-format json</code> or
+<strong><code>opencode serve</code> + synchronous
+<code>POST /session/:id/message</code></strong> (blocks until done,
+returns result). Completion = process exit / HTTP return,
+<strong>identical for any provider</strong>.</li>
+<li><strong>opencode <code>serve</code> is the single biggest
+lever</strong> — synchronous wait endpoint + SSE + status polling +
+arbitrary cheap/local model. Reliability <em>and</em> cost <em>and</em>
+heterogeneity in one move.</li>
+<li><strong>Semantic trap (cmux #2576):</strong> <code>Stop</code> ≠
+“done” ≠ “needs input.” Conflating them rebuilds cmux’s most-hated bug.
+Must model <em>turn-complete</em> / <em>blocked-on-human</em> /
+<em>terminated</em> distinctly.</li>
+</ul>
+<hr />
+<h1 id="part-5-the-core-finding">Part 5 — The Core Finding</h1>
+<p>Your four goals map to <strong>one</strong> missing layer:</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Why it fails today</th>
+<th>What fixes it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reliable orchestration</td>
+<td>Scraping the wrong pane, no “done” signal, no timeout</td>
+<td>Crew emits hook event → socket → task state; captain <em>queries
+state</em>, never scrapes; hard timeout</td>
+</tr>
+<tr>
+<td>Multi-provider</td>
+<td>Spawn path special-cases Claude; others die after 1 turn</td>
+<td>Headless invocation (<code>claude -p</code> /
+<code>opencode serve</code>) — completion is provider-agnostic by
+construction</td>
+</tr>
+<tr>
+<td>Auto-recovery</td>
+<td>No daemon, no watchdog, no health layer</td>
+<td>A rule on the same event bus:
+<code>task.failed</code>/<code>timeout</code> → reassign/restart (this
+<em>is</em> #77)</td>
+</tr>
+<tr>
+<td>Auto-learn</td>
+<td>wiki/learnings depend on an agent remembering</td>
+<td>Subscribe wiki/learnings to bus events (<code>task.done</code> →
+capture); curate with a prompt, not silently</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>They are not four features. They are one substrate.</strong>
+Build it once and three of the four fall out almost for free. Build none
+of it and every future feature joins the “never worked” list.</p>
+</blockquote>
+<hr />
+<h1 id="part-6-recommended-direction">Part 6 — Recommended
+Direction</h1>
+<h3 id="the-reframe-a-nervous-system-not-a-brain">The reframe: a nervous
+system, not a brain</h3>
+<p>Your principle — <em>“the CLI is the ignition key, not the brain;
+orchestration happens in the agent session”</em> — conflicts with
+reliability, because an agent session is mortal and forgetful. The
+resolution is <strong>not</strong> to move the brain. It is to add a
+thin, dumb, always-running <strong>control plane</strong> that does not
+think:</p>
+<ul>
+<li>transports events over a local socket,</li>
+<li>persists task state to disk,</li>
+<li>enforces timeouts and restarts dead things.</li>
+</ul>
+<p>The agent stays the brain. The daemon is the <strong>nervous
+system</strong> that makes the brain’s intent survive its own death.
+This is exactly notchi’s/cmux’s converged design.</p>
+<h3 id="sequenced-plan">Sequenced plan</h3>
+<p><strong>1 — Build the substrate as ONE thin vertical slice (not the
+whole #64 plan).</strong> The prior attempt failed because it was a
+large plan bolted onto the scraping architecture. Do the opposite:
+smallest end-to-end slice that proves the model.</p>
+<ul>
+<li>A cockpit-owned long-lived process (launchd-managed — survives
+session death; <strong>this piece has never existed</strong>).</li>
+<li>One Unix socket, one event vocabulary:
+<code>task.started / task.done / task.failed / task.blocked</code>.</li>
+<li>Claude crew gets a merged, idempotent
+<code>Stop</code>/<code>SubagentStop</code> hook (notchi’s exact
+pattern) that POSTs to the socket.</li>
+<li>A JSON task-state file the captain <em>reads</em> instead of
+scraping.</li>
+<li>One hard timeout → <code>task.failed</code> if no event in N
+minutes.</li>
+</ul>
+<p>That slice alone fixes orchestration pain points #1/#2/#3 for
+Claude→Claude and gives the bus everything else hangs off.</p>
+<p><strong>2 — Second provider = opencode via <code>serve</code>, not
+interactive tabs.</strong> opencode is the only non-Claude with a true
+synchronous “wait until done” endpoint. Heterogeneous that actually
+works = Claude captain blocking on <code>opencode serve</code> workers.
+Defer codex/gemini/aider (print-mode-only; not viable as managed crew
+without #35).</p>
+<p><strong>3 — Re-point reactor / status / wiki / learnings at the
+bus.</strong> They don’t need fixing — they need a <em>trigger</em>.
+Once events flow, <code>poll-status</code> becomes event-driven, the
+dashboard unfreezes, learnings auto-capture on <code>task.done</code>.
+<strong>Decide remove-vs-keep here:</strong> if wiki/learnings aren’t
+worth subscribing to the bus, delete them — they have never been
+used.</p>
+<p><strong>4 — Wire capability gating into the spawn path.</strong>
+<code>validateRole</code> already exists and is never called. One line
+of enforcement turns “spawn whatever and hope” into “refuse a codex
+captain because it can’t auto-approve.” Cheap, high value.</p>
+<p><strong>Defer / push back on:</strong> full A2A protocol (right
+long-term target, wrong now — the JSON state store is the migration
+path). Do not rebuild the elaborate #64 plan in one shot. <strong>Add no
+new feature surface until the substrate carries the existing
+ones.</strong></p>
+<hr />
+<h1 id="part-7-risks-honest-pushback">Part 7 — Risks &amp; Honest
+Pushback</h1>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Daemon is new territory</td>
+<td>The launchd-managed process is the one load-bearing piece that has
+never existed. That is the real work; everything else is mechanical once
+it exists.</td>
+</tr>
+<tr>
+<td>Semantic trap</td>
+<td>If <code>Stop</code> / blocked-on-human / terminated are not
+modelled distinctly from day one, you rebuild cmux issue #2576 (every
+parked session screams “needs input”).</td>
+</tr>
+<tr>
+<td>Loss of observability</td>
+<td>Headless delegation (Pattern B/C) trades live cmux-tab watching for
+reliability. opencode SSE mitigates. Decide consciously: recommendation
+is reliable-by-default with an opt-in observable mode.</td>
+</tr>
+<tr>
+<td>Repeating history</td>
+<td>The #64 attempt was scrapped once. The mitigation is <em>scope</em>:
+one vertical slice that replaces the channel, not a 1000-line plan
+layered on scraping.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="appendix-issue-cross-reference">Appendix — Issue
+Cross-Reference</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Issue</th>
+<th>State</th>
+<th>Relevance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>#64</td>
+<td>OPEN (bug)</td>
+<td>Crew→captain completion signal. Fully designed,
+<strong>unimplemented</strong>, prior attempt scrapped.</td>
+</tr>
+<tr>
+<td>#77</td>
+<td>OPEN (P1)</td>
+<td>Service health tracking — becomes trivial <em>once the bus
+exists</em>.</td>
+</tr>
+<tr>
+<td>#35</td>
+<td>OPEN (P3)</td>
+<td>Captain/crew role identity for non-Claude — core multi-provider
+blocker.</td>
+</tr>
+<tr>
+<td>#61</td>
+<td>OPEN</td>
+<td>opencode session-scoped identity — global leak today.</td>
+</tr>
+<tr>
+<td>#31</td>
+<td>CLOSED</td>
+<td>Projection V1 — the only delivered multi-agent piece; emits static
+text only.</td>
+</tr>
+<tr>
+<td>#19</td>
+<td>OPEN</td>
+<td>Captain post-compaction status drift — a symptom of no event
+persistence.</td>
+</tr>
+<tr>
+<td>#18</td>
+<td>OPEN (bug)</td>
+<td>command→captain send-submit asymmetry — same fragile terminal
+path.</td>
+</tr>
+<tr>
+<td>#70 / #76</td>
+<td>OPEN</td>
+<td>Stale config test (the only 2 test failures; not a real
+defect).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="appendix-key-evidence-locations">Appendix — Key Evidence
+Locations</h2>
+<ul>
+<li>Completion classifier (no “done” pattern):
+<code>src/reactor/status-classifier.ts:64-93</code></li>
+<li>Reads captain pane not crew:
+<code>src/reactor/auto-status.ts:73</code></li>
+<li>Claude hard-branch: <code>src/commands/launch.ts:128</code></li>
+<li>Crew interactive gate: <code>src/commands/crew.ts:139</code></li>
+<li>Capability gating dead code:
+<code>src/capabilities/registry.ts:40-67</code> (never called)</li>
+<li>opencode unhandled in shell spawn:
+<code>scripts/spawn-workspace.sh</code> (<code>*) → exit 1</code>)</li>
+<li>No scheduler:
+<code>grep cron|launchd|setInterval src/ plugin/</code> → empty</li>
+<li>Prior research:
+<code>docs/research/2026-05-16-idle-detection-and-inter-agent-orchestration.md</code></li>
+</ul>
+</body>
+</html>

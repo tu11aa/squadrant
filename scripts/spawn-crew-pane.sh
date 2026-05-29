@@ -11,7 +11,7 @@ fi
 
 PROJECT="$1"
 TASK="$2"
-DIRECTION="${3:-right}"
+DIRECTION="${3:-tab}"
 AGENT="${4:-claude}"
 
 exec cockpit crew spawn "$PROJECT" "$TASK" --direction "$DIRECTION" --agent "$AGENT"

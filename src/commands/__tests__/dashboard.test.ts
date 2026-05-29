@@ -28,6 +28,11 @@ vi.mock("../../config.js", () => ({
   resolveHome: (p: string) => p.replace(/^~/, process.env.HOME ?? ""),
 }));
 
+const mockReadAllStatuses = vi.hoisted(() => vi.fn());
+vi.mock("../../dashboard/read-status.js", () => ({
+  readAllStatuses: mockReadAllStatuses,
+}));
+
 import { runDashboardOnce, runDashboardPane, runSyncHub } from "../dashboard.js";
 
 const cfg = () => ({
@@ -40,45 +45,30 @@ const cfg = () => ({
   metrics: { enabled: false, path: "" },
 });
 
-const SAMPLE = [
-  "---",
-  "project: brove",
-  "auto_state: idle",
-  'auto_last_checked: "2026-05-05T12:00:00.000Z"',
-  "captain_workspace: brove-captain",
-  "---",
-  "",
-  "## Last activity excerpt",
-  "",
-  "```",
-  "│ > ",
-  "```",
-  "",
-].join("\n");
-
 describe("runDashboardOnce", () => {
   let writes: string[];
   beforeEach(() => {
     writes = [];
     loadConfig.mockReturnValue(cfg());
+    mockReadAllStatuses.mockResolvedValue([
+      { project: "brove", state: "idle", lastChecked: "2026-05-05T12:00:00.000Z", captainWorkspace: "brove-captain", excerpt: "" },
+    ]);
   });
 
-  it("renders the grid for every registered project", () => {
-    runDashboardOnce({
-      readFile: () => SAMPLE,
+  it("renders the grid for every registered project", async () => {
+    await runDashboardOnce({
       now: () => "2026-05-05T12:00:30.000Z",
       write: (s) => writes.push(s),
     });
     const out = writes.join("");
     expect(out).toContain("brove");
     expect(out).toContain("idle");
-    expect(out).toContain("30s");
   });
 
-  it("renders the empty-projects message when no projects are registered", () => {
+  it("renders the empty-projects message when no projects are registered", async () => {
     loadConfig.mockReturnValueOnce({ ...cfg(), projects: {} });
-    runDashboardOnce({
-      readFile: () => "",
+    mockReadAllStatuses.mockResolvedValueOnce([]);
+    await runDashboardOnce({
       now: () => "2026-05-05T12:00:30.000Z",
       write: (s) => writes.push(s),
     });
@@ -94,11 +84,13 @@ describe("runSyncHub", () => {
     writes = [];
     mkdirs = [];
     loadConfig.mockReturnValue(cfg());
+    mockReadAllStatuses.mockResolvedValue([
+      { project: "brove", state: "idle", lastChecked: "2026-05-05T12:00:00.000Z", captainWorkspace: "brove-captain", excerpt: "" },
+    ]);
   });
 
-  it("writes a hub mirror per project", () => {
-    const result = runSyncHub({
-      readFile: () => SAMPLE,
+  it("writes a hub mirror per project", async () => {
+    const result = await runSyncHub({
       writeFile: (p, c) => { writes.push({ path: p, content: c }); },
       mkdir: (p) => { mkdirs.push(p); },
     });

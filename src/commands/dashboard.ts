@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import { execSync } from "node:child_process";
-import fs from "node:fs";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
@@ -8,13 +7,10 @@ import { readAllStatuses } from "../dashboard/read-status.js";
 import { renderDashboard } from "../dashboard/render.js";
 import { syncHub, type SyncHubResult } from "../dashboard/sync-hub.js";
 import type { PaneRef } from "../runtimes/types.js";
-
-// TODO(runtime): current-workspace not yet abstracted by RuntimeDriver — direct cmux call retained,
-// matching the existing pattern in src/commands/command.ts.
-const CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux";
+import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
 function detectCurrentWorkspace(): string {
-  const out = execSync(`"${CMUX_BIN}" current-workspace`, { encoding: "utf-8" }).trim();
+  const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
     throw new Error("Could not detect current cmux workspace. Run `cockpit dashboard --pane` from inside a cmux workspace.");
@@ -23,33 +19,29 @@ function detectCurrentWorkspace(): string {
 }
 
 export interface DashboardOnceDeps {
-  readFile?: (path: string) => string;
   now?: () => string;
   write?: (s: string) => void;
 }
 
-export function runDashboardOnce(deps: DashboardOnceDeps = {}): void {
+export async function runDashboardOnce(deps: DashboardOnceDeps = {}): Promise<void> {
   const config = loadConfig();
-  const readFile = deps.readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
   const now = (deps.now ?? (() => new Date().toISOString()))();
   const write = deps.write ?? ((s) => process.stdout.write(s));
 
-  const statuses = readAllStatuses({ config, readFile });
+  const statuses = await readAllStatuses({ config });
   const width = process.stdout.columns ?? 100;
   write(renderDashboard(statuses, { now, width }));
   write("\n");
 }
 
 export interface SyncHubCliDeps {
-  readFile?: (path: string) => string;
   writeFile?: (path: string, content: string) => void;
   mkdir?: (path: string) => void;
 }
 
-export function runSyncHub(deps: SyncHubCliDeps = {}): SyncHubResult[] {
+export async function runSyncHub(deps: SyncHubCliDeps = {}): Promise<SyncHubResult[]> {
   const config = loadConfig();
-  const readFile = deps.readFile ?? ((p) => fs.readFileSync(p, "utf-8"));
-  const statuses = readAllStatuses({ config, readFile });
+  const statuses = await readAllStatuses({ config });
   return syncHub({ config, statuses, writeFile: deps.writeFile, mkdir: deps.mkdir });
 }
 
@@ -77,7 +69,7 @@ export async function runDashboardPane(input: DashboardPaneInput): Promise<PaneR
 }
 
 export const dashboardCommand = new Command("dashboard")
-  .description("Live status grid of all projects (auto-derived from spoke status.md)")
+  .description("Live status grid of all projects (derived from daemon task state)")
   .option("--once", "Print one snapshot and exit (used by --pane's refresh loop)")
   .option("--pane", "Open a refreshing sidebar pane in the current cmux workspace")
   .option("--direction <dir>", "Pane split direction (right|left|up|down)", "right")
@@ -90,7 +82,7 @@ export const dashboardCommand = new Command("dashboard")
         return;
       }
       // Default behaviour: --once. (Bare `cockpit dashboard` prints once and exits.)
-      runDashboardOnce();
+      await runDashboardOnce();
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);
@@ -101,8 +93,8 @@ dashboardCommand
   .command("sync-hub")
   .description("Mirror each spoke status.md into {hubVault}/projects/<name>.md for Obsidian Dataview")
   .option("--json", "Emit results as JSON")
-  .action((opts: { json?: boolean }) => {
-    const results = runSyncHub();
+  .action(async (opts: { json?: boolean }) => {
+    const results = await runSyncHub();
     if (opts.json) {
       console.log(JSON.stringify(results, null, 2));
       return;

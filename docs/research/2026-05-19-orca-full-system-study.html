@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orca — Full-System Study &amp; Deep Comparison vs. Cockpit</title>
+<style>
+  :root{
+    --bg:#0f1115;--panel:#171a21;--panel2:#1d212a;--ink:#e6e8ee;--mut:#9aa3b2;
+    --line:#2a2f3a;--accent:#5db0ff;--ck:#7c9eff;--or:#ff9d6b;
+    --good:#4ade80;--warn:#fbbf24;--bad:#f87171;
+    --code:#0b0d12;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box} html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{display:grid;grid-template-columns:268px 1fr;max-width:1280px;margin:0 auto;}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;
+    padding:26px 16px;border-right:1px solid var(--line);font-size:13px;}
+  nav h2{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);margin:18px 0 8px}
+  nav h2:first-child{margin-top:0}
+  nav a{display:block;color:var(--mut);text-decoration:none;padding:4px 8px;border-radius:6px;margin:1px 0}
+  nav a:hover{color:var(--ink);background:var(--panel2)}
+  nav a.sub{padding-left:18px;font-size:12.5px;opacity:.82}
+  main{padding:46px 56px 120px;min-width:0}
+  header.hero{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:30px}
+  .kicker{color:var(--accent);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+  h1{font-size:29px;line-height:1.25;margin:10px 0 8px;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:14px}
+  .meta{display:flex;flex-wrap:wrap;gap:9px;margin-top:16px}
+  .pill{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--mut)}
+  .pill b{color:var(--ink)}
+  h2.sec{font-size:21px;margin:50px 0 12px;padding-top:10px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h2.part{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:54px 0 0;border-top:2px solid var(--accent);padding-top:14px}
+  h3{font-size:16.5px;margin:26px 0 9px;color:#cdd3df}
+  p{margin:11px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);padding:2px 6px;border-radius:5px;color:#cfe6ff}
+  .ev{color:var(--mut);font-size:12px;font-family:var(--mono)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:16px 0}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0}
+  .callout.good{border-color:var(--good)} .callout.warn{border-color:var(--warn)} .callout.bad{border-color:var(--bad)}
+  .callout .lbl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--mut);display:block;margin-bottom:6px}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cdd3df;font-weight:600}
+  td.y{color:var(--good)} td.n{color:var(--bad)} td.m{color:var(--warn)}
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;border:1px solid var(--line)}
+  .tag.green{color:var(--good);border-color:#2f6b46} .tag.amber{color:var(--warn);border-color:#6b5520}
+  .tag.red{color:var(--bad);border-color:#6b2f2f} .tag.blue{color:var(--accent);border-color:#2f4f6b}
+  ul,ol{margin:10px 0;padding-left:22px} li{margin:6px 0}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;margin:14px 0}
+  pre code{background:none;padding:0;color:#d6dcea;font-size:12px}
+  .foot{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--mut);font-size:12px}
+  .big{font-size:15px}
+  @media(max-width:980px){.wrap{grid-template-columns:1fr}nav{display:none}main{padding:28px 20px 80px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <h2>Part A — Orca system</h2>
+  <a href="#tldr">Executive summary</a>
+  <a href="#a0" class="sub">A0 · Architecture</a>
+  <a href="#a1" class="sub">A1 · Driving model (crux)</a>
+  <a href="#a1n" class="sub">A1 · 3-tier normalization</a>
+  <a href="#a2" class="sub">A2 · PTY layer</a>
+  <a href="#a3" class="sub">A3 · Hook ingestion</a>
+  <a href="#a4" class="sub">A4 · Orchestrator</a>
+  <a href="#a5" class="sub">A5–A7 · Worktree/SCM/integrations</a>
+  <a href="#a8" class="sub">A8 · The PTY daemon ★</a>
+  <a href="#a9" class="sub">A9–A11 · CLI/footprint/learning</a>
+  <a href="#a12" class="sub">A12 · Bugs &amp; gotchas</a>
+  <h2>Part B — vs Cockpit</h2>
+  <a href="#bi">B(i) · Subsystem matrix</a>
+  <a href="#bii">B(ii) · 5 deepest insights</a>
+  <a href="#biii">B(iii) · Where cockpit leads</a>
+  <a href="#biv">B(iv) · Recommendations</a>
+  <h2>Decision</h2>
+  <a href="#fork">Impact on the fork</a>
+</nav>
+<main>
+
+<header class="hero">
+  <div class="kicker">Cockpit · Full-System Prior-Art Study</div>
+  <h1>Orca — Whole System &amp; Deep Comparison vs. Cockpit</h1>
+  <div class="sub">Every major subsystem with file:line evidence, then a rigorous head-to-head against cockpit's post-PR-#85 architecture.</div>
+  <div class="meta">
+    <span class="pill">Date <b>2026-05-19</b></span>
+    <span class="pill">Orca <b>@ 03b88951 (~2000 PRs)</b></span>
+    <span class="pill">Cockpit <b>@ develop 9e61220</b></span>
+    <span class="pill">Companions <b>orca-codex-wrapping · cockpit-vs-orca</b></span>
+  </div>
+</header>
+
+<section id="tldr">
+<div class="callout">
+<span class="lbl">What orca actually is</span>
+An <b>Electron terminal-multiplexer-for-agents</b>. It hosts ~30 CLI agents as their <b>native interactive TUI inside node-pty</b>, one per worktree pane. The agent loop is PTY-centric end to end; protocols (<code>codex app-server</code>) are used only for side-channel telemetry.
+</div>
+<div class="card big">
+<b>How it drives everything — three tiers, degrading:</b>
+<ol>
+<li><b>Primary — native hooks.</b> It installs each agent's <i>own</i> hook system (9 bespoke <code>hook-service.ts</code> files writing into 8 third-party home dirs), and a server-side normalizer collapses ~10 incompatible event vocabularies into <b>4 canonical states</b> (<code>working/blocked/waiting/done</code>) via a <code>never</code>-guarded exhaustive switch.</li>
+<li><b>Fallback — OSC-title screen-scraping</b> for <code>tui-idle</code> waits — which orca itself documents as buggy (#1437 stuck-spinner; null→idle hangs).</li>
+<li><b>Last resort — terminal output reading</b>, explicitly demoted in its own skill docs.</li>
+</ol>
+</div>
+<div class="callout good">
+<span class="lbl">The single biggest strategic insight for cockpit</span>
+<b>Issue #86 is not a process-supervision problem — it's a missing resume-artifact problem, and orca proves the fix.</b> Orca survives daemon/app bounce because each session persists a <i>first-class resumable representation</i> written on every state transition (its "final checkpoint" snapshot), plus a versioned protocol and restart-coalescing. Cockpit's headless path doesn't need a screen snapshot — it needs the equivalent: persist an opaque <code>resumeRef</code> (codex-exec rollout id / <code>claude --resume</code> id / app-server <code>thread</code> id) into per-task JSON <b>on every transition</b>, and make state-machine recovery re-attach through it on bounce. Pair with a daemon protocol-version constant + concurrent-restart coalescing. <b>That single change closes #86 properly</b> and is the highest-leverage thing this study surfaces.
+</div>
+</section>
+
+<h2 class="part">Part A — Orca: The Whole System</h2>
+
+<h2 class="sec" id="a0">A0 · One-paragraph architecture</h2>
+<p>Orca is an Electron desktop IDE that hosts any CLI agent as its native TUI in a <code>node-pty</code>, xterm.js-rendered, one per git-worktree pane. Three layers bolt on: (1) an out-of-process <b>PTY daemon</b> (<code>src/main/daemon/</code>) that owns the pty children and survives Electron restarts via server-side headless-terminal snapshots; (2) a <b>unified agent-status pipeline</b> that installs each agent's own native hooks and normalizes ~10 vocabularies into 4 states over a loopback HTTP server; (3) an <b>RPC runtime</b> (<code>src/main/runtime/</code>) exposing an <code>orca</code> CLI over AF_UNIX (plus WebSocket+E2EE for mobile), on which a polling <b>orchestration coordinator</b> dispatches a SQLite task DAG by typing prompts into PTYs and collecting <code>worker_done</code> callbacks.</p>
+
+<h2 class="sec" id="a1">A1 · Generic agent-driving model — the crux</h2>
+<p>The per-agent launch table is <code>src/shared/tui-agent-config.ts</code> — <code>TUI_AGENT_CONFIG</code> for 30 agents (<span class="ev">:58–260</span>). Each entry: <code>detectCmd/launchCmd/expectedProcess</code>, <code>promptInjectionMode</code>, optional <code>preflightTrust</code>, <code>draftPasteReadySignal</code>.</p>
+<ul>
+<li><b><code>promptInjectionMode</code></b> (<span class="ev">:3–9</span>): <code>argv</code> (claude, codex, cursor — codex's positional auto-submits so a draft paste is still needed, <span class="ev">:75–79</span>); <code>flag-prompt*</code> (opencode <code>--prompt</code>, gemini, copilot <code>-i</code> because <code>--prompt</code> would run non-interactively and <i>kill the hosted TUI</i>, <span class="ev">:242–246</span>); <code>stdin-after-start</code> (aider, goose, amp, ~15 others — <b>screen-timing-dependent injection</b>).</li>
+<li><b><code>preflightTrust</code></b> (<span class="ev">:36–43</span>): pre-writes the agent's "trust this folder" artifact (<code>agent-trust-presets.ts</code>) so the menu never eats the bracketed paste.</li>
+<li><b><code>draftPasteReadySignal</code></b> (<span class="ev">:44–49</span>): generic agents use a quiet-render timer; codex gets the stronger <code>codex-composer-prompt</code> (watches the rendered <code>›</code> prompt) — the only place orca reads codex's TUI, and only for paste-timing.</li>
+</ul>
+<p>Onboarding a new agent = one <code>TUI_AGENT_CONFIG</code> row + (if it has hooks) a <code>src/main/&lt;agent&gt;/hook-service.ts</code>.</p>
+
+<h3 id="a1n">Turn/done normalization across heterogeneous agents — THE key decision</h3>
+<p>Every agent has a <i>different</i> native hook system. Orca writes a per-agent managed script and <b>normalizes server-side</b>. Nine <code>hook-service.ts</code> files, each on that agent's own vocabulary:</p>
+<table>
+<tr><th>Agent</th><th>Config target</th><th>Native turn-start / done (evidence)</th></tr>
+<tr><td>claude</td><td><code>~/.claude/settings.json</code></td><td><code>UserPromptSubmit</code>/<code>Stop</code> <span class="ev">claude/hook-service.ts:21–42</span></td></tr>
+<tr><td>codex</td><td><code>~/.codex/hooks.json</code> + <code>config.toml</code> trust</td><td><code>UserPromptSubmit</code>/<code>Stop</code>, <code>PermissionRequest</code> <span class="ev">:42–49</span></td></tr>
+<tr><td>gemini</td><td><code>~/.gemini/settings.json</code></td><td><code>BeforeAgent</code>/<code>AfterAgent</code>; <b>no permission hook → no waiting state</b> <span class="ev">:21–32</span></td></tr>
+<tr><td>cursor</td><td><code>~/.cursor/hooks.json</code></td><td><code>beforeSubmitPrompt</code>/<code>stop</code>; shell/MCP = approvals <span class="ev">:22–46</span></td></tr>
+<tr><td>grok</td><td><code>~/.grok/hooks/orca-status.json</code></td><td><code>user_prompt_submit</code>/<code>Stop</code> <span class="ev">:21–45</span></td></tr>
+<tr><td>copilot</td><td><code>~/.copilot/hooks/orca.json</code></td><td><code>UserPromptSubmit</code>/<code>Stop</code>, <code>subagentStart</code> <span class="ev">:27–44</span></td></tr>
+<tr><td>droid</td><td><code>~/.factory/settings.json</code></td><td><code>UserPromptSubmit</code>/<code>Stop</code> <span class="ev">:19–37</span></td></tr>
+<tr><td>hermes</td><td><code>~/.hermes</code> YAML plugin</td><td><code>pre_llm_call</code>/<code>post_llm_call</code>, <code>pre_approval_request</code> <span class="ev">:26–37</span></td></tr>
+<tr><td>opencode</td><td>injected JS plugin</td><td><code>SessionBusy</code>/<code>SessionIdle</code>/<code>PermissionRequest</code> <span class="ev">:53–60</span></td></tr>
+</table>
+<p>Normalization is server-side in <code>src/shared/agent-hook-listener.ts</code>: per-source <code>normalize&lt;Agent&gt;Event()</code> map every vocabulary onto <b>4 canonical states</b> <code>working|blocked|waiting|done</code> (<span class="ev">agent-status-types.ts:6</span>). An <b>exhaustive <code>switch</code> with a <code>never</code> guard</b> (<code>isNewTurnEvent</code> <span class="ev">:1274–1305</span>) forces a <i>compile error</i> if a new source lacks a turn-start mapping — "fail at typecheck, not silently false."</p>
+<div class="callout warn">
+<span class="lbl">The crux answer — "does every agent use hooks?" NO, three tiers</span>
+<b>(1)</b> native hooks → 4-state normalization. <b>(2)</b> OSC-title scraping for <code>tui-idle</code> (<span class="ev">orca-runtime.ts:1797–1872</span>) — resolves on <i>any</i> →idle because "Claude Code may skip 'working' on fast tasks, going null→idle, and the waiter would hang forever" (<span class="ev">:1861–1866</span>); the #1437 stuck-spinner bug is field evidence this is fragile. <b>(3)</b> terminal output read (120-line buffer) — skill doc: "for status monitoring, not result extraction. Prefer structured <code>worker_done</code>."
+</div>
+<p><b>Non-obvious tradeoff:</b> orca accepts heterogeneity over a protocol — 8 third-party home dirs, 9 installers, a giant switch — to get <i>real</i> turn signals without scraping. Cost: enormous surface area + version coupling (codex 0.129+ trust hashes).</p>
+
+<h2 class="sec" id="a2">A2 · PTY / process layer</h2>
+<p><code>local-pty-provider.ts</code>: <code>node-pty</code>, pane→process by pty id, env scrubbed so child identity ≠ parent (<span class="ev">:232–271</span>). <code>ssh-pty-provider.ts</code> mirrors over SSH. Native gotcha (<span class="ev">:39</span>): node-pty's NAPI ThreadSafeFunctions for <code>onData/onExit</code> <b>must be disposed before kill</b> or they "leave callbacks alive into Electron shutdown, which can abort the app."</p>
+
+<h2 class="sec" id="a3">A3 · Hook ingestion &amp; install lifecycle</h2>
+<p><code>agent-hooks/server.ts</code>: loopback <code>http.createServer</code>, <b>bearer-token auth</b>, IPC fanout, on-disk <code>last-status.json</code> surviving restart. Shared listener so an SSH relay can host the same pipeline remotely ("relay normalizes; Orca routes"). Managed-script lifecycle: <code>createManagedCommandMatcher</code> matches by <i>filename not exact command</i> so installs sweep stale entries without clobbering user hooks. Scripts re-source <code>$ORCA_AGENT_HOOK_ENDPOINT</code> each fire so a surviving pty keeps reporting to a new orca instance after restart.</p>
+<div class="callout warn">
+<span class="lbl">Most reusable production gotcha in the repo</span>
+<b>Codex 0.129+ silently drops untrusted hooks.</b> Orca computes the <code>trusted_hash</code> (mirroring codex-rs <code>fingerprint.rs</code> + <code>hooks/src/lib.rs</code>), writes per-hook trust into <code>~/.codex/config.toml</code>, and reports <code>partial</code> if trust is stale because "a green status without trust verification is misleading" (<span class="ev">config-toml-trust.ts; hook-service.ts:150–152,297–338</span>). General lesson: <b>codex silently degrades when config preconditions are unmet — never treat silence as success.</b>
+</div>
+
+<h2 class="sec" id="a4">A4 · Orchestration coordinator</h2>
+<p><code>runtime/orchestration/{coordinator,preamble,db}.ts</code>, SQLite-backed:</p>
+<ul>
+<li><b>Task DAG</b>: <code>task-create --deps</code>; task→<code>ready</code> when deps complete; completion auto-promotes dependents.</li>
+<li><b>Loop</b> (<span class="ev">coordinator.ts:148–225</span>): poll <code>tick()</code> every 2 s — messages → escalations → decision-gates → stale-warn → dispatch → convergence. <b>Decomposition is NOT AI</b> — tasks pre-created; AI-decompose explicitly deferred to "a future phase where the coordinator itself is an LLM agent" (<span class="ev">:201–206</span>).</li>
+<li><b>Dispatch</b> (<span class="ev">:480–574</span>): git-drift guard (skip-not-fail if worktree &gt;20 commits behind — burning the breaker would convert recoverable→hard-fail); then <code>runtime.sendTerminal(handle,{text:preamble,enter:true})</code> — <b>types the prompt into the pty</b>; <code>writeTerminalAction</code> writes text, <code>setTimeout 500ms</code>, then <code>\r</code> ("TUI apps treat a single large write as a paste"). <i>This is exactly cockpit's legacy cmux injection.</i></li>
+<li><b>Feedback</b>: agent voluntarily runs <code>orca orchestration send --type worker_done</code> (taught by <code>preamble.ts</code>); cooperative callback, no protocol.</li>
+<li><b>Watchdog</b>: 5-min heartbeat, 10-min hung threshold; <code>warnStaleDispatches</code> <b>only warns, deliberately does NOT auto-fail</b> ("false-positive cost of killing a slow-but-correct worker &gt; false-negative of a hung worker holding a slot"); heartbeats keyed by <code>dispatchId</code> not task, so a stale heartbeat from a dead retry can't mask a hung new dispatch (<span class="ev">:274–301</span>).</li>
+<li><b>Circuit breaker</b>: 3 consecutive failures → <code>circuit_broken</code>. Dispatch contexts are <i>separate rows</i> from tasks ("sling pattern") so retries don't dirty task state.</li>
+<li><b>Decision gates</b>: HITL — block task, human resolves, resolution injected into the next preamble.</li>
+</ul>
+
+<h2 class="sec" id="a5">A5–A7 · Worktrees · Source control · Integrations</h2>
+<p><b>Worktrees:</b> git-worktree-native, one pane per worktree; drift guard treats stale-base as a <i>dispatch</i> concern not a worktree concern. <b>SCM:</b> diffs in main, rendered in renderer; inline commit; commit-message is the only non-agent <code>codex exec</code> use (stdin delivery for diff-size safety). <b>Integrations:</b> GitHub/Linear/GitLab/Gitea/Azure/Bitbucket dirs; <b>SSH relay</b> daemon SCP'd over SSH, framed JSON-RPC, keeps PTYs alive in a grace period on a unix socket across disconnects, hosts the same hook pipeline; <b>mobile</b> React Native over WS + E2EE + pairing + device registry, renders the daemon's headless snapshots.</p>
+
+<h2 class="sec" id="a8">A8 · The PTY daemon ★ (the standout — direct <code>cockpitd</code> analog)</h2>
+<div class="card">
+<p><code>src/main/daemon/</code>, 59 files. Electron <code>fork()</code>s it (<span class="ev">daemon-init.ts:12</span>), AF_UNIX <code>chmod 0o600</code>, token auth, <b>protocol versioning</b> (<span class="ev">types.ts:6</span> <code>PROTOCOL_VERSION=7</code>, <code>PREVIOUS=[1..6]</code> — "daemons survive app updates; bump for wire-shape changes").</p>
+<ul>
+<li><b>Server-side headless terminal</b>: each session runs a <code>@xterm/headless</code> <code>Terminal</code> + <code>SerializeAddon</code> — the daemon keeps the <i>rendered screen</i>, not just bytes.</li>
+<li><b>Reattach via snapshot</b>: on reconnect, <code>getSnapshot()</code> returns <code>TerminalSnapshot{snapshotAnsi}</code>; a <b>"final checkpoint" snapshot persisted on exit</b>. Sessions whose subprocess hasn't exited are not reattached as new (guard <span class="ev">terminal-host.ts:66–76</span>).</li>
+<li><b>Restart orchestration</b>: documented 7-step atomic provider-swap; <code>restartInFlight</code> promise <b>coalescing</b> so two restart triggers can't both enter teardown (<span class="ev">daemon-init.ts:40–46</span>); stale-daemon detection + <code>killStaleDaemon</code>.</li>
+</ul>
+<p><b>Net:</b> Electron main/renderer can crash and restart; the pty children keep running in the daemon; the UI reattaches to a serialized screen. The agent <i>conversation</i> still isn't truly resumable (it's whatever the live pty holds) — but <b>the process and screen survive</b>. This is orca's answer to the daemon-bounce-orphans class — i.e. cockpit's open <b>#86</b>.</p>
+</div>
+
+<h2 class="sec" id="a9">A9–A11 · CLI · Footprint · Self-improvement</h2>
+<p><b>CLI as ignition:</b> <code>src/cli/index.ts</code> → <code>RuntimeClient</code> → AF_UNIX/WS RPC; <code>launchOrcaApp()</code> spawns Electron if down — <b>conceptually identical to cockpit's "CLI is an ignition key, not the brain."</b> <b>Footprint:</b> invasive by necessity — writes into <b>8 third-party agent home dirs</b>; mitigated by filename-scoped matchers + hash-matched cleanup; the opposite of cockpit's <code>~/.config/cockpit</code> hygiene. <b>Self-improvement:</b> <b>none</b> — <code>telemetry/</code> is anonymous opt-out analytics, not a feedback loop. No learnings, no wiki, no self-heal. (Cockpit's learnings + LLM-wiki + self-healing daemon have <b>zero orca analog</b>.)</p>
+
+<h2 class="sec" id="a12">A12 · Real bugs / workarounds / version-gotchas (the gold)</h2>
+<ul>
+<li><b>Codex 0.129+ silent hook-drop</b> w/o <code>config.toml</code> trust hash — relevant to any codex-hooks path.</li>
+<li><b>#1437 stuck-spinner</b>: OSC-title 'working' stays sticky after agent exits → <i>title-scraping for completion is fragile</i>.</li>
+<li><b>#1148 opencode regression</b>: sessionId shape changed numeric→<code>&lt;wtId&gt;@@&lt;uuid&gt;</code>; old path-traversal regex rejected every legit id → <i>session-id shape changes are a recurring break source</i>; fixed by SHA-256-hashing the id.</li>
+<li><b>node-pty NAPI leak</b>: dispose <code>onData/onExit</code> before kill or Electron aborts on shutdown.</li>
+<li><b>Non-interactive flag foot-guns</b>: <code>codex --ephemeral</code>, copilot <code>--prompt</code> kill the hosted TUI; large argv prompt exceeds Win/SSH limits → stdin.</li>
+<li><b>Coordinator can't AI-decompose</b> (deferred); <code>allow-stale-base</code> regex matches inside fenced code blocks (accepted v1 limit); tui-idle null→idle race.</li>
+</ul>
+
+<h2 class="part">Part B — Deep Comparison vs. Cockpit</h2>
+
+<h2 class="sec" id="bi">B(i) · Subsystem-by-subsystem</h2>
+<table>
+<tr><th>Subsystem</th><th>Orca</th><th>Cockpit (post #85)</th><th>Ahead &amp; why</th></tr>
+<tr><td>Agent driving (interactive)</td><td>Native TUI in pty; prompt typed in</td><td>Headless = daemon child PID; interactive = injected hooks (Claude); codex = open fork</td><td class="m">Split — cockpit headless cleaner for batch; orca has the only human-attachable live session today</td></tr>
+<tr><td>Turn/done detection</td><td>Native hooks → 4-state; OSC fallback; output last</td><td><code>reduce(state,event)</code>; hooks (Claude); anti-false-done invariant</td><td class="y">Cockpit on rigor; orca on breadth. Orca's #1437/tui-idle bugs <b>validate</b> cockpit's distrust of scrape-done</td></tr>
+<tr><td>Cross-agent normalization</td><td><code>never</code>-guarded per-source switch → 4 states</td><td>Provider tiering; per-provider drivers</td><td class="n">Orca ahead — cockpit has no unified normalization layer (orca's deepest asset)</td></tr>
+<tr><td>Daemon / supervision</td><td>Out-of-proc, protocol-versioned, <b>headless-screen snapshot + reattach</b></td><td><code>cockpitd</code>, per-task JSON, heartbeat watchdog, <code>reduce</code></td><td class="m">Orca on resilience (#86 is exactly what its snapshot/version/coalesce solves); cockpit on state purity</td></tr>
+<tr><td>Orchestration</td><td>SQLite DAG, polling, preamble typed in, <code>worker_done</code>, breaker, gates</td><td>Command→Captain→Crew + Reactor; orchestration inside an LLM session</td><td class="m">Different locus — orca deterministic but can't AI-decompose; cockpit's is the LLM phase orca's roadmap chases</td></tr>
+<tr><td>HITL / approvals</td><td>Punted to agent's own TUI; decision-gates as workflow checkpoints</td><td>Open codex-interactive question</td><td class="m">Orca pragmatic not better; its decision-gate primitive is worth stealing</td></tr>
+<tr><td>CLI as ignition</td><td>Thin RPC client + app-launcher</td><td>"Ignition key, not the brain"</td><td class="y">Identical philosophy, independently arrived at — validation</td></tr>
+<tr><td>Skills / portability</td><td><code>SKILL.md</code>s; <code>CLAUDE.md</code> = <code>@AGENTS.md</code> one-liner</td><td>Load-on-demand portable skills; AGENTS.md canonical</td><td class="y">Identical pattern — validation</td></tr>
+<tr><td>Multi-agent breadth</td><td>30 agents, 9 hooked, generic fallback</td><td>Claude ref, codex/opencode headless, driver abstraction</td><td class="n">Orca far ahead — its config+hook-service pattern is a proven template for cockpit's runtime slot</td></tr>
+<tr><td>Config footprint</td><td>Invasive — 8 agent home dirs</td><td>Non-invasive — <code>~/.config/cockpit</code></td><td class="y">Cockpit on hygiene (but only because it doesn't yet do hook-based interactive multi-agent)</td></tr>
+<tr><td>Self-improvement</td><td>None (analytics only)</td><td>Learnings + LLM-wiki + self-heal</td><td class="y">Cockpit clearly ahead — no orca analog; do not regress</td></tr>
+<tr><td>State model</td><td>Screen-snapshot blob + SQLite rows</td><td>Pure typed <code>reduce</code>, JSON per-task</td><td class="y">Cockpit ahead — orca's live truth is an opaque screen; cockpit's is auditable/testable</td></tr>
+</table>
+
+<h2 class="sec" id="bii">B(ii) · The 5 deepest insights for cockpit</h2>
+<ol class="big">
+<li><b>Daemon-bounce is solved with a server-side resumable snapshot + reattach + protocol version, not just process supervision.</b> For cockpit's <i>headless</i> path the resumable representation isn't a screen — it's the <b>JSON state + the child's resumable session id</b>. Design the resume artifact as a first-class persisted thing the daemon writes on <i>every</i> transition (orca's "final checkpoint"), not reconstructed at bounce.</li>
+<li><b>No protocol gives turn-done for free across agents.</b> Orca proves the only reliable signal is the agent's own runtime event; titles/output/timeouts are a degrading fallback it openly distrusts (#1437, tui-idle). This is field evidence <i>for</i> cockpit's anti-false-done invariant. The codex fork should bias toward a <b>real codex-emitted event</b> (app-server <code>TurnCompleted</code> as liveness, or codex's own hooks), and treat legacy cmux scrape as the same "last resort" tier orca demotes.</li>
+<li><b>Heterogeneous agents demand a normalization layer; orca's <code>never</code>-guarded per-source switch is the template.</b> If cockpit grows beyond Claude for interactive, it hits orca's exact problem. Grow an explicit <code>normalizeProviderEvent</code> seam with compile-time exhaustiveness feeding <code>reduce()</code>.</li>
+<li><b>Orca's watchdog beats cockpit's current heartbeat on three specifics:</b> (a) heartbeats keyed by <b>dispatch-id not task</b>; (b) <b>warn-don't-autofail</b> on stale; (c) <b>circuit breaker as a separate dispatch-context row</b> from the task ("sling pattern") so retries don't dirty task state.</li>
+<li><b>Decision-gates are a clean codeable HITL primitive cockpit lacks.</b> Block task → human answers a structured question → resolution auto-injected into the next dispatch. Exactly cockpit's "semi-automatic, prompted-at-key-moments" ethos, formalized as a first-class gating state.</li>
+</ol>
+
+<h2 class="sec" id="biii">B(iii) · Where cockpit is genuinely ahead — do NOT regress</h2>
+<ol>
+<li><b>Pure <code>reduce(state,event)</code> + typed per-task JSON + TERMINAL_STATES.</b> Orca's live-agent truth is an opaque xterm blob. Keep cockpit's auditable model.</li>
+<li><b>Anti-false-done as a stated invariant.</b> Orca has the bug class and patches reactively; cockpit elevates it to a principle. Don't weaken to match orca's title-scraping.</li>
+<li><b>Non-invasive footprint.</b> Adopt agent-hooks only eyes-open; if so, copy orca's mitigations (filename-scoped matchers, hash-matched cleanup), not the blast radius.</li>
+<li><b>Self-improving subsystems.</b> Zero orca analog. Genuinely differentiating. Keep investing.</li>
+<li><b>Orchestration as an LLM session, not hardcoded code.</b> Orca's coordinator literally can't decompose a spec yet; cockpit's Command/Captain already are that phase. A real lead.</li>
+</ol>
+
+<h2 class="sec" id="biv">B(iv) · Concrete recommendations (named subsystems/files)</h2>
+<ol class="big">
+<li><b>Close #86 with an orca-style resume artifact.</b> In <code>cockpitd</code>'s per-task JSON store, persist a <code>resumeRef</code> on every transition: headless codex = rollout id for <code>codex exec resume</code>; <code>claude -p</code> = <code>--resume</code> id; app-server = <code>thread</code> id. Recovery re-attaches via <code>resumeRef</code>. Add a daemon <b>protocol-version</b> constant and <b>coalesce concurrent restarts</b>.</li>
+<li><b>Add <code>normalizeProviderEvent(provider,raw)→CanonicalEvent</code> with compile-time exhaustiveness</b>, feeding <code>reduce()</code>; keep <code>TurnCompleted/Stop</code> as <i>liveness</i>, gated to completion only by an explicit terminal event.</li>
+<li><b>Refactor watchdog to dispatch-attempt granularity</b> — attempts as sub-records with own <code>lastHeartbeatAt</code> + <code>circuitBroken</code>; <b>warn-don't-autofail</b> default; surface to Captain.</li>
+<li><b>Codex-interactive fork: orca's evidence tilts toward app-server, not orca's hook path.</b> Orca only uses codex hooks because it's <i>already</i> hosting the TUI for a human; cockpit's interactive codex has no such forcing requirement, and <code>codex-fetcher.ts:88–261</code> proves a clean app-server client works. Take the hook-trust gotcha as a general warning: make daemon "ready" contingent on a successful app-server <code>initialize</code> round-trip, not just child-spawned.</li>
+<li><b>Adopt the decision-gate primitive in the Captain layer</b> — first-class <code>gate{pending|resolved|timeout}</code> blocking a DAG node, structured question to the human, resolution injected into the next Crew dispatch.</li>
+<li><b>Steal the foot-gun catalogue</b> into cockpit's runtime drivers: TUI-killing non-interactive flags, argv-vs-stdin for large prompts, node-pty dispose-before-kill (if cockpit ever pty-hosts), and treat <code>resumeRef</code> as an <b>opaque hashed token, never parsed</b> (orca #1148).</li>
+</ol>
+
+<h2 class="sec" id="fork">What this means for the open brainstorm fork</h2>
+<div class="callout good">
+<span class="lbl">The study sharpens — and confirms — Path X</span>
+Recommendation #4 is the decisive one: orca's reason for using codex's <i>hooks</i> instead of app-server is that <b>it already hosts the TUI for a human</b> — a constraint cockpit's interactive codex <b>does not have</b>. Strip that constraint and orca's own working <code>codex-fetcher.ts</code> app-server client is the evidence the protocol path is sound. So <b>Path X (app-server) holds</b>, now with three orca-derived hardening requirements baked in: (a) <code>resumeRef</code>-on-every-transition closes #86 and makes <code>thread/resume</code> real; (b) daemon "ready" = successful <code>initialize</code> handshake, not spawn (counters codex silent-degradation); (c) a <code>normalizeProviderEvent</code> seam so the same machinery generalizes when more interactive providers arrive.
+</div>
+<p>The fork is still formally yours to call (X / Y / Z) — but the full-system study removes the main argument for Y (orca's hook path) by showing <i>why</i> orca chose it doesn't apply to cockpit. Net for the spec: <b>X, with #86's resume-artifact promoted from "Phase-2 nice-to-have" to a Phase-2 cornerstone.</b></p>
+
+<div class="foot">
+Source memo: <code>docs/research/2026-05-19-orca-full-system-study.md</code> (~195 lines, file:line-backed) · Companions: <code>2026-05-19-orca-codex-wrapping-study.html</code>, <code>2026-05-19-cockpit-vs-orca-system-comparison.html</code> · Orca @ <code>03b88951</code> (shallow clone; historical "why" from in-code comments, not git log) · Cockpit @ <code>develop 9e61220</code>.
+</div>
+
+</main>
+</div>
+</body>
+</html>

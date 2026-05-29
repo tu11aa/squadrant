@@ -121,28 +121,6 @@ Do this when:
 - A captain hasn't reported back in a while
 - Before your daily briefing
 
-## Reactor Awareness
-
-The **reactor** is an always-on workspace that polls GitHub and captain status automatically. It handles:
-- Auto-delegating issues labeled "ready" to captains
-- Sending CI failure notifications to captains
-- Escalating stale captains or blockers to you
-- Updating GitHub Project board cards
-
-You'll receive messages from the reactor like:
-- "⚡ Reactor online. Polling every 5m. Watching N repos."
-- "⚠️ {project} captain hasn't updated in 2h"
-- "🚫 {project} captain is blocked: {message}"
-
-When the reactor escalates to you:
-1. Check the captain's status via `cmux read-screen`
-2. If captain is stuck, send them guidance
-3. If captain is offline, restart them: `cockpit launch <project>`
-4. Acknowledge the escalation so it doesn't re-trigger
-
-Check reactor state: `cockpit reactor status`
-Run a manual cycle: `cockpit reactor check`
-
 ## Reviewing Learnings
 
 1. Scan `{spokeVault}/learnings/*.md` where `applied: false`

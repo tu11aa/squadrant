@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
+import os from "node:os";
+import fsp from "node:fs/promises";
+import path from "node:path";
 import { readUserLevelSource, readProjectLevelSource } from "../canonical-source.js";
+import { createObsidianDriver } from "../../workspaces/index.js";
 import type { WorkspaceDriver } from "../../workspaces/types.js";
 
 function memDriver(files: Record<string, string>): WorkspaceDriver {
@@ -70,27 +74,52 @@ describe("canonical-source", () => {
 
   it("readProjectLevelSource returns null when AGENTS.md is absent", async () => {
     const driver = memDriver({});
-    const src = await readProjectLevelSource(driver, "/brove");
+    const src = await readProjectLevelSource(driver);
     expect(src).toBeNull();
   });
 
   it("readProjectLevelSource reads AGENTS.md when present", async () => {
     const driver = memDriver({
-      "/brove/AGENTS.md": "# Brove rules\nuse design tokens",
+      "AGENTS.md": "# Brove rules\nuse design tokens",
     });
-    const src = await readProjectLevelSource(driver, "/brove");
+    const src = await readProjectLevelSource(driver);
     expect(src).not.toBeNull();
     expect(src!.instructions).toContain("Brove rules");
   });
 
   it("readProjectLevelSource inlines project-local plugin/skills if present", async () => {
     const driver = memDriver({
-      "/brove/AGENTS.md": "# Brove",
-      "/brove/plugin/skills/brove-style/SKILL.md":
+      "AGENTS.md": "# Brove",
+      "plugin/skills/brove-style/SKILL.md":
         "---\nname: brove-style\ndescription: BS\n---\n\nBS body",
     });
-    const src = await readProjectLevelSource(driver, "/brove");
+    const src = await readProjectLevelSource(driver);
     expect(src!.skills.map((s) => s.name)).toEqual(["brove-style"]);
+  });
+
+  // Regression: project-scope projection silently skipped every managed project
+  // whose path was not under the cockpit repo, because the source-reading driver
+  // was rooted at process.cwd() and the obsidian sandbox guard rejected the
+  // absolute out-of-cwd project path. readProjectLevelSource must read a project
+  // whose directory lives OUTSIDE process.cwd().
+  it("readProjectLevelSource reads a project rooted outside process.cwd()", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "cockpit-proj-"));
+    try {
+      await fsp.writeFile(path.join(tmp, "AGENTS.md"), "# OnePlan rules\nuse design tokens");
+      await fsp.mkdir(path.join(tmp, "plugin/skills/op-style"), { recursive: true });
+      await fsp.writeFile(
+        path.join(tmp, "plugin/skills/op-style/SKILL.md"),
+        "---\nname: op-style\ndescription: OP\n---\n\nOP body",
+      );
+      expect(tmp.startsWith(process.cwd())).toBe(false);
+      const driver = createObsidianDriver({ root: tmp });
+      const src = await readProjectLevelSource(driver);
+      expect(src).not.toBeNull();
+      expect(src!.instructions).toContain("OnePlan rules");
+      expect(src!.skills.map((s) => s.name)).toEqual(["op-style"]);
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
   });
 
   it("skips SKILL.md files with missing frontmatter", async () => {
