@@ -2,17 +2,26 @@
 import type { TaskRecord } from "./types.js";
 
 /**
- * Pure. Returns a stalled record if a `working` task has exceeded its
- * heartbeat budget at time `now` (epoch ms), else null. No I/O, no clock.
+ * Pure. Returns an idle-transitioned record if a `working` task has exceeded
+ * its heartbeat budget at time `now` (epoch ms), else null. No I/O, no clock.
  *
- * Policy: `stalled` is RECOVERABLE, not terminal (spec §4.8, #90).
- * Interactive-codex tasks in particular surface to the Captain via the
- * 'stalled' state and remain answerable; this function never produces
- * `failed` directly.
+ * Mode decides what "idle" means:
+ *  - interactive → 'awaiting-input'. An idle interactive crew has merely ended
+ *    a turn and is awaiting the captain's next message — answerable, NOT a
+ *    failure. This reframes the old interactive-codex 'stalled' surfacing
+ *    (#90 "warn-don't-autofail", spec §4.8) into an explicitly answerable
+ *    state that reads as normal idle and resumes to 'working' on next liveness.
+ *  - headless → 'stalled'. A batch child that stops heartbeating is genuinely
+ *    stuck; there is no captain turn to await, so surface it as a stall.
+ *
+ * Neither state is terminal; this function never produces `failed` directly.
  */
 export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (rec.state !== "working") return null;
   if (now - rec.lastHeartbeat <= rec.heartbeatBudgetMs) return null;
+  if (rec.mode === "interactive") {
+    return { ...rec, state: "awaiting-input", lastEvent: "watchdog.idle" };
+  }
   return { ...rec, state: "stalled", lastEvent: "watchdog.stall" };
 }
 

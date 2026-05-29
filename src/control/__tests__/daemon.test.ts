@@ -73,12 +73,20 @@ describe("daemon handler", () => {
     expect(store.get("p", "h2")?.state).toBe("working");
   });
 
-  it("sweep: marks an over-budget working task stalled", async () => {
+  it("sweep: marks an over-budget working HEADLESS task stalled", async () => {
     const store = createStore(dir);
-    store.put(rec("s1", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
     d.sweep();
     expect(store.get("p", "s1")?.state).toBe("stalled");
+  });
+
+  it("sweep: marks an over-budget working INTERACTIVE task awaiting-input (not stalled)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s1i", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    const d = createDaemon({ store, now: () => 1000 });
+    d.sweep();
+    expect(store.get("p", "s1i")?.state).toBe("awaiting-input");
   });
 
   it("sweep: recovers a stalled task that has a fresh heartbeat", async () => {
