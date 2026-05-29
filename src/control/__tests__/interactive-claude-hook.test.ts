@@ -237,3 +237,50 @@ describe("mapClaudeHookToEvent Stop derived-path fallback (#174 delivery)", () =
     expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 });
+
+// Verified against claude-cli 2.1.156: the real Stop payload carries the final
+// assistant text DIRECTLY as `last_assistant_message` (full text incl. trailing
+// question, no transcript I/O). This is the primary #174 detection source — it
+// must win over transcript files and work even when none exist on disk.
+describe("mapClaudeHookToEvent Stop last_assistant_message (#174 primary source)", () => {
+  const TID = "task-abc";
+
+  it("trailing question in last_assistant_message → task.blocked (no transcript needed)", () => {
+    const ev = mapClaudeHookToEvent(
+      "Stop",
+      { last_assistant_message: "I've drafted the change. Which config file should I edit?" },
+      TID,
+    );
+    expect(ev).toEqual({
+      type: "task.blocked",
+      id: TID,
+      reason: "crew asked a question (auto-detected)",
+      question: "I've drafted the change. Which config file should I edit?",
+    });
+  });
+
+  it("statement in last_assistant_message → task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done. Pushed the branch." }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("last_assistant_message wins over a transcript_path that ends in a statement", () => {
+    // payload field says question; transcript (unread) is irrelevant — no I/O happens.
+    const ev = mapClaudeHookToEvent(
+      "Stop",
+      { last_assistant_message: "Should I delete the old branch?", transcript_path: "/no/such/file.jsonl" },
+      TID,
+    );
+    expect(ev).toEqual({
+      type: "task.blocked",
+      id: TID,
+      reason: "crew asked a question (auto-detected)",
+      question: "Should I delete the old branch?",
+    });
+  });
+
+  it("empty/whitespace last_assistant_message falls through to transcript resolution", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "   " }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+});

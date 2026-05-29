@@ -118,15 +118,22 @@ function readLastAssistantText(transcriptPath: string): string | null {
 }
 
 /**
- * I/O: obtain the last-assistant text from a LAYERED source, first readable wins:
- *   1. payload.transcript_path (the documented field, when present + readable);
- *   2. else the path derived from payload.session_id + cwd (real Stop payloads
- *      frequently omit transcript_path — this is the #174 delivery fix).
+ * I/O: obtain the last-assistant text from a LAYERED source, first hit wins:
+ *   0. payload.last_assistant_message — the field Claude puts the final assistant
+ *      text in DIRECTLY on the Stop payload (verified against claude-cli 2.1.156:
+ *      carries the full final message, including a trailing question, no I/O). This
+ *      is the primary source and the real #174 delivery fix — earlier diagnoses
+ *      chased transcript_path (which can be absent), but the message is right here.
+ *   1. else payload.transcript_path (documented field, when present + readable);
+ *   2. else the path derived from payload.session_id + cwd (defensive fallback for
+ *      older clients that omit both of the above).
  * cwd preference: payload.cwd (Claude hook contract) → COCKPIT_CREW_CWD → cwd().
- * Best-effort: a null from one source falls through to the next; never throws.
+ * Best-effort: a null/miss from one source falls through to the next; never throws.
  */
 function resolveLastAssistantText(payload: unknown): string | null {
   const p = payload as any;
+  const direct = p?.last_assistant_message;
+  if (typeof direct === "string" && direct.trim()) return direct;
   const candidates: string[] = [];
   const tp = p?.transcript_path;
   if (typeof tp === "string" && tp) candidates.push(tp);
@@ -153,10 +160,11 @@ function resolveLastAssistantText(payload: unknown): string | null {
  * question to the captain as CREW BLOCKED. This is the one auto-detected path to
  * `task.blocked`; it relaxes the old "no hook → blocked" rule for blocked ONLY
  * (never done/failed). The last-assistant text is obtained from a LAYERED source
- * (transcript_path → derived path from session_id+cwd) because real Stop payloads
- * do not reliably carry transcript_path. All transcript I/O is best-effort: any
- * failure falls through to the next source and ultimately to task.turn.completed,
- * and never throws (the hook must exit 0).
+ * (last_assistant_message on the payload → transcript_path → derived path from
+ * session_id+cwd); the payload field is the primary, I/O-free source and the
+ * earlier transcript_path-only approach is why #174 stayed dormant in production.
+ * All transcript I/O is best-effort: any failure falls through to the next source
+ * and ultimately to task.turn.completed, and never throws (the hook must exit 0).
  */
 export function mapClaudeHookToEvent(
   event: string,
