@@ -42,6 +42,26 @@ describe("state-machine reduce", () => {
     expect(next.question).toBe("which path?");
   });
 
+  it("working + task.blocked → blocked carrying the question (#174 auto-detect)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.blocked", id: "t1", reason: "crew asked a question (auto-detected)", question: "which db?" }, 3600);
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("which db?");
+  });
+
+  it("blocked + task.blocked is idempotent — the FIRST question wins, no overwrite (#174)", () => {
+    // The explicit `cockpit crew signal blocked` fires BEFORE the turn ends; the
+    // auto-detect Stop hook may re-emit task.blocked afterward. The first question
+    // must survive so the captain sees what the crew actually typed.
+    const next = reduce(
+      rec({ state: "blocked", question: "explicit question?" }),
+      { type: "task.blocked", id: "t1", reason: "crew asked a question (auto-detected)", question: "auto-detected question?" },
+      4200,
+    );
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("explicit question?");
+    expect(next.lastHeartbeat).toBe(4200); // liveness still updates
+  });
+
   it("blocked + task.progress does NOT auto-unblock (explicit reply required)", () => {
     const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.progress", id: "t1" }, 4000);
     expect(next.state).toBe("blocked");

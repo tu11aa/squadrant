@@ -61,6 +61,12 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.blocked":
       // ev.reason is protocol/logging-only and intentionally not persisted;
       // only `question` is stored on the record.
+      // Idempotency (#174): the explicit `cockpit crew signal blocked` fires
+      // BEFORE the turn ends; the auto-detect Stop hook may then re-emit
+      // task.blocked on an already-blocked task. Treat a repeat block as a
+      // no-op so the FIRST (explicit) question wins and no duplicate CREW
+      // BLOCKED fires. Terminal states are already absorbed above.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       return { ...base, state: "blocked", question: ev.question };
     case "task.done":
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };

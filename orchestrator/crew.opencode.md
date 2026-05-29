@@ -39,7 +39,7 @@ Your captain learns you are done from an **explicit signal**, not from your CLI 
 3. Run **`cockpit crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the cockpit daemon so the captain sees terminal state without scraping your pane.
 4. Then (and only then) exit your CLI.
 
-If you are blocked, run `cockpit crew signal blocked --question "<your question>"` instead. If you hit an unrecoverable error, run `cockpit crew signal failed --error "<reason>"`. The signal verb reads `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT` from your environment — both are set automatically by your spawn.
+If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — run `cockpit crew signal blocked --question "<the question>"` BEFORE ending your turn, then wait. Asking conversationally alone does not notify the captain; the explicit signal is what surfaces your question as CREW BLOCKED. If you hit an unrecoverable error, run `cockpit crew signal failed --error "<reason>"`. The signal verb reads `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT` from your environment — both are set automatically by your spawn.
 
 ## Coding Discipline (Karpathy Principles)
 

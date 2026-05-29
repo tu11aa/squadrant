@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import type { InteractiveHookAdapter } from "./types.js";
 import type { ControlEvent } from "../types.js";
 
@@ -46,27 +47,93 @@ export function mergeClaudeHooks(settings: any, hookCmd: string): any {
 }
 
 /**
- * Map a Claude hook event name to a cockpit ControlEvent. Pure function —
- * isolated for testability and to codify the anti-#2576 invariant in one
- * place: NO Claude hook ever maps to `task.done`/`task.failed`/`task.blocked`.
+ * Pure, conservative detector for a trailing question that needs captain input.
+ * Returns the question text when the LAST non-empty line of the message (outside
+ * any fenced code block) ends with "?", else null. Intentionally narrow to avoid
+ * false-blocked: rhetorical mid-text questions and questions inside ```fences```
+ * are ignored because only the final visible line counts. When unsure → null.
+ */
+export function detectTrailingQuestion(text: string): string | null {
+  if (!text) return null;
+  let inFence = false;
+  let lastLine: string | null = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("```")) { inFence = !inFence; continue; }
+    if (inFence || line === "") continue;
+    lastLine = line;
+  }
+  if (lastLine && lastLine.endsWith("?")) return lastLine;
+  return null;
+}
+
+/**
+ * I/O: read the LAST assistant message text from a Claude transcript JSONL file.
+ * Kept separate from the pure detector so the detector stays trivially testable.
+ * Never throws — returns null on any read/parse failure (the hook must exit 0).
+ */
+function readLastAssistantText(transcriptPath: string): string | null {
+  try {
+    const raw = readFileSync(transcriptPath, "utf-8");
+    const lines = raw.split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let entry: any;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const isAssistant = entry?.type === "assistant" || entry?.message?.role === "assistant";
+      if (!isAssistant) continue;
+      const content = entry?.message?.content;
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        const txt = content
+          .filter((b: any) => b?.type === "text" && typeof b.text === "string")
+          .map((b: any) => b.text)
+          .join("\n")
+          .trim();
+        return txt || null;
+      }
+      return null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Map a Claude hook event name to a cockpit ControlEvent. Codifies the anti-#2576
+ * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop/SessionEnd = liveness only (task.progress).
- * Stop = turn boundary (task.turn.completed → awaiting-input, stall-immune).
- * Terminal state comes exclusively from explicit `cockpit crew signal`.
+ * Terminal `done`/`failed` come exclusively from explicit `cockpit crew signal`.
  *
- * Stop is remapped to task.turn.completed so the task leaves the working
- * state between turns — no hooks fire while the captain reviews output,
- * so the previous liveness-only mapping would heartbeat-expire after
- * heartbeatBudgetMs and fire a false CREW STALLED alert. The awaiting-input
- * state is immune to evaluateStall (fixes #131).
+ * Stop = turn boundary. It normally maps to task.turn.completed → awaiting-input
+ * (stall-immune) so a captain reviewing output never trips a false CREW STALLED
+ * (fixes #131). NARROW EXCEPTION (#174): when the Stop payload carries a
+ * `transcript_path` and the crew's last assistant message ENDS with a direct
+ * question, Stop maps to task.blocked instead, surfacing the question to the
+ * captain as CREW BLOCKED. This is the one auto-detected path to `task.blocked`;
+ * it relaxes the old "no hook → blocked" rule for blocked ONLY (never done/failed).
+ * All transcript I/O is best-effort: any failure falls back to task.turn.completed
+ * and never throws (the hook must exit 0).
  */
 export function mapClaudeHookToEvent(
   event: string,
-  _payload: unknown,
+  payload: unknown,
   taskId: string,
 ): ControlEvent | null {
   switch (event) {
-    case "Stop":
+    case "Stop": {
+      const transcriptPath = (payload as any)?.transcript_path;
+      if (typeof transcriptPath === "string" && transcriptPath) {
+        const text = readLastAssistantText(transcriptPath);
+        const question = text ? detectTrailingQuestion(text) : null;
+        if (question) {
+          return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question };
+        }
+      }
       return { type: "task.turn.completed", id: taskId, turnId: "hook-stop" };
+    }
     case "SubagentStop":
     case "SessionEnd":
     case "PostToolUse":
