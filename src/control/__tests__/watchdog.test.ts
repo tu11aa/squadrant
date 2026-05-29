@@ -14,10 +14,21 @@ function rec(o: Partial<TaskRecord> = {}): TaskRecord {
 }
 
 describe("evaluateStall", () => {
-  it("working past budget → stalled", () => {
+  it("working HEADLESS past budget → stalled", () => {
     const out = evaluateStall(rec(), 6001);
     expect(out?.state).toBe("stalled");
     expect(out?.lastEvent).toBe("watchdog.stall");
+  });
+
+  it("working INTERACTIVE past budget → awaiting-input, not stalled", () => {
+    // An idle interactive crew has simply ended a turn and is awaiting the
+    // captain's next message — that is NOT a stall. Surface it as the
+    // answerable 'awaiting-input' state so the captain gets an accurate,
+    // non-alarming nudge instead of a misleading CREW STALLED.
+    const out = evaluateStall(rec({ mode: "interactive" }), 6001);
+    expect(out?.state).toBe("awaiting-input");
+    expect(out?.state).not.toBe("stalled");
+    expect(out?.lastEvent).toBe("watchdog.idle");
   });
 
   it("working within budget → no change (null)", () => {
@@ -48,7 +59,12 @@ describe("recoverStall", () => {
   });
 });
 
-describe("stalled = warn-don't-autofail for interactive-codex (spec §4.8, #90 slice)", () => {
+describe("idle interactive-codex = warn-don't-autofail (spec §4.8, #90 slice)", () => {
+  // #90's intent ("warn-don't-autofail") was that an idle interactive-codex
+  // task must remain answerable, never auto-failed. We now express that as
+  // 'awaiting-input' rather than 'stalled': both are non-terminal & answerable,
+  // but 'awaiting-input' reads to the captain as normal idle (turn ended)
+  // instead of a failure, and resumes to 'working' on the next liveness/turn.
   function rec(overrides: Partial<TaskRecord> = {}): TaskRecord {
     return {
       id: "t1", project: "p", provider: "codex", mode: "interactive",
@@ -59,18 +75,19 @@ describe("stalled = warn-don't-autofail for interactive-codex (spec §4.8, #90 s
     };
   }
 
-  it("a stalled interactive-codex task is non-terminal (never failed)", () => {
-    const stalled = evaluateStall(rec(), 100_000);
-    expect(stalled).not.toBeNull();
-    expect(stalled!.state).toBe("stalled");
-    expect(stalled!.state).not.toBe("failed");
-    expect(stalled!.state).not.toBe("done");
+  it("an idle interactive-codex task is non-terminal & answerable (awaiting-input, never failed)", () => {
+    const idle = evaluateStall(rec(), 100_000);
+    expect(idle).not.toBeNull();
+    expect(idle!.state).toBe("awaiting-input");
+    expect(idle!.state).not.toBe("failed");
+    expect(idle!.state).not.toBe("done");
   });
 
-  it("a stalled interactive-codex task recovers to working on next liveness", () => {
-    const stalled = evaluateStall(rec(), 100_000)!;
-    const recovered = recoverStall(stalled, 101_000);
-    expect(recovered).not.toBeNull();
-    expect(recovered!.state).toBe("working");
+  it("an idle interactive-codex task resumes to working on the next turn (task.started/PostToolUse)", () => {
+    // awaiting-input → working is the reducer's job (task.started / task.progress);
+    // the watchdog itself never re-stalls an awaiting-input task.
+    const idle = evaluateStall(rec(), 100_000)!;
+    expect(evaluateStall(idle, 200_000)).toBeNull(); // no re-stall while idle
+    expect(recoverStall(idle, 101_000)).toBeNull();  // recoverStall only acts on 'stalled'
   });
 });

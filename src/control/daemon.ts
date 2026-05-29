@@ -38,7 +38,10 @@ export interface DaemonDeps {
   }) => Promise<void> | void;
 }
 
-const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled"]);
+// 'awaiting-input' is an attention state: entering it (idle watchdog OR a
+// Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
+// firePush prev===next guard keeps it from re-firing while the task sits idle.
+const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled", "awaiting-input"]);
 
 function shortId(id: string): string {
   return id.slice(0, 8);
@@ -61,6 +64,8 @@ function formatMessage(rec: TaskRecord): string | null {
       return `CREW FAILED ${tag}: ${(rec.error ?? "(no error)").trim()}`;
     case "stalled":
       return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
+    case "awaiting-input":
+      return `CREW IDLE ${tag}: turn ended / awaiting your input — review and reply or close.`;
     default:
       return null;
   }
@@ -180,15 +185,17 @@ export function createDaemon(deps: DaemonDeps) {
     sweep(): void {
       const t = now();
       for (const r of store.listAll()) {
-        const stalled = evaluateStall(r, t);
-        if (stalled) {
-          store.put(stalled);
-          const synthEvent: ControlEvent = {
-            type: "task.stalled",
-            id: r.id,
-            heartbeatBudgetMs: r.heartbeatBudgetMs,
-          };
-          firePush(deps, r.project, r.state, stalled, synthEvent);
+        const idle = evaluateStall(r, t);
+        if (idle) {
+          store.put(idle);
+          // Interactive idle → awaiting-input (task.idle); headless → stalled
+          // (task.stalled). The synth event only carries the notify payload;
+          // the reducer treats both as no-ops (state already updated above).
+          const synthEvent: ControlEvent =
+            idle.state === "awaiting-input"
+              ? { type: "task.idle", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs }
+              : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
+          firePush(deps, r.project, r.state, idle, synthEvent);
           continue;
         }
         const recovered = recoverStall(r, t);

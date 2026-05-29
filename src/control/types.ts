@@ -92,6 +92,10 @@ export type ControlEvent =
   // notify payloads. They are never sent over the wire and the reducer treats
   // them as no-ops; the watchdog has already updated state directly.
   | { type: "task.stalled"; id: string; heartbeatBudgetMs: number }
+  // task.idle is the interactive analogue of task.stalled: the watchdog has
+  // already moved an idle interactive task to 'awaiting-input', and this carries
+  // the accurate (non-alarming) notify payload to the captain.
+  | { type: "task.idle"; id: string; heartbeatBudgetMs: number }
   | { type: "task.reconcile-failed"; id: string; reason: string };
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
