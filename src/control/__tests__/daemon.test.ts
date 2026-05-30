@@ -231,7 +231,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls.length).toBe(0); // second block silently absorbed — captain missed it
   });
 
-  it("blocked + task.started (resume) → working + second task.blocked fires CREW BLOCKED (#182 fix path)", async () => {
+  it("blocked + task.started (resume) → working + second task.blocked fires CREW BLOCKED (#183 fix path)", async () => {
     // The fix: runCrewSend emits task.started before sendToPane so the crew
     // re-enters working state and the next real block fires a fresh notification.
     const store = createStore(dir);
@@ -250,7 +250,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls[0].message).toContain("second prompt");
   });
 
-  it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#182)", async () => {
+  it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#183)", async () => {
     // Same fix path for crews that went idle (awaiting-input) before captain replied.
     const store = createStore(dir);
     store.put(rec("t-idle", { state: "awaiting-input" }));

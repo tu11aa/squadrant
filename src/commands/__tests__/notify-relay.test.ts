@@ -9,6 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
+import type { MailboxEntry } from "../../control/mailbox.js";
 import { runNotifyRelay, DEFAULT_STATE_ROOT, formatEntry } from "../notify-relay.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
@@ -178,9 +179,9 @@ describe("notify-relay file-tailer", () => {
 // Validates that task.idle and task.turn.completed emit CREW IDLE (#182) and
 // that suppressed events (task.started, task.progress) return null.
 describe("formatEntry", () => {
-  const base = {
+  const base: Omit<MailboxEntry, "kind"> = {
     seq: 1,
-    ts: 1,
+    ts: "2026-01-01T00:00:00.000Z",
     provider: "claude",
     taskId: "deadbeefcafebabe",
     name: "crew-1",
