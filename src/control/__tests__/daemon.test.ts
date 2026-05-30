@@ -203,14 +203,14 @@ describe("daemon handler", () => {
   });
 });
 
-// ── Bug #182: silent re-block — blocked crew misses second permission prompt ──
+// ── Bug #183: silent re-block — blocked crew misses second permission prompt ──
 // Root cause: runCrewSend emits no resume event for blocked tasks.
 // task.progress keeps state=blocked (anti-auto-unblock, state-machine:58).
 // A second task.blocked on an already-blocked task hits the idempotency guard
 // (state-machine:69) and firePush prev===next swallows it silently.
 // Fix: runCrewSend must emit task.started for blocked/awaiting-input tasks
 // before sending to pane — clearing to working so the next real block re-fires.
-describe("daemon – blocked crew resume path (#182)", () => {
+describe("daemon – blocked crew resume path (#183)", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-resume-")); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
