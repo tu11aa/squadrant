@@ -9,7 +9,8 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay, DEFAULT_STATE_ROOT } from "../notify-relay.js";
+import type { MailboxEntry } from "../../control/mailbox.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT, formatEntry } from "../notify-relay.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
 function freshState(): string {
@@ -171,5 +172,47 @@ describe("notify-relay file-tailer", () => {
     const out = sendSpy.mock.calls[0][1] as string;
     expect(out).toBe("CREW DONE [claude/deadbeef]: hello world");
     expect(out).not.toContain("/some/result/file.txt");
+  });
+});
+
+// ── formatEntry unit tests (pure; no I/O) ──────────────────────────────────
+// Validates that task.idle and task.turn.completed emit CREW IDLE (#182) and
+// that suppressed events (task.started, task.progress) return null.
+describe("formatEntry", () => {
+  const base: Omit<MailboxEntry, "kind"> = {
+    seq: 1,
+    ts: "2026-01-01T00:00:00.000Z",
+    provider: "claude",
+    taskId: "deadbeefcafebabe",
+    name: "crew-1",
+    payload: {},
+  };
+
+  it("task.turn.completed → CREW IDLE with crew name", () => {
+    const out = formatEntry({ ...base, kind: "task.turn.completed" });
+    expect(out).toMatch(/^CREW IDLE \[claude\/crew-1\]:/);
+  });
+
+  it("task.idle → CREW IDLE with crew name", () => {
+    const out = formatEntry({ ...base, kind: "task.idle" });
+    expect(out).toMatch(/^CREW IDLE \[claude\/crew-1\]:/);
+  });
+
+  it("task.started → null (suppressed)", () => {
+    expect(formatEntry({ ...base, kind: "task.started" })).toBeNull();
+  });
+
+  it("task.progress → null (suppressed)", () => {
+    expect(formatEntry({ ...base, kind: "task.progress" })).toBeNull();
+  });
+
+  it("task.done → CREW DONE", () => {
+    const out = formatEntry({ ...base, kind: "task.done", payload: { message: "done!" } });
+    expect(out).toMatch(/^CREW DONE \[claude\/crew-1\]: done!/);
+  });
+
+  it("uses short taskId when no name", () => {
+    const out = formatEntry({ ...base, name: undefined, kind: "task.idle" });
+    expect(out).toMatch(/^CREW IDLE \[claude\/deadbeef\]:/);
   });
 });

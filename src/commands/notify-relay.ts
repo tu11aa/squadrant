@@ -58,6 +58,9 @@ export function formatEntry(entry: MailboxEntry): string | null {
       return `CREW FAILED ${tag}: ${(entry.payload.error as string | undefined) ?? "(no error)"}`;
     case "task.stalled":
       return `CREW STALLED ${tag}: no heartbeat`;
+    case "task.turn.completed":
+    case "task.idle":
+      return `CREW IDLE ${tag}: turn ended / awaiting your input — review and reply or close.`;
     default:
       return null;
   }
