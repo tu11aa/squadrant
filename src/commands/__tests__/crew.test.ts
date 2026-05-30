@@ -695,6 +695,59 @@ describe("cockpit crew send/read/close/list", () => {
     });
   });
 
+  it("close emits task.cancelled for a non-terminal crew task before closing the pane (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-b1", name: "crew-1", project: "brove", state: "blocked", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.blocked", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
+    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "event",
+      project: "brove",
+      event: { type: "task.cancelled", id: "task-b1", reason: "closed by captain" },
+    }));
+    expect(closePane).toHaveBeenCalled();
+  });
+
+  it("close skips task.cancelled when the crew task is already terminal (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-d1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    const callKinds = (cockpitdCall.mock.calls as Array<[{ kind: string }]>).map(([req]) => req.kind);
+    expect(callKinds).toEqual(["list"]); // only list, no event emitted
+    expect(closePane).toHaveBeenCalled();
+  });
+
+  it("close still calls closePane when daemon is unreachable (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockRejectedValue(new Error("ENOENT: daemon socket not found"));
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(closePane).toHaveBeenCalled();
+  });
+
   it("list returns all crews for the project, ignoring non-crew tabs", async () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:9", title: "captain shell" },

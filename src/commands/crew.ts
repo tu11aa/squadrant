@@ -427,6 +427,20 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
   }
+  // Terminalize the daemon task before closing the pane (#184). Without this,
+  // non-terminal tasks (blocked/working/awaiting-input) linger in the daemon
+  // ledger and keep firing phantom CREW BLOCKED/IDLE pushes until the next
+  // daemon restart. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
+  // firePush stays silent — captain initiated the close, no notification needed.
+  try {
+    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const task = tasks.find((t) => t.name === name);
+    if (task && !TERMINAL_STATES.has(task.state)) {
+      await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
+    }
+  } catch {
+    // Swallow daemon errors — a crew without a daemon must still close.
+  }
   await runtime.closePane(crew);
 }
 

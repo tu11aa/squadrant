@@ -203,6 +203,43 @@ describe("daemon handler", () => {
   });
 });
 
+// ── Issue #184: crew close must terminalize daemon task silently ─────────────
+describe("daemon – crew close terminalization (#184)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-cancel-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("task.cancelled on blocked task → state 'cancelled', no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel", { state: "blocked", question: "awaiting captain?" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel", reason: "closed by captain" } });
+    expect(store.get("p", "t-cancel")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0); // captain-initiated close is silent — no CREW CANCELLED push
+  });
+
+  it("task.cancelled on working task → cancelled, no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel-w", { state: "working" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel-w" } });
+    expect(store.get("p", "t-cancel-w")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0);
+  });
+
+  it("task.cancelled on awaiting-input task → cancelled, no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel-i", { state: "awaiting-input" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel-i" } });
+    expect(store.get("p", "t-cancel-i")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0);
+  });
+});
+
 // ── Bug #183: silent re-block — blocked crew misses second permission prompt ──
 // Root cause: runCrewSend emits no resume event for blocked tasks.
 // task.progress keeps state=blocked (anti-auto-unblock, state-machine:58).
