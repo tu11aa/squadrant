@@ -89,6 +89,13 @@ notification reaching the captain session, not just the crew screen.
 
 | Date | Agent | HEAD | 1 Interactive | 2 Question | 3 Permission | 4 Idle | 5 Finish | Notes |
 |------|-------|------|---------------|------------|--------------|--------|----------|-------|
-|      | claude |     |               |            |              |        |          |       |
+| 2026-05-30 | claude | b0b8753 | PASS | PASS | PASS | GAP | PASS | checkpoint 4 = state OK but no captain idle ping (Stop hook liveness-only) |
 |      | codex  |     |               |            |              |        |          |       |
 |      | opencode |   |               |            |              |        |          |       |
+
+---
+
+## Findings — 2026-05-30 (claude)
+
+- **Checkpoints 1, 2, 3, 5 PASS.** Interactive multi-turn works; `signal blocked --question` surfaces as CREW BLOCKED and a captain `crew send` answer unblocks; a real permission prompt (write outside workspace) surfaces as CREW BLOCKED within ~0-3s and `crew send "1"` lets it through; `signal done` surfaces as CREW DONE and the daemon ledger goes terminal (`state: done`, `lastEvent: task.done`).
+- **Checkpoint 4 (idle ping) = GAP.** The crew transitions to idle correctly and the daemon task stays non-terminal, but the captain receives NO idle/awaiting notification. By design the Stop hook is liveness-only (anti-#2576) — it feeds the watchdog, not the captain. The only captain-visible pings today are CREW BLOCKED (question/permission) and CREW DONE. If an explicit "idle / awaiting next turn" ping is wanted (distinct from done), it needs new wiring — e.g. a `cockpit crew signal idle` verb or a Stop-hook → captain notification (debounced so captain-driven turns don't spam).
