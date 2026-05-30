@@ -59,6 +59,14 @@ notification reaching the captain session, not just the crew screen.
 > Note: #2 and #3 both surface as CREW BLOCKED but via **different feeders** — #2 is an explicit
 > `signal blocked`, #3 is the live Notification hook on a real prompt. Verify both paths.
 
+### 3b. Successive permission prompts in one turn (#183)
+- **Action:** Tell the crew to run **two** side-effecting commands outside the workspace, one at a
+  time, in a single turn. Approve the first prompt when it fires.
+- **Expect:** Both prompts each fire a separate **CREW BLOCKED**. (Before #183, only the first did
+  — answering a blocked crew now clears `blocked → working` so the second re-fires.)
+- **Captain signal:** Two distinct CREW BLOCKED notifications for the two commands.
+- [ ] PASS — second successive prompt also notifies the captain
+
 ### 4. Idle — pings captain, NOT finished
 - **Action:** Tell the crew to finish the current turn's work and **wait for the next turn
   without signaling done**.
@@ -67,7 +75,7 @@ notification reaching the captain session, not just the crew screen.
 - **Captain signal:** captain is pinged that the crew is **idle/awaiting** — and the daemon task
   state is **non-terminal** (still `working`/awaiting, NOT `done`).
 - **Verify state:** `cockpit crew list cockpit` shows the crew alive and non-terminal.
-- [ ] PASS — idle ping received **and** state is not terminal
+- [x] PASS — CREW IDLE now fires; `formatEntry` maps `task.turn.completed` / `task.idle` → CREW IDLE (fixed #182, merged 625cd11)
 
 ### 5. Finish — pings captain (done)
 - **Action:** Tell the crew to run `cockpit crew signal done --message "<one-line summary>"`.
@@ -96,7 +104,7 @@ notification reaching the captain session, not just the crew screen.
 
 | Date | Agent | HEAD | 1 Interactive | 2 Question | 3 Permission | 4 Idle | 5 Finish | 6 Reopen | Notes |
 |------|-------|------|---------------|------------|--------------|--------|----------|----------|-------|
-| 2026-05-30 | claude | b0b8753 | PASS | PASS | PASS | GAP | PASS | PASS | checkpoint 4 = state OK but no captain idle ping (Stop hook liveness-only) |
+| 2026-05-30 | claude | 625cd11 | PASS | PASS | PASS | PASS | PASS | PASS | all checkpoints pass (idle fixed #182, re-block fixed #183) |
 |      | codex  |     |               |            |              |        |          |          |       |
 |      | opencode |   |               |            |              |        |          |          |       |
 
@@ -106,4 +114,5 @@ notification reaching the captain session, not just the crew screen.
 
 - **Checkpoints 1, 2, 3, 5 PASS.** Interactive multi-turn works; `signal blocked --question` surfaces as CREW BLOCKED and a captain `crew send` answer unblocks; a real permission prompt (write outside workspace) surfaces as CREW BLOCKED within ~0-3s and `crew send "1"` lets it through; `signal done` surfaces as CREW DONE and the daemon ledger goes terminal (`state: done`, `lastEvent: task.done`).
 - **Checkpoint 4 (idle ping) = GAP.** The crew transitions to idle correctly and the daemon task stays non-terminal, but the captain receives NO idle/awaiting notification. By design the Stop hook is liveness-only (anti-#2576) — it feeds the watchdog, not the captain. The only captain-visible pings today are CREW BLOCKED (question/permission) and CREW DONE. If an explicit "idle / awaiting next turn" ping is wanted (distinct from done), it needs new wiring — e.g. a `cockpit crew signal idle` verb or a Stop-hook → captain notification (debounced so captain-driven turns don't spam).
+- **2026-05-30 (#182/#183 fixed + live-verified):** Checkpoint 4 idle ping now fires CREW IDLE. Successive same-turn permission prompts each fire CREW BLOCKED (#183). Both verified live against daemon 14215 / relay running the new `formatEntry`.
 - **Checkpoint 6 (reopen after done) = PASS.** First `signal done` → CREW DONE + ledger `done`. A captain `crew send` to the terminal crew fired `task.reopened` (#148) back to `working`; the crew redid the work and a second `signal done` fired CREW DONE again, ledger back to terminal `done`. Reopen→re-done works.
