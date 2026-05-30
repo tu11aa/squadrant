@@ -120,6 +120,87 @@ describe("CodexInteractiveDriver.dispatch", () => {
     expect(events.slice(before).some((e) => e.type === "task.input.requested")).toBe(false);
   });
 
+  describe("answer", () => {
+    function dispatchedDriver() {
+      const client = fakeClient();
+      const events: any[] = [];
+      const drv = new CodexInteractiveDriver({
+        makeClient: () => client,
+        emit: (ev) => events.push(ev),
+      });
+      const task = {
+        id: "t1", project: "p", provider: "codex", mode: "interactive",
+        state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+        lastEvent: "", heartbeatBudgetMs: 1000,
+        attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+        cwd: "/tmp/work",
+      } as any;
+      return { client, drv, task, events };
+    }
+
+    it("old protocol execCommandApproval: approve → approved, deny → denied", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      client.emit("serverRequest", { id: 10, method: "execCommandApproval", params: { question: "run?" } });
+      await drv.answer("t1", { text: "yes", decision: "approve" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(10, { decision: "approved" });
+
+      client.emit("serverRequest", { id: 11, method: "execCommandApproval", params: { question: "run?" } });
+      await drv.answer("t1", { text: "no", decision: "deny" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(11, { decision: "denied" });
+    });
+
+    it("old protocol applyPatchApproval: approve → approved, deny → denied", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      client.emit("serverRequest", { id: 20, method: "applyPatchApproval", params: { question: "patch?" } });
+      await drv.answer("t1", { text: "ok", decision: "approve" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(20, { decision: "approved" });
+
+      client.emit("serverRequest", { id: 21, method: "applyPatchApproval", params: { question: "patch?" } });
+      await drv.answer("t1", { text: "no", decision: "deny" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(21, { decision: "denied" });
+    });
+
+    it("v2 commandExecution/requestApproval: approve → accept, deny → decline", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      client.emit("serverRequest", { id: 30, method: "item/commandExecution/requestApproval", params: { question: "run?" } });
+      await drv.answer("t1", { text: "yes", decision: "approve" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(30, { decision: "accept" });
+
+      client.emit("serverRequest", { id: 31, method: "item/commandExecution/requestApproval", params: { question: "run?" } });
+      await drv.answer("t1", { text: "no", decision: "deny" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(31, { decision: "decline" });
+    });
+
+    it("v2 fileChange/requestApproval: approve → accept, deny → decline", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      client.emit("serverRequest", { id: 40, method: "item/fileChange/requestApproval", params: { question: "patch?" } });
+      await drv.answer("t1", { text: "ok", decision: "approve" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(40, { decision: "accept" });
+
+      client.emit("serverRequest", { id: 41, method: "item/fileChange/requestApproval", params: { question: "patch?" } });
+      await drv.answer("t1", { text: "no", decision: "deny" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(41, { decision: "decline" });
+    });
+
+    it("passthrough: payload with no decision field is sent unchanged", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      client.emit("serverRequest", { id: 50, method: "item/tool/requestUserInput", params: { question: "enter value" } });
+      await drv.answer("t1", { text: "hello" });
+      expect(client.respondToServerRequest).toHaveBeenCalledWith(50, { text: "hello" });
+    });
+
+    it("throws when no pending server-request for task", async () => {
+      const { client, drv, task } = dispatchedDriver();
+      await drv.dispatch(task);
+      await expect(drv.answer("t1", { text: "x" })).rejects.toThrow(/no pending server-request/);
+    });
+  });
+
   it("if initialize rejects, emits task.failed with a clear handshake error", async () => {
     const client = fakeClient();
     client.initialize = vi.fn().mockRejectedValue(new Error("Not initialized"));
