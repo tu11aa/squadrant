@@ -75,6 +75,13 @@ notification reaching the captain session, not just the crew screen.
 - **Captain signal:** **CREW DONE** reaches the captain; daemon task state is terminal `done`.
 - [ ] PASS — done notification received **and** state is terminal
 
+### 6. Reopen after done — redo → done again
+- **Action:** With the crew already terminal `done` (checkpoint 5), the captain reviews, finds a gap, and sends a new turn with redo instructions: `cockpit crew send cockpit <name> "<redo>"`.
+- **Expect:** `cockpit crew send` detects the terminal task and fires `task.reopened` (#148) — the task returns to non-terminal `working`. The crew does the redo, then runs `cockpit crew signal done` again.
+- **Captain signal:** crew responds to the new turn despite having been done; the second `signal done` fires **CREW DONE** again and the daemon ledger returns to terminal `done` (`lastEvent: task.done`).
+- **Note:** a turn-end `Stop` hook may transiently set `lastEvent: task.progress`; the explicit `signal done` is what settles the ledger back to terminal `done`.
+- [ ] PASS — done crew reopened on the new turn AND reported done a second time
+
 ---
 
 ## Teardown
@@ -87,11 +94,11 @@ notification reaching the captain session, not just the crew screen.
 
 ## Result log (fill in per run)
 
-| Date | Agent | HEAD | 1 Interactive | 2 Question | 3 Permission | 4 Idle | 5 Finish | Notes |
-|------|-------|------|---------------|------------|--------------|--------|----------|-------|
-| 2026-05-30 | claude | b0b8753 | PASS | PASS | PASS | GAP | PASS | checkpoint 4 = state OK but no captain idle ping (Stop hook liveness-only) |
-|      | codex  |     |               |            |              |        |          |       |
-|      | opencode |   |               |            |              |        |          |       |
+| Date | Agent | HEAD | 1 Interactive | 2 Question | 3 Permission | 4 Idle | 5 Finish | 6 Reopen | Notes |
+|------|-------|------|---------------|------------|--------------|--------|----------|----------|-------|
+| 2026-05-30 | claude | b0b8753 | PASS | PASS | PASS | GAP | PASS | PASS | checkpoint 4 = state OK but no captain idle ping (Stop hook liveness-only) |
+|      | codex  |     |               |            |              |        |          |          |       |
+|      | opencode |   |               |            |              |        |          |          |       |
 
 ---
 
@@ -99,3 +106,4 @@ notification reaching the captain session, not just the crew screen.
 
 - **Checkpoints 1, 2, 3, 5 PASS.** Interactive multi-turn works; `signal blocked --question` surfaces as CREW BLOCKED and a captain `crew send` answer unblocks; a real permission prompt (write outside workspace) surfaces as CREW BLOCKED within ~0-3s and `crew send "1"` lets it through; `signal done` surfaces as CREW DONE and the daemon ledger goes terminal (`state: done`, `lastEvent: task.done`).
 - **Checkpoint 4 (idle ping) = GAP.** The crew transitions to idle correctly and the daemon task stays non-terminal, but the captain receives NO idle/awaiting notification. By design the Stop hook is liveness-only (anti-#2576) — it feeds the watchdog, not the captain. The only captain-visible pings today are CREW BLOCKED (question/permission) and CREW DONE. If an explicit "idle / awaiting next turn" ping is wanted (distinct from done), it needs new wiring — e.g. a `cockpit crew signal idle` verb or a Stop-hook → captain notification (debounced so captain-driven turns don't spam).
+- **Checkpoint 6 (reopen after done) = PASS.** First `signal done` → CREW DONE + ledger `done`. A captain `crew send` to the terminal crew fired `task.reopened` (#148) back to `working`; the crew redid the work and a second `signal done` fired CREW DONE again, ledger back to terminal `done`. Reopen→re-done works.
