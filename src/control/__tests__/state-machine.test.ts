@@ -168,6 +168,42 @@ describe("state-machine reduce", () => {
     const next = reduce(rec({ state: "awaiting-input" }), { type: "task.failed", id: "t1", error: "boom" }, 11000);
     expect(next.state).toBe("failed");
   });
+
+  // ── Issue #184: crew close terminalization ──────────────────────────────────
+  it("task.cancelled on working task → state 'cancelled', terminal and silent (#184)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.cancelled", id: "t1", reason: "closed by captain" }, 5000);
+    expect(next.state).toBe("cancelled");
+    expect(next.lastHeartbeat).toBe(5000);
+    expect(next.lastEvent).toBe("task.cancelled");
+  });
+
+  it("task.cancelled on blocked task → cancelled (#184)", () => {
+    const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.cancelled", id: "t1" }, 5001);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("task.cancelled on awaiting-input task → cancelled (#184)", () => {
+    const next = reduce(rec({ state: "awaiting-input" }), { type: "task.cancelled", id: "t1" }, 5002);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("cancelled task absorbs task.progress — same reference, no transition (#184)", () => {
+    const cancelled = rec({ state: "cancelled" });
+    const next = reduce(cancelled, { type: "task.progress", id: "t1" }, 6000);
+    expect(next).toBe(cancelled);
+  });
+
+  it("cancelled task absorbs task.blocked — stays cancelled, no re-notification (#184)", () => {
+    const cancelled = rec({ state: "cancelled" });
+    const next = reduce(cancelled, { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 6001);
+    expect(next).toBe(cancelled);
+  });
+
+  it("done task absorbs task.cancelled — already terminal, no state change (#184)", () => {
+    const done = rec({ state: "done", resultRef: "/r" });
+    const next = reduce(done, { type: "task.cancelled", id: "t1", reason: "closed" }, 7000);
+    expect(next).toBe(done);
+  });
 });
 
 describe("DispatchAttempt schema", () => {

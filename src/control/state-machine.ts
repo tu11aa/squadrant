@@ -72,6 +72,8 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
+    case "task.cancelled":
+      return { ...base, state: "cancelled" };
     case "task.session":
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":

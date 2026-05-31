@@ -9,7 +9,8 @@ export type TaskState =
   | "done"
   | "failed"
   | "stalled"
-  | "awaiting-input";
+  | "awaiting-input"
+  | "cancelled";
 
 export interface DispatchAttempt {
   attemptId: string;
@@ -96,10 +97,16 @@ export type ControlEvent =
   // already moved an idle interactive task to 'awaiting-input', and this carries
   // the accurate (non-alarming) notify payload to the captain.
   | { type: "task.idle"; id: string; heartbeatBudgetMs: number }
-  | { type: "task.reconcile-failed"; id: string; reason: string };
+  | { type: "task.reconcile-failed"; id: string; reason: string }
+  // Emitted by runCrewClose before closing the pane; transitions a non-terminal
+  // task to the absorbing 'cancelled' state. Silent: captain initiated the close
+  // so no CREW CANCELLED push is fired (not in ATTENTION_STATES).
+  | { type: "task.cancelled"; id: string; reason?: string };
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
+// 'cancelled' is terminal and silent (captain-initiated close).
 export const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([
   "done",
   "failed",
+  "cancelled",
 ]);

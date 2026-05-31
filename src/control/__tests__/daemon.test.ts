@@ -202,3 +202,101 @@ describe("daemon handler", () => {
     expect(calls).toEqual([["dispatch", "t1"]]);
   });
 });
+
+// ── Issue #184: crew close must terminalize daemon task silently ─────────────
+describe("daemon – crew close terminalization (#184)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-cancel-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("task.cancelled on blocked task → state 'cancelled', no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel", { state: "blocked", question: "awaiting captain?" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel", reason: "closed by captain" } });
+    expect(store.get("p", "t-cancel")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0); // captain-initiated close is silent — no CREW CANCELLED push
+  });
+
+  it("task.cancelled on working task → cancelled, no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel-w", { state: "working" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel-w" } });
+    expect(store.get("p", "t-cancel-w")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0);
+  });
+
+  it("task.cancelled on awaiting-input task → cancelled, no notify fired", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-cancel-i", { state: "awaiting-input" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.cancelled", id: "t-cancel-i" } });
+    expect(store.get("p", "t-cancel-i")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0);
+  });
+});
+
+// ── Bug #183: silent re-block — blocked crew misses second permission prompt ──
+// Root cause: runCrewSend emits no resume event for blocked tasks.
+// task.progress keeps state=blocked (anti-auto-unblock, state-machine:58).
+// A second task.blocked on an already-blocked task hits the idempotency guard
+// (state-machine:69) and firePush prev===next swallows it silently.
+// Fix: runCrewSend must emit task.started for blocked/awaiting-input tasks
+// before sending to pane — clearing to working so the next real block re-fires.
+describe("daemon – blocked crew resume path (#183)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-resume-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("blocked + task.progress stays blocked AND second task.blocked fires NO notify (bug path)", async () => {
+    // Demonstrates the silent-miss: without a resume event the captain never
+    // learns about the second permission prompt.
+    const store = createStore(dir);
+    store.put(rec("t-miss", { state: "blocked", question: "first prompt" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    // Captain sends answer via pane → crew resumes → PostToolUse fires progress
+    await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-miss", note: "posttooluse" } });
+    expect(store.get("p", "t-miss")?.state).toBe("blocked"); // stays blocked (correct per anti-auto-unblock)
+    // Crew hits a second permission prompt
+    await d.handle({ kind: "event", project: "p", event: { type: "task.blocked", id: "t-miss", reason: "r", question: "second prompt" } });
+    expect(store.get("p", "t-miss")?.state).toBe("blocked");
+    expect(calls.length).toBe(0); // second block silently absorbed — captain missed it
+  });
+
+  it("blocked + task.started (resume) → working + second task.blocked fires CREW BLOCKED (#183 fix path)", async () => {
+    // The fix: runCrewSend emits task.started before sendToPane so the crew
+    // re-enters working state and the next real block fires a fresh notification.
+    const store = createStore(dir);
+    store.put(rec("t-fix", { state: "blocked", question: "first prompt" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    // runCrewSend emits task.started before delivering captain's answer to pane
+    await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-fix" } });
+    expect(store.get("p", "t-fix")?.state).toBe("working"); // cleared to working
+    expect(store.get("p", "t-fix")?.question).toBeUndefined(); // question cleared
+    // Crew hits a second permission prompt
+    await d.handle({ kind: "event", project: "p", event: { type: "task.blocked", id: "t-fix", reason: "r", question: "second prompt" } });
+    expect(store.get("p", "t-fix")?.state).toBe("blocked");
+    expect(calls.length).toBe(1); // CREW BLOCKED fired for second prompt
+    expect(calls[0].message).toContain("CREW BLOCKED");
+    expect(calls[0].message).toContain("second prompt");
+  });
+
+  it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#183)", async () => {
+    // Same fix path for crews that went idle (awaiting-input) before captain replied.
+    const store = createStore(dir);
+    store.put(rec("t-idle", { state: "awaiting-input" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-idle" } });
+    expect(store.get("p", "t-idle")?.state).toBe("working");
+    await d.handle({ kind: "event", project: "p", event: { type: "task.blocked", id: "t-idle", reason: "r", question: "a prompt" } });
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toContain("CREW BLOCKED");
+  });
+});
