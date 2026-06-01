@@ -59,6 +59,25 @@ describe("claude driver", () => {
     expect(cmd).toContain("--append-system-prompt-file /tmp/captain.claude.md");
   });
 
+  it("adds --permission-mode when permissionMode specified", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      permissionMode: "acceptEdits",
+    });
+    expect(cmd).toContain("--permission-mode acceptEdits");
+  });
+
+  it("omits --permission-mode when permissionMode not specified", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+    });
+    expect(cmd).not.toContain("--permission-mode");
+  });
+
   it("adds --settings when settingsPath specified", () => {
     const cmd = driver.buildCommand({
       prompt: "do something",

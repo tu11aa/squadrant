@@ -20,8 +20,20 @@ import {
   readFromCursor,
   type MailboxEntry,
 } from "../control/mailbox.js";
+import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
+import { createCrewPaneReader } from "../control/crew-pane-reader.js";
+import { cockpitdCall } from "./crew-control.js";
+import type { TaskRecord, ControlEvent } from "../control/types.js";
 
 export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
+
+// How often the in-cmux probe scrapes interactive crew panes for a block. The
+// daemon can't do this (launchd can't connect to cmux), so it lives here.
+export const PROBE_INTERVAL_MS = 10_000;
+// A working interactive task with no heartbeat for this long is a probe
+// candidate: PostToolUse never fires while a permission prompt is up, so a
+// genuinely-blocked crew goes quiet well before the multi-minute stall budget.
+export const PROBE_QUIET_MS = 20_000;
 
 function shortId(id: string): string {
   return id.slice(0, 8);
@@ -51,6 +63,97 @@ export function formatEntry(entry: MailboxEntry): string | null {
   }
 }
 
+// ── Phase 2b: in-cmux interactive-block probe ───────────────────────────────
+// A claude/opencode crew parked at a permission prompt (or ending a turn with a
+// question) sits at daemon state=working with NO heartbeat — the hook bridge
+// only fires PostToolUse, which never happens while a prompt is up. The daemon
+// can't scrape the pane to notice (launchd can't connect to cmux). The relay
+// runs INSIDE the captain's cmux workspace, so it can read panes AND reach the
+// daemon socket — it is the right place to detect this and surface CREW BLOCKED.
+
+interface InteractiveProbeDeps {
+  project: string;
+  /** Daemon task list (the `kind:"list"` request `cockpit crew tasks` uses). */
+  listTasks: () => Promise<TaskRecord[]>;
+  /** Best-effort crew-pane tail reader (in-cmux); returns null on any failure. */
+  readPaneTail: (rec: TaskRecord) => Promise<string | null>;
+  /** Emit a control event to the daemon (the `kind:"event"` path). */
+  sendEvent: (event: ControlEvent) => Promise<void>;
+  now: () => number;
+  log: (m: string) => void;
+  /** No-heartbeat threshold before a working task is probed. */
+  quietMs?: number;
+}
+
+/**
+ * Pure-ish probe core (I/O injected for tests). One `tick`:
+ *  1. list the project's daemon tasks,
+ *  2. keep only interactive + working + named + quiet (> quietMs since
+ *     lastHeartbeat) candidates,
+ *  3. read each candidate's pane tail and skip it if the tail is unchanged
+ *     since the last tick (per-task change-detection → fires once per prompt),
+ *  4. classify the tail; a permission/question verdict → one task.blocked.
+ *
+ * Best-effort throughout: every read/daemon call is caught and logged; the tick
+ * never throws, so a transient cmux/daemon failure can't crash the relay. The
+ * daemon's applyEvent + #176 idempotency make a re-sent block harmless.
+ */
+export function createInteractiveProbe(deps: InteractiveProbeDeps): {
+  tick: () => Promise<void>;
+} {
+  const quietMs = deps.quietMs ?? PROBE_QUIET_MS;
+  // taskId → last pane tail seen, so an unchanged prompt fires exactly once.
+  const lastTail = new Map<string, string>();
+
+  async function tick(): Promise<void> {
+    let tasks: TaskRecord[];
+    try {
+      tasks = await deps.listTasks();
+    } catch (e) {
+      deps.log(`probe listTasks failed: ${(e as Error).message}`);
+      return;
+    }
+    const now = deps.now();
+    for (const rec of tasks) {
+      if (rec.mode !== "interactive") continue;
+      if (rec.state !== "working") continue;
+      if (!rec.name) continue;
+      if (now - rec.lastHeartbeat <= quietMs) continue; // still lively
+
+      let tail: string | null;
+      try {
+        tail = await deps.readPaneTail(rec);
+      } catch (e) {
+        deps.log(`probe read failed for ${rec.id}: ${(e as Error).message}`);
+        continue;
+      }
+      if (!tail) continue;
+      if (lastTail.get(rec.id) === tail) continue; // unchanged → already handled
+      lastTail.set(rec.id, tail);
+
+      const verdict = classifyPaneTail(tail);
+      if (!verdict) continue;
+      const reason =
+        verdict.kind === "approval"
+          ? "crew awaiting permission (pane-detected)"
+          : "crew asked a question (pane-detected)";
+      try {
+        await deps.sendEvent({
+          type: "task.blocked",
+          id: rec.id,
+          reason,
+          question: verdict.text,
+        });
+        deps.log(`probe -> CREW BLOCKED ${rec.name} (${verdict.kind})`);
+      } catch (e) {
+        deps.log(`probe sendEvent failed for ${rec.id}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  return { tick };
+}
+
 interface RunOpts {
   project: string;
   subscriber: string;
@@ -58,6 +161,8 @@ interface RunOpts {
   runtime: RuntimeDriver;
   captainName: string;
   pollMs?: number;
+  /** Probe cadence override (default PROBE_INTERVAL_MS); 0 disables the probe. */
+  probeMs?: number;
   log?: (m: string) => void;
 }
 
@@ -128,11 +233,35 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
     if (!stopped) drain().catch((e) => log(`drain error: ${(e as Error).message}`));
   }, opts.pollMs ?? 1000);
 
+  // Separate probe interval (additive — does not disturb mailbox tailing).
+  // Detects crews blocked at a permission prompt / trailing question by reading
+  // their pane, which only works from inside cmux (here), not from the daemon.
+  const probeMs = opts.probeMs ?? PROBE_INTERVAL_MS;
+  const readPaneTail = createCrewPaneReader();
+  const probe = createInteractiveProbe({
+    project: opts.project,
+    listTasks: async () =>
+      (await cockpitdCall({ kind: "list", project: opts.project })) as TaskRecord[],
+    readPaneTail,
+    sendEvent: async (event) => {
+      await cockpitdCall({ kind: "event", project: opts.project, event });
+    },
+    now: () => Date.now(),
+    log,
+  });
+  const probeInterval =
+    probeMs > 0
+      ? setInterval(() => {
+          if (!stopped) probe.tick().catch((e) => log(`probe error: ${(e as Error).message}`));
+        }, probeMs)
+      : undefined;
+
   await drain(); // initial drain
 
   return () => {
     stopped = true;
     clearInterval(interval);
+    if (probeInterval) clearInterval(probeInterval);
   };
 }
 

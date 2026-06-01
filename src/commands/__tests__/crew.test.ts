@@ -104,7 +104,16 @@ describe("cockpit crew spawn", () => {
     sendToPane.mockReset();
     closePane.mockReset();
     readPaneScreen.mockReset();
-    readPaneScreen.mockResolvedValue("> ");
+    // Staged boot: first read (the call-site preLaunch snapshot) shows the
+    // un-entered launch line; subsequent reads show a stable TUI prompt that
+    // has advanced past it, so sendFirstTurnWhenReady's readiness gate fires.
+    let reads = 0;
+    readPaneScreen.mockImplementation(async () => {
+      reads++;
+      if (reads === 1) return "booting…";
+      if (reads <= 4) return "> ready";
+      return "> ready\nworking…";
+    });
     listSurfaces.mockReset();
     status.mockReset();
     buildCommand.mockReset();
@@ -444,7 +453,9 @@ describe("sendFirstTurnWhenReady", () => {
     readPaneScreen.mockImplementation(async () => {
       callCount++;
       if (callCount <= 1) return "";
-      return "> do the thing";
+      if (callCount <= 3) return "> ";        // stable prompt, advanced past launch
+      if (callCount === 4) return "> ";       // preSend snapshot
+      return "> do the thing";                // after-send: screen changed → no re-send
     });
 
     const pane = { workspaceId: "w:1", surfaceId: "s:1" };
@@ -452,6 +463,7 @@ describe("sendFirstTurnWhenReady", () => {
       { readPaneScreen, sendToPane } as any,
       pane,
       "do the thing",
+      "$ launch",
     );
 
     await vi.advanceTimersByTimeAsync(4000);
@@ -469,18 +481,19 @@ describe("sendFirstTurnWhenReady", () => {
       { readPaneScreen, sendToPane } as any,
       pane,
       "do the thing",
+      "$ launch",
     );
 
     await vi.advanceTimersByTimeAsync(21000);
     await promise;
 
-    // Two calls: fallback send + one re-send (post-send check sees empty screen)
+    // Two calls: fallback send + one re-send (post-send check sees an unchanged screen)
     expect(sendToPane).toHaveBeenCalledTimes(2);
     expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
     expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
   }, 15000);
 
-  it("re-sends once when the first send is not reflected on screen", async () => {
+  it("re-sends once when the screen is unchanged after the first send", async () => {
     readPaneScreen.mockResolvedValue("> ");
 
     const pane = { workspaceId: "w:1", surfaceId: "s:1" };
@@ -488,16 +501,74 @@ describe("sendFirstTurnWhenReady", () => {
       { readPaneScreen, sendToPane } as any,
       pane,
       "do the thing",
+      "$ launch",
     );
 
     await vi.advanceTimersByTimeAsync(3500);
     await promise;
 
-    // Two calls: initial send + one re-send
+    // Two calls: initial send + one re-send (preSend === afterScreen)
     expect(sendToPane).toHaveBeenCalledTimes(2);
     expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
     expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
   });
+
+  // #168: sendToPane (since #136) collapses newlines to spaces, so a multi-line
+  // task never appears verbatim in the pane render. The old post-send check
+  // `!afterScreen.includes(task)` therefore always re-sent → duplicate first
+  // turn. The fix compares the screen before vs after sending instead.
+  it("does NOT re-send a multi-line task when the pane render collapses newlines", async () => {
+    const task = "line one\nline two\nline three";
+    let callCount = 0;
+    readPaneScreen.mockImplementation(async () => {
+      callCount++;
+      // reads 1-2: poll (stable), read 3: preSend snapshot — all the bare prompt.
+      if (callCount <= 3) return "> ";
+      return "> line one line two line three";               // after-send: collapsed render
+    });
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      task,
+      "$ launch",
+    );
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await promise;
+
+    // The screen changed after the send (task was received), so no re-send —
+    // even though `afterScreen.includes(task)` is false for the multi-line task.
+    expect(sendToPane).toHaveBeenCalledTimes(1);
+    expect(sendToPane).toHaveBeenCalledWith(pane, task);
+  });
+
+  // opencode boot-race: the screen can be momentarily static while the launch
+  // command still sits un-entered on the shell line. Sending then concatenates
+  // onto that line → shell parse error. The readiness gate must require the
+  // screen to ADVANCE past the launch-line snapshot, not merely be static.
+  it("does NOT send the first turn while the pane still shows the un-entered launch line", async () => {
+    const launchLine = "$ COCKPIT_CREW_TASK_ID=t1 opencode";
+    readPaneScreen.mockResolvedValue(launchLine);
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+      launchLine,
+    );
+
+    // Well under the 20s timeout: the screen never advanced past the launch
+    // line, so the readiness gate must not have fired yet.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sendToPane).not.toHaveBeenCalled();
+
+    // Drain to the timeout so the fallback send fires and the promise resolves.
+    await vi.advanceTimersByTimeAsync(20000);
+    await promise;
+  }, 15000);
 });
 
 describe("cockpit crew send/read/close/list", () => {
@@ -622,6 +693,59 @@ describe("cockpit crew send/read/close/list", () => {
       surfaceId: "surface:10",
       title: "🔧 brove:crew-1",
     });
+  });
+
+  it("close emits task.cancelled for a non-terminal crew task before closing the pane (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-b1", name: "crew-1", project: "brove", state: "blocked", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.blocked", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
+    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "event",
+      project: "brove",
+      event: { type: "task.cancelled", id: "task-b1", reason: "closed by captain" },
+    }));
+    expect(closePane).toHaveBeenCalled();
+  });
+
+  it("close skips task.cancelled when the crew task is already terminal (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-d1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    const callKinds = (cockpitdCall.mock.calls as Array<[{ kind: string }]>).map(([req]) => req.kind);
+    expect(callKinds).toEqual(["list"]); // only list, no event emitted
+    expect(closePane).toHaveBeenCalled();
+  });
+
+  it("close still calls closePane when daemon is unreachable (#184)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockRejectedValue(new Error("ENOENT: daemon socket not found"));
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(closePane).toHaveBeenCalled();
   });
 
   it("list returns all crews for the project, ignoring non-crew tabs", async () => {

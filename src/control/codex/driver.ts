@@ -21,8 +21,8 @@ export class CodexInteractiveDriver {
   private handshakeP?: Promise<void>;
   private threadByTask = new Map<string, string>();
   private taskByThread = new Map<string, string>();
-  /** taskId → last pending server-request id (for answer()) */
-  private serverRequestByTask = new Map<string, number>();
+  /** taskId → last pending server-request {id, method} (for answer()) */
+  private serverRequestByTask = new Map<string, { id: number; method: string }>();
   private deps: DriverDeps;
 
   constructor(deps: DriverDeps) { this.deps = deps; }
@@ -51,7 +51,16 @@ export class CodexInteractiveDriver {
       const { threadId } = await c.startThread({
         cwd: rec.cwd ?? process.cwd(),
         model: rec.model,
-        sandbox: "workspace-write",
+        // Parity with claude/opencode crews, which run UNSANDBOXED (no Seatbelt).
+        // Codex was the only agent under `workspace-write`, and that FS sandbox
+        // blocked `cockpit crew signal …` from reaching the daemon socket (which
+        // lives outside the workspace) — breaking the done/blocked/failed
+        // lifecycle. Codex's AF_UNIX-socket allowance has no stable config path
+        // (it's gated behind the experimental_network feature), so the surgical
+        // writable_roots escape is not viable. danger-full-access removes the FS
+        // jail so signals work; approvalPolicy still gates risky ops when set to
+        // "untrusted" (the gate axis is independent of the sandbox axis).
+        sandbox: "danger-full-access",
         approvalPolicy: rec.approvalPolicy ?? "never",
         developerInstructions: buildCodexDeveloperInstructions(rec),
       });
@@ -89,10 +98,38 @@ export class CodexInteractiveDriver {
 
   async answer(taskId: string, payload: unknown): Promise<void> {
     const c = this.client!;
-    const reqId = this.serverRequestByTask.get(taskId);
-    if (reqId == null) throw new Error(`no pending server-request for task ${taskId}`);
-    c.respondToServerRequest(reqId, payload);
+    const rec = this.serverRequestByTask.get(taskId);
+    if (rec == null) throw new Error(`no pending server-request for task ${taskId}`);
+    c.respondToServerRequest(rec.id, this.mapAnswerPayload(payload, rec.method));
     this.serverRequestByTask.delete(taskId);
+  }
+
+  /**
+   * Map the captain-facing payload ({text, decision}) to the response shape
+   * the codex app-server expects for the specific request method.
+   *
+   * Old protocol (applyPatchApproval / execCommandApproval):
+   *   { decision: ReviewDecision }  where ReviewDecision = "approved" | "denied" | …
+   *
+   * v2 protocol (item/commandExecution/requestApproval / item/fileChange/requestApproval):
+   *   { decision: CommandExecutionApprovalDecision }  where decision = "accept" | "decline" | …
+   *
+   * Non-approval requests (text input) pass through unchanged.
+   */
+  private mapAnswerPayload(payload: unknown, method: string): unknown {
+    if (typeof payload !== "object" || !payload) return payload;
+    const p = payload as Record<string, unknown>;
+    if (typeof p.decision !== "string") return payload;
+    if (method === "applyPatchApproval" || method === "execCommandApproval") {
+      const d = p.decision === "approve" ? "approved" : "denied";
+      return { decision: d };
+    }
+    if (method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval") {
+      const d = p.decision === "approve" ? "accept" : "decline";
+      return { decision: d };
+    }
+    // Unknown method — send the raw decision value
+    return { decision: p.decision };
   }
 
   async reattach(rec: TaskRecord & { cwd?: string }): Promise<void> {
@@ -130,7 +167,7 @@ export class CodexInteractiveDriver {
       }
     }
     if (!taskId) return;
-    this.serverRequestByTask.set(taskId, r.id);
+    this.serverRequestByTask.set(taskId, { id: r.id, method: r.method });
     const isApproval = r.method.includes("Approval") || r.method.includes("approval");
     if (isApproval) {
       this.deps.emit({

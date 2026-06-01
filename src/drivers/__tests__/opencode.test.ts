@@ -59,6 +59,17 @@ describe("opencode driver", () => {
     expect(cmd).toBe("opencode");
   });
 
+  it("buildCommand interactive with a port binds the embedded server", () => {
+    const cmd = driver.buildCommand({
+      prompt: "first turn",
+      workdir: "/tmp/test",
+      role: "crew",
+      interactive: true,
+      port: 54321,
+    });
+    expect(cmd).toBe("opencode --port 54321");
+  });
+
   it("probes capabilities", async () => {
     const result = await driver.probe();
     expect(result.installed).toBe(true);

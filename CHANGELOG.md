@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-01
+
+This release closes the cross-agent **crew-lifecycle parity** goal: all three
+agents (claude, codex, opencode) now have a controlled lifecycle plus
+notify-and-answer on questions/permissions, each driven by a *reliable* signal
+source rather than screen-scraping.
+
+### Added
+
+- **opencode SSE turn-end bridge.** Interactive opencode crews now launch as
+  `opencode --port <N>`; the daemon opens a long-lived subscription to the
+  crew's `/event` stream and maps the documented `session.idle` event to a
+  turn-end, so it learns a crew is idle without the crew shelling out to
+  cockpit. The daemon no longer sits at `working` forever. (#188)
+- **codex crew sandbox parity.** Codex crews now run with
+  `sandbox: "danger-full-access"`, matching the already-unsandboxed
+  claude/opencode crews, so `cockpit crew signal done|blocked|failed` can reach
+  the daemon socket. The full codex signal lifecycle (question / done / reopen)
+  now works end-to-end. `approvalPolicy` remains an independent axis, so the
+  permission gate still fires under `--approval`. (#190)
+- **Semi-automatic claude crews.** `acceptEdits` permission mode plus a
+  permission allowlist let crews run on cheaper models while still gating risky
+  operations. (#178)
+- **Event-driven permission detection.** The claude `Notification` hook surfaces
+  a real permission prompt as CREW BLOCKED within ~0–3s; the in-cmux notify-relay
+  also detects crews parked at a prompt. (#180, #181)
+- **Trailing-question detection.** A crew that ends a turn on a question is
+  surfaced to the captain as CREW BLOCKED. (#174, #176)
+- **Crew lifecycle test checklist.** A reusable 6-checkpoint regression harness
+  to run on any crew/daemon/relay/template change.
+  (`docs/testing/crew-lifecycle-checklist.md`)
+
+### Fixed
+
+- **codex approval round-trip.** `answer()` maps approve/deny to the codex
+  app-server schema (old `approved`/`denied`, v2 `accept`/`decline`), so captain
+  approvals are accepted instead of silently rejected.
+- **Turn-end no longer clobbers a blocked crew.** `task.turn.completed` from
+  `blocked` is now a no-op, so an app-server/SSE trailing turn-end can't drop the
+  question a `signal blocked` just raised.
+- **Silent mid-turn re-block.** `crew send` to a blocked/awaiting crew re-arms
+  the daemon so a subsequent permission prompt re-fires CREW BLOCKED. (#183)
+- **`crew close` terminalizes the task** via a silent `cancelled` state, ending
+  phantom CREW BLOCKED/IDLE pushes after a captain-initiated close. (#184)
+- **Exactly-once first-turn delivery** plus an opencode boot-race readiness
+  gate. (#175)
+
+### Changed
+
+- **CREW IDLE notifications reverted.** The idle-ping feature (#182/#185/#185b)
+  was removed: it depended on the claude `Stop` hook, which fires unreliably in
+  the claude-mem/cmux environment (a probe sat at `working` for 216s+ with the
+  hook never firing). Reliable idle/turn-end detection now comes per-agent from
+  real protocol events — opencode SSE `session.idle` and codex app-server
+  `TurnCompleted` — instead of a flaky hook.
+
 ## [0.4.0] - 2026-05-29
 
 ### Added

@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { writePerCrewSettings, writePerCrewOpencodeConfig } from "../per-crew-settings.js";
+import {
+  writePerCrewSettings,
+  writePerCrewSettingsLocal,
+  writePerCrewOpencodeConfig,
+  CREW_PERMISSION_ALLOWLIST,
+} from "../per-crew-settings.js";
 
 describe("writePerCrewSettings", () => {
   let tmp: string;
@@ -68,6 +73,64 @@ describe("writePerCrewSettings", () => {
     const out = writePerCrewSettings({ stateRoot: deep, project: "x", taskId: "y" });
     expect(fs.existsSync(out)).toBe(true);
     expect(fs.statSync(path.dirname(out)).isDirectory()).toBe(true);
+  });
+});
+
+describe("writePerCrewSettingsLocal — permission allowlist", () => {
+  let tmp: string;
+  const settingsPath = () => path.join(tmp, ".claude", "settings.local.json");
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-local-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes a permissions.allow starter set covering common dev commands", () => {
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    const json = JSON.parse(fs.readFileSync(settingsPath(), "utf-8"));
+    expect(Array.isArray(json.permissions.allow)).toBe(true);
+    for (const entry of CREW_PERMISSION_ALLOWLIST) {
+      expect(json.permissions.allow).toContain(entry);
+    }
+    // Representative coverage: git mutations, installs, and the test runner.
+    expect(json.permissions.allow).toContain("Bash(git commit:*)");
+    expect(json.permissions.allow).toContain("Bash(npm install:*)");
+    expect(json.permissions.allow).toContain("Bash(vitest:*)");
+  });
+
+  it("does NOT blanket-allow Bash or risky ops (so 2b still surfaces them)", () => {
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    const json = JSON.parse(fs.readFileSync(settingsPath(), "utf-8"));
+    expect(json.permissions.allow).not.toContain("Bash(*)");
+    expect(json.permissions.allow).not.toContain("Bash(rm:*)");
+    expect(json.permissions.allow).not.toContain("Bash(curl:*)");
+  });
+
+  it("merges with (does not clobber) a pre-existing permissions.allow", () => {
+    fs.mkdirSync(path.join(tmp, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsPath(),
+      JSON.stringify({ permissions: { allow: ["Bash(python3:*)"], deny: ["Bash(sudo:*)"] } }, null, 2),
+    );
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    const json = JSON.parse(fs.readFileSync(settingsPath(), "utf-8"));
+    // The user's own entry survives...
+    expect(json.permissions.allow).toContain("Bash(python3:*)");
+    // ...alongside the starter set...
+    expect(json.permissions.allow).toContain("Bash(git push:*)");
+    // ...and unrelated permission keys are preserved.
+    expect(json.permissions.deny).toEqual(["Bash(sudo:*)"]);
+  });
+
+  it("is idempotent — does not duplicate allowlist entries on a second write", () => {
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    const json = JSON.parse(fs.readFileSync(settingsPath(), "utf-8"));
+    const counts = new Map<string, number>();
+    for (const e of json.permissions.allow) counts.set(e, (counts.get(e) ?? 0) + 1);
+    for (const [, n] of counts) expect(n).toBe(1);
   });
 });
 

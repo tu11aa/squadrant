@@ -61,17 +61,30 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.blocked":
       // ev.reason is protocol/logging-only and intentionally not persisted;
       // only `question` is stored on the record.
+      // Idempotency (#174): the explicit `cockpit crew signal blocked` fires
+      // BEFORE the turn ends; the auto-detect Stop hook may then re-emit
+      // task.blocked on an already-blocked task. Treat a repeat block as a
+      // no-op so the FIRST (explicit) question wins and no duplicate CREW
+      // BLOCKED fires. Terminal states are already absorbed above.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       return { ...base, state: "blocked", question: ev.question };
     case "task.done":
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
+    case "task.cancelled":
+      return { ...base, state: "cancelled" };
     case "task.session":
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":
       return { ...stampAttempt(base, {}, now), state: "working" };
     case "task.turn.completed":
       // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
+      // A turn ending while blocked must NOT unblock — only the captain's answer
+      // (task.started via `crew send`) clears blocked. Mirrors task.progress: the
+      // opencode SSE bridge emits task.turn.completed right after an explicit
+      // `signal blocked`, and that trailing turn-end must not drop the question.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       return { ...stampAttempt(base, {}, now), state: "awaiting-input" };
     case "task.delta":
       return stampAttempt(base, {}, now);  // heartbeat-only

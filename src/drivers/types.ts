@@ -24,10 +24,19 @@ export interface SpawnOptions {
   autoApprove?: boolean;
   jsonOutput?: boolean;
   promptFile?: string;
+  // Claude's --permission-mode value (e.g. "acceptEdits", "plan", "default").
+  // "acceptEdits" auto-accepts file edits while still prompting for risky ops
+  // (Bash, etc.) — the semi-automatic gate used for cheaper-model crews. If
+  // autoApprove is also set, --dangerously-skip-permissions supersedes this.
+  permissionMode?: string;
   // Interactive crew sessions: drivers should NOT bake the prompt into the
   // command (no `-p`). Caller will deliver the prompt via runtime.send after
   // the CLI is ready, so the session stays alive between turns.
   interactive?: boolean;
+  // TCP port for an agent's embedded HTTP server. Opencode interactive crews
+  // launch as `opencode --port <N>` so the daemon's SSE bridge can subscribe
+  // to the crew's /event stream for reliable turn-end detection.
+  port?: number;
   // Per-invocation settings file (Claude's --settings flag). The
   // daemon-supervised claude crew spawn writes a per-crew settings.json
   // containing the cockpit Stop hook and passes the path here so the hook

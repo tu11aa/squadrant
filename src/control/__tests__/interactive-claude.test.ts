@@ -75,4 +75,11 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.SubagentStop[0].hooks[0].command).toContain(HOOK_CMD);
     expect(out.hooks.SessionEnd[0].hooks[0].command).toContain(HOOK_CMD);
   });
+
+  it("registers a Notification hook for instant permission-prompt detection (#notification-hook)", () => {
+    const out = mergeClaudeHooks({}, HOOK_CMD);
+    expect(out.hooks.Notification).toBeDefined();
+    expect(out.hooks.Notification[0].hooks[0].command).toContain(HOOK_CMD);
+    expect(out.hooks.Notification[0].hooks[0].command).toContain("Notification");
+  });
 });

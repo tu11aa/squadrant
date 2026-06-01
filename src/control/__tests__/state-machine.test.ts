@@ -42,6 +42,40 @@ describe("state-machine reduce", () => {
     expect(next.question).toBe("which path?");
   });
 
+  it("working + task.blocked → blocked carrying the question (#174 auto-detect)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.blocked", id: "t1", reason: "crew asked a question (auto-detected)", question: "which db?" }, 3600);
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("which db?");
+  });
+
+  it("blocked + task.blocked is idempotent — the FIRST question wins, no overwrite (#174)", () => {
+    // The explicit `cockpit crew signal blocked` fires BEFORE the turn ends; the
+    // auto-detect Stop hook may re-emit task.blocked afterward. The first question
+    // must survive so the captain sees what the crew actually typed.
+    const next = reduce(
+      rec({ state: "blocked", question: "explicit question?" }),
+      { type: "task.blocked", id: "t1", reason: "crew asked a question (auto-detected)", question: "auto-detected question?" },
+      4200,
+    );
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("explicit question?");
+    expect(next.lastHeartbeat).toBe(4200); // liveness still updates
+  });
+
+  it("blocked + task.turn.completed does NOT auto-unblock (opencode SSE bridge trailing idle)", () => {
+    // An opencode crew runs `signal blocked` mid-turn; the turn then ends and the
+    // SSE bridge emits task.turn.completed. That trailing turn-end must preserve
+    // the blocked state + question — only the captain's answer clears it.
+    const next = reduce(
+      rec({ state: "blocked", question: "which color?" }),
+      { type: "task.turn.completed", id: "t1", turnId: "ses_x" },
+      4100,
+    );
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("which color?");
+    expect(next.lastHeartbeat).toBe(4100); // liveness still updates
+  });
+
   it("blocked + task.progress does NOT auto-unblock (explicit reply required)", () => {
     const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.progress", id: "t1" }, 4000);
     expect(next.state).toBe("blocked");
@@ -147,6 +181,42 @@ describe("state-machine reduce", () => {
   it("awaiting-input + task.failed still transitions to failed", () => {
     const next = reduce(rec({ state: "awaiting-input" }), { type: "task.failed", id: "t1", error: "boom" }, 11000);
     expect(next.state).toBe("failed");
+  });
+
+  // ── Issue #184: crew close terminalization ──────────────────────────────────
+  it("task.cancelled on working task → state 'cancelled', terminal and silent (#184)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.cancelled", id: "t1", reason: "closed by captain" }, 5000);
+    expect(next.state).toBe("cancelled");
+    expect(next.lastHeartbeat).toBe(5000);
+    expect(next.lastEvent).toBe("task.cancelled");
+  });
+
+  it("task.cancelled on blocked task → cancelled (#184)", () => {
+    const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.cancelled", id: "t1" }, 5001);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("task.cancelled on awaiting-input task → cancelled (#184)", () => {
+    const next = reduce(rec({ state: "awaiting-input" }), { type: "task.cancelled", id: "t1" }, 5002);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("cancelled task absorbs task.progress — same reference, no transition (#184)", () => {
+    const cancelled = rec({ state: "cancelled" });
+    const next = reduce(cancelled, { type: "task.progress", id: "t1" }, 6000);
+    expect(next).toBe(cancelled);
+  });
+
+  it("cancelled task absorbs task.blocked — stays cancelled, no re-notification (#184)", () => {
+    const cancelled = rec({ state: "cancelled" });
+    const next = reduce(cancelled, { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 6001);
+    expect(next).toBe(cancelled);
+  });
+
+  it("done task absorbs task.cancelled — already terminal, no state change (#184)", () => {
+    const done = rec({ state: "done", resultRef: "/r" });
+    const next = reduce(done, { type: "task.cancelled", id: "t1", reason: "closed" }, 7000);
+    expect(next).toBe(done);
   });
 });
 

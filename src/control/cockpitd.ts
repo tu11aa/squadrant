@@ -9,10 +9,12 @@ import { createDaemon } from "./daemon.js";
 import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "./protocol.js";
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver } from "./codex/driver.js";
+import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
 import { readdir } from "node:fs/promises";
 import type { Gate, TaskRecord, ControlEvent } from "./types.js";
+import { TERMINAL_STATES } from "./types.js";
 import type { Socket } from "node:net";
 
 export interface CockpitdOpts {
@@ -49,6 +51,11 @@ export interface CockpitdOpts {
     steer: (taskId: string, text: string) => Promise<void>;
     interrupt: (taskId: string) => Promise<void>;
     answer: (taskId: string, payload: unknown) => Promise<void>;
+  };
+  /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
+  opencodeBridge?: {
+    start: (o: { taskId: string; port: number }) => void;
+    stop: (taskId: string) => void;
   };
 }
 
@@ -163,6 +170,21 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     },
   });
 
+  // ── Opencode SSE bridge ───────────────────────────────────────────────────
+  // Interactive opencode crews launch as `opencode --port <N>`; this bridge
+  // subscribes to each crew's /event stream and maps `session.idle` →
+  // task.turn.completed so the daemon learns turn-end without the crew shelling
+  // out to cockpit. emit resolves the project from the store (events carry only
+  // the task id), mirroring the codexDriver emit above.
+  const opencodeBridge = opts.opencodeBridge ?? new OpencodeSseBridge({
+    emit: (ev) => {
+      const found = store.listAll().find((r) => r.id === ev.id);
+      if (!found) return;
+      void d.handle({ kind: "event", project: found.project, event: ev });
+    },
+    log,
+  });
+
   const ingest = (project: string) => (e: import("./types.js").ControlEvent) =>
     void d.handle({ kind: "event", project, event: e });
 
@@ -217,10 +239,12 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       if (rec.provider === "opencode") {
         // Opencode interactive crews run in a cmux tab — same approach as
         // claude. The daemon owns the state ledger, not the process. Emit
-        // task.started so the record transitions submitted → working, then
-        // the watchdog sweeps for stalls if no heartbeat arrives. Terminal
-        // state comes from explicit `cockpit crew signal` in the template.
+        // task.started so the record transitions submitted → working. Terminal
+        // state still comes from explicit `cockpit crew signal` in the template;
+        // the SSE bridge (when serverPort is set) adds reliable turn-end
+        // (idle) detection on top so the daemon isn't stuck at "working".
         ingest(rec.project)({ type: "task.started", id: rec.id });
+        if (rec.serverPort) opencodeBridge.start({ taskId: rec.id, port: rec.serverPort });
         return;
       }
       throw new Error(
@@ -246,6 +270,16 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     codexDriver.reattach(rec).catch((e: unknown) => {
       log(`reattach failed for ${rec.id}: ${(e as Error).message}`);
     });
+  }
+
+  // Re-subscribe the opencode SSE bridge after a daemon bounce: the crew's
+  // cmux pane (and its `opencode --port <N>` server) survives a daemon restart,
+  // so a non-terminal opencode crew with a known serverPort can be re-attached.
+  for (const rec of store.listAll()) {
+    if (rec.provider !== "opencode" || rec.mode !== "interactive") continue;
+    if (TERMINAL_STATES.has(rec.state)) continue;
+    if (!rec.serverPort) continue;
+    opencodeBridge.start({ taskId: rec.id, port: rec.serverPort });
   }
 
   const server = startServer(sockPath, {

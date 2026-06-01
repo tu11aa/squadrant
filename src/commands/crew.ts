@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
@@ -28,6 +29,22 @@ const SEND_FIRST_TURN_FLOOR_MS = 1500;
 const POLL_INTERVAL_MS = 750;
 const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
 const POST_SEND_CHECK_MS = 750;
+
+/** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
+ *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
+ *  between release and the crew binding the port; acceptable for local
+ *  single-user spawns (and the SSE bridge retries until the server is up). */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error("no free port assigned"))));
+    });
+  });
+}
 
 function titleFor(project: string, name: string): string {
   return `🔧 ${project}:${name}`;
@@ -95,6 +112,7 @@ export async function sendFirstTurnWhenReady(
   runtime: RuntimeDriver,
   pane: PaneRef,
   task: string,
+  preLaunchScreen: string,
 ): Promise<void> {
   await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
 
@@ -106,7 +124,13 @@ export async function sendFirstTurnWhenReady(
 
   for (let i = 0; i < maxPolls && !stable; i++) {
     const screen = (await runtime.readPaneScreen(pane)) ?? "";
-    if (screen.length > 0 && screen === previousScreen) {
+    // Ready = the agent prompt is actually up: screen is non-empty, settled
+    // (unchanged between two consecutive reads), AND has advanced past the
+    // un-entered launch command line. The last condition prevents sending the
+    // task onto the shell line before the TUI takes over — which concatenates
+    // onto the launch command and triggers a shell parse error (opencode
+    // boot-race). A momentarily static launch line is not readiness.
+    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen) {
       stable = true;
     } else {
       previousScreen = screen;
@@ -114,11 +138,18 @@ export async function sendFirstTurnWhenReady(
     }
   }
 
+  // Snapshot the screen immediately before sending so the post-send check can
+  // tell whether the keystrokes were received. Comparing against the raw task
+  // text is unreliable: sendToPane collapses newlines to spaces (#136), so a
+  // multi-line task never appears verbatim in the single-line pane render and
+  // the check would always re-send a duplicate first turn (#168).
+  const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.sendToPane(pane, task);
 
   await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
   const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-  if (!afterScreen.includes(task)) {
+  if (afterScreen === preSendScreen) {
+    // Screen unchanged after sending → nothing was received at all; re-send once.
     await runtime.sendToPane(pane, task);
   }
 }
@@ -240,6 +271,10 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       role: "crew",
       promptFile,
       interactive: true,
+      // Semi-automatic gate: auto-accept file edits, still prompt for risky
+      // ops (Bash, etc.). Replaces reliance on cmux's unreliable auto-accept
+      // toggle and enables running crews on cheaper models.
+      permissionMode: "acceptEdits",
       ...(crewModel ? { model: crewModel } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
@@ -249,7 +284,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     // running inside the crew's cmux tab can identify their task.
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -259,6 +295,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // does the actual CLI launch. No hook bridge (opencode has no hooks); the
   // crew template instructs explicit `cockpit crew signal done|blocked|failed`.
   if (agentName === "opencode") {
+    // Bind the crew's embedded opencode HTTP server on a known port so the
+    // daemon's SSE bridge can subscribe to /event for turn-end detection.
+    const serverPort = await getFreePort();
     const req = buildDispatchRequest({
       provider: "opencode",
       mode: "interactive",
@@ -268,8 +307,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       name,
       // opencode has no heartbeat hook, so a normal budget would false-stall
       // every crew after 5min; use a 24h budget to effectively disable stall
-      // detection until a plugin-based liveness bridge exists.
+      // detection. The SSE bridge (serverPort) provides turn-end liveness.
       budgetMs: 86400000,
+      serverPort,
     });
     const rec = (await cockpitdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({
@@ -284,13 +324,15 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       promptFile,
       interactive: true,
       model: crewModel,
+      port: serverPort,
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -314,7 +356,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // the task as the first prompt. For non-interactive (legacy) the prompt is
   // already baked into cliCommand, so we're done.
   if (interactive) {
-    await sendFirstTurnWhenReady(runtime, pane, input.task);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
   }
 
   return { ...pane, title };
@@ -368,13 +411,21 @@ export async function runCrewSend(project: string, name: string, message: string
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
   }
-  // Best-effort: if the daemon task for this crew is terminal, reopen it so
-  // the next signal done is a real transition and fires CREW DONE (#148).
+  // Best-effort attention-state handling before delivering the captain's answer.
+  // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
+  // Blocked task: emit task.started to clear blocked→working so a subsequent real
+  // permission prompt re-fires CREW BLOCKED (#182). Without this the second block
+  // hits the idempotency guard (state-machine:69) and the captain misses it.
+  // Awaiting-input task: same resume — crew re-enters working so the next block fires.
   try {
     const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
-    const task = tasks.find((t) => t.name === name && TERMINAL_STATES.has(t.state));
+    const task = tasks.find((t) => t.name === name);
     if (task) {
-      await cockpitdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
+      if (TERMINAL_STATES.has(task.state)) {
+        await cockpitdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
+      } else if (task.state === "blocked" || task.state === "awaiting-input") {
+        await cockpitdCall({ kind: "event", project, event: { type: "task.started", id: task.id } });
+      }
     }
   } catch {
     // Swallow daemon errors so crews without a daemon or offline daemon
@@ -397,6 +448,20 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   const crew = await findCrew(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
+  }
+  // Terminalize the daemon task before closing the pane (#184). Without this,
+  // non-terminal tasks (blocked/working/awaiting-input) linger in the daemon
+  // ledger and keep firing phantom CREW BLOCKED/IDLE pushes until the next
+  // daemon restart. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
+  // firePush stays silent — captain initiated the close, no notification needed.
+  try {
+    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const task = tasks.find((t) => t.name === name);
+    if (task && !TERMINAL_STATES.has(task.state)) {
+      await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
+    }
+  } catch {
+    // Swallow daemon errors — a crew without a daemon must still close.
   }
   await runtime.closePane(crew);
 }
