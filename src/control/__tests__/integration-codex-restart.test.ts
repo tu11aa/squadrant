@@ -22,11 +22,15 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
       say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn(),
     };
     let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fakeDriver1 } as any);
+    // Fresh heartbeat = a still-live crew. The reattach guard only resumes
+    // recently-active tasks; stale zombies (dead crews) are skipped to avoid the
+    // boot MCP storm. See shouldReattachCodex.
+    const fresh = Date.now();
     await sendRequest(sock, { kind: "seed", record: {
       id: "tc1", project: "p", provider: "codex", mode: "interactive",
-      state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
+      state: "working", task: "x", createdAt: 1, lastHeartbeat: fresh,
       lastEvent: "task.started", heartbeatBudgetMs: 999999,
-      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1, resumeRef: "TH-OLD" }],
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: fresh, resumeRef: "TH-OLD" }],
     } });
     h.stop();
 

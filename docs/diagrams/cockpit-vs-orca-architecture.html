@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>claude-cockpit vs Orca — Architecture Diagrams</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --ink: #e6edf3;
+    --muted: #9aa7b4;
+    --line: #2a313c;
+    --accent: #4f9cf9;
+    --accent-2: #f7a23b;
+    --green: #5dd39e;
+    --pink: #f778ba;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 28px 80px; }
+  header.page { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 40px; }
+  h1 { font-size: 30px; margin: 0 0 8px; letter-spacing: -0.4px; }
+  h1 .vs { color: var(--accent-2); }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 0; }
+  .intro { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin: 28px 0 0; }
+  .intro p { margin: 0 0 10px; }
+  .intro p:last-child { margin-bottom: 0; }
+  section { margin: 56px 0 0; }
+  section > h2 {
+    font-size: 23px; margin: 0 0 6px; padding-bottom: 10px; letter-spacing: -0.3px;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
+  }
+  section.orca > h2 { border-bottom-color: var(--accent-2); }
+  section.compare > h2 { border-bottom-color: var(--green); }
+  .lede { color: var(--muted); margin: 14px 0 26px; max-width: 80ch; }
+  h3 { font-size: 17px; margin: 36px 0 4px; color: var(--ink); }
+  .caption { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+  .diagram {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px; overflow-x: auto;
+    margin: 0 0 8px;
+  }
+  .mermaid { display: flex; justify-content: center; }
+  .legend { color: var(--muted); font-size: 12.5px; margin: 4px 2px 0; }
+  .legend code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; margin: 18px 0 0; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--accent); font-weight: 600; border-bottom: 2px solid var(--line); }
+  td.cock { color: var(--ink); }
+  td.orca { color: var(--ink); }
+  tr:hover { background: rgba(255,255,255,0.02); }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.8px; }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); margin-left: 8px;
+    vertical-align: middle;
+  }
+  .note { background: var(--panel-2); border-left: 3px solid var(--accent-2); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 22px 0; color: var(--ink); }
+  .note strong { color: var(--accent-2); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+  .card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card h4 { margin: 0 0 8px; font-size: 14px; color: var(--green); }
+  .card.diff h4 { color: var(--pink); }
+  .card ul { margin: 0; padding-left: 18px; }
+  .card li { margin: 4px 0; font-size: 13.5px; }
+  footer { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  footer .small { font-size: 12px; opacity: 0.8; }
+  a { color: var(--accent); }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <h1>claude-cockpit <span class="vs">vs</span> Orca</h1>
+    <p class="subtitle">Two approaches to multi-agent orchestration — architecture diagrams &amp; mapping</p>
+    <div class="intro">
+      <p>This page maps the real architecture of <strong>claude-cockpit</strong> (this repo, as of develop branch May 2026) against <strong>Orca</strong> (stablyai/orca, studied in <code>docs/research/2026-05-19-orca-full-system-study.md</code>). Every box in the cockpit diagrams corresponds to a real file or component in <code>src/</code>; the Orca boxes are sourced from the research docs in this repo.</p>
+      <p>The two systems converged on the same philosophy from opposite starting points. Both are a thin CLI "ignition key" over a long-lived daemon that supervises agent processes; both treat <em>turn-end as liveness, not completion</em>; both make skills portable and <code>AGENTS.md</code> canonical. They diverge on the hardest problem — how to drive a heterogeneous CLI agent and detect when it is done — and cockpit's recent control-plane + interactive-codex work was explicitly informed by studying Orca.</p>
+    </div>
+  </header>
+
+  <!-- ============================================================ COCKPIT -->
+  <section class="cockpit">
+    <h2>1 · Cockpit architecture</h2>
+    <p class="lede">Cockpit is a multi-agent orchestration layer that runs agent sessions inside the <strong>cmux</strong> terminal multiplexer, coordinated by an LLM "Command" session at the top and supervised by a launchd-managed daemon (<code>cockpitd</code>) underneath. The orchestration brain is itself an agent session, not hardcoded code.</p>
+
+    <h3>1a · The agent hierarchy <span class="pill">conceptual model</span></h3>
+    <p class="caption">Command → Captain → Crew, plus the autonomous Reactor. Each role is an agent session with a model routed by role; the CLI only bootstraps and wires sessions together.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    user([Human operator]):::human
+    user --> cmd
+
+    subgraph hier["Agent hierarchy &nbsp;·&nbsp; one cmux workspace per project"]
+      direction TB
+      cmd["🏛️ Command session<br/><span style='font-size:11px'>opus · top-level orchestrator<br/>NEVER reads project source</span>"]:::command
+      cmd -->|"cockpit launch &lt;project&gt;"| cap
+      cap["⚓ Captain session<br/><span style='font-size:11px'>opus · per-project lead<br/>plans, delegates, close-out</span>"]:::captain
+      cap -->|"cockpit crew spawn"| crew1["🔧 Crew (claude)<br/><span style='font-size:11px'>sonnet · tab/pane in captain ws</span>"]:::crew
+      cap -->|"cockpit crew spawn --agent codex"| crew2["🔧 Crew (codex)<br/><span style='font-size:11px'>via control plane + attach renderer</span>"]:::crew
+    end
+
+    react["⚡ Reactor engine<br/><span style='font-size:11px'>dedicated workspace · polls GitHub<br/>reactions.json rules → delegate</span>"]:::reactor
+    react -.->|"send-to-command / delegate-to-captain"| cmd
+    react -.->|"escalate / nudge"| cap
+
+    classDef human fill:#222a36,stroke:#4f9cf9,color:#e6edf3
+    classDef command fill:#1d2b45,stroke:#4f9cf9,color:#e6edf3
+    classDef captain fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+    classDef crew fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef reactor fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Roles &amp; model routing live in <code>src/config.ts</code> (<code>RoleConfig</code>, <code>ModelRoutingConfig</code>). Crew spawn: <code>src/commands/crew.ts</code>. Reactor: <code>src/commands/reactor.ts</code>, <code>src/reactor/</code>. Command hard-rule "never reads project source" is a project invariant.</p>
+
+    <h3>1b · Runtime &amp; CLI surface — how sessions actually live <span class="pill">cmux substrate</span></h3>
+    <p class="caption">cmux is the terminal-multiplexer substrate: each project is a workspace; each agent is a tab/pane (a "surface"). The CLI drives cmux through a <code>RuntimeDriver</code> and finds named crews by tab title (🔧 emoji prefix).</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    cli["cockpit CLI<br/><span style='font-size:11px'>src/index.ts (commander)</span>"]:::cli
+    cli --> sync["ensureRuntimeSynced()<br/><span style='font-size:11px'>self-heal ~/.config/cockpit copy<br/>src/lib/runtime-sync.ts</span>"]:::lib
+    cli --> ensure["ensureDaemon()<br/><span style='font-size:11px'>self-heal launchd plist (idempotent)<br/>src/control/launchd.ts</span>"]:::lib
+
+    cli --> rt["RuntimeDriver (cmux)<br/><span style='font-size:11px'>src/runtimes/cmux.ts</span>"]:::driver
+    rt -->|"new-workspace / new-surface / new-pane<br/>send · send-key · read-screen · tree"| cmux
+
+    subgraph cmux["cmux — terminal multiplexer (substrate)"]
+      direction TB
+      ws["workspace:N &nbsp;(one per project)"]:::ws
+      ws --> s1["surface ⚓ captain tab"]:::surface
+      ws --> s2["surface 🔧 crew-1 tab"]:::surface
+      ws --> s3["surface 🔧 crew-2 (codex attach)"]:::surface
+    end
+
+    cli --> agentdrv["AgentDriver registry<br/><span style='font-size:11px'>builds the CLI command per agent<br/>src/drivers/ (buildCommand)</span>"]:::driver
+    agentdrv -.->|"claude / opencode (interactive)<br/>codex / gemini / aider"| s2
+
+    classDef cli fill:#1d2b45,stroke:#4f9cf9,color:#e6edf3
+    classDef lib fill:#1c2230,stroke:#9aa7b4,color:#e6edf3
+    classDef driver fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef ws fill:#162033,stroke:#4f9cf9,color:#e6edf3
+    classDef surface fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Runtime contract: <code>src/runtimes/types.ts</code> (<code>RuntimeDriver</code>, <code>WorkspaceRef</code>, <code>PaneRef</code>). cmux binary is invoked via <code>execSync</code> in <code>src/runtimes/cmux.ts</code>. Per-agent command building: <code>src/drivers/{claude,codex,gemini,aider,opencode}.ts</code>.</p>
+
+    <h3>1c · The control plane — <code>cockpitd</code> daemon <span class="pill">src/control/</span></h3>
+    <p class="caption">A launchd-managed daemon that owns agent task lifecycle. State is a pure reducer over events; tasks are typed JSON records on disk; a watchdog detects stalls; an attach protocol streams interactive sessions over a unix socket.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    client["CLI client<br/><span style='font-size:11px'>crew dispatch / status / tasks / attach<br/>src/commands/crew-control.ts</span>"]:::cli
+    client -->|"newline-JSON over AF_UNIX<br/>~/.config/cockpit/cockpit.sock"| sock
+
+    subgraph daemon["cockpitd daemon &nbsp;·&nbsp; launchd KeepAlive · src/control/cockpitd.ts"]
+      direction TB
+      sock["protocol server<br/><span style='font-size:11px'>protocol.ts · req/res + attach fan-out</span>"]:::proto
+      sock --> d["daemon.handle()<br/><span style='font-size:11px'>daemon.ts · dispatch/event/status/list/reply/gate-resolve</span>"]:::core
+      d --> sm["reduce(state, event)<br/><span style='font-size:11px'>state-machine.ts · PURE · TERMINAL_STATES<br/>turn-end = liveness, NEVER completion</span>"]:::core
+      d --> store["task store<br/><span style='font-size:11px'>store.ts · atomic JSON per task<br/>path-segment hardened</span>"]:::store
+      d --> wd["watchdog sweep<br/><span style='font-size:11px'>watchdog.ts · stalled = RECOVERABLE</span>"]:::core
+      d --> rec["reconcile() on boot<br/><span style='font-size:11px'>crash recovery + restart-reattach</span>"]:::core
+    end
+
+    d -->|"mode = headless"| hl["runHeadless()<br/><span style='font-size:11px'>headless-launcher.ts · daemon-owned child PID<br/>claude -p / opencode run / codex exec --json</span>"]:::launch
+    d -->|"mode = interactive (codex)"| codex
+
+    subgraph codex["Interactive codex path"]
+      direction TB
+      drv["CodexInteractiveDriver<br/><span style='font-size:11px'>codex/driver.ts · 1 client, threadId↔taskId</span>"]:::launch
+      drv -->|"JSON-RPC 2.0 over stdio"| as["AppServerClient<br/><span style='font-size:11px'>codex/app-server-client.ts<br/>initialize → initialized → thread/start</span>"]:::launch
+      as -->|"spawn"| cx["codex app-server<br/><span style='font-size:11px'>child process</span>"]:::ext
+    end
+
+    store -. "TaskRecord{ state, attempts[], gates?,<br/>resumeRef, roleInstructions }" .-> diskNote[(per-task JSON<br/>~/.config/cockpit/state)]:::disk
+
+    classDef cli fill:#1d2b45,stroke:#4f9cf9,color:#e6edf3
+    classDef proto fill:#162033,stroke:#4f9cf9,color:#e6edf3
+    classDef core fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+    classDef store fill:#1c2230,stroke:#9aa7b4,color:#e6edf3
+    classDef launch fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef ext fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+    classDef disk fill:#162033,stroke:#9aa7b4,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Files: <code>cockpitd.ts</code> (assembly + attach fan-out + gate promotion), <code>daemon.ts</code> (request handler), <code>state-machine.ts</code> (<code>reduce</code>), <code>store.ts</code> (atomic store), <code>watchdog.ts</code> (<code>evaluateStall</code>/<code>recoverStall</code>), <code>protocol.ts</code> (AF_UNIX framing + <code>AttachFrame</code>), <code>launchd.ts</code> (plist self-heal), <code>types.ts</code> (<code>TaskRecord</code>, <code>DispatchAttempt</code>, <code>Gate</code>).</p>
+
+    <h3>1d · Interactive-codex end-to-end <span class="pill">attach renderer in cmux</span></h3>
+    <p class="caption">A codex crew runs as a daemon-owned app-server thread, streamed live into a cmux tab via the attach protocol. Human-in-the-loop questions promote to a <em>Gate</em> if no client is attached. This is the structured-state path cockpit chose over screen-scraping.</p>
+    <div class="diagram">
+      <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Cap as Captain
+    participant CLI as cockpit crew spawn
+    participant D as cockpitd / CodexInteractiveDriver
+    participant AS as codex app-server JSON-RPC
+    participant Tab as cmux tab attach renderer
+
+    Cap->>CLI: crew spawn with task and roleInstructions
+    CLI->>D: dispatch provider=codex mode=interactive
+    D->>AS: initialize, initialized, thread/start
+    AS-->>D: returns threadId, resumeRef persisted on transition
+    CLI->>Tab: open tab, run cockpit crew attach taskId
+    Tab->>D: op=attach taskId over AF_UNIX
+    CLI->>D: first turn, op=say with task arg
+    D->>AS: turn/start
+    AS-->>D: notifications, deltas and turn lifecycle
+    D-->>Tab: stream AttachFrames, delta / turn-started / turn-completed
+    AS-->>D: serverRequest, approval or input
+    alt client attached
+        D-->>Tab: input-requested or approval-requested
+        Tab->>D: op=answer with payload
+        D->>AS: respondToServerRequest
+    else no client for 5s
+        D->>D: promote to Gate, state pending
+        Note over D: Captain resolves via crew reply --gate
+    end
+      </div>
+    </div>
+    <p class="legend">Spawn: <code>runCodexInteractiveSpawn</code> in <code>crew.ts</code>; first-turn delivery + dispatch helpers in <code>crew-control.ts</code>; the renderer (framed turns, status line, approve/deny prompts) is <code>crew-attach.ts</code>; gate promotion + answer routing live in <code>cockpitd.ts</code> / <code>driver.ts</code>. <code>roleInstructions</code> → codex <code>developerInstructions</code> gives parity with claude's <code>--append-system-prompt-file</code>.</p>
+
+    <h3>1e · The four plugin slots &amp; the runtime layout <span class="pill">extension model</span></h3>
+    <p class="caption">Cockpit's non-Claude future rests on four pluggable slots plus the agent-driver abstraction. Plus the persistence surfaces: Obsidian hub-and-spoke vaults and the GitHub reactor.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    core["cockpit core<br/><span style='font-size:11px'>config.ts selects implementations per project</span>"]:::core
+
+    core --> s_rt["① runtime slot<br/><span style='font-size:11px'>src/runtimes/ · cmux (only impl)</span>"]:::slot
+    core --> s_ws["② workspace slot<br/><span style='font-size:11px'>src/workspaces/ · obsidian</span>"]:::slot
+    core --> s_tr["③ tracker slot<br/><span style='font-size:11px'>src/trackers/ · github</span>"]:::slot
+    core --> s_no["④ notifier slot<br/><span style='font-size:11px'>src/notifiers/ · cmux</span>"]:::slot
+
+    core --> agents["agent drivers (cross-cutting)<br/><span style='font-size:11px'>src/drivers/ · claude·codex·gemini·aider·opencode</span>"]:::slot
+    core --> proj["projection layer<br/><span style='font-size:11px'>src/projection/ · cross-agent AGENTS.md/CLAUDE.md<br/>codex·cursor·gemini·opencode targets</span>"]:::slot
+
+    s_ws --> vault
+
+    subgraph vault["Obsidian hub-and-spoke vaults"]
+      direction TB
+      hub["hub vault (~/cockpit-hub)<br/><span style='font-size:11px'>status.md · daily-logs · cross-project</span>"]:::vaultn
+      hub --> spoke["one spoke vault per project<br/><span style='font-size:11px'>status · learnings · wiki subdir</span>"]:::vaultn
+    end
+
+    s_tr --> reactor["Reactor (GitHub polling)<br/><span style='font-size:11px'>reactions.json rules → auto-delegate<br/>src/reactor/ + src/commands/reactor.ts</span>"]:::reactorn
+
+    classDef core fill:#1d2b45,stroke:#4f9cf9,color:#e6edf3
+    classDef slot fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef vaultn fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+    classDef reactorn fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Slot registries: <code>src/{runtimes,workspaces,trackers,notifiers}/registry.ts</code>. Config wiring: <code>src/config.ts</code> (<code>runtime</code>/<code>workspace</code>/<code>tracker</code>/<code>notifier</code> fields). Source lives at <code>~/me/claude-cockpit</code>; runtime copy at <code>~/.config/cockpit</code> (self-healed on every CLI run); hub vault at <code>~/cockpit-hub</code>.</p>
+  </section>
+
+  <!-- ============================================================ ORCA -->
+  <section class="orca">
+    <h2>2 · Orca architecture</h2>
+    <p class="lede">Orca is an Electron desktop IDE that hosts <em>any</em> CLI agent as its native interactive TUI inside a <code>node-pty</code>, rendered with xterm.js, one per git-worktree pane. It is fundamentally a terminal multiplexer for agents, with a PTY daemon, a unified agent-status pipeline, and a polling orchestration coordinator bolted on. (Source: <code>docs/research/2026-05-19-orca-full-system-study.md</code>.)</p>
+
+    <h3>2a · Orca system layers</h3>
+    <p class="caption">Electron main owns truth; renderer is a view; an out-of-process PTY daemon survives app restarts; a loopback hook server normalizes every agent's native events into 4 canonical states.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    userO([Human / mobile app]):::human
+    userO --> ui
+
+    subgraph electron["Electron app"]
+      direction TB
+      ui["renderer (xterm.js)<br/><span style='font-size:11px'>view only · src/renderer</span>"]:::view
+      main["main process (truth)<br/><span style='font-size:11px'>src/main · runtime + RPC</span>"]:::core
+      ui --- main
+    end
+
+    cliO["orca CLI (ignition key)<br/><span style='font-size:11px'>src/cli · thin RPC client + app launcher</span>"]:::cli
+    cliO -->|"AF_UNIX / WS RPC"| main
+
+    main -->|"fork()"| pdaemon
+
+    subgraph pdaemon["PTY daemon (out-of-process · src/main/daemon, 59 files)"]
+      direction TB
+      thost["terminal-host<br/><span style='font-size:11px'>@xterm/headless + SerializeAddon</span>"]:::core
+      thost --> snap["server-side rendered snapshot<br/><span style='font-size:11px'>getSnapshot() · final checkpoint on exit</span>"]:::store
+      thost --> pv["local-pty / ssh-pty provider<br/><span style='font-size:11px'>node-pty children · one per worktree pane</span>"]:::launch
+      ver["PROTOCOL_VERSION = 7<br/><span style='font-size:11px'>children outlive app upgrades</span>"]:::store
+    end
+
+    pv --> ag["agent TUI in pty<br/><span style='font-size:11px'>30 agents · prompt typed in</span>"]:::ext
+    ag -.->|"native hooks POST"| hooks
+
+    subgraph hooks["Agent-status pipeline (loopback HTTP, bearer token)"]
+      direction TB
+      hsrv["agent-hooks/server.ts<br/><span style='font-size:11px'>9 per-agent hook-service.ts installers</span>"]:::core
+      hsrv --> norm["agent-hook-listener.ts<br/><span style='font-size:11px'>normalize&lt;Agent&gt;Event() · never-guarded switch<br/>→ working | blocked | waiting | done</span>"]:::core
+    end
+
+    classDef human fill:#222a36,stroke:#f7a23b,color:#e6edf3
+    classDef view fill:#1c2230,stroke:#9aa7b4,color:#e6edf3
+    classDef core fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+    classDef store fill:#1c2230,stroke:#9aa7b4,color:#e6edf3
+    classDef launch fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef cli fill:#1d2b45,stroke:#4f9cf9,color:#e6edf3
+    classDef ext fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Per-agent launch table: <code>src/shared/tui-agent-config.ts</code> (<code>TUI_AGENT_CONFIG</code>, 30 agents, <code>promptInjectionMode</code> / <code>preflightTrust</code>). Daemon: <code>src/main/daemon/{terminal-host,headless-emulator,history-manager}.ts</code>. Hooks: <code>src/main/agent-hooks/server.ts</code> + 9 <code>&lt;agent&gt;/hook-service.ts</code>; normalization in <code>src/shared/agent-hook-listener.ts</code>. Writes managed scripts into 8 third-party agent home dirs.</p>
+
+    <h3>2b · Orca orchestration coordinator</h3>
+    <p class="caption">A SQLite-backed task DAG dispatched by a polling coordinator (2s tick). The coordinator is deterministic code, not an LLM — tasks must be pre-created. Dispatch types the prompt into the pty; feedback is a cooperative <code>worker_done</code> callback.</p>
+    <div class="diagram">
+      <div class="mermaid">
+flowchart TD
+    coord["coordinator.ts<br/><span style='font-size:11px'>tick() every 2s · NOT an LLM</span>"]:::core
+    db[(SQLite task DAG<br/>db.ts · tasks + dispatch contexts)]:::store
+    coord <--> db
+
+    coord --> phases["processMessages → processEscalations →<br/>processDecisionGates → warnStaleDispatches →<br/>dispatchReadyTasks → checkConvergence"]:::core
+
+    coord -->|"dispatch (pre-flight git-drift guard)"| inj["writeTerminalAction<br/><span style='font-size:11px'>type preamble · setTimeout 500ms · \\r<br/>(paste-aware)</span>"]:::launch
+    inj --> ptyT["agent pty (worktree)"]:::ext
+    ptyT -.->|"orca orchestration send --type worker_done"| mailbox[(SQLite mailbox)]:::store
+    mailbox --> coord
+
+    coord --> cb["circuit breaker<br/><span style='font-size:11px'>3 fails → context circuit_broken<br/>'sling pattern': dispatch ctx ≠ task row</span>"]:::store
+    coord --> gate["decision gates (HITL)<br/><span style='font-size:11px'>gate-create blocks task →<br/>gate-resolve injects into next preamble</span>"]:::reactorn
+    coord --> watch["warnStaleDispatches<br/><span style='font-size:11px'>warn-don't-autofail · heartbeats keyed by dispatchId</span>"]:::core
+
+    classDef core fill:#1c2230,stroke:#5dd39e,color:#e6edf3
+    classDef store fill:#1c2230,stroke:#9aa7b4,color:#e6edf3
+    classDef launch fill:#1c2230,stroke:#f7a23b,color:#e6edf3
+    classDef ext fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+    classDef reactorn fill:#2a1f2e,stroke:#f778ba,color:#e6edf3
+      </div>
+    </div>
+    <p class="legend">Coordinator: <code>src/main/runtime/orchestration/{coordinator,preamble,db}.ts</code>. Title-scrape fallback (<code>tui-idle</code>) lives in <code>orca-runtime.ts</code>; SSH relay in <code>src/relay/</code>; mobile WS+E2EE in <code>runtime-rpc.ts</code>. Notable battle-tested patterns: dispatchId-keyed heartbeats, warn-don't-autofail, sling-pattern circuit breaker, decision gates.</p>
+  </section>
+
+  <!-- ============================================================ COMPARE -->
+  <section class="compare">
+    <h2>3 · Side-by-side comparison</h2>
+    <p class="lede">Where the two systems map onto each other, and where they deliberately differ. Cockpit's recent control-plane and interactive-codex work was directly informed by the Orca study — the table notes what cockpit <em>adopted</em> versus what it intentionally did <em>differently</em>.</p>
+
+    <table>
+      <thead>
+        <tr><th>Concern</th><th>claude-cockpit</th><th>Orca</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Daemon / control plane</strong></td>
+          <td class="cock"><code>cockpitd</code> — launchd KeepAlive, AF_UNIX socket, typed JSON state machine (<code>reduce</code>)</td>
+          <td class="orca">PTY daemon — Electron <code>fork()</code>, AF_UNIX, protocol-versioned, server-side screen snapshot</td>
+        </tr>
+        <tr>
+          <td><strong>Orchestration brain</strong></td>
+          <td class="cock">An <em>LLM session</em> (Command/Captain) — decomposes specs natively, flexible</td>
+          <td class="orca">A <em>code coordinator</em> (<code>coordinator.ts</code>) — deterministic, but cannot AI-decompose (deferred)</td>
+        </tr>
+        <tr>
+          <td><strong>Worker unit</strong></td>
+          <td class="cock">Crew session (tab/pane in captain's cmux workspace) or daemon-owned headless child</td>
+          <td class="orca">Agent TUI in a <code>node-pty</code>, one per git-worktree pane</td>
+        </tr>
+        <tr>
+          <td><strong>Terminal substrate</strong></td>
+          <td class="cock">cmux (external multiplexer; CLI drives it via <code>RuntimeDriver</code>)</td>
+          <td class="orca">Electron + xterm.js + node-pty (owned in-app)</td>
+        </tr>
+        <tr>
+          <td><strong>Driving an agent</strong></td>
+          <td class="cock">Headless = daemon-owned child (<code>claude -p</code>, <code>codex exec --json</code>); interactive-codex = app-server JSON-RPC</td>
+          <td class="orca">Type the prompt into the pty (<code>writeTerminalAction</code> + 500ms + <code>\r</code>); paste-aware</td>
+        </tr>
+        <tr>
+          <td><strong>Turn / done detection</strong></td>
+          <td class="cock">Pure <code>reduce(state,event)</code> + <code>TERMINAL_STATES</code>; <em>turn-end = liveness, never completion</em></td>
+          <td class="orca">Native hooks → 4-state normalize; OSC-title scrape fallback; output read last</td>
+        </tr>
+        <tr>
+          <td><strong>Cross-agent normalization</strong></td>
+          <td class="cock">Per-provider drivers + per-task <code>provider</code>/<code>mode</code>; codex notifications mapped in <code>normalize.ts</code></td>
+          <td class="orca">9 <code>normalize&lt;Agent&gt;Event()</code> + <code>never</code>-guarded switch → 4 canonical states</td>
+        </tr>
+        <tr>
+          <td><strong>Human-in-the-loop</strong></td>
+          <td class="cock"><code>Gate{pending|resolved|timeout}</code> — promoted when no client attached; resolved via <code>crew reply --gate</code></td>
+          <td class="orca">Agent shows its own TUI approval; orca observes it; plus workflow decision-gates</td>
+        </tr>
+        <tr>
+          <td><strong>Restart / reattach</strong></td>
+          <td class="cock"><code>reconcile()</code> on boot + <code>resumeRef</code> (codex <code>threadId</code>) → <code>reattach()</code>; attach renderer re-streams</td>
+          <td class="orca">Reattach via serialized screen snapshot ("final checkpoint"); pty children survive app restart</td>
+        </tr>
+        <tr>
+          <td><strong>Watchdog policy</strong></td>
+          <td class="cock"><code>stalled</code> is RECOVERABLE (not terminal); per-task heartbeat budget; <code>DispatchAttempt[]</code> sub-records</td>
+          <td class="orca">warn-don't-autofail; heartbeats keyed by dispatchId; circuit breaker on dispatch context</td>
+        </tr>
+        <tr>
+          <td><strong>Multi-agent breadth</strong></td>
+          <td class="cock">Claude (ref), codex/opencode, gemini/aider via driver abstraction; 4 plugin slots</td>
+          <td class="orca">30 agents (<code>TUI_AGENT_CONFIG</code>), 9 with native hooks, generic fallback for the rest</td>
+        </tr>
+        <tr>
+          <td><strong>Config footprint</strong></td>
+          <td class="cock">Non-invasive — scoped to <code>~/.config/cockpit</code></td>
+          <td class="orca">Invasive — writes managed scripts into 8 third-party agent home dirs</td>
+        </tr>
+        <tr>
+          <td><strong>Persistence / reporting</strong></td>
+          <td class="cock">Obsidian hub-and-spoke vaults (status, daily-logs, learnings, wiki) + GitHub reactor</td>
+          <td class="orca">GitHub/Linear/GitLab integrations; mobile companion (WS+E2EE) renders daemon snapshots</td>
+        </tr>
+        <tr>
+          <td><strong>Remote / SSH</strong></td>
+          <td class="cock">Not a focus</td>
+          <td class="orca">Relay daemon SCP'd over SSH, grace-period pty survival, same hook pipeline remote</td>
+        </tr>
+        <tr>
+          <td><strong>Self-improvement</strong></td>
+          <td class="cock">Learnings system + LLM-wiki + self-heal-on-invoke (no Orca analog)</td>
+          <td class="orca">None — telemetry is anonymous analytics only</td>
+        </tr>
+        <tr>
+          <td><strong>CLI philosophy</strong></td>
+          <td class="cock">"CLI is the ignition key, not the brain"</td>
+          <td class="orca">Thin RPC client; <code>launchOrcaApp()</code> spawns the app if down — same philosophy</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <strong>The core philosophical split.</strong> Both systems agree the only trustworthy "done" signal is the agent's own runtime event, and both demote screen-scraping to a last resort. They diverge on the mechanism: <strong>Orca</strong> embraces heterogeneity — it installs each agent's <em>native hook system</em> and normalizes ~10 event vocabularies server-side, accepting an invasive 8-home-dir footprint to get real signals and a human-attachable native TUI. <strong>Cockpit</strong> chose structured protocol state over scraping — driving interactive codex through the <code>codex app-server</code> JSON-RPC interface, keeping a pure, auditable typed state machine and a non-invasive footprint, at the cost of less multi-agent breadth today.
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h4>What cockpit ADOPTED from the Orca study</h4>
+        <ul>
+          <li><code>resumeRef</code> persisted on every state transition (codex <code>threadId</code>) → reattach on daemon boot</li>
+          <li>Daemon "ready" = successful app-server <code>initialize</code> round-trip, not just child-spawned (counters codex 0.129+ silent degradation)</li>
+          <li><code>DispatchAttempt[]</code> sub-records on <code>TaskRecord</code> — the "sling pattern" so retries don't dirty task state</li>
+          <li>The <code>Gate</code> decision-gate HITL primitive (block → structured question → resolution injected)</li>
+          <li>App-server over Orca's own hook path — Orca's <code>codex-fetcher.ts</code> proved a clean JSON-RPC client works</li>
+          <li>Treat <code>resumeRef</code> as an opaque hashed token, never parsed (Orca #1148 session-id-shape lesson)</li>
+        </ul>
+      </div>
+      <div class="card diff">
+        <h4>Where cockpit deliberately DIFFERS</h4>
+        <ul>
+          <li>Pure <code>reduce(state,event)</code> + typed JSON state vs Orca's opaque serialized-screen "truth"</li>
+          <li>Anti-false-done elevated to a stated <em>invariant</em>, not patched reactively (Orca's #1437 / tui-idle bugs validate this)</li>
+          <li>Non-invasive <code>~/.config/cockpit</code> footprint vs Orca's 8 agent home dirs</li>
+          <li>Orchestration is an LLM session (decomposes specs) vs Orca's deterministic-but-non-AI coordinator</li>
+          <li>Self-improving subsystems (learnings, LLM-wiki, self-heal) — no Orca analog</li>
+          <li>External cmux substrate vs Orca's in-app Electron + node-pty ownership</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Generated 2026-05-22 · claude-cockpit @ develop. Cockpit boxes verified against <code>src/control/</code>, <code>src/commands/</code>, <code>src/drivers/</code>, <code>src/runtimes/</code>, <code>src/{workspaces,trackers,notifiers,projection,reactor}/</code>, and <code>src/config.ts</code>. Orca details sourced from <code>docs/research/2026-05-19-orca-full-system-study.md</code> and companion memos.</p>
+    <p class="small">Diagrams rendered with Mermaid.js (CDN). ROADMAP.md (Apr 6) is stale and was not used as a current source.</p>
+  </footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    securityLevel: "loose",
+    flowchart: { curve: "basis", htmlLabels: true, useMaxWidth: true },
+    themeVariables: {
+      fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif",
+      fontSize: "14px"
+    }
+  });
+</script>
+</body>
+</html>

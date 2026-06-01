@@ -1,12 +1,46 @@
 import { describe, it, expect, vi } from "vitest";
-import { CodexInteractiveDriver } from "../driver.js";
+import { CodexInteractiveDriver, shouldReattachCodex } from "../driver.js";
 import { EventEmitter } from "node:events";
+
+describe("shouldReattachCodex (boot reattach guard — anti-MCP-storm)", () => {
+  const NOW = 1_000_000;
+  const STALE = 10 * 60_000;
+  const base = (over: any = {}) => ({
+    id: "t", project: "p", provider: "codex", mode: "interactive",
+    state: "awaiting-input", task: "x", createdAt: 0, lastHeartbeat: NOW,
+    lastEvent: "", heartbeatBudgetMs: 1000,
+    attempts: [{ attemptId: "a", startedAt: 0, lastHeartbeatAt: NOW, resumeRef: "TH-1" }],
+    ...over,
+  });
+
+  it("reattaches a fresh, non-terminal codex task with a resumeRef", () => {
+    expect(shouldReattachCodex(base() as any, NOW, STALE)).toBe(true);
+  });
+  it("skips terminal tasks (done/failed/cancelled — incl. crews closed via codex-close)", () => {
+    for (const state of ["done", "failed", "cancelled"]) {
+      expect(shouldReattachCodex(base({ state }) as any, NOW, STALE)).toBe(false);
+    }
+  });
+  it("skips STALE tasks (dead crew — no heartbeat within the window) → no MCP storm", () => {
+    const stale = base({ attempts: [{ attemptId: "a", startedAt: 0, lastHeartbeatAt: NOW - STALE - 1, resumeRef: "TH-1" }] });
+    expect(shouldReattachCodex(stale as any, NOW, STALE)).toBe(false);
+  });
+  it("skips tasks without a resumeRef", () => {
+    const noref = base({ attempts: [{ attemptId: "a", startedAt: 0, lastHeartbeatAt: NOW }] });
+    expect(shouldReattachCodex(noref as any, NOW, STALE)).toBe(false);
+  });
+  it("skips non-codex / non-interactive tasks", () => {
+    expect(shouldReattachCodex(base({ provider: "claude" }) as any, NOW, STALE)).toBe(false);
+    expect(shouldReattachCodex(base({ mode: "headless" }) as any, NOW, STALE)).toBe(false);
+  });
+});
 
 function fakeClient() {
   const ee = new EventEmitter() as any;
   ee.initialize = vi.fn().mockResolvedValue({});
   ee.startThread = vi.fn().mockResolvedValue({ threadId: "TH-1" });
   ee.resumeThread = vi.fn().mockResolvedValue({});
+  ee.archiveThread = vi.fn().mockResolvedValue({});
   ee.sendTurn = vi.fn().mockResolvedValue({ turnId: "T1" });
   ee.steerTurn = vi.fn().mockResolvedValue({});
   ee.interruptTurn = vi.fn().mockResolvedValue({});
@@ -55,6 +89,29 @@ describe("CodexInteractiveDriver.dispatch", () => {
     expect(params.sandbox).toBe("danger-full-access");
     // approvalPolicy is independent of the sandbox axis — still gates when set.
     expect(params.approvalPolicy).toBe("never");
+  });
+
+  it("close() archives the thread and clears the task↔thread maps (crew-close teardown)", async () => {
+    const client = fakeClient();
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any);
+    await drv.close("t1");
+    expect(client.archiveThread).toHaveBeenCalledWith("TH-1");
+    // maps cleared → a later say() can't find the thread
+    await expect(drv.say("t1", "hi")).rejects.toThrow(/no thread/);
+  });
+
+  it("close() is a no-op for an unknown task (idempotent)", async () => {
+    const client = fakeClient();
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.close("nope");
+    expect(client.archiveThread).not.toHaveBeenCalled();
   });
 
   it("injects task id, project, and the explicit-flag signal command into developerInstructions", async () => {

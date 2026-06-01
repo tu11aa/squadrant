@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Opencode trong Cockpit — kiến trúc &amp; vì sao "dễ" nhất</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171c24; --panel2:#1e2430; --ink:#e6e9ef; --mut:#9aa4b2;
+    --line:#2c3442; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#58a6ff;
+    --okbg:rgba(63,185,80,.12); --badbg:rgba(248,81,73,.12); --warnbg:rgba(210,153,34,.12);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:27px;line-height:1.25;margin:0 0 6px}
+  h2{font-size:20px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px;color:var(--accent)}
+  .sub{color:var(--mut);margin:0 0 8px}
+  p{margin:10px 0}
+  code{background:#0b0e13;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cdd6e4}
+  .tag{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:2px 10px;margin-right:6px}
+  .t-ok{background:var(--okbg);color:var(--ok);border:1px solid var(--ok)}
+  .t-bad{background:var(--badbg);color:var(--bad);border:1px solid var(--bad)}
+  .t-warn{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn)}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 22px;margin:18px 0}
+  .col{display:flex;flex-direction:column;align-items:center;gap:0}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:11px 16px;min-width:300px;text-align:center;position:relative}
+  .node .ttl{font-weight:600}
+  .node .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
+  .node.daemon{border-color:var(--accent)}
+  .node.cli{border-color:#56b6c2}
+  .node.bus{border:2px dashed var(--ok);background:var(--okbg);min-width:460px}
+  .arrow{color:var(--mut);font-size:13px;margin:7px 0;text-align:center}
+  .split{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-weight:600}
+  td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.warn{color:var(--warn)}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0}
+  .callout.bad{border-left-color:var(--bad)} .callout.ok{border-left-color:var(--ok)} .callout.warn{border-left-color:var(--warn)}
+  ul{margin:8px 0 8px 2px;padding-left:20px} li{margin:5px 0}
+  .foot{margin-top:50px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:14px}
+  .kbd{font:12px ui-monospace,Menlo,monospace;color:#cdd6e4}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Opencode trong Cockpit — kiến trúc &amp; vì sao "dễ" nhất</h1>
+  <p class="sub">01/06/2026 · báo cáo vòng đời · nguồn: <code>src/control/opencode/sse-bridge.ts</code> (PR #188), <code>src/commands/crew.ts</code>, kiểm chứng trên opencode 1.15.12</p>
+
+  <div class="callout ok">
+    <b>Tóm tắt 1 dòng:</b> Opencode "dễ" vì nó là agent <em>duy nhất</em> có <b>CẢ HAI</b> thứ tốt nhất của hai agent kia mà <b>không dính nhược điểm nào</b>:
+    (1) chạy CLI thật <b>không sandbox</b> → <code>signal</code> hoạt động ngay (như claude), và (2) có <b>HTTP + SSE event bus</b> đáng tin → tự phát hiện idle/permission (như codex), qua <b>một kết nối duy nhất</b>.
+  </div>
+
+  <h2>1 · Opencode hoạt động thế nào (CLI thật + SSE bus)</h2>
+  <p>Crew chạy <b>CLI opencode thật</b> trong tab cmux (như claude). Điểm đặc biệt: TUI opencode <b>nhúng sẵn một HTTP server</b>. Ta khởi chạy <code>opencode --port N</code> để server lắng nghe ở cổng biết trước, rồi daemon mở <b>một kết nối SSE dài hạn</b> tới <code>GET 127.0.0.1:N/event</code> và nhận mọi sự kiện bus.</p>
+
+  <div class="diagram">
+    <div class="col">
+      <div class="node"><div class="ttl">Command / Captain</div><div class="meta"><span class="kbd">cockpit crew spawn --agent opencode</span></div></div>
+      <div class="arrow">│ dispatch ▼</div>
+      <div class="node daemon"><div class="ttl">cockpitd (daemon)</div><div class="meta">giữ sổ trạng thái + chạy <b>OpencodeSseBridge</b></div></div>
+      <div class="arrow">│ task.started · cấp cổng tự do N ▼</div>
+      <div class="node cli"><div class="ttl">Tab cmux: <span class="kbd">opencode --port N</span> (CLI thật)</div><div class="meta">+ <span class="kbd">OPENCODE_CONFIG</span> (auto-approve) + env <span class="kbd">COCKPIT_CREW_*</span> · KHÔNG sandbox</div></div>
+    </div>
+
+    <div class="arrow" style="margin-top:18px">hai kênh tín hiệu đi LÊN daemon</div>
+    <div class="split">
+      <div class="col">
+        <div class="node bus" style="border-color:var(--ok)">
+          <div class="ttl">(A) Explicit signal — không sandbox</div>
+          <div class="meta" style="margin-top:6px;text-align:left;line-height:1.8">
+            crew gõ <span class="kbd">cockpit crew signal done|blocked</span> → socket daemon <span class="t-ok">OK</span><br>
+            → CP2 / CP5 / CP6 PASS ngay
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="node bus">
+          <div class="ttl">(B) SSE event bus — đáng tin</div>
+          <div class="meta" style="margin-top:6px;text-align:left;line-height:1.8">
+            daemon: <span class="kbd">GET 127.0.0.1:N/event</span> (1 kết nối dài hạn)<br>
+            <span class="kbd">session.idle</span> → task.turn.completed → awaiting-input <span class="t-ok">OK</span> (CP4)<br>
+            <span class="kbd">permission.asked</span> cũng trên cùng bus này (CP3 — để sau)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2 · Vì sao "dễ" — 4 lý do</h2>
+  <h3>① Không sandbox → <code>signal</code> chạy ngay</h3>
+  <p>Khác codex (bị Seatbelt <code>workspace-write</code> chặn socket), opencode chạy như tiến trình thường trong môi trường captain. Lệnh <code>cockpit crew signal</code> connect thẳng tới daemon — 4 checkpoint dùng signal (CP1/2/5/6) PASS mà <b>không cần code gì thêm</b>.</p>
+
+  <h3>② Có event bus thật → tự phát hiện, không scrape</h3>
+  <p>Khác claude (chỉ có hooks, lại chập chờn), opencode có <code>opencode serve</code> + SSE <code>/event</code>: một stream đầy đủ <code>session.idle</code>, <code>message.*</code>, <code>permission.asked</code>… Wire-format ổn định <code>{type, properties}</code>, một kết nối nhận hết. Không phải parse màn hình.</p>
+  <div class="callout ok">
+    <b>So với 2 agent kia:</b> codex tốt nhờ giao thức nhưng dính sandbox; claude không sandbox nhưng tín hiệu (Stop) chập chờn. <b>Opencode gỡ được cả hai nút thắt cùng lúc.</b>
+  </div>
+
+  <h3>③ Sửa idle (CP4) là thay đổi rất nhỏ</h3>
+  <p>State-machine <b>vốn đã</b> hỗ trợ <code>task.turn.completed → awaiting-input</code> (codex dùng sẵn). Nên đóng CP4 chỉ gồm: spawn kèm <code>--port N</code> + 1 module SSE map <code>session.idle → task.turn.completed</code> + nối dây cổng. Phần lõi state-machine gần như không đụng.</p>
+  <div class="callout">
+    Đối lập hoàn toàn với claude: cùng tính năng "idle ping" mà claude phải qua #182→#183→#185→#185b rồi <b>revert</b>; opencode chỉ cần 1 cầu nối SSE + 1 guard nhỏ, <b>chạy tin cậy ngay</b>.
+  </div>
+
+  <h3>④ Hệ sinh thái sẵn sàng</h3>
+  <p>OpenAPI 3.1 spec, SDK chính thức <code>@opencode-ai/sdk</code> với <code>event.subscribe()</code>, <code>opencode attach</code>, resume qua <code>--session/--continue</code>. Tích hợp dựa trên API công khai, không phải hack.</p>
+
+  <h2>3 · Điểm mạnh / Điểm yếu — Opencode</h2>
+  <div class="split" style="align-items:stretch">
+    <div class="callout ok" style="flex:1;min-width:320px">
+      <b>✅ Điểm mạnh</b>
+      <ul>
+        <li><b>Có cả hai đường</b>: explicit signal (không sandbox) <i>và</i> tự phát hiện qua SSE — không agent nào khác có đủ cả hai.</li>
+        <li><b>Event bus đáng tin</b>: 1 kết nối SSE = mọi sự kiện vòng đời (idle, permission, message).</li>
+        <li><b>Dễ tích hợp nhất</b>: idle bridge là module nhỏ, state-machine sẵn sàng.</li>
+        <li>API/SDK/OpenAPI công khai; resume; <code>permission.asked</code> sẵn cho CP3 tương lai.</li>
+        <li>Idle tin cậy (không như Stop hook của claude).</li>
+      </ul>
+    </div>
+    <div class="callout bad" style="flex:1;min-width:320px">
+      <b>❌ Điểm yếu</b>
+      <ul>
+        <li><b>CP3 permission còn hoãn</b>: config hiện <b>auto-approve mọi tool</b> → chưa có luồng captain-duyệt cho opencode.</li>
+        <li><b>TUI gốc không mở /event</b> nếu thiếu <code>--port</code> (mặc định dùng unix socket ẩn) → phải cấp cổng tường minh.</li>
+        <li><b>API plugin/event có thể đổi giữa các bản 0.x</b> (dự án tốc độ cao) → rủi ro bảo trì.</li>
+        <li>Watchdog stall vẫn tắt (budget 24h) — hiện dựa vào SSE cho liveness; nếu server chết im, cần xử lý reconnect.</li>
+        <li>Mặc định trong setup này chạy model free (DeepSeek) — chỉ là cấu hình, nhưng cần lưu ý chất lượng.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>4 · So sánh 3 agent (trục vòng đời)</h2>
+  <table>
+    <tr><th>Trục</th><th>Claude</th><th>Codex</th><th>Opencode</th></tr>
+    <tr><td>Cơ chế detection</td><td class="warn">Hooks (file)</td><td class="ok">app-server JSON-RPC</td><td class="ok">HTTP + SSE bus</td></tr>
+    <tr><td>Tín hiệu turn-end</td><td class="bad">Stop — chập chờn</td><td class="ok">TurnCompleted — tin cậy</td><td class="ok">session.idle — tin cậy</td></tr>
+    <tr><td>Sandbox lệnh?</td><td class="ok">Không → signal OK</td><td class="bad">Có → signal CHẶN</td><td class="ok">Không → signal OK</td></tr>
+    <tr><td>Explicit signal (CP2/5/6)</td><td class="ok">✅</td><td class="bad">❌ sandbox</td><td class="ok">✅</td></tr>
+    <tr><td>Idle tự động (CP4)</td><td class="bad">❌ đã bỏ</td><td class="ok">✅</td><td class="ok">✅ (bridge mới)</td></tr>
+    <tr><td>Permission (CP3)</td><td class="ok">✅ Notification hook</td><td class="ok">✅ (cần --approval)</td><td class="warn">⏸️ auto-approve, hoãn</td></tr>
+    <tr><td>Độ phức tạp tích hợp</td><td class="bad">Cao (nhiều fix)</td><td class="warn">Trung bình–cao</td><td class="ok">Thấp (dễ nhất)</td></tr>
+  </table>
+
+  <div class="foot">Báo cáo vòng đời cockpit · 01/06/2026 · xem thêm: <span class="kbd">2026-06-01-claude-architecture-vi.html</span>, <span class="kbd">2026-06-01-codex-architecture-vi.html</span></div>
+</div>
+</body>
+</html>

@@ -79,6 +79,12 @@ export class AppServerClient extends EventEmitter {
     return this._sendRequest("thread/resume", params);
   }
 
+  /** Archive a thread so the app-server tears it down (and reaps any per-thread
+   *  MCP servers it spawned). Called when a codex crew closes. */
+  archiveThread(threadId: string): Promise<unknown> {
+    return this._sendRequest("thread/archive", { threadId });
+  }
+
   readThread(params: { threadId: string; lastN?: number }): Promise<unknown> {
     return this._sendRequest("thread/read", params);
   }

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude trong Cockpit — kiến trúc &amp; vì sao "lằng nhằng" hơn</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171c24; --panel2:#1e2430; --ink:#e6e9ef; --mut:#9aa4b2;
+    --line:#2c3442; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#58a6ff;
+    --okbg:rgba(63,185,80,.12); --badbg:rgba(248,81,73,.12); --warnbg:rgba(210,153,34,.12);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:27px;line-height:1.25;margin:0 0 6px}
+  h2{font-size:20px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px;color:var(--accent)}
+  .sub{color:var(--mut);margin:0 0 8px}
+  p{margin:10px 0}
+  code{background:#0b0e13;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cdd6e4}
+  .tag{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:2px 10px;margin-right:6px}
+  .t-ok{background:var(--okbg);color:var(--ok);border:1px solid var(--ok)}
+  .t-bad{background:var(--badbg);color:var(--bad);border:1px solid var(--bad)}
+  .t-warn{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn)}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 22px;margin:18px 0}
+  .col{display:flex;flex-direction:column;align-items:center;gap:0}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:11px 16px;min-width:300px;text-align:center;position:relative}
+  .node .ttl{font-weight:600}
+  .node .meta{color:var(--mut);font-size:12.5px;margin-top:3px}
+  .node.daemon{border-color:var(--accent)}
+  .node.cli{border-color:#e3934f}
+  .node.hooks{border:2px dashed var(--warn);background:var(--warnbg);min-width:460px}
+  .node.flaky{border:2px dashed var(--bad);background:var(--badbg)}
+  .arrow{color:var(--mut);font-size:13px;margin:7px 0;text-align:center}
+  .split{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-weight:600}
+  td.ok{color:var(--ok)} td.bad{color:var(--bad)} td.warn{color:var(--warn)}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0}
+  .callout.bad{border-left-color:var(--bad)} .callout.ok{border-left-color:var(--ok)} .callout.warn{border-left-color:var(--warn)}
+  ul{margin:8px 0 8px 2px;padding-left:20px} li{margin:5px 0}
+  .foot{margin-top:50px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:14px}
+  .kbd{font:12px ui-monospace,Menlo,monospace;color:#cdd6e4}
+  .pill{font-size:12px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Claude trong Cockpit — kiến trúc &amp; vì sao "lằng nhằng" hơn</h1>
+  <p class="sub">01/06/2026 · báo cáo vòng đời · nguồn: <code>src/control/interactive/claude.ts</code>, <code>src/commands/crew.ts</code>, lịch sử fix #174/#182/#183/#185/#185b</p>
+
+  <div class="callout">
+    <b>Tóm tắt 1 dòng:</b> Claude là agent <em>duy nhất</em> <b>không có server/giao thức</b> — nó chỉ có <b>hooks</b> (callback cấu hình bằng file).
+    Và cái hook quan trọng nhất để biết "turn xong" (<code>Stop</code>) lại <b>bắn không đáng tin</b> trong môi trường claude-mem/cmux → đó là gốc rễ của sự lằng nhằng và lý do phải <b>bỏ trạng thái idle</b>.
+  </div>
+
+  <h2>1 · Claude hoạt động thế nào (hook-based)</h2>
+  <p>Daemon <b>không sở hữu</b> tiến trình claude (khác codex). Tab cmux chạy <b>CLI claude thật</b>. Daemon chỉ giữ <i>sổ trạng thái</i>, và học vòng đời qua <b>hooks</b> được tiêm vào <code>.claude/settings.local.json</code> của từng crew — mỗi hook <code>shell-out</code> gọi <code>cockpit crew _hook …</code> về socket daemon.</p>
+
+  <div class="diagram">
+    <div class="col">
+      <div class="node"><div class="ttl">Command / Captain</div><div class="meta"><span class="kbd">cockpit crew spawn --agent claude</span></div></div>
+      <div class="arrow">│ dispatch ▼</div>
+      <div class="node daemon"><div class="ttl">cockpitd (daemon)</div><div class="meta">CHỈ giữ sổ trạng thái — KHÔNG sở hữu tiến trình claude</div></div>
+      <div class="arrow">│ task.started + tiêm hook file ▼</div>
+      <div class="node cli"><div class="ttl">Tab cmux: CLI <b>claude</b> thật</div><div class="meta"><span class="kbd">--permission-mode acceptEdits</span> · role qua <span class="kbd">--append-system-prompt-file</span></div></div>
+      <div class="arrow">│ <code>.claude/settings.local.json</code> tiêm hooks ▼</div>
+      <div class="node hooks">
+        <div class="ttl">⚙️ HOOKS → <span class="kbd">cockpit crew _hook …</span> → socket daemon (không sandbox)</div>
+        <div class="meta" style="margin-top:8px;text-align:left;line-height:1.85">
+          <span class="t-bad">FLAKY</span> <b>Stop</b> → task.turn.completed (hoặc task.blocked nếu có câu hỏi cuối, #174)<br>
+          <span class="t-ok">OK</span> <b>Notification</b> → task.blocked (nếu xin quyền) — CP3 hoạt động ~0–3s<br>
+          <span class="t-warn">~</span> <b>PostToolUse / SubagentStop / SessionEnd</b> → task.progress (liveness)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p><b>Điểm khác biệt cốt lõi so với codex/opencode:</b> không có <code>app-server</code> (codex) hay <code>HTTP+SSE</code> (opencode). Bề mặt duy nhất để daemon biết vòng đời là hooks. Hook lại phụ thuộc môi trường (claude-mem wrap, cmux <code>--settings</code>, thứ tự merge #134).</p>
+
+  <h2>2 · Vì sao "lằng nhằng" hơn — 3 tầng vấn đề</h2>
+
+  <h3>Tầng 1 — Tín hiệu "turn xong" (Stop hook) bắn không đáng tin</h3>
+  <p>Khác <code>TurnCompleted</code> (codex) và <code>session.idle</code> (opencode) là <b>sự kiện giao thức</b> chắc chắn, <code>Stop</code> chỉ là hook. Kiểm chứng trực tiếp: một crew thử nghiệm <b>kẹt ở <code>working</code> 216 giây+</b>, <code>PostToolUse</code> bắn liên tục nhưng <code>Stop</code> <b>không bao giờ bắn</b> (tương tác claude-mem/cmux nuốt hook). Nghĩa là không thể tin Stop để phát hiện idle.</p>
+  <div class="callout bad">
+    Trục "tín hiệu turn-end": opencode <code>session.idle</code> ✅ tin cậy · codex <code>TurnCompleted</code> ✅ tin cậy · claude <code>Stop</code> ❌ <b>chập chờn</b>. Đây là toàn bộ lý do.
+  </div>
+
+  <h3>Tầng 2 — Ngữ nghĩa hook rắc rối (anti-#2576)</h3>
+  <p><code>Stop</code> = "turn kết thúc" ≠ "task xong". Phải thêm logic <b>dò câu hỏi cuối</b> để map Stop → blocked vs turn.completed (#174). Notification phải phân biệt "xin quyền" vs thường. Nhiều nhánh map, dễ sai.</p>
+
+  <h3>Tầng 3 — Hệ quả: tính năng idle phải làm đi làm lại rồi BỎ</h3>
+  <p>Vì tín hiệu nền (Stop) không chắc, tính năng "ping captain khi idle" thành một chuỗi vá:</p>
+  <table>
+    <tr><th>Bản</th><th>Việc</th><th>Hệ quả</th></tr>
+    <tr><td>#182</td><td>Thêm CREW IDLE (Stop → idle ping)</td><td class="warn">Phụ thuộc Stop chập chờn</td></tr>
+    <tr><td>#183</td><td>Sửa "silent re-block" giữa turn</td><td class="warn">Bug phát sinh kèm theo</td></tr>
+    <tr><td>#185</td><td>Debounce 2 phút chống spam</td><td class="warn">IDLE quá ồn</td></tr>
+    <tr><td>#185b</td><td>Boot-guard chống "bão idle" khi restart</td><td class="warn">Restart bắn ~30 task chết</td></tr>
+    <tr><td><b>REVERT</b></td><td><b>Bỏ toàn bộ idle 31/05</b></td><td class="bad">Tín hiệu Stop không đáng tin → không cứu được</td></tr>
+  </table>
+  <p class="sub">→ "Gần như bỏ trạng thái idle để chạy tốt" = đúng: idle bị revert vì <b>nền tảng hook không đủ tin cậy</b>, không phải vì code sai. (Trớ trêu: cùng tính năng idle đó lại <b>dễ</b> làm cho opencode nhờ <code>session.idle</code>.)</p>
+
+  <h2>3 · Điểm mạnh / Điểm yếu — Claude</h2>
+  <div class="split" style="align-items:stretch">
+    <div class="callout ok" style="flex:1;min-width:320px">
+      <b>✅ Điểm mạnh</b>
+      <ul>
+        <li><b>Bản tham chiếu, trưởng thành nhất</b> — chạy CLI claude thật, đầy đủ tính năng.</li>
+        <li><b>Explicit signal hoạt động</b> (không sandbox) → CP2/CP5/CP6 đều PASS.</li>
+        <li><b>Permission (CP3) tin cậy</b>: Notification hook bắn ~0–3s khi gặp prompt thật → CREW BLOCKED → captain duyệt.</li>
+        <li>Reopen-after-done (CP6) hoạt động; semi-auto <code>acceptEdits</code> hợp lý.</li>
+        <li>Hook tiêm theo từng crew (settings.local.json), merge với hook người dùng (#134).</li>
+      </ul>
+    </div>
+    <div class="callout bad" style="flex:1;min-width:320px">
+      <b>❌ Điểm yếu</b>
+      <ul>
+        <li><b>Không có giao thức/máy chủ</b> — chỉ hooks; ít tín hiệu cấu trúc nhất trong 3 agent.</li>
+        <li><b>Stop hook chập chờn</b> (claude-mem/cmux) → idle/turn-end không đáng tin → <b>idle đã bị bỏ</b>.</li>
+        <li><b>Cơ chế tiêm/merge hook phức tạp</b>: settings.local.json + wrapper cmux + claude-mem dễ "nuốt" hook.</li>
+        <li><b>Tốn nhiều vòng fix</b> (#174/#182/#183/#185/#185b) — chi phí bảo trì cao nhất.</li>
+        <li>Daemon không sở hữu tiến trình → không "drive" được, chỉ quan sát qua hook.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>4 · So sánh 3 agent (trục vòng đời)</h2>
+  <table>
+    <tr><th>Trục</th><th>Claude</th><th>Codex</th><th>Opencode</th></tr>
+    <tr><td>Cơ chế detection</td><td class="warn">Hooks (file)</td><td class="ok">app-server JSON-RPC</td><td class="ok">HTTP + SSE bus</td></tr>
+    <tr><td>Tín hiệu turn-end</td><td class="bad">Stop — chập chờn</td><td class="ok">TurnCompleted — tin cậy</td><td class="ok">session.idle — tin cậy</td></tr>
+    <tr><td>Sandbox lệnh?</td><td class="ok">Không → signal OK</td><td class="bad">Có → signal CHẶN</td><td class="ok">Không → signal OK</td></tr>
+    <tr><td>Explicit signal (CP2/5/6)</td><td class="ok">✅</td><td class="bad">❌ sandbox</td><td class="ok">✅</td></tr>
+    <tr><td>Idle tự động (CP4)</td><td class="bad">❌ đã bỏ</td><td class="ok">✅</td><td class="ok">✅ (bridge mới)</td></tr>
+    <tr><td>Permission (CP3)</td><td class="ok">✅ Notification hook</td><td class="ok">✅ (cần --approval)</td><td class="warn">⏸️ auto-approve, hoãn</td></tr>
+    <tr><td>Độ phức tạp tích hợp</td><td class="bad">Cao (nhiều fix)</td><td class="warn">Trung bình–cao</td><td class="ok">Thấp (dễ nhất)</td></tr>
+  </table>
+
+  <div class="foot">Báo cáo vòng đời cockpit · 01/06/2026 · xem thêm: <span class="kbd">2026-06-01-codex-architecture-vi.html</span>, <span class="kbd">2026-06-01-opencode-architecture-vi.html</span></div>
+</div>
+</body>
+</html>

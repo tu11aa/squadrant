@@ -8,6 +8,29 @@
 import { AppServerClient } from "./app-server-client.js";
 import { normalizeAppServerNotification } from "./normalize.js";
 import type { ControlEvent, TaskRecord } from "../types.js";
+import { TERMINAL_STATES } from "../types.js";
+
+/**
+ * Boot-time guard for the daemon's codex reattach loop. Reattaching a thread
+ * re-spawns its per-thread MCP servers (gitnexus/pay), so reattaching EVERY
+ * non-terminal codex task on boot re-storms one MCP set per historical crew
+ * (observed: 22 zombie tasks → 22 gitnexus servers → RAM exhaustion). Only
+ * reattach a task that is (a) interactive codex, (b) non-terminal — closed
+ * crews are `cancelled` via codex-close, so they're skipped, (c) still fresh:
+ * a dead crew's pane is gone and hasn't heartbeat within the staleness window,
+ * and (d) has a resumeRef to resume from.
+ */
+export function shouldReattachCodex(
+  rec: TaskRecord,
+  now: number,
+  staleMs: number,
+): boolean {
+  if (rec.provider !== "codex" || rec.mode !== "interactive") return false;
+  if (TERMINAL_STATES.has(rec.state)) return false;
+  const last = rec.attempts.at(-1)?.lastHeartbeatAt ?? rec.lastHeartbeat ?? 0;
+  if (now - last > staleMs) return false;
+  return Boolean(rec.attempts.at(-1)?.resumeRef);
+}
 
 export interface DriverDeps {
   /** Override for tests; defaults to a real AppServerClient. */
@@ -94,6 +117,27 @@ export class CodexInteractiveDriver {
     const tid = this.threadByTask.get(taskId);
     if (!tid) throw new Error(`no thread for task ${taskId}`);
     await c.interruptTurn(tid);
+  }
+
+  /**
+   * Tear down a task's thread when its crew closes. Cockpit runs ONE shared
+   * app-server with a thread per crew; closing the cmux pane only kills the
+   * `crew attach` renderer, so without this the thread — and the gitnexus/pay
+   * MCP servers it spawned — leak forever (verified: ~53MB per orphaned crew).
+   * Archiving the thread lets the app-server reap it and its MCP children.
+   */
+  async close(taskId: string): Promise<void> {
+    const tid = this.threadByTask.get(taskId);
+    this.serverRequestByTask.delete(taskId);
+    if (!tid) return;
+    this.threadByTask.delete(taskId);
+    this.taskByThread.delete(tid);
+    try {
+      await this.client?.archiveThread(tid);
+    } catch {
+      // Best-effort: the app-server may already be gone. The maps are cleared
+      // regardless so a daemon restart won't try to reattach a dead thread.
+    }
   }
 
   async answer(taskId: string, payload: unknown): Promise<void> {

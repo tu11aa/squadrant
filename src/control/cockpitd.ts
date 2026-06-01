@@ -8,7 +8,7 @@ import { createStore } from "./store.js";
 import { createDaemon } from "./daemon.js";
 import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "./protocol.js";
 import { runHeadless } from "./headless-launcher.js";
-import { CodexInteractiveDriver } from "./codex/driver.js";
+import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
@@ -51,6 +51,7 @@ export interface CockpitdOpts {
     steer: (taskId: string, text: string) => Promise<void>;
     interrupt: (taskId: string) => Promise<void>;
     answer: (taskId: string, payload: unknown) => Promise<void>;
+    close: (taskId: string) => Promise<void>;
   };
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
   opencodeBridge?: {
@@ -260,13 +261,20 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   d.reconcile(); // crash recovery on boot
 
   // Restart-reattach (spec §5; closes interactive slice of #86):
-  // For each non-terminal interactive-codex task that has a resumeRef, fire
-  // reattach() against the driver. Fire-and-forget; failures are logged only.
+  // For each LIVE interactive-codex task that has a resumeRef, fire reattach()
+  // against the driver. Fire-and-forget; failures are logged only.
+  //
+  // Guard against the reattach storm: resuming a thread re-spawns its per-thread
+  // MCP servers (gitnexus/pay), so blindly reattaching every non-terminal codex
+  // task means each daemon restart re-spawns one MCP set per HISTORICAL crew —
+  // which exhausted RAM (22 zombie tasks → 22 gitnexus servers on one boot).
+  // Skip terminal tasks (done/failed/cancelled — incl. crews closed via the new
+  // codex-close archive) AND stale tasks whose crew pane is long gone (no
+  // heartbeat within the staleness window — the watchdog would stall them too).
+  const bootNow = Date.now();
+  const REATTACH_STALE_MS = 10 * 60_000;
   for (const rec of store.listAll()) {
-    if (rec.provider !== "codex" || rec.mode !== "interactive") continue;
-    if (rec.state === "done" || rec.state === "failed") continue;
-    const ref = rec.attempts.at(-1)?.resumeRef;
-    if (!ref) continue;
+    if (!shouldReattachCodex(rec, bootNow, REATTACH_STALE_MS)) continue;
     codexDriver.reattach(rec).catch((e: unknown) => {
       log(`reattach failed for ${rec.id}: ${(e as Error).message}`);
     });
@@ -285,6 +293,15 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const server = startServer(sockPath, {
     handler: async (msg: any) => {
       if (msg.kind === "seed") { store.put(msg.record as TaskRecord); return { ok: true }; }
+      // Crew-close teardown for codex: the cmux pane only hosts the `crew attach`
+      // renderer — the thread lives on the shared app-server, so closing the pane
+      // doesn't reap it. `cockpit crew close` calls this to archive the thread and
+      // its per-thread MCP servers (else they leak ~53MB/crew). Fires for terminal
+      // and non-terminal crews alike.
+      if (msg.kind === "codex-close") {
+        await codexDriver.close(msg.taskId).catch((e: unknown) => log(`codex close err: ${e}`));
+        return { ok: true };
+      }
       return d.handle(msg);
     },
     onAttach: (conn, frame) => {

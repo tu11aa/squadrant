@@ -460,6 +460,14 @@ export async function runCrewClose(project: string, name: string): Promise<void>
     if (task && !TERMINAL_STATES.has(task.state)) {
       await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
     }
+    // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
+    // (and its per-thread MCP servers) live on the shared app-server, so closing
+    // the pane alone leaks them. Tell the daemon to archive the thread. Fires for
+    // terminal and non-terminal crews alike (a finished codex crew still holds a
+    // live thread until archived).
+    if (task && task.provider === "codex") {
+      await cockpitdCall({ kind: "codex-close", taskId: task.id });
+    }
   } catch {
     // Swallow daemon errors — a crew without a daemon must still close.
   }
