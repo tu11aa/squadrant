@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
@@ -28,6 +29,22 @@ const SEND_FIRST_TURN_FLOOR_MS = 1500;
 const POLL_INTERVAL_MS = 750;
 const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
 const POST_SEND_CHECK_MS = 750;
+
+/** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
+ *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
+ *  between release and the crew binding the port; acceptable for local
+ *  single-user spawns (and the SSE bridge retries until the server is up). */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error("no free port assigned"))));
+    });
+  });
+}
 
 function titleFor(project: string, name: string): string {
   return `🔧 ${project}:${name}`;
@@ -278,6 +295,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // does the actual CLI launch. No hook bridge (opencode has no hooks); the
   // crew template instructs explicit `cockpit crew signal done|blocked|failed`.
   if (agentName === "opencode") {
+    // Bind the crew's embedded opencode HTTP server on a known port so the
+    // daemon's SSE bridge can subscribe to /event for turn-end detection.
+    const serverPort = await getFreePort();
     const req = buildDispatchRequest({
       provider: "opencode",
       mode: "interactive",
@@ -287,8 +307,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       name,
       // opencode has no heartbeat hook, so a normal budget would false-stall
       // every crew after 5min; use a 24h budget to effectively disable stall
-      // detection until a plugin-based liveness bridge exists.
+      // detection. The SSE bridge (serverPort) provides turn-end liveness.
       budgetMs: 86400000,
+      serverPort,
     });
     const rec = (await cockpitdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({
@@ -303,6 +324,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       promptFile,
       interactive: true,
       model: crewModel,
+      port: serverPort,
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
