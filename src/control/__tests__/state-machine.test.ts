@@ -62,6 +62,20 @@ describe("state-machine reduce", () => {
     expect(next.lastHeartbeat).toBe(4200); // liveness still updates
   });
 
+  it("blocked + task.turn.completed does NOT auto-unblock (opencode SSE bridge trailing idle)", () => {
+    // An opencode crew runs `signal blocked` mid-turn; the turn then ends and the
+    // SSE bridge emits task.turn.completed. That trailing turn-end must preserve
+    // the blocked state + question — only the captain's answer clears it.
+    const next = reduce(
+      rec({ state: "blocked", question: "which color?" }),
+      { type: "task.turn.completed", id: "t1", turnId: "ses_x" },
+      4100,
+    );
+    expect(next.state).toBe("blocked");
+    expect(next.question).toBe("which color?");
+    expect(next.lastHeartbeat).toBe(4100); // liveness still updates
+  });
+
   it("blocked + task.progress does NOT auto-unblock (explicit reply required)", () => {
     const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.progress", id: "t1" }, 4000);
     expect(next.state).toBe("blocked");

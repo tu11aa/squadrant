@@ -80,6 +80,11 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return { ...stampAttempt(base, {}, now), state: "working" };
     case "task.turn.completed":
       // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
+      // A turn ending while blocked must NOT unblock — only the captain's answer
+      // (task.started via `crew send`) clears blocked. Mirrors task.progress: the
+      // opencode SSE bridge emits task.turn.completed right after an explicit
+      // `signal blocked`, and that trailing turn-end must not drop the question.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       return { ...stampAttempt(base, {}, now), state: "awaiting-input" };
     case "task.delta":
       return stampAttempt(base, {}, now);  // heartbeat-only

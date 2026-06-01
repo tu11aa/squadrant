@@ -69,6 +69,10 @@ export interface TaskRecord {
    *  (interactive only). Parity with claude's --append-system-prompt-file:
    *  injects crew rules / Karpathy discipline before the first user turn. */
   roleInstructions?: string;
+  /** TCP port of an interactive opencode crew's embedded HTTP server
+   *  (`opencode --port <N>`). The daemon's SSE bridge subscribes to
+   *  http://127.0.0.1:<serverPort>/event for reliable turn-end detection. */
+  serverPort?: number;
 }
 
 export type ControlEvent =
