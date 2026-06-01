@@ -51,7 +51,16 @@ export class CodexInteractiveDriver {
       const { threadId } = await c.startThread({
         cwd: rec.cwd ?? process.cwd(),
         model: rec.model,
-        sandbox: "workspace-write",
+        // Parity with claude/opencode crews, which run UNSANDBOXED (no Seatbelt).
+        // Codex was the only agent under `workspace-write`, and that FS sandbox
+        // blocked `cockpit crew signal …` from reaching the daemon socket (which
+        // lives outside the workspace) — breaking the done/blocked/failed
+        // lifecycle. Codex's AF_UNIX-socket allowance has no stable config path
+        // (it's gated behind the experimental_network feature), so the surgical
+        // writable_roots escape is not viable. danger-full-access removes the FS
+        // jail so signals work; approvalPolicy still gates risky ops when set to
+        // "untrusted" (the gate axis is independent of the sandbox axis).
+        sandbox: "danger-full-access",
         approvalPolicy: rec.approvalPolicy ?? "never",
         developerInstructions: buildCodexDeveloperInstructions(rec),
       });

@@ -33,12 +33,28 @@ describe("CodexInteractiveDriver.dispatch", () => {
     } as any);
     expect(client.initialize).toHaveBeenCalledTimes(1);
     expect(client.startThread).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/tmp/work", sandbox: "workspace-write" }),
+      expect.objectContaining({ cwd: "/tmp/work", sandbox: "danger-full-access" }),
     );
     expect(events).toEqual([
       { type: "task.session", id: "t1", resumeRef: "TH-1" },
       { type: "task.started", id: "t1" },
     ]);
+  });
+
+  it("runs codex crews with danger-full-access (parity with unsandboxed claude/opencode) so `cockpit crew signal` reaches the daemon socket", async () => {
+    const client = fakeClient();
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any);
+    const params = client.startThread.mock.calls[0][0];
+    expect(params.sandbox).toBe("danger-full-access");
+    // approvalPolicy is independent of the sandbox axis — still gates when set.
+    expect(params.approvalPolicy).toBe("never");
   });
 
   it("injects task id, project, and the explicit-flag signal command into developerInstructions", async () => {
