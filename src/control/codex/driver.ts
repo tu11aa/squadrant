@@ -5,9 +5,22 @@
 // normalizeAppServerNotification (Task 2.3); the driver only routes server-
 // requests and lifecycle. Spec §4.1/§4.6/§4.7.
 
+import os from "node:os";
+import path from "node:path";
 import { AppServerClient } from "./app-server-client.js";
 import { normalizeAppServerNotification } from "./normalize.js";
 import type { ControlEvent, TaskRecord } from "../types.js";
+
+/**
+ * The cockpit control-plane directory that must be reachable from inside a
+ * codex crew's sandbox so `cockpit crew signal …` can connect to the daemon
+ * socket. Derived from the same default the CLI uses (COCKPITD_SOCK or
+ * ~/.config/cockpit/cockpit.sock) so a custom socket location stays in sync.
+ */
+export function cockpitWritableRoot(): string {
+  const sock = process.env.COCKPITD_SOCK ?? path.join(os.homedir(), ".config", "cockpit", "cockpit.sock");
+  return path.dirname(sock);
+}
 
 export interface DriverDeps {
   /** Override for tests; defaults to a real AppServerClient. */
@@ -54,6 +67,19 @@ export class CodexInteractiveDriver {
         sandbox: "workspace-write",
         approvalPolicy: rec.approvalPolicy ?? "never",
         developerInstructions: buildCodexDeveloperInstructions(rec),
+        // Surgical sandbox escape: add ONLY the cockpit control-plane dir to
+        // writable_roots so the crew's `cockpit crew signal …` can connect to
+        // the daemon socket (which lives outside the workspace). Everything
+        // else stays under the workspace-write sandbox. writable_roots is
+        // ADDITIVE — the workspace cwd + tmp stay writable by default.
+        config: {
+          sandbox_workspace_write: {
+            writable_roots: [cockpitWritableRoot()],
+            network_access: false,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+          },
+        },
       });
       this.threadByTask.set(rec.id, threadId);
       this.taskByThread.set(threadId, rec.id);

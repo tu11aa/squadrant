@@ -41,6 +41,23 @@ describe("CodexInteractiveDriver.dispatch", () => {
     ]);
   });
 
+  it("adds the cockpit dir to sandbox writable_roots so `cockpit crew signal` can reach the daemon socket", async () => {
+    const client = fakeClient();
+    vi.stubEnv("COCKPITD_SOCK", "/custom/cockpit/cockpit.sock");
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any);
+    const cfg = client.startThread.mock.calls[0][0].config;
+    expect(cfg.sandbox_workspace_write.writable_roots).toEqual(["/custom/cockpit"]);
+    expect(cfg.sandbox_workspace_write.network_access).toBe(false);
+    vi.unstubAllEnvs();
+  });
+
   it("injects task id, project, and the explicit-flag signal command into developerInstructions", async () => {
     const client = fakeClient();
     const drv = new CodexInteractiveDriver({
