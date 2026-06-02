@@ -95,7 +95,9 @@ interface InteractiveProbeDeps {
  *     lastHeartbeat) candidates,
  *  3. read each candidate's pane tail and skip it if the tail is unchanged
  *     since the last tick (per-task change-detection → fires once per prompt),
- *  4. classify the tail; a permission/question verdict → one task.blocked.
+ *  4. classify the tail; a permission/question verdict → one task.blocked, a
+ *     fatal error-banner verdict → one task.failed (#196 — a turn that died on a
+ *     transient API error leaves the process alive and silently stuck).
  *
  * Best-effort throughout: every read/daemon call is caught and logged; the tick
  * never throws, so a transient cmux/daemon failure can't crash the relay. The
@@ -136,18 +138,30 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
 
       const verdict = classifyPaneTail(tail);
       if (!verdict) continue;
-      const reason =
-        verdict.kind === "approval"
-          ? "crew awaiting permission (pane-detected)"
-          : "crew asked a question (pane-detected)";
+      // #196: a fatal error banner on a quiet working pane means the turn died
+      // (transient API error / crash) and the crew is silently stuck — fire the
+      // terminal task.failed so the captain gets CREW FAILED, not just an
+      // eventual non-alarming idle. Recoverable via `crew send` (task.reopened).
+      const event: ControlEvent =
+        verdict.kind === "error"
+          ? {
+              type: "task.failed",
+              id: rec.id,
+              error: `crew session error (pane-detected): ${verdict.text}`,
+            }
+          : {
+              type: "task.blocked",
+              id: rec.id,
+              reason:
+                verdict.kind === "approval"
+                  ? "crew awaiting permission (pane-detected)"
+                  : "crew asked a question (pane-detected)",
+              question: verdict.text,
+            };
       try {
-        await deps.sendEvent({
-          type: "task.blocked",
-          id: rec.id,
-          reason,
-          question: verdict.text,
-        });
-        deps.log(`probe -> CREW BLOCKED ${rec.name} (${verdict.kind})`);
+        await deps.sendEvent(event);
+        const label = verdict.kind === "error" ? "CREW FAILED" : "CREW BLOCKED";
+        deps.log(`probe -> ${label} ${rec.name} (${verdict.kind})`);
       } catch (e) {
         deps.log(`probe sendEvent failed for ${rec.id}: ${(e as Error).message}`);
       }

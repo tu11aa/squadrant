@@ -13,12 +13,20 @@ import { detectTrailingQuestion } from "./claude.js";
  *  - "question": the agent's output region (TUI chrome stripped) ends in a
  *    direct question. Mainly the opencode path; Claude turn-end questions are
  *    already handled by the #174 Stop-hook transcript path.
+ *  - "error": the pane shows a fatal CLI error banner (e.g. Anthropic
+ *    `API Error: 529 Overloaded`, an HTTP 5xx, retry exhaustion). A turn that
+ *    dies on a transient API error leaves the process ALIVE with the banner
+ *    frozen in the pane and no further heartbeat — the probe's only window onto
+ *    it (#196). text = the banner line. Checked LAST so a genuine approval /
+ *    question that merely mentions an error stays recoverable, never terminal.
  *  - else null.
  *
  * Conservative by design: it only runs against a quiet working pane and must not
  * false-block, so an ambiguous tail returns null.
  */
-export function classifyPaneTail(tail: string): { kind: "approval" | "question"; text: string } | null {
+export function classifyPaneTail(
+  tail: string,
+): { kind: "approval" | "question" | "error"; text: string } | null {
   if (!tail) return null;
   const raw = tail.split(/\r?\n/);
   // cleaned[i] is the agent-region text of line i, or null if the line is pure
@@ -52,8 +60,30 @@ export function classifyPaneTail(tail: string): { kind: "approval" | "question";
   const q = detectTrailingQuestion(region);
   if (q) return { kind: "question", text: q };
 
+  // ── error: a fatal CLI error banner (#196), checked LAST so a recoverable
+  // approval/question above always wins. Match the LAST banner line (the final
+  // error after any retry chatter is the most informative).
+  let errLine: string | null = null;
+  for (const c of cleaned) {
+    if (c != null && ERROR_BANNER_RE.some((re) => re.test(c))) errLine = c;
+  }
+  if (errLine) return { kind: "error", text: errLine.slice(0, 200) };
+
   return null;
 }
+
+// Distinctive fatal-error-banner signatures a crew's CLI prints when a turn
+// dies (Anthropic / OpenAI / opencode). Anchored to CLI banner SHAPES — never a
+// bare "error" / lone status code — so a crew merely discussing errors in prose
+// is never mis-failed. Combined with the probe's working+quiet precondition,
+// these only fire on a genuinely stalled, error-frozen pane.
+const ERROR_BANNER_RE: RegExp[] = [
+  /\bAPI Error\b/i,                                    // Claude: "API Error: 529 ..."
+  /\bOverloaded\b/,                                    // Anthropic overloaded_error message
+  /\b(?:429|500|502|503|504|529)\b[^?]*\b(?:overloaded|unavailable|internal server error|bad gateway|gateway timeout|too many requests|service unavailable)\b/i,
+  /\bretr(?:y|ies)\s+(?:exhausted|limit\s+(?:reached|exceeded))\b/i,
+  /\bmaximum\s+retries\b/i,
+];
 
 // A numbered option line, after chrome stripping: an optional cursor marker
 // (❯ / > / ›), a number, a dot, then the label. e.g. "❯ 1. Yes".

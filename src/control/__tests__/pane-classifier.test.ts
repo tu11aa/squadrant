@@ -65,6 +65,67 @@ describe("classifyPaneTail", () => {
     expect(classifyPaneTail(chromeOnly)).toBeNull();
   });
 
+  it("classifies a Claude API 529 overloaded banner as error", () => {
+    const tail = [
+      "● Patching the reducer next.",
+      '⎿ API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    const r = classifyPaneTail(tail);
+    expect(r?.kind).toBe("error");
+    expect(r?.text).toContain("API Error: 529");
+  });
+
+  it("classifies an HTTP 503 service-unavailable banner as error", () => {
+    const tail = [
+      "● Calling the model...",
+      "  503 Service Unavailable",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)?.kind).toBe("error");
+  });
+
+  it("classifies a retry-exhaustion banner as error", () => {
+    const tail = [
+      "  Request failed after maximum retries",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)?.kind).toBe("error");
+  });
+
+  it("does not misfire error on prose that merely mentions errors", () => {
+    const tail = [
+      "● I added error handling for the 500 most common cases.",
+      "● The tests cover the unavailable-network path too.",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)).toBeNull();
+  });
+
+  it("prefers a trailing question over error so a recoverable wait is never mis-failed", () => {
+    // A genuine question that happens to mention an error term must stay a
+    // (recoverable) question, not become a terminal failure.
+    const tail = [
+      "The last call hit an API Error earlier.",
+      "Should I retry the request now?",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)).toEqual({
+      kind: "question",
+      text: "Should I retry the request now?",
+    });
+  });
+
   it("does not misfire approval on a numbered list that lacks a Yes/No block", () => {
     const numberedList = [
       "Here is the plan:",

@@ -129,6 +129,29 @@ describe("createInteractiveProbe", () => {
     });
   });
 
+  it("sends exactly one task.failed when a quiet working crew's pane shows an API error banner", async () => {
+    const errorTail = [
+      "● Starting the first turn.",
+      '⎿ API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+    ].join("\n");
+    const h = harness({ tasks: [task()], readPaneTail: async () => errorTail });
+    await h.tick();
+    expect(h.sendEvent).toHaveBeenCalledTimes(1);
+    const ev = h.sendEvent.mock.calls[0][0] as ControlEvent;
+    expect(ev.type).toBe("task.failed");
+    expect((ev as { id: string }).id).toBe("task-1");
+    expect((ev as { error: string }).error).toContain("API Error: 529");
+  });
+
+  it("does not re-send task.failed when the error tail is unchanged on the next tick", async () => {
+    const errorTail = "  503 Service Unavailable";
+    const h = harness({ tasks: [task()], readPaneTail: async () => errorTail });
+    await h.tick();
+    await h.tick();
+    expect(h.sendEvent).toHaveBeenCalledTimes(1);
+    expect((h.sendEvent.mock.calls[0][0] as ControlEvent).type).toBe("task.failed");
+  });
+
   it("does not block a working pane with no prompt or question", async () => {
     const h = harness({ tasks: [task()], readPaneTail: async () => "● running the tests next" });
     await h.tick();
