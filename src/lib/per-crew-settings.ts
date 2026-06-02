@@ -3,19 +3,26 @@ import { join } from "node:path";
 import { mergeClaudeHooks } from "../control/interactive/claude.js";
 
 /**
- * Starter Bash permission allowlist for crews running under
- * `--permission-mode acceptEdits` (Phase 2a). acceptEdits auto-accepts file
- * edits but still prompts on EVERY mutating shell command — including routine
- * dev ops (commit, push, install, test). Without this, the Phase 2b pane probe
- * would fire CREW BLOCKED on every commit/install/test = notification spam.
+ * Bash permission allowlist for crews running under `--permission-mode
+ * acceptEdits` (Phase 2a). acceptEdits auto-accepts file edits but still
+ * prompts on EVERY shell command. Without this, the Phase 2b pane probe fires
+ * CREW BLOCKED on every commit/install/test/grep = notification spam.
  *
- * Conservative by design: only safe-but-mutating *dev* commands are listed,
- * scoped per-subcommand so genuinely risky ops (`git reset --hard`,
- * `git config`, `rm`, `curl`, `wget`, unknown binaries, out-of-workspace
- * writes) STILL prompt and surface as CREW BLOCKED. No blanket `Bash(*)`.
+ * Conservative by design: two tiers —
+ *   1. Read-only inspection (ps, ls, grep, jq, …) — never mutates anything.
+ *   2. Safe-but-mutating dev ops (git commit, npm install, vitest, …) — needed
+ *      for normal crew work; scoped to safe subcommands.
+ * Genuinely risky ops (`git reset --hard`, `git config`, `rm`, `curl`, `wget`,
+ * `sudo`, `kill`, unknown binaries, out-of-workspace writes) STILL prompt and
+ * surface as CREW BLOCKED. No blanket `Bash(*)`.
  *
- * Syntax: Claude Code Bash permission patterns, `Bash(<prefix>:*)` matches the
- * prefix command plus any trailing args.
+ * Syntax: `Bash(<prefix>:*)` allows any command whose text starts with
+ * <prefix>. Patterns match the raw command string — NOT the resolved binary.
+ *
+ * Known limitation: commands with a leading env-var assignment
+ * (e.g. `COCKPIT_CREW_TASK_ID=x sleep 5`) still prompt because the line
+ * starts with the variable name, not the command. This is rare and acceptable;
+ * it's not a bug.
  */
 export const CREW_PERMISSION_ALLOWLIST: readonly string[] = [
   // git — read + safe mutations (reset/clean/config intentionally excluded)
@@ -31,17 +38,70 @@ export const CREW_PERMISSION_ALLOWLIST: readonly string[] = [
   "Bash(git log:*)",
   "Bash(git stash:*)",
   "Bash(git restore:*)",
+  // git — read-only queries (no-mutation subcommands)
+  "Bash(git show:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(git remote -v:*)",
+  "Bash(git stash list:*)",
   // npm / npx — installs + script/test/build runners
   "Bash(npm install:*)",
   "Bash(npm ci:*)",
   "Bash(npm run:*)",
   "Bash(npm test:*)",
+  "Bash(npm ls:*)",
+  "Bash(npm view:*)",
   "Bash(npx vitest:*)",
   "Bash(npx tsc:*)",
   // direct runners
   "Bash(node:*)",
+  "Bash(node --version:*)",
   "Bash(vitest:*)",
   "Bash(tsc:*)",
+  // pnpm
+  "Bash(pnpm ls:*)",
+  // process / system read — non-interactive, read-only
+  "Bash(ps:*)",
+  "Bash(pgrep:*)",
+  "Bash(lsof:*)",
+  "Bash(top -l:*)",
+  "Bash(uptime:*)",
+  "Bash(whoami:*)",
+  "Bash(uname:*)",
+  "Bash(date:*)",
+  "Bash(env:*)",
+  "Bash(sysctl:*)",
+  // file read / navigation
+  "Bash(ls:*)",
+  "Bash(cat:*)",
+  "Bash(head:*)",
+  "Bash(tail:*)",
+  "Bash(wc:*)",
+  "Bash(grep:*)",
+  "Bash(rg:*)",
+  "Bash(find:*)",
+  "Bash(pwd:*)",
+  "Bash(stat:*)",
+  "Bash(file:*)",
+  "Bash(realpath:*)",
+  "Bash(basename:*)",
+  "Bash(dirname:*)",
+  "Bash(du:*)",
+  "Bash(df:*)",
+  "Bash(tree:*)",
+  // read-only text processing
+  "Bash(sort:*)",
+  "Bash(uniq:*)",
+  "Bash(cut:*)",
+  "Bash(tr:*)",
+  "Bash(jq:*)",
+  "Bash(diff:*)",
+  "Bash(column:*)",
+  // harmless utilities
+  "Bash(echo:*)",
+  "Bash(which:*)",
+  "Bash(true:*)",
+  "Bash(sleep:*)",
+  "Bash(printf:*)",
 ];
 
 /**
