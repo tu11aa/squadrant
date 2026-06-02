@@ -28,7 +28,10 @@ export async function resolveCodexModel(): Promise<string | undefined> {
   // model names (e.g. gpt-5.3-codex → gpt-5.5) before calling thread/start.
   // Without this, the app-server sends the stale name and ChatGPT OAuth rejects
   // it with a 400: "The 'gpt-5.3-codex' model is not supported".
-  const migSection = text.match(/^\[notice\.model_migrations\]([\s\S]*?)(?=^\[|\z)/m);
+  // Capture the section body up to the next section header (`^[`) or end of
+  // input. JS regex has no `\z`; `(?![\s\S])` is the end-of-input assertion so
+  // migrations still resolve when the section is the last one in the file.
+  const migSection = text.match(/^\[notice\.model_migrations\]([\s\S]*?)(?=^\[|(?![\s\S]))/m);
   if (migSection) {
     const migRe = /^"([^"]+)"\s*=\s*"([^"]+)"/mg;
     let m: RegExpExecArray | null;

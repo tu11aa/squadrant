@@ -35,6 +35,18 @@ describe("resolveCodexModel", () => {
     await expect(resolveCodexModel()).resolves.toBe("gpt-5.5");
   });
 
+  it("applies migrations when the section is the last one in the file", async () => {
+    const toml = [
+      'model = "gpt-5.3-codex"',
+      "",
+      "[notice.model_migrations]",
+      '"gpt-5.3-codex" = "gpt-5.5"',
+      "",
+    ].join("\n");
+    readFileMock.mockResolvedValue(toml);
+    await expect(resolveCodexModel()).resolves.toBe("gpt-5.5");
+  });
+
   it("returns the model unchanged when it is not in the migrations map", async () => {
     const toml = [
       'model = "gpt-5.5"',
