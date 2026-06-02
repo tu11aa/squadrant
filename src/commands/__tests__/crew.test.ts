@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { spawn } from "node:child_process";
 
 const newPane = vi.hoisted(() => vi.fn());
 const sendToPane = vi.hoisted(() => vi.fn());
@@ -85,7 +86,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren } from "../crew.js";
 
 const baseConfig = {
   commandName: "command",
@@ -761,5 +762,48 @@ describe("cockpit crew send/read/close/list", () => {
       { name: "crew-1", surfaceId: "surface:10" },
       { name: "fix-typos", surfaceId: "surface:11" },
     ]);
+  });
+});
+
+describe("reapCrewChildren", () => {
+  it("kills node processes tagged with the crew task ID and leaves sibling processes alive", async () => {
+    const taskId = `reap-crew-test-${process.pid}-${Date.now()}`;
+    const siblingId = `reap-sibling-test-${process.pid}-${Date.now()}`;
+
+    // Spawn a long-running node process as the "crew child" (inherits COCKPIT_CREW_TASK_ID=taskId)
+    const crewChild = spawn("node", ["-e", "setInterval(() => {}, 999999)"], {
+      env: { ...process.env, COCKPIT_CREW_TASK_ID: taskId },
+      stdio: "ignore",
+    });
+
+    // Spawn a sibling with a DIFFERENT task ID — must NOT be killed
+    const sibling = spawn("node", ["-e", "setInterval(() => {}, 999999)"], {
+      env: { ...process.env, COCKPIT_CREW_TASK_ID: siblingId },
+      stdio: "ignore",
+    });
+
+    // Give ps time to see the new processes
+    await new Promise<void>((r) => setTimeout(r, 400));
+
+    const crewPid = crewChild.pid!;
+    const siblingPid = sibling.pid!;
+
+    // Both alive before reap
+    expect(() => process.kill(crewPid, 0)).not.toThrow();
+    expect(() => process.kill(siblingPid, 0)).not.toThrow();
+
+    // Reap with a short grace period so the test doesn't take 2 seconds
+    await reapCrewChildren(taskId, 50);
+
+    // Crew child must be dead
+    expect(() => process.kill(crewPid, 0)).toThrow();
+    // Sibling with a different task ID must still be alive
+    expect(() => process.kill(siblingPid, 0)).not.toThrow();
+
+    sibling.kill("SIGKILL");
+  }, 10000);
+
+  it("is a no-op and does not throw when no processes carry the task ID", async () => {
+    await expect(reapCrewChildren("nonexistent-task-id-xyz-abc", 50)).resolves.toBeUndefined();
   });
 });

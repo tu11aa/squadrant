@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { exec as nodeExec } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -443,6 +444,37 @@ export async function runCrewRead(project: string, name: string): Promise<string
   return runtime.readPaneScreen(crew);
 }
 
+/** Kill every process that inherited COCKPIT_CREW_TASK_ID=<taskId> from the
+ *  crew's shell env prefix. Uses `ps auxE` which exposes env vars for node
+ *  processes on macOS (vitest workers, the crew CLI, etc.). Best-effort:
+ *  swallows all errors so a childless crew still closes cleanly.
+ *
+ *  @param graceMs - ms between SIGTERM and SIGKILL (default 2 s; pass a short
+ *    value in tests to avoid waiting)
+ */
+export async function reapCrewChildren(taskId: string, graceMs = 2000): Promise<void> {
+  const marker = `COCKPIT_CREW_TASK_ID=${taskId}`;
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      nodeExec("ps auxE", (err, out) => (err ? reject(err) : resolve(out)));
+    });
+    const pids: number[] = [];
+    for (const line of stdout.split("\n").slice(1)) {
+      if (!line.includes(marker)) continue;
+      const pid = parseInt(line.trim().split(/\s+/)[1], 10);
+      if (!isNaN(pid) && pid !== process.pid) pids.push(pid);
+    }
+    if (pids.length === 0) return;
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+    }
+    await new Promise<void>((r) => setTimeout(r, graceMs));
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+  } catch { /* best-effort */ }
+}
+
 export async function runCrewClose(project: string, name: string): Promise<void> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const crew = await findCrew(runtime, workspaceId, project, name);
@@ -454,24 +486,33 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   // ledger and keep firing phantom CREW BLOCKED/IDLE pushes until the next
   // daemon restart. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
   // firePush stays silent — captain initiated the close, no notification needed.
+  let taskId: string | undefined;
   try {
     const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
     const task = tasks.find((t) => t.name === name);
-    if (task && !TERMINAL_STATES.has(task.state)) {
-      await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
-    }
-    // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
-    // (and its per-thread MCP servers) live on the shared app-server, so closing
-    // the pane alone leaks them. Tell the daemon to archive the thread. Fires for
-    // terminal and non-terminal crews alike (a finished codex crew still holds a
-    // live thread until archived).
-    if (task && task.provider === "codex") {
-      await cockpitdCall({ kind: "codex-close", taskId: task.id });
+    if (task) {
+      taskId = task.id;
+      if (!TERMINAL_STATES.has(task.state)) {
+        await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
+      }
+      // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
+      // (and its per-thread MCP servers) live on the shared app-server, so closing
+      // the pane alone leaks them. Tell the daemon to archive the thread. Fires for
+      // terminal and non-terminal crews alike (a finished codex crew still holds a
+      // live thread until archived).
+      if (task.provider === "codex") {
+        await cockpitdCall({ kind: "codex-close", taskId: task.id });
+      }
     }
   } catch {
     // Swallow daemon errors — a crew without a daemon must still close.
   }
   await runtime.closePane(crew);
+  // Reap any surviving child processes (vitest workers, node subprocs, etc.)
+  // that the cmux pane-close cascade may have missed.
+  if (taskId !== undefined) {
+    await reapCrewChildren(taskId);
+  }
 }
 
 export async function runCrewList(project: string): Promise<Array<{ name: string; surfaceId: string }>> {

@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay, DEFAULT_STATE_ROOT } from "../notify-relay.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS } from "../notify-relay.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
 function freshState(): string {
@@ -145,6 +145,29 @@ describe("notify-relay file-tailer", () => {
     expect(msgs[0]).toMatch(/^CREW DONE \[claude\/deadbeef\]:/);
     expect(msgs[1]).toMatch(/^CREW BLOCKED \[claude\/deadbeef\]: what now\?/);
     expect(msgs[2]).toMatch(/^CREW FAILED \[claude\/deadbeef\]: boom/);
+  });
+
+  it("silently acks entries older than STALE_THRESHOLD_MS without forwarding to captain", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    // Pretend relay is booting far in the future — makes the just-written entry stale.
+    const futureNow = () => Date.now() + STALE_THRESHOLD_MS + 60_000;
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+      now: futureNow,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    // Cursor must advance (so we don't replay on next start) but no notification.
+    expect(sendSpy).not.toHaveBeenCalled();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
   });
 
   it("task.done with payload.message prefers message over resultRef in display", async () => {
