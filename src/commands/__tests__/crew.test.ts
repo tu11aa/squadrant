@@ -408,6 +408,45 @@ describe("cockpit crew spawn", () => {
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
   });
 
+  it("passes the configured crew permission mode to buildCommand", async () => {
+    loadConfig.mockReturnValue({
+      ...baseConfig,
+      defaults: {
+        ...baseConfig.defaults,
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+      },
+    });
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude --permission-mode auto ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-pm" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-pm" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: "auto" }));
+  });
+
+  it("falls back to acceptEdits when no crew permission mode is configured", async () => {
+    // baseConfig.defaults.permissions = {} → no crew key set.
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-pmf" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-pmf" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: "acceptEdits" }));
+  });
+
   it("respects --direction override", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });

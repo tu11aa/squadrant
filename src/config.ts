@@ -17,6 +17,9 @@ export interface ProjectConfig {
 export interface PermissionConfig {
   command: string;   // permission mode for the command session
   captain: string;   // permission mode for captain sessions
+  crew?: string;     // permission mode for crew sessions (default: acceptEdits)
+  // Flexible role->mode map so future roles don't need a type change.
+  [role: string]: string | undefined;
 }
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
@@ -84,18 +87,19 @@ export function getDefaultConfig(): CockpitConfig {
       permissions: {
         command: "auto",
         captain: "auto",
+        crew: "auto",
       },
       models: {
         command: "opus",
         captain: "opus",
-        crew: "sonnet",
+        crew: "opus",
         exploration: "haiku",
         review: "opus",
       },
       roles: {
         command: { agent: "claude", model: "opus" },
         captain: { agent: "claude", model: "opus" },
-        crew: { agent: "claude", model: "sonnet" },
+        crew: { agent: "claude", model: "opus" },
         exploration: { agent: "claude", model: "haiku" },
       },
     },

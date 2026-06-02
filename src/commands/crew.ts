@@ -272,10 +272,11 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       role: "crew",
       promptFile,
       interactive: true,
-      // Semi-automatic gate: auto-accept file edits, still prompt for risky
-      // ops (Bash, etc.). Replaces reliance on cmux's unreliable auto-accept
-      // toggle and enables running crews on cheaper models.
-      permissionMode: "acceptEdits",
+      // Permission mode is config-driven (defaults.permissions.crew) so cockpit
+      // can default crews to 'auto' or keep the semi-automatic 'acceptEdits'
+      // gate (auto-accept edits, still prompt for risky ops). Falls back to
+      // 'acceptEdits' when unset.
+      permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
       ...(crewModel ? { model: crewModel } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";

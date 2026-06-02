@@ -51,7 +51,13 @@ describe("config", () => {
     const config = getDefaultConfig();
     expect(config.defaults.roles).toBeDefined();
     expect(config.defaults.roles!.command).toEqual({ agent: "claude", model: "opus" });
-    expect(config.defaults.roles!.crew).toEqual({ agent: "claude", model: "sonnet" });
+    expect(config.defaults.roles!.crew).toEqual({ agent: "claude", model: "opus" });
+  });
+
+  it("defaults crews to opus + auto permission mode", () => {
+    const config = getDefaultConfig();
+    expect(config.defaults.models!.crew).toBe("opus");
+    expect(config.defaults.permissions.crew).toBe("auto");
   });
 
   it("migrates old models config to roles on load", () => {
