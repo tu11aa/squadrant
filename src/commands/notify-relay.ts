@@ -30,6 +30,9 @@ export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state")
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
 export const PROBE_INTERVAL_MS = 10_000;
+// Entries older than this at relay-boot time are silently acked without being
+// forwarded — they are stale events from a prior captain session or dead crews.
+export const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 // A working interactive task with no heartbeat for this long is a probe
 // candidate: PostToolUse never fires while a permission prompt is up, so a
 // genuinely-blocked crew goes quiet well before the multi-minute stall budget.
@@ -163,6 +166,8 @@ interface RunOpts {
   pollMs?: number;
   /** Probe cadence override (default PROBE_INTERVAL_MS); 0 disables the probe. */
   probeMs?: number;
+  /** Override Date.now() — useful in tests to simulate a future session start time. */
+  now?: () => number;
   log?: (m: string) => void;
 }
 
@@ -185,6 +190,8 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
     } | undefined;
   if (!captainSurface) throw new Error("no surfaces in captain workspace");
 
+  const sessionStartMs = (opts.now ?? (() => Date.now()))();
+
   const cursor = await readCursor({
     stateRoot: opts.stateRoot,
     project: opts.project,
@@ -204,6 +211,20 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         fromSeq: lastAcked + 1,
       })) {
         if (stopped) return;
+        // Silently ack entries that pre-date this relay session by more than
+        // STALE_THRESHOLD_MS — they are leftovers from dead crews or a prior
+        // captain session and would only confuse the current captain.
+        const entryMs = new Date(entry.ts).getTime();
+        if (entryMs < sessionStartMs - STALE_THRESHOLD_MS) {
+          await writeCursor({
+            stateRoot: opts.stateRoot,
+            project: opts.project,
+            subscriber: opts.subscriber,
+            lastAckedSeq: entry.seq,
+          });
+          lastAcked = entry.seq;
+          continue;
+        }
         const msg = formatEntry(entry);
         if (msg) {
           try {
