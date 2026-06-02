@@ -17,6 +17,9 @@ export interface ProjectConfig {
 export interface PermissionConfig {
   command: string;   // permission mode for the command session
   captain: string;   // permission mode for captain sessions
+  crew?: string;     // permission mode for crew sessions (default: acceptEdits)
+  // Flexible role->mode map so future roles don't need a type change.
+  [role: string]: string | undefined;
 }
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
