@@ -1,6 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { CodexInteractiveDriver, shouldReattachCodex } from "../driver.js";
 import { EventEmitter } from "node:events";
+
+vi.mock("../config.js", () => ({ resolveCodexModel: vi.fn() }));
+import { resolveCodexModel } from "../config.js";
+const resolveCodexModelMock = vi.mocked(resolveCodexModel);
+afterEach(() => vi.resetAllMocks());
 
 describe("shouldReattachCodex (boot reattach guard — anti-MCP-storm)", () => {
   const NOW = 1_000_000;
@@ -52,6 +57,7 @@ function fakeClient() {
 
 describe("CodexInteractiveDriver.dispatch", () => {
   it("ensures handshake, starts a thread, emits task.session + task.started", async () => {
+    resolveCodexModelMock.mockResolvedValue(undefined);
     const client = fakeClient();
     const events: any[] = [];
     const drv = new CodexInteractiveDriver({
@@ -73,6 +79,40 @@ describe("CodexInteractiveDriver.dispatch", () => {
       { type: "task.session", id: "t1", resumeRef: "TH-1" },
       { type: "task.started", id: "t1" },
     ]);
+  });
+
+  it("resolves model from codex config when rec.model is undefined (fixes ChatGPT 400)", async () => {
+    resolveCodexModelMock.mockResolvedValue("gpt-5.5");
+    const client = fakeClient();
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any);
+    expect(client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5.5" }),
+    );
+  });
+
+  it("uses rec.model directly when explicitly set (crew-role model override)", async () => {
+    resolveCodexModelMock.mockResolvedValue("gpt-5.5");
+    const client = fakeClient();
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    await drv.dispatch({
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work", model: "o4-mini",
+    } as any);
+    expect(client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "o4-mini" }),
+    );
+    // Config resolution not needed when rec.model is already set
+    expect(resolveCodexModelMock).not.toHaveBeenCalled();
   });
 
   it("runs codex crews with danger-full-access (parity with unsandboxed claude/opencode) so `cockpit crew signal` reaches the daemon socket", async () => {

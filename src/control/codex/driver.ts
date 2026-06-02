@@ -6,6 +6,7 @@
 // requests and lifecycle. Spec §4.1/§4.6/§4.7.
 
 import { AppServerClient } from "./app-server-client.js";
+import { resolveCodexModel } from "./config.js";
 import { normalizeAppServerNotification } from "./normalize.js";
 import type { ControlEvent, TaskRecord } from "../types.js";
 import { TERMINAL_STATES } from "../types.js";
@@ -71,9 +72,14 @@ export class CodexInteractiveDriver {
     try {
       const c = await this.ensureClient();
       await withTimeout(this.ensureHandshake(), 10_000, "handshake timed out");
+      // When no model is explicitly set on the task record, read the user's
+      // codex config and apply model migrations (e.g. gpt-5.3-codex → gpt-5.5).
+      // Without this the app-server falls back to the raw config value and
+      // ChatGPT OAuth rejects it with a 400 (verified: gpt-5.5 succeeds).
+      const model = rec.model ?? await resolveCodexModel();
       const { threadId } = await c.startThread({
         cwd: rec.cwd ?? process.cwd(),
-        model: rec.model,
+        model,
         // Parity with claude/opencode crews, which run UNSANDBOXED (no Seatbelt).
         // Codex was the only agent under `workspace-write`, and that FS sandbox
         // blocked `cockpit crew signal …` from reaching the daemon socket (which
