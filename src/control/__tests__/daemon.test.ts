@@ -176,6 +176,35 @@ describe("daemon handler", () => {
     expect(after?.error).toBe("no adapter for gemini");
   });
 
+  it("gate-resolve marks the gate resolved and calls resolveInteractiveGate", async () => {
+    const calls: any[] = [];
+    const recIn: any = {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "blocked", task: "x", createdAt: 1, lastHeartbeat: 1, lastEvent: "",
+      heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a", startedAt: 1, lastHeartbeatAt: 1 }],
+      gates: [{ gateId: "g1", taskId: "t1", kind: "input", question: "?", state: "pending", createdAt: 1 }],
+    };
+    const store: any = {
+      put: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+      listAll: () => [recIn],
+      quarantine: vi.fn(),
+    };
+    const d = createDaemon({
+      store,
+      now: () => 100,
+      resolveInteractiveGate: (taskId: string, payload: unknown) => { calls.push(["answer", taskId, payload]); },
+    });
+    const res: any = await d.handle({ kind: "gate-resolve", project: "p", gateId: "g1", resolvedBy: "captain", payload: { text: "ok" } });
+    expect(store.put).toHaveBeenCalled();
+    const written = (store.put as any).mock.calls[0][0];
+    expect(written.gates[0].state).toBe("resolved");
+    expect(written.gates[0].resolvedBy).toBe("captain");
+    expect(calls).toEqual([["answer", "t1", { text: "ok" }]]);
+  });
+
   // Regression: daemon must route provider=codex interactive dispatch to the
   // injected launchInteractive hook (which cockpitd wires to CodexInteractiveDriver).
   it("daemon routes codex interactive dispatch to the driver", async () => {
