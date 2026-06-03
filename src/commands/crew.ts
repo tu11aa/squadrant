@@ -18,6 +18,7 @@ import {
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
+import { resolveTextInput } from "../lib/resolve-text-input.js";
 import { TERMINAL_STATES, type TaskRecord } from "../control/types.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -535,21 +536,23 @@ crewCommand
     "Spawn an interactive crew session as a tab in the captain's workspace (use --direction to split into a pane instead)",
   )
   .argument("<project>", "Project name (must be registered)")
-  .argument("<task>", "Initial task prompt for the crew session")
+  .argument("[task]", "Initial task prompt for the crew session (omit with --task-file)")
   .option("--name <name>", "Crew name (default: auto-generated crew-N)")
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
   .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|opencode)", "claude")
   .option("--approval", "force codex approvalPolicy='untrusted' (codex only; exercises gate primitive)", false)
+  .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .action(
     async (
       project: string,
-      task: string,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean },
+      task: string | undefined,
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; taskFile?: string },
     ) => {
       try {
+        const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const pane = await runCrewSpawn({
           project,
-          task,
+          task: resolvedTask,
           name: opts.name,
           direction: opts.direction,
           agent: opts.agent,
@@ -588,10 +591,12 @@ crewCommand
   .description("Send a follow-up message to an existing crew session")
   .argument("<project>", "Project name")
   .argument("<name>", "Crew name (e.g. crew-1)")
-  .argument("<message>", "Message to send")
-  .action(async (project: string, name: string, message: string) => {
+  .argument("[message]", "Message to send (omit with --message-file)")
+  .option("--message-file <path>", "Read message from file instead of positional arg ('-' for stdin)")
+  .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string }) => {
     try {
-      await runCrewSend(project, name, message);
+      const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
+      await runCrewSend(project, name, resolvedMessage);
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (err) {
       console.error(chalk.red((err as Error).message));
