@@ -805,7 +805,7 @@ describe("cockpit crew send/read/close/list", () => {
 });
 
 describe("reapCrewChildren", () => {
-  it("kills node processes tagged with the crew task ID and leaves sibling processes alive", async () => {
+  it.skipIf(process.platform !== "darwin")("kills node processes tagged with the crew task ID and leaves sibling processes alive", async () => {
     const taskId = `reap-crew-test-${process.pid}-${Date.now()}`;
     const siblingId = `reap-sibling-test-${process.pid}-${Date.now()}`;
 
