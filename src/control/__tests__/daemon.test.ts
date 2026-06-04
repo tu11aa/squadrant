@@ -316,6 +316,80 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls[0].message).toContain("second prompt");
   });
 
+  // ── #214: DONE message preservation (unified formatter) ───────────────────
+  it("CREW DONE prefers the crew's signal-done message over the task snippet", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-dm", { state: "working", task: "the original assigned task" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-dm", resultRef: "/r", message: "fixed the formatter, all tests pass" } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toBe("CREW DONE [claude/t-dm]: fixed the formatter, all tests pass");
+  });
+
+  it("CREW DONE falls back to the task snippet when no message is provided", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-ds", { state: "working", task: "implement the thing" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-ds", resultRef: "/r" } });
+    expect(calls[0].message).toBe("CREW DONE [claude/t-ds]: implement the thing");
+  });
+
+  // ── #210: CREW IDLE debounce ──────────────────────────────────────────────
+  // awaiting-input fires CREW IDLE, but must NOT spam during an active
+  // captain-driven back-and-forth: a turn-end shortly after the captain's own
+  // task.started (crew send/reply) is suppressed; a genuine self-idle delivers.
+  describe("CREW IDLE debounce (#210)", () => {
+    it("suppresses CREW IDLE when the turn ends within the debounce window of a captain turn", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-deb", { state: "working" }));
+      const calls: any[] = [];
+      let nowMs = 10_000;
+      const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });
+      // Captain sends → task.started (working → working, records lastCaptainTurnAt)
+      await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-deb" } });
+      // Crew finishes the turn 3s later (well within the window)
+      nowMs = 13_000;
+      await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-deb", turnId: "turn-1" } });
+      expect(store.get("p", "t-deb")?.state).toBe("awaiting-input");
+      expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(0);
+    });
+
+    it("delivers CREW IDLE for a self-idle turn-end long after the captain's last turn", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-self", { state: "working" }));
+      const calls: any[] = [];
+      let nowMs = 10_000;
+      const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-self" } });
+      // Turn ends far outside the debounce window → genuine idle, must deliver
+      nowMs = 10_000 + 5 * 60_000;
+      await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-self", turnId: "turn-1" } });
+      const idle = calls.filter((c) => c.message.includes("CREW IDLE"));
+      expect(idle).toHaveLength(1);
+    });
+
+    it("delivers CREW IDLE for a turn-end with no prior captain turn at all", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-none", { state: "working" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 50_000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-none", turnId: "turn-1" } });
+      expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(1);
+    });
+
+    it("does NOT debounce CREW BLOCKED even right after a captain turn", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-blk", { state: "working" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-blk" } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.blocked", id: "t-blk", reason: "r", question: "q" } });
+      expect(calls.filter((c) => c.message.includes("CREW BLOCKED"))).toHaveLength(1);
+    });
+  });
+
   it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#183)", async () => {
     // Same fix path for crews that went idle (awaiting-input) before captain replied.
     const store = createStore(dir);

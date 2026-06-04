@@ -301,4 +301,20 @@ describe("writePerCrewOpencodeConfig", () => {
     expect(fs.existsSync(out)).toBe(true);
     expect(fs.statSync(path.dirname(out)).isDirectory()).toBe(true);
   });
+
+  it("defaults bash to 'allow' (CP3 opt-in: default behavior unchanged)", () => {
+    const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1" });
+    const json = JSON.parse(fs.readFileSync(out, "utf-8"));
+    expect(json.permission.bash).toBe("allow");
+  });
+
+  it("gateBash:true sets bash to 'ask' so the captain approves shell commands", () => {
+    const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1", gateBash: true });
+    const json = JSON.parse(fs.readFileSync(out, "utf-8"));
+    expect(json.permission.bash).toBe("ask");
+    // Only bash flips — every other tool stays auto-approved (surgical gate).
+    expect(json.permission.edit).toBe("allow");
+    expect(json.permission.read).toBe("allow");
+    expect(json.permission.external_directory).toEqual({ "**": "allow" });
+  });
 });

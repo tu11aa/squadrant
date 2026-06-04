@@ -57,6 +57,8 @@ export interface CockpitdOpts {
   opencodeBridge?: {
     start: (o: { taskId: string; port: number }) => void;
     stop: (taskId: string) => void;
+    /** CP3: POST the captain's approve/deny decision to the crew's server. */
+    answer: (taskId: string, decision: "approve" | "deny") => Promise<boolean>;
   };
 }
 
@@ -182,6 +184,13 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       const found = store.listAll().find((r) => r.id === ev.id);
       if (!found) return;
       void d.handle({ kind: "event", project: found.project, event: ev });
+      // CP3: a gated permission must become a resolvable gate so the captain can
+      // approve/deny via `crew reply --gate`. Opencode crews never attach a
+      // renderer (no `crew attach`), so schedulePromotion always fires after the
+      // grace window — mirroring the codex emit hook below.
+      if (ev.type === "task.approval.requested") {
+        schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
+      }
     },
     log,
   });
@@ -207,6 +216,9 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         project: args.project,
         taskRecord: args.record,
         event: args.event,
+        // Persist the daemon-rendered message (#214/#210): the relay delivers it
+        // verbatim instead of re-deriving from the raw event (which drifted).
+        message: args.message,
       });
     } catch (e) {
       log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
@@ -253,8 +265,20 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       );
     },
     resolveInteractiveGate: async (taskId, payload) => {
-      try { await codexDriver.answer(taskId, payload); }
-      catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
+      // Route the captain's decision to the owning provider's driver. Opencode
+      // crews resolve via the SSE bridge (POST to the crew's server); codex via
+      // its app-server respondToServerRequest. Provider comes from the record.
+      const rec = store.listAll().find((r) => r.id === taskId);
+      try {
+        if (rec?.provider === "opencode") {
+          // Only an explicit "approve" approves; any other reply (incl. an
+          // ambiguous one) denies — never auto-approve a permission gate.
+          const decision = (payload as { decision?: string })?.decision === "approve" ? "approve" : "deny";
+          await opencodeBridge.answer(taskId, decision);
+        } else {
+          await codexDriver.answer(taskId, payload);
+        }
+      } catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
     },
   });
 

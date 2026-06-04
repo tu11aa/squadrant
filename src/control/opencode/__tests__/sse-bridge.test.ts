@@ -125,4 +125,89 @@ describe("OpencodeSseBridge", () => {
     await flush();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  // ── CP3: permission gate (live-verified opencode 1.15.13 shapes) ──────────
+  // permission.asked carries properties = PermissionRequest:
+  //   { id:"per_…", sessionID:"ses_…", permission:"bash", patterns:[…], … }
+  // Reply endpoint (live-verified): POST /session/{sessionID}/permissions/{permissionID}
+  //   body { response: "once"|"always"|"reject" } → 200, fires permission.replied.
+
+  /** fetchImpl that streams the given SSE on GET /event and 200s any POST. */
+  function permFetch(sse: string[]) {
+    return vi.fn().mockImplementation((url: unknown) => {
+      if (String(url).endsWith("/event")) return Promise.resolve(sseResponse(sse));
+      return Promise.resolve({ ok: true, status: 200, body: null } as unknown as Response);
+    });
+  }
+
+  it("maps permission.asked → task.approval.requested", async () => {
+    const events: ControlEvent[] = [];
+    const fetchImpl = permFetch([
+      'data: {"id":"e1","type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_1","permission":"bash","patterns":["echo hi"]}}\n',
+    ]);
+    const bridge = new OpencodeSseBridge({ emit: (e) => events.push(e), fetchImpl });
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush();
+    await flush();
+    const ev = events.find((e) => e.type === "task.approval.requested");
+    expect(ev).toBeDefined();
+    expect(ev).toMatchObject({ type: "task.approval.requested", id: "t1", kind: "bash" });
+    // requestId is a synthetic number (opencode has no numeric request id on the
+    // bus); it keys the daemon's gate promotion just like codex's JSON-RPC id.
+    expect(typeof (ev as { requestId: number }).requestId).toBe("number");
+    expect((ev as { question: string }).question).toContain("bash");
+  });
+
+  it("answer(approve) POSTs response 'once' to /session/{id}/permissions/{id}", async () => {
+    const events: ControlEvent[] = [];
+    const fetchImpl = permFetch([
+      'data: {"type":"permission.asked","properties":{"id":"per_9","sessionID":"ses_9","permission":"bash","patterns":[]}}\n',
+    ]);
+    const bridge = new OpencodeSseBridge({ emit: (e) => events.push(e), fetchImpl });
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush();
+    await flush();
+    const resolved = await bridge.answer("t1", "approve");
+    expect(resolved).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:7777/session/ses_9/permissions/per_9",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ response: "once" }) }),
+    );
+  });
+
+  it("answer(deny) POSTs response 'reject'", async () => {
+    const fetchImpl = permFetch([
+      'data: {"type":"permission.asked","properties":{"id":"per_7","sessionID":"ses_7","permission":"bash","patterns":[]}}\n',
+    ]);
+    const bridge = new OpencodeSseBridge({ emit: () => {}, fetchImpl });
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush();
+    await flush();
+    await bridge.answer("t1", "deny");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:7777/session/ses_7/permissions/per_7",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ response: "reject" }) }),
+    );
+  });
+
+  it("answer() returns false when no permission is pending", async () => {
+    const fetchImpl = permFetch([]);
+    const bridge = new OpencodeSseBridge({ emit: () => {}, fetchImpl });
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush();
+    expect(await bridge.answer("t1", "approve")).toBe(false);
+  });
+
+  it("permission.replied clears the pending permission", async () => {
+    const fetchImpl = permFetch([
+      'data: {"type":"permission.asked","properties":{"id":"per_5","sessionID":"ses_5","permission":"bash","patterns":[]}}\n',
+      'data: {"type":"permission.replied","properties":{"sessionID":"ses_5","requestID":"per_5","reply":"once"}}\n',
+    ]);
+    const bridge = new OpencodeSseBridge({ emit: () => {}, fetchImpl });
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush();
+    await flush();
+    // Already resolved on the bus → captain's later answer is a no-op.
+    expect(await bridge.answer("t1", "approve")).toBe(false);
+  });
 });

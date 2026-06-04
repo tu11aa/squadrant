@@ -323,6 +323,8 @@ describe("cockpit crew spawn", () => {
       project: "brove",
       taskId: "task-oc1",
     }));
+    // CP3 default unchanged: without --approval, bash is NOT gated.
+    expect(writePerCrewOpencodeConfig.mock.calls[0][0].gateBash).toBeFalsy();
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ interactive: true }));
     expect(newPane).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: "workspace:5",
@@ -339,6 +341,22 @@ describe("cockpit crew spawn", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "do the thing",
     ]);
+  });
+
+  it("--approval gates bash for opencode crews (CP3 opt-in → gateBash:true)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("opencode");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-oc2" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-oc2", project: "brove", provider: "opencode", mode: "interactive" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "do it", agent: "opencode", approval: true });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(writePerCrewOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({ gateBash: true }));
   });
 
   it("--agent codex routes through the control-plane daemon and opens an attach tab in the captain", async () => {

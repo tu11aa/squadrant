@@ -57,6 +57,28 @@ describe("appendToMailbox", () => {
     expect(typeof entry.ts).toBe("string");
   });
 
+  it("persists the daemon-rendered message verbatim on the entry (unified-formatter)", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({
+      stateRoot,
+      project: "demo",
+      taskRecord: sampleRecord,
+      event: doneEvent,
+      message: "CREW DONE [claude/abc]: shipped it",
+    });
+    const logPath = join(stateRoot, "inbox", "demo.log");
+    const entry = JSON.parse(readFileSync(logPath, "utf-8").trim());
+    expect(entry.message).toBe("CREW DONE [claude/abc]: shipped it");
+  });
+
+  it("stores message:null when the daemon passes no message", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const logPath = join(stateRoot, "inbox", "demo.log");
+    const entry = JSON.parse(readFileSync(logPath, "utf-8").trim());
+    expect(entry.message).toBeNull();
+  });
+
   it("assigns monotonically increasing seq on subsequent appends", async () => {
     const stateRoot = freshState();
     const s1 = await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });

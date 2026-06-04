@@ -36,6 +36,13 @@ export interface OpencodeSseBridgeDeps {
  */
 export class OpencodeSseBridge {
   private controllers = new Map<string, AbortController>();
+  /** taskId → the crew's opencode server port (for permission-reply POSTs). */
+  private portByTask = new Map<string, number>();
+  /** taskId → the last unresolved permission on the bus (for answer()). */
+  private pendingPermByTask = new Map<string, { permID: string; sessionID: string }>();
+  /** Synthetic monotonic request id. opencode has no numeric id on the bus, but
+   *  task.approval.requested carries one (codex parity) to key gate promotion. */
+  private nextRequestId = 1;
   private deps: OpencodeSseBridgeDeps;
 
   constructor(deps: OpencodeSseBridgeDeps) {
@@ -45,6 +52,7 @@ export class OpencodeSseBridge {
   /** Begin subscribing to the crew's /event stream. Idempotent per task. */
   start(o: { taskId: string; port: number }): void {
     if (this.controllers.has(o.taskId)) return;
+    this.portByTask.set(o.taskId, o.port);
     const ac = new AbortController();
     this.controllers.set(o.taskId, ac);
     void this.run(o.taskId, o.port, ac);
@@ -53,9 +61,41 @@ export class OpencodeSseBridge {
   /** Stop subscribing for a task (crew closed / terminal). */
   stop(taskId: string): void {
     const ac = this.controllers.get(taskId);
-    if (!ac) return;
-    ac.abort();
-    this.controllers.delete(taskId);
+    if (ac) { ac.abort(); this.controllers.delete(taskId); }
+    this.portByTask.delete(taskId);
+    this.pendingPermByTask.delete(taskId);
+  }
+
+  /**
+   * Resolve a pending opencode permission by POSTing the captain's decision to
+   * the crew's server (live-verified, opencode 1.15.13: POST
+   * /session/{sessionID}/permissions/{permissionID} with
+   * { response: "once" | "reject" } → 200, fires permission.replied). Mirrors
+   * codex's driver.answer(). Returns true if there WAS a pending permission (so
+   * the caller knows the answer was an approval, not a reply to a plain `signal
+   * blocked` question); false if nothing was pending (already resolved on the
+   * bus, or no gate).
+   */
+  async answer(taskId: string, decision: "approve" | "deny"): Promise<boolean> {
+    const pend = this.pendingPermByTask.get(taskId);
+    const port = this.portByTask.get(taskId);
+    if (!pend || port == null) return false;
+    this.pendingPermByTask.delete(taskId);
+    const fetchImpl = this.deps.fetchImpl ?? fetch;
+    const response = decision === "approve" ? "once" : "reject";
+    try {
+      await fetchImpl(`http://127.0.0.1:${port}/session/${pend.sessionID}/permissions/${pend.permID}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ response }),
+      });
+    } catch (e) {
+      this.deps.log?.(`opencode permission reply failed for ${taskId}: ${(e as Error).message}`);
+    }
+    // Clear blocked → working; the crew continues (or aborts) the turn, and a
+    // later session.idle settles it back to awaiting-input.
+    this.deps.emit({ type: "task.started", id: taskId });
+    return true;
   }
 
   private async run(taskId: string, port: number, ac: AbortController): Promise<void> {
@@ -128,7 +168,18 @@ export class OpencodeSseBridge {
     // SSE field form `data: {json}`; opencode also emits bare JSON lines.
     if (line.startsWith("data:")) line = line.slice(5).trim();
     if (!line.startsWith("{")) return;
-    let json: { type?: string; properties?: { sessionID?: string } } | undefined;
+    let json:
+      | {
+          type?: string;
+          properties?: {
+            id?: string;
+            sessionID?: string;
+            requestID?: string;
+            permission?: string;
+            patterns?: string[];
+          };
+        }
+      | undefined;
     try {
       json = JSON.parse(line);
     } catch {
@@ -142,6 +193,30 @@ export class OpencodeSseBridge {
         id: taskId,
         turnId: json.properties?.sessionID ?? "opencode",
       });
+    } else if (json?.type === "permission.asked") {
+      // A gated tool (e.g. bash, when --approval set bash:"ask") needs approval.
+      // Live-verified payload (opencode 1.15.13): properties = PermissionRequest
+      // { id:"per_…", sessionID:"ses_…", permission:"bash", patterns:[cmd], … }.
+      // Record the pending request so answer() can POST the decision, and surface
+      // it as task.approval.requested (codex parity) — the reducer turns it into
+      // blocked and the relay renders CREW BLOCKED with the tool + command.
+      const p = json.properties;
+      if (p?.id && p?.sessionID) {
+        this.pendingPermByTask.set(taskId, { permID: p.id, sessionID: p.sessionID });
+        const tool = p.permission ?? "a tool";
+        const cmd = Array.isArray(p.patterns) && p.patterns.length ? `: ${p.patterns.join(" ")}` : "";
+        this.deps.emit({
+          type: "task.approval.requested",
+          id: taskId,
+          requestId: this.nextRequestId++,
+          question: `opencode requests permission to run ${tool}${cmd}`,
+          kind: tool,
+        });
+      }
+    } else if (json?.type === "permission.replied") {
+      // The permission was resolved on the bus (by us or another client) — clear
+      // pending state so a later captain answer is a no-op rather than a stale POST.
+      this.pendingPermByTask.delete(taskId);
     }
   }
 }

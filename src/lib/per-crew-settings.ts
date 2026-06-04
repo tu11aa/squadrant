@@ -176,11 +176,17 @@ export function writePerCrewSettingsLocal(o: {
  * ~/.config/opencode/opencode.json automatically.
  *
  * Returns the absolute path to the written file.
+ *
+ * CP3 opt-in: with `gateBash`, bash flips to "ask" so the captain approves
+ * shell commands (opencode emits `permission.asked` → daemon surfaces CREW
+ * BLOCKED → captain's decision is POSTed back). Default (no flag) keeps bash
+ * "allow" — opencode crews stay fully autonomous unless `--approval` is passed.
  */
 export function writePerCrewOpencodeConfig(o: {
   stateRoot: string;
   project: string;
   taskId: string;
+  gateBash?: boolean;
 }): string {
   const dir = join(o.stateRoot, o.project, o.taskId);
   mkdirSync(dir, { recursive: true });
@@ -191,7 +197,7 @@ export function writePerCrewOpencodeConfig(o: {
       edit: "allow",
       glob: "allow",
       grep: "allow",
-      bash: "allow",
+      bash: o.gateBash ? "ask" : "allow",
       webfetch: "allow",
       websearch: "allow",
       task: "allow",

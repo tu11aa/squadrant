@@ -12,6 +12,11 @@ export interface MailboxEntry {
   kind: ControlEvent["type"];
   provider: TaskRecord["provider"];
   payload: Record<string, unknown>;
+  /** Daemon-rendered captain-facing message (unified-formatter, #214/#210).
+   *  The daemon's formatMessage is the single source of truth; the relay
+   *  delivers this verbatim and skips entries where it is null/empty.
+   *  `null` on entries the daemon chose not to surface (and legacy records). */
+  message?: string | null;
 }
 
 interface AppendOpts {
@@ -19,6 +24,8 @@ interface AppendOpts {
   project: string;
   taskRecord: TaskRecord;
   event: ControlEvent;
+  /** Captain-facing message rendered by the daemon (daemon.ts formatMessage). */
+  message?: string | null;
 }
 
 function inboxDir(stateRoot: string): string {
@@ -112,6 +119,7 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
       kind: opts.event.type,
       provider: opts.taskRecord.provider,
       payload: extractPayload(opts.event),
+      message: opts.message ?? null,
     };
     await fs.appendFile(file, JSON.stringify(entry) + "\n", { encoding: "utf-8" });
     return seq;

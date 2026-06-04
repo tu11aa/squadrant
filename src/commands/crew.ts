@@ -174,6 +174,10 @@ export interface CrewSpawnInput {
   /** Opt-in (#216): run this crew in its own git worktree + branch instead of
    *  the shared root checkout. For feature tasks; small/one-off tasks omit it. */
   worktree?: boolean;
+  /** CP3 opt-in: gate risky tools (bash) so the captain approves them.
+   *  codex maps this to approvalPolicy='untrusted'; opencode maps it to a
+   *  bash:"ask" per-crew config. Default (false) = fully autonomous. */
+  approval?: boolean;
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
@@ -346,6 +350,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
       project: input.project,
       taskId: rec.id,
+      // CP3 opt-in: --approval gates bash so the captain approves shell commands.
+      // Without it, bash stays auto-approved (default behavior unchanged).
+      ...(input.approval ? { gateBash: true } : {}),
     });
     const cliCommand = agent.buildCommand({
       prompt: input.task,
@@ -588,7 +595,7 @@ crewCommand
   .option("--name <name>", "Crew name (default: auto-generated crew-N)")
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
   .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|opencode)", "claude")
-  .option("--approval", "force codex approvalPolicy='untrusted' (codex only; exercises gate primitive)", false)
+  .option("--approval", "gate risky tools so the captain approves them (codex: approvalPolicy='untrusted'; opencode: bash:'ask')", false)
   .option("--worktree", "run the crew in its own git worktree + branch (feature tasks; small tasks omit to share the root checkout)", false)
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .action(
@@ -605,7 +612,9 @@ crewCommand
           name: opts.name,
           direction: opts.direction,
           agent: opts.agent,
-          ...(opts.approval ? { approvalPolicy: "untrusted" } : {}),
+          // --approval is provider-agnostic: codex consumes approvalPolicy,
+          // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
+          ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
           ...(opts.worktree ? { worktree: true } : {}),
         });
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));
