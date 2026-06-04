@@ -78,6 +78,13 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewOpencodeConfig,
 }));
 
+const addWorktree = vi.hoisted(() => vi.fn());
+const removeWorktree = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/git-worktree.js", () => ({
+  addWorktree,
+  removeWorktree,
+}));
+
 const existsSyncMock = vi.hoisted(() => vi.fn());
 const readFileSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:fs", async (importOriginal) => {
@@ -128,6 +135,8 @@ describe("cockpit crew spawn", () => {
     writePerCrewSettingsLocal.mockReturnValue("/tmp/brove/.claude/settings.local.json");
     writePerCrewOpencodeConfig.mockReset();
     writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
+    addWorktree.mockReset();
+    removeWorktree.mockReset();
     existsSyncMock.mockReset();
     readFileSyncMock.mockReset();
     // Default: pretend the codex role template is absent so older tests that
@@ -187,6 +196,73 @@ describe("cockpit crew spawn", () => {
       "do the thing",
     ]);
     expect(result.title).toBe("🔧 brove:crew-1");
+  });
+
+  it("--worktree creates an isolated worktree and spawns the crew with its path as cwd", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-wt1" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-wt1", project: "brove", provider: "claude", mode: "interactive" });
+    const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
+    addWorktree.mockReturnValue(wtPath);
+
+    const promise = runCrewSpawn({ project: "brove", task: "do the thing", worktree: true });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    // Worktree created from config.worktreeDir, off the develop base branch.
+    expect(addWorktree).toHaveBeenCalledWith({
+      repoRoot: "/tmp/brove",
+      worktreeDir: ".worktrees",
+      project: "brove",
+      name: "crew-1",
+      base: "develop",
+    });
+    // The crew runs in the worktree, not the shared root checkout.
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({ cwd: wtPath }));
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ workdir: wtPath }));
+    expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({ projectCwd: wtPath }));
+  });
+
+  it("without --worktree never creates a worktree (cwd stays the root checkout)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nowt" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-nowt" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "do the thing" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(addWorktree).not.toHaveBeenCalled();
+    expect(buildDispatchRequest).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/tmp/brove" }));
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ workdir: "/tmp/brove" }));
+  });
+
+  it("--worktree threads a custom config.worktreeDir into worktree creation", async () => {
+    loadConfig.mockReturnValue({
+      ...baseConfig,
+      defaults: { ...baseConfig.defaults, worktreeDir: ".wt" },
+    });
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-wtc" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-wtc" });
+    addWorktree.mockReturnValue("/tmp/brove/.wt/brove-crew-1");
+
+    const promise = runCrewSpawn({ project: "brove", task: "task", worktree: true });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(addWorktree).toHaveBeenCalledWith(expect.objectContaining({ worktreeDir: ".wt" }));
   });
 
   it("auto-names the next crew based on existing tabs (crew-1 + crew-3 → crew-2)", async () => {
@@ -622,6 +698,7 @@ describe("cockpit crew send/read/close/list", () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     cockpitdCall.mockReset();
+    removeWorktree.mockReset();
   });
 
   it("send delivers a message to the matching crew tab", async () => {
@@ -733,6 +810,43 @@ describe("cockpit crew send/read/close/list", () => {
       surfaceId: "surface:10",
       title: "🔧 brove:crew-1",
     });
+  });
+
+  it("close removes the crew's worktree when its task ran in one (cwd != root)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-wt-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: wtPath, createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(removeWorktree).toHaveBeenCalledWith("/tmp/brove", wtPath);
+    expect(closePane).toHaveBeenCalled();
+  });
+
+  it("close does NOT remove a worktree for a non-worktree crew (cwd == root)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-root-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: "/tmp/brove", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1");
+
+    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(closePane).toHaveBeenCalled();
   });
 
   it("close emits task.cancelled for a non-terminal crew task before closing the pane (#184)", async () => {
