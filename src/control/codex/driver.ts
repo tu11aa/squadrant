@@ -45,6 +45,13 @@ export class CodexInteractiveDriver {
   private handshakeP?: Promise<void>;
   private threadByTask = new Map<string, string>();
   private taskByThread = new Map<string, string>();
+  /**
+   * taskId → in-flight dispatch promise. The first-turn say() can arrive while
+   * dispatch() is still awaiting startThread (threadByTask not yet set); say()
+   * awaits this gate before reading threadByTask so the first turn isn't lost
+   * with "no thread for task" (issue #212).
+   */
+  private dispatchByTask = new Map<string, Promise<void>>();
   /** taskId → last pending server-request {id, method} (for answer()) */
   private serverRequestByTask = new Map<string, { id: number; method: string }>();
   private deps: DriverDeps;
@@ -69,6 +76,19 @@ export class CodexInteractiveDriver {
   }
 
   async dispatch(rec: TaskRecord & { cwd?: string; model?: string }): Promise<void> {
+    // Register the in-flight dispatch synchronously so a concurrent first-turn
+    // say() can await it (see dispatchByTask / issue #212). Cleared once the
+    // thread is mapped (or dispatch failed), after which say() reads the map.
+    const p = this.runDispatch(rec);
+    this.dispatchByTask.set(rec.id, p.then(() => {}, () => {}));
+    try {
+      await p;
+    } finally {
+      this.dispatchByTask.delete(rec.id);
+    }
+  }
+
+  private async runDispatch(rec: TaskRecord & { cwd?: string; model?: string }): Promise<void> {
     try {
       const c = await this.ensureClient();
       await withTimeout(this.ensureHandshake(), 10_000, "handshake timed out");
@@ -105,6 +125,10 @@ export class CodexInteractiveDriver {
   }
 
   async say(taskId: string, text: string): Promise<void> {
+    // Wait out any in-flight dispatch so the first turn isn't dropped during
+    // the startThread window (#212). The gate never rejects; a failed dispatch
+    // simply leaves threadByTask empty → the existing "no thread" throw stands.
+    await this.dispatchByTask.get(taskId);
     const c = this.client!;
     const tid = this.threadByTask.get(taskId);
     if (!tid) throw new Error(`no thread for task ${taskId}`);

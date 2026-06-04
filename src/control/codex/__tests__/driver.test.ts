@@ -314,6 +314,52 @@ describe("CodexInteractiveDriver.dispatch", () => {
     });
   });
 
+  it("first-turn say() awaits an in-flight dispatch instead of dropping the turn (race #212)", async () => {
+    resolveCodexModelMock.mockResolvedValue(undefined);
+    const client = fakeClient();
+    // startThread parks on a deferred promise to simulate the JSON-RPC
+    // round-trip window during which the first-turn say() arrives — the exact
+    // window where threadByTask is still empty.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    client.startThread = vi.fn().mockImplementation(async () => {
+      await gate;
+      return { threadId: "TH-1" };
+    });
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    const task = {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any;
+
+    const dispatchP = drv.dispatch(task);   // parks inside startThread
+    const sayP = drv.say("t1", "hello");     // first turn arrives DURING the await window
+    await Promise.resolve();                 // let say() reach its thread lookup
+    release();                               // startThread resolves → thread mapped
+
+    await expect(Promise.all([dispatchP, sayP])).resolves.toBeDefined();
+    expect(client.sendTurn).toHaveBeenCalledWith("TH-1", "hello");
+  });
+
+  it("say() still rejects with 'no thread' when its dispatch failed (no thread ever mapped)", async () => {
+    const client = fakeClient();
+    client.startThread = vi.fn().mockRejectedValue(new Error("startThread boom"));
+    const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
+    const task = {
+      id: "t1", project: "p", provider: "codex", mode: "interactive",
+      state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a1", startedAt: 1, lastHeartbeatAt: 1 }],
+      cwd: "/tmp/work",
+    } as any;
+    const dispatchP = drv.dispatch(task).catch(() => {});
+    await expect(drv.say("t1", "hello")).rejects.toThrow(/no thread/);
+    await dispatchP;
+  });
+
   it("if initialize rejects, emits task.failed with a clear handshake error", async () => {
     const client = fakeClient();
     client.initialize = vi.fn().mockRejectedValue(new Error("Not initialized"));
