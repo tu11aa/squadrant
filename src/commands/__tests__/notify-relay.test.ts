@@ -52,10 +52,19 @@ describe("notify-relay default stateRoot", () => {
   });
 });
 
+// Unified-formatter contract (#214/#210): the daemon renders the captain-facing
+// message and stores it on the mailbox entry; the relay is a dumb pipe that
+// delivers entry.message VERBATIM and skips entries with a null/empty message.
+// These tests therefore append entries WITH a message (what defaultNotify now
+// writes), not bare events.
+async function append(stateRoot: string, message: string | null, event: ControlEvent = doneEvent): Promise<number> {
+  return appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event, message });
+}
+
 describe("notify-relay file-tailer", () => {
   it("starts from seq 1 when cursor missing — delivers first event", async () => {
     const stateRoot = freshState();
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: shipped");
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     const stop = await runNotifyRelay({
       project: "demo",
@@ -75,8 +84,8 @@ describe("notify-relay file-tailer", () => {
 
   it("starts from seq+1 when cursor exists — delivers only newer events", async () => {
     const stateRoot = freshState();
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: one");
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: two");
     await writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: 1 });
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     const stop = await runNotifyRelay({
@@ -97,7 +106,7 @@ describe("notify-relay file-tailer", () => {
 
   it("does NOT advance cursor when sendToSurface throws", async () => {
     const stateRoot = freshState();
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
     const sendSpy = vi.fn().mockRejectedValue(new Error("send failed"));
     const stop = await runNotifyRelay({
       project: "demo",
@@ -114,21 +123,13 @@ describe("notify-relay file-tailer", () => {
     expect(sendSpy.mock.calls.length).toBeGreaterThan(0); // attempted
   });
 
-  it("formats task.done/blocked/failed with provider + short id + payload", async () => {
+  it("delivers entry.message VERBATIM (relay does not re-derive)", async () => {
     const stateRoot = freshState();
-    const blockedEvent: ControlEvent = {
-      type: "task.blocked",
-      id: rec.id,
-      question: "what now?",
-    } as ControlEvent;
-    const failedEvent: ControlEvent = {
-      type: "task.failed",
-      id: rec.id,
-      error: "boom",
-    } as ControlEvent;
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: blockedEvent });
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: failedEvent });
+    const blockedEvent: ControlEvent = { type: "task.blocked", id: rec.id, question: "what now?" } as ControlEvent;
+    const failedEvent: ControlEvent = { type: "task.failed", id: rec.id, error: "boom" } as ControlEvent;
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: finished", doneEvent);
+    await append(stateRoot, "CREW BLOCKED [claude/deadbeef]: what now?", blockedEvent);
+    await append(stateRoot, "CREW FAILED [claude/deadbeef]: boom", failedEvent);
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     const stop = await runNotifyRelay({
       project: "demo",
@@ -142,14 +143,37 @@ describe("notify-relay file-tailer", () => {
     stop();
     expect(sendSpy).toHaveBeenCalledTimes(3);
     const msgs = sendSpy.mock.calls.map((c) => c[1] as string);
-    expect(msgs[0]).toMatch(/^CREW DONE \[claude\/deadbeef\]:/);
-    expect(msgs[1]).toMatch(/^CREW BLOCKED \[claude\/deadbeef\]: what now\?/);
-    expect(msgs[2]).toMatch(/^CREW FAILED \[claude\/deadbeef\]: boom/);
+    expect(msgs[0]).toBe("CREW DONE [claude/deadbeef]: finished");
+    expect(msgs[1]).toBe("CREW BLOCKED [claude/deadbeef]: what now?");
+    expect(msgs[2]).toBe("CREW FAILED [claude/deadbeef]: boom");
+  });
+
+  it("skips entries with a null/empty message but still advances the cursor", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, null); // daemon chose not to surface (e.g. debounced idle)
+    await append(stateRoot, "   "); // whitespace-only → also skipped
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: real");
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    // Only the real message is delivered; the two empty entries are acked silently.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][1]).toBe("CREW DONE [claude/deadbeef]: real");
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(3);
   });
 
   it("silently acks entries older than STALE_THRESHOLD_MS without forwarding to captain", async () => {
     const stateRoot = freshState();
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneEvent });
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: stale");
     const sendSpy = vi.fn().mockResolvedValue(undefined);
     // Pretend relay is booting far in the future — makes the just-written entry stale.
     const futureNow = () => Date.now() + STALE_THRESHOLD_MS + 60_000;
@@ -168,31 +192,5 @@ describe("notify-relay file-tailer", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
     expect(cursor?.lastAckedSeq).toBe(1);
-  });
-
-  it("task.done with payload.message prefers message over resultRef in display", async () => {
-    const stateRoot = freshState();
-    const doneWithMessage: ControlEvent = {
-      type: "task.done",
-      id: rec.id,
-      resultRef: "/some/result/file.txt",
-      message: "hello world",
-    };
-    await appendToMailbox({ stateRoot, project: "demo", taskRecord: rec, event: doneWithMessage });
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    const stop = await runNotifyRelay({
-      project: "demo",
-      subscriber: "captain",
-      stateRoot,
-      runtime: fakeRuntime(sendSpy) as never,
-      captainName: "captain",
-      pollMs: 50,
-    });
-    await new Promise((r) => setTimeout(r, 200));
-    stop();
-    expect(sendSpy).toHaveBeenCalledTimes(1);
-    const out = sendSpy.mock.calls[0][1] as string;
-    expect(out).toBe("CREW DONE [claude/deadbeef]: hello world");
-    expect(out).not.toContain("/some/result/file.txt");
   });
 });

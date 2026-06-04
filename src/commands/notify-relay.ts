@@ -38,32 +38,18 @@ export const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 // genuinely-blocked crew goes quiet well before the multi-minute stall budget.
 export const PROBE_QUIET_MS = 20_000;
 
-function shortId(id: string): string {
-  return id.slice(0, 8);
-}
-
-export function formatEntry(entry: MailboxEntry): string | null {
-  const tag = `[${entry.provider}/${entry.name != null ? entry.name : shortId(entry.taskId)}]`;
-  switch (entry.kind) {
-    case "task.started":
-    case "task.progress":
-      return null; // suppress liveness/start
-    case "task.done": {
-      const msg =
-        (entry.payload.message as string | undefined) ??
-        (entry.payload.resultRef as string | undefined) ??
-        "(no message)";
-      return `CREW DONE ${tag}: ${msg.toString().split(/\r?\n/)[0].slice(0, 200)}`;
-    }
-    case "task.blocked":
-      return `CREW BLOCKED ${tag}: ${(entry.payload.question as string | undefined) ?? "(no question)"}`;
-    case "task.failed":
-      return `CREW FAILED ${tag}: ${(entry.payload.error as string | undefined) ?? "(no error)"}`;
-    case "task.stalled":
-      return `CREW STALLED ${tag}: no heartbeat`;
-    default:
-      return null;
-  }
+// Unified-formatter (#214/#210): the daemon's formatMessage is the single
+// source of truth for the captain-facing message and stores it on the mailbox
+// entry. The relay is a dumb pipe — it delivers entry.message verbatim and
+// skips entries the daemon chose not to surface (null/empty). The old
+// formatEntry switch re-derived the message from the raw event kind and had
+// drifted (no case for task.approval.requested / task.idle), silently dropping
+// those events. It is retired; deliverable() is the whole policy now.
+export function deliverable(entry: MailboxEntry): string | null {
+  const msg = entry.message;
+  if (msg == null) return null;
+  const trimmed = msg.trim();
+  return trimmed.length > 0 ? msg : null;
 }
 
 // ── Phase 2b: in-cmux interactive-block probe ───────────────────────────────
@@ -239,7 +225,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
           lastAcked = entry.seq;
           continue;
         }
-        const msg = formatEntry(entry);
+        const msg = deliverable(entry);
         if (msg) {
           try {
             await (opts.runtime as RuntimeDriver & {

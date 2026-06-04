@@ -207,6 +207,9 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         project: args.project,
         taskRecord: args.record,
         event: args.event,
+        // Persist the daemon-rendered message (#214/#210): the relay delivers it
+        // verbatim instead of re-deriving from the raw event (which drifted).
+        message: args.message,
       });
     } catch (e) {
       log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
