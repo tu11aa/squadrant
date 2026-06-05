@@ -492,7 +492,14 @@ export async function reapCrewChildren(taskId: string, graceMs = 2000): Promise<
   const marker = `COCKPIT_CREW_TASK_ID=${taskId}`;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
-      nodeExec("ps auxE", (err, out) => (err ? reject(err) : resolve(out)));
+      // `ps auxE` dumps every process's full env, which on a busy machine far
+      // exceeds exec's default 1 MB maxBuffer (~2.7 MB with ~1k procs). Without
+      // a raised cap the call errors with "maxBuffer length exceeded", the outer
+      // catch swallows it, and the reap silently no-ops — leaving crew children
+      // alive. 64 MB comfortably covers thousands of processes.
+      nodeExec("ps auxE", { maxBuffer: 64 * 1024 * 1024 }, (err, out) =>
+        err ? reject(err) : resolve(out),
+      );
     });
     const pids: number[] = [];
     for (const line of stdout.split("\n").slice(1)) {
