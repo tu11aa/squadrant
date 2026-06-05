@@ -10,9 +10,10 @@ import type { ControlEvent } from "../types.js";
 // Stop fires at turn completion and maps to task.turn.completed so the task
 // transitions to awaiting-input (immune to stall detection) — without this,
 // a captain AFK for >heartbeatBudgetMs would get a false CREW STALLED.
-// SubagentStop/SessionEnd fire only at turn boundaries but are liveness-only:
-// SubagentStop fires while the parent agent still owns the turn, and SessionEnd
-// is an unreliable signal (crash / Ctrl-C / /exit).
+// SubagentStop fires only at a turn boundary but is liveness-only — it fires
+// while the parent agent still owns the turn. SessionEnd is NOT liveness: it
+// signals the session is gone (crash / Ctrl-C / /exit), so it terminalizes the
+// record (→ task.session.ended) rather than resuming 'working' (#139).
 const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification"] as const;
 
 /**
@@ -162,7 +163,9 @@ function resolveLastAssistantText(payload: unknown): string | null {
 /**
  * Map a Claude hook event name to a cockpit ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
- * PostToolUse/SubagentStop/SessionEnd = liveness only (task.progress).
+ * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
+ * the lone terminalizing hook: the session is gone, so it maps to
+ * task.session.ended → cancelled (#139) — silent, never done/failed.
  * Terminal `done`/`failed` come exclusively from explicit `cockpit crew signal`.
  *
  * Stop = turn boundary. It normally maps to task.turn.completed → awaiting-input
@@ -204,9 +207,16 @@ export function mapClaudeHookToEvent(
       }
       return { type: "task.progress", id: taskId, note: "notification" };
     }
-    case "SubagentStop":
     case "SessionEnd":
+      // #139: the session is GONE. NOT liveness — mapping this to task.progress
+      // resumed a dead crew to 'working' (awaiting-input → working), where
+      // nothing heartbeats and the watchdog false-stalled it ~budget later.
+      // Terminalize the record instead (reducer: task.session.ended → cancelled).
+      return { type: "task.session.ended", id: taskId };
+    case "SubagentStop":
     case "PostToolUse":
+      // The only resume-liveness hooks: PostToolUse fires after every tool call
+      // mid-turn; SubagentStop fires while the parent still owns the turn.
       return { type: "task.progress", id: taskId, note: event.toLowerCase() };
     default:
       return null;

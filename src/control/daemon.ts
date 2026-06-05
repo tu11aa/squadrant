@@ -11,6 +11,17 @@ export interface DaemonDeps {
   deliverReply?: (rec: TaskRecord, message: string) => Promise<void>;
   /** Defaults to a real process.kill(pid,0) check at the call site (Task 17). */
   isPidAlive?: (pid: number) => boolean;
+  /**
+   * #139 backstop: the interactive analogue of isPidAlive. Resolves whether an
+   * interactive crew's backing cmux surface (pane/tab) still exists. Three-valued
+   * so a transient cmux outage never false-reaps a live crew:
+   *   - "alive"   → the crew's pane is present; keep watching.
+   *   - "gone"    → cmux answered AND the pane is provably absent → terminalize.
+   *   - "unknown" → could not determine (cmux down, no captain, error) → do nothing.
+   * Defaults to always-"unknown" (never reaps) when not wired — pure unit tests
+   * and any non-cmux deployment are unaffected.
+   */
+  isSurfaceAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
   /** Wired in cockpitd to runHeadless; absent in pure unit tests. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /**
@@ -42,6 +53,12 @@ export interface DaemonDeps {
 // Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
 // firePush prev===next guard keeps it from re-firing while the task sits idle.
 const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled", "awaiting-input"]);
+
+// #139: non-terminal, post-launch states an interactive crew can be sitting in
+// while its session has actually died. Any of these with a provably-gone surface
+// is a zombie → reap to 'cancelled'. 'submitted' is excluded: it is pre-launch
+// (no surface yet), so reaping it would race the spawn.
+const REAPABLE_SURFACE_STATES: ReadonlySet<TaskState> = new Set(["working", "stalled", "awaiting-input", "blocked"]);
 
 // #210: CREW IDLE (awaiting-input) is debounced — suppressed when the turn-end
 // lands within this window of the captain's own last turn to the crew (a
@@ -216,9 +233,25 @@ export function createDaemon(deps: DaemonDeps) {
         default: { const _exhaustive: never = req; throw new Error(`unhandled request kind`); }
       }
     },
-    sweep(): void {
+    async sweep(): Promise<void> {
       const t = now();
+      const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
+        // #139 backstop: reap interactive records whose backing surface is
+        // PROVABLY gone (crew session died with no terminal signal — opencode has
+        // no SessionEnd hook, and a hard kill can drop claude's). This is
+        // liveness-based reaping, NOT a shorter timeout: the 24h heartbeat budget
+        // is untouched, so a legitimately-idle LIVE crew is never reaped (its
+        // surface answers "alive" and falls through to evaluateStall → CREW IDLE).
+        // "unknown" (cmux down) never reaps. cancelled is silent (not in
+        // ATTENTION_STATES) — no false CREW STALLED re-emitted.
+        if (r.mode === "interactive" && REAPABLE_SURFACE_STATES.has(r.state)) {
+          const liveness = await surfaceAlive(r);
+          if (liveness === "gone") {
+            store.put({ ...r, state: "cancelled", lastEvent: "sweep.surface-gone" });
+            continue;
+          }
+        }
         const idle = evaluateStall(r, t);
         if (idle) {
           store.put(idle);
@@ -237,8 +270,9 @@ export function createDaemon(deps: DaemonDeps) {
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
       }
     },
-    reconcile(): void {
+    async reconcile(): Promise<void> {
       const alive = deps.isPidAlive ?? (() => true);
+      const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
         if (r.state !== "working" && r.state !== "submitted") continue;
         if (r.mode === "headless") {
@@ -255,14 +289,16 @@ export function createDaemon(deps: DaemonDeps) {
           };
           firePush(deps, r.project, r.state, failed, synthEvent, lastCaptainTurnAt.get(r.id));
         } else {
-          const stalled: TaskRecord = { ...r, state: "stalled", lastEvent: "reconcile" };
-          store.put(stalled);
-          const synthEvent: ControlEvent = {
-            type: "task.reconcile-failed",
-            id: r.id,
-            reason: "interactive task lost on daemon restart",
-          };
-          firePush(deps, r.project, r.state, stalled, synthEvent, lastCaptainTurnAt.get(r.id));
+          // #139: an interactive crew's cmux pane SURVIVES a daemon bounce, so a
+          // live crew must stay 'working' for the reattach loop to re-subscribe
+          // it. The old unconditional → 'stalled' both false-stalled live crews
+          // AND fired CREW STALLED on every restart. Reap ONLY when the surface
+          // is provably gone; alive/unknown stay working (sweep re-checks later).
+          const liveness = await surfaceAlive(r);
+          if (liveness === "gone") {
+            store.put({ ...r, state: "cancelled", lastEvent: "reconcile.surface-gone" });
+            // silent — the crew is gone; no alarming push (consistent with close).
+          }
         }
       }
     },

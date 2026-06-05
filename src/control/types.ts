@@ -105,7 +105,13 @@ export type ControlEvent =
   // Emitted by runCrewClose before closing the pane; transitions a non-terminal
   // task to the absorbing 'cancelled' state. Silent: captain initiated the close
   // so no CREW CANCELLED push is fired (not in ATTENTION_STATES).
-  | { type: "task.cancelled"; id: string; reason?: string };
+  | { type: "task.cancelled"; id: string; reason?: string }
+  // #139: a claude crew's SessionEnd hook fired — the session is GONE. Unlike
+  // the other turn-boundary hooks (PostToolUse/SubagentStop = liveness), a dead
+  // session must NOT resume 'working' (nothing heartbeats → false CREW STALLED
+  // ~budget later). Terminalizes the record to the absorbing 'cancelled' state.
+  // Silent (not in ATTENTION_STATES), like task.cancelled.
+  | { type: "task.session.ended"; id: string };
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
 // 'cancelled' is terminal and silent (captain-initiated close).

@@ -52,24 +52,45 @@ describe("daemon handler", () => {
     const store = createStore(dir);
     store.put(rec("h1", { state: "working", mode: "headless", pid: 999999 }));
     const d = createDaemon({ store, now: () => 5000, isPidAlive: () => false });
-    d.reconcile();
+    await d.reconcile();
     expect(store.get("p", "h1")?.state).toBe("failed");
     expect(store.get("p", "h1")?.error).toMatch(/orphan|daemon restart/i);
   });
 
-  it("reconcile: working interactive task → stalled (hook source gone)", async () => {
+  // #139: on daemon restart a LIVE interactive crew's cmux pane survives the
+  // bounce, so it must NOT be moved to 'stalled' (the old behavior false-stalled
+  // it AND fired CREW STALLED). Only a PROVABLY-gone surface is terminalized.
+  it("reconcile: interactive orphan with a GONE surface → cancelled (silent) (#139)", async () => {
     const store = createStore(dir);
     store.put(rec("i1", { state: "working", mode: "interactive" }));
-    const d = createDaemon({ store, now: () => 5000, isPidAlive: () => false });
-    d.reconcile();
-    expect(store.get("p", "i1")?.state).toBe("stalled");
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 5000, isSurfaceAlive: async () => "gone", notify: async (a) => { calls.push(a); } });
+    await d.reconcile();
+    expect(store.get("p", "i1")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0); // silent — no CREW STALLED re-emitted
+  });
+
+  it("reconcile: interactive orphan with a LIVE surface stays working (reattachable) (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("i2", { state: "working", mode: "interactive" }));
+    const d = createDaemon({ store, now: () => 5000, isSurfaceAlive: async () => "alive" });
+    await d.reconcile();
+    expect(store.get("p", "i2")?.state).toBe("working");
+  });
+
+  it("reconcile: interactive orphan with UNKNOWN surface liveness stays working (never false-cancel) (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("i3", { state: "working", mode: "interactive" }));
+    const d = createDaemon({ store, now: () => 5000, isSurfaceAlive: async () => "unknown" });
+    await d.reconcile();
+    expect(store.get("p", "i3")?.state).toBe("working");
   });
 
   it("reconcile: working headless task with live pid → stays working", async () => {
     const store = createStore(dir);
     store.put(rec("h2", { state: "working", mode: "headless", pid: 4242 }));
     const d = createDaemon({ store, now: () => 5000, isPidAlive: () => true });
-    d.reconcile();
+    await d.reconcile();
     expect(store.get("p", "h2")?.state).toBe("working");
   });
 
@@ -77,7 +98,7 @@ describe("daemon handler", () => {
     const store = createStore(dir);
     store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "s1")?.state).toBe("stalled");
   });
 
@@ -85,7 +106,7 @@ describe("daemon handler", () => {
     const store = createStore(dir);
     store.put(rec("s1i", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "s1i")?.state).toBe("awaiting-input");
   });
 
@@ -93,7 +114,7 @@ describe("daemon handler", () => {
     const store = createStore(dir);
     store.put(rec("s2", { state: "stalled", lastHeartbeat: 990, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "s2")?.state).toBe("working");
   });
 
@@ -102,8 +123,70 @@ describe("daemon handler", () => {
     // lastHeartbeat=0, budget=100, now=1000 → 1000-0=1000 > 100 → guard blocks recovery
     store.put(rec("s3", { state: "stalled", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "s3")?.state).toBe("stalled");
+  });
+
+  // ── #139 backstop: sweep reaps interactive records whose surface is gone ─────
+  // Covers opencode crews (no SessionEnd hook) and any missed claude SessionEnd.
+  // A provably-gone surface means the crew can never make progress → cancelled,
+  // silently (NOT oscillated working↔stalled, NOT a re-fired CREW STALLED).
+  it("sweep: interactive WORKING record with a gone surface → cancelled (silent), within 24h budget (#139)", async () => {
+    const store = createStore(dir);
+    // Heartbeat is FRESH (well within the 24h budget) — proves the reap is
+    // liveness-based, not a shorter timeout. The legitimate-idle false-stall fix
+    // (#131/#133) keeps the 86400000ms budget; only a dead surface reaps.
+    store.put(rec("g1", { mode: "interactive", state: "working", lastHeartbeat: 990, heartbeatBudgetMs: 86_400_000 }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone", notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "g1")?.state).toBe("cancelled");
+    expect(calls.length).toBe(0); // silent reap
+  });
+
+  it("sweep: interactive AWAITING-INPUT record with a gone surface → cancelled (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("g2", { mode: "interactive", state: "awaiting-input", lastHeartbeat: 990, heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone" });
+    await d.sweep();
+    expect(store.get("p", "g2")?.state).toBe("cancelled");
+  });
+
+  it("sweep: interactive STALLED record with a gone surface → cancelled (not left oscillating) (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("g3", { mode: "interactive", state: "stalled", lastHeartbeat: 990, heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone" });
+    await d.sweep();
+    expect(store.get("p", "g3")?.state).toBe("cancelled");
+  });
+
+  // The critical non-regression: a LEGITIMATELY-IDLE live crew (surface alive)
+  // that is over its heartbeat budget must still become awaiting-input (CREW
+  // IDLE), NEVER reaped. This preserves the #131/#133 24h-budget false-stall fix.
+  it("sweep: interactive over-budget record with a LIVE surface → awaiting-input, not reaped (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("g4", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "alive" });
+    await d.sweep();
+    expect(store.get("p", "g4")?.state).toBe("awaiting-input");
+  });
+
+  it("sweep: interactive over-budget record with UNKNOWN surface → awaiting-input, never false-reaped (#139)", async () => {
+    const store = createStore(dir);
+    store.put(rec("g5", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "unknown" });
+    await d.sweep();
+    expect(store.get("p", "g5")?.state).toBe("awaiting-input");
+  });
+
+  it("sweep: headless records are never surface-reaped (pid is their liveness) (#139)", async () => {
+    const store = createStore(dir);
+    // A headless working record with a fresh heartbeat: even if isSurfaceAlive
+    // says 'gone', headless mode must ignore it (it has no cmux surface).
+    store.put(rec("g6", { mode: "headless", state: "working", lastHeartbeat: 990, heartbeatBudgetMs: 1000 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone" });
+    await d.sweep();
+    expect(store.get("p", "g6")?.state).toBe("working");
   });
 
   it("dispatch persists submitted then (headless) triggers launch hook", async () => {

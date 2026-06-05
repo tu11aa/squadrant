@@ -74,6 +74,11 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
     case "task.cancelled":
       return { ...base, state: "cancelled" };
+    case "task.session.ended":
+      // #139: the claude crew session ended (SessionEnd hook). The process is
+      // gone, so terminalize instead of resuming 'working'. Reuses the silent
+      // 'cancelled' state — no alarming push, just a clean terminal record.
+      return { ...base, state: "cancelled" };
     case "task.session":
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":

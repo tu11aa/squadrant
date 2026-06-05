@@ -17,9 +17,14 @@ describe("mapClaudeHookToEvent", () => {
     expect(ev).toEqual({ type: "task.progress", id: TID, note: "subagentstop" });
   });
 
-  it("maps SessionEnd → task.progress with note 'sessionend' (NOT terminal)", () => {
+  // #139: SessionEnd means the crew session is GONE. It must NOT be liveness —
+  // mapping it to task.progress resumed a dead crew to 'working', which the
+  // watchdog then false-stalled ~budget later. It maps to task.session.ended,
+  // which the reducer terminalizes (→ cancelled). Only PostToolUse and
+  // SubagentStop count as resume-liveness.
+  it("maps SessionEnd → task.session.ended (terminal, NOT liveness) (#139)", () => {
     const ev = mapClaudeHookToEvent("SessionEnd", { reason: "exit" }, TID);
-    expect(ev).toEqual({ type: "task.progress", id: TID, note: "sessionend" });
+    expect(ev).toEqual({ type: "task.session.ended", id: TID });
   });
 
   // PostToolUse fires after every tool call MID-turn, so it keeps the

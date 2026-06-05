@@ -92,7 +92,7 @@ describe("cockpitd push notifications (#109)", () => {
     store.put(rec("task-stall-1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "task-stall-1")?.state).toBe("stalled");
     expect(n.calls).toHaveLength(1);
     expect(n.calls[0]?.message).toMatch(/^CREW STALLED \[claude\/task-sta/);
@@ -105,7 +105,7 @@ describe("cockpitd push notifications (#109)", () => {
     store.put(rec("task-idle-1", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
-    d.sweep();
+    await d.sweep();
     expect(store.get("p", "task-idle-1")?.state).toBe("awaiting-input");
     expect(n.calls).toHaveLength(1);
     expect(n.calls[0]?.message).toMatch(/^CREW IDLE \[claude\/task-idl/);
@@ -118,9 +118,9 @@ describe("cockpitd push notifications (#109)", () => {
     store.put(rec("task-idle-2", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
-    d.sweep(); // working → awaiting-input, one push
-    d.sweep(); // awaiting-input is not 'working' → no re-stall, no re-notify
-    d.sweep();
+    await d.sweep(); // working → awaiting-input, one push
+    await d.sweep(); // awaiting-input is not 'working' → no re-stall, no re-notify
+    await d.sweep();
     expect(store.get("p", "task-idle-2")?.state).toBe("awaiting-input");
     expect(n.calls).toHaveLength(1);
   });
@@ -130,7 +130,7 @@ describe("cockpitd push notifications (#109)", () => {
     store.put(rec("task-idle-3", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
-    d.sweep(); // → awaiting-input, push #1 (CREW IDLE)
+    await d.sweep(); // → awaiting-input, push #1 (CREW IDLE)
     await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "task-idle-3" } });
     expect(store.get("p", "task-idle-3")?.state).toBe("working");
     expect(n.calls).toHaveLength(1); // working is not an attention state → no extra push

@@ -218,6 +218,33 @@ describe("state-machine reduce", () => {
     const next = reduce(done, { type: "task.cancelled", id: "t1", reason: "closed" }, 7000);
     expect(next).toBe(done);
   });
+
+  // ── Issue #139: a dead claude session terminalizes, never resumes 'working' ──
+  // SessionEnd maps to task.session.ended (NOT task.progress). The crew process
+  // is gone, so the record must reach a terminal state instead of being revived
+  // to 'working' (where nothing heartbeats and the watchdog later false-stalls).
+  it("task.session.ended on awaiting-input → cancelled (NOT working) (#139)", () => {
+    const next = reduce(rec({ state: "awaiting-input" }), { type: "task.session.ended", id: "t1" }, 8000);
+    expect(next.state).toBe("cancelled");
+    expect(next.lastHeartbeat).toBe(8000);
+    expect(next.lastEvent).toBe("task.session.ended");
+  });
+
+  it("task.session.ended on working → cancelled (#139)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.session.ended", id: "t1" }, 8001);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("task.session.ended on blocked → cancelled (dead session can't be answered) (#139)", () => {
+    const next = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.session.ended", id: "t1" }, 8002);
+    expect(next.state).toBe("cancelled");
+  });
+
+  it("done task absorbs task.session.ended — already terminal, no state change (#139)", () => {
+    const done = rec({ state: "done", resultRef: "/r" });
+    const next = reduce(done, { type: "task.session.ended", id: "t1" }, 8003);
+    expect(next).toBe(done);
+  });
 });
 
 describe("DispatchAttempt schema", () => {
