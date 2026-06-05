@@ -920,6 +920,41 @@ describe("cockpit crew send/read/close/list", () => {
     expect(closePane).toHaveBeenCalled();
   });
 
+  // #139: a dead crew's pane is already gone, but its daemon task record still
+  // dangles in a non-terminal state. close must terminalize that record even
+  // when there is no pane to close — gating terminalization on findCrew left
+  // the zombie record to re-emit false CREW STALLED forever.
+  it("close terminalizes the daemon task when the crew pane is already gone (#139)", async () => {
+    listSurfaces.mockResolvedValue([]); // pane gone — crew session died
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-dead-1", name: "crew-1", project: "brove", state: "working", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.started", heartbeatBudgetMs: 86400000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    await runCrewClose("brove", "crew-1"); // must NOT throw
+
+    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "event",
+      project: "brove",
+      event: { type: "task.cancelled", id: "task-dead-1", reason: "closed by captain" },
+    }));
+    expect(closePane).not.toHaveBeenCalled(); // no pane to close
+  });
+
+  it("close throws when neither a pane nor a daemon task exists (typo guard) (#139)", async () => {
+    listSurfaces.mockResolvedValue([]); // no pane
+    cockpitdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") return []; // no daemon task either
+      return undefined;
+    });
+
+    await expect(runCrewClose("brove", "ghost")).rejects.toThrow(/not found/i);
+  });
+
   it("list returns all crews for the project, ignoring non-crew tabs", async () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:9", title: "captain shell" },

@@ -513,18 +513,16 @@ export async function reapCrewChildren(taskId: string, graceMs = 2000): Promise<
 
 export async function runCrewClose(project: string, name: string): Promise<void> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
-  const crew = await findCrew(runtime, workspaceId, project, name);
-  if (!crew) {
-    throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
-  }
   // resolveCaptainWorkspace already validated the project exists; reload for its
   // root path so we can tell a worktree crew (cwd != root) from a root crew.
   const projRoot = loadConfig().projects[project]?.path;
-  // Terminalize the daemon task before closing the pane (#184). Without this,
-  // non-terminal tasks (blocked/working/awaiting-input) linger in the daemon
-  // ledger and keep firing phantom CREW BLOCKED/IDLE pushes until the next
-  // daemon restart. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
-  // firePush stays silent — captain initiated the close, no notification needed.
+  // Terminalize the daemon task FIRST — before (and independent of) finding the
+  // cmux pane (#184, hardened for #139). Without this, non-terminal tasks
+  // (blocked/working/awaiting-input) linger in the daemon ledger and keep firing
+  // phantom CREW BLOCKED/IDLE/STALLED pushes. Crucially, a DEAD crew's pane is
+  // already gone, so gating terminalization on findCrew (the old order) left that
+  // zombie record dangling forever. 'cancelled' is terminal but NOT in
+  // ATTENTION_STATES, so firePush stays silent — captain initiated the close.
   let taskId: string | undefined;
   // Worktree to clean up after the pane closes — set only when this crew ran in
   // its own worktree (cwd recorded by the daemon differs from the root checkout).
@@ -554,7 +552,16 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   } catch {
     // Swallow daemon errors — a crew without a daemon must still close.
   }
-  await runtime.closePane(crew);
+  // Close the cmux pane if it still exists. A dead crew's pane is already gone —
+  // that is not an error (the record is terminalized above); proceed to reap
+  // children / clean the worktree. Only a genuine miss (no pane AND no daemon
+  // task) is a typo → surface the not-found error.
+  const crew = await findCrew(runtime, workspaceId, project, name);
+  if (crew) {
+    await runtime.closePane(crew);
+  } else if (taskId === undefined) {
+    throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
+  }
   // Reap any surviving child processes (vitest workers, node subprocs, etc.)
   // that the cmux pane-close cascade may have missed.
   if (taskId !== undefined) {
