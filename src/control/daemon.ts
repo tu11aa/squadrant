@@ -3,6 +3,7 @@ import type { Store } from "./store.js";
 import type { ControlEvent, TaskRecord, TaskState } from "./types.js";
 import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
+import { classifyHealth, RELAY_STALE_MS, RELAY_GONE_MS, type RelayHealth } from "./liveness.js";
 
 export interface DaemonDeps {
   store: Store;
@@ -47,6 +48,16 @@ export interface DaemonDeps {
     record: TaskRecord;
     event: ControlEvent;
   }) => Promise<void> | void;
+  /**
+   * #207 relay heal (SECONDARY — best-effort). Called once per "down" episode
+   * when the sweep finds a registered relay gone dark. The default impl
+   * (cockpitd) attempts a `spawnInjector` re-spawn, but is mostly inert in prod:
+   * the launchd daemon is outside cmux's process-lineage and cannot inject. The
+   * non-negotiable guarantee — "captain never SILENTLY blind" — is delivered by
+   * getRelayHealth() + the liveness surface, not by this hook. Errors are
+   * swallowed by the sweep so a refused cmux write never trips the daemon.
+   */
+  healRelay?: (project: string) => Promise<void> | void;
 }
 
 // 'awaiting-input' is an attention state: entering it (idle watchdog OR a
@@ -151,7 +162,34 @@ export function createDaemon(deps: DaemonDeps) {
   // active back-and-forth. Bounded by the live task set; never read after a
   // task terminates (terminal states don't transition to awaiting-input).
   const lastCaptainTurnAt = new Map<string, number>();
+  // #207: per-project relay registration + last heartbeat. The relay registers
+  // over the socket on boot and beats every ~10s; the sweep health-checks these.
+  const relayHealth = new Map<string, RelayHealth>();
+  // Per-project last heal attempt, so a persistently-dark relay is healed once
+  // per episode, not every 30s sweep. Re-armed (deleted) when a fresh heartbeat
+  // proves the relay recovered.
+  const lastHealAttempt = new Map<string, number>();
   return {
+    /** #207: a notify-relay announced itself (boot). */
+    registerRelay(r: { project: string; pid: number; startedAt: number }): void {
+      relayHealth.set(r.project, { ...r, lastSeenMs: now() });
+      lastHealAttempt.delete(r.project);
+    },
+    /** #207: a notify-relay heartbeat (every ~10s). Re-arms heal. */
+    relayHeartbeat(r: { project: string; pid: number }): void {
+      const prev = relayHealth.get(r.project);
+      relayHealth.set(r.project, {
+        project: r.project,
+        pid: r.pid,
+        startedAt: prev?.startedAt ?? now(),
+        lastSeenMs: now(),
+      });
+      lastHealAttempt.delete(r.project);
+    },
+    /** #207/#77: snapshot of every registered relay's health (for the surface). */
+    getRelayHealth(): RelayHealth[] {
+      return [...relayHealth.values()];
+    },
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "dispatch": {
@@ -268,6 +306,26 @@ export function createDaemon(deps: DaemonDeps) {
         const recovered = recoverStall(r, t);
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
+      }
+      // #207 relay health-check: a registered relay gone dark past the gone
+      // window is down. Best-effort heal, debounced to once per episode. The
+      // surface (getRelayHealth) already exposes the "gone" state regardless —
+      // that is the never-silently-blind guarantee; heal is the secondary try.
+      if (deps.healRelay) {
+        for (const rh of relayHealth.values()) {
+          if (classifyHealth(rh.lastSeenMs, t, RELAY_STALE_MS, RELAY_GONE_MS) !== "gone") continue;
+          const last = lastHealAttempt.get(rh.project);
+          if (last != null && t - last <= RELAY_GONE_MS) continue; // debounce
+          lastHealAttempt.set(rh.project, t);
+          try {
+            const r = deps.healRelay(rh.project);
+            if (r && typeof (r as Promise<void>).catch === "function") {
+              (r as Promise<void>).catch(() => {});
+            }
+          } catch {
+            // best-effort — a refused cmux write (lineage) must not trip the sweep
+          }
+        }
       }
     },
     async reconcile(): Promise<void> {
