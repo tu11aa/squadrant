@@ -13,6 +13,9 @@ import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
 import { createSurfaceLivenessProbe } from "./crew-pane-reader.js";
+import { createRelayHealer, createCaptainProbe } from "./relay-healer.js";
+import { projectHealth, type ComponentHealth } from "./liveness.js";
+import { loadConfig } from "../config.js";
 import { readdir } from "node:fs/promises";
 import type { Gate, TaskRecord, ControlEvent } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
@@ -57,6 +60,12 @@ export interface CockpitdOpts {
     answer: (taskId: string, payload: unknown) => Promise<void>;
     close: (taskId: string) => Promise<void>;
   };
+  /** #207 best-effort relay healer. Defaults to a real cmux spawnInjector
+   *  re-spawn (mostly inert under launchd). Tests inject a fake/spy. */
+  healRelay?: (project: string) => Promise<void> | void;
+  /** #77 captain-presence probe for the health verb. Defaults to a real cmux
+   *  read. Returns true/false/null (null = couldn't determine). Tests inject. */
+  captainProbe?: (project: string, captainName: string) => Promise<boolean | null>;
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
   opencodeBridge?: {
     start: (o: { taskId: string; port: number }) => void;
@@ -235,6 +244,8 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     // #139 backstop: terminalize interactive crews whose cmux pane is provably
     // gone (sweep/reconcile reaper). Three-valued; "unknown" never reaps.
     isSurfaceAlive: opts.isSurfaceAlive ?? createSurfaceLivenessProbe(),
+    // #207 best-effort relay heal on the sweep (secondary — surface is primary).
+    healRelay: opts.healRelay ?? createRelayHealer(log),
     launchHeadless: async (rec) => {
       await runHeadless({
         provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
@@ -288,6 +299,36 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       } catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
     },
   });
+
+  // #77 service-health surface. Assembles per-component liveness for the health
+  // socket verb: the relay map comes from the daemon, captain presence from a
+  // cmux read (allowed from launchd), crews from the store — all fed into the
+  // pure projectHealth(). Never throws (a flaky cmux read maps to "unknown").
+  const captainProbe = opts.captainProbe ?? createCaptainProbe();
+  async function buildHealth(only?: string): Promise<ComponentHealth[]> {
+    const config = loadConfig();
+    const names = only ? [only] : Object.keys(config.projects);
+    const now = Date.now();
+    const relays = d.getRelayHealth();
+    const out: ComponentHealth[] = [];
+    for (const project of names) {
+      const proj = config.projects[project];
+      if (!proj) continue;
+      const captainPresent = await captainProbe(project, proj.captainName);
+      out.push(
+        ...projectHealth({
+          project,
+          now,
+          captainName: proj.captainName,
+          relay: relays.find((r) => r.project === project) ?? null,
+          captainPresent,
+          commandPresent: null, // command is on-demand; not tracked in this cut
+          crews: store.list(project),
+        }),
+      );
+    }
+    return out;
+  }
 
   // Crash recovery on boot. reconcile() is async (#139: it consults the
   // interactive surface-liveness probe to reap dead crews instead of stalling
@@ -344,6 +385,22 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       if (msg.kind === "codex-close") {
         await codexDriver.close(msg.taskId).catch((e: unknown) => log(`codex close err: ${e}`));
         return { ok: true };
+      }
+      // #207 relay registration: the notify-relay announces itself on boot and
+      // heartbeats every ~10s so the daemon can health-check it on the sweep.
+      if (msg.kind === "relay-register") {
+        d.registerRelay({ project: msg.project, pid: msg.pid, startedAt: msg.startedAt ?? Date.now() });
+        return { ok: true };
+      }
+      if (msg.kind === "relay-heartbeat") {
+        d.relayHeartbeat({ project: msg.project, pid: msg.pid });
+        return { ok: true };
+      }
+      // #77 service-health surface: per-component liveness for the queried
+      // project (or all). The captain probe (cmux read) is allowed from the
+      // daemon; the heavy lifting is the pure projectHealth().
+      if (msg.kind === "health") {
+        return await buildHealth(msg.project as string | undefined);
       }
       return d.handle(msg);
     },
