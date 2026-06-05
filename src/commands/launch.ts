@@ -14,6 +14,7 @@ import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js"
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
+import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -28,7 +29,7 @@ const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.js
 // terminal, which is exactly the #121 Issue B leak. Capturing fd 2 here
 // swallows it. Returns trimmed stdout for callers that need it.
 export function cmuxLocal(args: string[]): string {
-  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: CMUX_TIMEOUT }).trim();
 }
 
 interface SessionRecord {
