@@ -189,6 +189,48 @@ describe("daemon handler", () => {
     expect(store.get("p", "g6")?.state).toBe("working");
   });
 
+  // ── Issue #227: SessionEnd surface-liveness gate ─────────────────────────
+  // A task.session.ended event must ONLY terminalize the record when the
+  // crew's surface is PROVABLY gone. If the surface is alive or liveness is
+  // unknown, the event is a no-op — prevents a nested/spurious SessionEnd
+  // from false-cancelling a live working crew (#227 regression). The
+  // 'gone'-only / 'unknown'-never-reaps semantics are identical to the sweep.
+  it("event: task.session.ended on a LIVE interactive surface → no-op, NOT cancelled (#227)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s227a", { mode: "interactive", name: "crew-1", state: "working" }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "alive" });
+    const r = await d.handle({ kind: "event", project: "p", event: { type: "task.session.ended", id: "s227a" } });
+    expect((r as TaskRecord).state).toBe("working");
+    expect(store.get("p", "s227a")?.state).toBe("working");
+  });
+
+  it("event: task.session.ended on UNKNOWN surface liveness → no-op, NOT cancelled (#227)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s227b", { mode: "interactive", name: "crew-1", state: "awaiting-input" }));
+    // No isSurfaceAlive passed → defaults to always-unknown
+    const d = createDaemon({ store, now: () => 1000 });
+    const r = await d.handle({ kind: "event", project: "p", event: { type: "task.session.ended", id: "s227b" } });
+    expect((r as TaskRecord).state).toBe("awaiting-input");
+    expect(store.get("p", "s227b")?.state).toBe("awaiting-input");
+  });
+
+  it("event: task.session.ended on a GONE surface → cancelled (#139 regression preserved) (#227)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s227c", { mode: "interactive", name: "crew-1", state: "blocked", question: "?" }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone" });
+    const r = await d.handle({ kind: "event", project: "p", event: { type: "task.session.ended", id: "s227c" } });
+    expect((r as TaskRecord).state).toBe("cancelled");
+    expect(store.get("p", "s227c")?.state).toBe("cancelled");
+  });
+
+  it("event: task.session.ended on an already-terminal task is a no-op regardless of liveness (#227)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s227d", { state: "done", resultRef: "/r" }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "alive" });
+    const r = await d.handle({ kind: "event", project: "p", event: { type: "task.session.ended", id: "s227d" } });
+    expect((r as TaskRecord).state).toBe("done"); // terminal state is absorbing — no state change
+  });
+
   it("dispatch persists submitted then (headless) triggers launch hook", async () => {
     const store = createStore(dir);
     const launched: string[] = [];
