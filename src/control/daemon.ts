@@ -1,6 +1,7 @@
 // src/control/daemon.ts
 import type { Store } from "./store.js";
 import type { ControlEvent, TaskRecord, TaskState } from "./types.js";
+import { TERMINAL_STATES } from "./types.js";
 import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
 import { classifyHealth, RELAY_STALE_MS, RELAY_GONE_MS, type RelayHealth } from "./liveness.js";
@@ -229,6 +230,15 @@ export function createDaemon(deps: DaemonDeps) {
           // A captain turn (crew send/reply) arrives as task.started → record it
           // so a quick trailing turn-end is debounced (#210).
           if (req.event.type === "task.started") lastCaptainTurnAt.set(req.event.id, now());
+          // #227: gate SessionEnd behind surface-liveness — only terminalize
+          // when the surface is provably GONE. Prevents a nested/spurious
+          // SessionEnd from false-cancelling a live crew while preserving the
+          // #139 dead-crew behavior. "unknown" never cancels (transient cmux
+          // outage), identical to the sweep reaper's semantics.
+          if (req.event.type === "task.session.ended" && !TERMINAL_STATES.has(cur.state)) {
+            const liveness = deps.isSurfaceAlive ? await deps.isSurfaceAlive(cur) : "unknown";
+            if (liveness !== "gone") return cur; // alive/unknown: no-op, keep current state
+          }
           const next = reduce(cur, req.event, now());
           if (next !== cur) {
             store.put(next); // skip redundant write on terminal no-ops
