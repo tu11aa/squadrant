@@ -4,6 +4,7 @@ import type {
   NotifierProbeResult,
   NotifierScope,
 } from "./types.js";
+import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
 
 export function createCmuxNotifier(_scope: NotifierScope): NotifierDriver {
   return {
@@ -28,7 +29,7 @@ export function createCmuxNotifier(_scope: NotifierScope): NotifierDriver {
       // execFileSync with an argv array and NO shell: the message is one literal
       // argv element, so backticks / $() in notification text are never parsed
       // by a shell. See #120 (same class as #118/#119).
-      execFileSync("cockpit", ["runtime", "send", "--command", message], { encoding: "utf-8" });
+      execFileSync("cockpit", ["runtime", "send", "--command", message], { encoding: "utf-8", timeout: CMUX_TIMEOUT });
     },
   };
 }

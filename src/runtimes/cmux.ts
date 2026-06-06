@@ -2,11 +2,30 @@ import { execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
 
+// 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
+// system load or a momentarily stuck cmux server without causing the captain
+// blindness that an unbounded hang would (see #209).
+export const CMUX_TIMEOUT = 15_000;
+
+export class CmuxTimeoutError extends Error {
+  constructor(cmd: string) {
+    super(`cmux timeout after ${CMUX_TIMEOUT}ms on: ${cmd}`);
+    this.name = "CmuxTimeoutError";
+  }
+}
+
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
 // literal argument — backticks, $(), quotes are never parsed. See #118.
 function cmux(args: string[]): string {
-  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8" }).trim();
+  try {
+    return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", timeout: CMUX_TIMEOUT }).trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      throw new CmuxTimeoutError(args.join(" "));
+    }
+    throw err;
+  }
 }
 
 function parseList(output: string): WorkspaceRef[] {

@@ -20,6 +20,7 @@ import {
   readFromCursor,
   type MailboxEntry,
 } from "../control/mailbox.js";
+import { sendRequest } from "../control/protocol.js";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
 import { createCrewPaneReader } from "../control/crew-pane-reader.js";
 import { cockpitdCall } from "./crew-control.js";
@@ -37,6 +38,9 @@ export const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 // candidate: PostToolUse never fires while a permission prompt is up, so a
 // genuinely-blocked crew goes quiet well before the multi-minute stall budget.
 export const PROBE_QUIET_MS = 20_000;
+// #207: how often the relay heartbeats its liveness to the daemon. The daemon's
+// RELAY_STALE_MS/RELAY_GONE_MS windows are sized as multiples of this.
+export const RELAY_REGISTER_HEARTBEAT_MS = 10_000;
 
 // Unified-formatter (#214/#210): the daemon's formatMessage is the single
 // source of truth for the captain-facing message and stores it on the mailbox
@@ -201,6 +205,22 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   let stopped = false;
   let draining = false;
 
+  // #207: register with the daemon so it knows this project SHOULD have a live
+  // relay, and heartbeat every ~10s so the sweep can health-check (and, if this
+  // relay dies entirely, surface it as down). Best-effort via a RAW socket call
+  // (not cockpitdCall) so a registration attempt never KICKSTARTS the daemon —
+  // a relay registering should not resurrect a down daemon, and the drain loop
+  // is what actually matters. Errors are swallowed.
+  const relayPid = process.pid;
+  const sockPath = join(homedir(), ".config", "cockpit", "cockpit.sock");
+  const announceRelay = (req: unknown) => void sendRequest(sockPath, req).catch(() => {});
+  announceRelay({ kind: "relay-register", project: opts.project, pid: relayPid, startedAt: sessionStartMs });
+  const heartbeatInterval = setInterval(() => {
+    if (stopped) return;
+    announceRelay({ kind: "relay-heartbeat", project: opts.project, pid: relayPid });
+  }, RELAY_REGISTER_HEARTBEAT_MS);
+  heartbeatInterval.unref?.();
+
   async function drain(): Promise<void> {
     if (draining) return;
     draining = true;
@@ -282,6 +302,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   return () => {
     stopped = true;
     clearInterval(interval);
+    clearInterval(heartbeatInterval);
     if (probeInterval) clearInterval(probeInterval);
   };
 }

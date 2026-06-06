@@ -20,6 +20,34 @@ describe("cmux driver", () => {
     execFileMock.mockReset();
   });
 
+  describe("subprocess timeout", () => {
+    // Retrieve the 3rd argument (options) from an execFileSync mock call
+    const optsOf = (call: unknown[]) => call[2] as Record<string, unknown>;
+
+    it("passes a positive timeout to execFileSync", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.probe();
+      // resolveCmuxBin's `which` call is first; the cmux call has --version.
+      const cmuxCall = execFileMock.mock.calls.find((c: unknown[]) =>
+        (c[1] as string[]).includes("--version"),
+      );
+      expect(cmuxCall).toBeDefined();
+      expect(((cmuxCall as unknown[])[2] as Record<string, unknown>).timeout).toBeGreaterThan(0);
+    });
+
+    it("throws a clean CmuxTimeoutError when execFileSync times out (unwrapped caller)", async () => {
+      execFileMock.mockImplementation(() => {
+        const err = new Error("cmux hung");
+        (err as NodeJS.ErrnoException).code = "ETIMEDOUT";
+        throw err;
+      });
+      // sendKey doesn't wrap cmux() in try/catch — the typed error
+      // should propagate as-is with no ETIMEDOUT/stack leak.
+      await expect(driver.sendKey("workspace:1", "Enter"))
+        .rejects.toThrow(/cmux timeout/i);
+    });
+  });
+
   it("has name 'cmux'", () => {
     expect(driver.name).toBe("cmux");
   });

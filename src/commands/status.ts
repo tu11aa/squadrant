@@ -3,6 +3,7 @@ import chalk from "chalk";
 import matter from "gray-matter";
 import { loadConfig } from "../config.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import { queryHealth, printServiceHealth } from "./health-view.js";
 
 interface StatusFrontmatter {
   project?: string;
@@ -41,7 +42,8 @@ function progressBar(completed: number, total: number): string {
 
 export const statusCommand = new Command("status")
   .description("Show status of all projects from spoke vault status files")
-  .action(async () => {
+  .option("--detailed", "also show live per-component service health from the daemon (#77)")
+  .action(async (opts: { detailed?: boolean }) => {
     const config = loadConfig();
     const projects = Object.entries(config.projects);
     const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
@@ -94,4 +96,10 @@ export const statusCommand = new Command("status")
     }
 
     console.log("");
+
+    // #77: --detailed adds the live service-health view (relay/captain/crew/
+    // command per-component last-seen + state) queried from the daemon.
+    if (opts.detailed) {
+      printServiceHealth(await queryHealth());
+    }
   });

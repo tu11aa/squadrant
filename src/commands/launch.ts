@@ -13,6 +13,8 @@ import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
+import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -27,7 +29,7 @@ const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.js
 // terminal, which is exactly the #121 Issue B leak. Capturing fd 2 here
 // swallows it. Returns trimmed stdout for callers that need it.
 export function cmuxLocal(args: string[]): string {
-  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: CMUX_TIMEOUT }).trim();
 }
 
 interface SessionRecord {
@@ -178,31 +180,10 @@ function buildAgentCmd(
   });
 }
 
-const NOTIFY_RELAY_TAB_TITLE = "✉ notify-relay";
-
-const RELAY_RESTART_DELAY_S = 3;
-
-/**
- * Build the command for the relay tab as a self-restarting shell supervisor
- * loop (#186). The relay process can exit on its own — most commonly a boot
- * race during a daemon/session restart, where `runNotifyRelay` throws "captain
- * workspace 'X' not running" and the CLI does `process.exit(1)`. With a bare
- * `cockpit notify-relay …` invocation it then stays dead, and the captain is
- * silently blind to every CREW BLOCKED/DONE event (the documented 2026-05-31
- * failure). Wrapping it in `while true; do …; sleep N; done` makes any exit
- * respawn the relay — and rides out the boot race until the captain workspace
- * appears. The loop is typed into the tab's shell by spawnInjector, so the cmux
- * tab is the supervisor; this needs no daemon (which can't spawn into cmux) and
- * no captain-side hook (cmux owns the captain's settings).
- */
-export function buildRelaySupervisorCommand(project: string): string {
-  const relay = `cockpit notify-relay ${project} --as captain`;
-  return (
-    `while true; do ${relay}; ` +
-    `echo "[notify-relay ${project}] exited (code $?), restarting in ${RELAY_RESTART_DELAY_S}s"; ` +
-    `sleep ${RELAY_RESTART_DELAY_S}; done`
-  );
-}
+// Relay-tab builders moved to src/control/relay-supervisor.ts (shared with the
+// daemon's #207 healer). Re-exported for back-compat (launch.test.ts imports
+// them from "../launch").
+export { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE };
 
 /**
  * Add the notify-relay to a captain workspace as a background tab. The

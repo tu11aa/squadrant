@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-06-06
+
+A reliability and config-hygiene release. Adds a service-health layer and config-drift detection, and hardens the daemon against false crew-cancellation and hung cmux subprocesses.
+
+### Added
+
+- **Service-health layer.** Relay register / health-check / heal plus component liveness; `cockpit doctor` and `cockpit status --detailed` now surface component health, and the daemon best-effort heals a downed relay while always surfacing it as actionable. (#226, closes #207, #77, #208)
+- **Config drift detection.** `config.json` carries a `_cockpitVersion` stamp and is checked against the current default schema after an update. `cockpit config check --fix` applies the safe tier (missing/deprecated keys); the `config-doctor` skill reconciles judgment calls (changed defaults, invalid values). Closes the config.json half of cockpit's auto-update story. (#230)
+
+### Fixed
+
+- **No more false-cancellation of live crews.** `SessionEnd` terminalization is gated behind a surface-liveness probe, so a nested/subprocess `SessionEnd` (GSD, subagents, claude-mem) no longer cancels a live crew. Fixes a regression introduced in 0.5.2. (#229, closes #227)
+- **A hung cmux can no longer wedge captain/relay.** cmux subprocess calls now time out (15s) so a hung cmux fails fast instead of wedging the captain or relay. (#228, closes #209)
+- **reapCrewChildren works on busy machines.** Raised the `ps auxE` maxBuffer so child-process reaping does not silently fail under load. (#222 — shipped in 0.5.2; its changelog entry was omitted at the time.)
+
 ## [0.5.2] - 2026-06-05
 
 A daemon-reliability and crew-safety patch release. The headline fix

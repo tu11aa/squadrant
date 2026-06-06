@@ -8,6 +8,7 @@ import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
+import { queryHealth, printServiceHealth } from "./health-view.js";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -202,6 +203,10 @@ export const doctorCommand = new Command("doctor")
     console.log(
       `\n${passed === total ? chalk.green("All checks passed") : chalk.yellow(`${passed}/${total} checks passed`)}\n`,
     );
+
+    // #77 service-health: live per-component liveness from the daemon. Printed
+    // before the prereq-fail exit so a degraded install still shows what is up.
+    printServiceHealth(await queryHealth());
 
     if (results.some((r) => !r)) {
       process.exit(1);
