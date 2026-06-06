@@ -34,6 +34,13 @@ const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: CockpitConfig) => boole
   },
 ];
 
+const KNOWN_DEFAULT_HISTORY: Array<{ path: string; oldDefaults: unknown[] }> = [
+  { path: "defaults.roles.crew.model", oldDefaults: ["sonnet"] },
+  { path: "defaults.roles.captain.model", oldDefaults: ["sonnet"] },
+];
+
+const KNOWN_DRIVERS = new Set(["claude", "codex", "gemini", "opencode"]);
+
 function getPath(obj: unknown, dotted: string): unknown {
   return dotted.split(".").reduce<unknown>((acc, k) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[k] : undefined), obj);
 }
@@ -71,6 +78,47 @@ export function detectDrift(user: CockpitConfig, def: CockpitConfig): DriftItem[
   for (const dep of KNOWN_DEPRECATED) {
     if (hasPath(user, dep.path) && (dep.when ? dep.when(user) : true)) {
       items.push({ path: dep.path, kind: "deprecated", severity: "info", current: getPath(user, dep.path), note: dep.note });
+    }
+  }
+
+  for (const hist of KNOWN_DEFAULT_HISTORY) {
+    if (!hasPath(user, hist.path) || !hasPath(def, hist.path)) continue;
+    const cur = getPath(user, hist.path);
+    const nowDefault = getPath(def, hist.path);
+    if (cur !== nowDefault && hist.oldDefaults.includes(cur)) {
+      items.push({
+        path: hist.path,
+        kind: "changed-default",
+        severity: "advisory",
+        current: cur,
+        suggested: nowDefault,
+        note: `default changed from ${JSON.stringify(cur)} to ${JSON.stringify(nowDefault)}`,
+      });
+    }
+  }
+
+  const agents = (user.agents ?? {}) as Record<string, { driver?: string }>;
+  for (const [name, entry] of Object.entries(agents)) {
+    if (entry?.driver && !KNOWN_DRIVERS.has(entry.driver)) {
+      items.push({
+        path: `agents.${name}.driver`,
+        kind: "invalid",
+        severity: "warn",
+        current: entry.driver,
+        note: `unknown driver '${entry.driver}'; known: ${[...KNOWN_DRIVERS].join(", ")}`,
+      });
+    }
+  }
+  const roles = (user.defaults?.roles ?? {}) as Record<string, { agent?: string }>;
+  for (const [role, asn] of Object.entries(roles)) {
+    if (asn?.agent && !(asn.agent in agents)) {
+      items.push({
+        path: `defaults.roles.${role}.agent`,
+        kind: "invalid",
+        severity: "warn",
+        current: asn.agent,
+        note: `references agent '${asn.agent}' which is not defined in agents`,
+      });
     }
   }
 

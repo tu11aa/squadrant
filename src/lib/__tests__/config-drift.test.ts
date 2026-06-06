@@ -46,3 +46,41 @@ describe("detectDrift \u2014 deprecated", () => {
     expect(items.some((i) => i.path === "someFutureKey")).toBe(false);
   });
 });
+
+describe("detectDrift \u2014 changed-default", () => {
+  it("flags a field whose value equals the OLD default but the default changed", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).crew = { agent: "claude", model: "sonnet" };
+    const items = detectDrift(u, getDefaultConfig());
+    const cd = items.find((i) => i.kind === "changed-default" && i.path === "defaults.roles.crew.model");
+    expect(cd).toBeDefined();
+    expect(cd?.severity).toBe("advisory");
+    expect(cd?.suggested).toBe("opus");
+  });
+
+  it("does NOT flag a field the user customized to a third value", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).crew = { agent: "claude", model: "haiku" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "changed-default" && i.path === "defaults.roles.crew.model")).toBe(false);
+  });
+});
+
+describe("detectDrift \u2014 invalid", () => {
+  it("flags an agent whose driver is not a known driver", () => {
+    const u = userConfig();
+    (u.agents as any).aider = { cli: "aider", driver: "aider" };
+    const items = detectDrift(u, getDefaultConfig());
+    const inv = items.find((i) => i.kind === "invalid" && i.path === "agents.aider.driver");
+    expect(inv).toBeDefined();
+    expect(inv?.severity).toBe("warn");
+  });
+
+  it("flags a role whose agent is not present in agents", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).captain = { agent: "ghost", model: "opus" };
+    const items = detectDrift(u, getDefaultConfig());
+    const inv = items.find((i) => i.kind === "invalid" && i.path === "defaults.roles.captain.agent");
+    expect(inv).toBeDefined();
+  });
+});
