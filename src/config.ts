@@ -45,6 +45,8 @@ export interface RoleAssignment {
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration", RoleAssignment>>;
 
 export interface CockpitConfig {
+  /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
+  _cockpitVersion?: string;
   commandName: string;
   hubVault: string;
   projects: Record<string, ProjectConfig>;
