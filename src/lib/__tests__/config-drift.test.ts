@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectDrift } from "../config-drift.js";
+import { detectDrift, applySafeFixes } from "../config-drift.js";
 import { getDefaultConfig } from "../../config.js";
 
 function userConfig() {
@@ -82,5 +82,25 @@ describe("detectDrift \u2014 invalid", () => {
     const items = detectDrift(u, getDefaultConfig());
     const inv = items.find((i) => i.kind === "invalid" && i.path === "defaults.roles.captain.agent");
     expect(inv).toBeDefined();
+  });
+});
+
+describe("applySafeFixes", () => {
+  it("adds missing keys and removes deprecated keys, leaving other drift untouched", () => {
+    const u = userConfig();
+    delete (u.defaults as any).worktreeDir;
+    (u.defaults as any).models = { command: "opus" } as any;
+    (u.defaults.roles as any).crew = { agent: "claude", model: "sonnet" };
+
+    const def = getDefaultConfig();
+    const items = detectDrift(u, def);
+    const { config, applied } = applySafeFixes(u, items, def);
+
+    expect((config.defaults as any).worktreeDir).toBe(def.defaults.worktreeDir);
+    expect((config.defaults as any).models).toBeUndefined();
+    expect((config.defaults.roles as any).crew.model).toBe("sonnet");
+    expect(applied).toContain("defaults.worktreeDir");
+    expect(applied).toContain("defaults.models");
+    expect(u === config).toBe(false);
   });
 });

@@ -124,3 +124,41 @@ export function detectDrift(user: CockpitConfig, def: CockpitConfig): DriftItem[
 
   return items;
 }
+
+function setPath(obj: Record<string, unknown>, dotted: string, value: unknown): void {
+  const parts = dotted.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {};
+    cur = cur[k] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function deletePath(obj: Record<string, unknown>, dotted: string): void {
+  const parts = dotted.split(".");
+  let cur: Record<string, unknown> | undefined = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur[parts[i]] as Record<string, unknown> | undefined;
+    if (!cur || typeof cur !== "object") return;
+  }
+  delete cur[parts[parts.length - 1]];
+}
+
+export function applySafeFixes(
+  user: CockpitConfig,
+  items: DriftItem[],
+  _def: CockpitConfig,
+): { config: CockpitConfig; applied: string[] } {
+  const config = JSON.parse(JSON.stringify(user)) as CockpitConfig;
+  const applied: string[] = [];
+  const root = config as unknown as Record<string, unknown>;
+  for (const item of items) {
+    if (!SAFE_KINDS.includes(item.kind)) continue;
+    if (item.kind === "missing") setPath(root, item.path, item.suggested);
+    else if (item.kind === "deprecated") deletePath(root, item.path);
+    applied.push(item.path);
+  }
+  return { config, applied };
+}
