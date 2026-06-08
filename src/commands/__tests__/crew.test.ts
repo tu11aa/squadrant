@@ -93,7 +93,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren, isTurnAccepted } from "../crew.js";
 
 const baseConfig = {
   commandName: "command",
@@ -638,7 +638,7 @@ describe("sendFirstTurnWhenReady", () => {
       "$ launch",
     );
 
-    await vi.advanceTimersByTimeAsync(3500);
+    await vi.advanceTimersByTimeAsync(5000);
     await promise;
 
     // Two calls: initial send + one re-send (preSend === afterScreen)
@@ -703,6 +703,106 @@ describe("sendFirstTurnWhenReady", () => {
     await vi.advanceTimersByTimeAsync(20000);
     await promise;
   }, 15000);
+});
+
+describe("isTurnAccepted", () => {
+  it("returns true when screen changed (claude: no splashMarker)", () => {
+    expect(isTurnAccepted("> ", "> do the thing")).toBe(true);
+  });
+
+  it("returns false when screen unchanged (claude)", () => {
+    expect(isTurnAccepted("> ", "> ")).toBe(false);
+  });
+
+  it("returns true when opencode splash marker is absent from afterScreen", () => {
+    expect(isTurnAccepted(
+      "Ask anything…",
+      "> do the thing",
+      { splashMarker: "Ask anything…" },
+    )).toBe(true);
+  });
+
+  it("returns false when opencode still at mutating splash (marker present)", () => {
+    expect(isTurnAccepted(
+      "Ask anything…",
+      "Ask anything… ▊",
+      { splashMarker: "Ask anything…" },
+    )).toBe(false);
+  });
+
+  it("returns false when opencode splash marker present despite screen change", () => {
+    expect(isTurnAccepted(
+      "Ask anything…",
+      "Ask anything… Build · DeepSeek… ▊",
+      { splashMarker: "Ask anything…" },
+    )).toBe(false);
+  });
+
+  it("returns true for opencode when splash marker absent even if afterScreen matches preSendScreen", () => {
+    expect(isTurnAccepted(
+      "Ask anything…",
+      "> ready",
+      { splashMarker: "Ask anything…" },
+    )).toBe(true);
+  });
+});
+
+describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen.mockReset();
+    sendToPane.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("retries up to retryLimit when opencode splash persists (splashMarker set)", async () => {
+    readPaneScreen.mockResolvedValue("Ask anything…");
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+      "$ opencode",       // preLaunchScreen
+      { splashMarker: "Ask anything…", retryLimit: 3 },
+    );
+
+    // Floor (1500) + 2 poll cycles (1500) + 3 retry checks (2250) = 5250ms
+    await vi.advanceTimersByTimeAsync(6000);
+    await promise;
+
+    // 3 full retry rounds: initial send + 2 re-sends = 3 total
+    expect(sendToPane).toHaveBeenCalledTimes(3);
+  });
+
+  it("exits early on acceptance instead of exhausting retries", async () => {
+    let callCount = 0;
+    readPaneScreen.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 1) return "booting…";        // preLaunchScreen
+      if (callCount <= 3) return "Ask anything…";    // poll 1-2 (stabilizing)
+      if (callCount === 4) return "Ask anything…";   // preSend snapshot
+      return "> do the thing";                        // after-send: accepted
+    });
+
+    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
+    const promise = sendFirstTurnWhenReady(
+      { readPaneScreen, sendToPane } as any,
+      pane,
+      "do the thing",
+      "booting…",
+      { splashMarker: "Ask anything…", retryLimit: 3 },
+    );
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await promise;
+
+    // 1 send only: acceptance detected on first retry check
+    expect(sendToPane).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("cockpit crew send/read/close/list", () => {
