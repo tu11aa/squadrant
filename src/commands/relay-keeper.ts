@@ -15,7 +15,7 @@ import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
 import type { RuntimeDriver, WorkspaceRef } from "../runtimes/types.js";
 import { sendRequest } from "../control/protocol.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
-import type { ComponentHealth, HealthState } from "../control/liveness.js";
+import type { ComponentHealth } from "../control/liveness.js";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 
@@ -59,16 +59,25 @@ export function decideKeeperAction(
  * needed, and if so dedup + spawnInjector the relay tab. Never throws — all
  * I/O is caught and logged so a transient daemon/cmux blip never crashes the
  * keeper process (and the shell loop re-polls ~15s later).
+ *
+ * @param fetchHealth  Injectable health source (defaults to real daemon socket).
+ *                     Tests supply a fake to avoid mocking sendRequest at the
+ *                     module level.
  */
 export async function runRelayKeeperTick(
   project: string,
   runtime: RuntimeDriver,
   captainName: string,
   log: (m: string) => void = () => {},
+  fetchHealth?: (project: string) => Promise<ComponentHealth[]>,
 ): Promise<void> {
+  const getHealth = fetchHealth ?? (async (p: string) => {
+    const res = await sendRequest(SOCK, { kind: "health", project: p });
+    return Array.isArray(res) ? (res as ComponentHealth[]) : [];
+  });
   let health: ComponentHealth[];
   try {
-    health = (await sendRequest(SOCK, { kind: "health", project })) as ComponentHealth[];
+    health = await getHealth(project);
     if (!Array.isArray(health)) {
       log("relay-keeper: health response not an array");
       return;
