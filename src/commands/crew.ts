@@ -40,6 +40,36 @@ const POLL_INTERVAL_MS = 750;
 const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
 const POST_SEND_CHECK_MS = 750;
 
+/** Configuration for the post-send acceptance check that replaces a naive
+ *  screen-changed comparison. For agents whose idle splash keeps mutating
+ *  (opencode's "Ask anything…" with blinking cursor / status line), the old
+ *  check would always see a different screen and never re-send a dropped turn. */
+export interface TurnAcceptanceConfig {
+  /** Text that identifies the idle splash state. When set, acceptance requires
+   *  this marker to be absent from the screen (e.g. "Ask anything…" for opencode).
+   *  Without it, acceptance defaults to "screen changed" (claude behavior). */
+  splashMarker?: string;
+  /** Max rounds of "wait, check, re-send" after the initial send. Defaults to 2
+   *  (initial + 1 re-send) to match the pre-retry behavior for claude. Use 3 for
+   *  opencode which has a wider boot-race window. */
+  retryLimit?: number;
+}
+
+/** Pure-function decision: was the first turn accepted by the TUI?
+ *  - With splashMarker: accepted = the marker is no longer visible (the TUI left
+ *    its idle splash, confirming the keystroke was received).
+ *  - Without splashMarker (claude): accepted = the screen changed after sending. */
+export function isTurnAccepted(
+  preSendScreen: string,
+  afterScreen: string,
+  config?: TurnAcceptanceConfig,
+): boolean {
+  if (config?.splashMarker) {
+    return !afterScreen.includes(config.splashMarker);
+  }
+  return afterScreen !== preSendScreen;
+}
+
 /** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
  *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
  *  between release and the crew binding the port; acceptable for local
@@ -123,6 +153,7 @@ export async function sendFirstTurnWhenReady(
   pane: PaneRef,
   task: string,
   preLaunchScreen: string,
+  acceptanceConfig?: TurnAcceptanceConfig,
 ): Promise<void> {
   await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
 
@@ -156,11 +187,23 @@ export async function sendFirstTurnWhenReady(
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.sendToPane(pane, task);
 
-  await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
-  const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-  if (afterScreen === preSendScreen) {
-    // Screen unchanged after sending → nothing was received at all; re-send once.
-    await runtime.sendToPane(pane, task);
+  // Bounded retry loop (#235): after sending, poll the pane for evidence that
+  // the TUI actually accepted the turn. opencode's idle splash ("Ask anything…")
+  // keeps mutating (cursor blink, status line), so the old single-shot check
+  // (afterScreen == preSendScreen) would always see a different screen and
+  // never re-send a dropped turn. The splashMarker config tells us what
+  // "still idle" looks like for this agent; absence of the marker means the
+  // TUI left splash (confirmation of acceptance). Cap at retryLimit attempts.
+  const retryLimit = acceptanceConfig?.retryLimit ?? 2;
+  for (let attempt = 0; attempt < retryLimit; attempt++) {
+    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
+      return;
+    }
+    if (attempt < retryLimit - 1) {
+      await runtime.sendToPane(pane, task);
+    }
   }
 }
 
@@ -369,7 +412,16 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen, {
+      // #235: opencode's idle splash ("Ask anything…") keeps mutating (cursor
+      // blink, status line toggle), so the old screen-changed check would always
+      // see a *different* screen and never re-send a dropped turn. The splashMarker
+      // confirms the TUI actually left splash before declaring acceptance.
+      splashMarker: "Ask anything…",
+      // opencode has a wider boot-race window than claude, so allow 3 retries
+      // instead of the default 2.
+      retryLimit: 3,
+    });
     return { ...pane, title };
   }
 
