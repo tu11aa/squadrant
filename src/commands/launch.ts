@@ -13,7 +13,12 @@ import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
-import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
+import {
+  buildRelaySupervisorCommand,
+  NOTIFY_RELAY_TAB_TITLE,
+  buildRelayKeeperCommand,
+  NOTIFY_RELAY_KEEPER_TAB_TITLE,
+} from "../control/relay-supervisor.js";
 import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
 
 const CMUX_APP = "/Applications/cmux.app";
@@ -183,7 +188,7 @@ function buildAgentCmd(
 // Relay-tab builders moved to src/control/relay-supervisor.ts (shared with the
 // daemon's #207 healer). Re-exported for back-compat (launch.test.ts imports
 // them from "../launch").
-export { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE };
+export { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE, buildRelayKeeperCommand, NOTIFY_RELAY_KEEPER_TAB_TITLE };
 
 /**
  * Add the notify-relay to a captain workspace as a background tab. The
@@ -217,6 +222,38 @@ async function ensureNotifyRelayTab(
   }
 }
 
+/**
+ * #224: Add the relay-keeper to a captain workspace as a background tab. The
+ * keeper polls the daemon's relay-health and re-spawns the notify-relay tab
+ * when it is gone. Unlike the relay's own supervisor (which only restarts the
+ * relay PROCESS), the keeper is a separate tab that survives the relay tab
+ * dying and can respawn it via spawnInjector — which works because the keeper
+ * is cmux-tree-resident.
+ */
+async function ensureRelayKeeperTab(
+  runtime: RuntimeDriver,
+  workspace: WorkspaceRef,
+  project: string,
+): Promise<void> {
+  try {
+    const surfaces = await runtime.listSurfaces(workspace.id);
+    for (const s of surfaces) {
+      if (s.title === NOTIFY_RELAY_KEEPER_TAB_TITLE) {
+        return; // already running — never duplicate
+      }
+    }
+    await runtime.spawnInjector({
+      captainWorkspace: workspace,
+      command: buildRelayKeeperCommand(project),
+      title: NOTIFY_RELAY_KEEPER_TAB_TITLE,
+      placement: "background",
+    });
+    console.log(chalk.cyan(`  ✔ Added background relay-keeper for '${project}'`));
+  } catch (e) {
+    console.error(chalk.yellow(`  ⚠ relay-keeper setup failed: ${(e as Error).message}`));
+  }
+}
+
 async function launchWorkspace(
   runtime: RuntimeDriver,
   name: string,
@@ -236,7 +273,10 @@ async function launchWorkspace(
     await runtime.stop(existing.id);
   } else if (existing) {
     console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
-    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing, notifyRelayProject);
+    if (notifyRelayProject) {
+      await ensureNotifyRelayTab(runtime, existing, notifyRelayProject);
+      await ensureRelayKeeperTab(runtime, existing, notifyRelayProject);
+    }
     // TODO(runtime): select/focus not yet abstracted; direct cmux call retained intentionally
     cmuxLocal(["select-workspace", "--workspace", existing.id]);
     return;
@@ -263,7 +303,10 @@ async function launchWorkspace(
     }, 3000);
   }
 
-  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref, notifyRelayProject);
+  if (notifyRelayProject) {
+    await ensureNotifyRelayTab(runtime, ref, notifyRelayProject);
+    await ensureRelayKeeperTab(runtime, ref, notifyRelayProject);
+  }
 
   if (navigate) {
     // TODO(runtime): select not yet abstracted
