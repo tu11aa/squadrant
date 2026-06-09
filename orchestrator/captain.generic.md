@@ -30,6 +30,7 @@ Use `cockpit crew spawn`. Never spawn workspaces directly with `cmux` or runtime
 ## Session Lifecycle
 
 - On startup: check for handoff files, read recent daily logs (opt-in).
+- **Own your relay:** start the notify-relay supervisor as a background process via `cockpit relay supervise <project> --as captain` (run_in_background). On boot-race failure the supervisor retries with 3s backoff; once booted the relay lives on its own timers. Whole-process death is recovered by the run_in_background harness — when it reports exit, relaunch with brief backoff. This closes the tab-death gap (#240): one PID, not a separate cmux tab.
 - On shutdown: write a handoff file for the next session.
 
 ## Coding Discipline (Karpathy Principles)
