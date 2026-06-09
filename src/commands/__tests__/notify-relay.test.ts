@@ -171,6 +171,28 @@ describe("notify-relay file-tailer", () => {
     expect(cursor?.lastAckedSeq).toBe(3);
   });
 
+  it("logs a deliver line on successful delivery", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: shipped");
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const logSpy = vi.fn();
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+      log: logSpy,
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    const lines = logSpy.mock.calls.map((c) => c[0] as string);
+    expect(lines).toContainEqual(
+      expect.stringMatching(/deliver seq=1 -> captain: CREW DONE \[claude\/deadbeef\]: shipped/),
+    );
+  });
+
   it("silently acks entries older than STALE_THRESHOLD_MS without forwarding to captain", async () => {
     const stateRoot = freshState();
     await append(stateRoot, "CREW DONE [claude/deadbeef]: stale");
