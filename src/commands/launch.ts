@@ -9,7 +9,7 @@ import { loadConfig, resolveHome, type ModelRoutingConfig } from "../config.js";
 import { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } from "../drivers/index.js";
 import type { AgentDriver, Role } from "../drivers/types.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import type { RuntimeDriver, WorkspaceRef } from "../runtimes/index.js";
+import type { RuntimeDriver } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
@@ -185,38 +185,6 @@ function buildAgentCmd(
 // them from "../launch").
 export { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE };
 
-/**
- * Add the notify-relay to a captain workspace as a background tab. The
- * relay tails the daemon's per-project mailbox and forwards each new event to
- * the captain pane via runtime.sendToSurface — required because cmux refuses
- * any caller not descended from its app process, so the daemon itself cannot
- * deliver. Dedups by closing any pre-existing relay surface before respawning,
- * so the relay always boots fresh with the current cockpit binary.
- */
-async function ensureNotifyRelayTab(
-  runtime: RuntimeDriver,
-  workspace: WorkspaceRef,
-  project: string,
-): Promise<void> {
-  try {
-    const surfaces = await runtime.listSurfaces(workspace.id);
-    for (const s of surfaces) {
-      if (s.title === NOTIFY_RELAY_TAB_TITLE) {
-        try { await runtime.closePane(s); } catch { /* best effort */ }
-      }
-    }
-    await runtime.spawnInjector({
-      captainWorkspace: workspace,
-      command: buildRelaySupervisorCommand(project),
-      title: NOTIFY_RELAY_TAB_TITLE,
-      placement: "background",
-    });
-    console.log(chalk.cyan(`  ✔ Added background notify-relay for '${project}'`));
-  } catch (e) {
-    console.error(chalk.yellow(`  ⚠ notify-relay setup failed: ${(e as Error).message}`));
-  }
-}
-
 async function launchWorkspace(
   runtime: RuntimeDriver,
   name: string,
@@ -226,7 +194,6 @@ async function launchWorkspace(
   forceFresh = false,
   pinToTop = false,
   initialPrompt?: string,
-  notifyRelayProject?: string,
 ): Promise<void> {
   ensureCmuxReady();
 
@@ -236,7 +203,6 @@ async function launchWorkspace(
     await runtime.stop(existing.id);
   } else if (existing) {
     console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
-    if (notifyRelayProject) await ensureNotifyRelayTab(runtime, existing, notifyRelayProject);
     // TODO(runtime): select/focus not yet abstracted; direct cmux call retained intentionally
     cmuxLocal(["select-workspace", "--workspace", existing.id]);
     return;
@@ -262,8 +228,6 @@ async function launchWorkspace(
       runtime.send(ref.id, initialPrompt).catch(() => { /* best-effort */ });
     }, 3000);
   }
-
-  if (notifyRelayProject) await ensureNotifyRelayTab(runtime, ref, notifyRelayProject);
 
   if (navigate) {
     // TODO(runtime): select not yet abstracted
@@ -335,11 +299,7 @@ export const launchCommand = new Command("launch")
         : runtimes.global(config);
 
       try {
-        // #111: only captain workspaces need the notify-relay tab — they're the
-        // ones that receive crew terminal-event push notifications. Command
-        // doesn't supervise crews.
-        const notifyRelayProject = role === "captain" ? projectName : undefined;
-        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt, notifyRelayProject);
+        await launchWorkspace(runtime, workspaceName, agentCmd, cwd, navigate, forceFresh, pinToTop, initialPrompt);
       } catch (err) {
         console.error(chalk.red(`  ✘ Failed: ${(err as Error).message}`));
       }

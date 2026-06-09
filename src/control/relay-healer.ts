@@ -13,8 +13,10 @@ import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-sup
  *   true  → workspace running
  *   false → enumerated, absent
  *   null  → could not determine (cmux down, no project) — never alarms
- * cmux READS are allowed from the launchd daemon (unlike writes), so this works
- * in prod; the #139 surface probe relies on the same primitive.
+ * NOTE: cmux lineage enforcement blocks ALL daemon-originated cmux calls
+ * (reads included — see #224 revert), so from the launchd daemon this resolves
+ * null in prod. It still works from a cmux-resident caller; the #139 surface
+ * probe relies on the same primitive.
  */
 export function createCaptainProbe(): (project: string, captainName: string) => Promise<boolean | null> {
   return async (project, captainName) => {
@@ -33,11 +35,11 @@ export function createCaptainProbe(): (project: string, captainName: string) => 
 /**
  * Best-effort relay heal (#207, SECONDARY). Re-spawns the notify-relay tab in
  * the captain workspace via the runtime's spawnInjector. This is mostly INERT in
- * production: cmux refuses writes from the launchd daemon (outside its
- * process-lineage), so the spawn is rejected and we just log. The genuine
- * in-prod recovery is the cmux-tree-resident relay-keeper (#224); the
- * never-silently-blind guarantee comes from the liveness SURFACE, not this hook.
- * Never throws.
+ * production: cmux refuses calls from the launchd daemon (outside its
+ * process-lineage), so the spawn is rejected and we just log. Genuine in-prod
+ * recovery is captain-managed from inside the cmux tree (relay-keeper #224 was
+ * reverted as over-complex); the never-silently-blind guarantee comes from the
+ * liveness SURFACE, not this hook. Never throws.
  */
 export function createRelayHealer(
   log: (m: string) => void = () => {},
