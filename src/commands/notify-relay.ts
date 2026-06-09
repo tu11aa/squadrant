@@ -256,6 +256,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
             // Don't advance cursor; the next poll will retry from the same seq.
             return;
           }
+          log(`deliver seq=${entry.seq} -> ${opts.subscriber}: ${msg}`);
         }
         await writeCursor({
           stateRoot: opts.stateRoot,
