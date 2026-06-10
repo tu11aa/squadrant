@@ -17,4 +17,9 @@ describe("framing", () => {
     const dec = createDecoder();
     expect(dec.push("not json\n{\"ok\":true}\n")).toEqual([{ ok: true }]);
   });
+
+  it("decoder silently discards { type: '_keepalive' } frames (#94)", () => {
+    const dec = createDecoder();
+    expect(dec.push('{"type":"_keepalive"}\n{"ok":true}\n')).toEqual([{ ok: true }]);
+  });
 });
