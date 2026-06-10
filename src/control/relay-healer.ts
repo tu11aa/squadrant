@@ -13,10 +13,12 @@ import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-sup
  *   true  → workspace running
  *   false → enumerated, absent
  *   null  → could not determine (cmux down, no project) — never alarms
- * NOTE: cmux lineage enforcement blocks ALL daemon-originated cmux calls
- * (reads included — see #224 revert), so from the launchd daemon this resolves
- * null in prod. It still works from a cmux-resident caller; the #139 surface
- * probe relies on the same primitive.
+ *
+ * NOTE: NOT used from the daemon health path. (#239 Phase A) Captain liveness
+ * is now derived from relay heartbeat presence in liveness.projectHealth() —
+ * the daemon (launchd) is outside cmux's process-lineage and would always get
+ * null here anyway. This function is still valid for cmux-resident callers
+ * (e.g. the #139 surface-liveness probe).
  */
 export function createCaptainProbe(): (project: string, captainName: string) => Promise<boolean | null> {
   return async (project, captainName) => {

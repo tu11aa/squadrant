@@ -13,7 +13,7 @@ import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
 import { createSurfaceLivenessProbe } from "./crew-pane-reader.js";
-import { createRelayHealer, createCaptainProbe } from "./relay-healer.js";
+import { createRelayHealer } from "./relay-healer.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { loadConfig } from "../config.js";
 import { readdir } from "node:fs/promises";
@@ -63,9 +63,6 @@ export interface CockpitdOpts {
   /** #207 best-effort relay healer. Defaults to a real cmux spawnInjector
    *  re-spawn (mostly inert under launchd). Tests inject a fake/spy. */
   healRelay?: (project: string) => Promise<void> | void;
-  /** #77 captain-presence probe for the health verb. Defaults to a real cmux
-   *  read. Returns true/false/null (null = couldn't determine). Tests inject. */
-  captainProbe?: (project: string, captainName: string) => Promise<boolean | null>;
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
   opencodeBridge?: {
     start: (o: { taskId: string; port: number }) => void;
@@ -304,11 +301,10 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   });
 
   // #77 service-health surface. Assembles per-component liveness for the health
-  // socket verb: the relay map comes from the daemon, captain presence from a
-  // cmux read (allowed from launchd), crews from the store — all fed into the
-  // pure projectHealth(). Never throws (a flaky cmux read maps to "unknown").
-  const captainProbe = opts.captainProbe ?? createCaptainProbe();
-  async function buildHealth(only?: string): Promise<ComponentHealth[]> {
+  // socket verb: relay map from the daemon, captain liveness from relay heartbeat
+  // (#239 Phase A — cmux probe removed; launchd lineage denies it), crews from
+  // the store — all fed into the pure projectHealth().
+  function buildHealth(only?: string): ComponentHealth[] {
     const config = loadConfig();
     const relays = d.getRelayHealth();
     const now = Date.now();
@@ -324,14 +320,12 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     for (const project of names) {
       const proj = config.projects[project];
       const captainName = proj?.captainName ?? `${project}-captain`;
-      const captainPresent = await captainProbe(project, captainName);
       out.push(
         ...projectHealth({
           project,
           now,
           captainName,
           relay: relays.find((r) => r.project === project) ?? null,
-          captainPresent,
           commandPresent: null, // command is on-demand; not tracked in this cut
           crews: store.list(project),
         }),
@@ -407,10 +401,9 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         return { ok: true };
       }
       // #77 service-health surface: per-component liveness for the queried
-      // project (or all). The captain probe (cmux read) is allowed from the
-      // daemon; the heavy lifting is the pure projectHealth().
+      // project (or all). Captain liveness derived from relay heartbeat (#239).
       if (msg.kind === "health") {
-        return await buildHealth(msg.project as string | undefined);
+        return buildHealth(msg.project as string | undefined);
       }
       return d.handle(msg);
     },
