@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hard crew task-timeout.** The daemon sweep now detects non-terminal tasks that exceed a per-task wall-clock ceiling (default 8h, configurable via `defaults.taskTimeoutMs`). When the ceiling is crossed the daemon fires a detect-only `CREW TIMEOUT` escalation to the captain via the existing mailbox → notify-relay pipe — the same path `CREW STALLED` / `CREW DONE` ride. No state change or kill (detection-first, per #77). Distinct from the heartbeat/stall budget, which only measures heartbeat freshness; a continuously-heartbeating crew stuck on one task for hours is now caught. Closes #225. (#225)
 
+### Fixed
+
+- **Running captains no longer show 'gone'.** Captain liveness now derives from the relay heartbeat the daemon can see over the socket, instead of a cmux read the launchd daemon is always denied. Relay beating → captain alive; heartbeat gone → captain gone; no relay registered → unknown (no false alarm). (#239 Phase A)
+
 ## [0.5.3] - 2026-06-06
 
 A reliability and config-hygiene release. Adds a service-health layer and config-drift detection, and hardens the daemon against false crew-cancellation and hung cmux subprocesses.
