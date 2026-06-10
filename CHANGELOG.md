@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cockpit shutdown` now terminalizes crew task records before closing workspaces.** Previously, closing a captain workspace left all its crew task records non-terminal in the daemon store (ghost records). On daemon restart the `#225` timeout sweep fired against every ghost simultaneously, flooding the captain with `CREW TIMEOUT` notifications. `cockpit shutdown [project]` now sends `task.cancelled` (reason: `captain shutdown`) for every non-terminal crew task before closing the workspace — the same terminalization `cockpit crew close` already performed. Daemon errors during terminalization are swallowed so a down daemon never blocks the workspace close. Closes ghost-source root cause of the `#225` timeout flood. (#225)
+
+- **Crew task-timeout now terminalizes the record (persistent dedup, flood-proof across restarts).** The prior `#225` implementation used an in-memory `firedTimeout` Set that reset on daemon restart, re-firing every `CREW TIMEOUT` notification for all still-non-terminal tasks on every restart. The Set is removed; when a task exceeds the wall-clock ceiling the sweep now transitions it to `cancelled` (`lastEvent: "sweep.task-timeout"`) via `store.put` **before** firing the notification. The terminal state is the persistent dedup: `TERMINAL_STATES.has(r.state)` at the top of the sweep loop gates every future pass, including passes from a freshly-restarted daemon instance. The timeout message continues to report the task's **original** state (e.g. `state: awaiting-input`), not `cancelled`. Reverses the detect-only decision from `#77`; detect-only + volatile dedup was the flood bug. (#225)
+
 - **Running captains no longer show 'gone'.** Captain liveness now derives from the relay heartbeat the daemon can see over the socket, instead of a cmux read the launchd daemon is always denied. Relay beating → captain alive; heartbeat gone → captain gone; no relay registered → unknown (no false alarm). (#239 Phase A)
 
 ## [0.5.3] - 2026-06-06

@@ -182,9 +182,6 @@ export function createDaemon(deps: DaemonDeps) {
   // per episode, not every 30s sweep. Re-armed (deleted) when a fresh heartbeat
   // proves the relay recovered.
   const lastHealAttempt = new Map<string, number>();
-  // #225: task IDs that have already received a CREW TIMEOUT escalation.
-  // Deduplicates across sweeps — a task gets at most one timeout push.
-  const firedTimeout = new Set<string>();
   return {
     /** #207: a notify-relay announced itself (boot). */
     registerRelay(r: { project: string; pid: number; startedAt: number }): void {
@@ -300,24 +297,30 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
-        // #225 task timeout: detect non-terminal tasks that have exceeded the
-        // wall-clock ceiling. Fires at most once per task (firedTimeout dedup).
-        // Does NOT change state (detect-first, per #77).
-        if (!TERMINAL_STATES.has(r.state) && !firedTimeout.has(r.id) && deps.notify) {
+        // #225 root-fix: terminate non-terminal tasks that exceeded the wall-clock
+        // ceiling. Terminalization is the persistent dedup — a daemon restart sees
+        // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
+        // The volatile firedTimeout Set is removed; terminal state replaces it.
+        if (!TERMINAL_STATES.has(r.state)) {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           if (t - r.createdAt > ceiling) {
-            firedTimeout.add(r.id);
+            const prevState = r.state; // capture BEFORE terminalization (shown in message)
             const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
             const hrs = Math.round(ceiling / 3_600_000);
-            const msg = `CREW TIMEOUT ${tag}: wall-clock exceeded ${hrs}h (id: ${r.id}, state: ${r.state})`;
+            const msg = `CREW TIMEOUT ${tag}: wall-clock exceeded ${hrs}h (id: ${r.id}, state: ${prevState})`;
             const synthEvent: ControlEvent = { type: "task.timeout", id: r.id, taskTimeoutMs: ceiling };
-            try {
-              const p = deps.notify({ project: r.project, message: msg, record: r, event: synthEvent });
-              if (p && typeof (p as Promise<void>).catch === "function") {
-                (p as Promise<void>).catch(() => {});
+            // Terminalize first — persisted to store so any future daemon instance
+            // sees a terminal record and skips it (flood-proof across restarts).
+            store.put({ ...r, state: "cancelled", lastEvent: "sweep.task-timeout" });
+            if (deps.notify) {
+              try {
+                const p = deps.notify({ project: r.project, message: msg, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") {
+                  (p as Promise<void>).catch(() => {});
+                }
+              } catch {
+                // swallowed — a flaky notifier must never trip the sweep
               }
-            } catch {
-              // swallowed — a flaky notifier must never trip the sweep
             }
           }
         }

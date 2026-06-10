@@ -632,4 +632,60 @@ describe("sweep: task-timeout (#225)", () => {
     const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000 });
     await expect(d.sweep()).resolves.toBeUndefined();
   });
+
+  // ── #225 root-fix: terminate-on-timeout (Fix C) ──────────────────────────────
+
+  it("timeout terminates task record (state=cancelled, lastEvent=sweep.task-timeout)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225h", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toMatch(/CREW TIMEOUT/);
+    const r = store.get("p", "t225h");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.task-timeout");
+  });
+
+  it("timeout message shows original state, not 'cancelled' (Fix C note 1)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225i", {
+      state: "awaiting-input", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls[0].message).toContain("awaiting-input");
+    expect(calls[0].message).not.toContain("state: cancelled");
+  });
+
+  it("flood proof: fresh daemon over same store never re-fires (Fix C persistent dedup)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const notify = async (a: any) => { calls.push(a); };
+    store.put(rec("t225j", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+
+    const d1 = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify });
+    await d1.sweep();
+    const timeoutCalls = () => calls.filter((c) => c.message.includes("CREW TIMEOUT")).length;
+    expect(timeoutCalls()).toBe(1);
+
+    // Second sweep on same daemon: task is terminal, no re-fire
+    await d1.sweep();
+    expect(timeoutCalls()).toBe(1);
+
+    // Fresh daemon, same store, empty in-memory state — this is the flood scenario.
+    // Terminal state in the store is the persistent dedup: must still be exactly 1.
+    const d2 = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify });
+    await d2.sweep();
+    expect(timeoutCalls()).toBe(1);
+  });
 });
