@@ -92,21 +92,25 @@ export interface CrewLiveness {
 /**
  * Pure. Project one project's component health from already-gathered inputs.
  * Emits: a relay row, a captain row, a command row (only when applicable), and
- * one row per non-terminal crew. cmux presence booleans are resolved by the
- * caller (cockpitd reads cmux); null means "could not determine" → unknown.
+ * one row per non-terminal crew.
+ *
+ * Captain liveness (#239 Phase A): derived from relay heartbeat presence, not a
+ * cmux probe. The relay runs inside the captain's process tree (#240) and beats
+ * the daemon every ~10s — relay presence IS captain presence.
+ *   relay alive/stale → captain ALIVE
+ *   relay gone        → captain GONE
+ *   no relay          → captain UNKNOWN (no signal; do not alarm)
  */
 export function projectHealth(input: {
   project: string;
   now: number;
   captainName: string;
   relay: RelayHealth | null;
-  /** true = captain workspace present, false = absent, null = cmux unreadable. */
-  captainPresent: boolean | null;
   /** true/false when a command workspace is expected; null = not applicable. */
   commandPresent: boolean | null;
   crews: CrewLiveness[];
 }): ComponentHealth[] {
-  const { project, now, captainName, relay, captainPresent, commandPresent, crews } = input;
+  const { project, now, captainName, relay, commandPresent, crews } = input;
   const out: ComponentHealth[] = [];
 
   // ── relay ──────────────────────────────────────────────────────────────
@@ -121,28 +125,33 @@ export function projectHealth(input: {
       detail: state === "alive" ? `pid ${relay.pid}` : relayActionable(project),
     });
   } else {
-    // No registration. A LIVE captain should have a relay → its absence is a
-    // down relay (the #207 silent-blind case). No captain → nothing should be
-    // running, so it is genuinely unknown, not an alarm.
-    const state: HealthState = captainPresent ? "gone" : "unknown";
+    // No relay registered. Without the cmux probe (denied from launchd, #239)
+    // we cannot distinguish "captain alive but relay dead" from "nothing
+    // running" — report unknown rather than falsely alarm.
     out.push({
       kind: "relay",
       project,
       ref: "relay",
-      state,
+      state: "unknown",
       lastSeenMs: null,
-      detail: state === "gone" ? relayActionable(project) : undefined,
     });
   }
 
   // ── captain ────────────────────────────────────────────────────────────
+  // Relay heartbeat is the liveness signal (#239 Phase A). relay.lastSeenMs
+  // surfaces as the captain's last-seen timestamp so consumers can show age.
+  const captainState: HealthState = !relay
+    ? "unknown"
+    : classifyHealth(relay.lastSeenMs, now, RELAY_STALE_MS, RELAY_GONE_MS) === "gone"
+      ? "gone"
+      : "alive";
   out.push({
     kind: "captain",
     project,
     ref: captainName,
-    state: presence(captainPresent),
-    lastSeenMs: null,
-    detail: captainPresent === false ? "captain workspace not running" : undefined,
+    state: captainState,
+    lastSeenMs: relay?.lastSeenMs ?? null,
+    detail: captainState === "gone" ? "captain presumed gone — relay heartbeat dark" : undefined,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────
