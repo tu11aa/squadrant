@@ -101,6 +101,9 @@ export type ControlEvent =
   // already moved an idle interactive task to 'awaiting-input', and this carries
   // the accurate (non-alarming) notify payload to the captain.
   | { type: "task.idle"; id: string; heartbeatBudgetMs: number }
+  // #225: emitted by the sweep when a task's wall-clock age exceeds the ceiling.
+  // Notify-only (detect-first, #77); reducer is a no-op.
+  | { type: "task.timeout"; id: string; taskTimeoutMs: number }
   | { type: "task.reconcile-failed"; id: string; reason: string }
   // Emitted by runCrewClose before closing the pane; transitions a non-terminal
   // task to the absorbing 'cancelled' state. Silent: captain initiated the close

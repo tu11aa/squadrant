@@ -84,6 +84,9 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "cockpit", "state");
   const sockPath = opts.sockPath ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
   const store = createStore(stateRoot);
+  // #225: hard crew task-timeout ceiling, read once at boot. Falls back to the
+  // daemon's DEFAULT_TASK_TIMEOUT_MS (8h) when unset in config.
+  const taskTimeoutMs = loadConfig().defaults.taskTimeoutMs;
   const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
   const spawn = opts.spawn ?? realSpawn;
   const resultsDir = join(stateRoot, "_results");
@@ -240,7 +243,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const notify = opts.notify ?? defaultNotify;
 
   const d = createDaemon({
-    store, now: () => Date.now(), isPidAlive, notify,
+    store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
     // #139 backstop: terminalize interactive crews whose cmux pane is provably
     // gone (sweep/reconcile reaper). Three-valued; "unknown" never reaps.
     isSurfaceAlive: opts.isSurfaceAlive ?? createSurfaceLivenessProbe(),

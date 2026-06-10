@@ -528,3 +528,108 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls[0].message).toContain("CREW BLOCKED");
   });
 });
+
+// ── Issue #225: hard crew task-timeout ───────────────────────────────────────
+// A per-task wall-clock ceiling distinct from the 24h interactive heartbeat
+// budget. A crew can keep heartbeating (state 'working', never 'stalled') yet
+// be stuck on one task for hours — nothing catches that today. This does.
+// DETECT-ONLY: fires a CREW TIMEOUT notify push via the existing notify hook.
+// Deduped: fires ONCE per overrun, not on every sweep.
+describe("sweep: task-timeout (#225)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-timeout-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("fires CREW TIMEOUT when task wall-clock exceeds ceiling while heartbeat is fresh", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    // createdAt=0, now=2000, ceiling=1000 → age 2000ms > ceiling
+    // lastHeartbeat=1990 → heartbeat age 10ms < 24h budget → NOT stalled: proves
+    // this catches the heartbeating-but-stuck scenario the stall watchdog misses
+    store.put(rec("t225a", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toMatch(/CREW TIMEOUT/);
+  });
+
+  it("escalation message names the crew and the full task id", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225b", {
+      state: "working", name: "my-crew", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("my-crew");
+    expect(calls[0].message).toContain("t225b");
+  });
+
+  it("fires ONLY ONCE across multiple sweeps (dedup)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225c", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    await d.sweep();
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("does NOT fire when task wall-clock is within the ceiling", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    // createdAt=0, now=500, ceiling=1000 → age 500ms < ceiling → no fire
+    store.put(rec("t225d", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 490, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 500, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("does NOT fire for terminal tasks regardless of age", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225e", { state: "done", createdAt: 0, resultRef: "/r", heartbeatBudgetMs: 86_400_000 }));
+    store.put(rec("t225e2", { state: "failed", createdAt: 0, error: "x", heartbeatBudgetMs: 86_400_000 }));
+    store.put(rec("t225e3", { state: "cancelled", createdAt: 0, heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({ store, now: () => 9_999_999, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("uses DEFAULT_TASK_TIMEOUT_MS (8h) when taskTimeoutMs is not configured", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const NINE_HOURS = 9 * 60 * 60 * 1000;
+    store.put(rec("t225f", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: NINE_HOURS - 100, heartbeatBudgetMs: 86_400_000,
+    }));
+    // No taskTimeoutMs → should use 8h default; 9h age exceeds it
+    const d = createDaemon({ store, now: () => NINE_HOURS, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("does NOT fire when no notify hook is wired (safe no-op)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t225g", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    // No notify dep — must not throw
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000 });
+    await expect(d.sweep()).resolves.toBeUndefined();
+  });
+});

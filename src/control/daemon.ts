@@ -59,7 +59,19 @@ export interface DaemonDeps {
    * swallowed by the sweep so a refused cmux write never trips the daemon.
    */
   healRelay?: (project: string) => Promise<void> | void;
+  /**
+   * #225 hard crew task-timeout: wall-clock ceiling in ms. When a non-terminal
+   * task's age (now - createdAt) exceeds this, the sweep fires a CREW TIMEOUT
+   * escalation via the notify hook. Defaults to DEFAULT_TASK_TIMEOUT_MS (8h).
+   * Distinct from the per-task heartbeat budget (stall detection).
+   */
+  taskTimeoutMs?: number;
 }
+
+// #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
+// heartbeat continuously yet be stuck on one task — the stall watchdog won't
+// catch it. This ceiling does. Configurable via DaemonDeps.taskTimeoutMs.
+export const DEFAULT_TASK_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 // 'awaiting-input' is an attention state: entering it (idle watchdog OR a
 // Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
@@ -170,6 +182,9 @@ export function createDaemon(deps: DaemonDeps) {
   // per episode, not every 30s sweep. Re-armed (deleted) when a fresh heartbeat
   // proves the relay recovered.
   const lastHealAttempt = new Map<string, number>();
+  // #225: task IDs that have already received a CREW TIMEOUT escalation.
+  // Deduplicates across sweeps — a task gets at most one timeout push.
+  const firedTimeout = new Set<string>();
   return {
     /** #207: a notify-relay announced itself (boot). */
     registerRelay(r: { project: string; pid: number; startedAt: number }): void {
@@ -285,6 +300,27 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
+        // #225 task timeout: detect non-terminal tasks that have exceeded the
+        // wall-clock ceiling. Fires at most once per task (firedTimeout dedup).
+        // Does NOT change state (detect-first, per #77).
+        if (!TERMINAL_STATES.has(r.state) && !firedTimeout.has(r.id) && deps.notify) {
+          const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+          if (t - r.createdAt > ceiling) {
+            firedTimeout.add(r.id);
+            const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
+            const hrs = Math.round(ceiling / 3_600_000);
+            const msg = `CREW TIMEOUT ${tag}: wall-clock exceeded ${hrs}h (id: ${r.id}, state: ${r.state})`;
+            const synthEvent: ControlEvent = { type: "task.timeout", id: r.id, taskTimeoutMs: ceiling };
+            try {
+              const p = deps.notify({ project: r.project, message: msg, record: r, event: synthEvent });
+              if (p && typeof (p as Promise<void>).catch === "function") {
+                (p as Promise<void>).catch(() => {});
+              }
+            } catch {
+              // swallowed — a flaky notifier must never trip the sweep
+            }
+          }
+        }
         // #139 backstop: reap interactive records whose backing surface is
         // PROVABLY gone (crew session died with no terminal signal — opencode has
         // no SessionEnd hook, and a hard kill can drop claude's). This is

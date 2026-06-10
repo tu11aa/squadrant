@@ -64,6 +64,8 @@ export interface CockpitConfig {
     permissions: PermissionConfig;
     models?: ModelRoutingConfig;
     roles?: RoleConfig;
+    /** #225 hard crew task-timeout ceiling (ms). Default: 8h. */
+    taskTimeoutMs?: number;
   };
   metrics: {
     enabled: boolean;
@@ -104,6 +106,7 @@ export function getDefaultConfig(): CockpitConfig {
         crew: { agent: "claude", model: "opus" },
         exploration: { agent: "claude", model: "haiku" },
       },
+      taskTimeoutMs: 8 * 60 * 60 * 1000,
     },
     metrics: {
       enabled: true,
