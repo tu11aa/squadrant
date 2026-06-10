@@ -28,6 +28,7 @@ import { relayCommand } from "./commands/relay.js";
 import { projectionCommand } from "./commands/projection.js";
 import { codexChatSmokeCommand } from "./commands/codex-chat-smoke.js";
 import { configCommand } from "./commands/config.js";
+import { healCommand } from "./commands/heal.js";
 import { detectDrift } from "./lib/config-drift.js";
 import { needsCheck, withStamp } from "./lib/config-version.js";
 import { getDefaultConfig } from "./config.js";
@@ -106,6 +107,7 @@ program.addCommand(relayCommand);
 program.addCommand(projectionCommand);
 program.addCommand(codexChatSmokeCommand);
 program.addCommand(configCommand);
+program.addCommand(healCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

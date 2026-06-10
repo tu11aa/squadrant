@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cockpit heal <component>` — targeted remediation surface.** Three subcommands close the detect → notify → remediate loop for remote/unattended operation. `heal status [--project P] [--json]` (dry-run: prints unhealthy components and the exact fix command; `--json` is machine-readable for skill/Telegram bridges; exit 0=healthy, 1=error, 2=unhealthy). `heal relay <project>` (re-establishes the notify-relay via the existing `spawnInjector` primitive; idempotent — no-op on alive/stale relay so it never competes with the captain's `#240`-owned supervisor). `heal daemon` (restarts cockpitd via the idempotent launchd kickstart path). `cockpit heal crew <id>` is explicitly deferred (overlaps #100). Closes #234. (#234)
+
 - **Hard crew task-timeout.** The daemon sweep now detects non-terminal tasks that exceed a per-task wall-clock ceiling (default 8h, configurable via `defaults.taskTimeoutMs`). When the ceiling is crossed the daemon fires a detect-only `CREW TIMEOUT` escalation to the captain via the existing mailbox → notify-relay pipe — the same path `CREW STALLED` / `CREW DONE` ride. No state change or kill (detection-first, per #77). Distinct from the heartbeat/stall budget, which only measures heartbeat freshness; a continuously-heartbeating crew stuck on one task for hours is now caught. Closes #225. (#225)
 
 ### Fixed
