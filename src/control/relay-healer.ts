@@ -1,38 +1,12 @@
 // src/control/relay-healer.ts
 //
-// cmux-facing helpers for the #207 relay-health layer, isolated behind the
-// runtime driver (same pattern as crew-pane-reader.ts). Both functions resolve
-// the captain workspace via the runtime and NEVER throw — a flaky cmux probe
-// must not trip the daemon sweep / health verb.
+// cmux-facing helper for the #207 relay-health layer, isolated behind the
+// runtime driver (same pattern as crew-pane-reader.ts). Resolves the captain
+// workspace via the runtime and NEVER throws — a flaky cmux probe must not
+// trip the daemon sweep / health verb.
 import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-supervisor.js";
-
-/**
- * Resolve whether a project's captain workspace is currently present.
- *   true  → workspace running
- *   false → enumerated, absent
- *   null  → could not determine (cmux down, no project) — never alarms
- *
- * NOTE: NOT used from the daemon health path. (#239 Phase A) Captain liveness
- * is now derived from relay heartbeat presence in liveness.projectHealth() —
- * the daemon (launchd) is outside cmux's process-lineage and would always get
- * null here anyway. This function is still valid for cmux-resident callers
- * (e.g. the #139 surface-liveness probe).
- */
-export function createCaptainProbe(): (project: string, captainName: string) => Promise<boolean | null> {
-  return async (project, captainName) => {
-    try {
-      const config = loadConfig();
-      if (!config.projects[project]) return null;
-      const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
-      const ws = await runtime.status(captainName);
-      return ws != null;
-    } catch {
-      return null;
-    }
-  };
-}
 
 /**
  * Best-effort relay heal (#207, SECONDARY). Re-spawns the notify-relay tab in
