@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, MAX_DEFERS } from "../notify-relay.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, DEFAULT_MAX_DEFERS } from "../notify-relay.js";
 import { DeferDelivery } from "../../runtimes/cmux.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
@@ -220,6 +220,10 @@ describe("notify-relay file-tailer", () => {
 
 // #258 idle-defer: relay-level defer tracking.
 describe("notify-relay idle-defer (#258 phase 2)", () => {
+  it("DEFAULT_MAX_DEFERS is 300 (~5min at 1s poll cadence)", () => {
+    expect(DEFAULT_MAX_DEFERS).toBe(300);
+  });
+
   it("does NOT advance cursor when sendToSurface throws DeferDelivery", async () => {
     const stateRoot = freshState();
     await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
@@ -232,7 +236,7 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
       captainName: "captain",
       pollMs: 50,
     });
-    // 4 polls at 50ms — deferCount=4, well below MAX_DEFERS=30; cursor stays null
+    // 4 polls at 50ms — deferCount=4, well below DEFAULT_MAX_DEFERS=300; cursor stays null
     await new Promise((r) => setTimeout(r, 250));
     stop();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
@@ -264,9 +268,10 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
     expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("force-delivers after MAX_DEFERS consecutive defers so message is never stuck", async () => {
+  it("force-delivers after maxDeferDeliveries consecutive defers so message is never stuck", async () => {
     const stateRoot = freshState();
     await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    const TEST_MAX_DEFERS = 3; // inject small value so test runs fast
     // Always defer unless force=true
     const sendSpy = vi.fn().mockImplementation(
       (_surface: unknown, _msg: string, opts?: { force?: boolean }) => {
@@ -281,9 +286,10 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
       runtime: fakeRuntime(sendSpy) as never,
       captainName: "captain",
       pollMs: 50,
+      maxDeferDeliveries: TEST_MAX_DEFERS,
     });
-    // MAX_DEFERS=30 polls + 1 force-deliver; at 50ms each = ~1550ms; allow 2500ms margin
-    await new Promise((r) => setTimeout(r, 2500));
+    // TEST_MAX_DEFERS polls + 1 force-deliver; at 50ms each = ~200ms; allow 500ms margin
+    await new Promise((r) => setTimeout(r, 500));
     stop();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
     expect(cursor?.lastAckedSeq).toBe(1);
@@ -292,7 +298,38 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
       (c) => (c[2] as { force?: boolean } | undefined)?.force === true,
     );
     expect(forcedCall).toBeDefined();
-    // Total calls = MAX_DEFERS defers + 1 force-deliver
-    expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(MAX_DEFERS + 1);
+    // Total calls = TEST_MAX_DEFERS defers + 1 force-deliver
+    expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(TEST_MAX_DEFERS + 1);
+  });
+
+  it("honors config-injected maxDeferDeliveries override", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    // With maxDeferDeliveries=1, force-deliver should trigger after a single defer
+    const sendSpy = vi.fn().mockImplementation(
+      (_surface: unknown, _msg: string, opts?: { force?: boolean }) => {
+        if (opts?.force) return Promise.resolve();
+        return Promise.reject(new DeferDelivery());
+      },
+    );
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+      maxDeferDeliveries: 1,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
+    // First call defers, second call force-delivers
+    expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const forcedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { force?: boolean } | undefined)?.force === true,
+    );
+    expect(forcedCall).toBeDefined();
   });
 });
