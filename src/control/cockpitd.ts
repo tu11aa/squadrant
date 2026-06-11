@@ -108,12 +108,19 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   type ProbeRequest = { taskId: string; name: string };
   const pendingProbes = new Map<string, ProbeRequest[]>(); // per-project queue
   const probeResults = new Map<string, "alive" | "gone" | "unknown">(); // per-taskId cache
+  // taskIds handed to the relay (poll sent) but not yet answered (result received).
+  // Prevents the sweep from re-enqueuing a probe that's already in-flight, which
+  // would cause the second relay-proxy-poll to return non-empty despite the queue
+  // being cleared on the first poll.
+  const inFlightProbes = new Set<string>();
 
   // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
   // execute, then returns the most-recent cached result ("unknown" when nothing
   // has been received yet — "unknown" never reaps, so the first tick is safe).
   const proxiedSurfaceAlive = async (rec: TaskRecord): Promise<"alive" | "gone" | "unknown"> => {
     if (rec.mode !== "interactive" || !rec.name) return "unknown";
+    // If the relay already has this probe, don't enqueue again until it answers.
+    if (inFlightProbes.has(rec.id)) return probeResults.get(rec.id) ?? "unknown";
     const list = pendingProbes.get(rec.project) ?? [];
     // Dedup: only enqueue once per taskId until the relay drains the queue.
     if (!list.some((p) => p.taskId === rec.id)) {
@@ -429,12 +436,14 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         const project = msg.project as string;
         const probes = pendingProbes.get(project) ?? [];
         pendingProbes.set(project, []); // clear after handing off to the relay
+        for (const p of probes) inFlightProbes.add(p.taskId); // mark in-flight
         return probes;
       }
       if (msg.kind === "relay-proxy-result") {
         const results = msg.results as Array<{ taskId: string; liveness: "alive" | "gone" | "unknown" }>;
         for (const r of results) {
           probeResults.set(r.taskId, r.liveness);
+          inFlightProbes.delete(r.taskId); // result received — no longer in-flight
         }
         return { ok: true };
       }
@@ -442,6 +451,18 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       // project (or all). Captain liveness derived from relay heartbeat (#239).
       if (msg.kind === "health") {
         return buildHealth(msg.project as string | undefined);
+      }
+      // #239 Phase B: on any event that terminates a task, evict its entries from
+      // inFlightProbes and probeResults so the Sets never leak. Tasks reaped by
+      // sweep/reconcile (not via the socket) are naturally safe — proxiedSurfaceAlive
+      // is only called for reapable (non-terminal) states.
+      if (msg.kind === "event") {
+        const rec = await d.handle(msg) as TaskRecord;
+        if (TERMINAL_STATES.has(rec.state)) {
+          inFlightProbes.delete(rec.id);
+          probeResults.delete(rec.id);
+        }
+        return rec;
       }
       return d.handle(msg);
     },
