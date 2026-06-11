@@ -22,7 +22,7 @@ import {
 } from "../control/mailbox.js";
 import { sendRequest } from "../control/protocol.js";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
-import { createCrewPaneReader } from "../control/crew-pane-reader.js";
+import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "../control/crew-pane-reader.js";
 import { cockpitdCall } from "./crew-control.js";
 import type { TaskRecord, ControlEvent } from "../control/types.js";
 
@@ -271,8 +271,53 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
     }
   }
 
+  // #239 Phase B: pull pending crew-surface-liveness probes from the daemon,
+  // execute each in-cmux (this process is inside the captain's cmux tree, so
+  // cmux calls succeed), and post results back. Best-effort throughout — any
+  // failure is caught and logged so the relay never crashes on a transient
+  // daemon or cmux error. surfaceVerdict(null, ...) = "unknown" so a cmux
+  // failure degrades safely without false-reaping live crews.
+  async function executeProxiedProbes(): Promise<void> {
+    let pending: Array<{ taskId: string; name: string }>;
+    try {
+      pending = (await cockpitdCall({
+        kind: "relay-proxy-poll",
+        project: opts.project,
+      })) as Array<{ taskId: string; name: string }>;
+    } catch {
+      return; // daemon unreachable — skip this tick
+    }
+    if (!Array.isArray(pending) || pending.length === 0) return;
+
+    // List captain workspace surfaces once for all probes this tick.
+    let surfaceTitles: string[] | null;
+    try {
+      const runtime = opts.runtime as RuntimeDriver & {
+        listSurfaces?: (id: string) => Promise<Array<{ title?: string }>>;
+      };
+      const surfaces = await runtime.listSurfaces?.(ws!.id);
+      surfaceTitles = surfaces ? surfaces.map((s) => s.title ?? "") : null;
+    } catch {
+      surfaceTitles = null; // surfaceVerdict(null, ...) → "unknown" — never false-reaps
+    }
+
+    const results = pending.map((p) => ({
+      taskId: p.taskId,
+      liveness: surfaceVerdict(surfaceTitles, crewPaneTitle(opts.project, p.name)),
+    }));
+
+    try {
+      await cockpitdCall({ kind: "relay-proxy-result", results });
+    } catch {
+      // best-effort: dropped results are re-requested on the next successful poll
+    }
+  }
+
   const interval = setInterval(() => {
-    if (!stopped) drain().catch((e) => log(`drain error: ${(e as Error).message}`));
+    if (!stopped) {
+      drain().catch((e) => log(`drain error: ${(e as Error).message}`));
+      executeProxiedProbes().catch((e) => log(`proxy-probe error: ${(e as Error).message}`));
+    }
   }, opts.pollMs ?? 1000);
 
   // Separate probe interval (additive — does not disturb mailbox tailing).
