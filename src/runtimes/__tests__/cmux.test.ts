@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen } from "../cmux.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
@@ -327,6 +327,31 @@ describe("cmux driver", () => {
     expect(text).toBe("");
   });
 
+  // #258: relay delivery must not clobber a captain's in-progress draft.
+  // Before injecting the crew message, kill the current input into the readline
+  // kill ring (ctrl+a → ctrl+k); after Enter, yank it back (ctrl+y).
+  // Empty drafts are safe: ctrl+k on empty line leaves an empty kill-ring entry
+  // and ctrl+y restores nothing.
+  it("sendToSurface wraps delivery in kill/yank sandwich to preserve captain draft", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    const calls = execFileMock.mock.calls.map(argvOf);
+    const idx = (pred: (a: string[]) => boolean, after = -1) =>
+      calls.findIndex((a, i) => i > after && pred(a));
+
+    const ctrlAIdx = idx(a => a.includes("send-key") && a.includes("ctrl+a") && a.includes("surface:8"));
+    const ctrlKIdx = idx(a => a.includes("send-key") && a.includes("ctrl+k") && a.includes("surface:8"), ctrlAIdx);
+    const msgIdx   = idx(a => a[0] === "send" && a.includes("crew done"), ctrlKIdx);
+    const enterIdx = idx(a => a.includes("send-key") && a.includes("Enter") && a.includes("surface:8"), msgIdx);
+    const ctrlYIdx = idx(a => a.includes("send-key") && a.includes("ctrl+y") && a.includes("surface:8"), enterIdx);
+
+    expect(ctrlAIdx, "ctrl+a before message").toBeGreaterThanOrEqual(0);
+    expect(ctrlKIdx, "ctrl+k after ctrl+a").toBeGreaterThan(ctrlAIdx);
+    expect(msgIdx,   "message after ctrl+k").toBeGreaterThan(ctrlKIdx);
+    expect(enterIdx, "Enter after message").toBeGreaterThan(msgIdx);
+    expect(ctrlYIdx, "ctrl+y after Enter").toBeGreaterThan(enterIdx);
+  });
+
   it("sendToSurface delivers shell metacharacters as literal text scoped to surface", async () => {
     execFileMock.mockReturnValue("");
     const text = 'done: `cmux close-workspace` $(whoami)';
@@ -464,6 +489,141 @@ describe("cmux driver", () => {
     execFileMock.mockImplementation(() => { throw new Error("workspace not found"); });
     const surfaces = await driver.listSurfaces("workspace:99");
     expect(surfaces).toEqual([]);
+  });
+});
+
+describe("sendToSurface draft-preservation", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  it("delivers directly when captain surface has no in-progress draft", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return "  Claude Code  \n  Tools: ...  \n  > ▌  ";
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew is done");
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    // No ctrl-u: no draft to clear
+    expect(cmds.every((c) => !c.includes("ctrl-u"))).toBe(true);
+    // One send (the message) and one send-key Enter
+    const sends = cmds.filter((c) => c.includes("send ") && !c.includes("send-key"));
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toContain("crew is done");
+  });
+
+  it("saves draft, clears input, delivers, then restores draft without submitting", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) {
+        return [
+          "│ Some conversation history │",
+          "│ > hello this is my draft  │",
+        ].join("\n");
+      }
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // ctrl-u must come before the message send
+    const ctrlUIdx = calls.findIndex((a) => a.includes("send-key") && a.includes("ctrl-u"));
+    const msgSendIdx = calls.findIndex((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")));
+    const enterIdx = calls.findIndex((a) => a.includes("send-key") && a.includes("Enter"));
+    // findLastIndex is ES2023; reverse-scan manually to stay within repo's tsconfig target
+    let restoreIdx = -1;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const a: string[] = calls[i];
+      if (a[0] === "send" && a.some((s: string) => s.includes("hello this is my draft"))) { restoreIdx = i; break; }
+    }
+    expect(ctrlUIdx).toBeGreaterThanOrEqual(0);
+    expect(msgSendIdx).toBeGreaterThan(ctrlUIdx);
+    expect(enterIdx).toBeGreaterThan(msgSendIdx);
+    // Restore send comes after Enter (draft goes back without submitting)
+    expect(restoreIdx).toBeGreaterThan(enterIdx);
+    // Restore must NOT be followed by another Enter
+    const cmdsAfterRestore = execFileMock.mock.calls.slice(restoreIdx + 1).map(cmdOf);
+    expect(cmdsAfterRestore.every((c) => !c.includes("Enter"))).toBe(true);
+  });
+
+  it("delivers normally when read-screen throws, without crashing", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) throw new Error("surface gone");
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).resolves.toBeUndefined();
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    // Still delivers the message
+    expect(cmds.some((c) => c.includes("send ") && c.includes("crew done"))).toBe(true);
+    expect(cmds.some((c) => c.includes("send-key") && c.includes("Enter"))).toBe(true);
+    // No ctrl-u on failure path
+    expect(cmds.every((c) => !c.includes("ctrl-u"))).toBe(true);
+  });
+});
+
+describe("parseDraftFromScreen", () => {
+  it("returns empty string for empty screen", () => {
+    expect(parseDraftFromScreen("")).toBe("");
+  });
+
+  it("returns empty string when input shows only cursor indicator", () => {
+    const screen = ["│ > ▌  │", "╰────────╯"].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  it("extracts draft from plain '> text' input line", () => {
+    const screen = ["Some history", "> hello this is my draft"].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("hello this is my draft");
+  });
+
+  it("extracts draft from box-drawing input line", () => {
+    const screen = [
+      "╭─────────────────────╮",
+      "│ > my draft message  │",
+      "╰─────────────────────╯",
+    ].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("my draft message");
+  });
+
+  it("ignores top-of-screen content and returns the bottom input line", () => {
+    // Simulate a line containing "> " far above the input (e.g. in conversation history)
+    const screen = [
+      "> old prompt from history",
+      "response text",
+      "more history",
+      "─────────────────────────────────────────────────────────",
+      "│ > actual draft       │",
+    ].join("\n");
+    // Should pick the last matching line (the actual draft area)
+    expect(parseDraftFromScreen(screen)).toBe("actual draft");
+  });
+
+  it("returns empty string when there is no '>' input line", () => {
+    const screen = ["   Claude Code   ", "   Thinking...  "].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  // Real Claude Code prompt uses ❯ (U+276F) + non-breaking space (U+00A0)
+  // confirmed via hexdump: bytes e2 9d af c2 a0 <draft text>
+  it("extracts draft from real Claude Code prompt (❯ + non-breaking space)", () => {
+    const screen = ["Some history", "❯ hello draft text"].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("hello draft text");
+  });
+
+  it("extracts draft from real Claude Code box-drawing prompt (❯ + non-breaking space)", () => {
+    const screen = [
+      "╭──────────────────────────╮",
+      "│ ❯ my real draft message │",
+      "╰──────────────────────────╯",
+    ].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("my real draft message");
+  });
+
+  it("returns empty string when real prompt has only cursor indicator (❯ + NBSP + ▌)", () => {
+    const screen = ["│ ❯ ▌  │", "╰────────╯"].join("\n");
+    expect(parseDraftFromScreen(screen)).toBe("");
   });
 });
 

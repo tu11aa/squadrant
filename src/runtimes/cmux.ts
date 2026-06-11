@@ -69,6 +69,42 @@ export function sanitizeForCmuxSend(text: string): string {
     .trim();
 }
 
+/**
+ * Extract the in-progress draft from a cmux read-screen capture (#258).
+ * Scans from the bottom of the screen so history lines that contain `> ` are
+ * ignored; only the actual input area (the last matching line) is returned.
+ * Handles both `>` (synthetic/test) and `❯` (U+276F, the real Claude Code
+ * prompt character) as the input caret. The real prompt is followed by a
+ * non-breaking space (U+00A0); JS `\s` covers it, so `\s+` matches either.
+ * Also handles box-drawing `│ ❯ text │` variants.
+ * Returns the trimmed draft text, or "" when the line holds only a cursor
+ * indicator (▌ / █) or no input line is present.
+ */
+export function parseDraftFromScreen(screen: string): string {
+  if (!screen) return "";
+  const lines = screen.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    let extracted: string | undefined;
+    // Box-drawing input line: │ [>❯] text │  (❯ is the real Claude Code prompt)
+    const boxMatch = line.match(/│\s*[>❯]\s+(.*?)\s*│/);
+    if (boxMatch) {
+      extracted = boxMatch[1].trim();
+    } else {
+      // Plain input line: optionally-indented [>❯] text
+      const plainMatch = line.match(/^\s*[>❯]\s+(.+)$/);
+      if (plainMatch) extracted = plainMatch[1].trim();
+    }
+    if (extracted !== undefined) {
+      // Strip terminal cursor characters (▌, █, etc.) that trail the caret position
+      const draft = extracted.replace(/\s*[▌█▍▎▏▌█]+\s*$/, "").trim();
+      if (draft) return draft;
+      // cursor-only line — continue scanning upward
+    }
+  }
+  return "";
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",
@@ -251,8 +287,32 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async sendToSurface(surface: PaneRef, text: string): Promise<void> {
-      cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
-      cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+      // #258: preserve any in-progress captain draft around relay delivery.
+      // First try to read the screen and detect a real draft:
+      //   - If found: ctrl-u clears the line, message is delivered, then the
+      //     draft text is re-typed (no Enter) so the captain can keep editing.
+      // Fall back to the readline kill-ring approach when the screen is
+      // unreadable or no draft is detected (empty input / cursor only):
+      //   - ctrl+a→ctrl+k saves the (empty) line into the kill ring, message
+      //     delivered, ctrl+y restores — always a no-op on an empty line.
+      let draft = "";
+      try {
+        const screen = cmux(["read-screen", "--workspace", surface.workspaceId, "--surface", surface.surfaceId]);
+        draft = parseDraftFromScreen(screen);
+      } catch { /* screen unreadable — fall through to kill-ring path */ }
+
+      if (draft) {
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl-u"]);
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(draft)]);
+      } else {
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+a"]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+k"]);
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+y"]);
+      }
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
