@@ -94,6 +94,20 @@ describe("daemon handler", () => {
     expect(store.get("p", "h2")?.state).toBe("working");
   });
 
+  // #259: crash-restart re-ran reconcile() → launchHeadless → real spawn, multiplying
+  // orphans. An in-flight launch (no pid yet) must not be failed by reconcile.
+  it("reconcile: headless task with in-flight launch is not marked failed (#259)", async () => {
+    const store = createStore(dir);
+    store.put(rec("hif", { state: "submitted", mode: "headless" }));
+    const d = createDaemon({
+      store, now: () => 5000,
+      isPidAlive: () => false,
+      isHeadlessInFlight: (id) => id === "hif",
+    });
+    await d.reconcile();
+    expect(store.get("p", "hif")?.state).toBe("submitted");
+  });
+
   it("sweep: marks an over-budget working HEADLESS task stalled", async () => {
     const store = createStore(dir);
     store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));

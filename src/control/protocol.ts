@@ -141,12 +141,16 @@ export function startServer(
           continue;
         }
         // Normal request/response path.
+        // #259: both writes are wrapped — a destroyed socket can throw synchronously
+        // (write-after-end); that throw would escape the async data handler and become
+        // an unhandled rejection, killing the daemon. Client-gone writes are silently
+        // swallowed; the conn.on("error") handler above covers the emitted error event.
         try {
           const reply = await handler(msg);
-          conn.write(encodeMsg({ ok: true, reply, _v: PROTOCOL_VERSION }));
+          try { conn.write(encodeMsg({ ok: true, reply, _v: PROTOCOL_VERSION })); } catch { /* client gone */ }
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
-          conn.write(encodeMsg({ ok: false, error: errMsg, _v: PROTOCOL_VERSION }));
+          try { conn.write(encodeMsg({ ok: false, error: errMsg, _v: PROTOCOL_VERSION })); } catch { /* client gone */ }
         }
       }
     });

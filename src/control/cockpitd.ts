@@ -115,6 +115,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // would cause the second relay-proxy-poll to return non-empty despite the queue
   // being cleared on the first poll.
   const inFlightProbes = new Set<string>();
+  const inFlightHeadlessIds = new Set<string>(); // #259: tasks being launched (no pid yet)
   const activeHeadlessKills = new Set<() => void>();
 
   // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
@@ -282,9 +283,14 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
         cwd: rec.cwd, spawn, emit: ingest(rec.project), writeResult,
       });
+      inFlightHeadlessIds.add(rec.id); // #259: mark in-flight before pid is set
       activeHeadlessKills.add(handle.kill);
-      try { await handle.result; } finally { activeHeadlessKills.delete(handle.kill); }
+      try { await handle.result; } finally {
+        inFlightHeadlessIds.delete(rec.id);
+        activeHeadlessKills.delete(handle.kill);
+      }
     }),
+    isHeadlessInFlight: (id) => inFlightHeadlessIds.has(id),
     launchInteractive: async (rec) => {
       if (rec.provider === "codex") {
         await codexDriver.dispatch(rec as any);

@@ -19,7 +19,14 @@ export function plistPath(): string {
  * because runtime-sync never mirrors compiled output there).
  */
 export function daemonEntryPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
+  const p = join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
+  if (!existsSync(p)) {
+    throw new Error(
+      `daemonEntryPath: compiled entry not found at '${p}'; ` +
+      `run 'npm run build' — a src-tree or missing path in the launchd plist causes a MODULE_NOT_FOUND crash-loop (#259)`,
+    );
+  }
+  return p;
 }
 
 function xmlEscape(s: string): string {

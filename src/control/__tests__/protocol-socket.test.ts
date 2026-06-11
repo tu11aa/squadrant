@@ -288,6 +288,53 @@ describe("keepalive framing (#94)", () => {
   });
 });
 
+// ── Issue #259: write to dead client must not crash the server ────────────────
+
+describe("non-fatal socket write (#259)", () => {
+  let cleanup: (() => void) | undefined;
+  afterEach(() => { cleanup?.(); cleanup = undefined; });
+
+  it("server survives write-after-disconnect when handler reply races a dropped client", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cp-wad-"));
+    const sock = join(dir, "wad.sock");
+
+    let resolveHandler!: () => void;
+    const handlerLatch = new Promise<void>((r) => { resolveHandler = r; });
+    let handlerStarted = false;
+
+    const server = startServer(sock, async (msg: any) => {
+      if (msg.slow) {
+        handlerStarted = true;
+        await handlerLatch;
+        return { slow: true };
+      }
+      return { echo: msg.ping };
+    });
+    cleanup = () => { server.close(); rmSync(dir, { recursive: true, force: true }); };
+
+    // Client sends a slow request then disconnects before the handler returns.
+    await new Promise<void>((resolve, reject) => {
+      const conn = createConnection(sock);
+      conn.setEncoding("utf-8");
+      conn.on("connect", () => {
+        conn.write(encodeMsg({ slow: true }));
+        setTimeout(() => { conn.destroy(); resolve(); }, 10);
+      });
+      conn.on("error", reject);
+    });
+
+    // Wait for handler to start, then release it — it will try to write to the dead conn.
+    await new Promise((r) => setTimeout(r, 40));
+    expect(handlerStarted).toBe(true);
+    resolveHandler();
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Server must still be alive — if conn.write threw out of the process it would be dead.
+    const res = await sendRequest(sock, { ping: "still-alive" });
+    expect(res).toEqual({ echo: "still-alive" });
+  });
+});
+
 // ── Issue #87: malformed / newline-less input fast error ─────────────────────
 
 describe("socket input validation (#87)", () => {

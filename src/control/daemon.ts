@@ -27,6 +27,14 @@ export interface DaemonDeps {
   /** Wired in cockpitd to runHeadless; absent in pure unit tests. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /**
+   * #259: true when a launchHeadless call for this task ID is currently in
+   * flight (process spawned but no pid yet). reconcile() skips these so a
+   * crash-restart re-run does NOT mark an actively-launching task as failed
+   * and re-dispatch it, multiplying orphaned headless processes.
+   * Defaults to () => false when not wired (pure unit tests, non-headless modes).
+   */
+  isHeadlessInFlight?: (id: string) => boolean;
+  /**
    * Forward hook for the deferred interactive-wiring spec. While absent,
    * interactive dispatch fails LOUD (red-team #4) instead of silently
    * black-holing in `submitted` forever.
@@ -401,6 +409,7 @@ export function createDaemon(deps: DaemonDeps) {
         if (r.state !== "working" && r.state !== "submitted") continue;
         if (r.mode === "headless") {
           if (r.pid != null && alive(r.pid)) continue; // still running, keep watching
+          if (deps.isHeadlessInFlight?.(r.id)) continue; // #259: launch in-flight, pid not yet set
           const failed: TaskRecord = {
             ...r, state: "failed", lastEvent: "reconcile",
             error: "orphaned by daemon restart; exit unobserved (conservative fail)",
