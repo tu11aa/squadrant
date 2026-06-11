@@ -6,7 +6,7 @@ const TAIL_LINES = 25;
 
 // MUST match `titleFor` in src/commands/crew.ts — the crew tab title convention
 // the daemon uses to find a crew's pane (🔧 <project>:<name>).
-function crewPaneTitle(project: string, name: string): string {
+export function crewPaneTitle(project: string, name: string): string {
   return `🔧 ${project}:${name}`;
 }
 

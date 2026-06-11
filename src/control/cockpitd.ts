@@ -12,7 +12,6 @@ import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
-import { createSurfaceLivenessProbe } from "./crew-pane-reader.js";
 import { createRelayHealer } from "./relay-healer.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { loadConfig } from "../config.js";
@@ -101,6 +100,28 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // Per-task set of live attach connections. Populated in onAttach, cleaned up
   // in onAttachClose. Not exposed outside this closure.
   const attachConns = new Map<string, Set<Socket>>();
+
+  // #239 Phase B: relay-as-cmux-proxy for crew-surface liveness.
+  // The relay (running inside the captain's cmux tree) polls relay-proxy-poll
+  // each tick, executes each probe in-lineage, and posts results via relay-proxy-result.
+  // The daemon never calls cmux directly; it only reads this result cache.
+  type ProbeRequest = { taskId: string; name: string };
+  const pendingProbes = new Map<string, ProbeRequest[]>(); // per-project queue
+  const probeResults = new Map<string, "alive" | "gone" | "unknown">(); // per-taskId cache
+
+  // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
+  // execute, then returns the most-recent cached result ("unknown" when nothing
+  // has been received yet — "unknown" never reaps, so the first tick is safe).
+  const proxiedSurfaceAlive = async (rec: TaskRecord): Promise<"alive" | "gone" | "unknown"> => {
+    if (rec.mode !== "interactive" || !rec.name) return "unknown";
+    const list = pendingProbes.get(rec.project) ?? [];
+    // Dedup: only enqueue once per taskId until the relay drains the queue.
+    if (!list.some((p) => p.taskId === rec.id)) {
+      list.push({ taskId: rec.id, name: rec.name });
+      pendingProbes.set(rec.project, list);
+    }
+    return probeResults.get(rec.id) ?? "unknown";
+  };
 
   function broadcast(taskId: string, f: AttachFrame): void {
     const conns = attachConns.get(taskId);
@@ -243,7 +264,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
     // #139 backstop: terminalize interactive crews whose cmux pane is provably
     // gone (sweep/reconcile reaper). Three-valued; "unknown" never reaps.
-    isSurfaceAlive: opts.isSurfaceAlive ?? createSurfaceLivenessProbe(),
+    isSurfaceAlive: opts.isSurfaceAlive ?? proxiedSurfaceAlive,
     // #207 best-effort relay heal on the sweep (secondary — surface is primary).
     healRelay: opts.healRelay ?? createRelayHealer(log),
     launchHeadless: async (rec) => {
@@ -398,6 +419,23 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       }
       if (msg.kind === "relay-heartbeat") {
         d.relayHeartbeat({ project: msg.project, pid: msg.pid });
+        return { ok: true };
+      }
+      // #239 Phase B: relay proxy — crew-surface liveness probes.
+      // The relay polls for pending probes, executes them in-lineage (cmux-accessible),
+      // and posts results back. Handled inline like relay-register/heartbeat so they
+      // never reach d.handle()'s unknown-kind guard.
+      if (msg.kind === "relay-proxy-poll") {
+        const project = msg.project as string;
+        const probes = pendingProbes.get(project) ?? [];
+        pendingProbes.set(project, []); // clear after handing off to the relay
+        return probes;
+      }
+      if (msg.kind === "relay-proxy-result") {
+        const results = msg.results as Array<{ taskId: string; liveness: "alive" | "gone" | "unknown" }>;
+        for (const r of results) {
+          probeResults.set(r.taskId, r.liveness);
+        }
         return { ok: true };
       }
       // #77 service-health surface: per-component liveness for the queried
