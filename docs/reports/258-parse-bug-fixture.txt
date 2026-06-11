@@ -1,0 +1,30 @@
+
+  Just say go.
+
+✻ Crunched for 27s · 1 shell still running
+
+❯ no the behavior is still not right.                                                                                                               
+  it should only deffer when my input (user input) is still there, if you are thinking or processing then ignore, no care.                          
+                                                                                                                                                    
+  also, when it deliver, it thought that I have not sent the message and still paste "I type some text. here, seem that it deffer, now let me send  
+  this message to you to see if it keep defferig anymore"                                                                                           
+                                                                                                                                                    
+  help me check carefully                                                                                                                           
+
+⏺ You've found two real bugs, and they share one root cause. Let me check carefully rather than theorize — I'll capture my actual surface and run
+  parseDraftFromScreen on it to see exactly what it's grabbing:
+
+⏺ Running 1 shell command…
+  ⎿  $ cd /Users/q3labsadmin/me/claude-cockpit; echo "=== capture my own captain surface (transcript + input box + status) ==="; cmux read-screen 
+     --surface surface:22 --lines 30 2>/dev/null > /tmp/captain-screen.txt; echo "--- last 14 lines (bottom of screen) ---"; tail -14 
+     /tmp/captain-screen.txt | cat…
+
+✢ Cerebrating… (1m 4s · ↓ 4.3k tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Model: Opus 4.8  Ctx Used: 52.0%  Cost: $40.11  Session: 1hr 42m 
+   Session ID: f945c3d9-88ad-4dad-8361-4885e612ec54  Thinking: high 
+   ⎇ fix/258-force-2min  𖠰 main 
+  ⏵⏵ auto mode on · 1 shell
