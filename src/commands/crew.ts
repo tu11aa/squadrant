@@ -221,6 +221,9 @@ export interface CrewSpawnInput {
    *  codex maps this to approvalPolicy='untrusted'; opencode maps it to a
    *  bash:"ask" per-crew config. Default (false) = fully autonomous. */
   approval?: boolean;
+  /** Per-spawn model override — takes precedence over defaults.roles.crew.model.
+   *  Agent-specific alias (e.g. "sonnet", "opus" for claude; "gpt-5.5" for codex). */
+  model?: string;
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
@@ -314,7 +317,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // a Claude alias; codex/gemini have their own routing). Cross-agent crews
   // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
-  const crewModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
+  const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
+  const crewModel = input.model ?? configModel;
 
   // Claude crews route through the control-plane daemon (PR #85 + this spec)
   // so the captain learns terminal state via `cockpit crew status` instead
@@ -664,11 +668,12 @@ crewCommand
   .option("--approval", "gate risky tools so the captain approves them (codex: approvalPolicy='untrusted'; opencode: bash:'ask')", false)
   .option("--worktree", "run the crew in its own git worktree + branch (feature tasks; small tasks omit to share the root checkout)", false)
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
+  .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; worktree: boolean; taskFile?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; worktree: boolean; taskFile?: string; model?: string },
     ) => {
       try {
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
@@ -682,6 +687,7 @@ crewCommand
           // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
           ...(opts.worktree ? { worktree: true } : {}),
+          ...(opts.model ? { model: opts.model } : {}),
         });
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));
       } catch (err) {
