@@ -31,4 +31,24 @@ describe("cockpitd headless wiring", () => {
     const st: any = await sendRequest(sock, { kind: "status", project: "p", id: "h1" });
     expect(st.state).toBe("done");
   });
+
+  it("stop() kills in-flight headless children", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-h-"));
+    const sock = join(dir, "c.sock");
+    const child: any = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 5678;
+    child.kill = vi.fn();
+    const spawn = vi.fn(() => child);
+    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, spawn: spawn as any });
+    stop = h.stop;
+    await sendRequest(sock, { kind: "dispatch", record: {
+      id: "h2", project: "p", provider: "claude", mode: "headless",
+      state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "dispatch", heartbeatBudgetMs: 10000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
+    await new Promise((r) => setTimeout(r, 20));
+    h.stop();
+    stop = undefined;
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
 });

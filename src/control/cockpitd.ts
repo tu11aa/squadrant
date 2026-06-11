@@ -62,6 +62,8 @@ export interface CockpitdOpts {
   /** #207 best-effort relay healer. Defaults to a real cmux spawnInjector
    *  re-spawn (mostly inert under launchd). Tests inject a fake/spy. */
   healRelay?: (project: string) => Promise<void> | void;
+  /** Inject a fake headless launcher for tests to avoid real process spawns. */
+  launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
   opencodeBridge?: {
     start: (o: { taskId: string; port: number }) => void;
@@ -113,6 +115,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // would cause the second relay-proxy-poll to return non-empty despite the queue
   // being cleared on the first poll.
   const inFlightProbes = new Set<string>();
+  const activeHeadlessKills = new Set<() => void>();
 
   // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
   // execute, then returns the most-recent cached result ("unknown" when nothing
@@ -274,12 +277,14 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     isSurfaceAlive: opts.isSurfaceAlive ?? proxiedSurfaceAlive,
     // #207 best-effort relay heal on the sweep (secondary — surface is primary).
     healRelay: opts.healRelay ?? createRelayHealer(log),
-    launchHeadless: async (rec) => {
-      await runHeadless({
+    launchHeadless: opts.launchHeadless ?? (async (rec) => {
+      const handle = runHeadless({
         provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
         cwd: rec.cwd, spawn, emit: ingest(rec.project), writeResult,
       });
-    },
+      activeHeadlessKills.add(handle.kill);
+      try { await handle.result; } finally { activeHeadlessKills.delete(handle.kill); }
+    }),
     launchInteractive: async (rec) => {
       if (rec.provider === "codex") {
         await codexDriver.dispatch(rec as any);
@@ -545,6 +550,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     stop() {
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
+      for (const kill of activeHeadlessKills) kill();
       server.close();
       log("stopped");
     },

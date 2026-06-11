@@ -59,6 +59,7 @@ describe("relay-proxy protocol round-trip (#239 Phase B)", () => {
       stateRoot: join(dir, "state"),
       sockPath: sock,
       sweepMs: 5,
+      launchHeadless: async () => {},
       ...overrides,
     });
     stop = handle.stop;

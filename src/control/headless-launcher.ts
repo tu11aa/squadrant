@@ -20,7 +20,12 @@ export interface RunHeadlessOpts {
   writeResult?: (id: string, payload: string) => string;
 }
 
-export function runHeadless(opts: RunHeadlessOpts): Promise<void> {
+export interface HeadlessHandle {
+  result: Promise<void>;
+  kill: () => void;
+}
+
+export function runHeadless(opts: RunHeadlessOpts): HeadlessHandle {
   const adapter = getHeadlessAdapter(opts.provider);
   const argv = adapter.buildCommand(opts.task, opts.sessionId);
   const child = opts.spawn(argv[0], argv.slice(1), {
@@ -37,7 +42,7 @@ export function runHeadless(opts: RunHeadlessOpts): Promise<void> {
   });
   child.stderr?.on("data", (d) => { err += String(d); });
 
-  return new Promise<void>((resolve) => {
+  const result = new Promise<void>((resolve) => {
     child.once("error", (e: Error) => {
       opts.emit({ type: "task.failed", id: opts.id, error: `spawn error: ${e.message}`, exitCode: undefined });
       resolve(); // never hang the daemon; resolve() is idempotent
@@ -54,4 +59,6 @@ export function runHeadless(opts: RunHeadlessOpts): Promise<void> {
       resolve();
     });
   });
+
+  return { result, kill: () => child.kill("SIGTERM") };
 }
