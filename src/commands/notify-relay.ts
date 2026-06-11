@@ -13,6 +13,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
+import { DeferDelivery } from "../runtimes/cmux.js";
 import type { RuntimeDriver } from "../runtimes/types.js";
 import {
   readCursor,
@@ -22,11 +23,16 @@ import {
 } from "../control/mailbox.js";
 import { sendRequest } from "../control/protocol.js";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
-import { createCrewPaneReader } from "../control/crew-pane-reader.js";
+import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "../control/crew-pane-reader.js";
 import { cockpitdCall } from "./crew-control.js";
 import type { TaskRecord, ControlEvent } from "../control/types.js";
 
 export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
+
+// #258 idle-defer: default max consecutive defers before force-delivering so a
+// message can never be stuck forever (~5min/300s at the default 1s poll cadence).
+// Override via config key relay.maxDeferDeliveries.
+export const DEFAULT_MAX_DEFERS = 300;
 
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
@@ -173,6 +179,8 @@ interface RunOpts {
   /** Override Date.now() — useful in tests to simulate a future session start time. */
   now?: () => number;
   log?: (m: string) => void;
+  /** Max consecutive defers before force-deliver. Default: DEFAULT_MAX_DEFERS. */
+  maxDeferDeliveries?: number;
 }
 
 export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
@@ -195,6 +203,11 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   if (!captainSurface) throw new Error("no surfaces in captain workspace");
 
   const sessionStartMs = (opts.now ?? (() => Date.now()))();
+  const maxDefers = opts.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS;
+
+  // #258 idle-defer: consecutive defer counts per mailbox seq.
+  // Keyed by entry.seq; deleted on successful delivery.
+  const deferCounts = new Map<number, number>();
 
   const cursor = await readCursor({
     stateRoot: opts.stateRoot,
@@ -248,14 +261,24 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         const msg = deliverable(entry);
         if (msg) {
           try {
+            const deferCount = deferCounts.get(entry.seq) ?? 0;
+            const force = deferCount >= maxDefers;
             await (opts.runtime as RuntimeDriver & {
-              sendToSurface: (s: unknown, m: string) => Promise<void>;
-            }).sendToSurface(captainSurface, msg);
+              sendToSurface: (s: unknown, m: string, o?: { force?: boolean }) => Promise<void>;
+            }).sendToSurface(captainSurface, msg, force ? { force: true } : undefined);
+            deferCounts.delete(entry.seq);
           } catch (e) {
+            if (e instanceof DeferDelivery) {
+              deferCounts.set(entry.seq, (deferCounts.get(entry.seq) ?? 0) + 1);
+              log(`deferred: captain typing (seq=${entry.seq})`);
+              // Don't advance cursor; the next poll will retry from the same seq.
+              return;
+            }
             log(`sendToSurface failed seq=${entry.seq}: ${(e as Error).message}`);
             // Don't advance cursor; the next poll will retry from the same seq.
             return;
           }
+          log(`deliver seq=${entry.seq} -> ${opts.subscriber}: ${msg}`);
         }
         await writeCursor({
           stateRoot: opts.stateRoot,
@@ -270,8 +293,53 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
     }
   }
 
+  // #239 Phase B: pull pending crew-surface-liveness probes from the daemon,
+  // execute each in-cmux (this process is inside the captain's cmux tree, so
+  // cmux calls succeed), and post results back. Best-effort throughout — any
+  // failure is caught and logged so the relay never crashes on a transient
+  // daemon or cmux error. surfaceVerdict(null, ...) = "unknown" so a cmux
+  // failure degrades safely without false-reaping live crews.
+  async function executeProxiedProbes(): Promise<void> {
+    let pending: Array<{ taskId: string; name: string }>;
+    try {
+      pending = (await cockpitdCall({
+        kind: "relay-proxy-poll",
+        project: opts.project,
+      })) as Array<{ taskId: string; name: string }>;
+    } catch {
+      return; // daemon unreachable — skip this tick
+    }
+    if (!Array.isArray(pending) || pending.length === 0) return;
+
+    // List captain workspace surfaces once for all probes this tick.
+    let surfaceTitles: string[] | null;
+    try {
+      const runtime = opts.runtime as RuntimeDriver & {
+        listSurfaces?: (id: string) => Promise<Array<{ title?: string }>>;
+      };
+      const surfaces = await runtime.listSurfaces?.(ws!.id);
+      surfaceTitles = surfaces ? surfaces.map((s) => s.title ?? "") : null;
+    } catch {
+      surfaceTitles = null; // surfaceVerdict(null, ...) → "unknown" — never false-reaps
+    }
+
+    const results = pending.map((p) => ({
+      taskId: p.taskId,
+      liveness: surfaceVerdict(surfaceTitles, crewPaneTitle(opts.project, p.name)),
+    }));
+
+    try {
+      await cockpitdCall({ kind: "relay-proxy-result", results });
+    } catch {
+      // best-effort: dropped results are re-requested on the next successful poll
+    }
+  }
+
   const interval = setInterval(() => {
-    if (!stopped) drain().catch((e) => log(`drain error: ${(e as Error).message}`));
+    if (!stopped) {
+      drain().catch((e) => log(`drain error: ${(e as Error).message}`));
+      executeProxiedProbes().catch((e) => log(`proxy-probe error: ${(e as Error).message}`));
+    }
   }, opts.pollMs ?? 1000);
 
   // Separate probe interval (additive — does not disturb mailbox tailing).
@@ -336,6 +404,7 @@ export const notifyRelayCommand = new Command("notify-relay")
         runtime,
         captainName: projCfg.captainName,
         pollMs: 1000,
+        maxDeferDeliveries: config.relay?.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS,
       });
       process.on("SIGTERM", () => process.exit(0));
     } catch (err) {

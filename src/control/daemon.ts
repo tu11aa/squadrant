@@ -27,6 +27,14 @@ export interface DaemonDeps {
   /** Wired in cockpitd to runHeadless; absent in pure unit tests. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /**
+   * #259: true when a launchHeadless call for this task ID is currently in
+   * flight (process spawned but no pid yet). reconcile() skips these so a
+   * crash-restart re-run does NOT mark an actively-launching task as failed
+   * and re-dispatch it, multiplying orphaned headless processes.
+   * Defaults to () => false when not wired (pure unit tests, non-headless modes).
+   */
+  isHeadlessInFlight?: (id: string) => boolean;
+  /**
    * Forward hook for the deferred interactive-wiring spec. While absent,
    * interactive dispatch fails LOUD (red-team #4) instead of silently
    * black-holing in `submitted` forever.
@@ -59,7 +67,19 @@ export interface DaemonDeps {
    * swallowed by the sweep so a refused cmux write never trips the daemon.
    */
   healRelay?: (project: string) => Promise<void> | void;
+  /**
+   * #225 hard crew task-timeout: wall-clock ceiling in ms. When a non-terminal
+   * task's age (now - createdAt) exceeds this, the sweep fires a CREW TIMEOUT
+   * escalation via the notify hook. Defaults to DEFAULT_TASK_TIMEOUT_MS (8h).
+   * Distinct from the per-task heartbeat budget (stall detection).
+   */
+  taskTimeoutMs?: number;
 }
+
+// #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
+// heartbeat continuously yet be stuck on one task — the stall watchdog won't
+// catch it. This ceiling does. Configurable via DaemonDeps.taskTimeoutMs.
+export const DEFAULT_TASK_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 // 'awaiting-input' is an attention state: entering it (idle watchdog OR a
 // Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
@@ -156,6 +176,19 @@ type Req =
   | { kind: "reply"; project: string; id: string; message: string }
   | { kind: "gate-resolve"; project: string; gateId: string; resolvedBy: string; payload: unknown };
 
+// #87: exhaustive set of known ControlEvent types for socket-boundary validation.
+// Any event.type arriving from the wire that is not in this set is rejected with
+// a clean structured error before it can reach reduce() or the store.
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "task.started", "task.progress", "heartbeat",
+  "task.blocked", "task.done", "task.failed",
+  "task.session", "task.turn.started", "task.turn.completed",
+  "task.delta", "task.input.requested", "task.approval.requested",
+  "task.reattached", "task.reopened",
+  "task.stalled", "task.idle", "task.timeout", "task.reconcile-failed",
+  "task.cancelled", "task.session.ended",
+]);
+
 export function createDaemon(deps: DaemonDeps) {
   const { store, now } = deps;
   // #210: per-task timestamp of the captain's most recent turn (a `crew send`/
@@ -225,6 +258,10 @@ export function createDaemon(deps: DaemonDeps) {
           return failed;
         }
         case "event": {
+          // #87: validate event.type at the socket boundary before touching state.
+          if (!KNOWN_EVENT_TYPES.has((req.event as any).type)) {
+            throw new Error(`unknown event type '${(req.event as any).type}' — not a valid ControlEvent`);
+          }
           const cur = store.get(req.project, req.event.id);
           if (!cur) throw new Error(`unknown task ${req.event.id}`);
           // A captain turn (crew send/reply) arrives as task.started → record it
@@ -285,6 +322,33 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
+        // #225 root-fix: terminate non-terminal tasks that exceeded the wall-clock
+        // ceiling. Terminalization is the persistent dedup — a daemon restart sees
+        // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
+        // The volatile firedTimeout Set is removed; terminal state replaces it.
+        if (!TERMINAL_STATES.has(r.state)) {
+          const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+          if (t - r.createdAt > ceiling) {
+            const prevState = r.state; // capture BEFORE terminalization (shown in message)
+            const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
+            const hrs = Math.round(ceiling / 3_600_000);
+            const msg = `CREW TIMEOUT ${tag}: wall-clock exceeded ${hrs}h (id: ${r.id}, state: ${prevState})`;
+            const synthEvent: ControlEvent = { type: "task.timeout", id: r.id, taskTimeoutMs: ceiling };
+            // Terminalize first — persisted to store so any future daemon instance
+            // sees a terminal record and skips it (flood-proof across restarts).
+            store.put({ ...r, state: "cancelled", lastEvent: "sweep.task-timeout" });
+            if (deps.notify) {
+              try {
+                const p = deps.notify({ project: r.project, message: msg, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") {
+                  (p as Promise<void>).catch(() => {});
+                }
+              } catch {
+                // swallowed — a flaky notifier must never trip the sweep
+              }
+            }
+          }
+        }
         // #139 backstop: reap interactive records whose backing surface is
         // PROVABLY gone (crew session died with no terminal signal — opencode has
         // no SessionEnd hook, and a hard kill can drop claude's). This is
@@ -345,6 +409,7 @@ export function createDaemon(deps: DaemonDeps) {
         if (r.state !== "working" && r.state !== "submitted") continue;
         if (r.mode === "headless") {
           if (r.pid != null && alive(r.pid)) continue; // still running, keep watching
+          if (deps.isHeadlessInFlight?.(r.id)) continue; // #259: launch in-flight, pid not yet set
           const failed: TaskRecord = {
             ...r, state: "failed", lastEvent: "reconcile",
             error: "orphaned by daemon restart; exit unobserved (conservative fail)",

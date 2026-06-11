@@ -54,7 +54,6 @@ describe("projectHealth (pure projection)", () => {
   const base = {
     project: "p",
     captainName: "p-captain",
-    captainPresent: true as boolean | null,
     commandPresent: null as boolean | null,
     crews: [],
   };
@@ -75,25 +74,37 @@ describe("projectHealth (pure projection)", () => {
     expect(r.detail).toContain("cockpit launch p");
   });
 
-  it("no relay registered but captain live → relay gone (a live captain SHOULD have a relay)", () => {
-    const cs = projectHealth({ ...base, now: 10_000, relay: null, captainPresent: true });
-    expect(find(cs, "relay")!.state).toBe("gone");
-  });
-
-  it("no relay registered and captain absent → relay unknown (nothing should be running)", () => {
-    const cs = projectHealth({ ...base, now: 10_000, relay: null, captainPresent: false });
+  it("no relay registered → relay unknown (no cmux probe available from daemon; #239)", () => {
+    // Without captainPresent (cmux-denied from launchd), we can't distinguish
+    // "captain alive but relay dead" from "nothing running" → unknown, not gone.
+    const cs = projectHealth({ ...base, now: 10_000, relay: null });
     expect(find(cs, "relay")!.state).toBe("unknown");
-  });
-
-  it("captain presence maps directly (no timestamp): true→alive, false→gone, null→unknown", () => {
-    expect(find(projectHealth({ ...base, now: 1, relay: null, captainPresent: true }), "captain")!.state).toBe("alive");
-    expect(find(projectHealth({ ...base, now: 1, relay: null, captainPresent: false }), "captain")!.state).toBe("gone");
-    expect(find(projectHealth({ ...base, now: 1, relay: null, captainPresent: null }), "captain")!.state).toBe("unknown");
   });
 
   it("command omitted (commandPresent null) → no command row (command is on-demand)", () => {
     const cs = projectHealth({ ...base, now: 1, relay: null, commandPresent: null });
     expect(find(cs, "command")).toBeUndefined();
+  });
+
+  // ── captain liveness from relay heartbeat (Phase A / #239) ────────────────
+
+  it("relay heartbeat fresh → captain alive", () => {
+    const now = 1_000 + RELAY_STALE_MS; // exactly at stale boundary = alive
+    const cs = projectHealth({ ...base, now, relay: relay({ lastSeenMs: 1_000 }) });
+    const c = find(cs, "captain")!;
+    expect(c.state).toBe("alive");
+    expect(c.lastSeenMs).toBe(1_000); // relay timestamp surfaces as captain's last-seen
+  });
+
+  it("relay heartbeat gone → captain gone (relay-presence IS the captain signal)", () => {
+    const now = 1_000 + RELAY_GONE_MS + 1; // relay past gone window
+    const cs = projectHealth({ ...base, now, relay: relay({ lastSeenMs: 1_000 }) });
+    expect(find(cs, "captain")!.state).toBe("gone");
+  });
+
+  it("no relay registered → captain unknown (no signal, no alarm)", () => {
+    const cs = projectHealth({ ...base, now: 10_000, relay: null });
+    expect(find(cs, "captain")!.state).toBe("unknown");
   });
 
   it("emits one crew row per non-terminal crew, skipping terminal ones", () => {

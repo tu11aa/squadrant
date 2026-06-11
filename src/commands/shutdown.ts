@@ -3,6 +3,9 @@ import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import type { RuntimeDriver } from "../runtimes/index.js";
+import { cockpitdCall } from "./crew-control.js";
+import type { TaskRecord } from "../control/types.js";
+import { TERMINAL_STATES } from "../control/types.js";
 
 // Captain workspaces gained the leading "⚓ " prefix partway through cockpit's
 // life. Workspaces created before that convention persist with the un-prefixed
@@ -70,6 +73,18 @@ export const shutdownCommand = new Command("shutdown")
           `\nShutting down ${cockpitWorkspaces.length} workspace(s)...\n`,
         ),
       );
+      // Terminalize all non-terminal crew tasks across every project before
+      // closing workspaces — prevents ghost records from flooding on restart.
+      for (const proj of Object.keys(config.projects)) {
+        try {
+          const tasks = (await cockpitdCall({ kind: "list", project: proj })) as TaskRecord[];
+          for (const task of tasks) {
+            if (!TERMINAL_STATES.has(task.state)) {
+              await cockpitdCall({ kind: "event", project: proj, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+            }
+          }
+        } catch { /* best-effort — daemon miss must not block workspace close */ }
+      }
       for (const ws of cockpitWorkspaces) {
         try {
           await globalRuntime.stop(ws.id);
@@ -96,6 +111,17 @@ export const shutdownCommand = new Command("shutdown")
     console.log(
       chalk.bold(`\nShutting down captain workspace for '${project}'...\n`),
     );
+
+    // Terminalize non-terminal crew tasks for this project before closing the
+    // captain workspace — prevents ghost records from flooding on restart (#225).
+    try {
+      const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+      for (const task of tasks) {
+        if (!TERMINAL_STATES.has(task.state)) {
+          await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+        }
+      }
+    } catch { /* best-effort — daemon miss must not block workspace close */ }
 
     const { failed } = await closeMatching(
       runtime,

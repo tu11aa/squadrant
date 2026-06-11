@@ -1,9 +1,8 @@
 // src/control/__tests__/cockpitd-relay-health.test.ts
 //
 // End-to-end through the real socket: relay-register/heartbeat routing and the
-// #77 health verb assembly (with an injected captainProbe — no cmux). Covers the
-// #207 "captain SILENTLY blind" case: a live captain with NO relay → relay gone
-// + actionable.
+// #77 health verb assembly. Captain liveness is derived from relay heartbeat
+// (#239 Phase A) — no cmux probe injection needed.
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,40 +19,41 @@ describe("cockpitd relay-health socket (#207/#77)", () => {
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-  function boot(captainPresent: boolean | null) {
+  function boot() {
     dir = mkdtempSync(join(tmpdir(), "cp-crh-"));
     const sock = join(dir, "c.sock");
     const handle = startCockpitd({
       stateRoot: join(dir, "state"),
       sockPath: sock,
       sweepMs: 0,
-      captainProbe: async () => captainPresent,
     });
     stop = handle.stop;
     return sock;
   }
 
-  it("relay-register → health shows the relay alive with its pid", async () => {
-    const sock = boot(true);
+  it("relay-register → health shows the relay alive with its pid, captain alive", async () => {
+    const sock = boot();
     const ok: any = await sendRequest(sock, { kind: "relay-register", project: "p", pid: 4242, startedAt: 1 });
     expect(ok).toEqual({ ok: true });
     const cs: ComponentHealth[] = await sendRequest(sock, { kind: "health", project: "p" }) as any;
     const relay = find(cs, "relay")!;
     expect(relay.state).toBe("alive");
     expect(relay.detail).toContain("4242");
+    // captain liveness from relay heartbeat (#239): relay alive → captain alive
     expect(find(cs, "captain")!.state).toBe("alive");
   });
 
-  it("live captain but NO relay registered → relay GONE with actionable (never silently blind)", async () => {
-    const sock = boot(true);
+  it("no relay registered → relay unknown, captain unknown (#239 Phase A: no cmux probe)", async () => {
+    // Without captainPresent signal (cmux-denied from launchd), relay-null is
+    // "unknown" — we cannot distinguish "relay dead" from "nothing running".
+    const sock = boot();
     const cs: ComponentHealth[] = await sendRequest(sock, { kind: "health", project: "p" }) as any;
-    const relay = find(cs, "relay")!;
-    expect(relay.state).toBe("gone");
-    expect(relay.detail).toContain("cockpit launch p");
+    expect(find(cs, "relay")!.state).toBe("unknown");
+    expect(find(cs, "captain")!.state).toBe("unknown");
   });
 
   it("relay-heartbeat keeps the relay registered/alive", async () => {
-    const sock = boot(null);
+    const sock = boot();
     await sendRequest(sock, { kind: "relay-register", project: "p", pid: 7, startedAt: 1 });
     const ok: any = await sendRequest(sock, { kind: "relay-heartbeat", project: "p", pid: 7 });
     expect(ok).toEqual({ ok: true });

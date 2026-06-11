@@ -245,6 +245,14 @@ describe("state-machine reduce", () => {
     const next = reduce(done, { type: "task.session.ended", id: "t1" }, 8003);
     expect(next).toBe(done);
   });
+
+  // ── Issue #87: exhaustive reduce — never return undefined ──────────────────
+  it("unknown/future event type is a no-op — returns the original record, never undefined (#87)", () => {
+    const r = rec({ state: "working" });
+    const next = reduce(r, { type: "future.unknown.event.type" } as any, 5000);
+    expect(next).toBe(r);          // same reference — unchanged record
+    expect(next).not.toBeUndefined(); // the accidental store.put(undefined) path must be closed
+  });
 });
 
 describe("DispatchAttempt schema", () => {

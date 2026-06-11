@@ -14,6 +14,15 @@ export class CmuxTimeoutError extends Error {
   }
 }
 
+// #258 Approach B: thrown by sendToSurface when the captain has any draft in
+// the input box. The relay defers delivery until the input is empty.
+export class DeferDelivery extends Error {
+  constructor() {
+    super("deferred: captain composing");
+    this.name = "DeferDelivery";
+  }
+}
+
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
 // literal argument — backticks, $(), quotes are never parsed. See #118.
@@ -67,6 +76,67 @@ export function sanitizeForCmuxSend(text: string): string {
     .replace(/[\n\r\t]+/g, " ")
     .replace(/ {2,}/g, " ")
     .trim();
+}
+
+/**
+ * Extract the in-progress draft from a cmux read-screen capture (#258).
+ * Scans from the bottom of the screen so history lines that contain `> ` are
+ * ignored; only the actual input area (the last matching line) is returned.
+ * Handles both `>` (synthetic/test) and `❯` (U+276F, the real Claude Code
+ * prompt character) as the input caret. The real prompt is followed by a
+ * non-breaking space (U+00A0); JS `\s` covers it, so `\s+` matches either.
+ * Also handles box-drawing `│ ❯ text │` variants.
+ * Returns the trimmed draft text, or "" when the line holds only a cursor
+ * indicator (▌ / █) or no input line is present.
+ */
+export function parseDraftFromScreen(screen: string): string {
+  if (!screen) return "";
+  const lines = screen.split(/\r?\n/);
+
+  // Locate the last two HR lines (runs of U+2500 ─) — they are the bottom and top
+  // boundaries of the live input box. Everything above the top HR is transcript
+  // content and is never scanned, preventing sent user messages with a ❯/> prefix
+  // from being mistaken for the live draft (#258).
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) {
+        bottomHR = i;
+      } else {
+        topHR = i;
+        break;
+      }
+    }
+  }
+
+  // Can't locate both boundaries — return "" so delivery proceeds rather than
+  // restoring garbage into the captain's input box.
+  if (topHR === -1) return "";
+
+  // Extract content lines strictly between the two HRs (the live input box only).
+  const inputLines = lines.slice(topHR + 1, bottomHR);
+
+  for (const line of inputLines) {
+    let extracted: string | undefined;
+    // Box-drawing input line: │ [>❯] text │
+    const boxMatch = line.match(/│\s*[>❯]\s+(.*?)\s*│/);
+    if (boxMatch) {
+      extracted = boxMatch[1].trim();
+    } else {
+      // Plain input line — allow empty content after the prompt glyph
+      const plainMatch = line.match(/^\s*[>❯]\s*(.*)$/);
+      if (plainMatch) extracted = plainMatch[1].trim();
+    }
+    if (extracted !== undefined) {
+      // Strip terminal cursor glyphs (▌, █, etc.) that trail the caret position
+      const draft = extracted.replace(/\s*[▌█▔▎▏▌█]+\s*$/, "").trim();
+      if (draft) return draft;
+    }
+  }
+
+  return "";
 }
 
 export function createCmuxDriver(): RuntimeDriver {
@@ -250,9 +320,34 @@ export function createCmuxDriver(): RuntimeDriver {
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
-    async sendToSurface(surface: PaneRef, text: string): Promise<void> {
-      cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
-      cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+    async sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void> {
+      // #258 Approach B: deliver only when the captain's input is empty.
+      // Read screen once; treat unreadable as empty so delivery always proceeds.
+      let draft = "";
+      try {
+        const screen = cmux(["read-screen", "--workspace", surface.workspaceId, "--surface", surface.surfaceId]);
+        draft = parseDraftFromScreen(screen);
+      } catch { /* screen unreadable — treat as empty, deliver directly */ }
+
+      if (draft && !opts?.force) {
+        // Captain is composing — defer until input clears (relay retries next poll).
+        throw new DeferDelivery();
+      }
+
+      if (draft && opts?.force) {
+        // Walk-away last-resort: backspace×(N+2) clears, deliver, restore draft.
+        const backspaceCount = draft.length + 2;
+        for (let i = 0; i < backspaceCount; i++) {
+          cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "backspace"]);
+        }
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(draft)]);
+      } else {
+        // Input is empty — deliver directly, nothing to protect.
+        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
+        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
+      }
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {

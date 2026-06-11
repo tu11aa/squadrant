@@ -100,9 +100,16 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return stampAttempt(base, {}, now);
     case "task.stalled":
     case "task.idle":
+    case "task.timeout":
     case "task.reconcile-failed":
       // Synthetic notify-only events; the daemon has already updated state
       // directly via the watchdog/reconcile paths. Reducer is a no-op.
+      return rec;
+    default:
+      // #87: unknown/future event type from the wire — safe no-op.
+      // The socket boundary (handle()) validates known types before calling
+      // reduce; this default is a deep-defense fallback so reduce() can
+      // never return undefined regardless of how it is called.
       return rec;
   }
 }

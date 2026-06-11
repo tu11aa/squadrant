@@ -14,4 +14,9 @@ describe("streaming protocol frames", () => {
     const wire = '\n{"type":"turn-completed","taskId":"t1"}\nbogus\n';
     expect(decodeFrames(wire)).toEqual([{ type: "turn-completed", taskId: "t1" }]);
   });
+
+  it("silently discards { type: '_keepalive' } frames (#94)", () => {
+    const wire = '{"type":"_keepalive"}\n{"type":"turn-completed","taskId":"t1"}\n';
+    expect(decodeFrames(wire)).toEqual([{ type: "turn-completed", taskId: "t1" }]);
+  });
 });

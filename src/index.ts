@@ -24,9 +24,11 @@ import { runtimeCommand } from "./commands/runtime.js";
 import { workspaceCommand } from "./commands/workspace.js";
 import { notifyCommand } from "./commands/notify.js";
 import { notifyRelayCommand } from "./commands/notify-relay.js";
+import { relayCommand } from "./commands/relay.js";
 import { projectionCommand } from "./commands/projection.js";
 import { codexChatSmokeCommand } from "./commands/codex-chat-smoke.js";
 import { configCommand } from "./commands/config.js";
+import { healCommand } from "./commands/heal.js";
 import { detectDrift } from "./lib/config-drift.js";
 import { needsCheck, withStamp } from "./lib/config-version.js";
 import { getDefaultConfig } from "./config.js";
@@ -42,29 +44,30 @@ ensureRuntimeSynced({
   runtimeRoot: join(homedir(), ".config", "cockpit"),
 });
 
-// Non-blocking config-drift banner. Fires only when the running package
-// version differs from the version stamped in config.json (i.e. just after
-// an update or on a legacy unstamped config). Detect + print only — never
-// mutates config and never throws; the CLI must stay usable regardless.
-try {
-  const cfgPath = join(homedir(), ".config", "cockpit", "config.json");
-  if (existsSync(cfgPath)) {
-    const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-    if (needsCheck(cfg, pkg.version)) {
-      const items = detectDrift(cfg, getDefaultConfig());
-      if (items.length === 0) {
-        writeFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
-      } else {
-        const from = cfg._cockpitVersion ?? "an earlier version";
-        process.stderr.write(
-          `\n\u26A1 cockpit updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
-          `   Run \`cockpit config check\` (or use the config-doctor skill) to reconcile.\n\n`,
-        );
+// Non-blocking config-drift banner. Suppressed during "cockpit config" —
+// the config command already surfaces drift, making the banner redundant.
+// Detect + print only — never mutates config and never throws.
+if (process.argv[2] !== "config") {
+  try {
+    const cfgPath = join(homedir(), ".config", "cockpit", "config.json");
+    if (existsSync(cfgPath)) {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      if (needsCheck(cfg, pkg.version)) {
+        const items = detectDrift(cfg, getDefaultConfig());
+        if (items.length === 0) {
+          writeFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
+        } else {
+          const from = cfg._cockpitVersion ?? "an earlier version";
+          process.stderr.write(
+            `\n\u26A1 cockpit updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
+            `   Run \`cockpit config check\` (or use the config-doctor skill) to reconcile.\n\n`,
+          );
+        }
       }
     }
+  } catch {
+    // Drift banner is best-effort; never block the CLI.
   }
-} catch {
-  // Drift banner is best-effort; never block the CLI.
 }
 
 // Self-heal the control-plane daemon the same way we self-heal the runtime:
@@ -100,9 +103,11 @@ program.addCommand(runtimeCommand);
 program.addCommand(workspaceCommand);
 program.addCommand(notifyCommand);
 program.addCommand(notifyRelayCommand);
+program.addCommand(relayCommand);
 program.addCommand(projectionCommand);
 program.addCommand(codexChatSmokeCommand);
 program.addCommand(configCommand);
+program.addCommand(healCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

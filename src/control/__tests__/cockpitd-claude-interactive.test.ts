@@ -89,14 +89,20 @@ describe("cockpitd claude interactive wiring", () => {
 
   it("claude headless mode still goes through the headless launcher (not the new branch)", async () => {
     // Regression guard: Task 5 only adds the interactive branch. Headless
-    // claude must still hit launchHeadless. We verify by dispatching headless
-    // without injecting a spawn — the launcher will try to spawn the real
-    // claude CLI which we don't want to invoke here. Instead, assert the
-    // dispatch ACK shape doesn't immediately mark the task failed via the
-    // new branch's error path.
+    // claude must still route to launchHeadless. We inject a fake launcher
+    // (the #260 seam) so the test never shells out to the real claude CLI —
+    // a real spawn here orphans a `claude -p` past teardown (the RAM-flood
+    // class fixed in #264) and its close handler writes into the deleted
+    // temp dir, surfacing as an unhandled ENOENT.
     dir = mkdtempSync(join(tmpdir(), "cp-claude-iv-"));
     const sock = join(dir, "c.sock");
-    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
+    const launched: string[] = [];
+    const h = startCockpitd({
+      stateRoot: join(dir, "state"),
+      sockPath: sock,
+      sweepMs: 0,
+      launchHeadless: async (rec) => { launched.push(rec.id); },
+    });
     stop = h.stop;
 
     const disp = (await sendRequest(sock, {
@@ -116,15 +122,11 @@ describe("cockpitd claude interactive wiring", () => {
       },
     })) as { state: string; error?: string };
     expect(disp.state).toBe("submitted");
-    // If the new interactive branch wrongly caught headless dispatches, the
-    // record's stored state would flip to "failed" with our error string.
     await new Promise((r) => setTimeout(r, 30));
     const st = (await sendRequest(sock, { kind: "status", project: "p", id: "c3" })) as { state: string; error?: string };
-    // Headless without a real claude binary or stubbed spawn fails with a
-    // launcher error — the assertion: if it failed, the error came from
-    // headless launcher, NOT from the interactive branch's throw.
-    if (st.state === "failed") {
-      expect(st.error ?? "").not.toMatch(/interactive mode is not yet implemented/);
-    }
+    // Headless dispatch routed to the headless launcher...
+    expect(launched).toContain("c3");
+    // ...and NOT into the interactive branch's throw.
+    expect(st.error ?? "").not.toMatch(/interactive mode is not yet implemented/);
   });
 });

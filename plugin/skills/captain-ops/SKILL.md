@@ -28,7 +28,17 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 ~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. (Opt-in) Status writes are not required on every event. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
+8. **Own your relay (#240):** Launch the notify-relay supervisor as a `run_in_background` process on session start:
+   ```bash
+   cockpit relay supervise <project> --as captain
+   ```
+   The supervisor handles boot-race retry in-process (3s backoff) and returns once the relay is booted; after that the relay runs on its own setInterval timers. Whole-process death (crash / SIGTERM / captain restart) is recovered by the `run_in_background` harness — when it reports the process exited, relaunch it with brief backoff.
+
+   **Why this closes the tab-death gap:** Previously the relay ran in a separate cmux tab (`✉ notify-relay`) that could be killed independently, leaving the captain silently blind to crew events. Now it is a single PID inside the captain's process tree. The loop only retries the boot race (which is the most common exit of the relay); post-boot crashes are handled by the harness relaunch because the relay's own drain/probe intervals catch their errors internally and never throw out of the process.
+
+   **Secondary seam:** The daemon healer (`createRelayHealer` in relay-healer.ts) remains the secondary recovery path (#207) — it tries to re-spawn the relay tab on sweep, but cmux lineage enforcement means it mostly logs from launchd. The primary recovery is the captain's `run_in_background` ownership.
+
+9. (Opt-in) Status writes are not required on every event. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
 
 ## Crew Setup
 

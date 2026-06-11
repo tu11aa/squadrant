@@ -94,6 +94,20 @@ describe("daemon handler", () => {
     expect(store.get("p", "h2")?.state).toBe("working");
   });
 
+  // #259: crash-restart re-ran reconcile() → launchHeadless → real spawn, multiplying
+  // orphans. An in-flight launch (no pid yet) must not be failed by reconcile.
+  it("reconcile: headless task with in-flight launch is not marked failed (#259)", async () => {
+    const store = createStore(dir);
+    store.put(rec("hif", { state: "submitted", mode: "headless" }));
+    const d = createDaemon({
+      store, now: () => 5000,
+      isPidAlive: () => false,
+      isHeadlessInFlight: (id) => id === "hif",
+    });
+    await d.reconcile();
+    expect(store.get("p", "hif")?.state).toBe("submitted");
+  });
+
   it("sweep: marks an over-budget working HEADLESS task stalled", async () => {
     const store = createStore(dir);
     store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
@@ -528,3 +542,197 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls[0].message).toContain("CREW BLOCKED");
   });
 });
+
+// ── Issue #225: hard crew task-timeout ───────────────────────────────────────
+// A per-task wall-clock ceiling distinct from the 24h interactive heartbeat
+// budget. A crew can keep heartbeating (state 'working', never 'stalled') yet
+// be stuck on one task for hours — nothing catches that today. This does.
+// DETECT-ONLY: fires a CREW TIMEOUT notify push via the existing notify hook.
+// Deduped: fires ONCE per overrun, not on every sweep.
+describe("sweep: task-timeout (#225)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-timeout-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("fires CREW TIMEOUT when task wall-clock exceeds ceiling while heartbeat is fresh", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    // createdAt=0, now=2000, ceiling=1000 → age 2000ms > ceiling
+    // lastHeartbeat=1990 → heartbeat age 10ms < 24h budget → NOT stalled: proves
+    // this catches the heartbeating-but-stuck scenario the stall watchdog misses
+    store.put(rec("t225a", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toMatch(/CREW TIMEOUT/);
+  });
+
+  it("escalation message names the crew and the full task id", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225b", {
+      state: "working", name: "my-crew", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("my-crew");
+    expect(calls[0].message).toContain("t225b");
+  });
+
+  it("fires ONLY ONCE across multiple sweeps (dedup)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225c", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    await d.sweep();
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("does NOT fire when task wall-clock is within the ceiling", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    // createdAt=0, now=500, ceiling=1000 → age 500ms < ceiling → no fire
+    store.put(rec("t225d", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 490, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 500, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("does NOT fire for terminal tasks regardless of age", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225e", { state: "done", createdAt: 0, resultRef: "/r", heartbeatBudgetMs: 86_400_000 }));
+    store.put(rec("t225e2", { state: "failed", createdAt: 0, error: "x", heartbeatBudgetMs: 86_400_000 }));
+    store.put(rec("t225e3", { state: "cancelled", createdAt: 0, heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({ store, now: () => 9_999_999, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("uses DEFAULT_TASK_TIMEOUT_MS (8h) when taskTimeoutMs is not configured", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const NINE_HOURS = 9 * 60 * 60 * 1000;
+    store.put(rec("t225f", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: NINE_HOURS - 100, heartbeatBudgetMs: 86_400_000,
+    }));
+    // No taskTimeoutMs → should use 8h default; 9h age exceeds it
+    const d = createDaemon({ store, now: () => NINE_HOURS, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("does NOT fire when no notify hook is wired (safe no-op)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t225g", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    // No notify dep — must not throw
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000 });
+    await expect(d.sweep()).resolves.toBeUndefined();
+  });
+
+  // ── #225 root-fix: terminate-on-timeout (Fix C) ──────────────────────────────
+
+  it("timeout terminates task record (state=cancelled, lastEvent=sweep.task-timeout)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225h", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toMatch(/CREW TIMEOUT/);
+    const r = store.get("p", "t225h");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.task-timeout");
+  });
+
+  it("timeout message shows original state, not 'cancelled' (Fix C note 1)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t225i", {
+      state: "awaiting-input", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls[0].message).toContain("awaiting-input");
+    expect(calls[0].message).not.toContain("state: cancelled");
+  });
+
+  it("flood proof: fresh daemon over same store never re-fires (Fix C persistent dedup)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const notify = async (a: any) => { calls.push(a); };
+    store.put(rec("t225j", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+
+    const d1 = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify });
+    await d1.sweep();
+    const timeoutCalls = () => calls.filter((c) => c.message.includes("CREW TIMEOUT")).length;
+    expect(timeoutCalls()).toBe(1);
+
+    // Second sweep on same daemon: task is terminal, no re-fire
+    await d1.sweep();
+    expect(timeoutCalls()).toBe(1);
+
+    // Fresh daemon, same store, empty in-memory state — this is the flood scenario.
+    // Terminal state in the store is the persistent dedup: must still be exactly 1.
+    const d2 = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify });
+    await d2.sweep();
+    expect(timeoutCalls()).toBe(1);
+  });
+});
+
+// ── Issue #87: socket-boundary schema validation ──────────────────────────────
+
+describe("daemon handle() socket-boundary validation (#87)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-val-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("handle() rejects completely unknown request kind with a clear structured error", async () => {
+    const store = createStore(dir);
+    const d = createDaemon({ store, now: () => 1000 });
+    await expect(
+      d.handle({ kind: "UNKNOWN_KIND_INJECTED_BY_ROGUE_CLIENT" } as any),
+    ).rejects.toThrow(/unknown.*kind|unhandled.*kind/i);
+  });
+
+  it("handle() rejects unknown event type with a clear validation error — NOT a store corruption (#87)", async () => {
+    const store = createStore(dir);
+    const task = rec("t-validate", { state: "working" });
+    store.put(task);
+    const d = createDaemon({ store, now: () => 2000 });
+    await expect(
+      d.handle({
+        kind: "event",
+        project: "p",
+        event: { type: "future.unknown.event.from.wire", id: "t-validate" } as any,
+      }),
+    ).rejects.toThrow(/unknown.*event.*type|event.*type.*unknown/i);
+    // The store record must be UNCHANGED — no corruption from reduce() returning undefined.
+    expect(store.get("p", "t-validate")?.state).toBe("working");
+  });
+});
+
