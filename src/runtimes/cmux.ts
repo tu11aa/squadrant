@@ -14,6 +14,15 @@ export class CmuxTimeoutError extends Error {
   }
 }
 
+// #258 Approach B: thrown by sendToSurface when the captain has any draft in
+// the input box. The relay defers delivery until the input is empty.
+export class DeferDelivery extends Error {
+  constructor() {
+    super("deferred: captain composing");
+    this.name = "DeferDelivery";
+  }
+}
+
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
 // literal argument — backticks, $(), quotes are never parsed. See #118.
@@ -286,32 +295,33 @@ export function createCmuxDriver(): RuntimeDriver {
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
-    async sendToSurface(surface: PaneRef, text: string): Promise<void> {
-      // #258: preserve any in-progress captain draft around relay delivery.
-      // First try to read the screen and detect a real draft:
-      //   - If found: ctrl-u clears the line, message is delivered, then the
-      //     draft text is re-typed (no Enter) so the captain can keep editing.
-      // Fall back to the readline kill-ring approach when the screen is
-      // unreadable or no draft is detected (empty input / cursor only):
-      //   - ctrl+a→ctrl+k saves the (empty) line into the kill ring, message
-      //     delivered, ctrl+y restores — always a no-op on an empty line.
+    async sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void> {
+      // #258 Approach B: deliver only when the captain's input is empty.
+      // Read screen once; treat unreadable as empty so delivery always proceeds.
       let draft = "";
       try {
         const screen = cmux(["read-screen", "--workspace", surface.workspaceId, "--surface", surface.surfaceId]);
         draft = parseDraftFromScreen(screen);
-      } catch { /* screen unreadable — fall through to kill-ring path */ }
+      } catch { /* screen unreadable — treat as empty, deliver directly */ }
 
-      if (draft) {
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl-u"]);
+      if (draft && !opts?.force) {
+        // Captain is composing — defer until input clears (relay retries next poll).
+        throw new DeferDelivery();
+      }
+
+      if (draft && opts?.force) {
+        // Walk-away last-resort: backspace×(N+2) clears, deliver, restore draft.
+        const backspaceCount = draft.length + 2;
+        for (let i = 0; i < backspaceCount; i++) {
+          cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "backspace"]);
+        }
         cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
         cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
         cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(draft)]);
       } else {
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+a"]);
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+k"]);
+        // Input is empty — deliver directly, nothing to protect.
         cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
         cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "ctrl+y"]);
       }
     },
 
