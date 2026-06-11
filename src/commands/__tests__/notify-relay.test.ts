@@ -9,7 +9,8 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS } from "../notify-relay.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, MAX_DEFERS } from "../notify-relay.js";
+import { DeferDelivery } from "../../runtimes/cmux.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
 function freshState(): string {
@@ -214,5 +215,84 @@ describe("notify-relay file-tailer", () => {
     expect(sendSpy).not.toHaveBeenCalled();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
     expect(cursor?.lastAckedSeq).toBe(1);
+  });
+});
+
+// #258 idle-defer: relay-level defer tracking.
+describe("notify-relay idle-defer (#258 phase 2)", () => {
+  it("does NOT advance cursor when sendToSurface throws DeferDelivery", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    const sendSpy = vi.fn().mockRejectedValue(new DeferDelivery());
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    // 4 polls at 50ms — deferCount=4, well below MAX_DEFERS=30; cursor stays null
+    await new Promise((r) => setTimeout(r, 250));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor).toBeNull();
+    expect(sendSpy.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("delivers and advances cursor once DeferDelivery resolves", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    // Defer once, then resolve
+    let attempts = 0;
+    const sendSpy = vi.fn().mockImplementation(() => {
+      if (++attempts <= 1) return Promise.reject(new DeferDelivery());
+      return Promise.resolve();
+    });
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
+    expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("force-delivers after MAX_DEFERS consecutive defers so message is never stuck", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    // Always defer unless force=true
+    const sendSpy = vi.fn().mockImplementation(
+      (_surface: unknown, _msg: string, opts?: { force?: boolean }) => {
+        if (opts?.force) return Promise.resolve();
+        return Promise.reject(new DeferDelivery());
+      },
+    );
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 50,
+    });
+    // MAX_DEFERS=30 polls + 1 force-deliver; at 50ms each = ~1550ms; allow 2500ms margin
+    await new Promise((r) => setTimeout(r, 2500));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
+    // The call that succeeded must have had force=true
+    const forcedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { force?: boolean } | undefined)?.force === true,
+    );
+    expect(forcedCall).toBeDefined();
+    // Total calls = MAX_DEFERS defers + 1 force-deliver
+    expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(MAX_DEFERS + 1);
   });
 });

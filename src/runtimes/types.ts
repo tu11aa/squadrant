@@ -73,5 +73,6 @@ export interface RuntimeDriver {
   // targets one surface directly. Used by the notify-relay injector to
   // deliver messages to the captain's primary surface. Throws if the surface
   // no longer exists.
-  sendToSurface(surface: PaneRef, text: string): Promise<void>;
+  // opts.force=true skips the idle-defer stability check (#258 phase 2).
+  sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void>;
 }

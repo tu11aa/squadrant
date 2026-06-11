@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen } from "../cmux.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, DeferDelivery } from "../cmux.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
@@ -327,29 +327,26 @@ describe("cmux driver", () => {
     expect(text).toBe("");
   });
 
-  // #258: relay delivery must not clobber a captain's in-progress draft.
-  // Before injecting the crew message, kill the current input into the readline
-  // kill ring (ctrl+a → ctrl+k); after Enter, yank it back (ctrl+y).
-  // Empty drafts are safe: ctrl+k on empty line leaves an empty kill-ring entry
-  // and ctrl+y restores nothing.
-  it("sendToSurface wraps delivery in kill/yank sandwich to preserve captain draft", async () => {
+  // #258: when no draft is detected (empty screen / cursor-only), deliver
+  // message+Enter directly with no key-chord preamble. ctrl-u/ctrl+a/ctrl+k/
+  // ctrl+y are all no-ops against Claude Code's input box.
+  it("sendToSurface delivers message+Enter directly when no draft detected", async () => {
     execFileMock.mockReturnValue("");
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
     const calls = execFileMock.mock.calls.map(argvOf);
-    const idx = (pred: (a: string[]) => boolean, after = -1) =>
-      calls.findIndex((a, i) => i > after && pred(a));
 
-    const ctrlAIdx = idx(a => a.includes("send-key") && a.includes("ctrl+a") && a.includes("surface:8"));
-    const ctrlKIdx = idx(a => a.includes("send-key") && a.includes("ctrl+k") && a.includes("surface:8"), ctrlAIdx);
-    const msgIdx   = idx(a => a[0] === "send" && a.includes("crew done"), ctrlKIdx);
-    const enterIdx = idx(a => a.includes("send-key") && a.includes("Enter") && a.includes("surface:8"), msgIdx);
-    const ctrlYIdx = idx(a => a.includes("send-key") && a.includes("ctrl+y") && a.includes("surface:8"), enterIdx);
+    // No kill-ring or ctrl-u keys
+    expect(calls.every((a) => !a.includes("ctrl+a"))).toBe(true);
+    expect(calls.every((a) => !a.includes("ctrl+k"))).toBe(true);
+    expect(calls.every((a) => !a.includes("ctrl+y"))).toBe(true);
+    expect(calls.every((a) => !a.includes("ctrl-u"))).toBe(true);
+    // No backspaces either — nothing to clear
+    expect(calls.every((a) => !a.includes("backspace"))).toBe(true);
 
-    expect(ctrlAIdx, "ctrl+a before message").toBeGreaterThanOrEqual(0);
-    expect(ctrlKIdx, "ctrl+k after ctrl+a").toBeGreaterThan(ctrlAIdx);
-    expect(msgIdx,   "message after ctrl+k").toBeGreaterThan(ctrlKIdx);
+    const msgIdx   = calls.findIndex((a) => a[0] === "send" && a.includes("crew done"));
+    const enterIdx = calls.findIndex((a, i) => i > msgIdx && a.includes("send-key") && a.includes("Enter") && a.includes("surface:8"));
+    expect(msgIdx, "message send exists").toBeGreaterThanOrEqual(0);
     expect(enterIdx, "Enter after message").toBeGreaterThan(msgIdx);
-    expect(ctrlYIdx, "ctrl+y after Enter").toBeGreaterThan(enterIdx);
   });
 
   it("sendToSurface delivers shell metacharacters as literal text scoped to surface", async () => {
@@ -514,33 +511,40 @@ describe("sendToSurface draft-preservation", () => {
     expect(sends[0]).toContain("crew is done");
   });
 
-  it("saves draft, clears input, delivers, then restores draft without submitting", async () => {
+  it("saves draft, clears input via backspaces, delivers, then restores draft without submitting (force=true)", async () => {
+    // "hello this is my draft" = 22 chars → 24 backspaces (draft.length + 2 margin)
+    const DRAFT = "hello this is my draft";
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) {
         return [
           "│ Some conversation history │",
-          "│ > hello this is my draft  │",
+          `│ > ${DRAFT}  │`,
         ].join("\n");
       }
       return "";
     });
-    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { force: true });
     const calls = execFileMock.mock.calls.map(argvOf);
-    // ctrl-u must come before the message send
-    const ctrlUIdx = calls.findIndex((a) => a.includes("send-key") && a.includes("ctrl-u"));
+
+    // No ctrl-u: that key is a no-op against Claude Code's input box
+    expect(calls.every((a) => !a.includes("ctrl-u"))).toBe(true);
+
+    // Backspaces must precede the message send
     const msgSendIdx = calls.findIndex((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")));
-    const enterIdx = calls.findIndex((a) => a.includes("send-key") && a.includes("Enter"));
+    const backspacesBefore = calls.slice(0, msgSendIdx).filter((a) => a.includes("send-key") && a.includes("backspace")).length;
+    expect(backspacesBefore, "backspace count = draft.length + 2").toBe(DRAFT.length + 2);
+
+    const enterIdx = calls.findIndex((a, i) => i > msgSendIdx && a.includes("send-key") && a.includes("Enter"));
     // findLastIndex is ES2023; reverse-scan manually to stay within repo's tsconfig target
     let restoreIdx = -1;
     for (let i = calls.length - 1; i >= 0; i--) {
       const a: string[] = calls[i];
-      if (a[0] === "send" && a.some((s: string) => s.includes("hello this is my draft"))) { restoreIdx = i; break; }
+      if (a[0] === "send" && a.some((s: string) => s.includes(DRAFT))) { restoreIdx = i; break; }
     }
-    expect(ctrlUIdx).toBeGreaterThanOrEqual(0);
-    expect(msgSendIdx).toBeGreaterThan(ctrlUIdx);
-    expect(enterIdx).toBeGreaterThan(msgSendIdx);
+    expect(msgSendIdx).toBeGreaterThanOrEqual(0);
+    expect(enterIdx, "Enter after message").toBeGreaterThan(msgSendIdx);
     // Restore send comes after Enter (draft goes back without submitting)
-    expect(restoreIdx).toBeGreaterThan(enterIdx);
+    expect(restoreIdx, "restore after Enter").toBeGreaterThan(enterIdx);
     // Restore must NOT be followed by another Enter
     const cmdsAfterRestore = execFileMock.mock.calls.slice(restoreIdx + 1).map(cmdOf);
     expect(cmdsAfterRestore.every((c) => !c.includes("Enter"))).toBe(true);
@@ -670,5 +674,75 @@ describe("sanitizeForCmuxSend", () => {
 
   it("handles empty string", () => {
     expect(sanitizeForCmuxSend("")).toBe("");
+  });
+});
+
+// #258 Approach B: deliver-only-when-empty. No 250ms stability double-read.
+// Draft present → DeferDelivery (caller retries next poll until input is empty).
+// Draft absent → deliver directly (nothing to protect, no backspaces).
+// Draft + force → backspace clear, deliver, restore (walk-away last-resort).
+describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  it("non-empty draft, not forced → throws DeferDelivery immediately without sending", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return "❯ hello draft text";
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    // Must not have attempted any send after the defer decision
+    expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
+    expect(cmds.filter((c) => c.includes("Enter"))).toHaveLength(0);
+  });
+
+  it("empty input → delivers directly (no backspace, no restore)", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // No backspaces — nothing to clear
+    expect(calls.every((a) => !a.includes("backspace"))).toBe(true);
+    // Message delivered then Enter
+    const msgIdx = calls.findIndex((a) => a[0] === "send" && a.includes("crew done"));
+    const enterIdx = calls.findIndex((a, i) => i > msgIdx && a.includes("send-key") && a.includes("Enter"));
+    expect(msgIdx, "message send").toBeGreaterThanOrEqual(0);
+    expect(enterIdx, "Enter after message").toBeGreaterThan(msgIdx);
+    // No restore send after Enter
+    const afterEnter = calls.slice(enterIdx + 1);
+    expect(afterEnter.filter((a) => a[0] === "send")).toHaveLength(0);
+  });
+
+  it("non-empty draft + force=true → backspace clear, deliver, restore without Enter", async () => {
+    const DRAFT = "my walk-away draft";
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return `❯ ${DRAFT}`;
+      return "";
+    });
+    await driver.sendToSurface(
+      { workspaceId: "workspace:3", surfaceId: "surface:8" },
+      "crew done",
+      { force: true },
+    );
+    const calls = execFileMock.mock.calls.map(argvOf);
+    const msgIdx = calls.findIndex((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")));
+    const backspacesBefore = calls.slice(0, msgIdx).filter((a) => a.includes("send-key") && a.includes("backspace")).length;
+    expect(backspacesBefore, "backspace count = draft.length + 2").toBe(DRAFT.length + 2);
+    const enterIdx = calls.findIndex((a, i) => i > msgIdx && a.includes("send-key") && a.includes("Enter"));
+    let restoreIdx = -1;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const a: string[] = calls[i];
+      if (a[0] === "send" && a.some((s: string) => s.includes(DRAFT))) { restoreIdx = i; break; }
+    }
+    expect(enterIdx, "Enter after message").toBeGreaterThan(msgIdx);
+    expect(restoreIdx, "restore after Enter").toBeGreaterThan(enterIdx);
+    // Restore must NOT be followed by another Enter
+    const afterRestore = execFileMock.mock.calls.slice(restoreIdx + 1).map(cmdOf);
+    expect(afterRestore.every((c) => !c.includes("Enter"))).toBe(true);
   });
 });

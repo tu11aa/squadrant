@@ -13,6 +13,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
+import { DeferDelivery } from "../runtimes/cmux.js";
 import type { RuntimeDriver } from "../runtimes/types.js";
 import {
   readCursor,
@@ -27,6 +28,10 @@ import { cockpitdCall } from "./crew-control.js";
 import type { TaskRecord, ControlEvent } from "../control/types.js";
 
 export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
+
+// #258 idle-defer: max consecutive defers before force-delivering so a message
+// can never be stuck forever (~30s at the default 1s poll cadence).
+export const MAX_DEFERS = 30;
 
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
@@ -196,6 +201,10 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
 
   const sessionStartMs = (opts.now ?? (() => Date.now()))();
 
+  // #258 idle-defer: consecutive defer counts per mailbox seq.
+  // Keyed by entry.seq; deleted on successful delivery.
+  const deferCounts = new Map<number, number>();
+
   const cursor = await readCursor({
     stateRoot: opts.stateRoot,
     project: opts.project,
@@ -248,10 +257,19 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         const msg = deliverable(entry);
         if (msg) {
           try {
+            const deferCount = deferCounts.get(entry.seq) ?? 0;
+            const force = deferCount >= MAX_DEFERS;
             await (opts.runtime as RuntimeDriver & {
-              sendToSurface: (s: unknown, m: string) => Promise<void>;
-            }).sendToSurface(captainSurface, msg);
+              sendToSurface: (s: unknown, m: string, o?: { force?: boolean }) => Promise<void>;
+            }).sendToSurface(captainSurface, msg, force ? { force: true } : undefined);
+            deferCounts.delete(entry.seq);
           } catch (e) {
+            if (e instanceof DeferDelivery) {
+              deferCounts.set(entry.seq, (deferCounts.get(entry.seq) ?? 0) + 1);
+              log(`deferred: captain typing (seq=${entry.seq})`);
+              // Don't advance cursor; the next poll will retry from the same seq.
+              return;
+            }
             log(`sendToSurface failed seq=${entry.seq}: ${(e as Error).message}`);
             // Don't advance cursor; the next poll will retry from the same seq.
             return;
