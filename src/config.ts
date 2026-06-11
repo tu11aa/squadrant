@@ -57,6 +57,10 @@ export interface CockpitConfig {
   projection?: {
     targets?: string[];
   };
+  relay?: {
+    /** Max consecutive defers before force-delivering a message (~1s poll cadence). Default: 300 (~5min). */
+    maxDeferDeliveries?: number;
+  };
   defaults: {
     maxCrew: number;
     worktreeDir: string;

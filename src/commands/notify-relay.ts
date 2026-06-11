@@ -29,9 +29,10 @@ import type { TaskRecord, ControlEvent } from "../control/types.js";
 
 export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
 
-// #258 idle-defer: max consecutive defers before force-delivering so a message
-// can never be stuck forever (~30s at the default 1s poll cadence).
-export const MAX_DEFERS = 30;
+// #258 idle-defer: default max consecutive defers before force-delivering so a
+// message can never be stuck forever (~5min/300s at the default 1s poll cadence).
+// Override via config key relay.maxDeferDeliveries.
+export const DEFAULT_MAX_DEFERS = 300;
 
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
@@ -178,6 +179,8 @@ interface RunOpts {
   /** Override Date.now() — useful in tests to simulate a future session start time. */
   now?: () => number;
   log?: (m: string) => void;
+  /** Max consecutive defers before force-deliver. Default: DEFAULT_MAX_DEFERS. */
+  maxDeferDeliveries?: number;
 }
 
 export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
@@ -200,6 +203,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   if (!captainSurface) throw new Error("no surfaces in captain workspace");
 
   const sessionStartMs = (opts.now ?? (() => Date.now()))();
+  const maxDefers = opts.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS;
 
   // #258 idle-defer: consecutive defer counts per mailbox seq.
   // Keyed by entry.seq; deleted on successful delivery.
@@ -258,7 +262,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         if (msg) {
           try {
             const deferCount = deferCounts.get(entry.seq) ?? 0;
-            const force = deferCount >= MAX_DEFERS;
+            const force = deferCount >= maxDefers;
             await (opts.runtime as RuntimeDriver & {
               sendToSurface: (s: unknown, m: string, o?: { force?: boolean }) => Promise<void>;
             }).sendToSurface(captainSurface, msg, force ? { force: true } : undefined);
@@ -400,6 +404,7 @@ export const notifyRelayCommand = new Command("notify-relay")
         runtime,
         captainName: projCfg.captainName,
         pollMs: 1000,
+        maxDeferDeliveries: config.relay?.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS,
       });
       process.on("SIGTERM", () => process.exit(0));
     } catch (err) {

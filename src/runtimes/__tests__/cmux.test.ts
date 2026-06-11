@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, DeferDelivery } from "../cmux.js";
 
@@ -12,6 +14,21 @@ vi.mock("node:child_process", () => ({
 // irrelevant to behavior.
 const argvOf = (call: unknown[]): string[] => call[1] as string[];
 const cmdOf = (call: unknown[]): string => (call[1] as string[]).join(" ");
+
+// Build a minimal screen in the real Claude Code format for parseDraftFromScreen tests.
+// Layout: optional transcript lines, then top-HR, then inputLine, then bottom-HR, then
+// a two-line status block. The HR lines use U+2500 ─ (110 chars) matching a real screen.
+const HR = "─".repeat(110);
+function makeTestScreen(inputLine: string, ...transcriptLines: string[]): string {
+  return [
+    ...transcriptLines,
+    HR,
+    inputLine,
+    HR,
+    "   Model: Opus 4.8  Ctx Used: 52.0%",
+    "  ⏵⏵ auto mode on",
+  ].join("\n");
+}
 
 describe("cmux driver", () => {
   const driver = createCmuxDriver();
@@ -498,7 +515,7 @@ describe("sendToSurface draft-preservation", () => {
 
   it("delivers directly when captain surface has no in-progress draft", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) return "  Claude Code  \n  Tools: ...  \n  > ▌  ";
+      if (args.includes("read-screen")) return makeTestScreen("❯ ▌");
       return "";
     });
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew is done");
@@ -516,10 +533,7 @@ describe("sendToSurface draft-preservation", () => {
     const DRAFT = "hello this is my draft";
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) {
-        return [
-          "│ Some conversation history │",
-          `│ > ${DRAFT}  │`,
-        ].join("\n");
+        return makeTestScreen(`│ > ${DRAFT}  │`, "│ Some conversation history │");
       }
       return "";
     });
@@ -572,62 +586,80 @@ describe("parseDraftFromScreen", () => {
     expect(parseDraftFromScreen("")).toBe("");
   });
 
-  it("returns empty string when input shows only cursor indicator", () => {
-    const screen = ["│ > ▌  │", "╰────────╯"].join("\n");
+  it("returns empty string when screen has no HR boundaries (cannot locate input box)", () => {
+    // No long ─ HR lines → cannot locate input box → safe fallback is ""
+    const screen = "Claude Code\nsome transcript\n> looks like input but no HR box";
     expect(parseDraftFromScreen(screen)).toBe("");
   });
 
-  it("extracts draft from plain '> text' input line", () => {
-    const screen = ["Some history", "> hello this is my draft"].join("\n");
+  it("returns empty string when input box is empty (cursor only)", () => {
+    const screen = makeTestScreen("❯ ▌");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  // (i) Happy path: real draft between HR rules above the status bar
+  it("extracts draft from plain ‘❯ text’ input line between HR boundaries", () => {
+    const screen = makeTestScreen("❯ my draft here", "Some history");
+    expect(parseDraftFromScreen(screen)).toBe("my draft here");
+  });
+
+  it("extracts draft from plain ‘> text’ input line between HR boundaries", () => {
+    const screen = makeTestScreen("> hello this is my draft", "Some history");
     expect(parseDraftFromScreen(screen)).toBe("hello this is my draft");
   });
 
-  it("extracts draft from box-drawing input line", () => {
-    const screen = [
-      "╭─────────────────────╮",
-      "│ > my draft message  │",
-      "╰─────────────────────╯",
-    ].join("\n");
+  // (ii) Box-drawing content variant: │ ❯ text │ line inside the HR-bounded input box
+  it("extracts draft from box-drawing input line between HR boundaries", () => {
+    const screen = makeTestScreen("│ > my draft message  │");
     expect(parseDraftFromScreen(screen)).toBe("my draft message");
   });
 
-  it("ignores top-of-screen content and returns the bottom input line", () => {
-    // Simulate a line containing "> " far above the input (e.g. in conversation history)
-    const screen = [
+  it("extracts draft from real Claude Code box-drawing prompt between HR boundaries", () => {
+    const screen = makeTestScreen("│ ❯ my real draft message │");
+    expect(parseDraftFromScreen(screen)).toBe("my real draft message");
+  });
+
+  // (iii) Regression: transcript above the top HR has ‘> sent message’ lines — must be ignored
+  it("returns '' when input box is empty but transcript above contains sent '> ' lines", () => {
+    const screen = makeTestScreen("❯ ", "> this is a sent message in the transcript");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  it("ignores transcript '> ' lines above the top HR, returns actual draft from input box", () => {
+    const screen = makeTestScreen(
+      "│ > actual draft       │",
       "> old prompt from history",
       "response text",
       "more history",
-      "─────────────────────────────────────────────────────────",
-      "│ > actual draft       │",
-    ].join("\n");
-    // Should pick the last matching line (the actual draft area)
+    );
     expect(parseDraftFromScreen(screen)).toBe("actual draft");
   });
 
-  it("returns empty string when there is no '>' input line", () => {
-    const screen = ["   Claude Code   ", "   Thinking...  "].join("\n");
+  it("returns empty string when no prompt glyph inside the input box", () => {
+    const screen = makeTestScreen("   thinking...   ", "   Claude Code   ");
     expect(parseDraftFromScreen(screen)).toBe("");
   });
 
   // Real Claude Code prompt uses ❯ (U+276F) + non-breaking space (U+00A0)
-  // confirmed via hexdump: bytes e2 9d af c2 a0 <draft text>
   it("extracts draft from real Claude Code prompt (❯ + non-breaking space)", () => {
-    const screen = ["Some history", "❯ hello draft text"].join("\n");
+    const screen = makeTestScreen("❯ hello draft text", "Some history");
     expect(parseDraftFromScreen(screen)).toBe("hello draft text");
   });
 
-  it("extracts draft from real Claude Code box-drawing prompt (❯ + non-breaking space)", () => {
-    const screen = [
-      "╭──────────────────────────╮",
-      "│ ❯ my real draft message │",
-      "╰──────────────────────────╯",
-    ].join("\n");
-    expect(parseDraftFromScreen(screen)).toBe("my real draft message");
+  it("returns empty string when real prompt has only cursor indicator (❯ ▌)", () => {
+    const screen = makeTestScreen("│ ❯ ▌  │");
+    expect(parseDraftFromScreen(screen)).toBe("");
   });
 
-  it("returns empty string when real prompt has only cursor indicator (❯ + NBSP + ▌)", () => {
-    const screen = ["│ ❯ ▌  │", "╰────────╯"].join("\n");
-    expect(parseDraftFromScreen(screen)).toBe("");
+  // Regression fixture: real captain screen captured during the #258 bug.
+  // Input box was empty (❯ with no text) but the transcript contained a sent
+  // ❯ message — parseDraftFromScreen must return "" not the sent message.
+  it("returns '' for real fixture: empty input box with sent ❯ lines in transcript (regression #258)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/258-parse-bug-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseDraftFromScreen(fixture)).toBe("");
   });
 });
 
@@ -690,7 +722,7 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
 
   it("non-empty draft, not forced → throws DeferDelivery immediately without sending", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) return "❯ hello draft text";
+      if (args.includes("read-screen")) return makeTestScreen("❯ hello draft text");
       return "";
     });
     await expect(
@@ -721,7 +753,7 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
   it("non-empty draft + force=true → backspace clear, deliver, restore without Enter", async () => {
     const DRAFT = "my walk-away draft";
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) return `❯ ${DRAFT}`;
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${DRAFT}`);
       return "";
     });
     await driver.sendToSurface(

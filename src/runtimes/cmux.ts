@@ -92,25 +92,50 @@ export function sanitizeForCmuxSend(text: string): string {
 export function parseDraftFromScreen(screen: string): string {
   if (!screen) return "";
   const lines = screen.split(/\r?\n/);
+
+  // Locate the last two HR lines (runs of U+2500 ─) — they are the bottom and top
+  // boundaries of the live input box. Everything above the top HR is transcript
+  // content and is never scanned, preventing sent user messages with a ❯/> prefix
+  // from being mistaken for the live draft (#258).
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) {
+        bottomHR = i;
+      } else {
+        topHR = i;
+        break;
+      }
+    }
+  }
+
+  // Can't locate both boundaries — return "" so delivery proceeds rather than
+  // restoring garbage into the captain's input box.
+  if (topHR === -1) return "";
+
+  // Extract content lines strictly between the two HRs (the live input box only).
+  const inputLines = lines.slice(topHR + 1, bottomHR);
+
+  for (const line of inputLines) {
     let extracted: string | undefined;
-    // Box-drawing input line: │ [>❯] text │  (❯ is the real Claude Code prompt)
+    // Box-drawing input line: │ [>❯] text │
     const boxMatch = line.match(/│\s*[>❯]\s+(.*?)\s*│/);
     if (boxMatch) {
       extracted = boxMatch[1].trim();
     } else {
-      // Plain input line: optionally-indented [>❯] text
-      const plainMatch = line.match(/^\s*[>❯]\s+(.+)$/);
+      // Plain input line — allow empty content after the prompt glyph
+      const plainMatch = line.match(/^\s*[>❯]\s*(.*)$/);
       if (plainMatch) extracted = plainMatch[1].trim();
     }
     if (extracted !== undefined) {
-      // Strip terminal cursor characters (▌, █, etc.) that trail the caret position
-      const draft = extracted.replace(/\s*[▌█▍▎▏▌█]+\s*$/, "").trim();
+      // Strip terminal cursor glyphs (▌, █, etc.) that trail the caret position
+      const draft = extracted.replace(/\s*[▌█▔▎▏▌█]+\s*$/, "").trim();
       if (draft) return draft;
-      // cursor-only line — continue scanning upward
     }
   }
+
   return "";
 }
 
