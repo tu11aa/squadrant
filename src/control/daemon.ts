@@ -133,6 +133,25 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
   }
 }
 
+/** #246: cross-project delegation report-back message. Called when a task
+ *  with originProject settles to a terminal state. Returns a captain-facing
+ *  one-liner that the origin's relay delivers verbatim. */
+function formatDelegationReport(rec: TaskRecord, originProject: string, targetProject: string): string | null {
+  const shortTask = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
+  switch (rec.state) {
+    case "done":
+      return `✅ Cross-project task → ${targetProject}: done — ${shortTask}`;
+    case "blocked":
+      return `⛔ Cross-project task → ${targetProject}: blocked — ${(rec.question ?? "(no question)").trim()}`;
+    case "failed":
+      return `⛔ Cross-project task → ${targetProject}: failed — ${(rec.error ?? "(no error)").trim()}`;
+    case "stalled":
+      return `⚠️ Cross-project task → ${targetProject}: stalled (no heartbeat in ${rec.heartbeatBudgetMs}ms)`;
+    default:
+      return null;
+  }
+}
+
 function firePush(
   deps: DaemonDeps,
   project: string,
@@ -165,6 +184,21 @@ function firePush(
     }
   } catch {
     // intentionally swallowed
+  }
+  // #246: cross-project delegation report-back. When a delegated task settles
+  // (done/blocked/failed/stalled/cancelled), fan the outcome back to the origin
+  // project's mailbox so A's relay wakes A's captain (dispatch-and-yield, never
+  // poll). 'awaiting-input' is excluded — the origin doesn't need a noise push
+  // every time the target crew ends a turn.
+  const reportState = next.state === "done" || next.state === "blocked" || next.state === "failed" || next.state === "stalled" || next.state === "cancelled";
+  if (next.originProject && next.originProject !== project && reportState) {
+    const originMsg = formatDelegationReport(next, next.originProject, project);
+    if (originMsg && deps.notify) {
+      try {
+        const r = deps.notify({ project: next.originProject, message: originMsg, record: next, event });
+        if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
+      } catch { /* swallowed */ }
+    }
   }
 }
 
@@ -228,6 +262,20 @@ export function createDaemon(deps: DaemonDeps) {
       switch (req.kind) {
         case "dispatch": {
           store.put(req.record);
+          // #246: cross-project delegation — notify B's mailbox so B's relay
+          // wakes B's captain with the request. Skip auto-launch; B's captain
+          // decides how to execute (typically spawns a crew).
+          if (req.record.originProject) {
+            const origin = req.record.originProject;
+            const msg = `📨 Cross-project task from ${origin}: ${req.record.task}`;
+            if (deps.notify) {
+              try {
+                const r = deps.notify({ project: req.record.project, message: msg, record: req.record, event: { type: "task.started", id: req.record.id } });
+                if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
+              } catch { /* swallowed — flaky notifier must not break dispatch */ }
+            }
+            return req.record;
+          }
           if (req.record.mode === "headless" && deps.launchHeadless) {
             deps.launchHeadless(req.record).catch((e: unknown) => {
               const error = e instanceof Error ? e.message : String(e);
