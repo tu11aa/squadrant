@@ -736,3 +736,122 @@ describe("daemon handle() socket-boundary validation (#87)", () => {
   });
 });
 
+// ── Issue #246: cross-project delegation report-back ──────────────────────────
+
+describe("daemon report-back on settle with originProject (#246)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-246-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function rec246(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
+    return {
+      id, project: "projB", provider: "claude", mode: "interactive",
+      state: "working", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+      originProject: "projA",
+      ...overrides,
+    };
+  }
+
+  it("fires notify to origin project when task transitions to done", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-done"));
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({ kind: "event", project: "projB", event: { type: "task.done", id: "t-done", resultRef: "/tmp/r" } });
+
+    const originCalls = calls.filter((c) => c.project === "projA");
+    expect(originCalls.length).toBe(1);
+    expect(originCalls[0].message).toMatch(/projB.*done|delegat/i);
+  });
+
+  it("fires notify to origin project when task transitions to blocked", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-blocked"));
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({ kind: "event", project: "projB", event: { type: "task.blocked", id: "t-blocked", reason: "stuck", question: "help" } });
+
+    const originCalls = calls.filter((c) => c.project === "projA");
+    expect(originCalls.length).toBe(1);
+    expect(originCalls[0].message).toMatch(/blocked|stuck/i);
+  });
+
+  it("fires notify to origin project when task transitions to failed", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-failed"));
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({ kind: "event", project: "projB", event: { type: "task.failed", id: "t-failed", error: "oops" } });
+
+    const originCalls = calls.filter((c) => c.project === "projA");
+    expect(originCalls.length).toBe(1);
+    expect(originCalls[0].message).toMatch(/failed|oops/i);
+  });
+
+  it("does NOT fire report-back when task has no originProject", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-no-origin", { originProject: undefined }));
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({ kind: "event", project: "projB", event: { type: "task.done", id: "t-no-origin", resultRef: "/tmp/r" } });
+
+    const originCalls = calls.filter((c) => c.project === "projA");
+    expect(originCalls.length).toBe(0);
+  });
+
+  it("does NOT fire report-back when task settles but originProject equals project (self-delegation no-op)", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-self", { originProject: "projB" })); // same as project
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({ kind: "event", project: "projB", event: { type: "task.done", id: "t-self", resultRef: "/tmp/r" } });
+
+    // Exactly 1 notify call: the normal CREW DONE (no extra report-back since
+    // originProject === project).
+    expect(calls.length).toBe(1);
+    expect(calls[0].project).toBe("projB");
+  });
+
+  it("fires notify to origin project on stall (sweep-synthetic)", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    store.put(rec246("t-stall", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100, mode: "headless" }));
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.sweep();
+
+    const originCalls = calls.filter((c) => c.project === "projA");
+    expect(originCalls.length).toBe(1);
+    expect(originCalls[0].message).toMatch(/stall|no heartbeat/i);
+  });
+
+  it("dispatched task with originProject notifies B (target) mailbox with delegation message", async () => {
+    const store = createStore(dir);
+    const calls: Array<{ project: string; message: string }> = [];
+    const notify = vi.fn(async (a: { project: string; message: string }) => { calls.push(a); });
+    const d = createDaemon({ store, now: () => 2000, notify });
+
+    await d.handle({
+      kind: "dispatch",
+      record: rec246("t-deleg", { state: "submitted", project: "projB", originProject: "projA" }),
+    });
+
+    const bCalls = calls.filter((c) => c.project === "projB");
+    expect(bCalls.length).toBe(1);
+    expect(bCalls[0].message).toMatch(/cross.project|projA/i);
+  });
+});
+
