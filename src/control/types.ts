@@ -73,6 +73,10 @@ export interface TaskRecord {
    *  (`opencode --port <N>`). The daemon's SSE bridge subscribes to
    *  http://127.0.0.1:<serverPort>/event for reliable turn-end detection. */
   serverPort?: number;
+  /** #246: cross-project intra-group delegation — set to the origin project's
+   *  name when this task was dispatched by a sibling captain. When the task
+   *  settles, the daemon fans the outcome back to originProject's mailbox. */
+  originProject?: string;
 }
 
 export type ControlEvent =

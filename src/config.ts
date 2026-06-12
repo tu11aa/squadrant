@@ -12,6 +12,9 @@ export interface ProjectConfig {
   groupRole?: string;
   runtime?: string;
   workspace?: string;
+  /** #246: when false, `cockpit group dispatch` rejects delegations to this
+   *  project. Defaults to true when absent. */
+  acceptDelegations?: boolean;
 }
 
 export interface PermissionConfig {
