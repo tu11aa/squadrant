@@ -220,6 +220,40 @@ If your config has `group` / `groupRole`:
 - Use **claude-mem** to search for context from sibling projects
 - `primary` role: your changes may need propagation to forks/dependents
 
+## Cross-Project Delegation
+
+When a task genuinely belongs to a sibling project in the same group, use **`cockpit group dispatch <to-project> '<task>'`** instead of hand-writing a message. This records a tracked task on the sibling's project and auto-wakes its captain via the existing mailbox/relay.
+
+### Rules
+
+1. **Same-group only.** `group dispatch` rejects any target whose `group` field differs from yours. Cross-group dispatch is out of scope — use claude-mem / wiki queries for awareness.
+2. **`acceptDelegations`.** If the sibling's project config has `acceptDelegations: false`, the command rejects with a clear error. The default is `true`.
+3. **Boot-if-down.** If the sibling's captain workspace / notify-relay are not running, `group dispatch` boots them (`cockpit launch <project>`) and waits for warmup with a bounded poll (30s hard timeout). If warmup fails, the dispatch is rejected (task not recorded).
+
+### Dispatch-and-yield (do NOT poll)
+
+Once the task is recorded to the daemon, `group dispatch` **returns immediately**. The sibling's captain auto-accepts (because `acceptDelegations` is true) and spawns a crew. When the task settles — done, blocked, or failed — the daemon fans the outcome back to **your** mailbox automatically. Your relay wakes you up. **You never poll the sibling.**
+
+HARD RULE: Do NOT add a polling loop after `group dispatch`. The report-back is event-driven; trust it.
+
+### Report-back format
+
+| Settlement | Message |
+|------------|---------|
+| done | `✅ Cross-project task → B: done — <task snippet>` |
+| blocked | `⛔ Cross-project task → B: blocked — <question>` |
+| failed | `⛔ Cross-project task → B: failed — <error>` |
+| stalled | `⚠️ Cross-project task → B: stalled (no heartbeat)` |
+
+### Example
+
+```bash
+# You are captain of "scaffold-stylus". Ask the docs sibling to update docs.
+cockpit group dispatch scaffold-stylus-docs "Document the new --format flag added in PR #42"
+# → "✔ Dispatched to 'scaffold-stylus-docs' (task abc12345)"
+# → (returns immediately; you are notified when settled)
+```
+
 ## Recording Learnings
 
 Recording learnings is **opt-in**. Record when something genuinely surprised you or a useful pattern emerged — not on a schedule.
