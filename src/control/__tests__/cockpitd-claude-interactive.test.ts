@@ -7,10 +7,10 @@ import { startCockpitd } from "../cockpitd.js";
 import { sendRequest } from "../protocol.js";
 
 describe("cockpitd claude interactive wiring", () => {
-  let stop: (() => void) | undefined;
+  let stop: (() => Promise<void>) | undefined;
   let dir: string;
-  afterEach(() => {
-    stop?.();
+  afterEach(async () => {
+    await stop?.();
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
