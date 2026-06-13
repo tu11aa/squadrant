@@ -96,7 +96,7 @@ vi.mock("node:fs", async (importOriginal) => {
 const resolveCrewRoute = vi.hoisted(() => vi.fn());
 vi.mock("../../control/crew-routing.js", () => ({ resolveCrewRoute }));
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren, isTurnAccepted } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren, isTurnAccepted, buildCompletionProtocol } from "../crew.js";
 
 const baseConfig = {
   commandName: "command",
@@ -196,11 +196,11 @@ describe("cockpit crew spawn", () => {
     expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_TASK_ID=task-cl1");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("claude --append-system-prompt-file /tmp/crew.md");
-    // Second sendToPane delivers the task as the first prompt.
-    expect(sendToPane.mock.calls[1]).toEqual([
-      { workspaceId: "workspace:5", surfaceId: "surface:9" },
-      "do the thing",
-    ]);
+    // Second sendToPane delivers the task + completion-protocol suffix as the first prompt.
+    expect(sendToPane.mock.calls[1]?.[0]).toEqual({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("do the thing");
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("--task-id task-cl1");
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("--project brove");
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
@@ -342,11 +342,11 @@ describe("cockpit crew spawn", () => {
     expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("OPENCODE_CONFIG=/tmp/per-crew/opencode.json");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("opencode");
-    // Second sendToPane delivers the task as the first prompt.
-    expect(sendToPane.mock.calls[1]).toEqual([
-      { workspaceId: "workspace:5", surfaceId: "surface:9" },
-      "do the thing",
-    ]);
+    // Second sendToPane delivers the task + completion-protocol suffix as the first prompt.
+    expect(sendToPane.mock.calls[1]?.[0]).toEqual({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("do the thing");
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("--task-id task-oc1");
+    expect(sendToPane.mock.calls[1]?.[1]).toContain("--project brove");
   });
 
   it("--approval gates bash for opencode crews (CP3 opt-in → gateBash:true)", async () => {
@@ -1151,6 +1151,132 @@ describe("cockpit crew send/read/close/list", () => {
       { name: "crew-1", surfaceId: "surface:10" },
       { name: "fix-typos", surfaceId: "surface:11" },
     ]);
+  });
+});
+
+describe("buildCompletionProtocol (#278)", () => {
+  it("includes the task-id and project in the done signal command", () => {
+    const result = buildCompletionProtocol("task-abc123", "my-project");
+    expect(result).toContain("--task-id task-abc123");
+    expect(result).toContain("--project my-project");
+    expect(result).toContain("crew signal done");
+  });
+
+  it("includes the blocked signal form with the same ids", () => {
+    const result = buildCompletionProtocol("task-abc123", "my-project");
+    expect(result).toContain("crew signal blocked");
+    expect(result).toContain("--task-id task-abc123");
+    expect(result).toContain("--project my-project");
+  });
+
+  it("substitutes both task-id and project independently", () => {
+    const a = buildCompletionProtocol("id-A", "proj-A");
+    const b = buildCompletionProtocol("id-B", "proj-B");
+    expect(a).toContain("--task-id id-A");
+    expect(a).toContain("--project proj-A");
+    expect(b).toContain("--task-id id-B");
+    expect(b).toContain("--project proj-B");
+    expect(a).not.toContain("id-B");
+    expect(b).not.toContain("id-A");
+  });
+});
+
+describe("completion-protocol suffix in first turns (#278)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    newPane.mockReset();
+    sendToPane.mockReset();
+    readPaneScreen.mockReset();
+    listSurfaces.mockReset();
+    status.mockReset();
+    buildCommand.mockReset();
+    loadConfig.mockReset();
+    cockpitdCall.mockReset();
+    buildDispatchRequest.mockReset();
+    sendCodexFirstTurn.mockReset();
+    sendCodexFirstTurn.mockResolvedValue(undefined);
+    writePerCrewSettingsLocal.mockReset();
+    writePerCrewSettingsLocal.mockReturnValue("/tmp/brove/.claude/settings.local.json");
+    writePerCrewOpencodeConfig.mockReset();
+    writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
+    addWorktree.mockReset();
+    existsSyncMock.mockReset();
+    existsSyncMock.mockReturnValue(false);
+    resolveCrewRoute.mockReset();
+    resolveCrewRoute.mockReturnValue(null);
+    let reads = 0;
+    readPaneScreen.mockImplementation(async () => {
+      reads++;
+      if (reads === 1) return "booting…";
+      if (reads <= 4) return "> ready";
+      return "> ready\nworking…";
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("claude first turn includes completion-protocol suffix with baked-in task-id and project", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-cl" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-proto-cl", project: "brove", provider: "claude", mode: "interactive" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "fix the bug" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
+    expect(firstTurn).toContain("fix the bug");
+    expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn).toContain("--task-id task-proto-cl");
+    expect(firstTurn).toContain("--project brove");
+    expect(firstTurn).toContain("crew signal done");
+    expect(firstTurn).toContain("crew signal blocked");
+  });
+
+  it("opencode first turn includes completion-protocol suffix with baked-in task-id and project", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("opencode");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-oc" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-proto-oc", project: "brove", provider: "opencode", mode: "interactive" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "fix the bug", agent: "opencode" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
+    expect(firstTurn).toContain("fix the bug");
+    expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn).toContain("--task-id task-proto-oc");
+    expect(firstTurn).toContain("--project brove");
+    expect(firstTurn).toContain("crew signal done");
+    expect(firstTurn).toContain("crew signal blocked");
+  });
+
+  it("codex first turn is sent via sendCodexFirstTurn unchanged — no completion-protocol suffix", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-cx" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-proto-cx", project: "brove", provider: "codex", mode: "interactive" });
+
+    await runCrewSpawn({ project: "brove", task: "fix the bug", agent: "codex" });
+
+    // sendCodexFirstTurn receives the bare task text — no protocol suffix
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-proto-cx", "fix the bug");
+    // sendToPane only fires once (the crew attach command) — no second first-turn send
+    expect(sendToPane).toHaveBeenCalledTimes(1);
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("crew attach");
+    expect(sendToPane.mock.calls[0]?.[1]).not.toContain("COMPLETION PROTOCOL");
   });
 });
 
