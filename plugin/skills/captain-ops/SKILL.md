@@ -161,12 +161,17 @@ cockpit crew spawn brove "Fix typo in README" --direction right
 
 ## Task Coordination
 
-You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. Track crew progress by:
-1. `cockpit crew read <project> <name>` — read tail of a crew's screen (default ~40 lines; `--full` for entire scrollback).
-2. `cockpit crew tasks <project>` — compact task listing (one line per task); `--id <prefix>` to filter; `--state-only <id>` for single-word state.
-3. `cockpit crew list <project>` — see all live crews and pick the right one.
-4. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
-5. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+**HARD RULE: Do NOT poll crew screens in a loop.** Crew lifecycle events (idle / done / blocked) arrive via the **notify-relay** automatically — trust the relay signal. Polling loops hang indefinitely, exhaust context, and mask real blockers.
+
+You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. When you need crew status:
+1. **Wait for the relay to notify you.** When a crew finishes, signals blocked, or goes idle, the notify-relay delivers the event to your captain pane. This is the primary mechanism — do not replace it with polling.
+2. `cockpit crew read <project> <name>` — **on-demand spot-check only** (a single read when you have a specific reason, e.g. reviewing a finished diff). Never in a loop, never with `until`.
+3. `cockpit crew tasks <project>` — **on-demand** compact task listing; `--id <prefix>` to filter; `--state-only <id>` for a single-word state check.
+4. `cockpit crew list <project>` — see all live crews and pick the right one.
+5. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
+6. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+
+If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attempts with a sleep between), or watch the mailbox seq — never an unbounded `until` loop.
 
 When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
