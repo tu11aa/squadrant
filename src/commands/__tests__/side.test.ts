@@ -68,6 +68,16 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewOpencodeConfig: vi.fn(),
 }));
 
+// git-worktree mock — lets us assert debug sessions create/remove worktrees.
+const addWorktreeMock = vi.hoisted(() => vi.fn());
+const removeWorktreeMock = vi.hoisted(() => vi.fn());
+const worktreePathMock = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/git-worktree.js", () => ({
+  addWorktree: addWorktreeMock,
+  removeWorktree: removeWorktreeMock,
+  worktreePath: worktreePathMock,
+}));
+
 // cockpitdCall and buildDispatchRequest are the daemon dispatch path.
 // side.ts MUST NOT call these — the mocks let us assert that invariant.
 const cockpitdCall = vi.hoisted(() => vi.fn());
@@ -131,6 +141,11 @@ describe("cockpit side spawn", () => {
     buildDispatchRequest.mockReset();
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(true);
+    addWorktreeMock.mockReset();
+    removeWorktreeMock.mockReset();
+    worktreePathMock.mockReset();
+    addWorktreeMock.mockReturnValue("/tmp/brove/.worktrees/brove-side-1");
+    worktreePathMock.mockReturnValue("/tmp/brove/.worktrees/brove-side-1");
 
     // Staged boot: first read shows pre-launch, subsequent reads show stable TUI.
     let reads = 0;
@@ -233,14 +248,86 @@ describe("cockpit side spawn", () => {
     expect(firstTurnCall?.[1]).toContain("research");
   });
 
-  it("throws 'not yet implemented' for --role debug (Phase 2)", async () => {
+  it("debug spawn creates a scratch worktree (addWorktree called)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
 
-    await expect(
-      runSideSpawn({ project: "brove", topic: "debug the crash", role: "debug" }),
-    ).rejects.toThrow("not yet implemented");
+    const promise = runSideSpawn({ project: "brove", topic: "debug the crash", role: "debug" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(addWorktreeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoRoot: "/tmp/brove",
+        project: "brove",
+        base: "develop",
+      }),
+    );
+  });
+
+  it("research spawn does NOT create a worktree (addWorktree not called)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
+
+    const promise = runSideSpawn({ project: "brove", topic: "research oauth", role: "research" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it("debug spawn is off the daemon lifecycle (no cockpitdCall)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
+
+    const promise = runSideSpawn({ project: "brove", topic: "debug the crash", role: "debug" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(buildDispatchRequest).not.toHaveBeenCalled();
+  });
+
+  it("debug spawn cd-prefixes into the scratch worktree path (#279 fix)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
+    addWorktreeMock.mockReturnValue("/tmp/brove/.worktrees/brove-side-1");
+
+    const promise = runSideSpawn({ project: "brove", topic: "debug the crash", role: "debug" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    // First sendToPane call is the CLI launch — must cd into the scratch worktree
+    const launchCall = sendToPane.mock.calls[0];
+    expect(launchCall?.[1]).toContain("cd '/tmp/brove/.worktrees/brove-side-1'");
+  });
+
+  it("debug first turn includes scratch worktree path in context block", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
+    addWorktreeMock.mockReturnValue("/tmp/brove/.worktrees/brove-side-1");
+
+    const promise = runSideSpawn({ project: "brove", topic: "debug the crash", role: "debug" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    const firstTurnCall = sendToPane.mock.calls[1];
+    expect(firstTurnCall?.[1]).toContain("Scratch worktree: /tmp/brove/.worktrees/brove-side-1");
   });
 
   it("throws for unknown --role", async () => {
@@ -338,8 +425,12 @@ describe("runSideList / runSideClose / runSideSend", () => {
     status.mockReset();
     sendToPane.mockReset();
     closePane.mockReset();
+    existsSyncMock.mockReset();
+    removeWorktreeMock.mockReset();
+    worktreePathMock.mockReset();
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    worktreePathMock.mockReturnValue("/tmp/brove/.worktrees/brove-side-1");
   });
 
   it("runSideList returns only 🗒-prefixed sessions for this project", async () => {
@@ -367,8 +458,32 @@ describe("runSideList / runSideClose / runSideSend", () => {
 
   it("runSideClose throws when session not found", async () => {
     listSurfaces.mockResolvedValue([]);
+    existsSyncMock.mockReturnValue(false);
 
     await expect(runSideClose("brove", "side-99")).rejects.toThrow("not found");
+  });
+
+  it("runSideClose prunes scratch worktree when worktree path exists (debug session)", async () => {
+    listSurfaces.mockResolvedValue([{ surfaceId: "s1", title: "🗒 brove:side-1" }]);
+    closePane.mockResolvedValue(undefined);
+    existsSyncMock.mockReturnValue(true); // worktree path exists → debug session
+
+    await runSideClose("brove", "side-1");
+
+    expect(removeWorktreeMock).toHaveBeenCalledWith(
+      "/tmp/brove",
+      "/tmp/brove/.worktrees/brove-side-1",
+    );
+  });
+
+  it("runSideClose does NOT call removeWorktree when worktree path absent (research session)", async () => {
+    listSurfaces.mockResolvedValue([{ surfaceId: "s1", title: "🗒 brove:side-1" }]);
+    closePane.mockResolvedValue(undefined);
+    existsSyncMock.mockReturnValue(false); // no worktree → research session
+
+    await runSideClose("brove", "side-1");
+
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
   });
 
   it("runSideSend sends to the matching pane without touching daemon", async () => {

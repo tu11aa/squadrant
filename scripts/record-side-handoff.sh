@@ -1,11 +1,12 @@
 #!/bin/bash
-# Usage: record-side-handoff.sh <spoke-vault-path> <topic> <summary>
+# Usage: record-side-handoff.sh <spoke-vault-path> <topic> <role> <summary>
 # Writes a durable handoff record to {spokeVault}/side-handoffs/<topic-slug>.md
 set -euo pipefail
 
-VAULT="${1:?Usage: record-side-handoff.sh <vault-path> <topic> <summary>}"
+VAULT="${1:?Usage: record-side-handoff.sh <vault-path> <topic> <role> <summary>}"
 TOPIC="${2:?}"
-SUMMARY="${3:?}"
+ROLE="${3:?}"
+SUMMARY="${4:?}"
 DATE=$(date +"%Y-%m-%d")
 SLUG=$(echo "$TOPIC" | head -c 60 | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g')
 FILENAME="${VAULT}/side-handoffs/${SLUG}.md"
@@ -15,7 +16,7 @@ mkdir -p "${VAULT}/side-handoffs"
 cat > "$FILENAME" << EOF
 ---
 type: side-handoff
-role: research
+role: ${ROLE}
 date: ${DATE}
 topic: ${TOPIC}
 ---

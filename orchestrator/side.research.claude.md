@@ -37,7 +37,7 @@ When you have produced a result that deserves the primary captain's attention:
 
    a. Write the durable vault record (replace placeholders with actual values from the "Side-session context" block in your first turn):
    ```bash
-   ~/.config/cockpit/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "<one-line summary>"
+   ~/.config/cockpit/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "research" "<one-line summary>"
    ```
 
    b. Send the structured handoff to the primary captain via relay:
