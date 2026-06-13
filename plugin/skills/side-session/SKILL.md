@@ -13,7 +13,7 @@ A side-session is a dedicated tab with **fresh context** running the captain mod
 # Research a topic, discuss an idea, produce a spec or GH issue
 cockpit side spawn <project> "<topic>" --role research
 
-# Debug mode (Phase 2 — not yet available)
+# Debug a bug in an isolated scratch worktree
 cockpit side spawn <project> "<topic>" --role debug
 ```
 
@@ -38,19 +38,36 @@ cockpit side close <project> <name>                       # close when done
 
 The session works in fresh context and produces artifacts (specs, GH issues, analysis). When done, it asks the user to confirm before sending a structured handoff to the primary captain.
 
+## Role: debug
+
+**Can:** Read code/docs, run code and tests, edit source — but **scratch only** in its isolated worktree (instrumentation, logging, a failing test to pinpoint the root cause).
+**Cannot:** Edit source outside the scratch worktree, spawn crews, merge/ship changes.
+
+The debug role creates an isolated scratch git worktree on spawn. Edits made there are never shipped — the draft patch lives on the scratch branch and is referenced in the handoff for a crew to implement cleanly. Close prunes the scratch worktree.
+
+### Bug intake (required first step)
+
+Before instrumenting, the debug session gathers from the user:
+1. Repro steps
+2. When/where the bug appears
+3. Expected vs actual behavior
+4. Recent changes that could be related
+
+If the topic already contains all of this, it confirms and proceeds. Otherwise it asks.
+
 ## Handoff workflow
 
 ```
-1. Research session produces an artifact (spec, issue, analysis).
+1. Side session produces a result (root cause / artifact).
 2. Session asks: "Notify the primary captain now? (y/n)"
 3. On yes:
    - Writes durable record: {spokeVault}/side-handoffs/<topic>.md
-   - Sends: cockpit runtime send <project> "🗒 Side handoff [research] — <topic> ..."
+   - Sends: cockpit runtime send <project> "🗒 Side handoff [<role>] — <topic> ..."
 4. Primary captain receives handoff via relay.
 5. Captain does NOT auto-spawn a crew — waits for user's go.
 ```
 
-### Structured handoff format
+### Structured handoff format (research)
 
 ```
 🗒 Side handoff [research] — <topic>
@@ -59,12 +76,25 @@ Artifacts: <gh issue #NNN | spec: path/to/file.md | …>
 Next: <recommended next action>
 ```
 
+### Structured handoff format (debug)
+
+```
+🗒 Side handoff [debug] — <topic>
+Root cause: <one-line root cause>
+Artifacts: <failing test path | instrumentation: <file> | draft patch: scratch branch crew/<name> | issue #NNN>
+Next: <what a crew should implement to fix this>
+```
+
 ## Spawn by the primary captain
 
-When the user asks you to start a side research session, spawn one:
+When the user asks you to start a side session, spawn one:
 
 ```bash
+# Research
 cockpit side spawn <project> "<the research question or topic>" --role research
+
+# Debug — creates a scratch worktree; pruned automatically on close
+cockpit side spawn <project> "<the bug description>" --role debug
 ```
 
 Note the session name from the output (e.g. `side-1`) and tell the user they can steer it with:
@@ -76,6 +106,8 @@ cockpit side close <project> side-1
 
 When the session completes, its handoff will arrive via relay with the `🗒 Side handoff` prefix.
 
-## Key invariant
+## Key invariants
 
 `cockpit side spawn` does **NOT** create a daemon task record. There is no `CREW IDLE/DONE` event for side-sessions. The only signal path is the explicit `cockpit runtime send` the side-session sends on user confirmation.
+
+`cockpit side close` on a debug session automatically prunes its scratch worktree (the branch is preserved so the draft patch survives).

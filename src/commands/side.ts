@@ -15,8 +15,12 @@ import {
 import type { PaneRef, PanePlacement } from "../runtimes/types.js";
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew.js";
 import { resolveTextInput } from "../lib/resolve-text-input.js";
+import { addWorktree, removeWorktree, worktreePath } from "../lib/git-worktree.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+
+// Debug scratch worktrees branch off develop (same as crew --worktree).
+const WORKTREE_BASE_BRANCH = "develop";
 
 const SIDE_ROLES = ["research", "debug"] as const;
 type SideRole = (typeof SIDE_ROLES)[number];
@@ -51,14 +55,16 @@ function nextAutoName(existingTitles: string[], project: string): string {
 }
 
 /** Builds the first-turn message: topic + injected context the agent needs
- *  for handoff (spokeVault, project, role). */
+ *  for handoff (spokeVault, project, role). For debug sessions, scratchWorktree
+ *  is the isolated worktree path the session is running in. */
 export function buildSideFirstTurn(
   topic: string,
   project: string,
   role: string,
   spokeVault: string,
+  scratchWorktree?: string,
 ): string {
-  return [
+  const lines = [
     topic,
     "",
     "---",
@@ -66,7 +72,11 @@ export function buildSideFirstTurn(
     `Project: ${project}`,
     `Role: ${role}`,
     `Spoke vault: ${spokeVault}`,
-  ].join("\n");
+  ];
+  if (scratchWorktree) {
+    lines.push(`Scratch worktree: ${scratchWorktree}`);
+  }
+  return lines.join("\n");
 }
 
 export interface SideSpawnInput {
@@ -85,11 +95,6 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
     throw new Error(`Project '${input.project}' not found. Run 'cockpit projects list'.`);
   }
 
-  if (input.role === "debug") {
-    throw new Error(
-      "Side role 'debug' is not yet implemented (Phase 2). Use --role research.",
-    );
-  }
   if (!SIDE_ROLES.includes(input.role as SideRole)) {
     throw new Error(
       `Unknown side role '${input.role}'. Valid roles: ${SIDE_ROLES.join(", ")}.`,
@@ -122,6 +127,19 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   }
   const name = input.name ?? nextAutoName(existingTitles, input.project);
 
+  // Debug sessions run in an isolated scratch git worktree so instrumentation
+  // edits never touch the captain's checkout. Research sessions share the root
+  // checkout. The #279 fix (cd into spawnCwd before launching CLI) applies to both.
+  const spawnCwd = input.role === "debug"
+    ? addWorktree({
+        repoRoot: proj.path,
+        worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
+        project: input.project,
+        name,
+        base: WORKTREE_BASE_BRANCH,
+      })
+    : proj.path;
+
   const agents = new CapabilityRegistry({
     claude: createClaudeDriver(),
     codex: createCodexDriver(),
@@ -147,7 +165,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
 
   const cliCommand = agent.buildCommand({
     prompt: input.topic,
-    workdir: proj.path,
+    workdir: spawnCwd,
     role: "side",
     promptFile: fs.existsSync(promptFile) ? promptFile : undefined,
     interactive: true,
@@ -155,7 +173,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
     ...(sideModel ? { model: sideModel } : {}),
   });
 
-  await runtime.sendToPane(pane, `cd ${shellQuote(proj.path)} && ${cliCommand}`);
+  await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${cliCommand}`);
   const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
 
   const firstTurn = buildSideFirstTurn(
@@ -163,6 +181,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
     input.project,
     input.role,
     proj.spokeVault ?? "",
+    input.role === "debug" ? spawnCwd : undefined,
   );
   await sendFirstTurnWhenReady(runtime, pane, firstTurn, preLaunchScreen);
 
@@ -200,6 +219,8 @@ export async function runSideList(
 }
 
 export async function runSideClose(project: string, name: string): Promise<void> {
+  const config = loadConfig();
+  const proj = config.projects[project];
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const want = titleFor(project, name);
   const surfaces = await runtime.listSurfaces(workspaceId);
@@ -210,6 +231,24 @@ export async function runSideClose(project: string, name: string): Promise<void>
     );
   }
   await runtime.closePane(pane);
+  // Prune the scratch worktree if this was a debug session. Detection is
+  // filesystem-based: debug spawns create a worktree at the deterministic path;
+  // research spawns do not. If the path exists, remove it (best-effort).
+  if (proj) {
+    const wtPath = worktreePath(
+      proj.path,
+      config.defaults.worktreeDir ?? ".worktrees",
+      project,
+      name,
+    );
+    if (fs.existsSync(wtPath)) {
+      try {
+        removeWorktree(proj.path, wtPath);
+      } catch (e) {
+        process.stderr.write(`(worktree remove failed: ${(e as Error).message})\n`);
+      }
+    }
+  }
 }
 
 export const sideCommand = new Command("side").description(
