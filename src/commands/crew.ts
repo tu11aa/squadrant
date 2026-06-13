@@ -208,6 +208,19 @@ export async function sendFirstTurnWhenReady(
   }
 }
 
+/** Builds the completion-protocol suffix baked into claude + opencode first turns (#278).
+ *  Substituting --task-id and --project at source makes the signal robust to env-var
+ *  races (Mode 1) and gives the model a concrete imperative at the point of action (Mode 2). */
+export function buildCompletionProtocol(taskId: string, project: string): string {
+  return [
+    "---",
+    "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:",
+    `  cockpit crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
+    "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
+    `  cockpit crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
+  ].join("\n");
+}
+
 export interface CrewSpawnInput {
   project: string;
   task: string;
@@ -378,7 +391,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
+    await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -428,7 +441,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen, {
+    await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
       // #235: opencode's idle splash ("Ask anything…") keeps mutating (cursor
       // blink, status line toggle), so the old screen-changed check would always
       // see a *different* screen and never re-send a dropped turn. The splashMarker

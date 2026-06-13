@@ -199,6 +199,25 @@ You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were C
 
 If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attempts with a sleep between), or watch the mailbox seq — never an unbounded `until` loop.
 
+### Handling CREW IDLE
+
+CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
+- **(a)** The crew finished but never ran `cockpit crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
+- **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).
+- **(c)** The crew is still mid-task and the idle pulse was transient.
+
+On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling loop), then classify:
+
+| Spot-check shows | Captain action |
+|-----------------|----------------|
+| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review; if good, terminalize (`merge` + `crew close`). If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
+| Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
+| Still mid-task / transient idle | Leave it; wait for the next relay event. |
+
+**Do not re-send the original task** if the crew appears to have completed it — that triggers a duplicate run. Read the crew screen or diff first, then decide: terminalize vs re-task vs leave.
+
+This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE.
+
 When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
 ## When Crew Finishes
