@@ -56,7 +56,7 @@ export interface RoleAssignment {
   model?: string;
 }
 
-export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration", RoleAssignment>>;
+export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
 export interface CockpitConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
@@ -125,6 +125,7 @@ export function getDefaultConfig(): CockpitConfig {
         captain: { agent: "claude", model: "opus" },
         crew: { agent: "claude", model: "opus" },
         exploration: { agent: "claude", model: "haiku" },
+        side: { agent: "claude", model: "opus" },
       },
       taskTimeoutMs: 8 * 60 * 60 * 1000,
       crewRouting: {

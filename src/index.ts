@@ -13,6 +13,7 @@ import { projectsCommand } from "./commands/projects.js";
 import { statusCommand } from "./commands/status.js";
 import { commandCommand } from "./commands/command.js";
 import { crewCommand } from "./commands/crew.js";
+import { sideCommand } from "./commands/side.js";
 import { addControlPlaneCrewCommands } from "./commands/crew-control.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { launchCommand } from "./commands/launch.js";
@@ -93,6 +94,7 @@ program.addCommand(statusCommand);
 // `cockpit crew` command so PR #85 doesn't break the captain-ops playbook.
 addControlPlaneCrewCommands(crewCommand);
 program.addCommand(crewCommand);
+program.addCommand(sideCommand);
 program.addCommand(commandCommand);
 program.addCommand(dashboardCommand);
 program.addCommand(launchCommand);
