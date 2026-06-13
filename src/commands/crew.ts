@@ -130,7 +130,7 @@ function nextAutoName(existingTitles: string[], project: string): string {
   return `crew-${i}`;
 }
 
-async function resolveCaptainWorkspace(project: string): Promise<{
+export async function resolveCaptainWorkspace(project: string): Promise<{
   runtime: RuntimeDriver;
   workspaceId: string;
 }> {
