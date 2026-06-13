@@ -93,6 +93,9 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
+const resolveCrewRoute = vi.hoisted(() => vi.fn());
+vi.mock("../../control/crew-routing.js", () => ({ resolveCrewRoute }));
+
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren, isTurnAccepted } from "../crew.js";
 
 const baseConfig = {
@@ -142,6 +145,9 @@ describe("cockpit crew spawn", () => {
     // Default: pretend the codex role template is absent so older tests that
     // don't care about role injection still pass unchanged.
     existsSyncMock.mockReturnValue(false);
+    resolveCrewRoute.mockReset();
+    // Default: no routing match (fall through to existing defaults).
+    resolveCrewRoute.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -568,6 +574,83 @@ describe("cockpit crew spawn", () => {
     status.mockResolvedValue(null);
     await expect(runCrewSpawn({ project: "brove", task: "x" }))
       .rejects.toThrow(/captain workspace 'brove-captain' is not running/i);
+  });
+
+  describe("leveled crew routing (#275)", () => {
+    it("uses routed agent+model when no explicit agent/model provided and routing matches", async () => {
+      loadConfig.mockReturnValue(baseConfig);
+      status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+      listSurfaces.mockResolvedValue([]);
+      newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+      buildCommand.mockReturnValue("claude --model sonnet ...");
+      buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-route1" } }));
+      cockpitdCall.mockResolvedValue({ id: "task-route1" });
+      resolveCrewRoute.mockReturnValue({ agent: "claude", model: "sonnet", tier: "hard", matchedRule: "refactor|implement" });
+
+      const promise = runCrewSpawn({ project: "brove", task: "refactor the daemon" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+
+      expect(resolveCrewRoute).toHaveBeenCalledWith("refactor the daemon", baseConfig);
+      expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "sonnet" }));
+    });
+
+    it("explicit --agent overrides routing when agentExplicit=true", async () => {
+      loadConfig.mockReturnValue(baseConfig);
+      status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+      listSurfaces.mockResolvedValue([]);
+      newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+      buildCommand.mockReturnValue("gemini ...");
+      // routing would suggest claude/sonnet but agentExplicit=true suppresses it
+      resolveCrewRoute.mockReturnValue({ agent: "claude", model: "sonnet", tier: "hard", matchedRule: "refactor" });
+
+      await runCrewSpawn({ project: "brove", task: "refactor the daemon", agent: "gemini", agentExplicit: true });
+
+      // routing should NOT have been consulted
+      expect(resolveCrewRoute).not.toHaveBeenCalled();
+      expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
+    });
+
+    it("explicit --model overrides routing model even when agentExplicit is false", async () => {
+      loadConfig.mockReturnValue(baseConfig);
+      status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+      listSurfaces.mockResolvedValue([]);
+      newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+      buildCommand.mockReturnValue("claude --model opus ...");
+      buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-modelx" } }));
+      cockpitdCall.mockResolvedValue({ id: "task-modelx" });
+
+      const promise = runCrewSpawn({ project: "brove", task: "refactor the daemon", model: "opus" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+
+      // model passed explicitly → routing skipped entirely
+      expect(resolveCrewRoute).not.toHaveBeenCalled();
+      expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "opus" }));
+    });
+
+    it("falls through to defaults.roles.crew when routing returns null", async () => {
+      loadConfig.mockReturnValue({
+        ...baseConfig,
+        defaults: {
+          ...baseConfig.defaults,
+          roles: { crew: { agent: "claude", model: "opus" } },
+        },
+      });
+      status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+      listSurfaces.mockResolvedValue([]);
+      newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+      buildCommand.mockReturnValue("claude --model opus ...");
+      buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-fallthrough" } }));
+      cockpitdCall.mockResolvedValue({ id: "task-fallthrough" });
+      resolveCrewRoute.mockReturnValue(null);
+
+      const promise = runCrewSpawn({ project: "brove", task: "some unmatched task" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+
+      expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "opus" }));
+    });
   });
 });
 

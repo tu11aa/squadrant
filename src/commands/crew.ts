@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
+import { resolveCrewRoute } from "../control/crew-routing.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import {
   createClaudeDriver,
@@ -224,6 +225,8 @@ export interface CrewSpawnInput {
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model.
    *  Agent-specific alias (e.g. "sonnet", "opus" for claude; "gpt-5.5" for codex). */
   model?: string;
+  /** True when --agent was explicitly passed by the caller; suppresses crew routing. */
+  agentExplicit?: boolean;
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
@@ -269,13 +272,22 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       })
     : proj.path;
 
+  // #275 leveled crew routing: consult routing rules when agent/model were not
+  // explicitly provided by the caller. Explicit --agent or --model always win.
+  const route = !input.agentExplicit && !input.model
+    ? resolveCrewRoute(input.task, config)
+    : null;
+  if (route) {
+    console.log(chalk.dim(`routed: tier=${route.tier} → ${route.agent}${route.model ? `/${route.model}` : ""} (rule: "${route.matchedRule}")`));
+  }
+
   const agents = new CapabilityRegistry({
     claude: createClaudeDriver(),
     codex: createCodexDriver(),
     gemini: createGeminiDriver(),
     opencode: createOpencodeDriver(),
   });
-  const agentName = input.agent ?? "claude";
+  const agentName = route?.agent ?? input.agent ?? "claude";
   const agent = agents.get(agentName);
   if (!agent) {
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
@@ -318,7 +330,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
-  const crewModel = input.model ?? configModel;
+  const crewModel = input.model ?? route?.model ?? configModel;
 
   // Claude crews route through the control-plane daemon (PR #85 + this spec)
   // so the captain learns terminal state via `cockpit crew status` instead
@@ -674,15 +686,18 @@ crewCommand
       project: string,
       task: string | undefined,
       opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; worktree: boolean; taskFile?: string; model?: string },
+      cmd: Command,
     ) => {
       try {
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
+        const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
           project,
           task: resolvedTask,
           name: opts.name,
           direction: opts.direction,
           agent: opts.agent,
+          agentExplicit,
           // --approval is provider-agnostic: codex consumes approvalPolicy,
           // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),

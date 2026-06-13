@@ -147,6 +147,32 @@ Open as a side-by-side pane when you want live preview:
 cockpit crew spawn brove "Fix typo in README" --direction right
 ```
 
+### Leveled crew routing
+
+When you spawn a crew without an explicit `--agent` or `--model`, cockpit automatically
+consults the routing rules in `defaults.crewRouting.rules` (config.json) and picks the
+right tier for the task:
+
+| Tier | Matches | Routes to |
+|------|---------|-----------|
+| extreme | redesign, architect, rewrite, from scratch | claude/opus |
+| hard | refactor, migrate, implement, feature | claude/sonnet |
+| mobile | mobile, ios, swift, android, kotlin | codex |
+| daily | typo, rename, bump, docs, lint | opencode |
+
+The chosen route is printed as a dim one-liner before the spawn completes, e.g.:
+```
+routed: tier=hard → claude/sonnet (rule: "refactor|migrate|implement|feature|daemon|control-plane")
+```
+
+**Override at any time** — explicit flags always win over routing:
+```bash
+cockpit crew spawn brove "refactor auth" --agent codex     # forces codex despite "hard" tier
+cockpit crew spawn brove "fix typo" --model opus           # forces opus despite "daily" tier
+```
+
+To add, edit, or remove routing rules: use the `cockpit:add-pick-crew-rule` skill.
+
 ### Rules
 
 - **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.

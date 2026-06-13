@@ -27,6 +27,17 @@ export interface PermissionConfig {
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
 
+export interface CrewRoutingRule {
+  tier: string;
+  match: string;
+  agent: string;
+  model?: string;
+}
+
+export interface CrewRoutingConfig {
+  rules: CrewRoutingRule[];
+}
+
 export interface ModelRoutingConfig {
   command: ModelAlias;
   captain: ModelAlias;
@@ -73,6 +84,8 @@ export interface CockpitConfig {
     roles?: RoleConfig;
     /** #225 hard crew task-timeout ceiling (ms). Default: 8h. */
     taskTimeoutMs?: number;
+    /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
+    crewRouting?: CrewRoutingConfig;
   };
   metrics: {
     enabled: boolean;
@@ -114,6 +127,14 @@ export function getDefaultConfig(): CockpitConfig {
         exploration: { agent: "claude", model: "haiku" },
       },
       taskTimeoutMs: 8 * 60 * 60 * 1000,
+      crewRouting: {
+        rules: [
+          { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
+          { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
+          { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
+          { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
+        ],
+      },
     },
     metrics: {
       enabled: true,
