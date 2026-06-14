@@ -177,7 +177,7 @@ To add, edit, or remove routing rules: use the `cockpit:add-pick-crew-rule` skil
 
 - **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.
 - **Close crews you're done with** (`cockpit crew close ...`) so they don't accumulate.
-- Do NOT manually run `git worktree add`. The crew operates in the captain's checkout. If a task genuinely requires worktree isolation, ask the user.
+- Crews run in **isolated worktrees by default** (parallel-safe, branch per crew). Pass `--shared` only for tiny/one-off tasks that don't need branch isolation. Never hand-run `git worktree add` — `cockpit crew spawn` handles it.
 - Do NOT edit source code yourself — always delegate to crew.
 - Respect `maxCrew` — don't exceed the configured concurrent crew count.
 - **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
