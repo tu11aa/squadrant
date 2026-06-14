@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-14
+
+A coordination-layer release headlined by **leveled crew routing** and the **side-sessions framework**, plus two crew-lifecycle reliability fixes — crews now signal `DONE` on their own, and `--worktree` crews are genuinely isolated. Also ships **experimental** cross-project intra-group delegation.
+
+### Added
+
+- **Leveled crew routing.** Captains now pick a crew's agent + model by task tier via a configurable `defaults.crewRouting.rules[]` ruleset (JSON, keyword → tier → `{agent, model}`, first-match-wins by array order). `resolveCrewRoute` is consulted at spawn; an explicit `--agent`/`--model` always overrides. New `cockpit:add-pick-crew-rule` skill edits the ruleset. Default tiers: extreme→claude/opus, hard→claude/sonnet, mobile→codex, daily→opencode. Closes #275. (#276)
+
+- **Side-sessions framework.** New `cockpit side spawn|send|list|close --role research|debug` opens a dedicated fresh-context tab on the **captain model (opus)**, deliberately **off the crew/daemon lifecycle** — no task record, no `CREW IDLE/DONE` noise to the primary captain. `research` discusses ideas and produces artifacts (issue/spec/plan) with no edits; `debug` does systematic-debugging in an isolated scratch worktree (instrument + failing test, never ships) and hands a diagnosis + optional draft patch back. Report-back is offer-and-confirm: a structured handoff via `cockpit runtime send` to the captain pane plus a durable `{spokeVault}/side-handoffs/<topic>.md` record. New `cockpit:side-session` skill. Closes #283. (#284, #285)
+
+- **Cross-project intra-group delegation (experimental).** `cockpit group dispatch <to-project> "<task>"` records a tracked task on a same-group sibling and wakes its captain via the existing mailbox/relay; the dispatcher yields and is notified when the task settles (done/blocked/failed). Validates same-group + `acceptDelegations`, attempts boot-if-down with a bounded warmup poll, and rejects loudly (task not recorded) on warmup failure. **Experimental:** boot-if-down of a *down* sibling does not yet reliably produce an operational target captain (#288) — works best when the target captain is already up. Closes #246. (#274)
+
+- **PR-time CI.** `ci.yml` now runs the build + full test suite on every pull request to `develop` and `main`, closing the gap where broken tests could reach `develop` silently (tests previously ran only on push to `main`). (#273)
+
+### Fixed
+
+- **Crew `DONE` is now signalled reliably and unprompted.** claude and opencode crews used to finish their work, report via text, and end the turn without ever running `cockpit crew signal done` → the watchdog parked the task at `awaiting-input` (`CREW IDLE`), so the captain never saw `CREW DONE`. The first turn sent to claude/opencode crews now carries a concrete **completion-protocol** suffix with `--task-id`/`--project` baked in (codex parity — robust to the keystroke-env race AND to model discretion). captain-ops also gained a **"Handling CREW IDLE"** reconciliation step (classify done-vs-waiting-vs-working on a single spot-check). Closes #278. (#281)
+
+- **`--worktree` crews are now isolated.** A `--worktree` crew used to run git in the captain's MAIN checkout (the pane was created in the captain workspace cwd and the session never `cd`'d into the worktree), dragging the captain's HEAD onto the crew branch. The claude/opencode launch now `cd`s into the spawn cwd first (no-op for non-worktree spawns). Closes #279. (#282)
+
+- **crewRouting config-migration backfill.** Existing `~/.config/cockpit/config.json` files written before routing existed never received `defaults.crewRouting`, so leveled routing was a silent no-op. `loadConfig` now backfills the default ruleset when absent, persists it once, and prints a one-time upgrade notice. Closes #286. (#289)
+
+- **Relay draft-preservation third state.** `parseDraftFromScreen` now defers delivery on an overlay/unknown screen instead of misclassifying it, so a crew reply can't clobber an in-progress captain draft in that state. (#268) (#272)
+
+- **Daemon teardown flake + crew anti-polling guidance.** The daemon test teardown now awaits async server close (eliminates an `ENOTEMPTY` flake, #146); captain-ops gained an anti-polling guard so captains don't spin unbounded `until` loops reading crew screens (#241). (#277)
+
 ## [0.5.4] - 2026-06-11
 
 A stability release headlined by the **RAM-flood fix** — orphaned headless `claude -p` sessions no longer accumulate until the machine runs out of memory. Also adds per-spawn `--model` override, captain-draft preservation in the inbox, a captain-managed relay with live `cockpit relay logs`, `PROTOCOL_VERSION` framing, `cockpit heal`, and project-management skills.
