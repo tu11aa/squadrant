@@ -223,10 +223,12 @@ async function launchWorkspace(
   });
 
   if (initialPrompt) {
-    // Small delay to let agent initialize before sending prompt
+    // #288: cold-boot Claude sessions need ~8s to initialize before they can
+    // receive input. 3s was too short — startup prompt arrived at the loading
+    // screen and was silently dropped, so relay supervisor never ran.
     setTimeout(() => {
       runtime.send(ref.id, initialPrompt).catch(() => { /* best-effort */ });
-    }, 3000);
+    }, 8000);
   }
 
   if (navigate) {
