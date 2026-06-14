@@ -720,6 +720,18 @@ describe("parseDraftFromScreen", () => {
     expect(parseDraftFromScreen(screen)).toBe("hello world");
   });
 
+  // Captain follow-up on #297: if user types "hello world" then presses Ctrl-A/Home to move
+  // the cursor to the start, does cmux read-screen render "❯\xa0▌hello world" (leading ▌)?
+  // Verified: CC uses native ANSI cursor positioning, NOT a ▌ glyph — cursor-at-position-0
+  // on an idle CC session captures as ❯\xa0 (0xe2 0x9d 0xaf 0xc2 0xa0, no 0xe2 0x96 0x8c).
+  // cmux read-screen output is ❯\xa0hello world regardless of cursor position.
+  // Heuristic #1 (/^[▌█]/ skip) is therefore unreachable for real typed drafts — no clobber.
+  it("returns real draft when cursor is at start of typed text (no leading ▌ in CC output — #297)", () => {
+    // This is exactly what cmux read-screen yields after: type "hello world", press Ctrl-A.
+    const screen = makeTestScreen("❯\xa0hello world");
+    expect(parseDraftFromScreen(screen)).toBe("hello world");
+  });
+
   // Regression fixture: real ghost screen captured from live captain during #294.
   // Input box between HR boundaries contains ❯\xa0<ghost> — must return "".
   it("returns '' for real ghost-placeholder fixture (regression #294)", () => {

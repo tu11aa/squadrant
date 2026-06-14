@@ -134,9 +134,13 @@ export function parseDraftFromScreen(screen: string): string | null {
       if (plainMatch) extracted = plainMatch[1].trim();
     }
     if (extracted !== undefined) {
-      // Leading cursor glyph (▌/█ at position 0): cursor is at the start of the input,
-      // meaning nothing has been typed. Any text that follows is a ghost suggestion
-      // rendered by CC at the cursor position (#294). Treat the entire line as empty.
+      // Heuristic #1 — Leading cursor glyph (▌/█) at position 0.
+      // CC renders its input cursor via native ANSI terminal positioning, NOT as a ▌ cell
+      // character: a live cmux read-screen of an idle CC session with cursor at position 0
+      // yields ❯\xa0 with no ▌ (confirmed by 258-parse-bug-fixture.txt L24 and a fresh
+      // crew session capture). Therefore ▌ at the start cannot arise from the user moving
+      // the cursor to the beginning of real typed text — it only appears when CC itself
+      // renders a UI placeholder at that position (#294). Safe to treat as empty. (#297)
       if (/^[▌█▔▎▏▌█]/.test(extracted)) continue;
 
       // Strip terminal cursor glyphs (▌, █, etc.) that trail the caret position
