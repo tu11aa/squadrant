@@ -230,6 +230,53 @@ describe("cmux driver", () => {
     expect(cmds.every((c) => !c.includes("--direction"))).toBe(true);
   });
 
+  // #295: new tab steals cmux focus, leaking user keystrokes into crew launch command.
+  // Fix: snapshot selected surface before new-surface, restore focus after creation.
+  it("newPane with direction=tab restores focus to the previously-selected surface (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("tree")) {
+        return [
+          'surface surface:5 [terminal] "captain" [selected]',
+          'surface surface:6 [terminal] "crew-1"',
+        ].join("\n");
+      }
+      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
+      return "";
+    });
+    await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) =>
+      c.includes("move-surface") &&
+      c.includes("--surface surface:5") &&
+      c.includes("--index 0") &&
+      c.includes("--focus true"))).toBe(true);
+  });
+
+  it("newPane with direction=tab skips focus restore gracefully when tree is unreadable (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("tree")) throw new Error("tree unreadable");
+      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
+      return "";
+    });
+    const pane = await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
+    expect(pane.surfaceId).toBe("surface:8");
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+  });
+
+  it("newPane with split direction does NOT query tree or restore focus (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("new-pane")) return "OK surface:27 pane:25 workspace:1";
+      return "";
+    });
+    await driver.newPane({ workspaceId: "workspace:1", direction: "right" });
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.every((c) => !c.includes("tree"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+  });
+
   it("newPane with direction=tab and title renames the new surface", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("new-surface")) return "OK surface:42 workspace:7";

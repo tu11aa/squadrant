@@ -242,6 +242,19 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
+      // #295: snapshot the focused surface before creating a new tab so we can
+      // restore focus afterward. new-surface steals focus; the captain's
+      // keystrokes would otherwise land in the crew's launch command line.
+      // Applies only to tabs (new-surface); split-panes keep cmux default focus.
+      let priorSurface: string | undefined;
+      let priorIndex = -1;
+      if (opts.direction === "tab") {
+        try {
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId]));
+          priorIndex = before.findIndex((s) => s.selected);
+          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
+        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
+      }
       const cmd = opts.direction === "tab"
         ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId]
         : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId];
@@ -255,6 +268,11 @@ export function createCmuxDriver(): RuntimeDriver {
         try {
           cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
+      }
+      if (opts.direction === "tab" && priorSurface) {
+        try {
+          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
+        } catch { /* refocus is best-effort */ }
       }
       return { workspaceId: opts.workspaceId, surfaceId };
     },
