@@ -16,8 +16,10 @@ export class CmuxTimeoutError extends Error {
 
 // #258 Approach B: thrown by sendToSurface when the captain has any draft in
 // the input box. The relay defers delivery until the input is empty.
+// #302: carries the observed draft text so the relay can detect content
+// stability (same content for K polls = not actively typing → safe to probe).
 export class DeferDelivery extends Error {
-  constructor() {
+  constructor(public readonly draft: string | null = null) {
     super("deferred: captain composing");
     this.name = "DeferDelivery";
   }
@@ -134,13 +136,60 @@ export function parseDraftFromScreen(screen: string): string | null {
       if (plainMatch) extracted = plainMatch[1].trim();
     }
     if (extracted !== undefined) {
+      // Heuristic #1 — Leading cursor glyph (▌/█) at position 0.
+      // CC renders its input cursor via native ANSI terminal positioning, NOT as a ▌ cell
+      // character: a live cmux read-screen of an idle CC session with cursor at position 0
+      // yields ❯\xa0 with no ▌ (confirmed by 258-parse-bug-fixture.txt L24 and a fresh
+      // crew session capture). Therefore ▌ at the start cannot arise from the user moving
+      // the cursor to the beginning of real typed text — it only appears when CC itself
+      // renders a UI placeholder at that position (#294). Safe to treat as empty. (#297)
+      if (/^[▌█▔▎▏▌█]/.test(extracted)) continue;
+
       // Strip terminal cursor glyphs (▌, █, etc.) that trail the caret position
       const draft = extracted.replace(/\s*[▌█▔▎▏▌█]+\s*$/, "").trim();
+
+      // Claude Code UI placeholder: appears in Working state when input is locked
+      // (user cannot type). "Press [key] to [action]" strings are UI instructions
+      // shown as ghost suggestions — never real user-typed content (#294).
+      if (/^Press\s+(?:up|down|left|right|enter|escape|esc|tab|any\s+key|ctrl|shift|alt)\s+to\s+/i.test(draft)) continue;
+
       if (draft) return draft;
     }
   }
 
   return "";
+}
+
+/**
+ * Extract the RAW input-box content for the #302 buffer-liveness probe — all
+ * content lines between the last two HRs, joined, with the prompt glyph and any
+ * trailing cursor glyph stripped (but NOT the #294 ghost heuristics: the probe
+ * needs the literal rendered text to diff before/after a backspace). Returns
+ * null if the box boundaries aren't visible (overlay/scroll). Unlike
+ * parseDraftFromScreen this captures EVERY content line, so a multi-line draft's
+ * change on its last line is not missed.
+ */
+export function readInputBoxRaw(screen: string): string | null {
+  if (!screen) return null;
+  const lines = screen.split(/\r?\n/);
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) bottomHR = i;
+      else { topHR = i; break; }
+    }
+  }
+  if (topHR === -1) return null;
+  const parts: string[] = [];
+  for (const line of lines.slice(topHR + 1, bottomHR)) {
+    let s = line.replace(/│/g, " ");        // drop box-drawing borders
+    s = s.replace(/^\s*[>❯]\s?/, "");        // drop the leading prompt glyph + one space
+    s = s.replace(/\s*[▌█▔▎▏]+\s*$/, "");    // drop a trailing cursor glyph
+    parts.push(s);
+  }
+  return parts.join("").replace(/\s+$/, ""); // trim only the trailing edge
 }
 
 export function createCmuxDriver(): RuntimeDriver {
@@ -242,6 +291,19 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
+      // #295: snapshot the focused surface before creating a new tab so we can
+      // restore focus afterward. new-surface steals focus; the captain's
+      // keystrokes would otherwise land in the crew's launch command line.
+      // Applies only to tabs (new-surface); split-panes keep cmux default focus.
+      let priorSurface: string | undefined;
+      let priorIndex = -1;
+      if (opts.direction === "tab") {
+        try {
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId]));
+          priorIndex = before.findIndex((s) => s.selected);
+          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
+        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
+      }
       const cmd = opts.direction === "tab"
         ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId]
         : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId];
@@ -255,6 +317,11 @@ export function createCmuxDriver(): RuntimeDriver {
         try {
           cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
+      }
+      if (opts.direction === "tab" && priorSurface) {
+        try {
+          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
+        } catch { /* refocus is best-effort */ }
       }
       return { workspaceId: opts.workspaceId, surfaceId };
     },
@@ -324,39 +391,56 @@ export function createCmuxDriver(): RuntimeDriver {
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
-    async sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void> {
+    async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void> {
+      const ws = surface.workspaceId;
+      const sf = surface.surfaceId;
+      const deliver = () => {
+        cmux(["send", "--workspace", ws, "--surface", sf, sanitizeForCmuxSend(text)]);
+        cmux(["send-key", "--workspace", ws, "--surface", sf, "Enter"]);
+      };
+
       // #258/#268 Approach B: deliver only when the captain's input is positively
       // confirmed empty. null = box not visible (overlay/menu/scroll) → always defer.
-      let draft: string | null = null;
+      let screen = "";
       try {
-        const screen = cmux(["read-screen", "--workspace", surface.workspaceId, "--surface", surface.surfaceId]);
-        draft = parseDraftFromScreen(screen);
-      } catch { /* screen unreadable — draft stays null, will defer below */ }
+        screen = cmux(["read-screen", "--workspace", ws, "--surface", sf]);
+      } catch { /* screen unreadable — parseDraftFromScreen("") → null → defer below */ }
+      const draft = parseDraftFromScreen(screen);
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).
-      if (draft === null) {
-        throw new DeferDelivery();
+      if (draft === null) throw new DeferDelivery(null);
+
+      // Empty input — nothing to protect, deliver directly.
+      if (draft === "") { deliver(); return; }
+
+      // A draft is present. On the hot path (no probe) we NEVER keystroke — we
+      // defer and carry the content so the relay can track stability (#302).
+      if (!opts?.probe) throw new DeferDelivery(draft);
+
+      // #302 buffer-liveness probe (replaces the old destructive backspace×N
+      // clear + re-paste, which MATERIALIZED ghost suggestions). A real draft is
+      // the ONLY thing that yields the "last char removed, still non-empty"
+      // signature under ONE backspace (verified live, CC 2.1.x); a ghost either
+      // stays invariant or dismisses to empty. So we PROTECT only on that exact
+      // signature, and we NEVER re-paste screen-read content.
+      const before = readInputBoxRaw(screen);
+      cmux(["send-key", "--workspace", ws, "--surface", sf, "backspace"]);
+      let afterScreen = "";
+      try {
+        afterScreen = cmux(["read-screen", "--workspace", ws, "--surface", sf]);
+      } catch { /* unreadable after probe — treat as no real draft, fall through to deliver */ }
+      const after = readInputBoxRaw(afterScreen);
+
+      if (before !== null && after !== null && after.length > 0 && after === before.slice(0, -1)) {
+        // Confirmed REAL draft. Restore the single char our probe removed (NOT a
+        // full re-paste — at most one known char), then defer. Never clobber, and
+        // a ghost can never reach this branch, so it can never be materialized.
+        cmux(["send", "--workspace", ws, "--surface", sf, before.slice(-1)]);
+        throw new DeferDelivery(draft);
       }
 
-      if (draft && !opts?.force) {
-        // Captain is composing — defer until input clears (relay retries next poll).
-        throw new DeferDelivery();
-      }
-
-      if (draft && opts?.force) {
-        // Walk-away last-resort: backspace×(N+2) clears, deliver, restore draft.
-        const backspaceCount = draft.length + 2;
-        for (let i = 0; i < backspaceCount; i++) {
-          cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "backspace"]);
-        }
-        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
-        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(draft)]);
-      } else {
-        // Input is empty — deliver directly, nothing to protect.
-        cmux(["send", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, sanitizeForCmuxSend(text)]);
-        cmux(["send-key", "--workspace", surface.workspaceId, "--surface", surface.surfaceId, "Enter"]);
-      }
+      // No real draft (ghost dismissed/invariant, or buffer now empty) → deliver.
+      deliver();
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {

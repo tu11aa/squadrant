@@ -73,6 +73,8 @@ export interface RuntimeDriver {
   // targets one surface directly. Used by the notify-relay injector to
   // deliver messages to the captain's primary surface. Throws if the surface
   // no longer exists.
-  // opts.force=true skips the idle-defer stability check (#258 phase 2).
-  sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void>;
+  // opts.probe=true runs the #302 buffer-liveness probe: deliver only if no real
+  // draft is present (protects a real draft, never materializes a ghost). Without
+  // it, any draft defers (#258/#268 deliver-when-empty).
+  sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void>;
 }

@@ -234,9 +234,10 @@ export interface CrewSpawnInput {
   direction?: PanePlacement;
   agent?: string;
   approvalPolicy?: string;
-  /** Opt-in (#216): run this crew in its own git worktree + branch instead of
-   *  the shared root checkout. For feature tasks; small/one-off tasks omit it. */
-  worktree?: boolean;
+  /** Opt-out (#296): run this crew in the root checkout instead of an isolated
+   *  worktree. Pass true for small/one-off tasks that don't need branch isolation.
+   *  Default (undefined/false) = isolated worktree — parallel-safe. */
+  shared?: boolean;
   /** CP3 opt-in: gate risky tools (bash) so the captain approves them.
    *  codex maps this to approvalPolicy='untrusted'; opencode maps it to a
    *  bash:"ask" per-crew config. Default (false) = fully autonomous. */
@@ -275,13 +276,13 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   }
   const name = input.name ?? nextAutoName(existingTitles, input.project);
 
-  // Feature crews (--worktree) run in an isolated worktree+branch so a crew's
-  // `git checkout` can't drag the captain's (shared) HEAD. Small crews keep
-  // running on the root checkout — spawnCwd stays proj.path, behavior unchanged.
+  // Crews run in an isolated worktree+branch by default so multiple parallel
+  // crews never collide on a shared HEAD (#296). Pass shared:true (CLI: --shared)
+  // for small/one-off tasks that should run on the root checkout.
   // Build/daemon still run from the MAIN checkout's dist (#216): worktrees edit
   // source only. The worktree path becomes the crew's cwd via the existing cwd
   // plumbing (dispatch record + buildCommand workdir).
-  const spawnCwd = input.worktree
+  const spawnCwd = !input.shared
     ? addWorktree({
         repoRoot: proj.path,
         worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
@@ -697,14 +698,14 @@ crewCommand
   .option("--direction <dir>", "Placement: tab (default) or split direction (right|left|up|down)", "tab")
   .option("--agent <name>", "Agent CLI to use (claude|codex|gemini|opencode)", "claude")
   .option("--approval", "gate risky tools so the captain approves them (codex: approvalPolicy='untrusted'; opencode: bash:'ask')", false)
-  .option("--worktree", "run the crew in its own git worktree + branch (feature tasks; small tasks omit to share the root checkout)", false)
+  .option("--shared", "run the crew in the root checkout instead of an isolated worktree (for small/one-off tasks)", false)
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; worktree: boolean; taskFile?: string; model?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string },
       cmd: Command,
     ) => {
       try {
@@ -720,7 +721,7 @@ crewCommand
           // --approval is provider-agnostic: codex consumes approvalPolicy,
           // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
-          ...(opts.worktree ? { worktree: true } : {}),
+          ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
         });
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));

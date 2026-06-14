@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "../../control/mailbox.js";
-import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, DEFAULT_MAX_DEFERS } from "../notify-relay.js";
+import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, DEFAULT_MAX_DEFERS, DEFAULT_STABLE_PROBE_POLLS } from "../notify-relay.js";
 import { DeferDelivery } from "../../runtimes/cmux.js";
 import type { TaskRecord, ControlEvent } from "../../control/types.js";
 
@@ -268,14 +268,14 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
     expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("force-delivers after maxDeferDeliveries consecutive defers so message is never stuck", async () => {
+  it("probes after maxDeferDeliveries consecutive defers so message is never stuck (backstop)", async () => {
     const stateRoot = freshState();
     await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
     const TEST_MAX_DEFERS = 3; // inject small value so test runs fast
-    // Always defer unless force=true
+    // Always defer (bare DeferDelivery = no content → never stable) unless probe=true
     const sendSpy = vi.fn().mockImplementation(
-      (_surface: unknown, _msg: string, opts?: { force?: boolean }) => {
-        if (opts?.force) return Promise.resolve();
+      (_surface: unknown, _msg: string, opts?: { probe?: boolean }) => {
+        if (opts?.probe) return Promise.resolve();
         return Promise.reject(new DeferDelivery());
       },
     );
@@ -288,27 +288,27 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
       pollMs: 50,
       maxDeferDeliveries: TEST_MAX_DEFERS,
     });
-    // TEST_MAX_DEFERS polls + 1 force-deliver; at 50ms each = ~200ms; allow 500ms margin
+    // TEST_MAX_DEFERS polls + 1 probe-deliver; at 50ms each = ~200ms; allow 500ms margin
     await new Promise((r) => setTimeout(r, 500));
     stop();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
     expect(cursor?.lastAckedSeq).toBe(1);
-    // The call that succeeded must have had force=true
-    const forcedCall = sendSpy.mock.calls.find(
-      (c) => (c[2] as { force?: boolean } | undefined)?.force === true,
+    // The call that succeeded must have had probe=true
+    const probedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { probe?: boolean } | undefined)?.probe === true,
     );
-    expect(forcedCall).toBeDefined();
-    // Total calls = TEST_MAX_DEFERS defers + 1 force-deliver
+    expect(probedCall).toBeDefined();
+    // Total calls = TEST_MAX_DEFERS defers + 1 probe-deliver
     expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(TEST_MAX_DEFERS + 1);
   });
 
   it("honors config-injected maxDeferDeliveries override", async () => {
     const stateRoot = freshState();
     await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
-    // With maxDeferDeliveries=1, force-deliver should trigger after a single defer
+    // With maxDeferDeliveries=1, probe should trigger after a single (no-content) defer
     const sendSpy = vi.fn().mockImplementation(
-      (_surface: unknown, _msg: string, opts?: { force?: boolean }) => {
-        if (opts?.force) return Promise.resolve();
+      (_surface: unknown, _msg: string, opts?: { probe?: boolean }) => {
+        if (opts?.probe) return Promise.resolve();
         return Promise.reject(new DeferDelivery());
       },
     );
@@ -325,11 +325,87 @@ describe("notify-relay idle-defer (#258 phase 2)", () => {
     stop();
     const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
     expect(cursor?.lastAckedSeq).toBe(1);
-    // First call defers, second call force-delivers
     expect(sendSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const forcedCall = sendSpy.mock.calls.find(
-      (c) => (c[2] as { force?: boolean } | undefined)?.force === true,
+    const probedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { probe?: boolean } | undefined)?.probe === true,
     );
-    expect(forcedCall).toBeDefined();
+    expect(probedCall).toBeDefined();
+  });
+});
+
+// #302 — kill the ~5-min stall (the original #294 pain). When parseDraftFromScreen
+// reports the SAME non-empty content for K consecutive polls (~a few seconds), the
+// captain is NOT actively typing, so it is safe to PROBE early instead of waiting
+// for the 300-defer backstop. An UNRECOGNIZED ghost stabilizes in seconds → probed →
+// delivered fast. An actively-typing captain's content CHANGES → never stable → never
+// probed → pure defer (no keystroke race). DeferDelivery carries the observed draft.
+describe("notify-relay stability-probe (#302)", () => {
+  it("DEFAULT_STABLE_PROBE_POLLS is a small value (~few seconds at 1s cadence)", () => {
+    expect(DEFAULT_STABLE_PROBE_POLLS).toBeGreaterThanOrEqual(2);
+    expect(DEFAULT_STABLE_PROBE_POLLS).toBeLessThanOrEqual(10);
+  });
+
+  it("probes EARLY (before maxDefers) once content is stable for stableProbePolls consecutive polls", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    // Stable non-empty content every poll; resolve only when probe=true.
+    const sendSpy = vi.fn().mockImplementation(
+      (_surface: unknown, _msg: string, opts?: { probe?: boolean }) => {
+        if (opts?.probe) return Promise.resolve();
+        return Promise.reject(new DeferDelivery("wait for both crews to finish"));
+      },
+    );
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 30,
+      maxDeferDeliveries: 300, // backstop far away — stability must trigger first
+      stableProbePolls: 2,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    stop();
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq).toBe(1);
+    const probedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { probe?: boolean } | undefined)?.probe === true,
+    );
+    expect(probedCall, "probe must fire from stability, not the 300 backstop").toBeDefined();
+    // Far fewer than 300 calls — stability triggered early
+    expect(sendSpy.mock.calls.length).toBeLessThan(20);
+  });
+
+  it("never probes while content KEEPS CHANGING between polls (active typing — no keystroke race)", async () => {
+    const stateRoot = freshState();
+    await append(stateRoot, "CREW DONE [claude/deadbeef]: x");
+    // Different content each poll → never stable → must never probe within the window.
+    let n = 0;
+    const sendSpy = vi.fn().mockImplementation(
+      (_surface: unknown, _msg: string, opts?: { probe?: boolean }) => {
+        if (opts?.probe) return Promise.resolve();
+        return Promise.reject(new DeferDelivery("draft " + (n++)));
+      },
+    );
+    const stop = await runNotifyRelay({
+      project: "demo",
+      subscriber: "captain",
+      stateRoot,
+      runtime: fakeRuntime(sendSpy) as never,
+      captainName: "captain",
+      pollMs: 30,
+      maxDeferDeliveries: 300,
+      stableProbePolls: 2,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    stop();
+    // Cursor never advanced (never delivered) and no probe ever fired.
+    const cursor = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(cursor?.lastAckedSeq ?? 0).toBe(0);
+    const probedCall = sendSpy.mock.calls.find(
+      (c) => (c[2] as { probe?: boolean } | undefined)?.probe === true,
+    );
+    expect(probedCall).toBeUndefined();
   });
 });

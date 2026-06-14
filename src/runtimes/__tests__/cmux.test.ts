@@ -230,6 +230,53 @@ describe("cmux driver", () => {
     expect(cmds.every((c) => !c.includes("--direction"))).toBe(true);
   });
 
+  // #295: new tab steals cmux focus, leaking user keystrokes into crew launch command.
+  // Fix: snapshot selected surface before new-surface, restore focus after creation.
+  it("newPane with direction=tab restores focus to the previously-selected surface (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("tree")) {
+        return [
+          'surface surface:5 [terminal] "captain" [selected]',
+          'surface surface:6 [terminal] "crew-1"',
+        ].join("\n");
+      }
+      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
+      return "";
+    });
+    await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) =>
+      c.includes("move-surface") &&
+      c.includes("--surface surface:5") &&
+      c.includes("--index 0") &&
+      c.includes("--focus true"))).toBe(true);
+  });
+
+  it("newPane with direction=tab skips focus restore gracefully when tree is unreadable (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd.includes("tree")) throw new Error("tree unreadable");
+      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
+      return "";
+    });
+    const pane = await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
+    expect(pane.surfaceId).toBe("surface:8");
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+  });
+
+  it("newPane with split direction does NOT query tree or restore focus (#295)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("new-pane")) return "OK surface:27 pane:25 workspace:1";
+      return "";
+    });
+    await driver.newPane({ workspaceId: "workspace:1", direction: "right" });
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.every((c) => !c.includes("tree"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+  });
+
   it("newPane with direction=tab and title renames the new surface", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("new-surface")) return "OK surface:42 workspace:7";
@@ -537,40 +584,83 @@ describe("sendToSurface draft-preservation", () => {
     expect(sends[0]).toContain("crew is done");
   });
 
-  it("saves draft, clears input via backspaces, delivers, then restores draft without submitting (force=true)", async () => {
-    // "hello this is my draft" = 22 chars → 24 backspaces (draft.length + 2 margin)
-    const DRAFT = "hello this is my draft";
+  // #302 — the old destructive force path (backspace×N clear + re-paste the
+  // screen-read draft) is replaced by a non-destructive BUFFER-LIVENESS PROBE.
+  // Verified live (CC 2.1.x): a real draft is the ONLY thing that yields the
+  // "last char removed, still non-empty" signature under ONE backspace; a ghost
+  // either stays invariant or dismisses to empty. So the probe protects ONLY a
+  // real draft and NEVER re-pastes screen-read content (the materialization vector).
+  //
+  // Stateful mock of CC's input box: `box` is the content rendered between the
+  // HRs; one backspace transforms it per `onBackspace`; read-screen renders the
+  // current box. This lets a probe observe a DIFFERENT screen before vs after.
+  function probeMock(initial: string, onBackspace: (s: string) => string) {
+    let box = initial;
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) {
-        return makeTestScreen(`│ > ${DRAFT}  │`, "│ Some conversation history │");
-      }
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${box}`);
+      if (args.includes("send-key") && args.includes("backspace")) { box = onBackspace(box); return ""; }
       return "";
     });
-    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { force: true });
+  }
+
+  it("probe: real draft (last-char-removal signature) → restores the one removed char and defers; never re-pastes the draft, never delivers", async () => {
+    const DRAFT = "hello world";
+    probeMock(DRAFT, (s) => s.slice(0, -1)); // real draft: backspace removes exactly the last char
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
     const calls = execFileMock.mock.calls.map(argvOf);
+    // Exactly ONE backspace — the probe, NOT a backspace×N clear
+    expect(calls.filter((a) => a.includes("send-key") && a.includes("backspace"))).toHaveLength(1);
+    // Crew message must NEVER be delivered (we deferred to protect the draft)
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+    // The full draft must NEVER be re-pasted (this was the #302 materialization vector)
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(DRAFT)))).toBe(false);
+    // Only the single removed char ("d") is restored
+    const sends = calls.filter((a) => a[0] === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][sends[0].length - 1]).toBe("d");
+  });
 
-    // No ctrl-u: that key is a no-op against Claude Code's input box
-    expect(calls.every((a) => !a.includes("ctrl-u"))).toBe(true);
+  it("probe: ghost that DISMISSES to empty under backspace → delivers message+Enter, NEVER re-sends the ghost text (#302 materialization regression)", async () => {
+    const GHOST = "wait for both crews to finish";
+    probeMock(GHOST, () => ""); // verified live: the #294 queue ghost dismisses to empty
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true });
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // The ghost text is NEVER typed back into the box
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("wait for both crews")))).toBe(false);
+    // The crew message IS delivered and submitted
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
 
-    // Backspaces must precede the message send
-    const msgSendIdx = calls.findIndex((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")));
-    const backspacesBefore = calls.slice(0, msgSendIdx).filter((a) => a.includes("send-key") && a.includes("backspace")).length;
-    expect(backspacesBefore, "backspace count = draft.length + 2").toBe(DRAFT.length + 2);
+  it("probe: ghost INVARIANT under backspace (stays identical) → delivers, never re-sends the ghost", async () => {
+    const GHOST = "some persistent suggestion";
+    probeMock(GHOST, (s) => s); // invariant: backspace is a no-op on non-buffer ghost
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true });
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("persistent suggestion")))).toBe(false);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+  });
 
-    const enterIdx = calls.findIndex((a, i) => i > msgSendIdx && a.includes("send-key") && a.includes("Enter"));
-    // findLastIndex is ES2023; reverse-scan manually to stay within repo's tsconfig target
-    let restoreIdx = -1;
-    for (let i = calls.length - 1; i >= 0; i--) {
-      const a: string[] = calls[i];
-      if (a[0] === "send" && a.some((s: string) => s.includes(DRAFT))) { restoreIdx = i; break; }
-    }
-    expect(msgSendIdx).toBeGreaterThanOrEqual(0);
-    expect(enterIdx, "Enter after message").toBeGreaterThan(msgSendIdx);
-    // Restore send comes after Enter (draft goes back without submitting)
-    expect(restoreIdx, "restore after Enter").toBeGreaterThan(enterIdx);
-    // Restore must NOT be followed by another Enter
-    const cmdsAfterRestore = execFileMock.mock.calls.slice(restoreIdx + 1).map(cmdOf);
-    expect(cmdsAfterRestore.every((c) => !c.includes("Enter"))).toBe(true);
+  it("non-probe call with a draft present defers WITHOUT any keystroke (hot path unchanged — never races typing)", async () => {
+    probeMock("typing in progress", (s) => s.slice(0, -1));
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a.includes("backspace"))).toBe(false);
+    expect(calls.some((a) => a[0] === "send")).toBe(false);
+  });
+
+  it("DeferDelivery carries the observed draft text so the relay can track content stability", async () => {
+    probeMock("my draft text", (s) => s.slice(0, -1));
+    let caught: unknown;
+    try {
+      await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(DeferDelivery);
+    expect((caught as DeferDelivery).draft).toBe("my draft text");
   });
 
   // #268: unreadable screen → draft stays null → DeferDelivery (never deliver into unknown state).
@@ -697,6 +787,50 @@ describe("parseDraftFromScreen", () => {
     );
     expect(parseDraftFromScreen(fixture)).toBeNull();
   });
+
+  // #294: Claude Code ghost-suggestion placeholder must be treated as empty.
+  // "Press up to edit queued messages" is a CC UI hint, NOT user-typed content.
+  // Captured from a live captain in Working state: ❯ + U+00A0 NBSP + ghost text, no cursor block.
+  it("returns '' for CC ghost 'Press up to edit queued messages' (Working state, no cursor — #294)", () => {
+    // U+276F ❯, U+00A0 NBSP, then the placeholder text CC shows when there are queued messages
+    const screen = makeTestScreen("❯\xa0Press up to edit queued messages");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  // #294: idle-state variant — cursor block appears at position 0 BEFORE the ghost text.
+  // Leading ▌ means cursor is at the start, so nothing has actually been typed.
+  it("returns '' when cursor block precedes ghost text in idle state (leading cursor = empty — #294)", () => {
+    const screen = makeTestScreen("❯\xa0▌Press up to edit queued messages");
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+
+  // Regression guard (#258): real typed draft must still return its text after #294 fix.
+  it("still returns real draft text after #294 fix (regression guard for #258)", () => {
+    const screen = makeTestScreen("❯\xa0hello world");
+    expect(parseDraftFromScreen(screen)).toBe("hello world");
+  });
+
+  // Captain follow-up on #297: if user types "hello world" then presses Ctrl-A/Home to move
+  // the cursor to the start, does cmux read-screen render "❯\xa0▌hello world" (leading ▌)?
+  // Verified: CC uses native ANSI cursor positioning, NOT a ▌ glyph — cursor-at-position-0
+  // on an idle CC session captures as ❯\xa0 (0xe2 0x9d 0xaf 0xc2 0xa0, no 0xe2 0x96 0x8c).
+  // cmux read-screen output is ❯\xa0hello world regardless of cursor position.
+  // Heuristic #1 (/^[▌█]/ skip) is therefore unreachable for real typed drafts — no clobber.
+  it("returns real draft when cursor is at start of typed text (no leading ▌ in CC output — #297)", () => {
+    // This is exactly what cmux read-screen yields after: type "hello world", press Ctrl-A.
+    const screen = makeTestScreen("❯\xa0hello world");
+    expect(parseDraftFromScreen(screen)).toBe("hello world");
+  });
+
+  // Regression fixture: real ghost screen captured from live captain during #294.
+  // Input box between HR boundaries contains ❯\xa0<ghost> — must return "".
+  it("returns '' for real ghost-placeholder fixture (regression #294)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/294-ghost-placeholder-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseDraftFromScreen(fixture)).toBe("");
+  });
 });
 
 describe("sanitizeForCmuxSend", () => {
@@ -814,31 +948,42 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
     expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
   });
 
-  it("non-empty draft + force=true → backspace clear, deliver, restore without Enter", async () => {
-    const DRAFT = "my walk-away draft";
+  // #294: ghost placeholder must NOT trigger DeferDelivery — deliver immediately.
+  it("delivers immediately when input shows CC ghost placeholder (no DeferDelivery — #294)", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) return makeTestScreen(`❯ ${DRAFT}`);
+      if (args.includes("read-screen")) return makeTestScreen("❯\xa0Press up to edit queued messages");
       return "";
     });
-    await driver.sendToSurface(
-      { workspaceId: "workspace:3", surfaceId: "surface:8" },
-      "crew done",
-      { force: true },
-    );
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).resolves.toBeUndefined();
     const calls = execFileMock.mock.calls.map(argvOf);
-    const msgIdx = calls.findIndex((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")));
-    const backspacesBefore = calls.slice(0, msgIdx).filter((a) => a.includes("send-key") && a.includes("backspace")).length;
-    expect(backspacesBefore, "backspace count = draft.length + 2").toBe(DRAFT.length + 2);
-    const enterIdx = calls.findIndex((a, i) => i > msgIdx && a.includes("send-key") && a.includes("Enter"));
-    let restoreIdx = -1;
-    for (let i = calls.length - 1; i >= 0; i--) {
-      const a: string[] = calls[i];
-      if (a[0] === "send" && a.some((s: string) => s.includes(DRAFT))) { restoreIdx = i; break; }
-    }
-    expect(enterIdx, "Enter after message").toBeGreaterThan(msgIdx);
-    expect(restoreIdx, "restore after Enter").toBeGreaterThan(enterIdx);
-    // Restore must NOT be followed by another Enter
-    const afterRestore = execFileMock.mock.calls.slice(restoreIdx + 1).map(cmdOf);
-    expect(afterRestore.every((c) => !c.includes("Enter"))).toBe(true);
+    const msgIdx = calls.findIndex((a) => a[0] === "send" && a.includes("crew done"));
+    expect(msgIdx, "message was delivered").toBeGreaterThanOrEqual(0);
+    // No backspaces — ghost is not real content
+    expect(calls.every((a) => !a.includes("backspace"))).toBe(true);
+  });
+
+  // #302: a real walk-away draft under {probe:true} is detected by the
+  // last-char-removal signature → restore + defer; it is NEVER force-delivered
+  // (the old backspace×N clear + re-paste, which materialized ghosts, is gone).
+  it("real walk-away draft + probe=true → one backspace, restore one char, defers (never force-clobbers)", async () => {
+    const DRAFT = "my walk-away draft";
+    let box = DRAFT;
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${box}`);
+      if (args.includes("send-key") && args.includes("backspace")) { box = box.slice(0, -1); return ""; }
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Exactly ONE backspace (the probe), not draft.length+2
+    expect(calls.filter((a) => a.includes("send-key") && a.includes("backspace"))).toHaveLength(1);
+    // Message NOT delivered, full draft NEVER re-pasted, no Enter submitted
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(DRAFT)))).toBe(false);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(false);
   });
 });

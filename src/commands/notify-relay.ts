@@ -34,6 +34,13 @@ export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state")
 // Override via config key relay.maxDeferDeliveries.
 export const DEFAULT_MAX_DEFERS = 300;
 
+// #302 stability-probe: consecutive polls of byte-identical non-empty draft
+// content after which it is safe to PROBE (captain is not actively typing).
+// ~3s at the 1s poll cadence — kills the ~5min stall for unrecognized ghosts
+// while never racing a live typist (changing content resets the counter).
+// Override via config key relay.stableProbePolls.
+export const DEFAULT_STABLE_PROBE_POLLS = 3;
+
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
 export const PROBE_INTERVAL_MS = 10_000;
@@ -181,6 +188,8 @@ interface RunOpts {
   log?: (m: string) => void;
   /** Max consecutive defers before force-deliver. Default: DEFAULT_MAX_DEFERS. */
   maxDeferDeliveries?: number;
+  /** Consecutive stable-content polls before probing early (#302). Default: DEFAULT_STABLE_PROBE_POLLS. */
+  stableProbePolls?: number;
 }
 
 export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
@@ -204,10 +213,15 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
 
   const sessionStartMs = (opts.now ?? (() => Date.now()))();
   const maxDefers = opts.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS;
+  const stableProbePolls = opts.stableProbePolls ?? DEFAULT_STABLE_PROBE_POLLS;
 
   // #258 idle-defer: consecutive defer counts per mailbox seq.
   // Keyed by entry.seq; deleted on successful delivery.
   const deferCounts = new Map<number, number>();
+  // #302 stability tracking: last observed draft content + how many consecutive
+  // polls it stayed byte-identical. Stable non-empty content → safe to probe.
+  const lastContent = new Map<number, string | null>();
+  const stableCounts = new Map<number, number>();
 
   const cursor = await readCursor({
     stateRoot: opts.stateRoot,
@@ -262,14 +276,29 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         if (msg) {
           try {
             const deferCount = deferCounts.get(entry.seq) ?? 0;
-            const force = deferCount >= maxDefers;
+            // #302: probe early once content has been stable for stableProbePolls
+            // polls (captain not typing) — kills the ~5min stall; the 300-defer
+            // backstop still guarantees delivery never hangs forever.
+            const stable = (stableCounts.get(entry.seq) ?? 0) >= stableProbePolls;
+            const probe = stable || deferCount >= maxDefers;
             await (opts.runtime as RuntimeDriver & {
-              sendToSurface: (s: unknown, m: string, o?: { force?: boolean }) => Promise<void>;
-            }).sendToSurface(captainSurface, msg, force ? { force: true } : undefined);
+              sendToSurface: (s: unknown, m: string, o?: { probe?: boolean }) => Promise<void>;
+            }).sendToSurface(captainSurface, msg, probe ? { probe: true } : undefined);
             deferCounts.delete(entry.seq);
+            stableCounts.delete(entry.seq);
+            lastContent.delete(entry.seq);
           } catch (e) {
             if (e instanceof DeferDelivery) {
               deferCounts.set(entry.seq, (deferCounts.get(entry.seq) ?? 0) + 1);
+              // Track content stability: byte-identical non-empty draft across
+              // consecutive polls means the captain isn't actively typing (#302).
+              const content = e.draft;
+              if (content && content === lastContent.get(entry.seq)) {
+                stableCounts.set(entry.seq, (stableCounts.get(entry.seq) ?? 0) + 1);
+              } else {
+                stableCounts.set(entry.seq, 0);
+              }
+              lastContent.set(entry.seq, content);
               log(`deferred: captain typing (seq=${entry.seq})`);
               // Don't advance cursor; the next poll will retry from the same seq.
               return;
@@ -405,6 +434,7 @@ export const notifyRelayCommand = new Command("notify-relay")
         captainName: projCfg.captainName,
         pollMs: 1000,
         maxDeferDeliveries: config.relay?.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS,
+        stableProbePolls: config.relay?.stableProbePolls ?? DEFAULT_STABLE_PROBE_POLLS,
       });
       process.on("SIGTERM", () => process.exit(0));
     } catch (err) {

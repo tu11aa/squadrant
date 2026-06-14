@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-15
+
+A reliability patch addressing relay ghost-materialization, headless launcher I/O pressure, cross-project boot-if-down, and crew spawn focus leakage — plus a build fix and a CI gate.
+
+### Fixed
+
+- **Cross-project boot-if-down now works reliably.** The target captain is brought to operational before warmup is judged; warmup timeout extended from 30 s → 120 s and exposed as `--warmup-timeout` flag. Closes #288. (#291)
+
+- **Headless launcher I/O pressure reduced.** Task-progress writes are coalesced via a 250 ms / 50-chunk debounce with a final flush, stopping O(chunks) file writes. stdout/stderr capture is capped at a 4 MB tail to bound memory. Closes #88. (#293)
+
+- **Relay no longer materializes Claude Code ghost-suggestions into drafts.** A buffer-liveness probe replaces the destructive re-paste mechanism: the probe distinguishes a ghost auto-suggestion from a real draft without clearing the input, so a ghost can never be committed as a crew message. The ~5-min defer stall from the previous heuristic is also eliminated via an early stability-probe path. Closes #294 and #302. (#297, #303)
+
+- **`crew spawn` (tab) no longer steals cmux focus.** Captain focus is restored after the new-pane call, preventing keystroke leakage into the crew launch command. Closes #295. (#299)
+
+- **TypeScript build error in headless-launcher tests fixed.** The `writeResult` mock was typed incorrectly, breaking `npm run build`. Closes #300. (#301)
+
+### Changed
+
+- **`crew spawn` defaults to an isolated git worktree+branch.** Parallel crews no longer collide on a shared working tree; opt out with `--shared` for small single-file tasks. Closes #296. (#298)
+
+- **CI `build-and-test` is a required merge gate on `develop`.** Broken builds and test failures are now caught at PR time rather than after merge.
+
 ## [0.6.0] - 2026-06-14
 
 A coordination-layer release headlined by **leveled crew routing** and the **side-sessions framework**, plus two crew-lifecycle reliability fixes — crews now signal `DONE` on their own, and `--worktree` crews are genuinely isolated. Also ships **experimental** cross-project intra-group delegation.

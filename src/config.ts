@@ -75,6 +75,8 @@ export interface CockpitConfig {
   relay?: {
     /** Max consecutive defers before force-delivering a message (~1s poll cadence). Default: 300 (~5min). */
     maxDeferDeliveries?: number;
+    /** Consecutive stable-content polls before probing early to avoid a stall (#302). Default: 3 (~3s). */
+    stableProbePolls?: number;
   };
   defaults: {
     maxCrew: number;

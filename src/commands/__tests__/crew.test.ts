@@ -139,6 +139,9 @@ describe("cockpit crew spawn", () => {
     writePerCrewOpencodeConfig.mockReset();
     writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
     addWorktree.mockReset();
+    // Default: worktree isolation is now the default (#296) — return a reasonable path so tests
+    // that don't explicitly opt out don't fail trying to use an undefined cwd.
+    addWorktree.mockReturnValue("/tmp/brove/.worktrees/brove-crew-1");
     removeWorktree.mockReset();
     existsSyncMock.mockReset();
     readFileSyncMock.mockReset();
@@ -172,13 +175,13 @@ describe("cockpit crew spawn", () => {
       provider: "claude",
       mode: "interactive",
       project: "brove",
-      cwd: "/tmp/brove",
+      cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
     expect(cockpitdCall).toHaveBeenCalledTimes(1);
-    // Cockpit hooks written to .claude/settings.local.json (auto-loaded source).
+    // Cockpit hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
-      projectCwd: "/tmp/brove",
+      projectCwd: "/tmp/brove/.worktrees/brove-crew-1",
     }));
     expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({
       interactive: true,
@@ -204,7 +207,7 @@ describe("cockpit crew spawn", () => {
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
-  it("--worktree creates an isolated worktree and spawns the crew with its path as cwd", async () => {
+  it("default spawn creates an isolated worktree and spawns the crew with its path as cwd", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -215,7 +218,7 @@ describe("cockpit crew spawn", () => {
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
-    const promise = runCrewSpawn({ project: "brove", task: "do the thing", worktree: true });
+    const promise = runCrewSpawn({ project: "brove", task: "do the thing" });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
@@ -233,16 +236,16 @@ describe("cockpit crew spawn", () => {
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({ projectCwd: wtPath }));
   });
 
-  it("without --worktree never creates a worktree (cwd stays the root checkout)", async () => {
+  it("--shared opt-out skips worktree creation (cwd stays the root checkout)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
-    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nowt" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-nowt" });
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-shared" } }));
+    cockpitdCall.mockResolvedValue({ id: "task-shared" });
 
-    const promise = runCrewSpawn({ project: "brove", task: "do the thing" });
+    const promise = runCrewSpawn({ project: "brove", task: "do the thing", shared: true });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
@@ -264,14 +267,14 @@ describe("cockpit crew spawn", () => {
     cockpitdCall.mockResolvedValue({ id: "task-wtc" });
     addWorktree.mockReturnValue("/tmp/brove/.wt/brove-crew-1");
 
-    const promise = runCrewSpawn({ project: "brove", task: "task", worktree: true });
+    const promise = runCrewSpawn({ project: "brove", task: "task" });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
     expect(addWorktree).toHaveBeenCalledWith(expect.objectContaining({ worktreeDir: ".wt" }));
   });
 
-  it("--worktree claude crew: launch command starts with cd into worktree path", async () => {
+  it("claude crew: launch command starts with cd into worktree path (default isolation)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -282,7 +285,7 @@ describe("cockpit crew spawn", () => {
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
-    const promise = runCrewSpawn({ project: "brove", task: "feature work", worktree: true });
+    const promise = runCrewSpawn({ project: "brove", task: "feature work" });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
@@ -291,7 +294,7 @@ describe("cockpit crew spawn", () => {
     expect(launchCmd).toMatch(/^cd '\/tmp\/brove\/\.worktrees\/brove-crew-1' && /);
   });
 
-  it("non-worktree claude crew: launch command starts with cd into main checkout (no-op harmless)", async () => {
+  it("--shared claude crew: launch command starts with cd into main checkout (no-op harmless)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -300,7 +303,7 @@ describe("cockpit crew spawn", () => {
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nowt2" } }));
     cockpitdCall.mockResolvedValue({ id: "task-nowt2", project: "brove", provider: "claude", mode: "interactive" });
 
-    const promise = runCrewSpawn({ project: "brove", task: "small fix" });
+    const promise = runCrewSpawn({ project: "brove", task: "small fix", shared: true });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
@@ -309,7 +312,7 @@ describe("cockpit crew spawn", () => {
     expect(launchCmd).toMatch(/^cd '\/tmp\/brove' && /);
   });
 
-  it("--worktree opencode crew: launch command starts with cd into worktree path", async () => {
+  it("opencode crew: launch command starts with cd into worktree path (default isolation)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -320,7 +323,7 @@ describe("cockpit crew spawn", () => {
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
-    const promise = runCrewSpawn({ project: "brove", task: "feature work", worktree: true, agent: "opencode", agentExplicit: true });
+    const promise = runCrewSpawn({ project: "brove", task: "feature work", agent: "opencode", agentExplicit: true });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
@@ -377,7 +380,7 @@ describe("cockpit crew spawn", () => {
       provider: "opencode",
       mode: "interactive",
       project: "brove",
-      cwd: "/tmp/brove",
+      cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
       budgetMs: 86400000,
     }));
@@ -438,7 +441,7 @@ describe("cockpit crew spawn", () => {
       provider: "codex",
       mode: "interactive",
       project: "brove",
-      cwd: "/tmp/brove",
+      cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
     expect(cockpitdCall).toHaveBeenCalledTimes(1);
@@ -1258,6 +1261,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     writePerCrewOpencodeConfig.mockReset();
     writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
     addWorktree.mockReset();
+    addWorktree.mockReturnValue("/tmp/brove/.worktrees/brove-crew-1");
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(false);
     resolveCrewRoute.mockReset();

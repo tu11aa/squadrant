@@ -1,0 +1,25 @@
+  
+
+⏺ Mình đã có design-spec đầy đủ từ iOS cho cả 6 màn (layout, spacing, màu Constants.*, font "Be Vietnam Pro", ~25 asset, các custom component như
+  PrimaryButton/SecondaryButton/BoardPinRow/BorderBeam...). Đây là project port UI đa-màn khá lớn.
+
+  Theo nguyên tắc "port asset trước" — để mình audit xem asset/font nào đã có trong Android, cái nào thiếu (đây là việc phải làm trước khi port màn):
+
+⏺ Running 1 shell command…
+  ⎿  $ cd /Users/q3labsadmin/me/LumiLabs/oneplan-wt-board/android/app/src/main/res
+     echo "=== Board-related assets already in Android res? ==="
+     for a in board_instagram board_tiktok empty_board create_board_thumbnail process_pin board_compass board_pin restaurant coffee night_club hotel shopping 
+     park mus…
+
+✳ Working… (14m 7s · ↓ 49.8k tokens · thinking more with high effort)
+  ⎿  Tip: Use Plan Mode to prepare for a complex request before making changes. Press shift+tab twice to enable.
+
+  ❯ nhớ là cũng cần port các feature và flow gaps bạn tìm được nhé                                                                                             
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Model: Opus 4.8  Ctx Used: 49.0%  Cost: $66.05  Session: 28hr 22m 
+   Session ID: 332e6ae9-ee58-4a63-9a98-88af6004a3c0  Thinking: high 
+   ⎇ ui-polish  𖠰 main 
+  ⏵⏵ auto mode on · PR #79 · 1 shell

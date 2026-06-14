@@ -16,7 +16,10 @@ import { sendRequest } from "../control/protocol.js";
 import type { TaskRecord, Provider, Mode } from "../control/types.js";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
-const WARMUP_TIMEOUT_MS = 30_000;
+// #288: 30s was too short — cold captain boot + relay supervisor startup takes
+// 45-90s. 120s gives the full chain (Claude init + checklist + relay register)
+// comfortable headroom while still failing fast on a genuinely broken launch.
+const WARMUP_TIMEOUT_MS = 120_000;
 const WARMUP_POLL_MS = 1_000;
 
 /** Resolve the current project name by matching cwd against config paths. */
@@ -138,19 +141,18 @@ export const groupCommand = new Command("group")
   .description("Cross-project intra-group operations (Phase 1: dispatch)")
   .addCommand(
     new Command("dispatch")
-      .description("[experimental] Dispatch a task to a sibling project in the same group")
+      .description("Dispatch a task to a sibling project in the same group")
       .argument("<to-project>", "Target project name (must be in the same group)")
       .argument("<task>", "Task description to dispatch")
       .option("--provider <p>", "claude|opencode|codex", "claude")
       .option("--mode <m>", "headless|interactive", "headless")
-      .action(async (toProject: string, task: string, opts: { provider?: Provider; mode?: Mode }) => {
+      .option("--warmup-timeout <s>", "seconds to wait for target captain relay to boot (default: 120)", (v) => parseInt(v, 10) * 1000)
+      .action(async (toProject: string, task: string, opts: { provider?: Provider; mode?: Mode; warmupTimeout?: number }) => {
         const fromProject = resolveCurrentProject(loadConfig());
         if (!fromProject) {
           console.error(chalk.red("Could not determine current project from cwd. Run from inside a registered project directory."));
           process.exit(1);
         }
-
-        console.error(chalk.yellow("⚠ cross-project delegation is experimental (#288): boot-if-down of a down sibling may not yet produce an operational captain."));
 
         try {
           const result = await runGroupDispatch({
@@ -159,6 +161,7 @@ export const groupCommand = new Command("group")
             task,
             provider: opts.provider,
             mode: opts.mode,
+            warmupTimeoutMs: opts.warmupTimeout,
           });
           console.log(chalk.green(`✔ Dispatched to '${toProject}' (task ${result.id.slice(0, 8)})`));
           console.log(chalk.dim(`  originProject: ${result.originProject ?? "none"}`));
