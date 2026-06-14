@@ -553,12 +553,11 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   }
 
   return {
-    stop() {
+    stop(): Promise<void> {
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
       for (const kill of activeHeadlessKills) kill();
-      server.close();
-      log("stopped");
+      return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
     },
   };
 }

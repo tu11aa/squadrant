@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
+import { resolveCrewRoute } from "../control/crew-routing.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import {
   createClaudeDriver,
@@ -129,7 +130,7 @@ function nextAutoName(existingTitles: string[], project: string): string {
   return `crew-${i}`;
 }
 
-async function resolveCaptainWorkspace(project: string): Promise<{
+export async function resolveCaptainWorkspace(project: string): Promise<{
   runtime: RuntimeDriver;
   workspaceId: string;
 }> {
@@ -207,6 +208,25 @@ export async function sendFirstTurnWhenReady(
   }
 }
 
+/** Builds the completion-protocol suffix baked into claude + opencode first turns (#278).
+ *  Substituting --task-id and --project at source makes the signal robust to env-var
+ *  races (Mode 1) and gives the model a concrete imperative at the point of action (Mode 2). */
+export function buildCompletionProtocol(taskId: string, project: string): string {
+  return [
+    "---",
+    "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:",
+    `  cockpit crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
+    "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
+    `  cockpit crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
+  ].join("\n");
+}
+
+// POSIX single-quote a path so it is safe to embed in a shell command even
+// when the path contains spaces or special characters.
+function shellQuote(p: string): string {
+  return "'" + p.replace(/'/g, "'\\''") + "'";
+}
+
 export interface CrewSpawnInput {
   project: string;
   task: string;
@@ -224,6 +244,8 @@ export interface CrewSpawnInput {
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model.
    *  Agent-specific alias (e.g. "sonnet", "opus" for claude; "gpt-5.5" for codex). */
   model?: string;
+  /** True when --agent was explicitly passed by the caller; suppresses crew routing. */
+  agentExplicit?: boolean;
 }
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
@@ -269,13 +291,22 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       })
     : proj.path;
 
+  // #275 leveled crew routing: consult routing rules when agent/model were not
+  // explicitly provided by the caller. Explicit --agent or --model always win.
+  const route = !input.agentExplicit && !input.model
+    ? resolveCrewRoute(input.task, config)
+    : null;
+  if (route) {
+    console.log(chalk.dim(`routed: tier=${route.tier} → ${route.agent}${route.model ? `/${route.model}` : ""} (rule: "${route.matchedRule}")`));
+  }
+
   const agents = new CapabilityRegistry({
     claude: createClaudeDriver(),
     codex: createCodexDriver(),
     gemini: createGeminiDriver(),
     opencode: createOpencodeDriver(),
   });
-  const agentName = input.agent ?? "claude";
+  const agentName = route?.agent ?? input.agent ?? "claude";
   const agent = agents.get(agentName);
   if (!agent) {
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
@@ -318,7 +349,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
-  const crewModel = input.model ?? configModel;
+  const crewModel = input.model ?? route?.model ?? configModel;
 
   // Claude crews route through the control-plane daemon (PR #85 + this spec)
   // so the captain learns terminal state via `cockpit crew status` instead
@@ -364,9 +395,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     // Prefix the CLI command with env so the hook bridge + signal verb
     // running inside the crew's cmux tab can identify their task.
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
-    await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
+    await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
+    await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -414,9 +445,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const title = titleFor(input.project, name);
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
-    await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
+    await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen, {
+    await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
       // #235: opencode's idle splash ("Ask anything…") keeps mutating (cursor
       // blink, status line toggle), so the old screen-changed check would always
       // see a *different* screen and never re-send a dropped turn. The splashMarker
@@ -674,15 +705,18 @@ crewCommand
       project: string,
       task: string | undefined,
       opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; worktree: boolean; taskFile?: string; model?: string },
+      cmd: Command,
     ) => {
       try {
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
+        const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
           project,
           task: resolvedTask,
           name: opts.name,
           direction: opts.direction,
           agent: opts.agent,
+          agentExplicit,
           // --approval is provider-agnostic: codex consumes approvalPolicy,
           // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),

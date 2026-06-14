@@ -13,6 +13,7 @@ import { projectsCommand } from "./commands/projects.js";
 import { statusCommand } from "./commands/status.js";
 import { commandCommand } from "./commands/command.js";
 import { crewCommand } from "./commands/crew.js";
+import { sideCommand } from "./commands/side.js";
 import { addControlPlaneCrewCommands } from "./commands/crew-control.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { launchCommand } from "./commands/launch.js";
@@ -29,6 +30,7 @@ import { projectionCommand } from "./commands/projection.js";
 import { codexChatSmokeCommand } from "./commands/codex-chat-smoke.js";
 import { configCommand } from "./commands/config.js";
 import { healCommand } from "./commands/heal.js";
+import { groupCommand } from "./commands/group.js";
 import { detectDrift } from "./lib/config-drift.js";
 import { needsCheck, withStamp } from "./lib/config-version.js";
 import { getDefaultConfig } from "./config.js";
@@ -92,6 +94,7 @@ program.addCommand(statusCommand);
 // `cockpit crew` command so PR #85 doesn't break the captain-ops playbook.
 addControlPlaneCrewCommands(crewCommand);
 program.addCommand(crewCommand);
+program.addCommand(sideCommand);
 program.addCommand(commandCommand);
 program.addCommand(dashboardCommand);
 program.addCommand(launchCommand);
@@ -108,6 +111,7 @@ program.addCommand(projectionCommand);
 program.addCommand(codexChatSmokeCommand);
 program.addCommand(configCommand);
 program.addCommand(healCommand);
+program.addCommand(groupCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

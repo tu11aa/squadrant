@@ -8,7 +8,7 @@ export type AgentCapability =
   | "streaming"
   | "prompt_file";
 
-export type Role = "command" | "captain" | "crew" | "exploration";
+export type Role = "command" | "captain" | "crew" | "exploration" | "side";
 
 export interface AgentProbeResult {
   installed: boolean;
@@ -70,4 +70,5 @@ export const ROLE_REQUIREMENTS: Record<Role, RoleRequirements> = {
   captain:     { required: ["auto_approve"], preferred: ["teams", "model_routing", "skills"] },
   crew:        { required: ["auto_approve"], preferred: ["json_output", "sandbox"] },
   exploration: { required: ["auto_approve"], preferred: [] },
+  side:        { required: ["auto_approve"], preferred: ["skills"] },
 };

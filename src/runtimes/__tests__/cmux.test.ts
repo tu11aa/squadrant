@@ -304,7 +304,10 @@ describe("cmux driver", () => {
   });
 
   it("sendToSurface sanitizes multi-line messages", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("\u276F \u258C");
+      return "";
+    });
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "multi\nline\r\ntext");
     const sendCall = execFileMock.mock.calls.find((c) => argvOf(c)[0] === "send");
     expect(sendCall).toBeDefined();
@@ -344,11 +347,14 @@ describe("cmux driver", () => {
     expect(text).toBe("");
   });
 
-  // #258: when no draft is detected (empty screen / cursor-only), deliver
+  // #258: when no draft is detected (cursor-only input box), deliver
   // message+Enter directly with no key-chord preamble. ctrl-u/ctrl+a/ctrl+k/
   // ctrl+y are all no-ops against Claude Code's input box.
   it("sendToSurface delivers message+Enter directly when no draft detected", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("\u276F \u258C");
+      return "";
+    });
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
     const calls = execFileMock.mock.calls.map(argvOf);
 
@@ -367,7 +373,10 @@ describe("cmux driver", () => {
   });
 
   it("sendToSurface delivers shell metacharacters as literal text scoped to surface", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("\u276F \u258C");
+      return "";
+    });
     const text = 'done: `cmux close-workspace` $(whoami)';
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, text);
     const sendCall = execFileMock.mock.calls.find((c) => argvOf(c)[0] === "send");
@@ -564,32 +573,30 @@ describe("sendToSurface draft-preservation", () => {
     expect(cmdsAfterRestore.every((c) => !c.includes("Enter"))).toBe(true);
   });
 
-  it("delivers normally when read-screen throws, without crashing", async () => {
+  // #268: unreadable screen → draft stays null → DeferDelivery (never deliver into unknown state).
+  it("throws DeferDelivery when read-screen throws (surface unreadable — defer, not deliver)", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) throw new Error("surface gone");
       return "";
     });
     await expect(
       driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(DeferDelivery);
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    // Still delivers the message
-    expect(cmds.some((c) => c.includes("send ") && c.includes("crew done"))).toBe(true);
-    expect(cmds.some((c) => c.includes("send-key") && c.includes("Enter"))).toBe(true);
-    // No ctrl-u on failure path
-    expect(cmds.every((c) => !c.includes("ctrl-u"))).toBe(true);
+    // Must not have sent anything — deferred
+    expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
   });
 });
 
 describe("parseDraftFromScreen", () => {
-  it("returns empty string for empty screen", () => {
-    expect(parseDraftFromScreen("")).toBe("");
+  it("returns null for empty screen (input box not confirmed visible — defer)", () => {
+    expect(parseDraftFromScreen("")).toBeNull();
   });
 
-  it("returns empty string when screen has no HR boundaries (cannot locate input box)", () => {
-    // No long ─ HR lines → cannot locate input box → safe fallback is ""
+  it("returns null when screen has no HR boundaries (overlay/unknown — must defer, not deliver)", () => {
+    // No long ─ HR lines → cannot confirm input box → null signals DEFER (#268)
     const screen = "Claude Code\nsome transcript\n> looks like input but no HR box";
-    expect(parseDraftFromScreen(screen)).toBe("");
+    expect(parseDraftFromScreen(screen)).toBeNull();
   });
 
   it("returns empty string when input box is empty (cursor only)", () => {
@@ -660,6 +667,35 @@ describe("parseDraftFromScreen", () => {
       "utf-8",
     );
     expect(parseDraftFromScreen(fixture)).toBe("");
+  });
+
+  // #268: overlay/menu/scrolled screen — HR boundaries absent → input box NOT confirmed.
+  // Must return null (not "") so the delivery gate knows to defer, never keystroke into unknown UI.
+  it("returns null when screen has no HR boundaries (overlay / menu / scrolled-away input box)", () => {
+    // No ─{10,} HR lines → topHR stays -1 → box not confirmed visible
+    const overlayScreen = [
+      " ╔══════════════════════════════════════╗",
+      " ║  /model                              ║",
+      " ║  ❯ claude-opus-4-8   (Powerful)      ║",
+      " ║    claude-sonnet-4-6 (Fast)          ║",
+      " ║  [Enter] Select  [Esc] Cancel        ║",
+      " ╚══════════════════════════════════════╝",
+      "   Model: Opus 4.8  Ctx Used: 31%",
+    ].join("\n");
+    expect(parseDraftFromScreen(overlayScreen)).toBeNull();
+  });
+
+  it("returns null for empty screen (input box not confirmed visible)", () => {
+    expect(parseDraftFromScreen("")).toBeNull();
+  });
+
+  // Regression fixture: real overlay screen captured for #268.
+  it("returns null for real overlay fixture (regression #268)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/268-overlay-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseDraftFromScreen(fixture)).toBeNull();
   });
 });
 
@@ -735,7 +771,10 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
   });
 
   it("empty input → delivers directly (no backspace, no restore)", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("\u276F \u258C");
+      return "";
+    });
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
     const calls = execFileMock.mock.calls.map(argvOf);
     // No backspaces — nothing to clear
@@ -748,6 +787,31 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
     // No restore send after Enter
     const afterEnter = calls.slice(enterIdx + 1);
     expect(afterEnter.filter((a) => a[0] === "send")).toHaveLength(0);
+  });
+
+  // #268: overlay / unknown screen → input box NOT positively confirmed → must defer,
+  // never keystroke into an overlay or scrolled-away surface.
+  it("throws DeferDelivery when read-screen returns a screen with no input-box boundaries (overlay/menu)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) {
+        // No ─{10,} HR lines → parseDraftFromScreen returns null → must defer
+        return [
+          " ╔══════════════════════════════════════╗",
+          " ║  /model                              ║",
+          " ║  ❯ claude-opus-4-8   (Powerful)      ║",
+          " ║    claude-sonnet-4-6 (Fast)          ║",
+          " ║  [Enter] Select  [Esc] Cancel        ║",
+          " ╚══════════════════════════════════════╝",
+        ].join("\n");
+      }
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    // Must not have sent anything into the overlay
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
   });
 
   it("non-empty draft + force=true → backspace clear, deliver, restore without Enter", async () => {

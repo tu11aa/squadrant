@@ -79,18 +79,22 @@ export function sanitizeForCmuxSend(text: string): string {
 }
 
 /**
- * Extract the in-progress draft from a cmux read-screen capture (#258).
+ * Extract the in-progress draft from a cmux read-screen capture (#258 / #268).
  * Scans from the bottom of the screen so history lines that contain `> ` are
  * ignored; only the actual input area (the last matching line) is returned.
  * Handles both `>` (synthetic/test) and `❯` (U+276F, the real Claude Code
  * prompt character) as the input caret. The real prompt is followed by a
  * non-breaking space (U+00A0); JS `\s` covers it, so `\s+` matches either.
  * Also handles box-drawing `│ ❯ text │` variants.
- * Returns the trimmed draft text, or "" when the line holds only a cursor
- * indicator (▌ / █) or no input line is present.
+ *
+ * Three-state return (#268):
+ *   "draft text" — input box found with content  → caller must DEFER
+ *   ""           — input box positively confirmed empty → caller may DELIVER
+ *   null         — HR boundaries not found (overlay/menu/scrolled) → caller must DEFER
  */
-export function parseDraftFromScreen(screen: string): string {
-  if (!screen) return "";
+export function parseDraftFromScreen(screen: string): string | null {
+  // Empty screen means the input box is definitely not visible — defer (#268).
+  if (!screen) return null;
   const lines = screen.split(/\r?\n/);
 
   // Locate the last two HR lines (runs of U+2500 ─) — they are the bottom and top
@@ -111,9 +115,9 @@ export function parseDraftFromScreen(screen: string): string {
     }
   }
 
-  // Can't locate both boundaries — return "" so delivery proceeds rather than
-  // restoring garbage into the captain's input box.
-  if (topHR === -1) return "";
+  // Can't locate both boundaries — input box not visible (overlay/menu/scrolled
+  // transcript). Defer so keystrokes never land in an unknown UI state (#268).
+  if (topHR === -1) return null;
 
   // Extract content lines strictly between the two HRs (the live input box only).
   const inputLines = lines.slice(topHR + 1, bottomHR);
@@ -321,13 +325,18 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async sendToSurface(surface: PaneRef, text: string, opts?: { force?: boolean }): Promise<void> {
-      // #258 Approach B: deliver only when the captain's input is empty.
-      // Read screen once; treat unreadable as empty so delivery always proceeds.
-      let draft = "";
+      // #258/#268 Approach B: deliver only when the captain's input is positively
+      // confirmed empty. null = box not visible (overlay/menu/scroll) → always defer.
+      let draft: string | null = null;
       try {
         const screen = cmux(["read-screen", "--workspace", surface.workspaceId, "--surface", surface.surfaceId]);
         draft = parseDraftFromScreen(screen);
-      } catch { /* screen unreadable — treat as empty, deliver directly */ }
+      } catch { /* screen unreadable — draft stays null, will defer below */ }
+
+      // null = box not confirmed visible → never keystroke into an overlay (#268).
+      if (draft === null) {
+        throw new DeferDelivery();
+      }
 
       if (draft && !opts?.force) {
         // Captain is composing — defer until input clears (relay retries next poll).

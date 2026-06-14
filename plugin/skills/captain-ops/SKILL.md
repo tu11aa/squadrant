@@ -147,6 +147,32 @@ Open as a side-by-side pane when you want live preview:
 cockpit crew spawn brove "Fix typo in README" --direction right
 ```
 
+### Leveled crew routing
+
+When you spawn a crew without an explicit `--agent` or `--model`, cockpit automatically
+consults the routing rules in `defaults.crewRouting.rules` (config.json) and picks the
+right tier for the task:
+
+| Tier | Matches | Routes to |
+|------|---------|-----------|
+| extreme | redesign, architect, rewrite, from scratch | claude/opus |
+| hard | refactor, migrate, implement, feature | claude/sonnet |
+| mobile | mobile, ios, swift, android, kotlin | codex |
+| daily | typo, rename, bump, docs, lint | opencode |
+
+The chosen route is printed as a dim one-liner before the spawn completes, e.g.:
+```
+routed: tier=hard → claude/sonnet (rule: "refactor|migrate|implement|feature|daemon|control-plane")
+```
+
+**Override at any time** — explicit flags always win over routing:
+```bash
+cockpit crew spawn brove "refactor auth" --agent codex     # forces codex despite "hard" tier
+cockpit crew spawn brove "fix typo" --model opus           # forces opus despite "daily" tier
+```
+
+To add, edit, or remove routing rules: use the `cockpit:add-pick-crew-rule` skill.
+
 ### Rules
 
 - **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.
@@ -161,12 +187,36 @@ cockpit crew spawn brove "Fix typo in README" --direction right
 
 ## Task Coordination
 
-You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. Track crew progress by:
-1. `cockpit crew read <project> <name>` — read tail of a crew's screen (default ~40 lines; `--full` for entire scrollback).
-2. `cockpit crew tasks <project>` — compact task listing (one line per task); `--id <prefix>` to filter; `--state-only <id>` for single-word state.
-3. `cockpit crew list <project>` — see all live crews and pick the right one.
-4. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
-5. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+**HARD RULE: Do NOT poll crew screens in a loop.** Crew lifecycle events (idle / done / blocked) arrive via the **notify-relay** automatically — trust the relay signal. Polling loops hang indefinitely, exhaust context, and mask real blockers.
+
+You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. When you need crew status:
+1. **Wait for the relay to notify you.** When a crew finishes, signals blocked, or goes idle, the notify-relay delivers the event to your captain pane. This is the primary mechanism — do not replace it with polling.
+2. `cockpit crew read <project> <name>` — **on-demand spot-check only** (a single read when you have a specific reason, e.g. reviewing a finished diff). Never in a loop, never with `until`.
+3. `cockpit crew tasks <project>` — **on-demand** compact task listing; `--id <prefix>` to filter; `--state-only <id>` for a single-word state check.
+4. `cockpit crew list <project>` — see all live crews and pick the right one.
+5. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
+6. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
+
+If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attempts with a sleep between), or watch the mailbox seq — never an unbounded `until` loop.
+
+### Handling CREW IDLE
+
+CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
+- **(a)** The crew finished but never ran `cockpit crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
+- **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).
+- **(c)** The crew is still mid-task and the idle pulse was transient.
+
+On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling loop), then classify:
+
+| Spot-check shows | Captain action |
+|-----------------|----------------|
+| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review; if good, terminalize (`merge` + `crew close`). If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
+| Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
+| Still mid-task / transient idle | Leave it; wait for the next relay event. |
+
+**Do not re-send the original task** if the crew appears to have completed it — that triggers a duplicate run. Read the crew screen or diff first, then decide: terminalize vs re-task vs leave.
+
+This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE.
 
 When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
@@ -219,6 +269,40 @@ If your config has `group` / `groupRole`:
 - If your change might affect a sibling, **flag it to command** so it can notify the sibling's captain
 - Use **claude-mem** to search for context from sibling projects
 - `primary` role: your changes may need propagation to forks/dependents
+
+## Cross-Project Delegation
+
+When a task genuinely belongs to a sibling project in the same group, use **`cockpit group dispatch <to-project> '<task>'`** instead of hand-writing a message. This records a tracked task on the sibling's project and auto-wakes its captain via the existing mailbox/relay.
+
+### Rules
+
+1. **Same-group only.** `group dispatch` rejects any target whose `group` field differs from yours. Cross-group dispatch is out of scope — use claude-mem / wiki queries for awareness.
+2. **`acceptDelegations`.** If the sibling's project config has `acceptDelegations: false`, the command rejects with a clear error. The default is `true`.
+3. **Boot-if-down.** If the sibling's captain workspace / notify-relay are not running, `group dispatch` boots them (`cockpit launch <project>`) and waits for warmup with a bounded poll (30s hard timeout). If warmup fails, the dispatch is rejected (task not recorded).
+
+### Dispatch-and-yield (do NOT poll)
+
+Once the task is recorded to the daemon, `group dispatch` **returns immediately**. The sibling's captain auto-accepts (because `acceptDelegations` is true) and spawns a crew. When the task settles — done, blocked, or failed — the daemon fans the outcome back to **your** mailbox automatically. Your relay wakes you up. **You never poll the sibling.**
+
+HARD RULE: Do NOT add a polling loop after `group dispatch`. The report-back is event-driven; trust it.
+
+### Report-back format
+
+| Settlement | Message |
+|------------|---------|
+| done | `✅ Cross-project task → B: done — <task snippet>` |
+| blocked | `⛔ Cross-project task → B: blocked — <question>` |
+| failed | `⛔ Cross-project task → B: failed — <error>` |
+| stalled | `⚠️ Cross-project task → B: stalled (no heartbeat)` |
+
+### Example
+
+```bash
+# You are captain of "scaffold-stylus". Ask the docs sibling to update docs.
+cockpit group dispatch scaffold-stylus-docs "Document the new --format flag added in PR #42"
+# → "✔ Dispatched to 'scaffold-stylus-docs' (task abc12345)"
+# → (returns immediately; you are notified when settled)
+```
 
 ## Recording Learnings
 

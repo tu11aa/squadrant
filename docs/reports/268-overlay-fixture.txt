@@ -1,0 +1,20 @@
+ Claude Code — pact-network-captain
+
+  ✻ Thinking for 12s
+
+  Let me check the status of the crew tasks…
+
+ ╔══════════════════════════════════════════════════════════════════════════╗
+ ║  /model                                                                  ║
+ ║                                                                          ║
+ ║  Current model: claude-opus-4-8                                          ║
+ ║                                                                          ║
+ ║  ❯ claude-opus-4-8      Powerful, best for complex tasks                 ║
+ ║    claude-sonnet-4-6    Fast and intelligent                             ║
+ ║    claude-haiku-4-5     Fastest                                          ║
+ ║                                                                          ║
+ ║  [Enter] Select   [Esc] Cancel                                           ║
+ ╚══════════════════════════════════════════════════════════════════════════╝
+
+   Model: Opus 4.8  Ctx Used: 31.2%  Cost: $8.42  Session: 47m
+   ⏵⏵ auto mode on · 0 shells

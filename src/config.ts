@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import chalk from "chalk";
 
 export interface ProjectConfig {
   path: string;
@@ -12,6 +13,9 @@ export interface ProjectConfig {
   groupRole?: string;
   runtime?: string;
   workspace?: string;
+  /** #246: when false, `cockpit group dispatch` rejects delegations to this
+   *  project. Defaults to true when absent. */
+  acceptDelegations?: boolean;
 }
 
 export interface PermissionConfig {
@@ -23,6 +27,17 @@ export interface PermissionConfig {
 }
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
+
+export interface CrewRoutingRule {
+  tier: string;
+  match: string;
+  agent: string;
+  model?: string;
+}
+
+export interface CrewRoutingConfig {
+  rules: CrewRoutingRule[];
+}
 
 export interface ModelRoutingConfig {
   command: ModelAlias;
@@ -42,7 +57,7 @@ export interface RoleAssignment {
   model?: string;
 }
 
-export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration", RoleAssignment>>;
+export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
 export interface CockpitConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
@@ -70,6 +85,8 @@ export interface CockpitConfig {
     roles?: RoleConfig;
     /** #225 hard crew task-timeout ceiling (ms). Default: 8h. */
     taskTimeoutMs?: number;
+    /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
+    crewRouting?: CrewRoutingConfig;
   };
   metrics: {
     enabled: boolean;
@@ -109,8 +126,17 @@ export function getDefaultConfig(): CockpitConfig {
         captain: { agent: "claude", model: "opus" },
         crew: { agent: "claude", model: "opus" },
         exploration: { agent: "claude", model: "haiku" },
+        side: { agent: "claude", model: "opus" },
       },
       taskTimeoutMs: 8 * 60 * 60 * 1000,
+      crewRouting: {
+        rules: [
+          { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
+          { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
+          { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
+          { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
+        ],
+      },
     },
     metrics: {
       enabled: true,
@@ -138,6 +164,18 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
     // Ensure agents has at least claude
     if (!config.agents) {
       config.agents = { claude: { cli: "claude", driver: "claude" } };
+    }
+
+    // #286: backfill crewRouting for configs written before routing existed
+    if (!config.defaults.crewRouting) {
+      config.defaults.crewRouting = getDefaultConfig().defaults.crewRouting;
+      saveConfig(config, configPath);
+      console.error(
+        chalk.cyan(
+          "⬆ cockpit upgrade: added default crew routing rules to your config (leveled routing now active). " +
+          "Edit defaults.crewRouting in ~/.config/cockpit/config.json or use the cockpit:add-pick-crew-rule skill.",
+        ),
+      );
     }
 
     return config;

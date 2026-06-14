@@ -1,5 +1,5 @@
 // src/config.test.ts
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { getDefaultConfig, loadConfig, saveConfig } from "./config.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -58,6 +58,102 @@ describe("config", () => {
     const config = getDefaultConfig();
     expect(config.defaults.models!.crew).toBe("opus");
     expect(config.defaults.permissions.crew).toBe("auto");
+  });
+
+  it("backfills crewRouting when absent and writes it to disk", () => {
+    const configWithoutRouting = {
+      commandName: "command",
+      hubVault: "/tmp/hub",
+      projects: {},
+      defaults: {
+        maxCrew: 5,
+        worktreeDir: ".worktrees",
+        teammateMode: "in-process",
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+      },
+      metrics: { enabled: true, path: "/tmp/metrics.json" },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(configWithoutRouting));
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loaded = loadConfig(configPath);
+    spy.mockRestore();
+
+    // in-memory result has crewRouting backfilled
+    expect(loaded.defaults.crewRouting).toBeDefined();
+    expect(loaded.defaults.crewRouting!.rules.length).toBeGreaterThan(0);
+
+    // file on disk was updated (migration persisted)
+    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(onDisk.defaults.crewRouting).toBeDefined();
+  });
+
+  it("does not re-persist or re-notice when crewRouting already present", () => {
+    const configWithRouting = {
+      commandName: "command",
+      hubVault: "/tmp/hub",
+      projects: {},
+      defaults: {
+        maxCrew: 5,
+        worktreeDir: ".worktrees",
+        teammateMode: "in-process",
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+        crewRouting: { rules: [{ tier: "custom", match: "custom", agent: "opencode" }] },
+      },
+      metrics: { enabled: true, path: "/tmp/metrics.json" },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(configWithRouting));
+    const originalMtime = fs.statSync(configPath).mtimeMs;
+
+    // Small delay to ensure mtime would differ if the file were rewritten
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loaded = loadConfig(configPath);
+
+    // custom rules preserved — not replaced with defaults
+    expect(loaded.defaults.crewRouting!.rules[0].tier).toBe("custom");
+    // file not rewritten (mtime unchanged)
+    expect(fs.statSync(configPath).mtimeMs).toBe(originalMtime);
+    // no stderr notice emitted
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("does not crash or persist when config file does not exist (fallback path)", () => {
+    const missingPath = path.join(tmpDir, "nonexistent.json");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loaded = loadConfig(missingPath);
+    spy.mockRestore();
+
+    // fallback returns default config (which has crewRouting) without writing any file
+    expect(loaded.defaults.crewRouting).toBeDefined();
+    expect(fs.existsSync(missingPath)).toBe(false);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("emits a stderr notice exactly once on the backfill path", () => {
+    const configWithoutRouting = {
+      commandName: "command",
+      hubVault: "/tmp/hub",
+      projects: {},
+      defaults: {
+        maxCrew: 5,
+        worktreeDir: ".worktrees",
+        teammateMode: "in-process",
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+      },
+      metrics: { enabled: true, path: "/tmp/metrics.json" },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(configWithoutRouting));
+
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    loadConfig(configPath);
+    // Second call — file now has crewRouting, so no second notice
+    loadConfig(configPath);
+
+    // notice fired exactly once
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toMatch(/cockpit upgrade/i);
+    spy.mockRestore();
   });
 
   it("migrates old models config to roles on load", () => {
