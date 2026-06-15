@@ -86,9 +86,9 @@ describe("cmux driver", () => {
     expect(result.version).toBe("");
   });
 
-  it("list parses list-workspaces output into WorkspaceRefs", async () => {
+  it("list calls 'workspace list' (migrated from list-workspaces) and parses output", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("list-workspaces")) {
+      if (args[0] === "workspace" && args[1] === "list") {
         return [
           "workspace:1  🏛️ command  (running)",
           "workspace:2  brove-captain  [selected]",
@@ -100,11 +100,14 @@ describe("cmux driver", () => {
     const refs = await driver.list();
     expect(refs).toHaveLength(3);
     expect(refs[1]).toEqual({ id: "workspace:2", name: "brove-captain", status: "running" });
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.startsWith("workspace list") && c.includes("--id-format refs"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("list-workspaces"))).toBe(true);
   });
 
   it("status returns null when name not in list", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("list-workspaces")) return "workspace:1  other-ws  (running)";
+      if (args[0] === "workspace" && args[1] === "list") return "workspace:1  other-ws  (running)";
       return "";
     });
     const ref = await driver.status("brove-captain");
@@ -113,7 +116,7 @@ describe("cmux driver", () => {
 
   it("status returns WorkspaceRef when name matches", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("list-workspaces")) return "workspace:5  brove-captain  (running)";
+      if (args[0] === "workspace" && args[1] === "list") return "workspace:5  brove-captain  (running)";
       return "";
     });
     const ref = await driver.status("brove-captain");
@@ -131,7 +134,7 @@ describe("cmux driver", () => {
   it("send routes to surface named after workspace when one exists", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
-      if (cmd.includes("list-workspaces")) return "workspace:2  test-ws  (running)";
+      if (args[0] === "workspace" && args[1] === "list") return "workspace:2  test-ws  (running)";
       if (cmd.includes("tree"))           return '  └── surface surface:5 [terminal] "test-ws"';
       return "";
     });
@@ -144,7 +147,7 @@ describe("cmux driver", () => {
   it("send falls back to workspace-level when no surface matches workspace name", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
-      if (cmd.includes("list-workspaces")) return "workspace:2  test-ws  (running)";
+      if (args[0] === "workspace" && args[1] === "list") return "workspace:2  test-ws  (running)";
       if (cmd.includes("tree"))           return '  └── surface surface:5 [terminal] "crew-1"';
       return "";
     });
@@ -171,12 +174,26 @@ describe("cmux driver", () => {
     expect(cmds[0]).toContain("Escape");
   });
 
-  it("stop calls close-workspace", async () => {
+  it("stop unpins workspace then closes it ('workspace close' migrated from 'close-workspace')", async () => {
     execFileMock.mockReturnValue("");
     await driver.stop("workspace:2");
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds[0]).toContain("close-workspace");
-    expect(cmds[0]).toContain("workspace:2");
+    const unpinIdx = cmds.findIndex((c) => c.includes("workspace-action") && c.includes("--action unpin") && c.includes("workspace:2"));
+    const closeIdx = cmds.findIndex((c) => c.startsWith("workspace close") && c.includes("workspace:2"));
+    expect(unpinIdx, "unpin call must exist").toBeGreaterThanOrEqual(0);
+    expect(closeIdx, "close call must exist").toBeGreaterThanOrEqual(0);
+    expect(unpinIdx, "unpin must precede close").toBeLessThan(closeIdx);
+    expect(cmds.every((c) => !c.includes("close-workspace"))).toBe(true);
+  });
+
+  it("stop proceeds to close even when unpin throws (workspace may not be pinned)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("workspace-action")) throw new Error("cannot unpin");
+      return "";
+    });
+    await driver.stop("workspace:2");
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.startsWith("workspace close") && c.includes("workspace:2"))).toBe(true);
   });
 
   it("readScreen calls read-screen and returns output", async () => {
@@ -188,10 +205,10 @@ describe("cmux driver", () => {
     expect(out).toBe("screen contents");
   });
 
-  it("spawn creates workspace, renames it, pins it, renames and pins its initial tab", async () => {
+  it("spawn calls 'workspace create' + 'workspace rename' (migrated verbs) and pins workspace and initial tab", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       const cmd = args.join(" ");
-      if (cmd.includes("new-workspace")) return "Created workspace:7\n";
+      if (args[0] === "workspace" && args[1] === "create") return "Created workspace:7\n";
       if (cmd.includes("tree"))        return '  └── surface surface:1 [terminal] ""';
       return "";
     });
@@ -199,8 +216,13 @@ describe("cmux driver", () => {
     expect(ref.id).toBe("workspace:7");
     expect(ref.name).toBe("test-ws");
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) => c.includes("new-workspace"))).toBe(true);
-    expect(cmds.some((c) => c.includes("rename-workspace") && c.includes("test-ws"))).toBe(true);
+    // Migrated: 'workspace create' not 'new-workspace'
+    expect(cmds.some((c) => c.startsWith("workspace create"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("new-workspace"))).toBe(true);
+    // Migrated: 'workspace rename id --title name' not 'rename-workspace --workspace id name'
+    expect(cmds.some((c) => c.startsWith("workspace rename") && c.includes("--title") && c.includes("test-ws"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("rename-workspace"))).toBe(true);
+    // Tab rename and pin unchanged
     expect(cmds.some((c) => c.includes("rename-tab") && c.includes("surface:1") && c.includes("test-ws"))).toBe(true);
     expect(cmds.some((c) => c.includes("workspace-action") && c.includes("--action pin"))).toBe(true);
     expect(cmds.some((c) => c.includes("tab-action") && c.includes("--surface surface:1") && c.includes("--action pin"))).toBe(true);
@@ -553,6 +575,9 @@ describe("cmux driver", () => {
       { workspaceId: "workspace:10", surfaceId: "surface:30", title: "🔧 pact-network:crew-1" },
       { workspaceId: "workspace:10", surfaceId: "surface:31", title: "🔧 pact-network:crew-2" },
     ]);
+    // Verify --id-format refs is passed to lock in the refs default
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.includes("tree") && c.includes("--id-format refs"))).toBe(true);
   });
 
   it("listSurfaces returns empty array when cmux throws", async () => {

@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import { checkToolCompat } from "../lib/tool-compat.js";
+import { compatManifest } from "../lib/compat-manifest.js";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -234,6 +236,8 @@ export function createCmuxDriver(): RuntimeDriver {
     async probe(): Promise<RuntimeProbeResult> {
       try {
         const version = cmux(["--version"]);
+        const warn = checkToolCompat("cmux", version, compatManifest.tools.cmux);
+        if (warn) process.stderr.write(`[cockpit] ${warn}\n`);
         return { installed: true, version };
       } catch {
         return { installed: false, version: "" };
@@ -242,7 +246,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async list(): Promise<WorkspaceRef[]> {
       try {
-        return parseList(cmux(["list-workspaces"]));
+        return parseList(cmux(["workspace", "list", "--id-format", "refs"]));
       } catch {
         return [];
       }
@@ -255,18 +259,18 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async spawn(opts: RuntimeSpawnOptions): Promise<WorkspaceRef> {
-      const newWorkspaceArgs = ["new-workspace", "--command", opts.command];
+      const newWorkspaceArgs = ["workspace", "create", "--command", opts.command];
       if (opts.workdir) newWorkspaceArgs.push("--cwd", opts.workdir);
       const output = cmux(newWorkspaceArgs);
       const id = output.match(/workspace:\d+/)?.[0] || output.split(/\s+/).pop() || "";
       if (!id) {
         throw new Error(`cmux spawn did not return a workspace id: ${output}`);
       }
-      cmux(["rename-workspace", "--workspace", id, opts.name]);
+      cmux(["workspace", "rename", id, "--title", opts.name]);
       // Rename the initial tab to the workspace name so send() can route to it
       let initialSurface: string | undefined;
       try {
-        const tree = cmux(["tree", "--workspace", id]);
+        const tree = cmux(["tree", "--workspace", id, "--id-format", "refs"]);
         const m = tree.match(/surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/);
         if (m) {
           initialSurface = m[1];
@@ -320,8 +324,13 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async stop(ref: string): Promise<void> {
+      // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
+      // cockpit launch --fresh works even when the captain workspace is pinned.
       try {
-        cmux(["close-workspace", "--workspace", ref]);
+        cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
+      } catch { /* workspace may not be pinned — proceed to close regardless */ }
+      try {
+        cmux(["workspace", "close", ref]);
       } catch { /* may already be closed */ }
     },
 
@@ -334,7 +343,7 @@ export function createCmuxDriver(): RuntimeDriver {
       let priorIndex = -1;
       if (opts.direction === "tab") {
         try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId]));
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId, "--id-format", "refs"]));
           priorIndex = before.findIndex((s) => s.selected);
           if (priorIndex >= 0) priorSurface = before[priorIndex].id;
         } catch { /* best-effort: if we can't read the tree, skip refocus */ }
@@ -401,7 +410,7 @@ export function createCmuxDriver(): RuntimeDriver {
       let priorIndex = -1;
       if (opts.placement === "background") {
         try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId]));
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId, "--id-format", "refs"]));
           priorIndex = before.findIndex((s) => s.selected);
           if (priorIndex >= 0) priorSurface = before[priorIndex].id;
         } catch { /* best-effort: if we can't read the tree, skip refocus */ }
@@ -481,7 +490,7 @@ export function createCmuxDriver(): RuntimeDriver {
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
       let output: string;
       try {
-        output = cmux(["tree", "--workspace", workspaceId]);
+        output = cmux(["tree", "--workspace", workspaceId, "--id-format", "refs"]);
       } catch {
         return [];
       }
