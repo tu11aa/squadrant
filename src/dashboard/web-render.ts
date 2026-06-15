@@ -192,7 +192,13 @@ function collect(snap: FullSnapshot): Collected {
 }
 
 // ── Tab: OVERVIEW ───────────────────────────────────────────────────────────────
-function tierCard(name: string, t: Tally): string {
+/** A titled section header: a short heading + a one-line plain-language caption,
+ *  so a first-time viewer knows what each block of widgets is showing. */
+function sectionHead(title: string, sub: string): string {
+  return `<div class="section-head"><h2 class="section-title">${esc(title)}</h2><p class="section-sub">${esc(sub)}</p></div>`;
+}
+
+function tierCard(name: string, t: Tally, desc: string): string {
   const w = t.total ? worst(([] as AnyState[]).concat(
     ...Array.from({ length: t.gone }, () => "gone" as AnyState),
     ...Array.from({ length: t.stale }, () => "stale" as AnyState),
@@ -202,6 +208,7 @@ function tierCard(name: string, t: Tally): string {
   return [
     `<div class="tier-card">`,
     `<div class="tier-top"><span class="tier-name">${esc(name)}</span>${statePill(w)}</div>`,
+    `<p class="tier-desc">${esc(desc)}</p>`,
     `<div class="tier-counts">`,
     `<span class="tc s-alive">${t.alive}<i>ok</i></span>`,
     `<span class="tc s-stale">${t.stale}<i>caution</i></span>`,
@@ -217,6 +224,10 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
   const word = linkLost ? "LINK LOST" : MASTER_WORD[mc];
   const out: string[] = [`<section class="panel" data-panel="overview" role="tabpanel" aria-label="Overview">`];
 
+  out.push(sectionHead(
+    "System Health",
+    `${col.overall.alive} of ${col.overall.total} monitored components are alive — the ring shows the full breakdown by state.`,
+  ));
   out.push(
     `<div class="hero a-${mc}">`,
     `<div class="gauge">`,
@@ -232,13 +243,21 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
     `</div>`,
   );
 
-  out.push(`<div class="tier-grid">`, tierCard("Daemon", col.daemonT), tierCard("Projects", col.projT), tierCard("Environment", col.envT), `</div>`);
+  out.push(sectionHead("Health by Tier", "How many components are healthy in each layer of the stack."));
+  out.push(
+    `<div class="tier-grid">`,
+    tierCard("Daemon", col.daemonT, "cockpitd process, build freshness & log volume (Tier 0)"),
+    tierCard("Projects", col.projT, "relays, captains, crews & message data plane (Tier 1/2)"),
+    tierCard("Environment", col.envT, "agent CLIs, vaults & config integrity (Tier 3/4)"),
+    `</div>`,
+  );
 
+  out.push(sectionHead("Live Trends", "Magnitudes tracked over time — each sparkline builds as new updates arrive."));
   out.push(
     `<div class="trend-grid">`,
-    trendCard("errors", "Daemon log", `${col.errors}`, "errors logged in the last window"),
-    trendCard("behind", "Delivery lag", `${col.behind}`, "messages captains have yet to read"),
-    trendCard("crewAge", "Crew heartbeat", linkLost ? "—" : fmtDur(col.crewAgeMs), "oldest crew since last sign of life"),
+    trendCard("errors", "Daemon log", `${col.errors}`, "errors the daemon logged in the last window"),
+    trendCard("behind", "Delivery lag", `${col.behind}`, "messages captains have not read yet"),
+    trendCard("crewAge", "Crew heartbeat", linkLost ? "—" : fmtDur(col.crewAgeMs), "time since the quietest crew was last seen"),
     `</div>`,
   );
 
@@ -275,6 +294,7 @@ function deliveryBar(behind: number, maxSeq: number): string {
 
 function renderProjects(snap: FullSnapshot, now: number): string {
   const out: string[] = [`<section class="panel" data-panel="projects" role="tabpanel" aria-label="Projects">`];
+  out.push(sectionHead("Projects", "Per-project relays, captains, and crews, plus each project's mailbox delivery and task store."));
   if (snap.daemon === "unreachable") {
     out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>cockpit heal daemon</code></div></section>`);
     return out.join("");
@@ -328,6 +348,7 @@ function instr(label: string, value: string, extra = ""): string {
 
 function renderDaemon(snap: FullSnapshot): string {
   const out: string[] = [`<section class="panel" data-panel="daemon" role="tabpanel" aria-label="Daemon">`];
+  out.push(sectionHead("Daemon · Tier 0", "The cockpitd process at the root of everything — uptime, build freshness, sweep cadence, and log volume."));
   if (snap.daemon === "unreachable") {
     out.push(`<div class="empty">Daemon unreachable — no Tier 0 telemetry. ${remediation("cockpit heal daemon")}</div></section>`);
     return out.join("");
@@ -384,6 +405,7 @@ function probeTable(rows: Array<[string, Probe]>): string {
 
 function renderEnv(ext: ExternalProbes): string {
   const out: string[] = [`<section class="panel" data-panel="environment" role="tabpanel" aria-label="Environment">`];
+  out.push(sectionHead("Environment · Tier 3 / 4", "External tools and on-disk state the cockpit depends on but does not own — agent CLIs, vaults, and config."));
 
   out.push(`<article class="card"><header class="card-head"><span class="card-title">Runtime & CLIs</span></header>`);
   out.push(probeTable([
@@ -446,14 +468,20 @@ export function renderContent(snap: FullSnapshot): string {
   const mc = linkLost ? "crit" : masterClass(col.overall);
   const word = linkLost ? "LINK LOST" : MASTER_WORD[mc];
 
-  const out: string[] = [`<h1 class="sr-only">COCKPIT SYSTEM HEALTH</h1>`];
+  const out: string[] = [
+    `<header class="page-head">`,
+    `<h1 class="page-title">COCKPIT SYSTEM HEALTH</h1>`,
+    `<p class="page-sub">Live health of the cockpit daemon, sessions, message data plane, and environment — refreshed automatically every few seconds.</p>`,
+    `</header>`,
+  ];
 
-  // Master annunciator — glanceable on every tab.
+  // Master annunciator (status summary) — glanceable on every tab.
+  const sumLine = `${col.overall.alive} nominal · ${col.overall.stale} caution · ${col.overall.gone} fault · ${col.overall.unknown} unknown`;
   out.push(
-    `<div class="annunciator a-${mc}" role="status">`,
-    `<span class="ann-word">${esc(word)}</span>`,
-    `<span class="ann-sum">${col.overall.alive} nominal · ${col.overall.stale} caution · ${col.overall.gone} fault · ${col.overall.unknown} unknown</span>`,
-    `</div>`,
+    `<section class="annunciator a-${mc}" role="status" aria-label="Status summary">`,
+    `<div class="ann-main"><span class="ann-eyebrow">Status summary</span><span class="ann-word">${esc(word)}</span></div>`,
+    `<div class="ann-meta"><span class="ann-sum">${sumLine}</span><span class="ann-cap">worst current state across all ${col.overall.total} monitored components</span></div>`,
+    `</section>`,
   );
 
   // Caution banners (loud, only when applicable).
@@ -483,20 +511,18 @@ export function renderTickJson(snap: FullSnapshot): string {
 
 const STYLE = `
 :root{
-  --bg:#070b14;--panel:#0c1322;--panel-2:#101a2e;--bezel:#1c2942;--track:#16223c;
-  --ink:#d2ddf0;--ink-dim:#6a7a9c;--hud:#37c6ee;--hud-deep:#0e4f63;
-  --ok:#3ad29f;--warn:#f5b945;--crit:#fb5d6e;--unk:#5e6f90;
-  --shadow:0 1px 0 rgba(255,255,255,.03),0 8px 24px rgba(0,0,0,.45);
+  --bg:#f6f7f9;--panel:#ffffff;--panel-2:#eef1f6;--bezel:#e3e7ef;--track:#e9ecf2;
+  --ink:#1b2333;--ink-dim:#5b6678;--hud:#0b6fc2;--hud-deep:#0b6fc2;
+  --ok:#157f3c;--warn:#b45309;--crit:#c01f2e;--unk:#5f6b7d;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.06);
 }
 *{box-sizing:border-box}
-body{margin:0;background:radial-gradient(1200px 700px at 50% -200px,#0d1830 0%,var(--bg) 60%);color:var(--ink);
+body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -260px,#eaf1fb 0%,var(--bg) 58%);color:var(--ink);
   font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;-webkit-font-smoothing:antialiased}
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
-.label{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;text-transform:uppercase;letter-spacing:.14em}
 
 /* Flight deck header (persistent shell) */
 .deck{display:flex;align-items:center;gap:18px;padding:14px 22px;border-bottom:1px solid var(--bezel);
-  background:linear-gradient(180deg,rgba(20,32,56,.65),rgba(8,12,20,.2));position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+  background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.62));position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
 .brand{display:flex;align-items:center;gap:11px}
 .led{width:10px;height:10px;border-radius:50%;background:var(--unk);box-shadow:0 0 0 0 rgba(55,198,238,.5)}
 .led.live{background:var(--ok);animation:beat 2.2s ease-in-out infinite}
@@ -513,20 +539,33 @@ body{margin:0;background:radial-gradient(1200px 700px at 50% -200px,#0d1830 0%,v
 #content{max-width:1080px;margin:0 auto;padding:18px 22px 64px;transition:opacity .18s ease}
 #content.swap{animation:fade .26s ease}
 
+/* Page heading + section headings */
+.page-head{margin:2px 0 16px}
+.page-title{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-weight:800;font-size:20px;letter-spacing:.06em;color:var(--ink)}
+.page-sub{margin:5px 0 0;color:var(--ink-dim);font-size:13px;max-width:74ch}
+.section-head{margin:20px 0 10px}
+.section-title{margin:0;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:12px;font-weight:700;color:var(--ink)}
+.section-sub{margin:3px 0 0;color:var(--ink-dim);font-size:12px}
+
 /* Annunciator */
-.annunciator{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;padding:13px 18px;border-radius:12px;margin-bottom:14px;
+.annunciator{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:14px 18px;border-radius:12px;margin-bottom:6px;
   border:1px solid var(--bezel);background:var(--panel);box-shadow:var(--shadow);position:relative;overflow:hidden}
 .annunciator::before{content:"";position:absolute;inset:0 auto 0 0;width:4px}
-.ann-word{font-family:system-ui,sans-serif;font-weight:800;letter-spacing:.2em;font-size:19px}
-.ann-sum{color:var(--ink-dim);letter-spacing:.04em}
+.ann-main{display:flex;flex-direction:column;gap:2px}
+.ann-eyebrow{font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.16em;font-size:9px;color:var(--ink-dim)}
+.ann-meta{display:flex;flex-direction:column;gap:2px;text-align:right;min-width:0}
+.ann-word{font-family:system-ui,sans-serif;font-weight:800;letter-spacing:.2em;font-size:21px}
+.ann-sum{color:var(--ink);letter-spacing:.04em;font-size:12px}
+.ann-cap{color:var(--ink-dim);font-size:11px}
+@media (max-width:560px){.ann-meta{text-align:left}}
 .a-ok .ann-word{color:var(--ok)}.a-ok::before{background:var(--ok);box-shadow:0 0 18px var(--ok)}
 .a-warn .ann-word{color:var(--warn)}.a-warn::before{background:var(--warn);box-shadow:0 0 18px var(--warn)}
 .a-crit .ann-word{color:var(--crit)}.a-crit::before{background:var(--crit);box-shadow:0 0 18px var(--crit);animation:pulseBar 1.4s ease-in-out infinite}
 
 /* Banners */
 .banner{padding:10px 14px;border-radius:10px;margin:10px 0;font-weight:700;letter-spacing:.02em;border:1px solid transparent}
-.banner.err{background:rgba(251,93,110,.12);color:#ff8d99;border-color:rgba(251,93,110,.4)}
-.banner.warn{background:rgba(245,185,69,.12);color:#ffd479;border-color:rgba(245,185,69,.36)}
+.banner.err{background:#fdecee;color:#b21f2c;border-color:#f3c3c9}
+.banner.warn{background:#fff5e1;color:#8a5806;border-color:#f0d8a4}
 .rem{color:var(--ink-dim);margin:6px 0;font-size:12px}
 .rem code,.empty code{background:var(--panel-2);padding:2px 7px;border-radius:5px;color:var(--hud);user-select:all;border:1px solid var(--bezel)}
 
@@ -564,8 +603,9 @@ body{margin:0;background:radial-gradient(1200px 700px at 50% -200px,#0d1830 0%,v
 /* Tier + trend cards */
 .tier-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px}
 .tier-card{border:1px solid var(--bezel);border-radius:12px;background:var(--panel);padding:14px 16px;box-shadow:var(--shadow)}
-.tier-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.tier-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .tier-name{font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--ink)}
+.tier-desc{margin:0 0 12px;color:var(--ink-dim);font-size:11px;min-height:2.2em}
 .tier-counts{display:flex;gap:14px}
 .tc{display:flex;flex-direction:column;font-size:21px;font-weight:700;font-family:system-ui,sans-serif;line-height:1.1}
 .tc i{font-size:9px;font-weight:600;font-style:normal;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim)}
@@ -593,7 +633,7 @@ body{margin:0;background:radial-gradient(1200px 700px at 50% -200px,#0d1830 0%,v
 .grid{width:100%;border-collapse:collapse;font-size:12px}
 .grid th{text-align:left;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:9px;
   color:var(--ink-dim);font-weight:600;padding:4px 10px 8px;border-bottom:1px solid var(--bezel)}
-.grid td{padding:6px 10px;border-bottom:1px solid rgba(28,41,66,.5);vertical-align:middle}
+.grid td{padding:6px 10px;border-bottom:1px solid var(--track);vertical-align:middle}
 .grid tr:last-child td{border-bottom:0}
 .rem-row td{padding-top:0;border-bottom:0}
 .mono{font-family:ui-monospace,monospace}
@@ -677,7 +717,7 @@ export function renderHtml(snap: FullSnapshot, opts: { port?: number } = {}): st
     '<html lang="en"><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     "<title>cockpit · system health</title>",
-    `<style>${STYLE}</style></head><body>`,
+    `<style>${STYLE}</style></head><body class="theme-light">`,
     `<header class="deck">`,
     `<div class="brand"><span class="led" id="led"></span><span class="wordmark">Cockpit</span><span class="tagline">Mission Control</span></div>`,
     `<span class="deck-spacer"></span>`,

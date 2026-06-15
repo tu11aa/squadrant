@@ -48,12 +48,55 @@ describe("renderHtml", () => {
   it("emits a full HTML document with the live content and an SSE connection indicator", () => {
     const html = renderHtml(full(daemon()));
     expect(html).toMatch(/^<!DOCTYPE html>/i);
-    expect(html).toContain("COCKPIT SYSTEM HEALTH"); // accessible page heading
+    expect(html).toContain("COCKPIT SYSTEM HEALTH"); // visible page heading
     expect(html).toContain('id="content"');
     expect(html).toContain('id="conn"');
     expect(html).toContain('id="led"'); // pulsing live indicator in the flight deck
     expect(html).toContain("EventSource"); // bootstrap JS wires the SSE stream
     expect(html).toContain("updated"); // "updated Ns ago" readout
+  });
+
+  it("ships the light theme — light background, dark ink, no dark mission-control palette", () => {
+    const html = renderHtml(full(daemon()));
+    expect(html).toContain('class="theme-light"');
+    expect(html).toContain("--bg:#f6f7f9"); // near-white page background
+    expect(html).toContain("--panel:#ffffff"); // white cards
+    expect(html).toContain("--ink:#1b2333"); // dark high-contrast text
+    expect(html).not.toContain("#070b14"); // the old dark page background is gone
+  });
+});
+
+describe("explanatory titles + captions", () => {
+  it("gives the page a heading and a plain-language subtitle", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('class="page-title"');
+    expect(out).toContain('class="page-sub"');
+    expect(out).toContain("Live health of the cockpit daemon");
+  });
+
+  it("titles every Overview block with a heading + caption", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('class="section-head"');
+    expect(out).toContain("System Health");
+    expect(out).toContain("Health by Tier");
+    expect(out).toContain("Live Trends");
+    // the donut number is explained in plain language
+    expect(out).toContain("monitored components are alive");
+  });
+
+  it("labels the status summary annunciator and each tier card", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain("Status summary");
+    expect(out).toContain('class="tier-desc"');
+    expect(out).toContain("Tier 0"); // daemon tier described
+    expect(out).toContain("Tier 3/4"); // environment tier described
+  });
+
+  it("introduces the other tabs so their tables are not ambiguous", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain("Daemon · Tier 0");
+    expect(out).toContain("Environment · Tier 3 / 4");
+    expect(out).toContain("mailbox delivery and task store"); // projects intro
   });
 });
 
