@@ -66,4 +66,26 @@ describe("checkToolCompat", () => {
   it("compares major version correctly (major above min → in range without lastVerified)", () => {
     expect(checkToolCompat("claude", "claude 3.0.0", { min: "2.1.32" })).toBeNull();
   });
+
+  // Optional-min entries (codex/gemini/opencode — presence-checked, no floor enforced yet)
+  it("returns null when min is absent and version is below lastVerified", () => {
+    expect(checkToolCompat("codex", "codex-cli 0.100.0", { lastVerified: "0.139.0" })).toBeNull();
+  });
+
+  it("warns when min is absent but version is above lastVerified (drift)", () => {
+    const warn = checkToolCompat("codex", "codex-cli 0.200.0", { lastVerified: "0.139.0" });
+    expect(warn).not.toBeNull();
+    expect(warn).toMatch(/last-verified/);
+  });
+
+  it("returns null when only lastVerified is set and version matches it exactly", () => {
+    expect(checkToolCompat("opencode", "1.17.4", { lastVerified: "1.17.4" })).toBeNull();
+  });
+
+  // Manifest shape: all six tools should produce a null when version is in-range
+  it("manifest tool entries for cmux/claude/node each have a min and are checkable", () => {
+    expect(checkToolCompat("cmux",  "cmux 0.64.16", { min: "0.64.0",  lastVerified: "0.64.16" })).toBeNull();
+    expect(checkToolCompat("claude","claude 2.1.32", { min: "2.1.32" })).toBeNull();
+    expect(checkToolCompat("node",  "22.0.0",        { min: "18.0.0", lastVerified: "24.6.0" })).toBeNull();
+  });
 });

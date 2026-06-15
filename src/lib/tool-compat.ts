@@ -17,16 +17,17 @@ function cmpSemVer(a: SemVer, b: SemVer): number {
  * Compare an installed tool version against the compat manifest entry.
  * Returns a warning string when the version is below min or above lastVerified,
  * or null when the version is in-range or unparseable (non-blocking).
+ * `min` is optional — entries without a floor are only drift-checked against lastVerified.
  */
 export function checkToolCompat(
   name: string,
   rawVersion: string,
-  entry: { min: string; lastVerified?: string },
+  entry: { min?: string; lastVerified?: string },
 ): string | null {
   const installed = parseSemVer(rawVersion);
   if (!installed) return null;
 
-  const min = parseSemVer(entry.min);
+  const min = entry.min ? parseSemVer(entry.min) : null;
   if (min && cmpSemVer(installed, min) < 0) {
     return `${name} ${rawVersion} < min ${entry.min} — upgrade to ${entry.min}+`;
   }

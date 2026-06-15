@@ -5,7 +5,8 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
-import { compatManifest } from "../lib/compat-manifest.js";
+import { compatManifest, type ToolEntry } from "../lib/compat-manifest.js";
+import { checkToolCompat } from "../lib/tool-compat.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
@@ -72,9 +73,17 @@ function pluginInstalled(pluginKey: string): boolean {
 }
 
 function nodeVersionOk(): boolean {
-  const version = process.versions.node;
-  const major = parseInt(version.split(".")[0], 10);
-  return major >= 18;
+  const major = parseInt(process.versions.node.split(".")[0], 10);
+  const [minMajor] = compatManifest.tools.node.min.split(".").map(Number);
+  return major >= minMajor;
+}
+
+function tryGetVersion(cmd: string): string {
+  try {
+    return execSync(`${cmd} --version`, { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
 }
 
 function check(label: string, pass: boolean): boolean {
@@ -209,6 +218,29 @@ export const doctorCommand = new Command("doctor")
     // #77 service-health: live per-component liveness from the daemon. Printed
     // before the prereq-fail exit so a degraded install still shows what is up.
     printServiceHealth(await queryHealth());
+
+    // Non-blocking version compat drift for every tool in the manifest.
+    // Tools not installed are skipped silently; only drift (below min / above
+    // lastVerified) produces a warning line — nothing here causes an exit.
+    console.log(chalk.bold("\nTool Version Compat\n"));
+    const toolVersionMap: Record<string, string> = {
+      cmux:     probeResults["cmux"]?.version ?? "",
+      claude:   tryGetVersion("claude"),
+      node:     process.versions.node,
+      codex:    tryGetVersion("codex"),
+      gemini:   tryGetVersion("gemini"),
+      opencode: tryGetVersion("opencode"),
+    };
+    for (const [name, entry] of Object.entries(compatManifest.tools) as [string, ToolEntry][]) {
+      const version = toolVersionMap[name] ?? "";
+      if (!version) continue;
+      const warn = checkToolCompat(name, version, entry);
+      if (warn) {
+        console.log(`  ${chalk.yellow("⚠ WARN")}  ${name}: ${warn}`);
+      } else {
+        console.log(`  ${chalk.green("✔ OK  ")}  ${name}: ${version}`);
+      }
+    }
 
     if (results.some((r) => !r)) {
       process.exit(1);
