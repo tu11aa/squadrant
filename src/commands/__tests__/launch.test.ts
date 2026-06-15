@@ -161,7 +161,7 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   // reads that working captain as "idle" on every settle sample, concludes the
   // keystrokes were dropped, and re-sends — 3 duplicate startup runs.
   // Source of truth: 258 fixture line 4 (working, no token counter).
-  it("FAILS PRE-FIX: a working-but-shell-waiting captain is misread as idle → 3 dupes", async () => {
+  it("does NOT re-send when the captain is working on a shell command (no token counter)", async () => {
     const SHELL_WAITING = [
       "✻ Crunched for 27s · 1 shell still running",
       HR, "❯ ", HR,

@@ -199,11 +199,19 @@ export function readInputBoxRaw(screen: string): string | null {
 // silently dropped (#235). Grounded in docs/reports/258-parse-bug-fixture.txt.
 const CC_INITIALIZED_RE = /⏵⏵|Ctx Used|for shortcuts|accept edits/i;
 
-// A live turn shows a working spinner carrying a token-down-counter ("↓ 4.3k
-// tokens") and/or the "esc to interrupt" hint — neither appears on an idle,
-// input-ready screen. The whimsical spinner verb ("Working…", "Cerebrating…")
-// varies across versions, so we key on these stable markers instead.
-const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt/i;
+// A live turn shows a working spinner. The whimsical verb ("Working…",
+// "Cerebrating…", "Crunched…") varies across versions, so we key on stable
+// markers instead. CRUCIAL: a turn is NOT always streaming tokens — during a
+// tool wait (e.g. the shell commands the captain startup checklist runs first)
+// the spinner reads "✻ Crunched for 27s · 1 shell still running", which carries
+// NO token-down-counter and no "esc to interrupt". Keying only on those two
+// (the original #292 mistake) misread a shell-waiting captain as "idle", so the
+// startup-prompt loop re-sent on every poll → 3 duplicate startup runs. We now
+// also match the shell-running hint and the in-parens elapsed timer ("(4s",
+// "(1m 4s") — both confined to the live spinner line, never on an idle,
+// input-ready screen. Grounded in docs/reports/258-parse-bug-fixture.txt
+// (line 4: shell-wait, no counter; line 22: token-stream).
+const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt|\bshell still running\b|·\s*\d+\s*shell\b|\(\d+m?\s*\d*s\b/i;
 
 /**
  * Classify a captain surface's read-screen into the three states #292's
