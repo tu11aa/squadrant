@@ -45,16 +45,19 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
         question: undefined, // resuming after a blocked→reply clears the question
       };
     case "task.progress":
+      // task.progress is a real-activity signal (stdout chunk for headless,
+      // PostToolUse/SubagentStop hook for interactive). Stamp the attempt so
+      // lastHeartbeatAt stays current and the watchdog stall-check (#89) can
+      // key off it without false-stalling long-running headless tasks.
+      // From blocked: liveness only — do not auto-unblock (explicit reply required).
+      // From awaiting-input: resume to working (PostToolUse on the next turn).
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      if (rec.state === "awaiting-input") return { ...stampAttempt(base, {}, now), state: "working" };
+      return stampAttempt(base, {}, now);
     case "heartbeat":
-      // `heartbeat` and `task.progress` intentionally share this case arm
-      // (both are liveness signals); split if the watchdog later needs to
-      // differentiate them.
-      // Anti-#2576: liveness only. A turn-end is NOT completion.
-      // From blocked, a bare progress/heartbeat does not auto-unblock
-      // (state stays "blocked"); only lastEvent + lastHeartbeat update.
-      // From awaiting-input, transition back to working — the Stop hook
-      // puts the task into awaiting-input between turns (fixes #131 false
-      // stall); PostToolUse on the next turn resumes the working state.
+      // Raw liveness ping — intentionally does NOT stamp the attempt so a late
+      // heartbeat from a dead dispatch cannot mask stalls on the new one (#89).
+      // From awaiting-input: resume to working (mirrors task.progress).
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       if (rec.state === "awaiting-input") return { ...base, state: "working" };
       return base;

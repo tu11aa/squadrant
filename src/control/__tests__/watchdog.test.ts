@@ -1,6 +1,7 @@
 // src/control/__tests__/watchdog.test.ts
 import { describe, it, expect } from "vitest";
 import { evaluateStall, recoverStall } from "../watchdog.js";
+import { reduce } from "../state-machine.js";
 import type { TaskRecord } from "../types.js";
 
 function rec(o: Partial<TaskRecord> = {}): TaskRecord {
@@ -89,5 +90,54 @@ describe("idle interactive-codex = warn-don't-autofail (spec §4.8, #90 slice)",
     const idle = evaluateStall(rec(), 100_000)!;
     expect(evaluateStall(idle, 200_000)).toBeNull(); // no re-stall while idle
     expect(recoverStall(idle, 101_000)).toBeNull();  // recoverStall only acts on 'stalled'
+  });
+});
+
+// ── Issue #89: masking-heartbeat regression ──────────────────────────────────
+// A late { type: "heartbeat" } from a dead attempt updates rec.lastHeartbeat
+// but bypasses stampAttempt, so attempts[-1].lastHeartbeatAt stays anchored to
+// the new dispatch's task.started time. evaluateStall must key off lastHeartbeatAt
+// so the stale pulse from the dead attempt cannot hide a hung new dispatch.
+describe("masking-heartbeat regression (#89)", () => {
+  function baseRec(): TaskRecord {
+    return {
+      id: "t1", project: "p", provider: "claude", mode: "headless",
+      state: "submitted", task: "do x", createdAt: 0,
+      lastHeartbeat: 0, lastEvent: "", heartbeatBudgetMs: 5000,
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }],
+    };
+  }
+
+  it("stale heartbeat from dead attempt does not mask stall on hung re-dispatch", () => {
+    // Attempt A starts at T=100.
+    let r = reduce(baseRec(), { type: "task.started", id: "t1", pid: 10 }, 100);
+    expect(r.attempts.at(-1)!.lastHeartbeatAt).toBe(100);
+
+    // Attempt A crashes at T=200 → terminal.
+    r = reduce(r, { type: "task.failed", id: "t1", error: "crash" }, 200);
+    expect(r.state).toBe("failed");
+
+    // Re-dispatch: captain reopens at T=300.
+    r = reduce(r, { type: "task.reopened", id: "t1" }, 300);
+    expect(r.state).toBe("working");
+
+    // New dispatch: task.started at T=400 stamps lastHeartbeatAt on the attempt.
+    r = reduce(r, { type: "task.started", id: "t1", pid: 20 }, 400);
+    expect(r.attempts.at(-1)!.lastHeartbeatAt).toBe(400);
+
+    // New dispatch is HUNG — no output, no events from pid 20.
+
+    // Late heartbeat from dead attempt A arrives at T=4500 (still within 5s budget
+    // if measured from rec.lastHeartbeat). It updates rec.lastHeartbeat but does NOT
+    // call stampAttempt, so lastHeartbeatAt stays anchored at 400.
+    r = reduce(r, { type: "heartbeat", id: "t1" }, 4500);
+    expect(r.lastHeartbeat).toBe(4500);
+    expect(r.attempts.at(-1)!.lastHeartbeatAt).toBe(400); // unchanged
+
+    // Watchdog fires at T=5401.
+    // Old (buggy) path: now - rec.lastHeartbeat = 5401-4500 = 901 ≤ 5000 → null (false-alive).
+    // Fixed path:       now - lastHeartbeatAt    = 5401-400  = 5001 > 5000 → stalled.
+    const result = evaluateStall(r, 5401);
+    expect(result?.state).toBe("stalled");
   });
 });

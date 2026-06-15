@@ -18,7 +18,10 @@ import type { TaskRecord } from "./types.js";
  */
 export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (rec.state !== "working") return null;
-  if (now - rec.lastHeartbeat <= rec.heartbeatBudgetMs) return null;
+  // Key off the latest attempt's lastHeartbeatAt so a stale event from a dead
+  // prior attempt cannot refresh the liveness clock of the new dispatch (#89).
+  const liveness = rec.attempts.at(-1)?.lastHeartbeatAt ?? rec.lastHeartbeat;
+  if (now - liveness <= rec.heartbeatBudgetMs) return null;
   if (rec.mode === "interactive") {
     return { ...rec, state: "awaiting-input", lastEvent: "watchdog.idle" };
   }
