@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **claude-cockpit** (4014 symbols, 6562 relationships, 110 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **claude-cockpit** (4531 symbols, 7257 relationships, 127 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -62,6 +62,12 @@ Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL
 2. **Simplicity first** — no speculative abstractions, no impossible-case error handling
 3. **Surgical changes** — every changed line traces to the request; no drive-by refactors
 4. **Goal-driven execution** — define verifiable success criteria before implementing
+
+## Remote Control
+
+- **Telegram remote control** (opt-in, #65): push crew lifecycle to Telegram forum
+  topics (one per session) and reply back to the captain. Configure via
+  `cockpit telegram link <project>`. See README "Telegram remote control".
 # Memory Context
 
 # [claude-cockpit] recent context, 2026-06-01 10:23pm GMT+7

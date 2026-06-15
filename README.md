@@ -90,6 +90,39 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit shutdown [project]` | Graceful shutdown |
 | `cockpit feedback` | Open opt-in feedback issue |
 
+## Telegram remote control (#65)
+
+Drive cockpit from your phone. Crew lifecycle events (done / blocked / idle) push
+to Telegram forum topics — one topic per session — and replies route back to the
+captain.
+
+### Setup
+
+1. Create a bot with [@BotFather](https://t.me/botfather); copy the token.
+2. Add the token to `~/.config/cockpit/config.json`:
+   ```json
+   { "telegram": { "botToken": "123456:ABC...", "chats": {} } }
+   ```
+3. Create a Telegram **supergroup with Topics enabled** for the project, and add
+   your bot as an **admin** (with "Manage topics").
+4. Run `cockpit telegram link <project>` — this binds the group to the project.
+5. Restart the daemon: `launchctl kickstart -kp gui/$(id -u)/com.cockpit.daemon`.
+
+Check status any time with `cockpit telegram status`.
+
+### How it works
+
+- **Outbound** rides the daemon's existing notification fan-out — Telegram is a
+  parallel consumer; your laptop notifications are unaffected if Telegram or the
+  network is down (best-effort).
+- **Inbound** replies are delivered to the captain (the coordinator), which routes
+  them onward to crews.
+- The feature is **opt-in**: with no `telegram` config, the daemon behaves exactly
+  as before.
+
+Deferred enhancements: inline approve/deny buttons (#309), webhook ingress (#310),
+direct-to-crew injection (#249).
+
 ## Architecture
 
 ### Roles
