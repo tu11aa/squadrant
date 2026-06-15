@@ -9,7 +9,7 @@ export interface MailboxEntry {
   /** Optional human-readable name carried from TaskRecord. Absent on legacy
    *  records — readers must fall back to shortId(taskId). */
   name?: string;
-  kind: ControlEvent["type"];
+  kind: ControlEvent["type"] | "captain.message";
   provider: TaskRecord["provider"];
   payload: Record<string, unknown>;
   /** Daemon-rendered captain-facing message (unified-formatter, #214/#210).
@@ -120,6 +120,45 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
       provider: opts.taskRecord.provider,
       payload: extractPayload(opts.event),
       message: opts.message ?? null,
+    };
+    await fs.appendFile(file, JSON.stringify(entry) + "\n", { encoding: "utf-8" });
+    return seq;
+  });
+}
+
+interface CaptainMessageOpts {
+  stateRoot: string;
+  project: string;
+  message: string;
+  /** Source crew task id, if the reply targeted a specific crew topic. Defaults to "captain". */
+  taskId?: string;
+  /** Source crew name, surfaced in the entry for parity with task entries. */
+  name?: string;
+}
+
+/**
+ * Append a daemon-originated, captain-directed message (e.g. an inbound Telegram
+ * reply). Reuses the mailbox seq/lock machinery so the existing relay delivers
+ * it verbatim via deliverable() — no relay change needed. Kind is the synthetic
+ * "captain.message"; no state-machine transition is involved (this never flows
+ * through d.handle()).
+ */
+export async function appendCaptainMessage(opts: CaptainMessageOpts): Promise<number> {
+  return withProjectLock(opts.project, async () => {
+    const dir = inboxDir(opts.stateRoot);
+    await fs.mkdir(dir, { recursive: true });
+    const file = logPath(opts.stateRoot, opts.project);
+    const lastSeq = await readMaxSeq(opts.stateRoot, opts.project);
+    const seq = lastSeq + 1;
+    const entry: MailboxEntry = {
+      seq,
+      ts: new Date().toISOString(),
+      taskId: opts.taskId ?? "captain",
+      ...(opts.name !== undefined ? { name: opts.name } : {}),
+      kind: "captain.message",
+      provider: "claude",
+      payload: {},
+      message: opts.message,
     };
     await fs.appendFile(file, JSON.stringify(entry) + "\n", { encoding: "utf-8" });
     return seq;
