@@ -1,6 +1,6 @@
 // src/control/launchd.ts
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync, closeSync, unlinkSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,6 +146,67 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
   return plistChanged ? ["kickstart", "-k", target] : ["kickstart", target];
 }
 
+// In-process dedup: JS is single-threaded and ensureDaemon is synchronous, so
+// true re-entrancy is impossible; this flag prevents sequential re-calls within
+// the same process (e.g. index.ts + crew-control.ts) from re-running the
+// bootout/bootstrap pair needlessly.
+let restartInFlight = false;
+
+/** @internal — reset only in tests; never call from production code */
+export function _resetRestartInFlightForTest(): void {
+  restartInFlight = false;
+}
+
+export function daemonLockPath(): string {
+  return join(homedir(), ".config", "cockpit", "daemon.lock");
+}
+
+/**
+ * Acquire a cross-process filesystem lock at ~/.config/cockpit/daemon.lock.
+ * Uses O_EXCL for atomic, race-free creation. Cleans up stale locks (dead PID)
+ * before the acquisition loop. Retries with a ~50 ms synchronous sleep up to
+ * 20 times (~1 s total) before giving up.
+ * Returns true on success, false if another live process holds the lock.
+ */
+export function tryAcquireDaemonLock(): boolean {
+  const lp = daemonLockPath();
+
+  // Stale-lock cleanup: if the owning PID is no longer alive, remove the file
+  // so the next O_EXCL attempt succeeds.
+  if (existsSync(lp)) {
+    try {
+      const pid = parseInt(readFileSync(lp, "utf-8").trim(), 10);
+      if (!Number.isFinite(pid) || pid <= 0) {
+        unlinkSync(lp);
+      } else {
+        try { process.kill(pid, 0); }
+        catch { unlinkSync(lp); } // ESRCH → process dead, steal the lock
+      }
+    } catch { /* read/parse/unlink error — fall through to O_EXCL attempt */ }
+  }
+
+  // Atomic acquisition: O_EXCL guarantees only one process creates the file.
+  for (let i = 0; i < 20; i++) {
+    try {
+      const fd = openSync(lp, constants.O_EXCL | constants.O_CREAT | constants.O_WRONLY);
+      writeSync(fd, String(process.pid));
+      closeSync(fd);
+      return true;
+    } catch {
+      if (i < 19) {
+        // Synchronous sleep: gives the lock-holder time to finish and release.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      }
+    }
+  }
+  return false; // another live process held the lock for > ~1 s — skip restart
+}
+
+/** Release the lock written by tryAcquireDaemonLock. */
+export function releaseDaemonLock(): void {
+  try { unlinkSync(daemonLockPath()); } catch { /* already cleaned up */ }
+}
+
 /**
  * Idempotent & cheap. Never throws fatally. Writes/reloads the plist ONLY when
  * its content actually changed; Distinguishes program-argument drift (warrants
@@ -155,8 +216,22 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
  * bootout's exit handler that produced exit-113 "service not loaded" errors.
  * The daemon entry is resolved internally (see daemonEntryPath) so no caller
  * can pass a wrong path.
+ *
+ * Concurrency guards:
+ *   - restartInFlight flag: prevents sequential re-calls within this process.
+ *   - tryAcquireDaemonLock: serialises concurrent SEPARATE cockpit processes
+ *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
+  if (restartInFlight) return;
+  restartInFlight = true;
+
+  if (!tryAcquireDaemonLock()) {
+    // Another process is handling the restart; it will be done by the time the
+    // CLI tries to reach the daemon socket.
+    return;
+  }
+
   try {
     const p = plistPath();
     const entry = daemonEntryPath();
@@ -195,5 +270,7 @@ export function ensureDaemon(nodeBin: string = process.execPath): void {
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
     process.stderr.write(`[cockpit] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
+  } finally {
+    releaseDaemonLock();
   }
 }
