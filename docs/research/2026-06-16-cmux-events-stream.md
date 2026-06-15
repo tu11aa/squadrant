@@ -102,7 +102,46 @@ and the existing path is harmless — the core property that makes this additive
 - Gated behind `defaults.cmuxEventsBridge` (default **on**); set false to fall
   back to scrape-only.
 
+## B4 check — does the stream carry agent run-state? YES, via agent hooks.
+
+The audit asked whether the stream exposes claude/codex **working vs idle** so
+cockpit could drop the read-screen spinner heuristics
+(`classifyStartupSurface` / `CC_WORKING_RE`). There is **no dedicated
+"agent.status" query method** (`cmux capabilities` has no agent run-state
+method; the closest is `surface.report_shell_state`). But run-state **is**
+derivable from the `agent` event category itself:
+
+- `agent.hook.PreToolUse` / `UserPromptSubmit` → the agent is **working**.
+- `agent.hook.Stop` → the agent is **idle** (turn ended).
+
+So B4 is feasible **on top of this same stream**: a future PR could map
+PreToolUse→working / Stop→idle to replace the spinner scrape entirely. This PR
+already consumes `Stop`; extending to PreToolUse-as-working is the natural next
+step. (Reporting only, per the task — not implemented here.)
+
+## Surface lifecycle events — audit premise does NOT match cmux 0.64.16
+
+The audit assumed the stream emits `surface.created/closed/selected` +
+`workspace.selected` (for an event-driven crew-surface reaper — STEP 2 — and an
+authoritative stale-ref prune — STEP 3). **Live verification contradicts this.**
+Creating and then closing a workspace while subscribed with
+`--category surface` produced only `surface.input_sent` / `surface.key_sent`
+(keystroke echoes) — **no** `surface.created` / `surface.closed` /
+`surface.selected` frame fired. There is also no `~/.cmuxterm/events.jsonl`
+file; the stream is socket-based (`cmux events`).
+
+**Implication:** an event-driven surface reaper / stale-ref prune cannot be built
+on `surface.closed` in cmux 0.64.16 — that event does not exist. The
+**agent-hook** approach this PR ships (`agent.hook.Stop` → turn-end / idle) is
+the achievable B1 win. STEP 3's relay "Workspace not found" noise must be fixed
+the polled way (a per-sweep workspace-list guard + prune-once log), independent
+of the event stream — flagged to the captain as a separate follow-up, since it's
+in the relay/probe path and not unblocked by any event here.
+
 ## Conclusion
 
-`cmux events` exists, is stable JSON, exposes the agent hook surface we need, and
-resumes durably. Safe to prototype a consumer alongside the scrape fallback.
+`cmux events` exists, is stable JSON, exposes the **agent hook** surface we need
+(idle via `Stop`, working via `PreToolUse` — enough for B1 and a future B4), and
+resumes durably. It does **not** expose surface lifecycle events, so the
+event-driven reaper/prune the audit hypothesized is not possible on this version.
+Safe to prototype the agent-hook consumer alongside the scrape fallback — done.
