@@ -92,6 +92,17 @@ export interface CockpitConfig {
     /** B1: consume cmux's native event stream for crew turn-end (idle) detection
      *  alongside the scrape fallback. Default true; set false for scrape-only. */
     cmuxEventsBridge?: boolean;
+    /**
+     * Audit C2 — agent hibernation (reclaim idle-crew RAM). INTENTIONALLY OFF and
+     * INERT: cmux 0.64.16's `cmux agent-hibernation <on|off>` is GLOBAL (app-wide,
+     * no per-session/per-workspace scope), so enabling it would also hibernate the
+     * CAPTAIN and the notify-relay — both must stay responsive to deliver
+     * notifications — breaking orchestration. We do NOT call `agent-hibernation on`
+     * anywhere; this flag is a documented decision record + a forward hook for when
+     * cmux gains crew-only scoping. Until then leave false.
+     * See docs/research/2026-06-16-cmux-events-stream.md (C2 finding).
+     */
+    cmuxAgentHibernation?: boolean;
   };
   metrics: {
     enabled: boolean;
@@ -135,6 +146,9 @@ export function getDefaultConfig(): CockpitConfig {
       },
       taskTimeoutMs: 8 * 60 * 60 * 1000,
       cmuxEventsBridge: true,
+      // Audit C2: OFF by design — cmux hibernation is global-only and would
+      // hibernate the captain/relay. See the field doc above.
+      cmuxAgentHibernation: false,
       crewRouting: {
         rules: [
           { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },

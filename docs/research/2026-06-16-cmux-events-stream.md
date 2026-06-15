@@ -145,3 +145,38 @@ in the relay/probe path and not unblocked by any event here.
 resumes durably. It does **not** expose surface lifecycle events, so the
 event-driven reaper/prune the audit hypothesized is not possible on this version.
 Safe to prototype the agent-hook consumer alongside the scrape fallback — done.
+
+## STEP 3 follow-up — relay stale-ref noise, fixed the polled way
+
+Implemented in `feat/lifecycle-hardening`. The observed per-cycle noise was the
+daemon sweep re-healing relay records for projects whose **captain workspace is
+permanently gone** (live `cockpitd.log` showed `relay heal pact-network: captain
+workspace not present` every cycle for `pact-network`/`oneplan`). Mechanism: a
+failing/absent cmux lookup degrades gracefully in code, but cmux's CLI **stderr
+is inherited** by the daemon (`execFileSync` default), so each retry also echoes
+cmux's own `Error: not_found …` to our stderr.
+
+Fix (polled, no surface events needed): `createRelayHealer` now returns
+`"captain-absent"` when the captain workspace no longer resolves; the sweep
+prunes that relay-health record (and its debounce) so the heal/log fires **once**
+then goes quiet. A captain restart re-registers a fresh relay, so recovery is
+unaffected. The crew-surface probe poll set was already pruned of terminal crews
+(`cockpitd` evicts `inFlightProbes`/`probeResults` on terminal state, and
+`proxiedSurfaceAlive` only enqueues non-terminal records), so no change there.
+
+## C2 — agent hibernation: investigated, deferred (global-only, unsafe)
+
+`cmux agent-hibernation --help` in 0.64.16 is `cmux agent-hibernation <on|off>`
+— a **GLOBAL, app-wide** toggle with no per-session or per-workspace argument
+("Configure idle and live-terminal limits from Settings"). Enabling it would
+hibernate **every** agent/terminal session, including the **captain** and the
+**notify-relay** — both must stay responsive to deliver notifications — which
+would break orchestration. Idle trigger is configured globally (Settings/JSON),
+not scopeable to crews.
+
+**Decision: do NOT enable.** Wired a documented OFF flag
+`defaults.cmuxAgentHibernation` (default `false`) in `src/config.ts` as a
+decision record + forward hook for if/when cmux adds crew-only scoping. Because
+it is global-only, the surface-liveness reaper needs no "hibernated = alive"
+change in this PR (nothing is hibernated). Revisit if cmux exposes per-session
+hibernation.

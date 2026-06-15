@@ -7,6 +7,7 @@
 import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-supervisor.js";
+import type { RelayHealOutcome } from "./daemon.js";
 
 /**
  * Best-effort relay heal (#207, SECONDARY). Re-spawns the notify-relay tab in
@@ -19,17 +20,19 @@ import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-sup
  */
 export function createRelayHealer(
   log: (m: string) => void = () => {},
-): (project: string) => Promise<void> {
+): (project: string) => Promise<RelayHealOutcome> {
   return async (project) => {
     try {
       const config = loadConfig();
       const proj = config.projects[project];
-      if (!proj) return;
+      if (!proj) return "skipped";
       const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
       const ws = await runtime.status(proj.captainName);
       if (!ws) {
-        log(`relay heal ${project}: captain workspace not present; nothing to heal into`);
-        return;
+        // Captain workspace gone for good — signal the sweep to prune this relay
+        // record so this log fires ONCE, not every cycle (audit STEP 3).
+        log(`relay heal ${project}: captain workspace not present; pruning stale relay record`);
+        return "captain-absent";
       }
       // Dedup: close any pre-existing relay tab before respawning fresh.
       try {
@@ -47,10 +50,14 @@ export function createRelayHealer(
         placement: "background",
       });
       log(`relay heal ${project}: re-spawned notify-relay tab`);
+      return "healed";
     } catch (e) {
       // Expected under launchd (cmux lineage refusal). The surface still shows
-      // the relay down with its actionable; this is the secondary path.
+      // the relay down with its actionable; this is the secondary path. Captain
+      // workspace WAS resolvable here (status succeeded), so do not prune —
+      // return "skipped" so the record stays and the surface keeps reporting it.
       log(`relay heal ${project} failed (expected under launchd lineage): ${(e as Error).message}`);
+      return "skipped";
     }
   };
 }

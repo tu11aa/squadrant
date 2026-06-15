@@ -93,6 +93,60 @@ describe("daemon relay health (#207)", () => {
     expect(healed).toEqual([]);
   });
 
+  it("prunes a relay whose captain workspace is gone — heals + logs ONCE (audit STEP 3)", async () => {
+    let t = 1000;
+    const healed: string[] = [];
+    const store = createStore(dir);
+    // Fixture: a stale relay ref whose captain workspace no longer resolves.
+    const d = createDaemon({
+      store,
+      now: () => t,
+      healRelay: (p) => { healed.push(p); return "captain-absent"; },
+    });
+    d.registerRelay({ project: "dead-proj", pid: 42, startedAt: 900 });
+
+    // Gone past the window → heal fires once and reports the captain absent.
+    t = 1000 + RELAY_GONE_MS + 1;
+    await d.sweep();
+    expect(healed).toEqual(["dead-proj"]);
+    // The stale record is pruned, so the liveness surface no longer carries it…
+    expect(d.getRelayHealth()).toEqual([]);
+
+    // …and every subsequent sweep is quiet: no re-heal, no per-cycle spam.
+    for (let i = 0; i < 3; i++) {
+      t += RELAY_GONE_MS + 1;
+      await d.sweep();
+    }
+    expect(healed).toEqual(["dead-proj"]);
+  });
+
+  it("a captain that restarts after a prune re-registers and heals again", async () => {
+    let t = 1000;
+    const healed: string[] = [];
+    const store = createStore(dir);
+    let captainPresent = false;
+    const d = createDaemon({
+      store,
+      now: () => t,
+      healRelay: (p) => { healed.push(p); return captainPresent ? "healed" : "captain-absent"; },
+    });
+    d.registerRelay({ project: "p", pid: 42, startedAt: 900 });
+
+    // Captain gone → first sweep heals once and prunes.
+    t = 1000 + RELAY_GONE_MS + 1;
+    await d.sweep();
+    expect(healed).toEqual(["p"]);
+    expect(d.getRelayHealth()).toEqual([]);
+
+    // Captain comes back: a fresh relay registers, then goes dark again later.
+    captainPresent = true;
+    t += 1000;
+    d.registerRelay({ project: "p", pid: 99, startedAt: t });
+    t += RELAY_GONE_MS + 1;
+    await d.sweep();
+    expect(healed).toEqual(["p", "p"]); // heals again — the prune did not blacklist it
+  });
+
   it("a throwing healRelay never breaks the sweep", async () => {
     let t = 1000;
     const store = createStore(dir);
