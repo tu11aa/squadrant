@@ -150,6 +150,33 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
     expect(rt.sends).toEqual(["GO", "GO", "GO"]);
   });
 
+  // DEBUG-REPRO (#292 follow-up): the captain startup checklist runs shell
+  // commands from its FIRST step (read-handoff.sh, wiki-query.sh, relay
+  // supervise). While a shell command is in flight, CC's spinner reads
+  // "✻ Crunched for 27s · 1 shell still running" — a WORKING screen that carries
+  // NO "↓ X.Xk tokens" counter (tokens only stream during generation, not tool
+  // waits) and no "esc to interrupt" (absent from this CC version's footer; 0
+  // hits in docs/reports/258-parse-bug-fixture.txt). CC_WORKING_RE therefore
+  // misses it and classifyStartupSurface returns "idle". The confirm/poll loop
+  // reads that working captain as "idle" on every settle sample, concludes the
+  // keystrokes were dropped, and re-sends — 3 duplicate startup runs.
+  // Source of truth: 258 fixture line 4 (working, no token counter).
+  it("FAILS PRE-FIX: a working-but-shell-waiting captain is misread as idle → 3 dupes", async () => {
+    const SHELL_WAITING = [
+      "✻ Crunched for 27s · 1 shell still running",
+      HR, "❯ ", HR,
+      "   Model: Opus 4.8  Ctx Used: 52.0%",
+      "  ⏵⏵ auto mode on · 1 shell",
+    ].join("\n");
+    // idle (ready) → send → captain is now WORKING on a shell cmd for the whole
+    // turn. Every confirm/poll sample returns SHELL_WAITING.
+    const rt = fakeRuntime([IDLE, SHELL_WAITING]);
+    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    // Correct behavior: send exactly once — the prompt landed and the captain
+    // is working. Pre-fix this is ["GO","GO","GO"].
+    expect(rt.sends).toEqual(["GO"]);
+  });
+
   it("never throws even if readScreen rejects", async () => {
     const rt = {
       sends: [] as string[],
