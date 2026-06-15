@@ -1,13 +1,19 @@
 import { Command } from "commander";
 import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { readAllStatuses } from "../dashboard/read-status.js";
 import { renderDashboard } from "../dashboard/render.js";
 import { syncHub, type SyncHubResult } from "../dashboard/sync-hub.js";
+import { startWebServer } from "../dashboard/web-server.js";
+import { defaultProbeRunners } from "../dashboard/probes.js";
 import type { PaneRef } from "../runtimes/types.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
+
+const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 
 function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
@@ -68,16 +74,43 @@ export async function runDashboardPane(input: DashboardPaneInput): Promise<PaneR
   return pane;
 }
 
+export interface DashboardWebInput {
+  port: number;
+  interval: number; // seconds
+}
+
+/**
+ * Start the localhost-only observability web dashboard. Separate process from
+ * the daemon (crash-isolated, read-only socket client). Keeps running until the
+ * process is killed; the HTTP server + tick loop hold the event loop open.
+ */
+export async function runDashboardWeb(input: DashboardWebInput): Promise<void> {
+  const handle = await startWebServer({
+    port: input.port,
+    intervalMs: input.interval * 1000,
+    sockPath: SOCK,
+    runners: defaultProbeRunners(),
+  });
+  console.log(chalk.green(`✔ Cockpit system dashboard → http://127.0.0.1:${handle.port}`));
+  console.log(chalk.dim(`  polling the daemon every ${input.interval}s · localhost only · read-only · Ctrl-C to stop`));
+}
+
 export const dashboardCommand = new Command("dashboard")
   .description("Live status grid of all projects (derived from daemon task state)")
   .option("--once", "Print one snapshot and exit (used by --pane's refresh loop)")
   .option("--pane", "Open a refreshing sidebar pane in the current cmux workspace")
+  .option("--web", "Serve the live system-health web dashboard on 127.0.0.1 (HTTP + SSE)")
+  .option("--port <port>", "Port for --web (default 7878)", (v) => parseInt(v, 10), 7878)
   .option("--direction <dir>", "Pane split direction (right|left|up|down)", "right")
-  .option("--interval <seconds>", "Refresh interval for --pane", (v) => parseInt(v, 10), 10)
-  .action(async (opts: { once?: boolean; pane?: boolean; direction: "right" | "left" | "up" | "down"; interval: number }) => {
+  .option("--interval <seconds>", "Daemon poll interval for --web (default 5); refresh interval for --pane (default 10)", (v) => parseInt(v, 10))
+  .action(async (opts: { once?: boolean; pane?: boolean; web?: boolean; port: number; direction: "right" | "left" | "up" | "down"; interval?: number }) => {
     try {
+      if (opts.web) {
+        await runDashboardWeb({ port: opts.port, interval: opts.interval ?? 5 });
+        return;
+      }
       if (opts.pane) {
-        const pane = await runDashboardPane({ direction: opts.direction, interval: opts.interval });
+        const pane = await runDashboardPane({ direction: opts.direction, interval: opts.interval ?? 10 });
         console.log(chalk.green(`✔ Dashboard pane opened in ${pane.workspaceId} ${pane.surfaceId}`));
         return;
       }

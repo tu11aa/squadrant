@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { appendToMailbox } from "../mailbox.js";
 import { readCursor, writeCursor } from "../mailbox.js";
 import { readFromCursor } from "../mailbox.js";
-import { rotateIfNeeded } from "../mailbox.js";
+import { rotateIfNeeded, mailboxStats } from "../mailbox.js";
 import { statSync } from "node:fs";
 import type { TaskRecord, ControlEvent } from "../types.js";
 
@@ -252,5 +252,40 @@ describe("rotateIfNeeded", () => {
     await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
     const items = await collect(readFromCursor({ stateRoot, project: "demo", fromSeq: 1 }));
     expect(items.map((i) => i.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe("mailboxStats", () => {
+  it("returns zeros for a project with no mailbox", async () => {
+    const stateRoot = freshState();
+    expect(await mailboxStats(stateRoot, "demo")).toEqual({
+      maxSeq: 0,
+      sizeBytes: 0,
+      oldestEntryAgeMs: 0,
+      rotationCount: 0,
+    });
+  });
+
+  it("reports maxSeq, a positive size and zero rotations for a live mailbox", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.maxSeq).toBe(2);
+    expect(stats.sizeBytes).toBeGreaterThan(0);
+    expect(stats.rotationCount).toBe(0);
+    expect(stats.oldestEntryAgeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("counts rotated segments and keeps maxSeq across them", async () => {
+    const stateRoot = freshState();
+    for (let i = 0; i < 5; i++) {
+      await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    }
+    await rotateIfNeeded({ stateRoot, project: "demo", maxBytes: 50, maxAgeMs: 999999999, keepCount: 3 });
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.rotationCount).toBe(1);
+    expect(stats.maxSeq).toBe(6);
   });
 });

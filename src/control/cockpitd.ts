@@ -1,8 +1,12 @@
 // src/control/cockpitd.ts
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn as realSpawn } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import {
+  writeFileSync, mkdirSync, readFileSync, readdirSync, statSync,
+  openSync, readSync, closeSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createStore } from "./store.js";
 import { createDaemon } from "./daemon.js";
@@ -11,14 +15,29 @@ import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { makeGate } from "./codex/gate.js";
-import { appendToMailbox, rotateIfNeeded } from "./mailbox.js";
+import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
+import { assembleDaemonSnapshot, type DaemonSnapshotInputs, type ResultArtifacts } from "./snapshot.js";
 import { loadConfig } from "../config.js";
 import { readdir } from "node:fs/promises";
 import type { Gate, TaskRecord, ControlEvent } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
 import type { Socket } from "node:net";
+
+// This module's own compiled file — its mtime is the dist build-time used for
+// the Tier 0 build-freshness check (process start vs build time). package.json
+// (repo root) gives the running version. Both resolved once at load.
+const SELF_PATH = fileURLToPath(import.meta.url);
+function readPkgVersion(): string {
+  try {
+    const pkgPath = join(dirname(SELF_PATH), "..", "..", "package.json");
+    return (JSON.parse(readFileSync(pkgPath, "utf-8")).version as string) ?? "unknown";
+  } catch { return "unknown"; }
+}
+const PKG_VERSION = readPkgVersion();
+const SNAPSHOT_LOG_WINDOW_MS = 60 * 60 * 1000; // count daemon-log errors in the last hour
+const CURSOR_SUBSCRIBER = "captain"; // the relay drains the mailbox as "captain" (#207)
 
 export interface CockpitdOpts {
   stateRoot?: string;
@@ -73,6 +92,82 @@ export interface CockpitdOpts {
   };
 }
 
+// ── Tier 0/2 snapshot gathering (I/O at the edge; the pure assembly lives in
+//    snapshot.ts). Each helper tolerates missing files and never throws. ───────
+
+/** mtime (epoch ms) of the running daemon's compiled code, for build-freshness. */
+function distBuiltAt(): number {
+  try { return statSync(SELF_PATH).mtimeMs; } catch { return 0; }
+}
+
+/** Daemon-log error count (last window) + total size. Reads only the tail so a
+ *  large log never makes the snapshot tick expensive. */
+function gatherLogStats(path: string, now: number, windowMs: number): DaemonSnapshotInputs["log"] {
+  let sizeBytes = 0;
+  try { sizeBytes = statSync(path).size; }
+  catch { return { errorCount: 0, sizeBytes: 0, windowMs }; }
+  if (sizeBytes === 0) return { errorCount: 0, sizeBytes, windowMs };
+  const CAP = 256 * 1024;
+  const start = Math.max(0, sizeBytes - CAP);
+  const len = sizeBytes - start;
+  let text = "";
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, start);
+      text = buf.toString("utf-8");
+    } finally { closeSync(fd); }
+  } catch { return { errorCount: 0, sizeBytes, windowMs }; }
+  const cutoff = now - windowMs;
+  let errorCount = 0;
+  for (const line of text.split("\n")) {
+    if (!/error|failed/i.test(line)) continue;
+    // Lines carry an ISO timestamp ("[cockpitd] 2026-... msg"); skip ones older
+    // than the window. Lines without a parseable timestamp are counted (conservative).
+    const m = line.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/);
+    if (m) { const ts = Date.parse(m[0]); if (!Number.isNaN(ts) && ts < cutoff) continue; }
+    errorCount++;
+  }
+  return { errorCount, sizeBytes, windowMs };
+}
+
+/** Per-project store state counts + corrupt/quarantined file count. */
+function gatherStoreStats(
+  store: { list: (p: string) => TaskRecord[] },
+  stateRoot: string,
+  project: string,
+): { byState: Record<string, number>; corruptCount: number } {
+  const byState: Record<string, number> = {};
+  for (const r of store.list(project)) byState[r.state] = (byState[r.state] ?? 0) + 1;
+  let corruptCount = 0;
+  const dir = join(stateRoot, project);
+  try {
+    for (const n of readdirSync(dir)) {
+      if (n.includes(".corrupt.")) { corruptCount++; continue; }
+      if (!n.endsWith(".json")) continue;
+      try { JSON.parse(readFileSync(join(dir, n), "utf-8")); }
+      catch { corruptCount++; }
+    }
+  } catch { /* no project dir yet */ }
+  return { byState, corruptCount };
+}
+
+/** Global _results/ artifact count + total bytes (unbounded-growth watch). */
+function gatherResults(resultsDir: string): ResultArtifacts {
+  let fileCount = 0;
+  let totalBytes = 0;
+  try {
+    for (const n of readdirSync(resultsDir)) {
+      try {
+        const s = statSync(join(resultsDir, n));
+        if (s.isFile()) { fileCount++; totalBytes += s.size; }
+      } catch { /* vanished mid-scan */ }
+    }
+  } catch { /* no results dir */ }
+  return { fileCount, totalBytes };
+}
+
 export function defaultIsPidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (e: any) { return e?.code === "EPERM"; } // EPERM = alive but not ours; ESRCH = dead
@@ -82,6 +177,10 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "cockpit", "state");
   const sockPath = opts.sockPath ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
   const store = createStore(stateRoot);
+  // #44 dashboard: process start-time (for uptime + build-freshness) and the
+  // timestamp of the most recent sweep (Tier 0 "sweep last Ns ago").
+  const bootedAt = Date.now();
+  let lastSweepAt: number | null = null;
   // #225: hard crew task-timeout ceiling, read once at boot. Falls back to the
   // daemon's DEFAULT_TASK_TIMEOUT_MS (8h) when unset in config.
   const taskTimeoutMs = loadConfig().defaults.taskTimeoutMs;
@@ -373,6 +472,49 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     return out;
   }
 
+  // #44 dashboard: the same project set buildHealth() covers (config ∪ relays ∪ tasks).
+  function knownProjects(): string[] {
+    const config = loadConfig();
+    return [...new Set<string>([
+      ...Object.keys(config.projects),
+      ...d.getRelayHealth().map((r) => r.project),
+      ...store.listAll().map((t) => t.project),
+    ])];
+  }
+
+  // #44 dashboard: gather all Tier 0/1/2 inputs (I/O) for the read-only snapshot
+  // verb, then hand them to the pure assembler. The daemon log lives next to the
+  // state root (~/.config/cockpit/cockpitd.log); deriving it from stateRoot keeps
+  // tests isolated to their temp dir.
+  async function gatherSnapshotInputs(now: number): Promise<DaemonSnapshotInputs> {
+    const logPath = join(dirname(stateRoot), "cockpitd.log");
+    const projects = await Promise.all(
+      knownProjects().map(async (project) => {
+        const cursor = await readCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER });
+        const storeStats = gatherStoreStats(store, stateRoot, project);
+        return {
+          project,
+          mailbox: await mailboxStats(stateRoot, project),
+          lastAckedSeq: cursor?.lastAckedSeq ?? 0,
+          storeByState: storeStats.byState,
+          corruptCount: storeStats.corruptCount,
+        };
+      }),
+    );
+    return {
+      pid: process.pid,
+      processStartedAt: bootedAt,
+      version: PKG_VERSION,
+      distBuiltAt: distBuiltAt(),
+      lastSweepAt,
+      sweepCadenceMs: opts.sweepMs ?? 30_000,
+      log: gatherLogStats(logPath, now, SNAPSHOT_LOG_WINDOW_MS),
+      health: buildHealth(),
+      projects,
+      results: gatherResults(resultsDir),
+    };
+  }
+
   // Crash recovery on boot. reconcile() is async (#139: it consults the
   // interactive surface-liveness probe to reap dead crews instead of stalling
   // them), so run it — and the reattach loops that depend on its terminalizing a
@@ -463,6 +605,13 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       if (msg.kind === "health") {
         return buildHealth(msg.project as string | undefined);
       }
+      // #44 dashboard: read-only full system snapshot (Tier 0/1/2). Additive —
+      // the `health` verb above is untouched. Pure assembly; all I/O is gathered
+      // here and fed in. Never mutates state.
+      if (msg.kind === "snapshot") {
+        const now = Date.now();
+        return assembleDaemonSnapshot(await gatherSnapshotInputs(now), now);
+      }
       // #239 Phase B: on any event that terminates a task, evict its entries from
       // inFlightProbes and probeResults so the Sets never leak. Tasks reaped by
       // sweep/reconcile (not via the socket) are naturally safe — proxiedSurfaceAlive
@@ -516,6 +665,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     timer = setInterval(() => {
       if (sweeping) return;
       sweeping = true;
+      lastSweepAt = Date.now(); // Tier 0 observability: time of the most recent sweep
       void d.sweep()
         .catch((e: unknown) => log(`sweep failed: ${(e as Error).message}`))
         .finally(() => { sweeping = false; });
