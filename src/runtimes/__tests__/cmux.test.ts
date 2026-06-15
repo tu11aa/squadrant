@@ -52,6 +52,17 @@ describe("cmux driver", () => {
       expect(((cmuxCall as unknown[])[2] as Record<string, unknown>).timeout).toBeGreaterThan(0);
     });
 
+    it("passes CMUX_QUIET=1 in the subprocess env to silence deprecation notices", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.probe();
+      const cmuxCall = execFileMock.mock.calls.find((c: unknown[]) =>
+        (c[1] as string[]).includes("--version"),
+      );
+      expect(cmuxCall).toBeDefined();
+      const env = (optsOf(cmuxCall as unknown[]).env) as Record<string, string>;
+      expect(env.CMUX_QUIET).toBe("1");
+    });
+
     it("throws a clean CmuxTimeoutError when execFileSync times out (unwrapped caller)", async () => {
       execFileMock.mockImplementation(() => {
         const err = new Error("cmux hung");

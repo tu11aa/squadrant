@@ -32,7 +32,15 @@ export class DeferDelivery extends Error {
 // literal argument — backticks, $(), quotes are never parsed. See #118.
 function cmux(args: string[]): string {
   try {
-    return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", timeout: CMUX_TIMEOUT }).trim();
+    // CMUX_QUIET=1 silences cmux 0.64's one-time deprecation hints (e.g. the
+    // "list-workspaces is now an alias for cmux workspace list" notice). Those
+    // notices print to the command's stdout and would otherwise pollute the
+    // output we parse. Inherit the rest of the environment unchanged.
+    return execFileSync(resolveCmuxBin(), args, {
+      encoding: "utf-8",
+      timeout: CMUX_TIMEOUT,
+      env: { ...process.env, CMUX_QUIET: "1" },
+    }).trim();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT") {
       throw new CmuxTimeoutError(args.join(" "));
