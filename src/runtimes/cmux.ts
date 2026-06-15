@@ -246,7 +246,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async list(): Promise<WorkspaceRef[]> {
       try {
-        return parseList(cmux(["workspace", "list"]));
+        return parseList(cmux(["workspace", "list", "--id-format", "refs"]));
       } catch {
         return [];
       }
@@ -270,7 +270,7 @@ export function createCmuxDriver(): RuntimeDriver {
       // Rename the initial tab to the workspace name so send() can route to it
       let initialSurface: string | undefined;
       try {
-        const tree = cmux(["tree", "--workspace", id]);
+        const tree = cmux(["tree", "--workspace", id, "--id-format", "refs"]);
         const m = tree.match(/surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/);
         if (m) {
           initialSurface = m[1];
@@ -343,7 +343,7 @@ export function createCmuxDriver(): RuntimeDriver {
       let priorIndex = -1;
       if (opts.direction === "tab") {
         try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId]));
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId, "--id-format", "refs"]));
           priorIndex = before.findIndex((s) => s.selected);
           if (priorIndex >= 0) priorSurface = before[priorIndex].id;
         } catch { /* best-effort: if we can't read the tree, skip refocus */ }
@@ -410,7 +410,7 @@ export function createCmuxDriver(): RuntimeDriver {
       let priorIndex = -1;
       if (opts.placement === "background") {
         try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId]));
+          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId, "--id-format", "refs"]));
           priorIndex = before.findIndex((s) => s.selected);
           if (priorIndex >= 0) priorSurface = before[priorIndex].id;
         } catch { /* best-effort: if we can't read the tree, skip refocus */ }
@@ -490,7 +490,7 @@ export function createCmuxDriver(): RuntimeDriver {
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
       let output: string;
       try {
-        output = cmux(["tree", "--workspace", workspaceId]);
+        output = cmux(["tree", "--workspace", workspaceId, "--id-format", "refs"]);
       } catch {
         return [];
       }

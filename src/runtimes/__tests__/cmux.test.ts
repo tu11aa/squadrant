@@ -101,7 +101,7 @@ describe("cmux driver", () => {
     expect(refs).toHaveLength(3);
     expect(refs[1]).toEqual({ id: "workspace:2", name: "brove-captain", status: "running" });
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) => c.startsWith("workspace list"))).toBe(true);
+    expect(cmds.some((c) => c.startsWith("workspace list") && c.includes("--id-format refs"))).toBe(true);
     expect(cmds.every((c) => !c.includes("list-workspaces"))).toBe(true);
   });
 
@@ -575,6 +575,9 @@ describe("cmux driver", () => {
       { workspaceId: "workspace:10", surfaceId: "surface:30", title: "🔧 pact-network:crew-1" },
       { workspaceId: "workspace:10", surfaceId: "surface:31", title: "🔧 pact-network:crew-2" },
     ]);
+    // Verify --id-format refs is passed to lock in the refs default
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.includes("tree") && c.includes("--id-format refs"))).toBe(true);
   });
 
   it("listSurfaces returns empty array when cmux throws", async () => {
