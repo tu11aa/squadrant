@@ -192,6 +192,33 @@ export function readInputBoxRaw(screen: string): string | null {
   return parts.join("").replace(/\s+$/, ""); // trim only the trailing edge
 }
 
+// #292: Claude Code renders a persistent bottom status block once its TUI is past
+// the cold-init splash — the auto-mode indicator (⏵⏵), the context meter
+// ("Ctx Used"), the shortcuts hint, or the accept-edits toggle. Absence of all of
+// these means we're still on the loading/splash screen, where keystrokes are
+// silently dropped (#235). Grounded in docs/reports/258-parse-bug-fixture.txt.
+const CC_INITIALIZED_RE = /⏵⏵|Ctx Used|for shortcuts|accept edits/i;
+
+// A live turn shows a working spinner carrying a token-down-counter ("↓ 4.3k
+// tokens") and/or the "esc to interrupt" hint — neither appears on an idle,
+// input-ready screen. The whimsical spinner verb ("Working…", "Cerebrating…")
+// varies across versions, so we key on these stable markers instead.
+const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt/i;
+
+/**
+ * Classify a captain surface's read-screen into the three states #292's
+ * deterministic startup delivery needs:
+ *   "loading" — splash / cold-init; keystrokes would be dropped, do not send yet.
+ *   "idle"    — TUI up and accepting input; safe to deliver the startup prompt.
+ *   "working" — a turn is in flight; sending would queue a DUPLICATE startup run.
+ * "working" is checked first so an active spinner above an (empty) input box wins.
+ */
+export function classifyStartupSurface(screen: string): "loading" | "idle" | "working" {
+  if (CC_WORKING_RE.test(screen)) return "working";
+  if (CC_INITIALIZED_RE.test(screen)) return "idle";
+  return "loading";
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",

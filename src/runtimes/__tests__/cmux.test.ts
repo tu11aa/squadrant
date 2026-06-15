@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, DeferDelivery } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, DeferDelivery } from "../cmux.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
@@ -985,5 +985,51 @@ describe("sendToSurface Approach B (#258 deliver-when-empty)", () => {
     expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
     expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(DRAFT)))).toBe(false);
     expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(false);
+  });
+});
+
+// #292: deterministic startup-prompt delivery needs to tell three surface states
+// apart so launch can wait out cold init, send when ready, and never re-send into
+// a working session. The signals are grounded in real read-screen captures:
+//   loading — splash/cold-init: none of the persistent CC bottom-status chrome yet
+//   idle    — TUI up, input box accepting keystrokes (⏵⏵ / Ctx Used / for shortcuts)
+//   working — a live turn: token-down-counter "↓ Nk tokens" and/or "esc to interrupt"
+describe("classifyStartupSurface (#292 startup-readiness classifier)", () => {
+  // Real CC working spinner line (see docs/reports/258-parse-bug-fixture.txt).
+  const WORKING_STATUS = [
+    "✢ Cerebrating… (1m 4s · ↓ 4.3k tokens)",
+    HR,
+    "❯ ",
+    HR,
+    "   Model: Opus 4.8  Ctx Used: 52.0%",
+    "  ⏵⏵ auto mode on · 1 shell",
+  ].join("\n");
+
+  it("returns 'loading' for an empty screen", () => {
+    expect(classifyStartupSurface("")).toBe("loading");
+  });
+
+  it("returns 'loading' for a cold-init splash with no CC status chrome", () => {
+    const splash = ["", " ✻ Welcome to Claude Code", "   Loading…", ""].join("\n");
+    expect(classifyStartupSurface(splash)).toBe("loading");
+  });
+
+  it("returns 'idle' once the CC bottom-status chrome is present and no turn is running", () => {
+    // makeTestScreen renders the real idle layout: HR-boxed empty ❯ + status block.
+    expect(classifyStartupSurface(makeTestScreen("❯ "))).toBe("idle");
+  });
+
+  it("returns 'working' when the live token-down-counter is on screen", () => {
+    expect(classifyStartupSurface(WORKING_STATUS)).toBe("working");
+  });
+
+  it("returns 'working' when 'esc to interrupt' is shown", () => {
+    const screen = makeTestScreen("❯ ", "Working… (3s · esc to interrupt)");
+    expect(classifyStartupSurface(screen)).toBe("working");
+  });
+
+  it("prefers 'working' over 'idle' when both chrome and a live turn are present", () => {
+    // The 258 fixture shape: idle-looking input box but an active spinner above.
+    expect(classifyStartupSurface(WORKING_STATUS)).toBe("working");
   });
 });
