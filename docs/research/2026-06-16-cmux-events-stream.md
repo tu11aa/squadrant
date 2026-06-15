@@ -119,6 +119,23 @@ PreToolUse→working / Stop→idle to replace the spinner scrape entirely. This 
 already consumes `Stop`; extending to PreToolUse-as-working is the natural next
 step. (Reporting only, per the task — not implemented here.)
 
+**STATUS — IMPLEMENTED (B4/A3, branch `feat/agent-hook-runstate`).** The
+working-state half now ships, but as a *false-stall suppressor*, not a spinner
+replacement. `deriveRunState()` classifies `PreToolUse`/`UserPromptSubmit` →
+`working` and `Stop` → `idle`. The bridge feeds a `working` hook into the
+liveness path **additively** as `task.progress` (the reducer's documented
+real-activity signal, state-machine.ts), which refreshes `lastHeartbeatAt` — the
+exact clock `evaluateStall` keys off — so a crew mid long, screen-quiet tool call
+is **not** false-idled (#292), and a crew the scrape path wrongly idled resumes
+to `working`. No change to `liveness.ts`/`watchdog.ts` was needed: suppression is
+achieved through the heartbeat clock they already consult. Screen-scraping stays
+as the fallback; the whole path is gated by `defaults.cmuxEventsBridge`.
+Re-verified live on 2026-06-16 that `agent.hook.PreToolUse` reaches
+`cmux events --category agent`. `UserPromptSubmit` is mapped opportunistically
+(not observed in 0.64.16 captures; harmless if it never fires). The spinner-scrape
+*replacement* (dropping `classifyStartupSurface`/`CC_WORKING_RE`) remains future
+work and is explicitly out of scope — that path is the most bug-fixed in the repo.
+
 ## Surface lifecycle events — audit premise does NOT match cmux 0.64.16
 
 The audit assumed the stream emits `surface.created/closed/selected` +
