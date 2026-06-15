@@ -243,6 +243,65 @@ describe("delivery lag bar", () => {
   });
 });
 
+describe("global delivery-lag excludes offline-relay projects", () => {
+  it("global behind in metrics blob is 0 when the only relay is gone", () => {
+    const d = daemon();
+    d.tier1 = [
+      { kind: "relay", project: "cockpit", ref: "relay", state: "gone", lastSeenMs: 1 },
+      { kind: "captain", project: "cockpit", ref: "captain", state: "gone", lastSeenMs: 1 },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
+    const out = renderContent(full(d));
+    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
+    expect(metrics.behind).toBe(0); // relay gone → not a live delivery problem
+  });
+  it("global behind is 0 when relay state is unknown (no relay registered)", () => {
+    const d = daemon();
+    d.tier1 = [
+      { kind: "relay", project: "cockpit", ref: "relay", state: "unknown", lastSeenMs: null },
+      { kind: "captain", project: "cockpit", ref: "captain", state: "unknown", lastSeenMs: null },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
+    const out = renderContent(full(d));
+    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
+    expect(metrics.behind).toBe(0); // relay unknown → offline, excluded
+  });
+  it("global behind includes lag for projects whose relay is alive", () => {
+    const d = daemon();
+    // default tier1 from daemon() has no relay entries — relay is implicitly absent
+    // override with an alive relay
+    d.tier1 = [
+      { kind: "relay", project: "cockpit", ref: "relay", state: "alive", lastSeenMs: 999_000 },
+      { kind: "captain", project: "cockpit", ref: "captain", state: "alive", lastSeenMs: 999_000 },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 7, behind: 3 };
+    const out = renderContent(full(d));
+    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
+    expect(metrics.behind).toBe(3); // relay alive → included
+  });
+});
+
+describe("global results location", () => {
+  it("global results line appears only in the daemon tab, not the projects tab", () => {
+    const out = renderContent(full(daemon()));
+    // exactly one occurrence
+    const occurrences = (out.match(/global results/g) ?? []).length;
+    expect(occurrences).toBe(1);
+    // must be inside the daemon panel
+    const daemonStart = out.indexOf('data-panel="daemon"');
+    const envStart = out.indexOf('data-panel="environment"');
+    const daemonSection = out.slice(daemonStart, envStart);
+    expect(daemonSection).toContain("global results");
+    // must NOT be inside the projects panel
+    const projStart = out.indexOf('data-panel="projects"');
+    const projectsSection = out.slice(projStart, daemonStart);
+    expect(projectsSection).not.toContain("global results");
+  });
+});
+
 describe("escaping", () => {
   it("HTML-escapes crew refs/details to prevent injection", () => {
     const evil: DaemonSnapshot["tier1"] = [

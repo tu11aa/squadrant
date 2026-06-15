@@ -91,12 +91,24 @@ export async function probeAgentClis(
   );
 }
 
-/** A vault is alive only when its directory AND its `.obsidian/` both exist. */
+/** Hub vault is alive only when its directory AND its `.obsidian/` both exist. */
 function vaultProbe(run: ProbeRunners, dir: string): Probe {
   try {
     if (!dir) return { state: "unknown", detail: "no vault configured" };
     if (!run.pathExists(dir)) return { state: "gone", detail: "vault directory missing" };
     if (!run.pathExists(join(dir, ".obsidian"))) return { state: "gone", detail: "no .obsidian/ (not a vault)" };
+    return { state: "alive" };
+  } catch {
+    return { state: "unknown" };
+  }
+}
+
+/** Spoke vault directories live INSIDE the hub vault and correctly have no
+ *  `.obsidian/` of their own. Alive = directory exists; gone = directory missing. */
+function spokeProbe(run: ProbeRunners, dir: string): Probe {
+  try {
+    if (!dir) return { state: "unknown", detail: "no vault configured" };
+    if (!run.pathExists(dir)) return { state: "gone", detail: "spoke directory missing" };
     return { state: "alive" };
   } catch {
     return { state: "unknown" };
@@ -109,7 +121,7 @@ export function probeVaults(run: ProbeRunners, config: CockpitConfig): ExternalP
     spokes: Object.entries(config.projects).map(([project, p]) => ({
       project,
       path: p.spokeVault,
-      ...vaultProbe(run, p.spokeVault),
+      ...spokeProbe(run, p.spokeVault),
     })),
   };
 }
@@ -145,7 +157,7 @@ export function probeSessions(run: ProbeRunners): Probe {
     const hashes = run.loadSessionsHashes();
     if (hashes.length === 0) return { state: "unknown", detail: "no sessions recorded" };
     if (hashes.length === 1) return { state: "alive" };
-    return { state: "gone", detail: `template drift: ${hashes.length} distinct hashes` };
+    return { state: "stale", detail: `template drift: ${hashes.length} distinct hashes` };
   } catch {
     return { state: "unknown" };
   }

@@ -83,6 +83,9 @@ export interface CockpitdOpts {
   healRelay?: (project: string) => Promise<void> | void;
   /** Inject a fake headless launcher for tests to avoid real process spawns. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
+  /** Override which projects appear in the Tier 2 per-project snapshot. Defaults
+   *  to Object.keys(loadConfig().projects). Tests inject this to avoid real config. */
+  registeredProjects?: string[];
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
   opencodeBridge?: {
     start: (o: { taskId: string; port: number }) => void;
@@ -488,8 +491,11 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // tests isolated to their temp dir.
   async function gatherSnapshotInputs(now: number): Promise<DaemonSnapshotInputs> {
     const logPath = join(dirname(stateRoot), "cockpitd.log");
+    // Scope Tier 2 per-project data to registered projects only. Orphan state
+    // directories from removed/test projects are excluded here.
+    const tier2Projects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
     const projects = await Promise.all(
-      knownProjects().map(async (project) => {
+      tier2Projects.map(async (project) => {
         const cursor = await readCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER });
         const storeStats = gatherStoreStats(store, stateRoot, project);
         return {

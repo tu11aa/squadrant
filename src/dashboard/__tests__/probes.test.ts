@@ -74,19 +74,32 @@ describe("probeAgentClis", () => {
 });
 
 describe("probeVaults", () => {
-  it("is alive when the vault dir and its .obsidian/ both exist", () => {
+  it("is alive when the hub dir and its .obsidian/ both exist, and spoke dir exists", () => {
     const v = probeVaults(okRunners(), cfg());
     expect(v.hub.state).toBe("alive");
     expect(v.spokes[0].project).toBe("cockpit");
     expect(v.spokes[0].state).toBe("alive");
   });
-  it("is gone when the vault directory is missing", () => {
+  it("hub is gone when the vault directory is missing", () => {
     const v = probeVaults(okRunners({ pathExists: () => false }), cfg());
     expect(v.hub.state).toBe("gone");
   });
-  it("is gone when the dir exists but has no .obsidian/", () => {
+  it("hub is gone when its dir exists but has no .obsidian/", () => {
     const v = probeVaults(okRunners({ pathExists: (p) => !p.endsWith(".obsidian") }), cfg());
     expect(v.hub.state).toBe("gone");
+  });
+  // Spokes live inside the hub vault — they correctly have no .obsidian/ of their own.
+  it("spoke is alive when its directory exists even without .obsidian/", () => {
+    const v = probeVaults(okRunners({ pathExists: (p) => !p.endsWith(".obsidian") }), cfg());
+    expect(v.spokes[0].state).toBe("alive");
+  });
+  it("spoke is gone when its directory is missing", () => {
+    // hub dir + hub .obsidian/ exist; spoke dir is missing
+    const v = probeVaults(
+      okRunners({ pathExists: (p) => p === cfg().hubVault || p.endsWith(".obsidian") }),
+      cfg(),
+    );
+    expect(v.spokes[0].state).toBe("gone");
   });
 });
 
@@ -103,9 +116,9 @@ describe("probeSessions", () => {
   it("is alive when a single template hash is recorded", () => {
     expect(probeSessions(okRunners()).state).toBe("alive");
   });
-  it("is gone (drift) when multiple distinct template hashes are recorded", () => {
+  it("is stale/caution (not fault) when multiple distinct template hashes are recorded", () => {
     const s = probeSessions(okRunners({ loadSessionsHashes: () => ["a", "b"] }));
-    expect(s.state).toBe("gone");
+    expect(s.state).toBe("stale"); // drift is expected across template versions — caution, not fault
     expect(s.detail).toMatch(/drift/);
   });
   it("is unknown when no sessions are recorded", () => {
