@@ -263,49 +263,32 @@ describe("cmux driver", () => {
     expect(cmds.every((c) => !c.includes("--direction"))).toBe(true);
   });
 
-  // #295: new tab steals cmux focus, leaking user keystrokes into crew launch command.
-  // Fix: snapshot selected surface before new-surface, restore focus after creation.
-  it("newPane with direction=tab restores focus to the previously-selected surface (#295)", async () => {
+  // audit A1+B3: a crew tab must be created focus-neutrally. cmux 0.64.16's
+  // new-surface defaults to --focus false; we pass it explicitly and NO LONGER
+  // snapshot the tree or move-surface to restore focus (the old #295 dance,
+  // which the 0.64 freeform canvas broke).
+  it("newPane with direction=tab creates the surface with --focus false and no refocus dance", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) {
-        return [
-          'surface surface:5 [terminal] "captain" [selected]',
-          'surface surface:6 [terminal] "crew-1"',
-        ].join("\n");
-      }
-      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
+      if (args.includes("new-surface")) return "OK surface:8 workspace:1";
       return "";
     });
     await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) =>
-      c.includes("move-surface") &&
-      c.includes("--surface surface:5") &&
-      c.includes("--index 0") &&
-      c.includes("--focus true"))).toBe(true);
-  });
-
-  it("newPane with direction=tab skips focus restore gracefully when tree is unreadable (#295)", async () => {
-    execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) throw new Error("tree unreadable");
-      if (cmd.includes("new-surface")) return "OK surface:8 workspace:1";
-      return "";
-    });
-    const pane = await driver.newPane({ workspaceId: "workspace:1", direction: "tab" });
-    expect(pane.surfaceId).toBe("surface:8");
-    const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.includes("new-surface") && c.includes("--focus false"))).toBe(true);
+    // No tree snapshot, no move-surface, never asks for focus true.
+    expect(cmds.every((c) => !c.includes("tree"))).toBe(true);
     expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("--focus true"))).toBe(true);
   });
 
-  it("newPane with split direction does NOT query tree or restore focus (#295)", async () => {
+  it("newPane with split direction creates the pane with --focus false and queries nothing", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("new-pane")) return "OK surface:27 pane:25 workspace:1";
       return "";
     });
     await driver.newPane({ workspaceId: "workspace:1", direction: "right" });
     const cmds = execFileMock.mock.calls.map(cmdOf);
+    expect(cmds.some((c) => c.includes("new-pane") && c.includes("--focus false"))).toBe(true);
     expect(cmds.every((c) => !c.includes("tree"))).toBe(true);
     expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
   });
@@ -473,9 +456,7 @@ describe("cmux driver", () => {
   // (new-surface) keeps the captain pane full-height with no split.
   it("spawnInjector background uses new-surface (no split-pane, no resize-pane)", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) return 'surface surface:5 [terminal] "cap" [selected]';
-      if (cmd.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
+      if (args.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
       return "";
     });
     const pane = await driver.spawnInjector({
@@ -494,9 +475,7 @@ describe("cmux driver", () => {
 
   it("spawnInjector background sends the command + Enter to the new surface", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) return 'surface surface:5 [terminal] "cap" [selected]';
-      if (cmd.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
+      if (args.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
       return "";
     });
     await driver.spawnInjector({
@@ -509,19 +488,12 @@ describe("cmux driver", () => {
     expect(cmds.some((c) => c.includes("send-key") && c.includes("--surface surface:8") && c.includes("Enter"))).toBe(true);
   });
 
-  // The background relay tab must never steal focus from the captain: after
-  // spawning it we re-select whichever surface was selected before, in its
-  // original position.
-  it("spawnInjector background restores focus to the previously-selected surface", async () => {
+  // audit A1+B3: the background relay tab must never steal focus from the
+  // captain. cmux 0.64.16's new-surface defaults to --focus false, so we pass it
+  // explicitly and DROP the old snapshot-then-move-surface refocus dance.
+  it("spawnInjector background creates the surface with --focus false and no refocus dance", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) {
-        return [
-          'surface surface:5 [terminal] "cap" [selected]',
-          'surface surface:6 [terminal] "crew-1"',
-        ].join("\n");
-      }
-      if (cmd.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
+      if (args.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
       return "";
     });
     await driver.spawnInjector({
@@ -530,18 +502,15 @@ describe("cmux driver", () => {
       placement: "background",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) =>
-      c.includes("move-surface") &&
-      c.includes("--surface surface:5") &&
-      c.includes("--index 0") &&
-      c.includes("--focus true"))).toBe(true);
+    expect(cmds.some((c) => c.includes("new-surface") && c.includes("--focus false"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("tree"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
+    expect(cmds.every((c) => !c.includes("--focus true"))).toBe(true);
   });
 
-  it("spawnInjector visible uses new-surface and leaves the new tab focused (no refocus)", async () => {
+  it("spawnInjector visible creates the surface with --focus true and no refocus dance", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      const cmd = args.join(" ");
-      if (cmd.includes("tree")) return 'surface surface:5 [terminal] "cap" [selected]';
-      if (cmd.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
+      if (args.includes("new-surface")) return "OK surface:8 pane:2 workspace:1";
       return "";
     });
     await driver.spawnInjector({
@@ -550,7 +519,7 @@ describe("cmux driver", () => {
       placement: "visible",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) => c.includes("new-surface"))).toBe(true);
+    expect(cmds.some((c) => c.includes("new-surface") && c.includes("--focus true"))).toBe(true);
     expect(cmds.every((c) => !c.includes("move-surface"))).toBe(true);
   });
 

@@ -64,20 +64,6 @@ function parseList(output: string): WorkspaceRef[] {
   return refs;
 }
 
-// Parse `cmux tree` into the ordered list of surfaces in a workspace, marking
-// which one is currently selected. Order matches the tab strip, so the array
-// index doubles as the surface's position for move-surface --index.
-function parseSurfaceOrder(tree: string): { id: string; selected: boolean }[] {
-  const surfaces: { id: string; selected: boolean }[] = [];
-  for (const line of tree.split("\n")) {
-    const match = line.match(/surface\s+(surface:\d+)/);
-    if (match) {
-      surfaces.push({ id: match[1], selected: line.includes("[selected]") });
-    }
-  }
-  return surfaces;
-}
-
 // cmux `send` treats \n, \r (and \t) as Enter/Tab keystrokes, so any newline in a
 // multi-line message would submit it line-by-line. Collapse all newline/CR/tab
 // (real bytes AND literal backslash-escapes) to single spaces so the whole message
@@ -343,22 +329,16 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
-      // #295: snapshot the focused surface before creating a new tab so we can
-      // restore focus afterward. new-surface steals focus; the captain's
-      // keystrokes would otherwise land in the crew's launch command line.
-      // Applies only to tabs (new-surface); split-panes keep cmux default focus.
-      let priorSurface: string | undefined;
-      let priorIndex = -1;
-      if (opts.direction === "tab") {
-        try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId, "--id-format", "refs"]));
-          priorIndex = before.findIndex((s) => s.selected);
-          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
-        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
-      }
+      // #295 / audit A1+B3: a crew tab must never steal focus from the captain.
+      // cmux 0.64.16's new-surface and new-pane both DEFAULT to --focus false,
+      // so we pass it explicitly (intent + resilience if the default changes)
+      // and create the surface focus-neutrally. This REPLACES the old
+      // snapshot-then-move-surface refocus dance, which depended on the fragile
+      // "tree order == array index" invariant that the 0.64 freeform canvas +
+      // staggered restore broke — risking a focus-steal regression.
       const cmd = opts.direction === "tab"
-        ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId]
-        : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId];
+        ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId, "--focus", "false"]
+        : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId, "--focus", "false"];
       const output = cmux(cmd);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
@@ -369,11 +349,6 @@ export function createCmuxDriver(): RuntimeDriver {
         try {
           cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
-      }
-      if (opts.direction === "tab" && priorSurface) {
-        try {
-          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
-        } catch { /* refocus is best-effort */ }
       }
       return { workspaceId: opts.workspaceId, surfaceId };
     },
@@ -410,20 +385,15 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // "background" then re-selects whatever surface was focused before, in its
-      // original position, so the relay tab never steals focus from the
-      // captain. "visible" leaves the new tab focused for debug ergonomics.
+      // cmux 0.64.16's new-surface DEFAULTS to --focus false, so "background"
+      // passes --focus false and the relay tab is created without ever stealing
+      // focus from the captain — no snapshot-then-move-surface refocus dance
+      // (audit A1+B3; the 0.64 freeform canvas broke the old tree-order==index
+      // assumption it relied on). "visible" passes --focus true to leave the
+      // debug tab focused for ergonomics.
       const wsId = opts.captainWorkspace.id;
-      let priorSurface: string | undefined;
-      let priorIndex = -1;
-      if (opts.placement === "background") {
-        try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId, "--id-format", "refs"]));
-          priorIndex = before.findIndex((s) => s.selected);
-          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
-        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
-      }
-      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId]);
+      const focus = opts.placement === "visible" ? "true" : "false";
+      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId, "--focus", focus]);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
         throw new Error(`cmux spawnInjector did not return a surface id: ${output}`);
@@ -435,11 +405,6 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
       cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
-      if (opts.placement === "background" && priorSurface) {
-        try {
-          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
-        } catch { /* refocus is best-effort */ }
-      }
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
