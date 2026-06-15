@@ -59,6 +59,14 @@ export interface RoleAssignment {
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
+export interface TelegramConfig {
+  /** Bot token from BotFather. Lives in ~/.config/cockpit (never in the repo). */
+  botToken: string;
+  /** project name → Telegram supergroup chat_id (negative for supergroups).
+   *  The set of values here is ALSO the inbound allowlist: only these chats may command. */
+  chats: Record<string, number>;
+}
+
 export interface CockpitConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _cockpitVersion?: string;
@@ -69,6 +77,8 @@ export interface CockpitConfig {
   runtime?: string;
   workspace?: string;
   notifier?: string;
+  /** #65 Telegram integration. Absent = feature off (daemon behaves exactly as before). */
+  telegram?: TelegramConfig;
   projection?: {
     targets?: string[];
   };
