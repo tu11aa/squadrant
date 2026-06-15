@@ -121,7 +121,7 @@ export function isConnectionStable(
   framesReceived: number,
   nowMs: number
 ): boolean {
-  return framesReceived > 0 || nowMs - connectTimeMs >= STABLE_MS;
+  return connectTimeMs > 0 && (framesReceived > 0 || nowMs - connectTimeMs >= STABLE_MS);
 }
 
 // --- CLI command ---

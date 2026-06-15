@@ -101,6 +101,14 @@ describe("crew-attach backoff logic", () => {
     expect(isConnectionStable(t0, 0, t0 + 50)).toBe(false);
   });
 
+  it("daemon-down guard: connectTimeMs=0 (never established) is NOT stable, even with huge elapsed", () => {
+    // If 'connect' event never fires, connectTimeMs stays 0.
+    // Date.now() - 0 is ~1.7e12 >> STABLE_MS, so without the connectTimeMs>0 guard
+    // this would wrongly return true and reset backoff/budget every attempt.
+    expect(isConnectionStable(0, 0, Date.now())).toBe(false);
+    expect(isConnectionStable(0, 0, STABLE_MS * 1000)).toBe(false);
+  });
+
   it("STABLE_MS is 5 seconds", () => {
     expect(STABLE_MS).toBe(5_000);
   });
