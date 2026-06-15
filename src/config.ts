@@ -89,6 +89,9 @@ export interface CockpitConfig {
     taskTimeoutMs?: number;
     /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
     crewRouting?: CrewRoutingConfig;
+    /** B1: consume cmux's native event stream for crew turn-end (idle) detection
+     *  alongside the scrape fallback. Default true; set false for scrape-only. */
+    cmuxEventsBridge?: boolean;
   };
   metrics: {
     enabled: boolean;
@@ -131,6 +134,7 @@ export function getDefaultConfig(): CockpitConfig {
         side: { agent: "claude", model: "opus" },
       },
       taskTimeoutMs: 8 * 60 * 60 * 1000,
+      cmuxEventsBridge: true,
       crewRouting: {
         rules: [
           { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
