@@ -48,10 +48,115 @@ describe("renderHtml", () => {
   it("emits a full HTML document with the live content and an SSE connection indicator", () => {
     const html = renderHtml(full(daemon()));
     expect(html).toMatch(/^<!DOCTYPE html>/i);
-    expect(html).toContain("COCKPIT SYSTEM HEALTH");
+    expect(html).toContain("COCKPIT SYSTEM HEALTH"); // visible page heading
     expect(html).toContain('id="content"');
     expect(html).toContain('id="conn"');
+    expect(html).toContain('id="led"'); // pulsing live indicator in the flight deck
     expect(html).toContain("EventSource"); // bootstrap JS wires the SSE stream
+    expect(html).toContain("updated"); // "updated Ns ago" readout
+  });
+
+  it("ships the light theme — light background, dark ink, no dark mission-control palette", () => {
+    const html = renderHtml(full(daemon()));
+    expect(html).toContain('class="theme-light"');
+    expect(html).toContain("--bg:#f6f7f9"); // near-white page background
+    expect(html).toContain("--panel:#ffffff"); // white cards
+    expect(html).toContain("--ink:#1b2333"); // dark high-contrast text
+    expect(html).not.toContain("#070b14"); // the old dark page background is gone
+  });
+});
+
+describe("explanatory titles + captions", () => {
+  it("gives the page a heading and a plain-language subtitle", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('class="page-title"');
+    expect(out).toContain('class="page-sub"');
+    expect(out).toContain("Live health of the cockpit daemon");
+  });
+
+  it("titles every Overview block with a heading + caption", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('class="section-head"');
+    expect(out).toContain("System Health");
+    expect(out).toContain("Health by Tier");
+    expect(out).toContain("Live Trends");
+    // the donut number is explained in plain language
+    expect(out).toContain("monitored components are alive");
+  });
+
+  it("labels the status summary annunciator and each tier card", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain("Status summary");
+    expect(out).toContain('class="tier-desc"');
+    expect(out).toContain("Tier 0"); // daemon tier described
+    expect(out).toContain("Tier 3/4"); // environment tier described
+  });
+
+  it("introduces the other tabs so their tables are not ambiguous", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain("Daemon · Tier 0");
+    expect(out).toContain("Environment · Tier 3 / 4");
+    expect(out).toContain("mailbox delivery and task store"); // projects intro
+  });
+});
+
+describe("tabbed navigation", () => {
+  it("renders all four tabs as a tablist", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('role="tablist"');
+    for (const tab of ["overview", "projects", "daemon", "environment"]) {
+      expect(out).toContain(`data-tab="${tab}"`);
+      expect(out).toContain(`data-panel="${tab}"`);
+    }
+    expect(out).toContain("Overview");
+    expect(out).toContain("Environment");
+  });
+});
+
+describe("overview gauge + charts", () => {
+  it("renders an inline-SVG health donut and a master annunciator", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('<svg class="donut"'); // the signature SVG gauge
+    expect(out).toContain('class="seg s-alive"'); // proportional segment
+    expect(out).toContain('class="annunciator'); // master flight status
+    expect(out).toContain("NOMINAL"); // all-healthy master word
+  });
+
+  it("renders sparkline chart nodes the client fills from rolling history", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('data-spark="errors"');
+    expect(out).toContain('data-spark="behind"');
+    expect(out).toContain('<svg class="spark"');
+  });
+
+  it("emits a machine-readable metrics blob for client-side trends", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('id="cockpit-metrics"');
+    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    expect(m).not.toBeNull();
+    const metrics = JSON.parse(m![1]);
+    expect(metrics.t).toBe(1_000_000);
+    expect(typeof metrics.alive).toBe("number");
+  });
+
+  it("escalates the master annunciator to CRITICAL when a component is gone", () => {
+    const goneCrew: DaemonSnapshot["tier1"] = [
+      { kind: "crew", project: "cockpit", ref: "x", state: "gone", lastSeenMs: 1 },
+    ];
+    const out = renderContent(full(daemon({}, goneCrew)));
+    expect(out).toContain('class="annunciator a-crit');
+    expect(out).toContain("CRITICAL");
+  });
+});
+
+describe("status pills", () => {
+  it("renders color-coded status pills with a dot", () => {
+    const tier1: DaemonSnapshot["tier1"] = [
+      { kind: "captain", project: "cockpit", ref: "cap", state: "alive", lastSeenMs: 999_000 },
+    ];
+    const out = renderContent(full(daemon({}, tier1)));
+    expect(out).toContain('class="pill s-alive"');
+    expect(out).toContain('class="pdot"');
   });
 });
 
@@ -61,10 +166,33 @@ describe("stale-build banner", () => {
     expect(stale).toContain("DAEMON RUNNING STALE CODE");
     // remediation is copy-able text, not a button
     expect(stale).toContain("npm run build");
-    expect(stale).not.toContain("<button");
+    expect(stale).not.toContain("<button class=\"banner");
   });
   it("omits the banner when the build is fresh", () => {
     expect(renderContent(full(daemon()))).not.toContain("DAEMON RUNNING STALE CODE");
+  });
+});
+
+describe("daemon sweep wording", () => {
+  it("says 'awaiting first sweep' when the daemon has not swept yet (fix a)", () => {
+    const out = renderContent(full(daemon({ sweep: { lastSweepAt: null, ageMs: null, cadenceMs: 30_000 } })));
+    expect(out).toContain("awaiting first sweep");
+    expect(out).not.toContain("never swept");
+  });
+  it("shows the last-swept age once a sweep has run", () => {
+    const out = renderContent(full(daemon({ sweep: { lastSweepAt: 1000, ageMs: 8000, cadenceMs: 30_000 } })));
+    expect(out).toContain("cadence");
+  });
+});
+
+describe("daemon log error metric (fix b)", () => {
+  it("presents log errors as a calm caution metric with a sparkline, never a red master alarm", () => {
+    const out = renderContent(full(daemon({ log: { errorCount: 7, sizeBytes: 4096, windowMs: 3_600_000 } })));
+    expect(out).toContain("Log errors");
+    expect(out).toContain('data-spark="errors"');
+    // 7 log errors must NOT push the master annunciator to CRITICAL.
+    expect(out).toContain('class="annunciator a-warn');
+    expect(out).not.toContain('class="annunciator a-crit');
   });
 });
 
@@ -72,6 +200,8 @@ describe("daemon unreachable", () => {
   it("shows the unreachable banner but still renders Tier 3/4", () => {
     const out = renderContent(full("unreachable"));
     expect(out).toContain("DAEMON UNREACHABLE");
+    expect(out).toContain('class="annunciator a-crit'); // master goes critical
+    expect(out).toContain("LINK LOST");
     expect(out).toContain("cmux"); // Tier 3 still rendered
     expect(out).toContain("claude");
   });
@@ -83,9 +213,10 @@ describe("severity rollup + remediation", () => {
     { kind: "captain", project: "pact", ref: "pact-captain", state: "gone", lastSeenMs: 1 },
   ];
 
-  it("bubbles a gone component up to its project header rollup", () => {
+  it("bubbles a gone component up to its project card rollup", () => {
     const out = renderContent(full(daemon({}, goneRelay)));
-    expect(out).toMatch(/data-rollup="gone"[^>]*>[^<]*pact/);
+    expect(out).toMatch(/data-rollup="gone"/);
+    expect(out).toContain("pact");
   });
 
   it("renders the heal command as copy-able remediation under the gone relay", () => {
@@ -98,6 +229,17 @@ describe("severity rollup + remediation", () => {
       { kind: "relay", project: "cockpit", ref: "relay", state: "alive", lastSeenMs: 999_000 },
     ];
     expect(renderContent(full(daemon({}, aliveRelay)))).not.toContain("cockpit heal relay");
+  });
+});
+
+describe("delivery lag bar", () => {
+  it("renders an SVG-free delivery bar with acked + behind segments", () => {
+    const d = daemon();
+    d.tier2.projects[0].delivery = { maxSeq: 20, lastAckedSeq: 12, behind: 8 };
+    const out = renderContent(full(d));
+    expect(out).toContain('class="dbar"');
+    expect(out).toContain("dbar-behind");
+    expect(out).toContain("8 behind");
   });
 });
 
@@ -116,7 +258,7 @@ describe("renderTickJson", () => {
   it("returns JSON with content HTML and the generated timestamp", () => {
     const parsed = JSON.parse(renderTickJson(full(daemon())));
     expect(typeof parsed.contentHtml).toBe("string");
-    expect(parsed.contentHtml).toContain("COCKPIT SYSTEM HEALTH");
+    expect(parsed.contentHtml).toContain("annunciator");
     expect(parsed.generatedAt).toBe(1_000_000);
   });
 });
