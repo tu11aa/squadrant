@@ -19,7 +19,8 @@ describe("cockpitd snapshot verb", () => {
   it("returns a Tier 0/1/2 snapshot and leaves the health verb intact", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-snap-"));
     const sock = join(dir, "c.sock");
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
+    // registeredProjects scopes Tier 2 to known projects (avoids config.json dependency in tests)
+    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["demo"] });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: {
@@ -51,5 +52,28 @@ describe("cockpitd snapshot verb", () => {
     // The pre-existing health verb is unchanged.
     const health = await sendRequest(sock, { kind: "health", project: "demo" }) as unknown[];
     expect(Array.isArray(health)).toBe(true);
+  });
+
+  it("excludes unregistered (orphan) projects from tier2 projects list", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-snap-orphan-"));
+    const sock = join(dir, "c.sock");
+    // "registered" is the only registered project; "orphan" has a task but is not registered
+    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["registered"] });
+    stop = handle.stop;
+
+    await sendRequest(sock, { kind: "seed", record: {
+      id: "t-reg", project: "registered", provider: "claude", mode: "interactive",
+      state: "working", task: "a", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
+    await sendRequest(sock, { kind: "seed", record: {
+      id: "t-orp", project: "orphan", provider: "claude", mode: "interactive",
+      state: "done", task: "stale", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
+
+    const snap = await sendRequest(sock, { kind: "snapshot" }) as DaemonSnapshot;
+    expect(snap.tier2.projects.find((p) => p.project === "registered")).toBeDefined();
+    expect(snap.tier2.projects.find((p) => p.project === "orphan")).toBeUndefined();
   });
 });

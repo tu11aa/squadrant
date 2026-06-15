@@ -143,6 +143,16 @@ function trendCard(key: string, label: string, value: string, sub: string): stri
   ].join("");
 }
 
+/** Sum delivery lag across projects whose relay is alive or stale (online only).
+ *  A captain that is offline with unread mail is not a live delivery problem. */
+function liveDeliveryBehind(d: DaemonSnapshot): number {
+  return d.tier2.projects.reduce((sum, p) => {
+    const relay = d.tier1.find((c) => c.kind === "relay" && c.project === p.project);
+    const relayState = relay?.state ?? "unknown";
+    return relayState === "alive" || relayState === "stale" ? sum + p.delivery.behind : sum;
+  }, 0);
+}
+
 // ── Aggregate collection (pure) ─────────────────────────────────────────────────
 interface Collected {
   now: number;
@@ -178,8 +188,8 @@ function collect(snap: FullSnapshot): Collected {
     for (const p of snap.daemon.tier2.projects) {
       if (p.delivery.behind > 0) projStates.push("stale");
       if (p.store.corruptCount > 0) projStates.push("gone");
-      behind += p.delivery.behind;
     }
+    behind = liveDeliveryBehind(snap.daemon);
   }
   return {
     now,
@@ -334,10 +344,7 @@ function renderProjects(snap: FullSnapshot, now: number): string {
     }
     out.push(`</article>`);
   }
-  out.push(
-    `<div class="results">global results · <span class="mono">${d.tier2.results.fileCount}</span> files · ${fmtBytes(d.tier2.results.totalBytes)}</div>`,
-    `</section>`,
-  );
+  out.push(`</section>`);
   return out.join("");
 }
 
@@ -383,7 +390,7 @@ function renderDaemon(snap: FullSnapshot): string {
       `<div class="trend-sub">${t0.log.errorCount === 0 ? "clean over the last" : `over the last`} ${fmtDur(t0.log.windowMs)} · log ${fmtBytes(t0.log.sizeBytes)}</div>`,
       `</div>`,
     ].join(""),
-    trendCard("behind", "Delivery lag", `${snap.daemon.tier2.projects.reduce((a, p) => a + p.delivery.behind, 0)}`, "summed across all project mailboxes"),
+    trendCard("behind", "Delivery lag", `${liveDeliveryBehind(snap.daemon)}`, "summed across online projects only (offline excluded)"),
     `</div>`,
   );
 
