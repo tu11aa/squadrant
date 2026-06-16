@@ -360,6 +360,68 @@ describe("cockpitd daemon-direct (#332)", () => {
     expect(cmux.sent).toEqual([]);
   });
 
+  // #332 storm BUG (re-entrancy): each deliveryTick does multiple slow cmux
+  // subprocess calls and can exceed the 1s interval. Without a re-entrancy guard,
+  // the interval fires again while the previous tick is still mid-flight; both
+  // ticks read the SAME cursor seq and both deliver the entries after it →
+  // duplicate/storm delivery. The guard must skip an overlapping tick so every
+  // mailbox entry is delivered EXACTLY ONCE even when ticks overlap.
+  it("flag ON: overlapping delivery ticks deliver each entry exactly once (re-entrancy guard)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-reentrancy-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
+
+    // One fresh mailbox entry. Both ticks would (without a guard) read cursor=0
+    // and deliver this same seq.
+    await appendToMailbox({ stateRoot, project: "p", taskRecord: TASK, event: EVENT, message: "CREW DONE [claude/t1] — only once" });
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+
+    // A send that blocks on a controllable gate, so tick #1 is still in-flight
+    // (cursor not yet advanced) when we fire tick #2.
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>((resolve) => { releaseSend = resolve; });
+    const sent: Array<{ text: string }> = [];
+    const cmux = {
+      sent,
+      send: async (_surface: PaneRef, text: string) => { sent.push({ text }); await sendGate; },
+      listSurfaces: async () => [],
+      readScreen: async () => null,
+      isAvailable: async () => true,
+      findWorkspaceId: async () => null,
+    } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
+
+    const handle = startCockpitd({
+      stateRoot, sockPath: sock, sweepMs: 0,
+      daemonCmux: cmux,
+      daemonDirectCmux: true,
+      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
+    });
+    stop = handle.stop;
+
+    // Fire tick #1 (does not resolve — blocked inside send awaiting the gate).
+    const tick1 = handle.tickDelivery!();
+    // Let tick #1 reach the blocked send.
+    await new Promise((r) => setTimeout(r, 10));
+    // Fire tick #2 while tick #1 is still in-flight → guard must skip it.
+    await handle.tickDelivery!();
+    // tick #2 returned immediately (skipped); only tick #1's send is pending.
+    expect(sent.length).toBe(1);
+
+    // Release the gate and let tick #1 finish + advance the cursor.
+    releaseSend();
+    await tick1;
+
+    // Exactly one delivery total, cursor advanced once.
+    expect(sent.length).toBe(1);
+    const c = await readCursor({ stateRoot, project: "p", subscriber: "captain" });
+    expect(c?.lastAckedSeq).toBe(1);
+
+    // A subsequent (non-overlapping) tick must NOT re-deliver the already-acked entry.
+    await handle.tickDelivery!();
+    expect(sent.length).toBe(1);
+  });
+
   it("flag ON: daemon-direct probe emits task.blocked when interactive crew pane shows a permission prompt", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-probe-"));
     const sock = join(dir, "c.sock");

@@ -780,7 +780,15 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     // cursor from re-delivering the entire historical backlog.
     const sessionStartMs = Date.now();
 
-    deliveryTick = async () => {
+    // #332 storm BUG (re-entrancy): each tick does multiple slow cmux subprocess
+    // calls and can exceed the 1s interval, so the interval can fire again while
+    // the previous tick is still in-flight. Two overlapping ticks read the SAME
+    // cursor seq and both deliver the entries after it → duplicate/storm
+    // delivery. Mirror the relay's drain() `draining` guard: set on entry, clear
+    // in a finally, skip overlapping fires.
+    let delivering = false;
+
+    const deliveryCore = async () => {
       const injectedSurfaces = opts.captainSurfaces ?? {};
       const allProjects = [...new Set([
         ...Object.keys(cfg.projects ?? {}),
@@ -865,6 +873,16 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       }
     };
 
+    deliveryTick = async () => {
+      if (delivering) return;
+      delivering = true;
+      try {
+        await deliveryCore();
+      } finally {
+        delivering = false;
+      }
+    };
+
     // #332: daemon-direct blocked-crew detection. Reuses createInteractiveProbe
     // (from notify-relay.ts) with a direct cmux pane reader injected as the
     // readPaneTail dep. Matches the relay's PROBE_INTERVAL_MS (10s).
@@ -886,7 +904,20 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       now: () => Date.now(),
       log,
     });
-    probeTick = interactiveProbe.tick;
+    // #332 storm BUG (re-entrancy): the probe reads crew panes via slow cmux
+    // subprocess calls and can exceed its 10s interval. Give it its own
+    // independent guard (separate from `delivering`) so an overlapping probe
+    // fire is skipped rather than stacking back-to-back cmux reads.
+    let probing = false;
+    probeTick = async () => {
+      if (probing) return;
+      probing = true;
+      try {
+        await interactiveProbe.tick();
+      } finally {
+        probing = false;
+      }
+    };
   }
 
   // #332: production delivery interval (1s poll). Gated on sweepMs so tests
