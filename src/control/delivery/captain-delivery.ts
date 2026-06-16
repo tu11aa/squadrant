@@ -1,4 +1,4 @@
-import { DeferDelivery } from "../../runtimes/cmux";
+import { DeferDelivery } from "../../runtimes/cmux.js";
 
 /**
  * #332: extracted defer-while-typing state machine (#258/#302).
