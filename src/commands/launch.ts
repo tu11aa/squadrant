@@ -14,7 +14,7 @@ import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js"
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
-import { CMUX_TIMEOUT, classifyStartupSurface } from "../runtimes/cmux.js";
+import { CMUX_TIMEOUT, classifyStartupSurface, parseDraftFromScreen } from "../runtimes/cmux.js";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -243,12 +243,29 @@ export async function deliverStartupPrompt(
     // Timed out waiting for chrome — sent blind once; nothing to confirm, stop.
     if (state === "loading") return;
 
-    // Phase 3 — confirm. A real submit flips the surface to "working" within a
-    // second or two (a startup turn runs far longer than settleMs). If it's no
-    // longer "idle", the prompt landed → done. If still "idle", the keystrokes
-    // were dropped (#235) → loop and re-send (bounded by maxAttempts).
+    // Phase 3 — confirm via the INPUT BOX, not the working-spinner.
+    //
+    // DRAFT FIX (debug side-session, cmux 0.64.16 double-startup bug): the old
+    // guard "re-send only if NOT working" relied on classifyStartupSurface →
+    // CC_WORKING_RE matching the live spinner. The new CC (Opus 4.8) renders the
+    // early thinking phase as a BARE "✽ Synthesizing…" (no timer/token/shell
+    // marker) and then streams "⏺ Thinking about …" with no spinner line at all —
+    // none of which CC_WORKING_RE matches. So a captain that has ALREADY accepted
+    // the prompt and is busy thinking reads as "idle" at the +settleMs check, and
+    // the loop re-sends → DOUBLE startup run (verified: 9/9 working frames of a
+    // real startup turn classified "idle"). classifyStartupSurface is unchanged
+    // since v0.6.2 — this is a cmux/CC render drift (audit finding A3), not a
+    // cockpit-code regression.
+    //
+    // Robust signal: a LANDED prompt leaves the input box empty; DROPPED
+    // keystrokes leave the prompt sitting unsubmitted in the box. parseDraftFromScreen
+    // returns "" for an empty box, null when the box isn't visible (working render),
+    // and the draft text only when real content remains. Re-send ONLY on a real
+    // remaining draft — proven to suppress every false re-send across the whole
+    // working turn while still catching genuinely-dropped keystrokes (#235).
     await sleep(settleMs);
-    if (classifyStartupSurface(await read()) !== "idle") return;
+    const draft = parseDraftFromScreen(await read());
+    if (draft === "" || draft === null) return;
   }
 }
 
