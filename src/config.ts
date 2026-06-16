@@ -90,7 +90,7 @@ export interface CockpitConfig {
     /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
     crewRouting?: CrewRoutingConfig;
     /** B1: consume cmux's native event stream for crew turn-end (idle) detection
-      *  alongside the scrape fallback. Default true; set false for scrape-only. */
+     *  alongside the scrape fallback. Default true; set false for scrape-only. */
     cmuxEventsBridge?: boolean;
     /** #332: daemon calls cmux directly (bypass notify-relay).
      *  TRANSPORT ONLY — does not change lifecycle source-of-truth.
