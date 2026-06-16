@@ -833,7 +833,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
           const result = await d.deliver(entry, (text, sendOpts) =>
             cmux.send(surface!, text, sendOpts),
           );
-          if (result.delivered) {
+          if ("delivered" in result) {
             await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
           } else {
             break;

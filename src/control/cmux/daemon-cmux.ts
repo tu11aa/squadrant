@@ -34,6 +34,11 @@ export class DaemonCmux {
     catch { return null; }
   }
 
+  async readPaneScreen(pane: PaneRef): Promise<string | null> {
+    try { return await this.driver.readPaneScreen(pane); }
+    catch { return null; }
+  }
+
   async findWorkspaceId(name: string): Promise<string | null> {
     try {
       const ref = await this.driver.status(name);

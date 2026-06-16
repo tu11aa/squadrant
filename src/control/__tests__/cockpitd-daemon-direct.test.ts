@@ -303,6 +303,7 @@ describe("cockpitd daemon-direct (#332)", () => {
         { workspaceId: "ws:1", surfaceId: "s1", title: crewPaneTitle("p", "worker") },
       ],
       readScreen: async () => APPROVAL_TAIL,
+      readPaneScreen: async () => APPROVAL_TAIL,
       isAvailable: async () => true,
       findWorkspaceId: async () => "ws:1",
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };

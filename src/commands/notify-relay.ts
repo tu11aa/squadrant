@@ -266,7 +266,7 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
               sendToSurface: (s: unknown, m: string, o?: { probe?: boolean }) => Promise<void>;
             }).sendToSurface(captainSurface, text, sendOpts),
           );
-          if (!result.delivered) {
+          if ("deferred" in result) {
             log(`deferred: captain typing (seq=${entry.seq})`);
             return;
           }

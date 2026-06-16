@@ -140,7 +140,7 @@ export function createDirectCrewPaneReader(
       const want = crewPaneTitle(rec.project, rec.name);
       const pane = surfaces.find((s) => s.title === want);
       if (!pane) return null;
-      const screen = await cmux.readScreen(pane);
+      const screen = await cmux.readPaneScreen(pane);
       if (!screen) return null;
       return screen.split(/\r?\n/).slice(-TAIL_LINES).join("\n");
     } catch {
