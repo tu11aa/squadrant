@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-16
+
+A patch release bundling the **web observability dashboard** and a **startup-delivery fix** — the work that accumulated on `develop` after 0.6.1, ahead of the cmux-compat changes that land in 0.7.0.
+
+### Added
+
+- **Web observability dashboard.** New `cockpit dashboard --web [--port] [--interval]` serves a zero-dependency localhost HTTP+SSE dashboard. It assembles a degrade-never-blank `FullSnapshot` (Tier 0–4: daemon state, crews, mailbox stats, and external probes for cmux / agent CLIs / vaults / config behind injectable runners) and renders pure HTML/SSE with a severity rollup, a stale banner, and remediation text. Ships a light, WCAG-AA theme with an explanatory title on every widget, tabs, and zero-dep SVG donut/sparkline charts. Read-only beta. Closes #314, #319. (#314, #319)
+
+### Fixed
+
+- **Dashboard snapshot/probe accuracy.** Corrected the hub-spoke vault health check, project-scoped probes, lag reporting, and severity classification; adds a `stale` `ProbeState` for template-drift caution. Data audited 68/68 fields accurate. Closes #320. (#320)
+
+- **Startup prompt delivered exactly once.** The captain launch path now recognizes non-streaming working states (a shell-waiting spinner carries no token down-counter), so a working captain is no longer misread as idle and re-sent the startup prompt — eliminating the 3× duplicate startup runs. (#312, #292 follow-up)
+
 ## [0.6.1] - 2026-06-15
 
 A reliability patch addressing relay ghost-materialization, headless launcher I/O pressure, cross-project boot-if-down, and crew spawn focus leakage — plus a build fix and a CI gate.
