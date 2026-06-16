@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { TaskRecord, ControlEvent } from "./types.js";
 
 export interface MailboxEntry {
@@ -143,19 +144,31 @@ export interface CursorState {
 }
 
 export async function readCursor(opts: CursorOpts): Promise<CursorState | null> {
+  let buf: string;
   try {
-    const buf = await fs.readFile(cursorPath(opts.stateRoot, opts.project, opts.subscriber), "utf-8");
-    return JSON.parse(buf) as CursorState;
+    buf = await fs.readFile(cursorPath(opts.stateRoot, opts.project, opts.subscriber), "utf-8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
+  }
+  // A 0-byte or corrupt cursor (e.g. an interrupted write) must be treated the
+  // same as a missing one — return null so the caller starts fresh from seq 0
+  // rather than crashing the relay boot / delivery loop (#332 storm BUG 1).
+  if (!buf.trim()) return null;
+  try {
+    return JSON.parse(buf) as CursorState;
+  } catch {
+    return null;
   }
 }
 
 export async function writeCursor(opts: CursorOpts & { lastAckedSeq: number }): Promise<void> {
   await fs.mkdir(inboxDir(opts.stateRoot), { recursive: true });
   const dest = cursorPath(opts.stateRoot, opts.project, opts.subscriber);
-  const tmp = dest + ".tmp";
+  // Unique tmp per call so overlapping writes never share a tmp path. A shared
+  // `dest + ".tmp"` let one rename consume the tmp the other expected → ENOENT
+  // on rename, leaving a 0-byte/corrupt cursor (#332 storm BUG 2).
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
   const data: CursorState = {
     lastAckedSeq: opts.lastAckedSeq,
     subscriber: opts.subscriber,
@@ -168,7 +181,13 @@ export async function writeCursor(opts: CursorOpts & { lastAckedSeq: number }): 
   } finally {
     await handle.close();
   }
-  await fs.rename(tmp, dest);
+  try {
+    await fs.rename(tmp, dest);
+  } catch (e) {
+    // Best-effort cleanup so a failed rename doesn't leave the unique tmp behind.
+    await fs.unlink(tmp).catch(() => {});
+    throw e;
+  }
 }
 
 interface ReadFromCursorOpts {

@@ -19,7 +19,7 @@ import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor, writeCursor, readFromCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
 import { createDirectSurfaceLivenessProbe, createDirectCrewPaneReader } from "./crew-pane-reader.js";
-import { createInteractiveProbe } from "../commands/notify-relay.js";
+import { createInteractiveProbe, STALE_THRESHOLD_MS } from "../commands/notify-relay.js";
 import { CaptainDelivery } from "./delivery/captain-delivery.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { assembleDaemonSnapshot, type DaemonSnapshotInputs, type ResultArtifacts } from "./snapshot.js";
@@ -774,6 +774,11 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     const cmux = daemonCmux;
     const cfg = loadConfig();
     const deliveries = new Map<string, CaptainDelivery>();
+    // #332 storm BUG 3: captured once at delivery-loop setup. Entries older than
+    // sessionStartMs - STALE_THRESHOLD_MS are silently acked (cursor advanced)
+    // without delivery, mirroring the relay's drain(). This stops a fresh/empty
+    // cursor from re-delivering the entire historical backlog.
+    const sessionStartMs = Date.now();
 
     deliveryTick = async () => {
       const injectedSurfaces = opts.captainSurfaces ?? {};
@@ -840,6 +845,14 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
           deliveries.set(project, d);
         }
         for await (const entry of readFromCursor({ stateRoot, project, fromSeq: lastAcked + 1 })) {
+          // #332 storm BUG 3: silently ack entries that pre-date this daemon
+          // session by more than STALE_THRESHOLD_MS — leftovers from dead crews
+          // or a prior captain session. Mirrors the relay's drain() skip so a
+          // fresh/empty cursor never re-delivers the historical backlog.
+          if (new Date(entry.ts).getTime() < sessionStartMs - STALE_THRESHOLD_MS) {
+            await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
+            continue;
+          }
           const result = await d.deliver(entry, (text, sendOpts) =>
             cmux.send(surface!, text, sendOpts),
           );

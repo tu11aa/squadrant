@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd, discoverCaptainSurface } from "../cockpitd.js";
-import { appendToMailbox, writeCursor } from "../mailbox.js";
+import { appendToMailbox, writeCursor, readCursor } from "../mailbox.js";
+import { STALE_THRESHOLD_MS } from "../../commands/notify-relay.js";
 import { sendRequest } from "../protocol.js";
 import { crewPaneTitle } from "../crew-pane-reader.js";
 import type { DaemonCmux } from "../cmux/daemon-cmux.js";
@@ -75,6 +76,52 @@ describe("cockpitd daemon-direct (#332)", () => {
 
     expect(cmux.sent.length).toBe(1);
     expect(cmux.sent[0].text).toMatch(/CREW DONE/);
+  });
+
+  // BUG 3 (#332 storm): the daemon-direct delivery loop lacked the relay's
+  // STALE_THRESHOLD_MS silent-ack, so a fresh/empty cursor re-delivered the
+  // entire historical backlog (the same CREW DONE events fired dozens of times).
+  // Entries older than sessionStart - STALE_THRESHOLD_MS must be silently acked
+  // (cursor advanced) WITHOUT being delivered.
+  it("flag ON: daemon silently acks stale backlog entries without delivering them", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-stale-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const inbox = join(stateRoot, "inbox");
+    mkdirSync(inbox, { recursive: true });
+
+    // Seed two STALE entries (older than STALE_THRESHOLD_MS) followed by one
+    // FRESH entry, all written directly so we control the timestamps.
+    const staleTs = new Date(Date.now() - STALE_THRESHOLD_MS - 60_000).toISOString();
+    const freshTs = new Date().toISOString();
+    const line = (seq: number, ts: string, message: string) =>
+      JSON.stringify({ seq, ts, taskId: "t1", name: "test-crew", kind: "task.done", provider: "claude", payload: {}, message }) + "\n";
+    appendFileSync(join(inbox, "p.log"),
+      line(1, staleTs, "CREW DONE stale-1") +
+      line(2, staleTs, "CREW DONE stale-2") +
+      line(3, freshTs, "CREW DONE fresh-3"),
+      "utf-8");
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+
+    const cmux = fakeCmux();
+    const handle = startCockpitd({
+      stateRoot,
+      sockPath: sock,
+      sweepMs: 0,
+      daemonCmux: cmux,
+      daemonDirectCmux: true,
+      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
+    });
+    stop = handle.stop;
+
+    if (handle.tickDelivery) await handle.tickDelivery();
+
+    // Only the fresh entry is delivered; the two stale ones are skipped.
+    expect(cmux.sent.length).toBe(1);
+    expect(cmux.sent[0].text).toMatch(/fresh-3/);
+    // The cursor advanced past all three (stale ones silently acked).
+    const c = await readCursor({ stateRoot, project: "p", subscriber: "captain" });
+    expect(c?.lastAckedSeq).toBe(3);
   });
 
   it("discoverCaptainSurface finds the matching captain pane by title", () => {

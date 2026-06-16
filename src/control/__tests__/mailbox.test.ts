@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox } from "../mailbox.js";
@@ -157,6 +157,46 @@ describe("cursor read/write", () => {
     const tg = await readCursor({ stateRoot, project: "demo", subscriber: "telegram" });
     expect(cap?.lastAckedSeq).toBe(10);
     expect(tg?.lastAckedSeq).toBe(5);
+  });
+
+  // BUG 1 (#332 storm): a 0-byte or corrupt cursor file must not throw — it
+  // would crash the relay boot / delivery loop. Treat it like a missing file.
+  it("readCursor returns null on an empty (0-byte) cursor file instead of throwing", async () => {
+    const stateRoot = freshState();
+    const inbox = join(stateRoot, "inbox");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "demo.captain.cursor"), "");
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c).toBeNull();
+  });
+
+  it("readCursor returns null on a corrupt (unparseable) cursor file instead of throwing", async () => {
+    const stateRoot = freshState();
+    const inbox = join(stateRoot, "inbox");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "demo.captain.cursor"), "{not valid json");
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c).toBeNull();
+  });
+
+  // BUG 2 (#332 storm): overlapping writeCursor calls used a SHARED tmp path,
+  // so one rename consumed the tmp the other expected → ENOENT, leaving a
+  // 0-byte/corrupt cursor. Concurrent writes must all succeed and leave a
+  // valid cursor with no leftover tmp files.
+  it("writeCursor survives concurrent overlapping writes (no shared-tmp rename race)", async () => {
+    const stateRoot = freshState();
+    await Promise.all(
+      Array.from({ length: 25 }, (_, i) =>
+        writeCursor({ stateRoot, project: "demo", subscriber: "captain", lastAckedSeq: i + 1 })
+      )
+    );
+    const c = await readCursor({ stateRoot, project: "demo", subscriber: "captain" });
+    expect(c).not.toBeNull();
+    expect(c!.lastAckedSeq).toBeGreaterThanOrEqual(1);
+    // No leftover unique-tmp files accumulated.
+    const inbox = join(stateRoot, "inbox");
+    const leftovers = readdirSync(inbox).filter((f) => f.includes(".tmp"));
+    expect(leftovers).toEqual([]);
   });
 });
 
