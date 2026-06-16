@@ -16,8 +16,9 @@ import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { CmuxEventsBridge } from "./cmux/events-bridge.js";
 import { makeGate } from "./codex/gate.js";
-import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor } from "./mailbox.js";
+import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor, writeCursor, readFromCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
+import { CaptainDelivery } from "./delivery/captain-delivery.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { assembleDaemonSnapshot, type DaemonSnapshotInputs, type ResultArtifacts } from "./snapshot.js";
 import { loadConfig } from "../config.js";
@@ -25,6 +26,8 @@ import { readdir } from "node:fs/promises";
 import type { Gate, TaskRecord, ControlEvent } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
 import type { Socket } from "node:net";
+import type { PaneRef } from "../runtimes/types.js";
+import type { DaemonCmux } from "./cmux/daemon-cmux.js";
 
 // This module's own compiled file — its mtime is the dist build-time used for
 // the Tier 0 build-freshness check (process start vs build time). package.json
@@ -97,6 +100,16 @@ export interface CockpitdOpts {
   /** B1: inject a fake cmux events bridge for tests. Defaults to a real one
    *  (gated on defaults.cmuxEventsBridge). */
   cmuxEventsBridge?: { start: () => void; stop: () => void };
+  /** #332: inject a fake DaemonCmux for testing daemon-direct delivery. When
+   *  absent and daemonDirectCmux is ON, a real cmux driver is created. */
+  daemonCmux?: DaemonCmux;
+  /** #332: override for daemonDirectCmux flag (bypasses config file load).
+   *  When true and daemonCmux is provided/injected, runs the daemon-direct
+   *  delivery loop instead of relying on the notify-relay. */
+  daemonDirectCmux?: boolean;
+  /** #332: injected captain-surface mapping (project → PaneRef) for the
+   *  daemon-direct delivery loop. Task 5 replaces this with real discovery. */
+  captainSurfaces?: Record<string, PaneRef>;
 }
 
 // ── Tier 0/2 snapshot gathering (I/O at the edge; the pure assembly lives in
@@ -706,6 +719,46 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   });
   log(`started pid=${process.pid} sock=${sockPath} stateRoot=${stateRoot}`);
 
+  // #332: daemon-direct delivery loop — replaces relay EGRESS when flag ON.
+  // Each tick reads from the project's mailbox cursor and delivers via
+  // DaemonCmux + CaptainDelivery. Returns `tickDelivery` so tests can trigger
+  // it manually; in production the caller sets up an interval (or the CLU
+  // entrypoint below adds one).
+  let deliveryTick: (() => Promise<void>) | undefined;
+
+  const daemonDirectCmux = opts.daemonDirectCmux ?? loadConfig().defaults?.daemonDirectCmux ?? false;
+  if (daemonDirectCmux && opts.daemonCmux) {
+    const cmux = opts.daemonCmux;
+    const cfg = loadConfig();
+    const deliveries = new Map<string, CaptainDelivery>();
+
+    deliveryTick = async () => {
+      const surfaces = opts.captainSurfaces ?? {};
+      for (const [project, surface] of Object.entries(surfaces)) {
+        const cursor = await readCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER });
+        const lastAcked = cursor?.lastAckedSeq ?? 0;
+        let d = deliveries.get(project);
+        if (!d) {
+          d = new CaptainDelivery({
+            maxDefers: cfg.relay?.maxDeferDeliveries ?? 300,
+            stableProbePolls: cfg.relay?.stableProbePolls ?? 3,
+          });
+          deliveries.set(project, d);
+        }
+        for await (const entry of readFromCursor({ stateRoot, project, fromSeq: lastAcked + 1 })) {
+          const result = await d.deliver(entry, (text, sendOpts) =>
+            cmux.send(surface, text, sendOpts),
+          );
+          if (result.delivered) {
+            await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
+          } else {
+            break;
+          }
+        }
+      }
+    };
+  }
+
   let timer: NodeJS.Timeout | undefined;
   if (opts.sweepMs && opts.sweepMs > 0) {
     // sweep() is async (#139: it probes cmux surface liveness). Guard against an
@@ -760,6 +813,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       for (const kill of activeHeadlessKills) kill();
       return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
     },
+    tickDelivery: deliveryTick,
   };
 }
 
