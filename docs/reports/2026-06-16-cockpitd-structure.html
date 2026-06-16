@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cockpit — Daemon Structure (core vs host) &amp; Split Proposal</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
+    --core:#3fb950; --host:#d29922; --rpc:#58a6ff; --deliver:#bc8cff; --probe:#39c5cf;
+    --driver:#f778ba; --gate:#e3b341; --attach:#79c0ff; --bad:#f85149;
+    --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace; --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #deck{height:100vh;display:flex;flex-direction:column}
+  header{padding:14px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex:0 0 auto}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  .slide{flex:1;display:none;padding:22px 44px 6px;overflow:auto}
+  .slide.active{display:flex;flex-direction:column;animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .slide h2{margin:0 0 6px;font-size:23px}
+  .slide .sub{color:var(--dim);font-size:14px;margin:0;max-width:1000px;line-height:1.5}
+  .stage{flex:1;display:grid;place-items:center;padding:8px 0}
+  svg{width:100%;height:auto;max-height:66vh;display:block}
+  .bt{font-family:var(--sans);font-weight:600;font-size:14.5px;fill:var(--ink)}
+  .bs{font-family:var(--mono);font-size:11.5px;fill:var(--dim)}
+  .edge{stroke:#52606d;stroke-width:1.8;fill:none}
+  .elabel{font-family:var(--mono);font-size:11.5px;fill:var(--dim)}
+  .loc{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding:6px 0 2px}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);padding:10px 28px;display:flex;align-items:center;gap:16px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--rpc)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer;transition:.2s}
+  .dots i.on{background:var(--rpc);transform:scale(1.25)}
+  .num{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:54px;text-align:right}
+  code{font-family:var(--mono);background:#1f2530;padding:1px 5px;border-radius:4px;font-size:.9em}
+  .pulse{stroke-dasharray:5 7;animation:dash 1.1s linear infinite}
+  @keyframes dash{to{stroke-dashoffset:-24}}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:26px;width:100%;max-width:1200px}
+  .card{border:1px solid var(--line);border-radius:14px;padding:22px 26px;background:var(--panel);min-height:48vh}
+  .card h3{margin:0 0 14px;font-size:17px}
+  .card ul{margin:0;padding-left:20px;font-size:14px;color:var(--ink);line-height:1.8}
+  .card ul li{margin-bottom:6px} .card ul li small{color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="deck">
+  <header>
+    <h1>⚙ Cockpit — Daemon Structure &amp; Split Proposal</h1>
+    <span class="tag">core vs host</span>
+    <div class="spacer"></div>
+    <span class="tag">space / → · A = autoplay</span>
+  </header>
+
+  <!-- SLIDE 1: two layers -->
+  <section class="slide active">
+    <h2>1 · Two layers (the seam already exists)</h2>
+    <p class="sub"><code>cockpitd.ts</code> is NOT the brain — it's the <b style="color:var(--host)">host process</b> (I/O, sockets, timers, drivers). The brain is <code>daemon.ts</code> = <b style="color:var(--core)">createDaemon()</b>, a near-pure core with all I/O <b>injected</b>. They talk through one function: <code>daemon.handle(req)</code>.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 460">
+        <rect x="60" y="70" width="470" height="320" rx="16" fill="none" stroke="var(--host)" stroke-width="1.6" stroke-dasharray="6 5"/>
+        <text x="84" y="104" class="bs" fill="var(--host)">cockpitd.ts · startCockpitd()  — HOST (1008 LOC)</text>
+        <rect x="92" y="130" width="180" height="58" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="112" y="156">socket server</text><text class="bs" x="112" y="176">+ 4 timers</text>
+        <rect x="320" y="130" width="170" height="58" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="340" y="156">real I/O wiring</text><text class="bs" x="340" y="176">spawn · cmux · fs</text>
+        <rect x="92" y="300" width="180" height="58" rx="10" fill="var(--panel)" stroke="var(--driver)"/><text class="bt" x="112" y="326" fill="var(--driver)">drivers/bridges</text><text class="bs" x="112" y="346">codex·opencode·cmux</text>
+        <rect x="320" y="300" width="170" height="58" rx="10" fill="var(--panel)" stroke="var(--deliver)"/><text class="bt" x="340" y="326" fill="var(--deliver)">delivery·probes</text><text class="bs" x="340" y="346">loops + reap</text>
+
+        <rect x="700" y="150" width="400" height="170" rx="16" fill="var(--panel2)" stroke="var(--core)" stroke-width="1.8"/>
+        <text x="724" y="186" class="bs" fill="var(--core)">daemon.ts · createDaemon()  — CORE (503 LOC)</text>
+        <text class="bt" x="724" y="220">state machine · reaping · push policy</text>
+        <text class="bs" x="724" y="246">all I/O injected via DaemonDeps</text>
+        <text class="bs" x="724" y="268">{ store, now, isPidAlive, notify,</text>
+        <text class="bs" x="724" y="288">  launchHeadless, launchInteractive, … }</text>
+
+        <path class="edge pulse" d="M530 235 L698 235" stroke="var(--core)" marker-end="url(#a)"/>
+        <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--core)"/></marker></defs>
+        <text class="elabel" x="556" y="222" fill="var(--core)">daemon.handle(req)</text>
+        <text class="elabel" x="556" y="258">deps.notify / launch* (callbacks back)</text>
+      </svg>
+    </div>
+    <div class="legend"><span>The split is healthy in principle — but the host (left) has accreted ~10 concerns into one 1008-line function. That's the weight.</span></div>
+  </section>
+
+  <!-- SLIDE 2: daemon.ts core -->
+  <section class="slide">
+    <h2>2 · <code style="font-size:.8em">daemon.ts</code> — the core (createDaemon)</h2>
+    <p class="sub">Near-pure. Owns task lifecycle + the "when do we notify the captain" policy. Depends only on small pure modules. This part is <b style="color:var(--core)">already clean</b> — leave it.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 470">
+        <defs><marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+        <!-- center -->
+        <rect x="430" y="190" width="320" height="92" rx="14" fill="var(--panel2)" stroke="var(--core)" stroke-width="1.8"/>
+        <text class="bt" x="456" y="226" fill="var(--core)">createDaemon().handle(req)</text>
+        <text class="bs" x="456" y="252">dispatch · event  → reduce() + firePush()</text>
+        <text class="bs" x="456" y="272">+ relay-health tracking</text>
+
+        <!-- internal helpers (top) -->
+        <rect x="120" y="60" width="220" height="60" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="140" y="86">firePush()</text><text class="bs" x="140" y="106">notify + IDLE debounce</text>
+        <rect x="370" y="60" width="220" height="60" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="390" y="86">formatMessage()</text><text class="bs" x="390" y="106">event → captain text</text>
+        <rect x="620" y="60" width="240" height="60" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="640" y="86">formatDelegationReport()</text><text class="bs" x="640" y="106">cross-project report</text>
+
+        <!-- pure deps (bottom) -->
+        <rect x="120" y="350" width="190" height="60" rx="10" fill="var(--panel)" stroke="var(--rpc)"/><text class="bt" x="140" y="376" fill="var(--rpc)">state-machine.ts</text><text class="bs" x="140" y="396">reduce() · 118 LOC</text>
+        <rect x="340" y="350" width="170" height="60" rx="10" fill="var(--panel)" stroke="var(--rpc)"/><text class="bt" x="360" y="376" fill="var(--rpc)">watchdog.ts</text><text class="bs" x="360" y="396">stall detect</text>
+        <rect x="540" y="350" width="170" height="60" rx="10" fill="var(--panel)" stroke="var(--rpc)"/><text class="bt" x="560" y="376" fill="var(--rpc)">liveness.ts</text><text class="bs" x="560" y="396">relay health</text>
+        <rect x="740" y="350" width="160" height="60" rx="10" fill="var(--panel)" stroke="var(--rpc)"/><text class="bt" x="760" y="376" fill="var(--rpc)">store.ts</text><text class="bs" x="760" y="396">task records</text>
+
+        <path class="edge" marker-end="url(#ad)" d="M230 120 L520 188"/>
+        <path class="edge" marker-end="url(#ad)" d="M480 120 L560 188"/>
+        <path class="edge" marker-end="url(#ad)" d="M740 120 L640 188"/>
+        <path class="edge" marker-end="url(#ad)" d="M300 350 L500 284"/>
+        <path class="edge" marker-end="url(#ad)" d="M430 350 L560 284"/>
+        <path class="edge" marker-end="url(#ad)" d="M610 350 L600 284"/>
+        <path class="edge" marker-end="url(#ad)" d="M790 350 L680 284"/>
+      </svg>
+    </div>
+    <div class="legend"><span><b style="background:var(--core)"></b>core logic</span><span><b style="background:var(--rpc)"></b>small pure deps</span><span>No sockets, no timers, no cmux — testable by injecting fakes. ~503 LOC, cohesive.</span></div>
+  </section>
+
+  <!-- SLIDE 3: cockpitd.ts host -->
+  <section class="slide">
+    <h2>3 · <code style="font-size:.8em">cockpitd.ts</code> — the host (startCockpitd) · the heavy one</h2>
+    <p class="sub">One 1008-line function wires ~10 distinct concerns + 20 imports + 9 socket handlers + 4 timers. Everything below lives inside a single closure — that's why it feels heavy.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 480">
+        <ellipse cx="590" cy="240" rx="150" ry="64" fill="var(--panel2)" stroke="var(--host)" stroke-width="2"/>
+        <text class="bt" x="590" y="234" text-anchor="middle" fill="var(--host)">startCockpitd()</text>
+        <text class="bs" x="590" y="256" text-anchor="middle">1008 LOC · one closure</text>
+
+        <!-- concern satellites -->
+        <g font-family="var(--sans)">
+        <rect x="60"  y="40"  width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--rpc)"/><text class="bt" x="78" y="64" fill="var(--rpc)">9 socket handlers</text><text class="bs" x="78" y="84">seed·codex-close·relay-*·health·snapshot·event</text>
+        <rect x="910" y="40"  width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--attach)"/><text class="bt" x="928" y="64" fill="var(--attach)">attach fan-out</text><text class="bs" x="928" y="84">broadcast AttachFrames</text>
+        <rect x="60"  y="130" width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--gate)"/><text class="bt" x="78" y="154" fill="var(--gate)">gate promotion</text><text class="bs" x="78" y="174">schedule/cancel timers</text>
+        <rect x="910" y="130" width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--driver)"/><text class="bt" x="928" y="154" fill="var(--driver)">codex driver</text><text class="bs" x="928" y="174">CodexInteractiveDriver</text>
+        <rect x="60"  y="330" width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--deliver)"/><text class="bt" x="78" y="354" fill="var(--deliver)">delivery loop</text><text class="bs" x="78" y="374">+ captain-close reap</text>
+        <rect x="910" y="330" width="210" height="56" rx="10" fill="var(--panel)" stroke="var(--probe)"/><text class="bt" x="928" y="354" fill="var(--probe)">probes</text><text class="bs" x="928" y="374">surface-live + blocked</text>
+        <rect x="60"  y="410" width="210" height="52" rx="10" fill="var(--panel)" stroke="var(--driver)"/><text class="bt" x="78" y="434" fill="var(--driver)">opencode + cmux bridges</text><text class="bs" x="78" y="452">SSE · events-bridge</text>
+        <rect x="910" y="410" width="210" height="52" rx="10" fill="var(--panel)" stroke="var(--line)"/><text class="bt" x="928" y="434">4 timers + mailbox notify</text><text class="bs" x="928" y="452">sweep·rotate·deliver·probe</text>
+        <rect x="430" y="400" width="320" height="56" rx="10" fill="var(--panel)" stroke="var(--bad)"/><text class="bt" x="448" y="424" fill="var(--bad)">relay-proxy queues (legacy)</text><text class="bs" x="448" y="444">pendingProbes·probeResults — delete w/ #332</text>
+        </g>
+
+        <path class="edge" d="M270 70 L450 210"/>
+        <path class="edge" d="M910 70 L730 210"/>
+        <path class="edge" d="M270 158 L444 218"/>
+        <path class="edge" d="M910 158 L736 218"/>
+        <path class="edge" d="M270 356 L450 270"/>
+        <path class="edge" d="M910 356 L730 270"/>
+        <path class="edge" d="M270 432 L448 280"/>
+        <path class="edge" d="M910 432 L734 282"/>
+        <path class="edge" d="M590 400 L590 306"/>
+      </svg>
+    </div>
+    <div class="legend"><span>Each colour = a concern that could become its own module. They share little state — mostly the <code>store</code>, the <code>daemon</code> handle, and a few maps.</span></div>
+  </section>
+
+  <!-- SLIDE 4: split proposal -->
+  <section class="slide">
+    <h2>4 · Proposed split — shrink the host to a wiring file</h2>
+    <p class="sub">Extract each concern into a focused module under <code>src/control/daemon/</code>. <code>startCockpitd</code> becomes a thin <b>composition root</b>: build deps → <code>createDaemon</code> → mount modules → start timers. Target: ~150 LOC.</p>
+    <div class="stage"><div class="twocol">
+      <div class="card">
+        <h3 style="color:var(--host)">Extract from cockpitd.ts →</h3>
+        <ul>
+          <li><code>daemon/server.ts</code> — socket + the 9 handlers (request router) <small>· ~rpc</small></li>
+          <li><code>daemon/attach.ts</code> — attach fan-out / AttachFrame broadcast</li>
+          <li><code>daemon/delivery.ts</code> — daemon-direct loop + captain discovery + close-reap</li>
+          <li><code>daemon/probes.ts</code> — surface-liveness + blocked probe wiring</li>
+          <li><code>daemon/drivers.ts</code> — codex / opencode / cmux-events bootstrap</li>
+          <li><code>daemon/gates.ts</code> — gate promotion timers</li>
+          <li><b>delete</b> relay-proxy queues (with #332 relay removal)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--core)">Leave alone (already cohesive)</h3>
+        <ul>
+          <li><code>daemon.ts</code> — the core. Maybe rename → <code>core.ts</code> to end the daemon.ts/cockpitd.ts confusion.</li>
+          <li><code>state-machine.ts</code>, <code>watchdog.ts</code>, <code>liveness.ts</code>, <code>store.ts</code></li>
+          <li><code>mailbox.ts</code>, <code>delivery/captain-delivery.ts</code></li>
+          <li><small>Pre-req: a thin <code>DaemonContext</code> ({store, daemon, log, cmux, cfg}) passed to each mounted module so they don't re-close over startCockpitd's locals.</small></li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="legend"><span>Result: 1008-LOC closure → ~150-LOC composition root + 6 focused modules (~80-150 LOC each). Each independently testable. Lower risk for #332/#333 work.</span></div>
+  </section>
+
+  <footer>
+    <button id="prev">← Prev</button>
+    <div class="dots" id="dots"></div>
+    <button id="auto">▶ Autoplay</button>
+    <button id="next">Next →</button>
+    <span class="num" id="counter">1 / 4</span>
+  </footer>
+</div>
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dotsBox=document.getElementById('dots');
+  let i=0, timer=null;
+  slides.forEach((_,n)=>{const d=document.createElement('i');d.onclick=()=>go(n);dotsBox.appendChild(d);});
+  const dots=[...dotsBox.children];
+  function go(n){i=(n+slides.length)%slides.length;slides.forEach((s,k)=>s.classList.toggle('active',k===i));dots.forEach((d,k)=>d.classList.toggle('on',k===i));document.getElementById('counter').textContent=(i+1)+' / '+slides.length;}
+  const next=()=>go(i+1), prev=()=>go(i-1);
+  document.getElementById('next').onclick=next; document.getElementById('prev').onclick=prev;
+  function toggleAuto(){const b=document.getElementById('auto');if(timer){clearInterval(timer);timer=null;b.textContent='▶ Autoplay';}else{timer=setInterval(next,5500);b.textContent='⏸ Pause';}}
+  document.getElementById('auto').onclick=toggleAuto;
+  addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' '){e.preventDefault();next();}else if(e.key==='ArrowLeft')prev();else if(e.key.toLowerCase()==='a')toggleAuto();});
+  go(0);
+</script>
+</body>
+</html>

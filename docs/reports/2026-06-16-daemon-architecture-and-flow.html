@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cockpit Daemon — Architecture &amp; Notification Flow</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
+    --crew:#3fb950; --captain:#58a6ff; --daemon:#d29922; --mailbox:#bc8cff;
+    --relay:#f778ba; --cmux:#39c5cf; --bad:#f85149; --good:#3fb950;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #deck{height:100vh;display:flex;flex-direction:column}
+  header{padding:14px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex:0 0 auto}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  .slide{flex:1;display:none;padding:22px 44px 6px;overflow:auto}
+  .slide.active{display:flex;flex-direction:column;animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .slide h2{margin:0 0 6px;font-size:23px}
+  .slide .sub{color:var(--dim);font-size:14px;margin:0;max-width:980px;line-height:1.5}
+  .stage{flex:1;display:grid;place-items:center;padding:10px 0}
+  svg{width:100%;height:auto;max-height:64vh;display:block}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding:6px 0 2px}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);padding:10px 28px;display:flex;align-items:center;gap:16px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--captain)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer;transition:.2s}
+  .dots i.on{background:var(--captain);transform:scale(1.25)}
+  .num{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:54px;text-align:right}
+  .box-t{font-family:var(--sans);font-weight:600;font-size:15px;fill:var(--ink)}
+  .box-s{font-family:var(--mono);font-size:12px;fill:var(--dim)}
+  .edge{stroke:#52606d;stroke-width:2;fill:none;marker-end:url(#arrow)}
+  .edge.hot{stroke:var(--daemon);stroke-width:2.5}
+  .elabel{font-family:var(--mono);font-size:12px;fill:var(--dim)}
+  .elabel.c{text-anchor:middle}
+  .pkt{fill:var(--daemon)}
+  .note{font-family:var(--mono);font-size:12.5px;fill:var(--dim)}
+  .ok{fill:var(--good)} .no{fill:var(--bad)}
+  code{font-family:var(--mono);background:#1f2530;padding:1px 5px;border-radius:4px;font-size:.9em}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:28px;width:100%;max-width:1180px}
+  .card{border:1px solid var(--line);border-radius:14px;padding:24px 28px;background:var(--panel);min-height:46vh}
+  .card h3{margin:0 0 14px;font-size:18px}
+  .card.def h3{color:var(--relay)} .card.dd h3{color:var(--daemon)}
+  .card ul{margin:0;padding-left:20px;font-size:14.5px;color:var(--ink);line-height:1.85}
+  .card ul li{margin-bottom:6px}
+  .card ul li b{color:var(--ink)}
+  .pill{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);vertical-align:middle}
+  .pill.on{color:var(--good);border-color:var(--good)} .pill.off{color:var(--bad);border-color:var(--bad)}
+</style>
+</head>
+<body>
+<div id="deck">
+  <header>
+    <h1>⚓ Cockpit — Daemon Architecture &amp; Notification Flow</h1>
+    <span class="tag">#332</span>
+    <div class="spacer"></div>
+    <span class="tag">space / → advance · A = autoplay</span>
+  </header>
+
+  <!-- ===== SLIDE 1 ===== -->
+  <section class="slide active">
+    <h2>1 · The pieces</h2>
+    <p class="sub">The <b style="color:var(--daemon)">daemon (cockpitd)</b> is the brain — a long-lived launchd service that owns the <b style="color:var(--mailbox)">task ledger</b> + <b style="color:var(--mailbox)">mailbox</b>. <b style="color:var(--cmux)">cmux</b> hosts every <b style="color:var(--crew)">crew</b> and the <b style="color:var(--captain)">captain</b> as surfaces.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 560">
+        <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <rect x="30" y="40" width="520" height="500" rx="16" fill="none" stroke="var(--cmux)" stroke-dasharray="6 5" stroke-width="1.5"/>
+        <text x="52" y="74" class="box-s" fill="var(--cmux)">cmux.app · terminal multiplexer (one process tree)</text>
+
+        <rect x="70" y="100" width="220" height="86" rx="12" fill="var(--panel)" stroke="var(--crew)" stroke-width="1.5"/>
+        <text class="box-t" x="92" y="136" fill="var(--crew)">🔧 Crew</text><text class="box-s" x="92" y="162">cmux surface · claude/codex</text>
+
+        <rect x="70" y="237" width="220" height="86" rx="12" fill="var(--panel)" stroke="var(--captain)" stroke-width="1.5"/>
+        <text class="box-t" x="92" y="273" fill="var(--captain)">⚓ Captain</text><text class="box-s" x="92" y="299">cmux surface (you)</text>
+
+        <rect x="70" y="374" width="220" height="98" rx="12" fill="var(--panel)" stroke="var(--relay)" stroke-width="1.5"/>
+        <text class="box-t" x="92" y="410" fill="var(--relay)">✉ notify-relay</text><text class="box-s" x="92" y="436">cmux-descended helper</text><text class="box-s" x="92" y="456">(default delivery path)</text>
+
+        <rect x="350" y="210" width="180" height="140" rx="12" fill="var(--panel)" stroke="var(--cmux)" stroke-width="1.5"/>
+        <text class="box-t" x="372" y="246" fill="var(--cmux)">cmux control</text><text class="box-s" x="372" y="274">socket</text><text class="box-s" x="372" y="296">~/.local/state/</text><text class="box-s" x="372" y="316">cmux/cmux.sock</text>
+
+        <rect x="650" y="90" width="490" height="150" rx="14" fill="var(--panel)" stroke="var(--daemon)" stroke-width="1.5"/>
+        <text class="box-t" x="676" y="128" fill="var(--daemon)">cockpitd — launchd daemon</text><text class="box-s" x="676" y="156">com.cockpit.daemon · NOT a cmux descendant</text><text class="box-s" x="676" y="180">socket: ~/.config/cockpit/cockpit.sock</text><text class="box-s" x="676" y="204">owns: task-state ledger · sweep · delivery</text>
+
+        <rect x="650" y="300" width="490" height="150" rx="14" fill="var(--panel)" stroke="var(--mailbox)" stroke-width="1.5"/>
+        <text class="box-t" x="676" y="338" fill="var(--mailbox)">Mailbox (append-only)</text><text class="box-s" x="676" y="366">state/inbox/&lt;project&gt;.log · entries w/ seq</text><text class="box-s" x="676" y="390">state/inbox/&lt;project&gt;.captain.cursor</text><text class="box-s" x="676" y="414">cursor = lastAckedSeq (read position)</text>
+
+        <!-- edges with labels in clear space -->
+        <path class="edge" d="M290 150 L348 240"/>
+        <path class="edge" d="M290 416 L348 320"/>
+        <path class="edge" d="M530 270 L648 200"/>
+        <text class="elabel c" x="585" y="250">socket calls</text>
+        <path class="edge" d="M895 240 L895 298"/>
+        <text class="elabel" x="908" y="276">read / append</text>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><b style="background:var(--crew)"></b>Crew</span><span><b style="background:var(--captain)"></b>Captain</span>
+      <span><b style="background:var(--daemon)"></b>Daemon</span><span><b style="background:var(--mailbox)"></b>Mailbox</span>
+      <span><b style="background:var(--relay)"></b>Relay</span><span><b style="background:var(--cmux)"></b>cmux</span>
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 2 ===== -->
+  <section class="slide">
+    <h2>2 · A crew finishes → daemon writes the mailbox</h2>
+    <p class="sub"><code>cockpit crew signal done</code> hits the daemon socket. The daemon does two things: updates the <b style="color:var(--daemon)">ledger</b> (state → done) and <b style="color:var(--mailbox)">appends one entry</b> with the next monotonic <code>seq</code>.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 460">
+        <defs><marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+        <rect x="40" y="180" width="200" height="100" rx="12" fill="var(--panel)" stroke="var(--crew)" stroke-width="1.5"/>
+        <text class="box-t" x="62" y="226" fill="var(--crew)">🔧 Crew</text><text class="box-s" x="62" y="252">cockpit crew signal done</text>
+
+        <rect x="430" y="140" width="300" height="180" rx="14" fill="var(--panel)" stroke="var(--daemon)" stroke-width="1.5"/>
+        <text class="box-t" x="456" y="180" fill="var(--daemon)">cockpitd.handle()</text>
+        <text class="box-s" x="456" y="214">1 · ledger: state = done</text>
+        <text class="box-s" x="456" y="244">2 · appendToMailbox()</text>
+        <text class="box-s" x="456" y="270">     seq = lastSeq + 1</text>
+
+        <rect x="900" y="140" width="240" height="180" rx="14" fill="var(--panel)" stroke="var(--mailbox)" stroke-width="1.5"/>
+        <text class="box-t" x="924" y="180" fill="var(--mailbox)">&lt;project&gt;.log</text>
+        <text class="box-s" x="924" y="214">{ seq: 1008,</text><text class="box-s" x="924" y="238">  kind: "task.done",</text><text class="box-s" x="924" y="262">  name, ts }</text>
+        <text class="box-s" x="924" y="294">appended · never edited</text>
+
+        <path class="edge hot" marker-end="url(#arrow2)" id="p2a" d="M240 230 L428 230"/>
+        <text class="elabel c" x="334" y="216">unix socket</text>
+        <path class="edge hot" marker-end="url(#arrow2)" id="p2b" d="M730 230 L898 230"/>
+        <circle class="pkt" r="7"><animateMotion dur="1.7s" repeatCount="indefinite"><mpath href="#p2a"/></animateMotion></circle>
+        <circle class="pkt" r="7"><animateMotion dur="1.7s" begin="0.85s" repeatCount="indefinite"><mpath href="#p2b"/></animateMotion></circle>
+
+        <text class="note" x="40" y="384">The ledger is the source of truth for state. The mailbox is the outbound queue of things the captain should be told.</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ===== SLIDE 3 ===== -->
+  <section class="slide">
+    <h2>3 · Delivery — two interchangeable modes</h2>
+    <p class="sub">A mailbox entry isn't a notification until something reads the cursor and pushes it to the captain's pane. Exactly ONE of these runs at a time (both = double-delivery).</p>
+    <div class="stage"><div class="twocol">
+      <div class="card def">
+        <h3>A · Relay &nbsp;<span class="pill on">DEFAULT</span></h3>
+        <ul>
+          <li><b>notify-relay</b> runs <em>inside the cmux tree</em> (a cmux-descended helper).</li>
+          <li>Tails the mailbox from the <code>captain</code> cursor every ~1s (<code>drain()</code>).</li>
+          <li>Each new entry → <code>cmux send</code> to the captain surface → advance cursor.</li>
+          <li>Works out-of-the-box: cmux trusts its own descendants.</li>
+          <li>Zero setup — captain runs <code>cockpit relay supervise</code>.</li>
+        </ul>
+      </div>
+      <div class="card dd">
+        <h3>B · Daemon-direct &nbsp;<span class="pill off">OPT-IN · #332</span></h3>
+        <ul>
+          <li>The <b>daemon itself</b> reads the cursor &amp; calls <code>cmux send</code> — no relay tab.</li>
+          <li>Gated by config <code>daemonDirectCmux: true</code>.</li>
+          <li>Same <code>CaptainDelivery</code> module as the relay → identical behaviour.</li>
+          <li><b>Requires</b> cmux <code>socketControlMode: automation</code> (slide 5) — the daemon is not a cmux descendant.</li>
+          <li>Re-entrancy + stale-skip guards mirror the relay's <code>drain()</code>.</li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="legend"><span>HYBRID goal: probe cmux → use B if configured, else fall back to A. The relay is never deleted.</span></div>
+  </section>
+
+  <!-- ===== SLIDE 4 ===== -->
+  <section class="slide">
+    <h2>4 · The full path of one notification</h2>
+    <p class="sub">A <span style="color:var(--daemon)">●</span> packet travels crew → daemon → mailbox → delivery → captain. Top lane = relay (default), bottom lane = daemon-direct.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 480">
+        <defs><marker id="arrow4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+        <rect x="30" y="205" width="140" height="70" rx="12" fill="var(--panel)" stroke="var(--crew)" stroke-width="1.5"/><text class="box-t" x="50" y="238" fill="var(--crew)">🔧 Crew</text><text class="box-s" x="50" y="260">done</text>
+        <rect x="290" y="205" width="170" height="70" rx="12" fill="var(--panel)" stroke="var(--daemon)" stroke-width="1.5"/><text class="box-t" x="310" y="238" fill="var(--daemon)">cockpitd</text><text class="box-s" x="310" y="260">ledger + append</text>
+        <rect x="560" y="205" width="170" height="70" rx="12" fill="var(--panel)" stroke="var(--mailbox)" stroke-width="1.5"/><text class="box-t" x="580" y="238" fill="var(--mailbox)">mailbox</text><text class="box-s" x="580" y="260">seq · cursor</text>
+        <rect x="880" y="60" width="200" height="68" rx="12" fill="var(--panel)" stroke="var(--relay)" stroke-width="1.5"/><text class="box-t" x="900" y="92" fill="var(--relay)">✉ relay drain()</text><text class="box-s" x="900" y="114">in-cmux</text>
+        <rect x="880" y="356" width="200" height="68" rx="12" fill="var(--panel)" stroke="var(--daemon)" stroke-width="1.5"/><text class="box-t" x="900" y="388" fill="var(--daemon)">cockpitd loop</text><text class="box-s" x="900" y="410">daemon-direct</text>
+        <rect x="880" y="206" width="200" height="70" rx="12" fill="var(--panel)" stroke="var(--captain)" stroke-width="1.5"/><text class="box-t" x="900" y="239" fill="var(--captain)">⚓ Captain pane</text><text class="box-s" x="900" y="261">notification shown</text>
+
+        <path class="edge hot" marker-end="url(#arrow4)" id="f1" d="M170 240 L288 240"/>
+        <path class="edge hot" marker-end="url(#arrow4)" id="f2" d="M460 240 L558 240"/>
+        <path class="edge" marker-end="url(#arrow4)" id="f3" d="M720 220 C 800 150, 820 110, 878 100" stroke="var(--relay)"/>
+        <path class="edge" marker-end="url(#arrow4)" id="f5" d="M720 260 C 800 330, 820 372, 878 384" stroke="var(--daemon)"/>
+        <path class="edge" marker-end="url(#arrow4)" id="f4" d="M980 128 C 980 160, 982 178, 982 204" stroke="var(--relay)"/>
+        <path class="edge" marker-end="url(#arrow4)" id="f6" d="M980 356 C 980 324, 982 300, 982 278" stroke="var(--daemon)"/>
+        <text class="elabel" x="746" y="150" fill="var(--relay)">cursor read</text>
+        <text class="elabel" x="746" y="338" fill="var(--daemon)">cursor read</text>
+        <text class="elabel" x="996" y="170">cmux send</text>
+
+        <circle class="pkt" r="7"><animateMotion dur="5s" repeatCount="indefinite"><mpath href="#f1"/></animateMotion></circle>
+        <circle class="pkt" r="7"><animateMotion dur="5s" begin="1s" repeatCount="indefinite"><mpath href="#f2"/></animateMotion></circle>
+        <circle r="7" fill="var(--relay)"><animateMotion dur="5s" begin="2s" repeatCount="indefinite"><mpath href="#f3"/></animateMotion></circle>
+        <circle r="7" fill="var(--relay)"><animateMotion dur="5s" begin="3s" repeatCount="indefinite"><mpath href="#f4"/></animateMotion></circle>
+        <circle r="7" fill="var(--daemon)"><animateMotion dur="5s" begin="2s" repeatCount="indefinite"><mpath href="#f5"/></animateMotion></circle>
+        <circle r="7" fill="var(--daemon)"><animateMotion dur="5s" begin="3s" repeatCount="indefinite"><mpath href="#f6"/></animateMotion></circle>
+      </svg>
+    </div>
+    <div class="legend"><span><b style="background:var(--relay)"></b>relay lane (default)</span><span><b style="background:var(--daemon)"></b>daemon-direct lane (opt-in)</span><span>cursor advances only after a successful send → in-order, at-least-once.</span></div>
+  </section>
+
+  <!-- ===== SLIDE 5 ===== -->
+  <section class="slide">
+    <h2>5 · Why daemon-direct needs a cmux switch</h2>
+    <p class="sub">cmux's control socket checks the <b>caller's process ancestry</b> at <code>accept()</code>, governed by <code>automation.socketControlMode</code>. This gate is the entire reason the relay exists.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 440">
+        <defs><marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <rect x="40" y="60" width="520" height="320" rx="16" fill="var(--panel)" stroke="var(--bad)" stroke-width="1.5"/>
+        <text class="box-t" x="68" y="104">socketControlMode: <tspan class="no" font-family="var(--mono)">cmuxOnly</tspan> <tspan class="box-s">(default)</tspan></text>
+        <rect x="80" y="150" width="180" height="64" rx="10" fill="#1b2230" stroke="var(--relay)" stroke-width="1.5"/><text class="box-s" x="100" y="188" fill="var(--relay)">✉ relay (in cmux)</text>
+        <rect x="80" y="270" width="180" height="64" rx="10" fill="#1b2230" stroke="var(--daemon)" stroke-width="1.5"/><text class="box-s" x="100" y="308" fill="var(--daemon)">cockpitd (launchd)</text>
+        <rect x="400" y="200" width="120" height="84" rx="10" fill="#1b2230" stroke="var(--cmux)" stroke-width="1.5"/><text class="box-s" x="424" y="248" fill="var(--cmux)">socket</text>
+        <path class="edge" marker-end="url(#arrowG)" d="M260 182 L398 226" stroke="var(--good)"/><text x="300" y="180" class="ok" font-family="var(--mono)" font-size="16">✓</text>
+        <path class="edge" marker-end="url(#arrowG)" d="M260 302 L398 262" stroke="var(--bad)"/><text x="284" y="312" class="no" font-family="var(--mono)" font-size="13">✗ broken pipe</text>
+
+        <rect x="620" y="60" width="520" height="320" rx="16" fill="var(--panel)" stroke="var(--good)" stroke-width="1.5"/>
+        <text class="box-t" x="648" y="104">socketControlMode: <tspan class="ok" font-family="var(--mono)">automation</tspan></text>
+        <rect x="660" y="150" width="180" height="64" rx="10" fill="#1b2230" stroke="var(--relay)" stroke-width="1.5"/><text class="box-s" x="680" y="188" fill="var(--relay)">✉ relay (in cmux)</text>
+        <rect x="660" y="270" width="180" height="64" rx="10" fill="#1b2230" stroke="var(--daemon)" stroke-width="1.5"/><text class="box-s" x="680" y="308" fill="var(--daemon)">cockpitd (launchd)</text>
+        <rect x="980" y="200" width="120" height="84" rx="10" fill="#1b2230" stroke="var(--cmux)" stroke-width="1.5"/><text class="box-s" x="1004" y="248" fill="var(--cmux)">socket</text>
+        <path class="edge" marker-end="url(#arrowG)" d="M840 182 L978 226" stroke="var(--good)"/><text x="880" y="180" class="ok" font-family="var(--mono)" font-size="16">✓</text>
+        <path class="edge" marker-end="url(#arrowG)" d="M840 302 L978 262" stroke="var(--good)"/><text x="864" y="312" class="ok" font-family="var(--mono)" font-size="13">✓ PONG</text>
+      </svg>
+    </div>
+    <div class="legend"><span>Set via ~/.config/cmux/cmux.json (file-managed, JSONC) + one cmux restart. Same-user threat model → no password needed.</span></div>
+  </section>
+
+  <!-- ===== SLIDE 6 ===== -->
+  <section class="slide">
+    <h2>6 · Mailbox mechanics &amp; the storm guards</h2>
+    <p class="sub">The mailbox is dead simple — an append-only log + a read cursor — but delivery needs four safeguards (the relay had them; daemon-direct had to learn them, via two storms 🌩).</p>
+    <div class="stage"><div class="twocol">
+      <div class="card">
+        <h3 style="color:var(--mailbox)">The data</h3>
+        <ul>
+          <li><code>&lt;project&gt;.log</code> — append-only; each line <code>{seq, ts, taskId, name, kind}</code>; rotated to <code>.log.1/.2</code>. <b>Nothing is ever deleted</b> → full audit trail.</li>
+          <li><code>&lt;project&gt;.captain.cursor</code> — <code>{lastAckedSeq}</code>. Read from <code>lastAcked+1</code>; advance only after a successful send.</li>
+          <li>Empty / corrupt cursor ⇒ treated as "start fresh" (never throws).</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--daemon)">The 4 delivery guards</h3>
+        <ul>
+          <li><b>defer-while-typing</b> — hold a send while the captain is mid-keystroke (#258/#302).</li>
+          <li><b>stale-skip</b> — silently ack entries older than session start, so a reset cursor never re-floods the backlog.</li>
+          <li><b>re-entrancy guard</b> — a slow tick must not overlap the next (else the same entry delivers twice → storm).</li>
+          <li><b>atomic cursor write</b> — unique tmp + rename; concurrent writes never corrupt it.</li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="legend"><span>Both modes share one <code>CaptainDelivery</code> module → relay and daemon-direct behave identically. Flip the flag, behaviour is unchanged.</span></div>
+  </section>
+
+  <!-- ===== SLIDE 7 ===== -->
+  <section class="slide">
+    <h2>7 · Where it stands</h2>
+    <p class="sub">Status of the #332 daemon-direct work after this session.</p>
+    <div class="stage"><div class="twocol">
+      <div class="card">
+        <h3 class="ok" style="color:var(--good)">✓ Done &amp; verified</h3>
+        <ul>
+          <li>Daemon-direct delivers cleanly (1 crew → 1 notification, no storm).</li>
+          <li>Root cause solved: cmux <code>socketControlMode</code> gate.</li>
+          <li>4 delivery bugs fixed + drain()-parity audited (#345 / #346 / #347).</li>
+          <li>Relay path hardened too (empty-cursor guard).</li>
+          <li>Mailbox preserved — append-only, traceable.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--daemon)">⏭ Next session</h3>
+        <ul>
+          <li><b>#348</b> auto-config cmux.json (clean install) + restart prompt + hybrid probe.</li>
+          <li><b>#332</b> re-scope: daemon-direct opt-in / relay default / hybrid.</li>
+          <li><b>#349</b> update docs: this diagram, README, CLI help.</li>
+          <li>Merge socket-auth design doc (branch <code>crew/dbg-socket-auth</code>).</li>
+          <li><b>#333</b> NativeHookSource — now that delivery is solid.</li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="legend"><span>⚠ Today it works only because the machine is in cmux <b style="color:var(--good)">automation</b> debug mode. Clean-install support = #348.</span></div>
+  </section>
+
+  <footer>
+    <button id="prev">← Prev</button>
+    <div class="dots" id="dots"></div>
+    <button id="auto">▶ Autoplay</button>
+    <button id="next">Next →</button>
+    <span class="num" id="counter">1 / 7</span>
+  </footer>
+</div>
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dotsBox=document.getElementById('dots');
+  let i=0, timer=null;
+  slides.forEach((_,n)=>{const d=document.createElement('i');d.onclick=()=>go(n);dotsBox.appendChild(d);});
+  const dots=[...dotsBox.children];
+  function go(n){
+    i=(n+slides.length)%slides.length;
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    dots.forEach((d,k)=>d.classList.toggle('on',k===i));
+    document.getElementById('counter').textContent=(i+1)+' / '+slides.length;
+  }
+  const next=()=>go(i+1), prev=()=>go(i-1);
+  document.getElementById('next').onclick=next;
+  document.getElementById('prev').onclick=prev;
+  function toggleAuto(){
+    const b=document.getElementById('auto');
+    if(timer){clearInterval(timer);timer=null;b.textContent='▶ Autoplay';}
+    else{timer=setInterval(next,5000);b.textContent='⏸ Pause';}
+  }
+  document.getElementById('auto').onclick=toggleAuto;
+  addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '){e.preventDefault();next();}
+    else if(e.key==='ArrowLeft')prev();
+    else if(e.key.toLowerCase()==='a')toggleAuto();
+  });
+  go(0);
+</script>
+</body>
+</html>

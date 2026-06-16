@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cockpit — Toàn cảnh kiến trúc · daemon &amp; cockpitd ở đâu</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
+    --cli:#58a6ff; --roles:#3fb950; --control:#d29922; --adapt:#bc8cff; --persist:#39c5cf; --hot:#f85149;
+    --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace; --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #deck{height:100vh;display:flex;flex-direction:column}
+  header{padding:14px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex:0 0 auto}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  .slide{flex:1;display:none;padding:20px 44px 6px;overflow:auto}
+  .slide.active{display:flex;flex-direction:column;animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .slide h2{margin:0 0 6px;font-size:22px}
+  .slide .sub{color:var(--dim);font-size:14px;margin:0;max-width:1040px;line-height:1.5}
+  .stage{flex:1;display:grid;place-items:center;padding:8px 0}
+  svg{width:100%;height:auto;max-height:68vh;display:block}
+  .bt{font-family:var(--sans);font-weight:600;font-size:14px;fill:var(--ink)}
+  .bs{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .band-l{font-family:var(--sans);font-weight:700;font-size:13px}
+  .chip{font-family:var(--mono);font-size:11.5px;fill:var(--ink)}
+  .edge{stroke:#52606d;stroke-width:2;fill:none;marker-end:url(#ar)}
+  .elabel{font-family:var(--mono);font-size:11.5px;fill:var(--dim)}
+  .pulse{stroke-dasharray:5 7;animation:dash 1.1s linear infinite} @keyframes dash{to{stroke-dashoffset:-24}}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding:6px 0 2px}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);padding:10px 28px;display:flex;align-items:center;gap:16px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--cli)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer} .dots i.on{background:var(--cli);transform:scale(1.25)}
+  .num{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:54px;text-align:right}
+  code{font-family:var(--mono);background:#1f2530;padding:1px 5px;border-radius:4px;font-size:.9em}
+  table{border-collapse:collapse;width:100%;max-width:1100px;font-size:13.5px}
+  td,th{border:1px solid var(--line);padding:9px 14px;text-align:left;vertical-align:top}
+  th{background:var(--panel);color:var(--dim);font-weight:600}
+  td code{font-size:.92em}
+</style>
+</head>
+<body>
+<div id="deck">
+  <header>
+    <h1>⚓ Cockpit — Toàn cảnh kiến trúc</h1>
+    <span class="tag">daemon &amp; cockpitd ở đâu</span>
+    <div class="spacer"></div>
+    <span class="tag">space / → · A = autoplay</span>
+  </header>
+
+  <!-- SLIDE 1: the layer cake -->
+  <section class="slide active">
+    <h2>1 · 5 tầng của cockpit</h2>
+    <p class="sub">Cockpit là <b>lớp điều phối đa-agent</b>. Đọc từ trên xuống: người dùng gõ CLI → CLI spawn các <b style="color:var(--roles)">role-session</b> + nói chuyện với <b style="color:var(--control)">control plane (daemon)</b> → daemon dùng các <b style="color:var(--adapt)">adapter</b> để điều khiển agent &amp; terminal → mọi thứ ghi xuống <b style="color:var(--persist)">persistence</b>.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 600">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <!-- L1 CLI -->
+        <rect x="40" y="30" width="1100" height="84" rx="12" fill="var(--panel)" stroke="var(--cli)" stroke-width="1.6"/>
+        <text class="band-l" x="60" y="58" fill="var(--cli)">① CLI — ignition</text><text class="bs" x="60" y="78">src/index.ts · src/commands/</text>
+        <text class="chip" x="360" y="62">cockpit launch</text><text class="chip" x="500" y="62">crew</text><text class="chip" x="580" y="62">side</text><text class="chip" x="660" y="62">relay</text><text class="chip" x="760" y="62">command</text><text class="chip" x="900" y="62">dashboard</text>
+        <text class="bs" x="360" y="92">"khởi động & ủy thác — không phải bộ não" · talks to daemon via unix socket</text>
+
+        <!-- L2 roles -->
+        <rect x="40" y="134" width="1100" height="84" rx="12" fill="var(--panel)" stroke="var(--roles)" stroke-width="1.6"/>
+        <text class="band-l" x="60" y="162" fill="var(--roles)">② Roles — SESSION (không phải code)</text><text class="bs" x="60" y="182">agent sessions trong cmux surface + templates/skills</text>
+        <text class="chip" x="540" y="166">🎛 Command</text><text class="elabel" x="660" y="166">→</text><text class="chip" x="690" y="166">⚓ Captain</text><text class="elabel" x="800" y="166">→</text><text class="chip" x="830" y="166">🔧 Crew</text>
+        <text class="bs" x="540" y="198">core loop = Captain → Crew (Command optional/on-demand)</text>
+
+        <!-- L3 control plane (highlight) -->
+        <rect x="40" y="238" width="1100" height="150" rx="12" fill="var(--panel2)" stroke="var(--control)" stroke-width="2.4"/>
+        <text class="band-l" x="60" y="266" fill="var(--control)">③ Control plane — THE DAEMON  ← daemon &amp; cockpitd Ở ĐÂY</text><text class="bs" x="60" y="286">src/control/ · long-lived launchd service</text>
+        <rect x="60" y="300" width="250" height="72" rx="10" fill="var(--bg)" stroke="var(--control)"/><text class="bt" x="78" y="326" fill="var(--control)">cockpitd.ts — HOST</text><text class="bs" x="78" y="346">startCockpitd() · socket+timers</text><text class="bs" x="78" y="362">1008 LOC · wiring</text>
+        <rect x="330" y="300" width="230" height="72" rx="10" fill="var(--bg)" stroke="var(--roles)"/><text class="bt" x="348" y="326" fill="var(--roles)">daemon.ts — CORE</text><text class="bs" x="348" y="346">createDaemon() · state machine</text><text class="bs" x="348" y="362">503 LOC · pure-ish</text>
+        <rect x="580" y="300" width="250" height="72" rx="10" fill="var(--bg)" stroke="var(--line)"/><text class="bt" x="598" y="326">store · mailbox · cursor</text><text class="bs" x="598" y="346">ledger + append-only queue</text><text class="bs" x="598" y="362">state-machine · watchdog</text>
+        <rect x="850" y="300" width="270" height="72" rx="10" fill="var(--bg)" stroke="var(--line)"/><text class="bt" x="868" y="326">delivery + bridges</text><text class="bs" x="868" y="346">relay / daemon-direct (#332)</text><text class="bs" x="868" y="362">codex · opencode · cmux-events</text>
+
+        <!-- L4 adapters -->
+        <rect x="40" y="408" width="1100" height="96" rx="12" fill="var(--panel)" stroke="var(--adapt)" stroke-width="1.6"/>
+        <text class="band-l" x="60" y="436" fill="var(--adapt)">④ Adapters — registry-based plugin slots</text>
+        <rect x="60" y="448" width="200" height="46" rx="8" fill="var(--bg)" stroke="var(--adapt)"/><text class="chip" x="76" y="476" fill="var(--adapt)">drivers/ · agents</text>
+        <rect x="276" y="448" width="200" height="46" rx="8" fill="var(--bg)" stroke="var(--adapt)"/><text class="chip" x="292" y="476" fill="var(--adapt)">runtimes/ · cmux</text>
+        <rect x="492" y="448" width="200" height="46" rx="8" fill="var(--bg)" stroke="var(--adapt)"/><text class="chip" x="508" y="476" fill="var(--adapt)">notifiers/ · push</text>
+        <rect x="708" y="448" width="200" height="46" rx="8" fill="var(--bg)" stroke="var(--adapt)"/><text class="chip" x="724" y="476" fill="var(--adapt)">workspaces/ · vault</text>
+        <rect x="924" y="448" width="196" height="46" rx="8" fill="var(--bg)" stroke="var(--adapt)"/><text class="chip" x="940" y="476" fill="var(--adapt)">projection/ · #31</text>
+
+        <!-- L5 persistence -->
+        <rect x="40" y="524" width="1100" height="66" rx="12" fill="var(--panel)" stroke="var(--persist)" stroke-width="1.6"/>
+        <text class="band-l" x="60" y="552" fill="var(--persist)">⑤ Persistence / external</text>
+        <text class="chip" x="320" y="556">~/.config/cockpit (config · state · mailbox)</text><text class="chip" x="720" y="556">cockpit-hub (vault)</text><text class="chip" x="960" y="556">cmux.app · agent CLIs</text>
+
+        <!-- vertical flow arrows -->
+        <path class="edge pulse" d="M590 114 L590 132" stroke="var(--cli)"/>
+        <path class="edge pulse" d="M590 218 L590 236" stroke="var(--roles)"/>
+        <path class="edge pulse" d="M590 388 L590 406" stroke="var(--control)"/>
+        <path class="edge pulse" d="M590 504 L590 522" stroke="var(--adapt)"/>
+      </svg>
+    </div>
+    <div class="legend"><span><b style="background:var(--control)"></b>③ control plane = nơi daemon &amp; cockpitd sống — giữa roles (trên) và adapters (dưới)</span></div>
+  </section>
+
+  <!-- SLIDE 2: request path -->
+  <section class="slide">
+    <h2>2 · Một lệnh đi xuyên kiến trúc</h2>
+    <p class="sub">Ví dụ <code>cockpit crew spawn …</code>: CLI → daemon (ghi ledger) → adapter cmux (tạo surface, spawn agent) → crew chạy → khi xong, daemon → mailbox → delivery → captain. daemon/cockpitd là trạm trung chuyển ở giữa.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 420">
+        <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+        <rect x="30" y="180" width="150" height="64" rx="10" fill="var(--panel)" stroke="var(--cli)"/><text class="bt" x="48" y="208" fill="var(--cli)">CLI</text><text class="bs" x="48" y="228">cockpit crew</text>
+        <rect x="250" y="170" width="190" height="84" rx="10" fill="var(--panel2)" stroke="var(--control)"/><text class="bt" x="268" y="198" fill="var(--control)">cockpitd</text><text class="bs" x="268" y="220">socket · ledger</text><text class="bs" x="268" y="238">→ createDaemon</text>
+        <rect x="510" y="180" width="170" height="64" rx="10" fill="var(--panel)" stroke="var(--adapt)"/><text class="bt" x="528" y="208" fill="var(--adapt)">cmux runtime</text><text class="bs" x="528" y="228">spawn surface</text>
+        <rect x="750" y="60" width="170" height="64" rx="10" fill="var(--panel)" stroke="var(--roles)"/><text class="bt" x="768" y="88" fill="var(--roles)">🔧 Crew</text><text class="bs" x="768" y="108">runs · signals done</text>
+        <rect x="750" y="300" width="190" height="64" rx="10" fill="var(--panel)" stroke="var(--persist)"/><text class="bt" x="768" y="328" fill="var(--persist)">mailbox + cursor</text><text class="bs" x="768" y="348">append-only</text>
+        <rect x="990" y="180" width="160" height="64" rx="10" fill="var(--panel)" stroke="var(--cli)"/><text class="bt" x="1008" y="208" fill="var(--cli)">⚓ Captain</text><text class="bs" x="1008" y="228">notified</text>
+
+        <path class="edge" marker-end="url(#ar2)" d="M180 212 L248 212"/><text class="elabel" x="188" y="200">socket</text>
+        <path class="edge" marker-end="url(#ar2)" d="M440 210 L508 210"/><text class="elabel" x="446" y="200">spawn</text>
+        <path class="edge" marker-end="url(#ar2)" d="M680 196 L748 110"/>
+        <path class="edge pulse" marker-end="url(#ar2)" d="M820 124 C 600 160, 480 300, 748 326" stroke="var(--control)"/><text class="elabel" x="470" y="280" fill="var(--control)">done → daemon → append</text>
+        <path class="edge pulse" marker-end="url(#ar2)" d="M940 320 C 1040 300, 1060 270, 1055 246" stroke="var(--persist)"/><text class="elabel" x="980" y="295">delivery (relay/direct)</text>
+      </svg>
+    </div>
+    <div class="legend"><span>Chi tiết khúc "done → mailbox → captain": xem deck <code>2026-06-16-daemon-architecture-and-flow.html</code>.</span></div>
+  </section>
+
+  <!-- SLIDE 3: folder → layer map -->
+  <section class="slide">
+    <h2>3 · src/ folder → tầng nào</h2>
+    <p class="sub">Bản đồ để định vị bất kỳ file nào trong dự án.</p>
+    <div class="stage">
+      <table>
+        <tr><th>Tầng</th><th>Thư mục</th><th>Vai trò</th></tr>
+        <tr><td style="color:var(--cli)">① CLI</td><td><code>src/index.ts</code> · <code>src/commands/</code> · <code>src/config.ts</code></td><td>Entry + tất cả lệnh (launch/crew/side/relay/command/dashboard/group/…). Bootstrap, không chứa orchestration logic.</td></tr>
+        <tr><td style="color:var(--roles)">② Roles</td><td><code>plugin/skills/</code> · templates</td><td>Command/Captain/Crew là <b>session</b> chạy trong cmux, nạp template + skill. Không phải module code.</td></tr>
+        <tr><td style="color:var(--control);font-weight:700">③ Control plane</td><td><code>src/control/</code> — <code>cockpitd.ts</code>, <code>daemon.ts</code>, <code>store</code>, <code>mailbox</code>, <code>state-machine</code>, <code>watchdog</code>, <code>liveness</code>, <code>snapshot</code>, <code>protocol</code>, <code>codex/ opencode/ cmux/ interactive/ delivery/</code></td><td><b>Bộ não.</b> daemon = cockpitd (host) + createDaemon (core). Theo dõi vòng đời task, gửi notification.</td></tr>
+        <tr><td style="color:var(--adapt)">④ Adapters</td><td><code>drivers/</code> (agents) · <code>runtimes/</code> (cmux) · <code>notifiers/</code> · <code>workspaces/</code> · <code>projection/</code></td><td>Mỗi cái 1 registry + types = plugin slot. Đổi cmux→driver khác, thêm agent… không đụng control plane.</td></tr>
+        <tr><td style="color:var(--persist)">⑤ Persistence</td><td><code>~/.config/cockpit/</code> · <code>cockpit-hub/</code> · <code>src/lib/</code></td><td>config.json, state (ledger/mailbox/cursor), vault hub-spoke; lib = shared (cmux-bin…).</td></tr>
+      </table>
+    </div>
+    <div class="legend"><span>Zoom-in: cấu trúc nội bộ control plane + đề xuất tách → <code>2026-06-16-cockpitd-structure.html</code>.</span></div>
+  </section>
+
+  <!-- SLIDE 4: daemon vs cockpitd recap -->
+  <section class="slide">
+    <h2>4 · Chốt lại: daemon vs cockpitd</h2>
+    <p class="sub">Hai cái tên gây rối nhất — đây là phân biệt dứt khoát.</p>
+    <div class="stage">
+      <table>
+        <tr><th></th><th style="color:var(--roles)">daemon.ts</th><th style="color:var(--control)">cockpitd.ts</th></tr>
+        <tr><td>Hàm</td><td><code>createDaemon()</code></td><td><code>startCockpitd()</code></td></tr>
+        <tr><td>Là gì</td><td>LÕI — logic thuần</td><td>VỎ — process host</td></tr>
+        <tr><td>Chứa</td><td>state machine, reap, push-policy (firePush/formatMessage), relay-health</td><td>socket server, 4 timer, 9 handler, drivers/bridges, delivery loop, probes, gates, attach</td></tr>
+        <tr><td>I/O</td><td>KHÔNG — inject qua <code>DaemonDeps</code></td><td>TẤT CẢ I/O thật (socket/spawn/cmux/fs)</td></tr>
+        <tr><td>LOC</td><td>503 · cohesive</td><td>1008 · nặng (≈10 concern)</td></tr>
+        <tr><td>Quan hệ</td><td colspan="2"><code>startCockpitd</code> dựng deps → gọi <code>createDaemon(deps)</code> → mount socket+timers quanh nó. Giao tiếp qua <code>daemon.handle(req)</code> + callbacks <code>deps.notify/launch*</code>.</td></tr>
+        <tr><td>Đề xuất</td><td>để yên (rename → <code>core.ts</code> cho đỡ nhầm?)</td><td>tách ra <code>daemon/{server,attach,delivery,probes,drivers,gates}.ts</code> → còn ~150 LOC composition root</td></tr>
+      </table>
+    </div>
+    <div class="legend"><span>Mẹo nhớ: <b style="color:var(--control)">cockpitd</b> = "the <b>d</b>aemon process" (chữ d = daemon/launchd). <b style="color:var(--roles)">daemon.ts</b> = "the daemon's <b>brain</b>". Tên trùng nhưng vai khác.</span></div>
+  </section>
+
+  <footer>
+    <button id="prev">← Prev</button>
+    <div class="dots" id="dots"></div>
+    <button id="auto">▶ Autoplay</button>
+    <button id="next">Next →</button>
+    <span class="num" id="counter">1 / 4</span>
+  </footer>
+</div>
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dotsBox=document.getElementById('dots');
+  let i=0, timer=null;
+  slides.forEach((_,n)=>{const d=document.createElement('i');d.onclick=()=>go(n);dotsBox.appendChild(d);});
+  const dots=[...dotsBox.children];
+  function go(n){i=(n+slides.length)%slides.length;slides.forEach((s,k)=>s.classList.toggle('active',k===i));dots.forEach((d,k)=>d.classList.toggle('on',k===i));document.getElementById('counter').textContent=(i+1)+' / '+slides.length;}
+  const next=()=>go(i+1), prev=()=>go(i-1);
+  document.getElementById('next').onclick=next; document.getElementById('prev').onclick=prev;
+  function toggleAuto(){const b=document.getElementById('auto');if(timer){clearInterval(timer);timer=null;b.textContent='▶ Autoplay';}else{timer=setInterval(next,6000);b.textContent='⏸ Pause';}}
+  document.getElementById('auto').onclick=toggleAuto;
+  addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' '){e.preventDefault();next();}else if(e.key==='ArrowLeft')prev();else if(e.key.toLowerCase()==='a')toggleAuto();});
+  go(0);
+</script>
+</body>
+</html>
