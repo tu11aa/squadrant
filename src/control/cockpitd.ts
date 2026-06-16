@@ -14,6 +14,7 @@ import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
+import { CmuxEventsBridge } from "./cmux/events-bridge.js";
 import { makeGate } from "./codex/gate.js";
 import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
@@ -93,6 +94,9 @@ export interface CockpitdOpts {
     /** CP3: POST the captain's approve/deny decision to the crew's server. */
     answer: (taskId: string, decision: "approve" | "deny") => Promise<boolean>;
   };
+  /** B1: inject a fake cmux events bridge for tests. Defaults to a real one
+   *  (gated on defaults.cmuxEventsBridge). */
+  cmuxEventsBridge?: { start: () => void; stop: () => void };
 }
 
 // ── Tier 0/2 snapshot gathering (I/O at the edge; the pure assembly lives in
@@ -342,6 +346,35 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     log,
   });
 
+  // B1: cmux native-events bridge. ADDITIVE — runs alongside the relay-proxy /
+  // pane-reader scrape path, which stays as the fallback. A single global
+  // `cmux events` subscription maps each crew's `agent.hook.Stop` (turn-end /
+  // idle) to task.turn.completed, correlating the frame's cwd to a non-terminal
+  // interactive record (each crew runs in a unique worktree path). The reducer
+  // absorbs duplicate/late turn.completed, so feeding it from both paths is safe.
+  const cmuxEventsBridge =
+    opts.cmuxEventsBridge ??
+    new CmuxEventsBridge({
+      emit: (ev) => {
+        const found = store.listAll().find((r) => r.id === ev.id);
+        if (!found) return;
+        void d.handle({ kind: "event", project: found.project, event: ev });
+      },
+      resolve: (hook) => {
+        if (!hook.cwd) return undefined;
+        return store
+          .listAll()
+          .find(
+            (r) =>
+              r.mode === "interactive" &&
+              !TERMINAL_STATES.has(r.state) &&
+              r.cwd === hook.cwd,
+          );
+      },
+      cursorFile: join(stateRoot, "cmux-events.seq"),
+      log,
+    });
+
   const ingest = (project: string) => (e: import("./types.js").ControlEvent) =>
     void d.handle({ kind: "event", project, event: e });
 
@@ -563,6 +596,17 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       if (!rec.serverPort) continue;
       opencodeBridge.start({ taskId: rec.id, port: rec.serverPort });
     }
+
+    // B1: start the single cmux native-events subscription (additive; the scrape
+    // fallback is unaffected). Opt out via defaults.cmuxEventsBridge:false. The
+    // REAL (non-injected) bridge is skipped under vitest so daemon tests never
+    // spawn a real `cmux events` child; an injected fake always starts so the
+    // wiring stays testable.
+    const enableCmuxEvents = loadConfig().defaults.cmuxEventsBridge !== false;
+    const cmuxEventsSafe = !!opts.cmuxEventsBridge || !process.env.VITEST;
+    if (enableCmuxEvents && cmuxEventsSafe) {
+      try { cmuxEventsBridge.start(); } catch (e) { log(`cmux events bridge start failed: ${(e as Error).message}`); }
+    }
   })();
 
   const server = startServer(sockPath, {
@@ -712,6 +756,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     stop(): Promise<void> {
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
+      try { cmuxEventsBridge.stop(); } catch { /* best-effort */ }
       for (const kill of activeHeadlessKills) kill();
       return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
     },

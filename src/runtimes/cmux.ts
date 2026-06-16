@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import { checkToolCompat } from "../lib/tool-compat.js";
+import { compatManifest } from "../lib/compat-manifest.js";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -30,7 +32,15 @@ export class DeferDelivery extends Error {
 // literal argument — backticks, $(), quotes are never parsed. See #118.
 function cmux(args: string[]): string {
   try {
-    return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", timeout: CMUX_TIMEOUT }).trim();
+    // CMUX_QUIET=1 silences cmux 0.64's one-time deprecation hints (e.g. the
+    // "list-workspaces is now an alias for cmux workspace list" notice). Those
+    // notices print to the command's stdout and would otherwise pollute the
+    // output we parse. Inherit the rest of the environment unchanged.
+    return execFileSync(resolveCmuxBin(), args, {
+      encoding: "utf-8",
+      timeout: CMUX_TIMEOUT,
+      env: { ...process.env, CMUX_QUIET: "1" },
+    }).trim();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT") {
       throw new CmuxTimeoutError(args.join(" "));
@@ -39,33 +49,52 @@ function cmux(args: string[]): string {
   }
 }
 
-function parseList(output: string): WorkspaceRef[] {
-  const refs: WorkspaceRef[] = [];
-  for (const line of output.split("\n")) {
-    const match = line.match(/(workspace:\d+)\s+(.+?)(?:\s+\(.*\))?(?:\s+\[selected\])?$/);
-    if (match) {
-      refs.push({
-        id: match[1],
-        name: match[2].trim(),
-        status: "running",
-      });
-    }
-  }
-  return refs;
+// Shape of `cmux workspace list --json` (cmux 0.64.16). Only the fields we
+// consume are typed; everything else in the payload is ignored.
+interface CmuxWorkspaceListJson {
+  workspaces?: Array<{
+    ref?: string;
+    custom_title?: string | null;
+    has_custom_title?: boolean;
+    current_directory?: string | null;
+  }>;
 }
 
-// Parse `cmux tree` into the ordered list of surfaces in a workspace, marking
-// which one is currently selected. Order matches the tab strip, so the array
-// index doubles as the surface's position for move-surface --index.
-function parseSurfaceOrder(tree: string): { id: string; selected: boolean }[] {
-  const surfaces: { id: string; selected: boolean }[] = [];
-  for (const line of tree.split("\n")) {
-    const match = line.match(/surface\s+(surface:\d+)/);
-    if (match) {
-      surfaces.push({ id: match[1], selected: line.includes("[selected]") });
-    }
+// Shape of `cmux tree --json` (cmux 0.64.16). Surfaces nest as
+// windows[].workspaces[].panes[].surfaces[]; only consumed fields are typed.
+interface CmuxTreeJson {
+  windows?: Array<{
+    workspaces?: Array<{
+      ref?: string;
+      panes?: Array<{
+        surfaces?: Array<{ ref?: string; surface_ref?: string; title?: string | null }>;
+      }>;
+    }>;
+  }>;
+}
+
+// Parse `cmux workspace list --json` into WorkspaceRefs. Replaces the old
+// regex over the human-readable `list-workspaces` text (audit B2). The display
+// name is the workspace's custom title when set (byte-identical to what the
+// text form showed, e.g. "⚓ cockpit-captain" — this is what cockpit matches
+// captains by), falling back to the cwd for untitled workspaces.
+function parseList(output: string): WorkspaceRef[] {
+  let parsed: CmuxWorkspaceListJson;
+  try {
+    parsed = JSON.parse(output) as CmuxWorkspaceListJson;
+  } catch {
+    return [];
   }
-  return surfaces;
+  const refs: WorkspaceRef[] = [];
+  for (const ws of parsed.workspaces ?? []) {
+    if (!ws.ref) continue;
+    refs.push({
+      id: ws.ref,
+      name: (ws.has_custom_title && ws.custom_title) ? ws.custom_title : (ws.current_directory ?? ws.ref),
+      status: "running",
+    });
+  }
+  return refs;
 }
 
 // cmux `send` treats \n, \r (and \t) as Enter/Tab keystrokes, so any newline in a
@@ -234,6 +263,8 @@ export function createCmuxDriver(): RuntimeDriver {
     async probe(): Promise<RuntimeProbeResult> {
       try {
         const version = cmux(["--version"]);
+        const warn = checkToolCompat("cmux", version, compatManifest.tools.cmux);
+        if (warn) process.stderr.write(`[cockpit] ${warn}\n`);
         return { installed: true, version };
       } catch {
         return { installed: false, version: "" };
@@ -242,7 +273,9 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async list(): Promise<WorkspaceRef[]> {
       try {
-        return parseList(cmux(["list-workspaces"]));
+        // --json: structured output (B2); --id-format refs: ids as
+        // workspace:N refs, not numeric (from #325). Both are required.
+        return parseList(cmux(["workspace", "list", "--json", "--id-format", "refs"]));
       } catch {
         return [];
       }
@@ -255,18 +288,18 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async spawn(opts: RuntimeSpawnOptions): Promise<WorkspaceRef> {
-      const newWorkspaceArgs = ["new-workspace", "--command", opts.command];
+      const newWorkspaceArgs = ["workspace", "create", "--command", opts.command];
       if (opts.workdir) newWorkspaceArgs.push("--cwd", opts.workdir);
       const output = cmux(newWorkspaceArgs);
       const id = output.match(/workspace:\d+/)?.[0] || output.split(/\s+/).pop() || "";
       if (!id) {
         throw new Error(`cmux spawn did not return a workspace id: ${output}`);
       }
-      cmux(["rename-workspace", "--workspace", id, opts.name]);
+      cmux(["workspace", "rename", id, "--title", opts.name]);
       // Rename the initial tab to the workspace name so send() can route to it
       let initialSurface: string | undefined;
       try {
-        const tree = cmux(["tree", "--workspace", id]);
+        const tree = cmux(["tree", "--workspace", id, "--id-format", "refs"]);
         const m = tree.match(/surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/);
         if (m) {
           initialSurface = m[1];
@@ -320,28 +353,27 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async stop(ref: string): Promise<void> {
+      // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
+      // cockpit launch --fresh works even when the captain workspace is pinned.
       try {
-        cmux(["close-workspace", "--workspace", ref]);
+        cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
+      } catch { /* workspace may not be pinned — proceed to close regardless */ }
+      try {
+        cmux(["workspace", "close", ref]);
       } catch { /* may already be closed */ }
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
-      // #295: snapshot the focused surface before creating a new tab so we can
-      // restore focus afterward. new-surface steals focus; the captain's
-      // keystrokes would otherwise land in the crew's launch command line.
-      // Applies only to tabs (new-surface); split-panes keep cmux default focus.
-      let priorSurface: string | undefined;
-      let priorIndex = -1;
-      if (opts.direction === "tab") {
-        try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", opts.workspaceId]));
-          priorIndex = before.findIndex((s) => s.selected);
-          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
-        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
-      }
+      // #295 / audit A1+B3: a crew tab must never steal focus from the captain.
+      // cmux 0.64.16's new-surface and new-pane both DEFAULT to --focus false,
+      // so we pass it explicitly (intent + resilience if the default changes)
+      // and create the surface focus-neutrally. This REPLACES the old
+      // snapshot-then-move-surface refocus dance, which depended on the fragile
+      // "tree order == array index" invariant that the 0.64 freeform canvas +
+      // staggered restore broke — risking a focus-steal regression.
       const cmd = opts.direction === "tab"
-        ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId]
-        : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId];
+        ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId, "--focus", "false"]
+        : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId, "--focus", "false"];
       const output = cmux(cmd);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
@@ -352,11 +384,6 @@ export function createCmuxDriver(): RuntimeDriver {
         try {
           cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
-      }
-      if (opts.direction === "tab" && priorSurface) {
-        try {
-          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
-        } catch { /* refocus is best-effort */ }
       }
       return { workspaceId: opts.workspaceId, surfaceId };
     },
@@ -393,20 +420,15 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // "background" then re-selects whatever surface was focused before, in its
-      // original position, so the relay tab never steals focus from the
-      // captain. "visible" leaves the new tab focused for debug ergonomics.
+      // cmux 0.64.16's new-surface DEFAULTS to --focus false, so "background"
+      // passes --focus false and the relay tab is created without ever stealing
+      // focus from the captain — no snapshot-then-move-surface refocus dance
+      // (audit A1+B3; the 0.64 freeform canvas broke the old tree-order==index
+      // assumption it relied on). "visible" passes --focus true to leave the
+      // debug tab focused for ergonomics.
       const wsId = opts.captainWorkspace.id;
-      let priorSurface: string | undefined;
-      let priorIndex = -1;
-      if (opts.placement === "background") {
-        try {
-          const before = parseSurfaceOrder(cmux(["tree", "--workspace", wsId]));
-          priorIndex = before.findIndex((s) => s.selected);
-          if (priorIndex >= 0) priorSurface = before[priorIndex].id;
-        } catch { /* best-effort: if we can't read the tree, skip refocus */ }
-      }
-      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId]);
+      const focus = opts.placement === "visible" ? "true" : "false";
+      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId, "--focus", focus]);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
         throw new Error(`cmux spawnInjector did not return a surface id: ${output}`);
@@ -418,11 +440,6 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
       cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
-      if (opts.placement === "background" && priorSurface) {
-        try {
-          cmux(["move-surface", "--surface", priorSurface, "--index", String(priorIndex), "--focus", "true"]);
-        } catch { /* refocus is best-effort */ }
-      }
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
@@ -481,18 +498,32 @@ export function createCmuxDriver(): RuntimeDriver {
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
       let output: string;
       try {
-        output = cmux(["tree", "--workspace", workspaceId]);
+        // --json: structured output (B2); --id-format refs: surface ids as
+        // surface:N refs, not numeric (from #325). Both are required.
+        output = cmux(["tree", "--workspace", workspaceId, "--json", "--id-format", "refs"]);
       } catch {
         return [];
       }
+      let parsed: CmuxTreeJson;
+      try {
+        parsed = JSON.parse(output) as CmuxTreeJson;
+      } catch {
+        return [];
+      }
+      // Navigate windows[].workspaces[].panes[].surfaces[], collecting every
+      // surface that belongs to the requested workspace. Replaces the old regex
+      // over `cmux tree` text (audit B2). Surface refs are globally unique, so
+      // filtering by the parent workspace ref is sufficient.
       const surfaces: PaneRef[] = [];
-      // tree output line example:
-      //     ├── surface surface:30 [terminal] "🔧 pact-network:crew-1" [selected]
-      const re = /surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/;
-      for (const line of output.split("\n")) {
-        const match = line.match(re);
-        if (match) {
-          surfaces.push({ workspaceId, surfaceId: match[1], title: match[2] });
+      for (const win of parsed.windows ?? []) {
+        for (const ws of win.workspaces ?? []) {
+          if (ws.ref !== workspaceId) continue;
+          for (const pane of ws.panes ?? []) {
+            for (const sf of pane.surfaces ?? []) {
+              const ref = sf.ref ?? sf.surface_ref;
+              if (ref) surfaces.push({ workspaceId, surfaceId: ref, title: sf.title ?? "" });
+            }
+          }
         }
       }
       return surfaces;

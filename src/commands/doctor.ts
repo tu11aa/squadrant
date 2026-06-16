@@ -5,6 +5,8 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
+import { compatManifest, type ToolEntry } from "../lib/compat-manifest.js";
+import { checkToolCompat } from "../lib/tool-compat.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
@@ -31,11 +33,12 @@ function claudeVersionOk(): boolean {
     const version = execSync("claude --version", { encoding: "utf-8" }).trim();
     const match = version.match(/(\d+)\.(\d+)\.(\d+)/);
     if (!match) return false;
-    const [, major, minor, patch] = match.map(Number);
+    const [major, minor, patch] = match.slice(1).map(Number);
+    const [minMajor, minMinor, minPatch] = compatManifest.tools.claude.min.split(".").map(Number);
     return (
-      major > 2 ||
-      (major === 2 && minor > 1) ||
-      (major === 2 && minor === 1 && patch >= 32)
+      major > minMajor ||
+      (major === minMajor && minor > minMinor) ||
+      (major === minMajor && minor === minMinor && patch >= minPatch)
     );
   } catch {
     return false;
@@ -70,9 +73,17 @@ function pluginInstalled(pluginKey: string): boolean {
 }
 
 function nodeVersionOk(): boolean {
-  const version = process.versions.node;
-  const major = parseInt(version.split(".")[0], 10);
-  return major >= 18;
+  const major = parseInt(process.versions.node.split(".")[0], 10);
+  const [minMajor] = compatManifest.tools.node.min.split(".").map(Number);
+  return major >= minMajor;
+}
+
+function tryGetVersion(cmd: string): string {
+  try {
+    return execSync(`${cmd} --version`, { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
 }
 
 function check(label: string, pass: boolean): boolean {
@@ -89,7 +100,7 @@ export const doctorCommand = new Command("doctor")
     const results: boolean[] = [];
 
     results.push(check("Claude Code installed", commandExists("claude")));
-    results.push(check("Claude Code version >= 2.1.32", claudeVersionOk()));
+    results.push(check(`Claude Code version >= ${compatManifest.tools.claude.min}`, claudeVersionOk()));
     results.push(check("Obsidian installed", commandExists("obsidian") || fs.existsSync("/Applications/Obsidian.app")));
     results.push(check("Node.js >= 18", nodeVersionOk()));
     results.push(
@@ -207,6 +218,29 @@ export const doctorCommand = new Command("doctor")
     // #77 service-health: live per-component liveness from the daemon. Printed
     // before the prereq-fail exit so a degraded install still shows what is up.
     printServiceHealth(await queryHealth());
+
+    // Non-blocking version compat drift for every tool in the manifest.
+    // Tools not installed are skipped silently; only drift (below min / above
+    // lastVerified) produces a warning line — nothing here causes an exit.
+    console.log(chalk.bold("\nTool Version Compat\n"));
+    const toolVersionMap: Record<string, string> = {
+      cmux:     probeResults["cmux"]?.version ?? "",
+      claude:   tryGetVersion("claude"),
+      node:     process.versions.node,
+      codex:    tryGetVersion("codex"),
+      gemini:   tryGetVersion("gemini"),
+      opencode: tryGetVersion("opencode"),
+    };
+    for (const [name, entry] of Object.entries(compatManifest.tools) as [string, ToolEntry][]) {
+      const version = toolVersionMap[name] ?? "";
+      if (!version) continue;
+      const warn = checkToolCompat(name, version, entry);
+      if (warn) {
+        console.log(`  ${chalk.yellow("⚠ WARN")}  ${name}: ${warn}`);
+      } else {
+        console.log(`  ${chalk.green("✔ OK  ")}  ${name}: ${version}`);
+      }
+    }
 
     if (results.some((r) => !r)) {
       process.exit(1);

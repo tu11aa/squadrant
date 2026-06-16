@@ -6,6 +6,15 @@ import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
 import { classifyHealth, RELAY_STALE_MS, RELAY_GONE_MS, type RelayHealth } from "./liveness.js";
 
+/**
+ * Result of a relay-heal attempt (audit STEP 3). "captain-absent" tells the
+ * sweep the captain workspace is permanently gone — the relay can never be
+ * healed, so its health record is pruned to stop per-cycle "captain workspace
+ * not present" log spam. Any other value (or void, for legacy impls) leaves the
+ * record in place so the liveness surface keeps reporting it.
+ */
+export type RelayHealOutcome = "captain-absent" | "healed" | "skipped";
+
 export interface DaemonDeps {
   store: Store;
   now: () => number;
@@ -66,7 +75,7 @@ export interface DaemonDeps {
    * getRelayHealth() + the liveness surface, not by this hook. Errors are
    * swallowed by the sweep so a refused cmux write never trips the daemon.
    */
-  healRelay?: (project: string) => Promise<void> | void;
+  healRelay?: (project: string) => Promise<RelayHealOutcome | void> | RelayHealOutcome | void;
   /**
    * #225 hard crew task-timeout: wall-clock ceiling in ms. When a non-terminal
    * task's age (now - createdAt) exceeds this, the sweep fires a CREW TIMEOUT
@@ -434,15 +443,22 @@ export function createDaemon(deps: DaemonDeps) {
       // surface (getRelayHealth) already exposes the "gone" state regardless —
       // that is the never-silently-blind guarantee; heal is the secondary try.
       if (deps.healRelay) {
-        for (const rh of relayHealth.values()) {
+        // Snapshot first: a "captain-absent" prune deletes from relayHealth mid-loop.
+        for (const rh of [...relayHealth.values()]) {
           if (classifyHealth(rh.lastSeenMs, t, RELAY_STALE_MS, RELAY_GONE_MS) !== "gone") continue;
           const last = lastHealAttempt.get(rh.project);
           if (last != null && t - last <= RELAY_GONE_MS) continue; // debounce
           lastHealAttempt.set(rh.project, t);
           try {
-            const r = deps.healRelay(rh.project);
-            if (r && typeof (r as Promise<void>).catch === "function") {
-              (r as Promise<void>).catch(() => {});
+            const outcome = await deps.healRelay(rh.project);
+            // audit STEP 3 stale-ref prune: the captain workspace is permanently
+            // gone, so this relay can never be healed and re-probing it every
+            // sweep just spams "captain workspace not present". Drop the record
+            // (and its debounce) so the loop goes quiet after a single attempt; a
+            // captain restart re-registers a fresh relay via registerRelay.
+            if (outcome === "captain-absent") {
+              relayHealth.delete(rh.project);
+              lastHealAttempt.delete(rh.project);
             }
           } catch {
             // best-effort — a refused cmux write (lineage) must not trip the sweep

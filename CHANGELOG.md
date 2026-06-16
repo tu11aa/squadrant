@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-16
+
+A compatibility release aligning cockpit with **cmux 0.64.16**, headlined by a fix for `cockpit launch --fresh` (broken by cmux's new pinned-workspace protection) and the elimination of cmux's deprecation noise. Introduces an **external-tool compatibility manifest** so dependency drift is caught early, plus first steps toward driver-agnostic crew-lifecycle detection via cmux's native event stream.
+
+### Added
+
+- **External-tool compatibility manifest + `doctor` drift check.** New `src/lib/compat-manifest.ts` pins the supported version of every external component cockpit depends on — `cmux` (min 0.64.0, last-verified 0.64.16), `claude` (min 2.1.32), `node` (min 18, last-verified 24.6.0), and presence-checked `codex` 0.139.0 / `gemini` 0.38.2 / `opencode` 1.17.4. `cockpit doctor` now warns (non-blocking) when an installed tool is below its floor or newer than the last-verified version, surfacing a future breaking update early instead of letting it fail silently. (#325)
+
+- **cmux native event stream for crew-idle detection (B1).** The daemon consumes cmux's `agent.hook.Stop` events as an additional crew-idle signal, keeping the screen-scrape as fallback. (#328)
+
+- **Agent-hook working-state to suppress false stalls (B4/A3).** `agent.hook.PreToolUse`/`UserPromptSubmit` derive a "working" state so a crew mid-tool-call is no longer misreported as stalled (the #292 class). Additive and gated; the delicate draft scraper is untouched. (#331)
+
+### Fixed
+
+- **`cockpit launch --fresh` works again on pinned workspaces.** cmux 0.64.16 refuses to close a pinned workspace; the driver's `stop()` now unpins before closing, so `--fresh` replaces the captain workspace instead of leaving a stale duplicate. (#325)
+
+- **cmux deprecation noise eliminated.** Migrated the driver to cmux's canonical noun-verb commands (`workspace list/create/rename/close`) and set `CMUX_QUIET=1` in the cmux subprocess env, removing the per-call "legacy alias" notices. Read commands also lock `--id-format refs` to stay robust against a future default change. (#325, #327)
+
+- **Focus-neutral crew spawn (A1/B3).** cmux's new freeform-canvas layout broke the index-based focus-restore dance; the driver now passes `--focus false` (cmux's new default) and drops the dance entirely, preventing keystroke leakage into a crew's launch line. (#327)
+
+- **`--json` parsing for `workspace list` / `tree`.** Replaces brittle regex parsing of cmux text output with structured JSON. (#327)
+
+- **Relay-health log noise pruned.** The daemon no longer floods `not_found: Workspace not found` every sweep on stale closed-crew refs — stale records are pruned and logged once. (#329)
+
+### Changed
+
+- **Agent Hibernation evaluated, gated off.** cmux's agent-hibernation is global-only and would hibernate the captain/relay, so it ships behind `defaults.cmuxAgentHibernation` (default `false`) with documented rationale rather than enabled. (#329)
+
+### Docs
+
+- cmux 0.62→0.64 compatibility audit, the agent-lifecycle + daemon-architecture research dossier, and a workspace-groups (audit C1) deferral note — backing follow-up issues #326 (compat backlog), #332 (deprecate relay → daemon-direct cmux), #333 (driver-agnostic `LifecycleSource`), and #114 (native codex TUI via hooks). (#327, #330, #334)
+
 ## [0.6.2] - 2026-06-16
 
 A patch release bundling the **web observability dashboard** and a **startup-delivery fix** — the work that accumulated on `develop` after 0.6.1, ahead of the cmux-compat changes that land in 0.7.0.

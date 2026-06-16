@@ -14,6 +14,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
 import { createRelayHealer } from "../control/relay-healer.js";
+import type { RelayHealOutcome } from "../control/daemon.js";
 import { ensureDaemon as _ensureDaemon } from "../control/launchd.js";
 import type { ComponentHealth, HealthState } from "../control/liveness.js";
 
@@ -124,7 +125,7 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 export interface HealRelayOpts {
   project: string;
   queryHealth: typeof queryHealth;
-  relayHealer: (project: string) => Promise<void>;
+  relayHealer: (project: string) => Promise<RelayHealOutcome | void>;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
 }
