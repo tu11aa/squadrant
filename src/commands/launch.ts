@@ -224,11 +224,14 @@ export async function deliverStartupPrompt(
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Phase 1 — wait out cold init (poll, don't guess with a fixed delay).
+    // Keep the last-read screen as the pre-send baseline for the Phase-3 check.
     const deadline = Date.now() + readyTimeoutMs;
-    let state = classifyStartupSurface(await read());
+    let preSend = await read();
+    let state = classifyStartupSurface(preSend);
     while (state === "loading" && Date.now() < deadline) {
       await sleep(pollMs);
-      state = classifyStartupSurface(await read());
+      preSend = await read();
+      state = classifyStartupSurface(preSend);
     }
 
     // A turn is already in flight (a prior attempt landed, or a resumed session
@@ -243,12 +246,21 @@ export async function deliverStartupPrompt(
     // Timed out waiting for chrome — sent blind once; nothing to confirm, stop.
     if (state === "loading") return;
 
-    // Phase 3 — confirm. A real submit flips the surface to "working" within a
-    // second or two (a startup turn runs far longer than settleMs). If it's no
-    // longer "idle", the prompt landed → done. If still "idle", the keystrokes
-    // were dropped (#235) → loop and re-send (bounded by maxAttempts).
+    // Phase 3 — confirm by whether the surface CHANGED, not by re-matching a
+    // working-spinner. The old guard re-sent "while still idle", relying on
+    // classifyStartupSurface → CC_WORKING_RE matching the live spinner. The newer
+    // CC renders the early turn as a bare "✽ Synthesizing…" (no timer/token/shell
+    // marker) and streams "⏺ Thinking…" with no spinner line at all — none of
+    // which CC_WORKING_RE matches — so a captain that ALREADY accepted the prompt
+    // and is busy thinking reads as "idle" at the +settleMs sample, and the loop
+    // re-sends → duplicate startup run (cmux/CC render drift, audit A3; the code
+    // is unchanged since v0.6.2). A LANDED prompt always mutates the surface (the
+    // submitted message echoes into the transcript and the turn begins); DROPPED
+    // keystrokes (#235) leave the surface byte-identical to the pre-send baseline.
+    // Re-send only on no-change — robust to whatever the spinner renders as.
     await sleep(settleMs);
-    if (classifyStartupSurface(await read()) !== "idle") return;
+    const after = await read();
+    if (after !== preSend) return;
   }
 }
 

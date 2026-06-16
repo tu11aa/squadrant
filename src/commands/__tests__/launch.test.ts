@@ -177,6 +177,34 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
     expect(rt.sends).toEqual(["GO"]);
   });
 
+  // REGRESSION (cmux 0.64.16 / new CC render drift, audit A3): the captain's
+  // first working frames render as a BARE "✽ Synthesizing…" spinner — NO token
+  // counter, NO "(Ns" timer, NO "esc to interrupt", NO shell hint — and then
+  // stream "⏺ Thinking…" with no spinner line at all. CC_WORKING_RE matches none
+  // of these, so classifyStartupSurface returns "idle" for a captain that has
+  // ALREADY accepted the prompt and is thinking. The pre-fix confirm guard
+  // ("re-send while still idle") therefore re-sent → duplicate startup run.
+  // The fix confirms by surface CHANGE: a landed prompt mutates the screen
+  // (transcript + spinner) even when the spinner is unrecognized.
+  // Source of truth: live capture of an Opus 4.8 startup turn (frames g01–g11).
+  it("does NOT re-send when the captain is thinking with an unrecognized spinner", async () => {
+    const SYNTHESIZING = [
+      "❯ Run your startup checklist: use the cockpit:captain-ops skill",
+      "⏺ Thinking about the startup checklist:",
+      "✽ Synthesizing… ",
+      HR, "❯ ", HR,
+      "   Model: Opus 4.8  Ctx Used: 0.0%  Cost: $0.00",
+      "  ⏵⏵ auto mode on",
+    ].join("\n");
+    // idle (ready) → send → captain accepted it and is thinking (unrecognized
+    // spinner) for the whole turn. classifyStartupSurface(SYNTHESIZING) === "idle",
+    // but the surface DIFFERS from the pre-send idle baseline → landed.
+    const rt = fakeRuntime([IDLE, SYNTHESIZING]);
+    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    // Exactly one send. Pre-fix this was ["GO", "GO", "GO"].
+    expect(rt.sends).toEqual(["GO"]);
+  });
+
   it("never throws even if readScreen rejects", async () => {
     const rt = {
       sends: [] as string[],
