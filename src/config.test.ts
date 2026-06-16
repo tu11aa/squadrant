@@ -22,6 +22,11 @@ describe("config", () => {
     expect(config.metrics.enabled).toBe(true);
   });
 
+  it("daemonDirectCmux defaults to false", () => {
+    const cfg = getDefaultConfig();
+    expect(cfg.defaults?.daemonDirectCmux).toBe(false);
+  });
+
   it("saves and loads config", () => {
     const config = getDefaultConfig();
     config.projects.brove = {
