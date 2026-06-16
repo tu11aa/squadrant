@@ -257,6 +257,38 @@ describe("cockpitd daemon-direct (#332)", () => {
     expect(cmux.sent.length).toBe(1);
   });
 
+  it("flag ON without injected daemonCmux: constructs DaemonCmux via makeDaemonCmux and wires delivery (prod path)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-prod-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
+
+    await appendToMailbox({ stateRoot, project: "p", taskRecord: TASK, event: EVENT, message: "CREW DONE [claude/t1]" });
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+
+    const sent: Array<{ text: string }> = [];
+    const handle = startCockpitd({
+      stateRoot,
+      sockPath: sock,
+      sweepMs: 0,
+      daemonDirectCmux: true,
+      makeDaemonCmux: () => ({
+        send: async (_surface: PaneRef, text: string) => { sent.push({ text }); },
+        listSurfaces: async () => [],
+        readScreen: async () => null,
+        isAvailable: async () => true,
+        findWorkspaceId: async () => null,
+      } as unknown as DaemonCmux),
+      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
+    });
+    stop = handle.stop;
+
+    expect(handle.tickDelivery).toBeDefined();
+    if (handle.tickDelivery) await handle.tickDelivery();
+    expect(sent.length).toBe(1);
+    expect(sent[0].text).toMatch(/CREW DONE/);
+  });
+
   it("flag OFF: daemon does NOT run the delivery loop (relay path owns it)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-off-"));
     const sock = join(dir, "c.sock");

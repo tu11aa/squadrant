@@ -29,7 +29,8 @@ import type { Gate, TaskRecord, ControlEvent } from "./types.js";
 import { TERMINAL_STATES } from "./types.js";
 import type { Socket } from "node:net";
 import type { PaneRef } from "../runtimes/types.js";
-import type { DaemonCmux } from "./cmux/daemon-cmux.js";
+import { DaemonCmux } from "./cmux/daemon-cmux.js";
+import { createCmuxDriver } from "../runtimes/index.js";
 
 // This module's own compiled file — its mtime is the dist build-time used for
 // the Tier 0 build-freshness check (process start vs build time). package.json
@@ -105,6 +106,10 @@ export interface CockpitdOpts {
   /** #332: inject a fake DaemonCmux for testing daemon-direct delivery. When
    *  absent and daemonDirectCmux is ON, a real cmux driver is created. */
   daemonCmux?: DaemonCmux;
+  /** #332: factory for constructing DaemonCmux in production when daemonCmux
+   *  is not injected. Defaults to () => new DaemonCmux(createCmuxDriver()).
+   *  Tests inject this to avoid real cmux. */
+  makeDaemonCmux?: () => DaemonCmux;
   /** #332: override for daemonDirectCmux flag (bypasses config file load).
    *  When true and daemonCmux is provided/injected, runs the daemon-direct
    *  delivery loop instead of relying on the notify-relay. */
@@ -437,12 +442,17 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // (below) and the delivery loop (further down) agree on the same value.
   const daemonDirectCmux = opts.daemonDirectCmux ?? loadConfig().defaults?.daemonDirectCmux ?? false;
 
+  // #332: construct DaemonCmux in production when the flag is ON but no
+  // injectable was provided. The factory is overridable for tests.
+  const daemonCmux = opts.daemonCmux
+    ?? (daemonDirectCmux ? (opts.makeDaemonCmux ?? (() => new DaemonCmux(createCmuxDriver())))() : undefined);
+
   // #332: daemon-direct mode replaces the proxy-based surface liveness probe
   // with a direct cmux probe (DaemonCmux.listSurfaces + surfaceVerdict).
   const surfaceProbe = opts.isSurfaceAlive
-    ?? (daemonDirectCmux && opts.daemonCmux
+    ?? (daemonDirectCmux && daemonCmux
       ? createDirectSurfaceLivenessProbe(
-          opts.daemonCmux,
+          daemonCmux,
           (project) => {
             const cfg = loadConfig();
             return cfg.projects?.[project]?.captainName ?? `${project}-captain`;
@@ -760,8 +770,8 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const captainMissingStreak = new Map<string, number>();
   const stoppedProjects = new Set<string>();
 
-  if (daemonDirectCmux && opts.daemonCmux) {
-    const cmux = opts.daemonCmux;
+  if (daemonDirectCmux && daemonCmux) {
+    const cmux = daemonCmux;
     const cfg = loadConfig();
     const deliveries = new Map<string, CaptainDelivery>();
 
@@ -870,7 +880,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // with sweepMs:0 avoid a real timer. The interval is always fire-and-forget so
   // a slow tick never stacks.
   let deliveryTimer: NodeJS.Timeout | undefined;
-  if (daemonDirectCmux && opts.daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
+  if (daemonDirectCmux && daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
     deliveryTimer = setInterval(() => {
       void deliveryTick!().catch((e: unknown) => log(`delivery tick error: ${(e as Error).message}`));
     }, 1000);
@@ -879,7 +889,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
 
   // #332: blocked-crew probe interval (10s). Same gate as delivery interval.
   let probeTimer: NodeJS.Timeout | undefined;
-  if (daemonDirectCmux && opts.daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
+  if (daemonDirectCmux && daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
     probeTimer = setInterval(() => {
       void probeTick!().catch((e: unknown) => log(`probe tick error: ${(e as Error).message}`));
     }, 10_000);
