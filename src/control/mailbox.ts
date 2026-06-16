@@ -202,6 +202,37 @@ export async function* readFromCursor(opts: ReadFromCursorOpts): AsyncIterable<M
   }
 }
 
+/** Read-only Tier 2 observability stats for one project's mailbox (#44 dashboard). */
+export interface MailboxStats {
+  /** Highest seq across the current log + rotated segments (0 when empty). */
+  maxSeq: number;
+  /** Size in bytes of the current (un-rotated) log file. */
+  sizeBytes: number;
+  /** Age of the oldest entry in the current log (0 when empty/missing). */
+  oldestEntryAgeMs: number;
+  /** Number of rotated segments on disk (<project>.log.1, .2, …). */
+  rotationCount: number;
+}
+
+/**
+ * Read-only stats for the dashboard's Tier 2 data-plane view. Never mutates;
+ * tolerates a missing inbox (returns zeros). The daemon gathers this and passes
+ * it to the pure snapshot assembler.
+ */
+export async function mailboxStats(stateRoot: string, project: string): Promise<MailboxStats> {
+  const file = logPath(stateRoot, project);
+  let sizeBytes = 0;
+  try { sizeBytes = (await fs.stat(file)).size; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+  const rotated = await listRotatedOldestFirst(stateRoot, project);
+  return {
+    maxSeq: await readMaxSeq(stateRoot, project),
+    sizeBytes,
+    oldestEntryAgeMs: await oldestEntryAgeMs(file),
+    rotationCount: rotated.length,
+  };
+}
+
 interface RotateOpts {
   stateRoot: string;
   project: string;

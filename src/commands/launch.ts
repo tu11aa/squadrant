@@ -14,7 +14,7 @@ import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js"
 import { ensureSpokeLayout } from "../lib/vault-layout.js";
 import { resolveCmuxBin } from "../lib/cmux-bin.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
-import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
+import { CMUX_TIMEOUT, classifyStartupSurface } from "../runtimes/cmux.js";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
@@ -185,6 +185,73 @@ function buildAgentCmd(
 // them from "../launch").
 export { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE };
 
+export interface StartupDeliveryOptions {
+  /** Max time to wait for the surface to leave the cold-init splash. */
+  readyTimeoutMs?: number;
+  /** Pause after a send before checking whether the turn started. */
+  settleMs?: number;
+  /** Poll cadence while waiting for readiness. */
+  pollMs?: number;
+  /** Hard cap on (re)send attempts. */
+  maxAttempts?: number;
+}
+
+/**
+ * #292: deliver the captain/command startup prompt deterministically instead of
+ * on a fixed 8s timer. CC cold-init takes 5–15s, so a fixed delay either wastes
+ * boot time or — on a slow boot — drops the prompt on the splash screen (#235),
+ * leaving the captain idle and the relay unbooted.
+ *
+ * The loop, per attempt: (1) poll until the surface is past the splash; (2) if a
+ * turn is already running, stop — never queue a duplicate startup run; (3) send;
+ * (4) after a short settle, re-check — a real submit flips the surface to
+ * "working", so we re-send ONLY while it's still "idle" (keystrokes were dropped).
+ * Re-sending strictly on observed-still-idle is what guards against duplicate
+ * runs: a prompt that landed is never sent twice. Best-effort and never throws.
+ */
+export async function deliverStartupPrompt(
+  runtime: Pick<RuntimeDriver, "readScreen" | "send">,
+  refId: string,
+  prompt: string,
+  opts: StartupDeliveryOptions = {},
+): Promise<void> {
+  const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
+  const settleMs = opts.settleMs ?? 2_500;
+  const pollMs = opts.pollMs ?? 1_000;
+  const maxAttempts = opts.maxAttempts ?? 3;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const read = async () => runtime.readScreen(refId).catch(() => "");
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Phase 1 — wait out cold init (poll, don't guess with a fixed delay).
+    const deadline = Date.now() + readyTimeoutMs;
+    let state = classifyStartupSurface(await read());
+    while (state === "loading" && Date.now() < deadline) {
+      await sleep(pollMs);
+      state = classifyStartupSurface(await read());
+    }
+
+    // A turn is already in flight (a prior attempt landed, or a resumed session
+    // auto-continued). Never keystroke into it — that would queue a duplicate run.
+    if (state === "working") return;
+
+    // Phase 2 — deliver. We send on "idle" (input-ready) and, as a non-hanging
+    // fallback, on a "loading" timeout (e.g. a non-Claude agent whose chrome we
+    // don't recognize) so a launch is never left silently without its prompt.
+    await runtime.send(refId, prompt).catch(() => { /* best-effort */ });
+
+    // Timed out waiting for chrome — sent blind once; nothing to confirm, stop.
+    if (state === "loading") return;
+
+    // Phase 3 — confirm. A real submit flips the surface to "working" within a
+    // second or two (a startup turn runs far longer than settleMs). If it's no
+    // longer "idle", the prompt landed → done. If still "idle", the keystrokes
+    // were dropped (#235) → loop and re-send (bounded by maxAttempts).
+    await sleep(settleMs);
+    if (classifyStartupSurface(await read()) !== "idle") return;
+  }
+}
+
 async function launchWorkspace(
   runtime: RuntimeDriver,
   name: string,
@@ -223,12 +290,13 @@ async function launchWorkspace(
   });
 
   if (initialPrompt) {
-    // #288: cold-boot Claude sessions need ~8s to initialize before they can
-    // receive input. 3s was too short — startup prompt arrived at the loading
-    // screen and was silently dropped, so relay supervisor never ran.
-    setTimeout(() => {
-      runtime.send(ref.id, initialPrompt).catch(() => { /* best-effort */ });
-    }, 8000);
+    // #292: deterministic delivery — poll for input-readiness, send, and bounded
+    // re-send if the first turn was dropped (replaces the racy fixed 8s delay
+    // that dropped the prompt on slow 5–15s cold boots). Fire-and-forget, as the
+    // old setTimeout was, so launch stays non-blocking and `--all` dispatches
+    // captains in parallel; the loop's pending poll timers keep the CLI process
+    // alive until delivery completes.
+    void deliverStartupPrompt(runtime, ref.id, initialPrompt);
   }
 
   if (navigate) {

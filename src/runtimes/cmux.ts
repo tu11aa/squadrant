@@ -192,6 +192,41 @@ export function readInputBoxRaw(screen: string): string | null {
   return parts.join("").replace(/\s+$/, ""); // trim only the trailing edge
 }
 
+// #292: Claude Code renders a persistent bottom status block once its TUI is past
+// the cold-init splash — the auto-mode indicator (⏵⏵), the context meter
+// ("Ctx Used"), the shortcuts hint, or the accept-edits toggle. Absence of all of
+// these means we're still on the loading/splash screen, where keystrokes are
+// silently dropped (#235). Grounded in docs/reports/258-parse-bug-fixture.txt.
+const CC_INITIALIZED_RE = /⏵⏵|Ctx Used|for shortcuts|accept edits/i;
+
+// A live turn shows a working spinner. The whimsical verb ("Working…",
+// "Cerebrating…", "Crunched…") varies across versions, so we key on stable
+// markers instead. CRUCIAL: a turn is NOT always streaming tokens — during a
+// tool wait (e.g. the shell commands the captain startup checklist runs first)
+// the spinner reads "✻ Crunched for 27s · 1 shell still running", which carries
+// NO token-down-counter and no "esc to interrupt". Keying only on those two
+// (the original #292 mistake) misread a shell-waiting captain as "idle", so the
+// startup-prompt loop re-sent on every poll → 3 duplicate startup runs. We now
+// also match the shell-running hint and the in-parens elapsed timer ("(4s",
+// "(1m 4s") — both confined to the live spinner line, never on an idle,
+// input-ready screen. Grounded in docs/reports/258-parse-bug-fixture.txt
+// (line 4: shell-wait, no counter; line 22: token-stream).
+const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt|\bshell still running\b|·\s*\d+\s*shell\b|\(\d+m?\s*\d*s\b/i;
+
+/**
+ * Classify a captain surface's read-screen into the three states #292's
+ * deterministic startup delivery needs:
+ *   "loading" — splash / cold-init; keystrokes would be dropped, do not send yet.
+ *   "idle"    — TUI up and accepting input; safe to deliver the startup prompt.
+ *   "working" — a turn is in flight; sending would queue a DUPLICATE startup run.
+ * "working" is checked first so an active spinner above an (empty) input box wins.
+ */
+export function classifyStartupSurface(screen: string): "loading" | "idle" | "working" {
+  if (CC_WORKING_RE.test(screen)) return "working";
+  if (CC_INITIALIZED_RE.test(screen)) return "idle";
+  return "loading";
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",
