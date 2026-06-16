@@ -110,6 +110,10 @@ export const relayCommand = new Command("relay")
       .action(async (project: string, opts: { as: string; stateRoot: string }) => {
         try {
           const config = loadConfig();
+          if (config.defaults?.daemonDirectCmux) {
+            console.log(chalk.blue("daemon-direct active; relay disabled (#332)"));
+            return;
+          }
           const relayArgs = buildRelaySuperviseArgs({
             project,
             subscriber: opts.as,

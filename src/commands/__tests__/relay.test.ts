@@ -1,9 +1,29 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createServer } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRelaySuperviseArgs, readRelayLogs } from "../relay.js";
+
+const loadConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../config.js", () => ({ loadConfig: loadConfigMock, resolveHome: (p: string) => p }));
+
+const runRelaySupervisorMock = vi.hoisted(() => vi.fn());
+vi.mock("../../control/relay-supervisor-loop.js", () => ({ runRelaySupervisor: runRelaySupervisorMock }));
+
+const createRelayLogBroadcasterMock = vi.hoisted(() => vi.fn());
+vi.mock("../../control/relay-log-broadcaster.js", () => ({
+  createRelayLogBroadcaster: createRelayLogBroadcasterMock,
+  relayLogSockPath: vi.fn(),
+}));
+
+const forProjectMock = vi.hoisted(() => vi.fn());
+const RuntimeRegistryMock = vi.hoisted(() => vi.fn().mockImplementation(() => ({ forProject: forProjectMock })));
+vi.mock("../../runtimes/index.js", () => ({
+  createCmuxDriver: () => ({}),
+  RuntimeRegistry: RuntimeRegistryMock,
+}));
+
+import { buildRelaySuperviseArgs, readRelayLogs, relayCommand } from "../relay.js";
 
 function cleanSock(path: string) {
   if (existsSync(path)) try { unlinkSync(path); } catch { /* ignore */ }
@@ -62,6 +82,23 @@ describe("relay supervise", () => {
         stateRoot: "/tmp/state",
       }),
     ).toThrow(/unknown project/);
+  });
+
+  it("relay supervise no-ops when daemonDirectCmux is ON", async () => {
+    loadConfigMock.mockReturnValue({
+      projects: { test: { captainName: "test-captain", path: "/test" } },
+      defaults: { daemonDirectCmux: true },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await relayCommand.parseAsync(["node", "relay", "supervise", "test"]);
+
+    expect(runRelaySupervisorMock).not.toHaveBeenCalled();
+    expect(createRelayLogBroadcasterMock).not.toHaveBeenCalled();
+    expect(forProjectMock).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("daemon-direct active"));
+
+    logSpy.mockRestore();
   });
 });
 

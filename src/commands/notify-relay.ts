@@ -13,14 +13,13 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import { DeferDelivery } from "../runtimes/cmux.js";
 import type { RuntimeDriver } from "../runtimes/types.js";
 import {
   readCursor,
   writeCursor,
   readFromCursor,
-  type MailboxEntry,
 } from "../control/mailbox.js";
+import { CaptainDelivery, deliverable } from "../control/delivery/captain-delivery.js";
 import { sendRequest } from "../control/protocol.js";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
 import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "../control/crew-pane-reader.js";
@@ -55,19 +54,9 @@ export const PROBE_QUIET_MS = 20_000;
 // RELAY_STALE_MS/RELAY_GONE_MS windows are sized as multiples of this.
 export const RELAY_REGISTER_HEARTBEAT_MS = 10_000;
 
-// Unified-formatter (#214/#210): the daemon's formatMessage is the single
-// source of truth for the captain-facing message and stores it on the mailbox
-// entry. The relay is a dumb pipe — it delivers entry.message verbatim and
-// skips entries the daemon chose not to surface (null/empty). The old
-// formatEntry switch re-derived the message from the raw event kind and had
-// drifted (no case for task.approval.requested / task.idle), silently dropping
-// those events. It is retired; deliverable() is the whole policy now.
-export function deliverable(entry: MailboxEntry): string | null {
-  const msg = entry.message;
-  if (msg == null) return null;
-  const trimmed = msg.trim();
-  return trimmed.length > 0 ? msg : null;
-}
+// deliverable() is defined in captain-delivery.ts (Task 3) — imported above.
+// Both the relay (flag OFF) and the daemon (flag ON) use the SAME module,
+// so flag-OFF parity is guaranteed.
 
 // ── Phase 2b: in-cmux interactive-block probe ───────────────────────────────
 // A claude/opencode crew parked at a permission prompt (or ending a turn with a
@@ -212,16 +201,14 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   if (!captainSurface) throw new Error("no surfaces in captain workspace");
 
   const sessionStartMs = (opts.now ?? (() => Date.now()))();
-  const maxDefers = opts.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS;
-  const stableProbePolls = opts.stableProbePolls ?? DEFAULT_STABLE_PROBE_POLLS;
 
-  // #258 idle-defer: consecutive defer counts per mailbox seq.
-  // Keyed by entry.seq; deleted on successful delivery.
-  const deferCounts = new Map<number, number>();
-  // #302 stability tracking: last observed draft content + how many consecutive
-  // polls it stayed byte-identical. Stable non-empty content → safe to probe.
-  const lastContent = new Map<number, string | null>();
-  const stableCounts = new Map<number, number>();
+  // #332: CaptainDelivery (imported from captain-delivery.ts) handles defer-
+  // while-typing (#258) and stability-probe (#302) identically for both the
+  // relay (flag OFF) and the daemon (flag ON).
+  const captainDelivery = new CaptainDelivery({
+    maxDefers: opts.maxDeferDeliveries ?? DEFAULT_MAX_DEFERS,
+    stableProbePolls: opts.stableProbePolls ?? DEFAULT_STABLE_PROBE_POLLS,
+  });
 
   const cursor = await readCursor({
     stateRoot: opts.stateRoot,
@@ -274,37 +261,13 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
         }
         const msg = deliverable(entry);
         if (msg) {
-          try {
-            const deferCount = deferCounts.get(entry.seq) ?? 0;
-            // #302: probe early once content has been stable for stableProbePolls
-            // polls (captain not typing) — kills the ~5min stall; the 300-defer
-            // backstop still guarantees delivery never hangs forever.
-            const stable = (stableCounts.get(entry.seq) ?? 0) >= stableProbePolls;
-            const probe = stable || deferCount >= maxDefers;
-            await (opts.runtime as RuntimeDriver & {
+          const result = await captainDelivery.deliver(entry, (text, sendOpts) =>
+            (opts.runtime as RuntimeDriver & {
               sendToSurface: (s: unknown, m: string, o?: { probe?: boolean }) => Promise<void>;
-            }).sendToSurface(captainSurface, msg, probe ? { probe: true } : undefined);
-            deferCounts.delete(entry.seq);
-            stableCounts.delete(entry.seq);
-            lastContent.delete(entry.seq);
-          } catch (e) {
-            if (e instanceof DeferDelivery) {
-              deferCounts.set(entry.seq, (deferCounts.get(entry.seq) ?? 0) + 1);
-              // Track content stability: byte-identical non-empty draft across
-              // consecutive polls means the captain isn't actively typing (#302).
-              const content = e.draft;
-              if (content && content === lastContent.get(entry.seq)) {
-                stableCounts.set(entry.seq, (stableCounts.get(entry.seq) ?? 0) + 1);
-              } else {
-                stableCounts.set(entry.seq, 0);
-              }
-              lastContent.set(entry.seq, content);
-              log(`deferred: captain typing (seq=${entry.seq})`);
-              // Don't advance cursor; the next poll will retry from the same seq.
-              return;
-            }
-            log(`sendToSurface failed seq=${entry.seq}: ${(e as Error).message}`);
-            // Don't advance cursor; the next poll will retry from the same seq.
+            }).sendToSurface(captainSurface, text, sendOpts),
+          );
+          if (!result.delivered) {
+            log(`deferred: captain typing (seq=${entry.seq})`);
             return;
           }
           log(`deliver seq=${entry.seq} -> ${opts.subscriber}: ${msg}`);

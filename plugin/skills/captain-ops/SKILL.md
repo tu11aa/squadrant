@@ -28,7 +28,7 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 ~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. **Own your relay (#240):** Launch the notify-relay supervisor as a `run_in_background` process on session start:
+8. **Own your relay (#240):** If `defaults.daemonDirectCmux` is ON in cockpit config, skip `relay supervise` — the daemon owns notification delivery directly (#332). Otherwise, launch the notify-relay supervisor as a `run_in_background` process on session start:
    ```bash
    cockpit relay supervise <project> --as captain
    ```
