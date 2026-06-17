@@ -23,10 +23,10 @@ vi.mock("../../runtimes/index.js", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("../../config.js", () => ({
-  loadConfig,
-  resolveHome: (p: string) => p.replace(/^~/, process.env.HOME ?? ""),
-}));
+vi.mock("@cockpit/shared", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+  return { ...actual, loadConfig, resolveHome: (p: string) => p.replace(/^~/, process.env.HOME ?? "") };
+});
 
 const mockReadAllStatuses = vi.hoisted(() => vi.fn());
 vi.mock("../../dashboard/read-status.js", () => ({

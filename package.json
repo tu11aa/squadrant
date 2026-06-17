@@ -1,14 +1,21 @@
 {
   "name": "claude-cockpit",
+  "packageManager": "pnpm@10.30.3",
   "version": "0.7.0",
   "description": "Multi-project agent orchestration for Claude Code",
   "type": "module",
   "bin": {
     "cockpit": "./dist/index.js"
   },
+  "files": [
+    "dist/",
+    "plugin/",
+    "scripts/",
+    "templates/"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "tsc -b --force packages/shared && tsup",
+    "dev": "tsup --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
     "codex:gen-types": "bash scripts/gen-codex-types.sh"
@@ -32,8 +39,13 @@
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
+    "@cockpit/shared": "workspace:*",
     "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

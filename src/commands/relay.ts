@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { createConnection } from "node:net";
 import chalk from "chalk";
-import { loadConfig, type CockpitConfig } from "../config.js";
+import { loadConfig, type CockpitConfig } from "@cockpit/shared";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { runNotifyRelay, DEFAULT_STATE_ROOT } from "./notify-relay.js";
 import { runRelaySupervisor } from "../control/relay-supervisor-loop.js";

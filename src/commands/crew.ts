@@ -6,7 +6,7 @@ import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { resolveCrewRoute } from "../control/crew-routing.js";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import {
@@ -20,9 +20,9 @@ import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
-import { addWorktree, removeWorktree } from "../lib/git-worktree.js";
-import { resolveTextInput } from "../lib/resolve-text-input.js";
-import { TERMINAL_STATES, type TaskRecord } from "../control/types.js";
+import { addWorktree, removeWorktree } from "@cockpit/shared";
+import { resolveTextInput } from "@cockpit/shared";
+import { TERMINAL_STATES, type TaskRecord } from "@cockpit/shared";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 

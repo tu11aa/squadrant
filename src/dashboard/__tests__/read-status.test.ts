@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { CockpitConfig } from "../../config.js";
-import type { TaskRecord } from "../../control/types.js";
+import type { CockpitConfig } from "@cockpit/shared";
+import type { TaskRecord } from "@cockpit/shared";
 import { readAllStatuses } from "../read-status.js";
 
 function makeConfig(): CockpitConfig {

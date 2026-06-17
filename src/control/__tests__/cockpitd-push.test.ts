@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDaemon } from "../daemon.js";
 import { createStore } from "../store.js";
-import type { TaskRecord, ControlEvent } from "../types.js";
+import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {

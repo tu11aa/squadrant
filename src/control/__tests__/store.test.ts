@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "../store.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 function rec(id: string): TaskRecord {
   return {

@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
 import { sendRequest } from "../protocol.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 // Minimal interactive claude task — mode:interactive so sweep calls isSurfaceAlive;
 // heartbeatBudgetMs large enough that stall detection never fires in test time.

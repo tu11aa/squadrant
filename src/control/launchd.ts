@@ -13,7 +13,7 @@ export function plistPath(): string {
 
 /**
  * Canonical path to the compiled daemon entrypoint, resolved relative to THIS
- * module (cockpitd.js is a sibling of launchd.js in <dist>/control/). This is
+ * module (cockpitd.js is a sibling of the bundled entry in <dist>/). This is
  * the single source of truth — callers must NOT recompute it (a hardcoded
  * ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
  * because runtime-sync never mirrors compiled output there).

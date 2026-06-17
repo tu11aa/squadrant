@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import { CmuxEventsBridge, deriveRunState } from "../events-bridge.js";
 import { reduce } from "../../state-machine.js";
 import { evaluateStall } from "../../watchdog.js";
-import type { ControlEvent, TaskRecord } from "../../types.js";
+import type { ControlEvent, TaskRecord } from "@cockpit/shared";
 
 /** A fake `cmux events` child: stdout streams the given lines, then exits. */
 function fakeChild(lines: string[]) {

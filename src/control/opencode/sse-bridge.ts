@@ -12,7 +12,7 @@
 // not a finished task. Terminal state still comes from the explicit
 // `cockpit crew signal done` in the crew template; the reducer absorbs any
 // session.idle that arrives after the task is already terminal.
-import type { ControlEvent } from "../types.js";
+import type { ControlEvent } from "@cockpit/shared";
 
 export interface OpencodeSseBridgeDeps {
   /** Ingress into the daemon's event pipeline (resolves project + handles). */

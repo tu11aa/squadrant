@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
 import { sendRequest } from "../protocol.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 function fakeCodexDriver(answer: ReturnType<typeof vi.fn>) {
   return {

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest } from "../control/protocol.js";
 import { ensureDaemon } from "../control/launchd.js";
-import type { ControlEvent, Mode, Provider, TaskRecord } from "../control/types.js";
+import type { ControlEvent, Mode, Provider, TaskRecord } from "@cockpit/shared";
 import { mapClaudeHookToEvent } from "../control/interactive/claude.js";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";

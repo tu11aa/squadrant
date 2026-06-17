@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "../config.js";
+import type { CockpitConfig } from "@cockpit/shared";
 import type { RuntimeDriver, RuntimeProbeResult } from "./types.js";
 
 const DEFAULT_RUNTIME = "cmux";

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { evaluateStall, recoverStall } from "../watchdog.js";
 import { reduce } from "../state-machine.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 function rec(o: Partial<TaskRecord> = {}): TaskRecord {
   return {

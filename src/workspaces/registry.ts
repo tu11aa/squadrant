@@ -1,9 +1,9 @@
-import { resolveHome, type CockpitConfig } from "../config.js";
+import { resolveHome, type CockpitConfig } from "@cockpit/shared";
 import type {
   WorkspaceDriver,
   WorkspaceFactory,
   WorkspaceProbeResult,
-} from "./types.js";
+} from "@cockpit/shared";
 
 const DEFAULT_WORKSPACE = "obsidian";
 

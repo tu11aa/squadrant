@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createInteractiveProbe } from "../notify-relay.js";
-import type { TaskRecord, ControlEvent } from "../../control/types.js";
+import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 // A claude permission dialog (box-drawing chrome included) — classifyPaneTail
 // recognises this as an approval wait.

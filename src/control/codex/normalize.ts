@@ -8,7 +8,7 @@
 // NOTE: Server-requests (frames that carry an `id` field alongside `method`)
 // are NOT handled here — they are routed by CodexInteractiveDriver (Task 2.4).
 // Extending this function with request handling would be incorrect.
-import type { ControlEvent } from "../types.js";
+import type { ControlEvent } from "@cockpit/shared";
 
 /** Minimal shape accepted from the JSON-RPC notification stream. */
 export type AppServerNotification = { method: string; params?: Record<string, unknown> };

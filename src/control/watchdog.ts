@@ -1,5 +1,5 @@
 // src/control/watchdog.ts
-import type { TaskRecord } from "./types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 /**
  * Pure. Returns an idle-transitioned record if a `working` task has exceeded

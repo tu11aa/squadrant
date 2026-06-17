@@ -12,7 +12,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("../../config.js", () => ({
+vi.mock("@cockpit/shared", () => ({
   loadConfig,
   resolveHome: (p: string) => p,
 }));

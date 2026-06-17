@@ -5,7 +5,7 @@
 // gap: the daemon learns a turn ended without the crew shelling out to cockpit.
 import { describe, it, expect, vi } from "vitest";
 import { OpencodeSseBridge } from "../sse-bridge.js";
-import type { ControlEvent } from "../../types.js";
+import type { ControlEvent } from "@cockpit/shared";
 
 /** Build a Response whose body streams the given SSE text in one or more chunks. */
 function sseResponse(chunks: string[], ok = true, status = 200): Response {

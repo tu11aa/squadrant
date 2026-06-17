@@ -4,7 +4,7 @@
 // runtime driver (same pattern as crew-pane-reader.ts). Resolves the captain
 // workspace via the runtime and NEVER throws — a flaky cmux probe must not
 // trip the daemon sweep / health verb.
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-supervisor.js";
 import type { RelayHealOutcome } from "./daemon.js";

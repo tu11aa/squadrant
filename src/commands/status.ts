@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import matter from "gray-matter";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 

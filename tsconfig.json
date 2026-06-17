@@ -1,4 +1,5 @@
 {
+  "references": [{ "path": "packages/shared" }],
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -8,7 +9,10 @@
     "strict": true,
     "esModuleInterop": true,
     "declaration": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@cockpit/shared": ["./packages/shared/src/index.ts"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

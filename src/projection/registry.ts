@@ -1,4 +1,4 @@
-import type { ProjectionEmitter, ProjectionEmitterFactory } from "./types.js";
+import type { ProjectionEmitter, ProjectionEmitterFactory } from "@cockpit/shared";
 
 export class ProjectionRegistry {
   constructor(private factories: Record<string, ProjectionEmitterFactory>) {}

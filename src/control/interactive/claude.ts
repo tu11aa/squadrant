@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { InteractiveHookAdapter } from "./types.js";
-import type { ControlEvent } from "../types.js";
+import type { ControlEvent } from "@cockpit/shared";
 
 // PostToolUse fires after EVERY tool call mid-turn — it is the only liveness
 // signal that refreshes the heartbeat while a crew is still working.

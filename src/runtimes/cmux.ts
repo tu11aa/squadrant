@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
-import { resolveCmuxBin } from "../lib/cmux-bin.js";
-import { checkToolCompat } from "../lib/tool-compat.js";
-import { compatManifest } from "../lib/compat-manifest.js";
+import { resolveCmuxBin } from "@cockpit/shared";
+import { checkToolCompat } from "@cockpit/shared";
+import { compatManifest } from "@cockpit/shared";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain

@@ -11,7 +11,7 @@ import { Command } from "commander";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
 import type { RuntimeDriver } from "../runtimes/types.js";
 import {
@@ -24,7 +24,7 @@ import { sendRequest } from "../control/protocol.js";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
 import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "../control/crew-pane-reader.js";
 import { cockpitdCall } from "./crew-control.js";
-import type { TaskRecord, ControlEvent } from "../control/types.js";
+import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 export const DEFAULT_STATE_ROOT = join(homedir(), ".config", "cockpit", "state");
 

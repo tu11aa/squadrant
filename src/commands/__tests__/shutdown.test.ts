@@ -6,7 +6,10 @@ const cockpitdCall = vi.hoisted(() => vi.fn());
 vi.mock("../crew-control.js", () => ({ cockpitdCall }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("../../config.js", () => ({ loadConfig, resolveHome: (p: string) => p }));
+vi.mock("@cockpit/shared", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+  return { ...actual, loadConfig, resolveHome: (p: string) => p };
+});
 
 const stopMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const listMock = vi.hoisted(() => vi.fn());

@@ -1,5 +1,5 @@
-import type { CockpitConfig } from "../config.js";
-import type { TaskRecord } from "../control/types.js";
+import type { CockpitConfig } from "@cockpit/shared";
+import type { TaskRecord } from "@cockpit/shared";
 import { cockpitdCall } from "../commands/crew-control.js";
 
 export type DashboardState = "idle" | "busy" | "blocked" | "errored" | "offline" | "unknown";

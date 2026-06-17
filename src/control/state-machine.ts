@@ -1,6 +1,6 @@
 // src/control/state-machine.ts
-import type { ControlEvent, TaskRecord, DispatchAttempt } from "./types.js";
-import { TERMINAL_STATES } from "./types.js";
+import type { ControlEvent, TaskRecord, DispatchAttempt } from "@cockpit/shared";
+import { TERMINAL_STATES } from "@cockpit/shared";
 
 /**
  * Pure helper: merges `patch` into the last attempt and updates lastHeartbeatAt.

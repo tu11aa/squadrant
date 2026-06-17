@@ -23,14 +23,14 @@ import { createInteractiveProbe, STALE_THRESHOLD_MS } from "../commands/notify-r
 import { CaptainDelivery } from "./delivery/captain-delivery.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { assembleDaemonSnapshot, type DaemonSnapshotInputs, type ResultArtifacts } from "./snapshot.js";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { readdir } from "node:fs/promises";
-import type { Gate, TaskRecord, ControlEvent } from "./types.js";
-import { TERMINAL_STATES } from "./types.js";
+import type { Gate, TaskRecord, ControlEvent } from "@cockpit/shared";
+import { TERMINAL_STATES } from "@cockpit/shared";
 import type { Socket } from "node:net";
 import type { PaneRef } from "../runtimes/types.js";
 import { DaemonCmux } from "./cmux/daemon-cmux.js";
-import { ensureCmuxAutoConfig, type AutoConfigResult } from "../lib/cmux-autoconfig.js";
+import { ensureCmuxAutoConfig, type AutoConfigResult } from "@cockpit/shared";
 import { createCmuxDriver } from "../runtimes/index.js";
 
 // This module's own compiled file — its mtime is the dist build-time used for
@@ -412,7 +412,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       log,
     });
 
-  const ingest = (project: string) => (e: import("./types.js").ControlEvent) =>
+  const ingest = (project: string) => (e: import("@cockpit/shared").ControlEvent) =>
     void d.handle({ kind: "event", project, event: e });
 
   // Default push-notification wiring (mailbox-injector spec): the daemon

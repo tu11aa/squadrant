@@ -34,16 +34,14 @@ vi.mock("../../projection/index.js", async () => {
 });
 
 const readUserLevelSourceMock = vi.hoisted(() => vi.fn(async () => ({ instructions: "", skills: [] })));
-vi.mock("../../lib/canonical-source.js", () => ({
-  readUserLevelSource: readUserLevelSourceMock,
-  readProjectLevelSource: vi.fn(async () => null),
-}));
+const readProjectLevelSourceMock = vi.hoisted(() => vi.fn(async () => null));
 
-// Mock loadConfig with a shape matching the real CockpitConfig — adapt if Step 3 shows different fields.
-vi.mock("../../config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../config.js")>("../../config.js");
+vi.mock("@cockpit/shared", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
   return {
     ...actual,
+    readUserLevelSource: readUserLevelSourceMock,
+    readProjectLevelSource: readProjectLevelSourceMock,
     loadConfig: () => ({
       commandName: "cmd",
       hubVault: "~/hub",

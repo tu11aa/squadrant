@@ -7,7 +7,7 @@ import {
   saveConfig,
   resolveHome,
   ProjectConfig,
-} from "../config.js";
+} from "@cockpit/shared";
 
 function findPackageRoot(): string {
   let dir = path.dirname(new URL(import.meta.url).pathname);

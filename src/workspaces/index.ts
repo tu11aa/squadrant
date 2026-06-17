@@ -5,4 +5,4 @@ export type {
   WorkspaceFactory,
   WorkspaceProbeResult,
   WorkspaceScope,
-} from "./types.js";
+} from "@cockpit/shared";

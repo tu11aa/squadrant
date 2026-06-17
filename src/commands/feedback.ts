@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 
 const REPO_URL = "https://github.com/tu11aa/claude-cockpit";
 

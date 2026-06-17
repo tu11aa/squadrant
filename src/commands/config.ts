@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import fs from "node:fs";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, type CockpitConfig } from "../config.js";
-import { detectDrift, applySafeFixes, type DriftItem } from "../lib/config-drift.js";
-import { withStamp } from "../lib/config-version.js";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, type CockpitConfig } from "@cockpit/shared";
+import { detectDrift, applySafeFixes, type DriftItem } from "@cockpit/shared";
+import { withStamp } from "@cockpit/shared";
 
 export interface ConfigCheckOptions {
   configPath: string;

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "../crew-pane-reader.js";
 import type { DaemonCmux } from "../cmux/daemon-cmux.js";
-import type { TaskRecord } from "../types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 function mockCmux(overrides?: Partial<DaemonCmux>): DaemonCmux {
   return {

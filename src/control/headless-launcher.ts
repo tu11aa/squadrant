@@ -1,6 +1,6 @@
 // src/control/headless-launcher.ts
 import type { spawn as nodeSpawn } from "node:child_process";
-import type { ControlEvent } from "./types.js";
+import type { ControlEvent } from "@cockpit/shared";
 import { getHeadlessAdapter } from "./headless/registry.js";
 
 export interface RunHeadlessOpts {

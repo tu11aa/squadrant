@@ -1,4 +1,4 @@
-import type { TaskRecord } from "../control/types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 export function tailLines(
   text: string,

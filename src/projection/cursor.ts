@@ -5,7 +5,7 @@ import type {
   ProjectionEmitResult,
   ProjectionEmitter,
   ProjectionSource,
-} from "./types.js";
+} from "@cockpit/shared";
 
 function renderMdc(source: ProjectionSource): string {
   const skillSections = source.skills

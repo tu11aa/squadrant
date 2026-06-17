@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Writable } from "node:stream";
 import { runCmuxAutoconfig } from "../cmux.js";
-import type { AutoConfigResult } from "../../lib/cmux-autoconfig.js";
+import type { AutoConfigResult } from "@cockpit/shared";
 
 function sink() {
   let buf = "";

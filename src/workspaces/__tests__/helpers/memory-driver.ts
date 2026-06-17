@@ -1,4 +1,4 @@
-import type { WorkspaceDriver } from "../../types.js";
+import type { WorkspaceDriver } from "@cockpit/shared";
 
 export function createMemoryDriver(initial: Record<string, string> = {}): WorkspaceDriver & {
   files: Map<string, string>;

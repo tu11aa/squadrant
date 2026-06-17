@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { CockpitConfig } from "../../config.js";
+import type { CockpitConfig } from "@cockpit/shared";
 import type {
   ProjectionSource,
   ProjectionDestination,
   ProjectionEmitter,
   ProjectionEmitResult,
   ProjectionEmitterFactory,
-} from "../types.js";
+} from "@cockpit/shared";
 
 describe("projection types", () => {
   it("CockpitConfig accepts optional projection.targets", () => {

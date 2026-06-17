@@ -7,7 +7,7 @@ import { readCursor, writeCursor } from "../mailbox.js";
 import { readFromCursor } from "../mailbox.js";
 import { rotateIfNeeded, mailboxStats } from "../mailbox.js";
 import { statSync } from "node:fs";
-import type { TaskRecord, ControlEvent } from "../types.js";
+import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 function freshState(): string {
   return mkdtempSync(join(tmpdir(), "mbox-"));

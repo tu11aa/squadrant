@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type { CockpitConfig } from "../../config.js";
+import type { CockpitConfig } from "@cockpit/shared";
 import type { ProjectStatus } from "../read-status.js";
 import { syncHub, buildMirrorMarkdown } from "../sync-hub.js";
 

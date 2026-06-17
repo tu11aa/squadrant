@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { NotifierRegistry } from "../registry.js";
 import type { NotifierDriver, NotifierScope } from "../types.js";
-import type { CockpitConfig } from "../../config.js";
+import type { CockpitConfig } from "@cockpit/shared";
 
 function stubFactory(name: string): (scope: NotifierScope) => NotifierDriver {
   return (_scope) => ({

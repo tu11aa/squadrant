@@ -9,7 +9,7 @@ import { sendRequest } from "../protocol.js";
 import { crewPaneTitle } from "../crew-pane-reader.js";
 import type { DaemonCmux } from "../cmux/daemon-cmux.js";
 import type { PaneRef } from "../../runtimes/types.js";
-import type { TaskRecord, ControlEvent } from "../types.js";
+import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 const TASK: TaskRecord = {
   id: "t1", project: "p", provider: "claude", mode: "interactive",

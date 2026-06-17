@@ -3,7 +3,7 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -14,11 +14,11 @@ import {
   type ProjectionSource,
 } from "../projection/index.js";
 import { createObsidianDriver } from "../workspaces/index.js";
-import type { WorkspaceDriver } from "../workspaces/types.js";
+import type { WorkspaceDriver } from "@cockpit/shared";
 import {
   readUserLevelSource,
   readProjectLevelSource,
-} from "../lib/canonical-source.js";
+} from "@cockpit/shared";
 
 type Opts = {
   scope?: "user" | "project";

@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import { readAllStatuses } from "../dashboard/read-status.js";
 import { renderDashboard } from "../dashboard/render.js";
@@ -11,7 +11,7 @@ import { syncHub, type SyncHubResult } from "../dashboard/sync-hub.js";
 import { startWebServer } from "../dashboard/web-server.js";
 import { defaultProbeRunners } from "../dashboard/probes.js";
 import type { PaneRef } from "../runtimes/types.js";
-import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import { resolveCmuxBin } from "@cockpit/shared";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 

@@ -2,8 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"],
-    exclude: ["dist/**", "node_modules/**"],
+    include: ["src/**/*.test.ts", "packages/**/*.test.ts"],
+    exclude: ["dist/**", "node_modules/**", "packages/**/dist/**"],
     // Bound the worker pool so a cockpit test run can't balloon RAM. By default
     // vitest forks ~one worker per core (12 on this machine, ~80–100 MB each ≈
     // 1 GB/run). When several project captains (e.g. the oneplan captain) run

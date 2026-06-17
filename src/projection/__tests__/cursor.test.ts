@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createCursorEmitter } from "../cursor.js";
-import type { ProjectionSource } from "../types.js";
+import type { ProjectionSource } from "@cockpit/shared";
 
 const fsMock = vi.hoisted(() => ({
   mkdir: vi.fn(),

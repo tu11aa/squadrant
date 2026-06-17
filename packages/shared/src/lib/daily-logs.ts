@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import { resolveHome } from "../config.js";
-import type { WorkspaceDriver } from "../workspaces/types.js";
+import type { WorkspaceDriver } from "../types/workspaces.js";
 
 export function iso(d: Date): string {
   return d.toISOString().slice(0, 10);

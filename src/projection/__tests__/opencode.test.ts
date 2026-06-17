@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpencodeEmitter } from "../opencode.js";
-import type { ProjectionSource } from "../types.js";
+import type { ProjectionSource } from "@cockpit/shared";
 import { MARKER_START, MARKER_END } from "../marker.js";
 
 const fsMock = vi.hoisted(() => ({

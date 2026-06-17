@@ -16,10 +16,10 @@ vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
 }));
 
-vi.mock("../../lib/cmux-bin.js", () => ({
-  resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux",
-  resetCmuxBinCache: vi.fn(),
-}));
+vi.mock("@cockpit/shared", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+  return { ...actual, resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux", resetCmuxBinCache: vi.fn() };
+});
 
 import { cmuxLocal, buildRelaySupervisorCommand, deliverStartupPrompt } from "../launch.js";
 

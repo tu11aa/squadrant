@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import {
   createClaudeDriver,
@@ -13,7 +13,7 @@ import {
   CapabilityRegistry,
 } from "../drivers/index.js";
 import type { PaneRef } from "../runtimes/types.js";
-import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import { resolveCmuxBin } from "@cockpit/shared";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 

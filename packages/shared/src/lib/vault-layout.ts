@@ -1,4 +1,4 @@
-import type { WorkspaceDriver } from "../workspaces/types.js";
+import type { WorkspaceDriver } from "../types/workspaces.js";
 
 export const SPOKE_SUBDIRS = [
   "crew",

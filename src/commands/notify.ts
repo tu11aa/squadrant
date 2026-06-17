@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
 
 async function readStdin(): Promise<string> {

@@ -5,7 +5,7 @@
 // so it is fully unit-testable. All runtime probing (cmux reads for captain
 // presence, the relay-heartbeat map) is gathered by the caller (cockpitd) and
 // passed in already-resolved; this module never touches cmux.
-import type { TaskState, Mode } from "./types.js";
+import type { TaskState, Mode } from "@cockpit/shared";
 
 export type ComponentKind = "relay" | "captain" | "crew" | "command";
 

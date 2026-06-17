@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "../config.js";
+import type { CockpitConfig } from "@cockpit/shared";
 
 export interface CrewRouteResult {
   agent: string;

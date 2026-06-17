@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const loadConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("../../config.js", () => ({ loadConfig: loadConfigMock, resolveHome: (p: string) => p }));
+vi.mock("@cockpit/shared", () => ({ loadConfig: loadConfigMock, resolveHome: (p: string) => p }));
 
 const runRelaySupervisorMock = vi.hoisted(() => vi.fn());
 vi.mock("../../control/relay-supervisor-loop.js", () => ({ runRelaySupervisor: runRelaySupervisorMock }));

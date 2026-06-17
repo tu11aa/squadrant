@@ -1,7 +1,7 @@
 // src/control/daemon.ts
 import type { Store } from "./store.js";
-import type { ControlEvent, TaskRecord, TaskState } from "./types.js";
-import { TERMINAL_STATES } from "./types.js";
+import type { ControlEvent, TaskRecord, TaskState } from "@cockpit/shared";
+import { TERMINAL_STATES } from "@cockpit/shared";
 import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
 import { classifyHealth, RELAY_STALE_MS, RELAY_GONE_MS, type RelayHealth } from "./liveness.js";

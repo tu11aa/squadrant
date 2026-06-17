@@ -1,7 +1,7 @@
-import { loadConfig } from "../config.js";
+import { loadConfig } from "@cockpit/shared";
 import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
 import type { DaemonCmux } from "./cmux/daemon-cmux.js";
-import type { TaskRecord } from "./types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 const TAIL_LINES = 25;
 

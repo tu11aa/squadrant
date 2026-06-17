@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
-import type { CockpitConfig } from "../config.js";
-import { loadConfig } from "../config.js";
-import { resolveCmuxBin } from "../lib/cmux-bin.js";
+import type { CockpitConfig } from "@cockpit/shared";
+import { loadConfig } from "@cockpit/shared";
+import { resolveCmuxBin } from "@cockpit/shared";
 
 export type ProbeState = "alive" | "stale" | "gone" | "unknown";
 

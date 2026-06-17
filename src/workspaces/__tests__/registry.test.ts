@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { WorkspaceRegistry } from "../registry.js";
-import type { WorkspaceDriver, WorkspaceScope } from "../types.js";
-import type { CockpitConfig } from "../../config.js";
+import type { WorkspaceDriver, WorkspaceScope } from "@cockpit/shared";
+import type { CockpitConfig } from "@cockpit/shared";
 
 function stubFactory(name: string): (scope: WorkspaceScope) => WorkspaceDriver {
   return (scope) => ({

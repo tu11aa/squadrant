@@ -8,7 +8,7 @@
 // See docs/specs/2026-06-16-cmux-socket-auth-daemon-direct-design.md §4.
 import { Command } from "commander";
 import chalk from "chalk";
-import { ensureCmuxAutoConfig, type AutoConfigResult } from "../lib/cmux-autoconfig.js";
+import { ensureCmuxAutoConfig, type AutoConfigResult } from "@cockpit/shared";
 
 export interface CmuxAutoconfigOpts {
   json: boolean;

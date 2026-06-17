@@ -37,10 +37,13 @@ vi.mock("../../runtimes/index.js", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("../../config.js", () => ({
-  loadConfig,
-  resolveHome: (p: string) => p,
-}));
+const addWorktreeMock = vi.hoisted(() => vi.fn());
+const removeWorktreeMock = vi.hoisted(() => vi.fn());
+const worktreePathMock = vi.hoisted(() => vi.fn());
+vi.mock("@cockpit/shared", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+  return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree: addWorktreeMock, removeWorktree: removeWorktreeMock, worktreePath: worktreePathMock };
+});
 
 const claudeDriver = vi.hoisted(() => ({
   name: "claude",
@@ -68,15 +71,6 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewOpencodeConfig: vi.fn(),
 }));
 
-// git-worktree mock — lets us assert debug sessions create/remove worktrees.
-const addWorktreeMock = vi.hoisted(() => vi.fn());
-const removeWorktreeMock = vi.hoisted(() => vi.fn());
-const worktreePathMock = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/git-worktree.js", () => ({
-  addWorktree: addWorktreeMock,
-  removeWorktree: removeWorktreeMock,
-  worktreePath: worktreePathMock,
-}));
 
 // cockpitdCall and buildDispatchRequest are the daemon dispatch path.
 // side.ts MUST NOT call these — the mocks let us assert that invariant.

@@ -4,7 +4,7 @@ import {
   statSync,
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import type { TaskRecord } from "./types.js";
+import type { TaskRecord } from "@cockpit/shared";
 
 export interface Store {
   put(rec: TaskRecord): void;
