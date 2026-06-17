@@ -1,5 +1,4 @@
 {
-  "references": [{ "path": "packages/shared" }, { "path": "packages/core" }],
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -9,12 +8,10 @@
     "strict": true,
     "esModuleInterop": true,
     "declaration": true,
-    "sourceMap": true,
-    "paths": {
-      "@cockpit/shared": ["./packages/shared/src/index.ts"],
-      "@cockpit/core": ["./packages/core/src/index.ts"]
-    }
+    "composite": true,
+    "sourceMap": true
   },
+  "references": [{ "path": "../shared" }],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

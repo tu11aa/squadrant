@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CaptainDelivery } from "../captain-delivery.js";
-import { DeferDelivery } from "../../../runtimes/cmux.js";
+import { DeferDelivery } from "../../delivery/defer-delivery.js";
 
 describe("CaptainDelivery defer-while-typing (#258/#302)", () => {
   it("defers while the captain is typing, delivers once clear", async () => {

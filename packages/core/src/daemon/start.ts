@@ -11,7 +11,6 @@ import { createDelivery } from "./delivery.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";
-import { createRelayHealer } from "../relay-healer.js";
 import { projectHealth, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@cockpit/shared";
@@ -49,7 +48,7 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   const d = createDaemon({
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
     isSurfaceAlive: surfaceProbe,
-    healRelay: opts.healRelay ?? createRelayHealer(log),
+    healRelay: opts.healRelay,
     launchHeadless: opts.launchHeadless!,
     isHeadlessInFlight: (id) => inFlightHeadlessIds.has(id),
     launchInteractive: async (rec) => {

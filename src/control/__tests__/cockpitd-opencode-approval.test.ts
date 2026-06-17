@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "../protocol.js";
+import { sendRequest } from "@cockpit/core";
 import type { TaskRecord } from "@cockpit/shared";
 
 function fakeCodexDriver(answer: ReturnType<typeof vi.fn>) {

@@ -3,8 +3,8 @@ import {
   buildFreshness,
   assembleDaemonSnapshot,
   type DaemonSnapshotInputs,
-} from "../snapshot.js";
-import type { ComponentHealth } from "../liveness.js";
+} from "@cockpit/core";
+import type { ComponentHealth } from "@cockpit/core";
 
 // ── buildFreshness ────────────────────────────────────────────────────────────
 describe("buildFreshness", () => {

@@ -8,9 +8,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemon } from "../daemon.js";
-import { createStore } from "../store.js";
-import { RELAY_GONE_MS } from "../liveness.js";
+import { createDaemon } from "@cockpit/core";
+import { createStore } from "@cockpit/core";
+import { RELAY_GONE_MS } from "@cockpit/core";
 
 describe("daemon relay health (#207)", () => {
   let dir: string;

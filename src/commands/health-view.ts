@@ -6,8 +6,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { sendRequest } from "../control/protocol.js";
-import type { ComponentHealth, HealthState } from "../control/liveness.js";
+import { sendRequest } from "@cockpit/core";
+import type { ComponentHealth, HealthState } from "@cockpit/core";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
 

@@ -9,7 +9,7 @@
 // {listTasks, readPaneTail, sendEvent, now} so the cmux + daemon I/O is faked.
 
 import { describe, it, expect, vi } from "vitest";
-import { createInteractiveProbe } from "../notify-relay.js";
+import { createInteractiveProbe } from "@cockpit/core";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 // A claude permission dialog (box-drawing chrome included) — classifyPaneTail

@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToMailbox } from "../mailbox.js";
-import { readCursor, writeCursor } from "../mailbox.js";
-import { readFromCursor } from "../mailbox.js";
-import { rotateIfNeeded, mailboxStats } from "../mailbox.js";
+import { appendToMailbox } from "@cockpit/core";
+import { readCursor, writeCursor } from "@cockpit/core";
+import { readFromCursor } from "@cockpit/core";
+import { rotateIfNeeded, mailboxStats } from "@cockpit/core";
 import { statSync } from "node:fs";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 

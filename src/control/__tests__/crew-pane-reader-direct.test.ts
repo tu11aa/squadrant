@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "../crew-pane-reader.js";
+import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "@cockpit/core";
 import type { DaemonCmux } from "../cmux/daemon-cmux.js";
 import type { TaskRecord } from "@cockpit/shared";
 

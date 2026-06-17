@@ -8,7 +8,7 @@ import {
   startServer, sendRequest, encodeMsg, encodeFrame, defaultListenError,
   PROTOCOL_VERSION,
   type NetConn,
-} from "../protocol.js";
+} from "@cockpit/core";
 
 describe("unix socket", () => {
   let cleanup: (() => void) | undefined;

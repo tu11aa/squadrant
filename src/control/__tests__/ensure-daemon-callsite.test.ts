@@ -3,7 +3,7 @@ import { it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { daemonEntryPath } from "../launchd.js";
+import { daemonEntryPath } from "@cockpit/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(join(here, "..", "..", rel), "utf-8");

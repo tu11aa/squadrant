@@ -5,9 +5,20 @@
 // workspace via the runtime and NEVER throws — a flaky cmux probe must not
 // trip the daemon sweep / health verb.
 import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
-import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "./relay-supervisor.js";
+import type { RuntimeDriver, CockpitConfig } from "@cockpit/shared";
 import type { RelayHealOutcome } from "./daemon.js";
+
+// Inlined from relay-supervisor.ts (root stays there; core can't import it).
+const RELAY_TAB_TITLE = "✉ notify-relay";
+const RELAY_RESTART_DELAY_S = 3;
+function buildRelayCmd(project: string): string {
+  const relay = `cockpit notify-relay ${project} --as captain`;
+  return (
+    `while true; do ${relay}; ` +
+    `echo "[notify-relay ${project}] exited (code $?), restarting in ${RELAY_RESTART_DELAY_S}s"; ` +
+    `sleep ${RELAY_RESTART_DELAY_S}; done`
+  );
+}
 
 /**
  * Best-effort relay heal (#207, SECONDARY). Re-spawns the notify-relay tab in
@@ -17,16 +28,23 @@ import type { RelayHealOutcome } from "./daemon.js";
  * recovery is captain-managed from inside the cmux tree (relay-keeper #224 was
  * reverted as over-complex); the never-silently-blind guarantee comes from the
  * liveness SURFACE, not this hook. Never throws.
+ *
+ * @param makeRuntime  Factory that returns a RuntimeDriver for the given project.
+ *   Omit (or return null) to skip healing — used in test environments that have
+ *   no runtime. The host (cockpitd.ts) always supplies this.
  */
 export function createRelayHealer(
   log: (m: string) => void = () => {},
+  makeRuntime?: (project: string, config: CockpitConfig) => RuntimeDriver | null,
 ): (project: string) => Promise<RelayHealOutcome> {
   return async (project) => {
+    if (!makeRuntime) return "skipped";
     try {
       const config = loadConfig();
       const proj = config.projects[project];
       if (!proj) return "skipped";
-      const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
+      const runtime = makeRuntime(project, config);
+      if (!runtime) return "skipped";
       const ws = await runtime.status(proj.captainName);
       if (!ws) {
         // Captain workspace gone for good — signal the sweep to prune this relay
@@ -38,15 +56,15 @@ export function createRelayHealer(
       try {
         const surfaces = await runtime.listSurfaces(ws.id);
         for (const s of surfaces) {
-          if (s.title === NOTIFY_RELAY_TAB_TITLE) {
+          if (s.title === RELAY_TAB_TITLE) {
             try { await runtime.closePane(s); } catch { /* best effort */ }
           }
         }
       } catch { /* best effort */ }
       await runtime.spawnInjector({
         captainWorkspace: ws,
-        command: buildRelaySupervisorCommand(project),
-        title: NOTIFY_RELAY_TAB_TITLE,
+        command: buildRelayCmd(project),
+        title: RELAY_TAB_TITLE,
         placement: "background",
       });
       log(`relay heal ${project}: re-spawned notify-relay tab`);

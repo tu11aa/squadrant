@@ -2,7 +2,7 @@
 // Driver-seam interfaces: the contracts that cockpitd's driver-agnostic core depends on.
 // Concrete implementations (CodexInteractiveDriver, OpencodeSseBridge, CmuxEventsBridge,
 // DaemonCmux) live in the root package host and implement these structurally.
-import type { PaneRef } from "../runtimes/types.js";
+import type { PaneRef } from "@cockpit/shared";
 
 /** Interactive agent runtime driver (codex/claude/opencode thread ops). */
 export interface AgentDriver {
@@ -29,9 +29,17 @@ export interface CmuxEventsBridge {
   stop: () => void;
 }
 
-/** DaemonCmux surface subset used by the daemon-direct delivery loop (#332). */
-export interface DaemonSurfaceDriver {
-  findWorkspaceId?: (name: string) => Promise<string | null>;
-  listSurfaces: (wsId: string) => Promise<PaneRef[]>;
+/** DaemonCmux read-only subset used by direct crew-pane probes. */
+export interface DirectCmuxReader {
+  findWorkspaceId(name: string): Promise<string | null>;
+  listSurfaces(wsId: string): Promise<PaneRef[]>;
+  readPaneScreen(pane: PaneRef): Promise<string | null>;
+}
+
+/** Full DaemonCmux seam: send (delivery loop) + read (pane probes). DaemonCmux in root implements this. */
+export interface DaemonSurfaceDriver extends DirectCmuxReader {
+  findWorkspaceId(name: string): Promise<string | null>;
+  listSurfaces(wsId: string): Promise<PaneRef[]>;
   send: (surface: PaneRef, text: string, opts?: { probe?: boolean }) => Promise<void>;
+  readPaneScreen(pane: PaneRef): Promise<string | null>;
 }

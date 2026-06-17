@@ -2,7 +2,7 @@
 // Attach fan-out and gate-promotion logic (spec §4.5/§4.6/§4.9).
 import { randomUUID } from "node:crypto";
 import { encodeFrame } from "../protocol.js";
-import { makeGate } from "../codex/gate.js";
+import { makeGate } from "../gate.js";
 import type { AttachFrame } from "../protocol.js";
 import type { Gate } from "@cockpit/shared";
 import type { DaemonContext } from "./context.js";

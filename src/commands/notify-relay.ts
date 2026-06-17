@@ -14,15 +14,12 @@ import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
 import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
 import type { RuntimeDriver } from "../runtimes/types.js";
-import {
-  readCursor,
-  writeCursor,
-  readFromCursor,
-} from "../control/mailbox.js";
-import { CaptainDelivery, deliverable } from "../control/delivery/captain-delivery.js";
-import { sendRequest } from "../control/protocol.js";
+import { readCursor, writeCursor, readFromCursor } from "@cockpit/core";
+import { CaptainDelivery, deliverable } from "@cockpit/core";
+import { sendRequest } from "@cockpit/core";
+import { createInteractiveProbe, STALE_THRESHOLD_MS } from "@cockpit/core";
 import { classifyPaneTail } from "../control/interactive/pane-classifier.js";
-import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "../control/crew-pane-reader.js";
+import { createCrewPaneReader, surfaceVerdict, crewPaneTitle } from "@cockpit/core";
 import { cockpitdCall } from "./crew-control.js";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
@@ -43,13 +40,12 @@ export const DEFAULT_STABLE_PROBE_POLLS = 3;
 // How often the in-cmux probe scrapes interactive crew panes for a block. The
 // daemon can't do this (launchd can't connect to cmux), so it lives here.
 export const PROBE_INTERVAL_MS = 10_000;
-// Entries older than this at relay-boot time are silently acked without being
-// forwarded — they are stale events from a prior captain session or dead crews.
-export const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 // A working interactive task with no heartbeat for this long is a probe
 // candidate: PostToolUse never fires while a permission prompt is up, so a
 // genuinely-blocked crew goes quiet well before the multi-minute stall budget.
 export const PROBE_QUIET_MS = 20_000;
+// STALE_THRESHOLD_MS re-exported from @cockpit/core for relay consumers.
+export { STALE_THRESHOLD_MS } from "@cockpit/core";
 // #207: how often the relay heartbeats its liveness to the daemon. The daemon's
 // RELAY_STALE_MS/RELAY_GONE_MS windows are sized as multiples of this.
 export const RELAY_REGISTER_HEARTBEAT_MS = 10_000;
@@ -58,110 +54,7 @@ export const RELAY_REGISTER_HEARTBEAT_MS = 10_000;
 // Both the relay (flag OFF) and the daemon (flag ON) use the SAME module,
 // so flag-OFF parity is guaranteed.
 
-// ── Phase 2b: in-cmux interactive-block probe ───────────────────────────────
-// A claude/opencode crew parked at a permission prompt (or ending a turn with a
-// question) sits at daemon state=working with NO heartbeat — the hook bridge
-// only fires PostToolUse, which never happens while a prompt is up. The daemon
-// can't scrape the pane to notice (launchd can't connect to cmux). The relay
-// runs INSIDE the captain's cmux workspace, so it can read panes AND reach the
-// daemon socket — it is the right place to detect this and surface CREW BLOCKED.
-
-interface InteractiveProbeDeps {
-  project: string;
-  /** Daemon task list (the `kind:"list"` request `cockpit crew tasks` uses). */
-  listTasks: () => Promise<TaskRecord[]>;
-  /** Best-effort crew-pane tail reader (in-cmux); returns null on any failure. */
-  readPaneTail: (rec: TaskRecord) => Promise<string | null>;
-  /** Emit a control event to the daemon (the `kind:"event"` path). */
-  sendEvent: (event: ControlEvent) => Promise<void>;
-  now: () => number;
-  log: (m: string) => void;
-  /** No-heartbeat threshold before a working task is probed. */
-  quietMs?: number;
-}
-
-/**
- * Pure-ish probe core (I/O injected for tests). One `tick`:
- *  1. list the project's daemon tasks,
- *  2. keep only interactive + working + named + quiet (> quietMs since
- *     lastHeartbeat) candidates,
- *  3. read each candidate's pane tail and skip it if the tail is unchanged
- *     since the last tick (per-task change-detection → fires once per prompt),
- *  4. classify the tail; a permission/question verdict → one task.blocked, a
- *     fatal error-banner verdict → one task.failed (#196 — a turn that died on a
- *     transient API error leaves the process alive and silently stuck).
- *
- * Best-effort throughout: every read/daemon call is caught and logged; the tick
- * never throws, so a transient cmux/daemon failure can't crash the relay. The
- * daemon's applyEvent + #176 idempotency make a re-sent block harmless.
- */
-export function createInteractiveProbe(deps: InteractiveProbeDeps): {
-  tick: () => Promise<void>;
-} {
-  const quietMs = deps.quietMs ?? PROBE_QUIET_MS;
-  // taskId → last pane tail seen, so an unchanged prompt fires exactly once.
-  const lastTail = new Map<string, string>();
-
-  async function tick(): Promise<void> {
-    let tasks: TaskRecord[];
-    try {
-      tasks = await deps.listTasks();
-    } catch (e) {
-      deps.log(`probe listTasks failed: ${(e as Error).message}`);
-      return;
-    }
-    const now = deps.now();
-    for (const rec of tasks) {
-      if (rec.mode !== "interactive") continue;
-      if (rec.state !== "working") continue;
-      if (!rec.name) continue;
-      if (now - rec.lastHeartbeat <= quietMs) continue; // still lively
-
-      let tail: string | null;
-      try {
-        tail = await deps.readPaneTail(rec);
-      } catch (e) {
-        deps.log(`probe read failed for ${rec.id}: ${(e as Error).message}`);
-        continue;
-      }
-      if (!tail) continue;
-      if (lastTail.get(rec.id) === tail) continue; // unchanged → already handled
-      lastTail.set(rec.id, tail);
-
-      const verdict = classifyPaneTail(tail);
-      if (!verdict) continue;
-      // #196: a fatal error banner on a quiet working pane means the turn died
-      // (transient API error / crash) and the crew is silently stuck — fire the
-      // terminal task.failed so the captain gets CREW FAILED, not just an
-      // eventual non-alarming idle. Recoverable via `crew send` (task.reopened).
-      const event: ControlEvent =
-        verdict.kind === "error"
-          ? {
-              type: "task.failed",
-              id: rec.id,
-              error: `crew session error (pane-detected): ${verdict.text}`,
-            }
-          : {
-              type: "task.blocked",
-              id: rec.id,
-              reason:
-                verdict.kind === "approval"
-                  ? "crew awaiting permission (pane-detected)"
-                  : "crew asked a question (pane-detected)",
-              question: verdict.text,
-            };
-      try {
-        await deps.sendEvent(event);
-        const label = verdict.kind === "error" ? "CREW FAILED" : "CREW BLOCKED";
-        deps.log(`probe -> ${label} ${rec.name} (${verdict.kind})`);
-      } catch (e) {
-        deps.log(`probe sendEvent failed for ${rec.id}: ${(e as Error).message}`);
-      }
-    }
-  }
-
-  return { tick };
-}
+// createInteractiveProbe is imported from @cockpit/core above.
 
 interface RunOpts {
   project: string;
@@ -338,7 +231,9 @@ export async function runNotifyRelay(opts: RunOpts): Promise<() => void> {
   // Detects crews blocked at a permission prompt / trailing question by reading
   // their pane, which only works from inside cmux (here), not from the daemon.
   const probeMs = opts.probeMs ?? PROBE_INTERVAL_MS;
-  const readPaneTail = createCrewPaneReader();
+  const readPaneTail = createCrewPaneReader((project, cfg) =>
+    new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, cfg),
+  );
   const probe = createInteractiveProbe({
     project: opts.project,
     listTasks: async () =>

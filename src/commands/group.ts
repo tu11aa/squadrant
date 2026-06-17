@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { loadConfig, resolveHome, type CockpitConfig } from "@cockpit/shared";
-import { sendRequest } from "../control/protocol.js";
+import { sendRequest } from "@cockpit/core";
 import type { TaskRecord, Provider, Mode } from "@cockpit/shared";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
