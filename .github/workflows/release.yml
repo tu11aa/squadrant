@@ -20,11 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+          cache: "pnpm"
 
       - name: Determine version
         id: ver
@@ -57,15 +61,15 @@ jobs:
 
       - name: Install dependencies
         if: steps.check.outputs.should_release == 'true'
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         if: steps.check.outputs.should_release == 'true'
-        run: npm run build
+        run: pnpm run build
 
       - name: Test
         if: steps.check.outputs.should_release == 'true'
-        run: npm test
+        run: pnpm test
 
       - name: Extract release notes
         if: steps.check.outputs.should_release == 'true'

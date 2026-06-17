@@ -1,5 +1,6 @@
 {
   "name": "claude-cockpit",
+  "packageManager": "pnpm@10.30.3",
   "version": "0.7.0",
   "description": "Multi-project agent orchestration for Claude Code",
   "type": "module",
