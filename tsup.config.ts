@@ -5,14 +5,18 @@ import type { Plugin } from "esbuild";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sharedDist = path.resolve(__dirname, "packages/shared/dist/index.js");
+const coreDist = path.resolve(__dirname, "packages/core/dist/index.js");
 
-// Resolve @cockpit/shared directly to its dist output, bypassing the global
+// Resolve @cockpit/* directly to their dist outputs, bypassing the global
 // Yarn PnP manifest which would otherwise intercept and block inlining.
-const inlineSharedPlugin: Plugin = {
-  name: "inline-cockpit-shared",
+const inlinePackagesPlugin: Plugin = {
+  name: "inline-cockpit-packages",
   setup(build) {
     build.onResolve({ filter: /^@cockpit\/shared$/ }, () => ({
       path: sharedDist,
+    }));
+    build.onResolve({ filter: /^@cockpit\/core$/ }, () => ({
+      path: coreDist,
     }));
   },
 };
@@ -30,9 +34,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   dts: false,              // bin/daemon don't ship types; faster build
-  // npm deps stay external (commander, chalk, etc.); @cockpit/shared is inlined
-  // via inlineSharedPlugin which resolves it to packages/shared/dist/index.js.
-  noExternal: ["@cockpit/shared"],
-  esbuildPlugins: [inlineSharedPlugin],
+  // npm deps stay external (commander, chalk, etc.); @cockpit/* are inlined
+  // via inlinePackagesPlugin which resolves them to their dist outputs.
+  noExternal: ["@cockpit/shared", "@cockpit/core"],
+  esbuildPlugins: [inlinePackagesPlugin],
   // src/index.ts already has #!/usr/bin/env node; tsup preserves it. No banner needed.
 });
