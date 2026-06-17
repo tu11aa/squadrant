@@ -1,4 +1,21 @@
 import { defineConfig } from "tsup";
+import { fileURLToPath } from "url";
+import path from "path";
+import type { Plugin } from "esbuild";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const sharedDist = path.resolve(__dirname, "packages/shared/dist/index.js");
+
+// Resolve @cockpit/shared directly to its dist output, bypassing the global
+// Yarn PnP manifest which would otherwise intercept and block inlining.
+const inlineSharedPlugin: Plugin = {
+  name: "inline-cockpit-shared",
+  setup(build) {
+    build.onResolve({ filter: /^@cockpit\/shared$/ }, () => ({
+      path: sharedDist,
+    }));
+  },
+};
 
 export default defineConfig({
   entry: {
@@ -13,9 +30,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   dts: false,              // bin/daemon don't ship types; faster build
-  // Keep node built-ins + real npm deps external; bundle our workspace code inline.
-  // tsup/esbuild externalize node_modules by default EXCEPT workspace packages,
-  // which we WANT inlined — so do not add @cockpit/* to `external`.
-  external: [],
+  // npm deps stay external (commander, chalk, etc.); @cockpit/shared is inlined
+  // via inlineSharedPlugin which resolves it to packages/shared/dist/index.js.
+  noExternal: ["@cockpit/shared"],
+  esbuildPlugins: [inlineSharedPlugin],
   // src/index.ts already has #!/usr/bin/env node; tsup preserves it. No banner needed.
 });
