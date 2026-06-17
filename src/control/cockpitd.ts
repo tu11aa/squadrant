@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { createDaemon } from "./daemon.js";
 import { buildContext } from "./daemon/context.js";
 import { createAttach } from "./daemon/attach.js";
+import { createProbes, buildSurfaceProbe } from "./daemon/probes.js";
 export type { CockpitdOpts } from "./daemon/context.js";
 export { defaultIsPidAlive } from "./daemon/context.js";
 import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "./protocol.js";
@@ -14,8 +15,7 @@ import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { CmuxEventsBridge } from "./cmux/events-bridge.js";
 import { appendToMailbox, rotateIfNeeded, mailboxStats, readCursor, writeCursor, readFromCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
-import { createDirectSurfaceLivenessProbe, createDirectCrewPaneReader } from "./crew-pane-reader.js";
-import { createInteractiveProbe, STALE_THRESHOLD_MS } from "../commands/notify-relay.js";
+import { STALE_THRESHOLD_MS } from "../commands/notify-relay.js";
 import { CaptainDelivery } from "./delivery/captain-delivery.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
 import { assembleDaemonSnapshot, type DaemonSnapshotInputs } from "./snapshot.js";
@@ -63,21 +63,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   } = ctx;
   const bootedAt = ctx.bootedAt;
 
-  // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
-  // execute, then returns the most-recent cached result ("unknown" when nothing
-  // has been received yet — "unknown" never reaps, so the first tick is safe).
-  const proxiedSurfaceAlive = async (rec: TaskRecord): Promise<"alive" | "gone" | "unknown"> => {
-    if (rec.mode !== "interactive" || !rec.name) return "unknown";
-    // If the relay already has this probe, don't enqueue again until it answers.
-    if (inFlightProbes.has(rec.id)) return probeResults.get(rec.id) ?? "unknown";
-    const list = pendingProbes.get(rec.project) ?? [];
-    // Dedup: only enqueue once per taskId until the relay drains the queue.
-    if (!list.some((p) => p.taskId === rec.id)) {
-      list.push({ taskId: rec.id, name: rec.name });
-      pendingProbes.set(rec.project, list);
-    }
-    return probeResults.get(rec.id) ?? "unknown";
-  };
+  const probes = createProbes(ctx);
 
   const { broadcast, schedulePromotion, cancelPromotionsFor } = createAttach(ctx);
   ctx.broadcast = broadcast;
@@ -206,18 +192,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   const daemonCmux = opts.daemonCmux
     ?? (daemonDirectCmux ? (opts.makeDaemonCmux ?? (() => new DaemonCmux(createCmuxDriver())))() : undefined);
 
-  // #332: daemon-direct mode replaces the proxy-based surface liveness probe
-  // with a direct cmux probe (DaemonCmux.listSurfaces + surfaceVerdict).
-  const surfaceProbe = opts.isSurfaceAlive
-    ?? (daemonDirectCmux && daemonCmux
-      ? createDirectSurfaceLivenessProbe(
-          daemonCmux,
-          (project) => {
-            const cfg = loadConfig();
-            return cfg.projects?.[project]?.captainName ?? `${project}-captain`;
-          },
-        )
-      : proxiedSurfaceAlive);
+  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonDirectCmux, daemonCmux);
 
   const d = createDaemon({
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
@@ -286,6 +261,8 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       } catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
     },
   });
+
+  ctx.d = d; // late-bind so daemon/* closures that reference ctx.d resolve correctly
 
   // #77 service-health surface. Assembles per-component liveness for the health
   // socket verb: relay map from the daemon, captain liveness from relay heartbeat
@@ -659,41 +636,9 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       }
     };
 
-    // #332: daemon-direct blocked-crew detection. Reuses createInteractiveProbe
-    // (from notify-relay.ts) with a direct cmux pane reader injected as the
-    // readPaneTail dep. Matches the relay's PROBE_INTERVAL_MS (10s).
-    const directPaneReader = createDirectCrewPaneReader(cmux, (project) => {
-      const cfg2 = loadConfig();
-      return cfg2.projects?.[project]?.captainName ?? `${project}-captain`;
-    });
-
-    const interactiveProbe = createInteractiveProbe({
-      project: "_all_",
-      listTasks: async () => store.listAll(),
-      readPaneTail: directPaneReader,
-      sendEvent: async (event) => {
-        const rec = store.listAll().find((r) => r.id === event.id);
-        if (rec) {
-          await d.handle({ kind: "event", project: rec.project, event });
-        }
-      },
-      now: () => Date.now(),
-      log,
-    });
-    // #332 storm BUG (re-entrancy): the probe reads crew panes via slow cmux
-    // subprocess calls and can exceed its 10s interval. Give it its own
-    // independent guard (separate from `delivering`) so an overlapping probe
-    // fire is skipped rather than stacking back-to-back cmux reads.
-    let probing = false;
-    probeTick = async () => {
-      if (probing) return;
-      probing = true;
-      try {
-        await interactiveProbe.tick();
-      } finally {
-        probing = false;
-      }
-    };
+    // #332: daemon-direct blocked-crew detection (probe-tick guard is inside
+    // createProbes.buildInteractiveProbe so re-entrancy is handled there).
+    probeTick = probes.buildInteractiveProbe({ cmux });
   }
 
   // #332: production delivery interval (1s poll). Gated on sweepMs so tests
