@@ -32,6 +32,7 @@ import type { PaneRef } from "../runtimes/types.js";
 import { DaemonCmux } from "./cmux/daemon-cmux.js";
 import { ensureCmuxAutoConfig, type AutoConfigResult } from "@cockpit/shared";
 import { createCmuxDriver } from "../runtimes/index.js";
+import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "./interfaces.js";
 
 // This module's own compiled file — its mtime is the dist build-time used for
 // the Tier 0 build-freshness check (process start vs build time). package.json
@@ -77,15 +78,7 @@ export interface CockpitdOpts {
     keepCount?: number;
   };
   /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
-  codexDriver?: import("./codex/driver.js").CodexInteractiveDriver | {
-    dispatch: (rec: any) => Promise<void>;
-    reattach: (rec: any) => Promise<void>;
-    say: (taskId: string, text: string) => Promise<void>;
-    steer: (taskId: string, text: string) => Promise<void>;
-    interrupt: (taskId: string) => Promise<void>;
-    answer: (taskId: string, payload: unknown) => Promise<void>;
-    close: (taskId: string) => Promise<void>;
-  };
+  codexDriver?: AgentDriver;
   /** #207 best-effort relay healer. Defaults to a real cmux spawnInjector
    *  re-spawn (mostly inert under launchd). Tests inject a fake/spy. */
   healRelay?: (project: string) => Promise<void> | void;
@@ -95,18 +88,13 @@ export interface CockpitdOpts {
    *  to Object.keys(loadConfig().projects). Tests inject this to avoid real config. */
   registeredProjects?: string[];
   /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
-  opencodeBridge?: {
-    start: (o: { taskId: string; port: number }) => void;
-    stop: (taskId: string) => void;
-    /** CP3: POST the captain's approve/deny decision to the crew's server. */
-    answer: (taskId: string, decision: "approve" | "deny") => Promise<boolean>;
-  };
+  opencodeBridge?: OpencodeBridge;
   /** B1: inject a fake cmux events bridge for tests. Defaults to a real one
    *  (gated on defaults.cmuxEventsBridge). */
-  cmuxEventsBridge?: { start: () => void; stop: () => void };
+  cmuxEventsBridge?: CmuxEventsBridge;
   /** #332: inject a fake DaemonCmux for testing daemon-direct delivery. When
    *  absent and daemonDirectCmux is ON, a real cmux driver is created. */
-  daemonCmux?: DaemonCmux;
+  daemonCmux?: DaemonSurfaceDriver | DaemonCmux;
   /** #332: factory for constructing DaemonCmux in production when daemonCmux
    *  is not injected. Defaults to () => new DaemonCmux(createCmuxDriver()).
    *  Tests inject this to avoid real cmux. */
