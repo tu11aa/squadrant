@@ -149,9 +149,9 @@ describe("ensureRuntimeSynced", () => {
     // plugin: tree target
     write(path.join(sourceRoot, "plugin", "skills", "captain-ops", "SKILL.md"), "captain");
     write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"cockpit"}');
-    // templates: flat target sourced from orchestrator/, filtered by extension
-    write(path.join(sourceRoot, "orchestrator", "captain.claude.md"), "tmpl");
-    write(path.join(sourceRoot, "orchestrator", "notes.txt"), "ignore me");
+    // templates: flat target sourced from templates/, filtered by extension
+    write(path.join(sourceRoot, "templates", "captain.claude.md"), "tmpl");
+    write(path.join(sourceRoot, "templates", "notes.txt"), "ignore me");
     // scripts: flat target, only *.sh, chmod 0o755
     write(path.join(sourceRoot, "scripts", "learn.sh"), "echo");
     write(path.join(sourceRoot, "scripts", "README.md"), "ignore me");
@@ -167,7 +167,7 @@ describe("ensureRuntimeSynced", () => {
     expect(
       fs.readFileSync(path.join(runtimeRoot, "plugin", ".claude-plugin", "plugin.json"), "utf-8"),
     ).toBe('{"name":"cockpit"}');
-    // templates sourced from orchestrator/, filtered
+    // templates sourced from templates/, filtered
     expect(fs.existsSync(path.join(runtimeRoot, "templates", "captain.claude.md"))).toBe(true);
     expect(fs.existsSync(path.join(runtimeRoot, "templates", "notes.txt"))).toBe(false);
     // scripts filtered to *.sh and made executable

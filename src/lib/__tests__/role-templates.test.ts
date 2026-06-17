@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
-const ORCH_DIR = path.join(REPO_ROOT, "orchestrator");
+const ORCH_DIR = path.join(REPO_ROOT, "templates");
 
 const FORBIDDEN: ReadonlyArray<string> = [
   "TaskCreate",

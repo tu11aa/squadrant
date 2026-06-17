@@ -127,7 +127,7 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 
 Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `cockpit projection emit`. User-level projection pushes cockpit's skills to `~/.cursor/rules/cockpit-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/cockpit.mdc`, `{project}/GEMINI.md` — zero cockpit-global content leaks into the project repo. Shared files use `<!-- cockpit:start --> ... <!-- cockpit:end -->` markers; dedicated files overwrite. See `docs/specs/2026-04-24-plugin-system-projection-design.md`.
 
-The user-level projection now also inlines `orchestrator/captain.generic.md` and `orchestrator/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the cockpit marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/2026-05-05-multi-agent-template-parity-plan.md` (#45).
+The user-level projection now also inlines `templates/captain.generic.md` and `templates/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the cockpit marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/2026-05-05-multi-agent-template-parity-plan.md` (#45).
 
 ### Obsidian Vaults (Hub-and-Spoke)
 
