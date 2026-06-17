@@ -7,9 +7,11 @@ import { buildContext } from "./daemon/context.js";
 import { createAttach } from "./daemon/attach.js";
 import { createProbes, buildSurfaceProbe } from "./daemon/probes.js";
 import { createDelivery } from "./daemon/delivery.js";
+import { createGateResolver } from "./daemon/gates.js";
+import { createServer } from "./daemon/server.js";
 export type { CockpitdOpts } from "./daemon/context.js";
 export { defaultIsPidAlive } from "./daemon/context.js";
-import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "./protocol.js";
+import type { AttachFrame } from "./protocol.js";
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
@@ -18,7 +20,7 @@ import { rotateIfNeeded, mailboxStats, readCursor } from "./mailbox.js";
 import { createRelayHealer } from "./relay-healer.js";
 import { STALE_THRESHOLD_MS } from "../commands/notify-relay.js";
 import { projectHealth, type ComponentHealth } from "./liveness.js";
-import { assembleDaemonSnapshot, type DaemonSnapshotInputs } from "./snapshot.js";
+import type { DaemonSnapshotInputs } from "./snapshot.js";
 import { loadConfig } from "@cockpit/shared";
 import { readdir } from "node:fs/promises";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
@@ -151,6 +153,12 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       log,
     });
 
+  // Set late-bound driver fields so daemon/* modules (gates.ts, server.ts) can
+  // reference them lazily via ctx at call time.
+  ctx.codexDriver = codexDriver;
+  ctx.opencodeBridge = opencodeBridge;
+  ctx.cmuxEventsBridge = cmuxEventsBridge;
+
   const ingest = (project: string) => (e: import("@cockpit/shared").ControlEvent) =>
     void d.handle({ kind: "event", project, event: e });
 
@@ -222,22 +230,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
         `interactive mode is not yet implemented for provider '${rec.provider}'; only 'codex', 'claude', and 'opencode' are supported`,
       );
     },
-    resolveInteractiveGate: async (taskId, payload) => {
-      // Route the captain's decision to the owning provider's driver. Opencode
-      // crews resolve via the SSE bridge (POST to the crew's server); codex via
-      // its app-server respondToServerRequest. Provider comes from the record.
-      const rec = store.listAll().find((r) => r.id === taskId);
-      try {
-        if (rec?.provider === "opencode") {
-          // Only an explicit "approve" approves; any other reply (incl. an
-          // ambiguous one) denies — never auto-approve a permission gate.
-          const decision = (payload as { decision?: string })?.decision === "approve" ? "approve" : "deny";
-          await opencodeBridge.answer(taskId, decision);
-        } else {
-          await codexDriver.answer(taskId, payload);
-        }
-      } catch (e) { log(`gate-resolve answer failed: ${(e as Error).message}`); }
-    },
+    resolveInteractiveGate: createGateResolver(ctx),
   });
 
   ctx.d = d; // late-bind so daemon/* closures that reference ctx.d resolve correctly
@@ -396,100 +389,11 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     }
   })();
 
-  const server = startServer(sockPath, {
-    handler: async (msg: any) => {
-      if (msg.kind === "seed") { store.put(msg.record as TaskRecord); return { ok: true }; }
-      // Crew-close teardown for codex: the cmux pane only hosts the `crew attach`
-      // renderer — the thread lives on the shared app-server, so closing the pane
-      // doesn't reap it. `cockpit crew close` calls this to archive the thread and
-      // its per-thread MCP servers (else they leak ~53MB/crew). Fires for terminal
-      // and non-terminal crews alike.
-      if (msg.kind === "codex-close") {
-        await codexDriver.close(msg.taskId).catch((e: unknown) => log(`codex close err: ${e}`));
-        return { ok: true };
-      }
-      // #207 relay registration: the notify-relay announces itself on boot and
-      // heartbeats every ~10s so the daemon can health-check it on the sweep.
-      if (msg.kind === "relay-register") {
-        d.registerRelay({ project: msg.project, pid: msg.pid, startedAt: msg.startedAt ?? Date.now() });
-        return { ok: true };
-      }
-      if (msg.kind === "relay-heartbeat") {
-        d.relayHeartbeat({ project: msg.project, pid: msg.pid });
-        return { ok: true };
-      }
-      // #239 Phase B: relay proxy — crew-surface liveness probes.
-      // The relay polls for pending probes, executes them in-lineage (cmux-accessible),
-      // and posts results back. Handled inline like relay-register/heartbeat so they
-      // never reach d.handle()'s unknown-kind guard.
-      if (msg.kind === "relay-proxy-poll") {
-        const project = msg.project as string;
-        const probes = pendingProbes.get(project) ?? [];
-        pendingProbes.set(project, []); // clear after handing off to the relay
-        for (const p of probes) inFlightProbes.add(p.taskId); // mark in-flight
-        return probes;
-      }
-      if (msg.kind === "relay-proxy-result") {
-        const results = msg.results as Array<{ taskId: string; liveness: "alive" | "gone" | "unknown" }>;
-        for (const r of results) {
-          probeResults.set(r.taskId, r.liveness);
-          inFlightProbes.delete(r.taskId); // result received — no longer in-flight
-        }
-        return { ok: true };
-      }
-      // #77 service-health surface: per-component liveness for the queried
-      // project (or all). Captain liveness derived from relay heartbeat (#239).
-      if (msg.kind === "health") {
-        return buildHealth(msg.project as string | undefined);
-      }
-      // #44 dashboard: read-only full system snapshot (Tier 0/1/2). Additive —
-      // the `health` verb above is untouched. Pure assembly; all I/O is gathered
-      // here and fed in. Never mutates state.
-      if (msg.kind === "snapshot") {
-        const now = Date.now();
-        return assembleDaemonSnapshot(await gatherSnapshotInputs(now), now);
-      }
-      // #239 Phase B: on any event that terminates a task, evict its entries from
-      // inFlightProbes and probeResults so the Sets never leak. Tasks reaped by
-      // sweep/reconcile (not via the socket) are naturally safe — proxiedSurfaceAlive
-      // is only called for reapable (non-terminal) states.
-      if (msg.kind === "event") {
-        const rec = await d.handle(msg) as TaskRecord;
-        if (TERMINAL_STATES.has(rec.state)) {
-          inFlightProbes.delete(rec.id);
-          probeResults.delete(rec.id);
-        }
-        return rec;
-      }
-      return d.handle(msg);
-    },
-    onAttach: (conn, frame) => {
-      let set = attachConns.get(frame.taskId);
-      if (!set) { set = new Set(); attachConns.set(frame.taskId, set); }
-      set.add(conn);
-      // A client arriving within the 5s window defuses any pending gate timer.
-      cancelPromotionsFor(frame.taskId);
-      // Immediately ack the attach so the client knows it's live.
-      try { conn.write(encodeFrame({ type: "reattached", taskId: frame.taskId })); } catch { /* ignore */ }
-    },
-    onAttachInbound: (_conn, frame) => {
-      // A second 'attach' on an already-claimed conn is ignored by protocol.ts,
-      // so every frame here is a genuine inbound op.
-      const f = frame as AttachInbound;
-      if (f.op === "say")
-        void codexDriver.say(f.taskId, f.text).catch((e: unknown) => log(`say err: ${e}`));
-      else if (f.op === "steer")
-        void codexDriver.steer(f.taskId, f.text).catch((e: unknown) => log(`steer err: ${e}`));
-      else if (f.op === "interrupt")
-        void codexDriver.interrupt(f.taskId).catch((e: unknown) => log(`interrupt err: ${e}`));
-      else if (f.op === "answer")
-        void codexDriver.answer(f.taskId, f.payload).catch((e: unknown) => log(`answer err: ${e}`));
-    },
-    onAttachClose: (conn) => {
-      // Remove the conn from every task's set (the conn only exists in one set,
-      // but a linear scan over a small map is fine).
-      for (const set of attachConns.values()) set.delete(conn);
-    },
+  const server = createServer(ctx, {
+    buildHealth,
+    gatherSnapshotInputs,
+    cancelPromotionsFor,
+    broadcast,
   });
   log(`started pid=${process.pid} sock=${sockPath} stateRoot=${stateRoot}`);
 
