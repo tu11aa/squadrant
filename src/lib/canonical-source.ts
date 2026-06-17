@@ -59,7 +59,7 @@ function readRoleTemplates(opts: UserSourceOptions): string {
   const reader = opts.readFile ?? ((p: string) => fs.readFileSync(p, "utf-8"));
   const sections: string[] = [];
   for (const { file, heading } of ROLE_TEMPLATES) {
-    const full = path.join(opts.pkgRoot, "orchestrator", file);
+    const full = path.join(opts.pkgRoot, "templates", file);
     let body = "";
     try { body = reader(full); } catch { continue; }
     sections.push(`${heading}\n\n${body.trim()}`);

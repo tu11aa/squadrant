@@ -51,7 +51,7 @@ export function mirrorDir(src: string, dest: string): void {
  * flat `dest`, prune dest entries no longer in the matched set, and apply
  * `chmod` to freshly copied files when given. Idempotent — unchanged files
  * are left untouched. For runtime dirs whose source is a differently-named,
- * mixed directory (templates ← orchestrator/, scripts).
+ * mixed directory (templates ← templates/, scripts).
  */
 export function mirrorFlat(
   src: string,
@@ -83,7 +83,7 @@ export function mirrorFlat(
 /**
  * A source-managed runtime dir. `name` is the dir under the runtime root;
  * `srcRel` is its source dir relative to the package root (note: the
- * runtime `templates/` is sourced from `orchestrator/`).
+ * runtime `templates/` is sourced from `templates/`).
  */
 export type ManagedTarget =
   | { name: string; srcRel: string; mode: "tree" }
@@ -100,14 +100,14 @@ export const MANAGED_TARGETS: ManagedTarget[] = [
   { name: "scripts", srcRel: "scripts", mode: "flat", match: /\.sh$/, chmod: 0o755 },
   {
     name: "templates",
-    srcRel: "orchestrator",
+    srcRel: "templates",
     mode: "flat",
     match: /\.(claude\.md|generic\.md|opencode\.md|CLAUDE\.md)$/,
   },
 ];
 
 export interface EnsureRuntimeSyncedOptions {
-  /** Package root containing the source dirs (`plugin/`, `orchestrator/`, …). */
+  /** Package root containing the source dirs (`plugin/`, `templates/`, …). */
   sourceRoot: string;
   /** Runtime root, normally ~/.config/cockpit. */
   runtimeRoot: string;

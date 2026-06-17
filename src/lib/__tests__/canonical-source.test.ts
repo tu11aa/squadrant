@@ -152,8 +152,8 @@ describe("readUserLevelSource — role template inlining (#45)", () => {
     expect(src.instructions).toContain("## Crew Role");
     expect(src.instructions).toContain("Crew Member — Generic Agent");
     expect(src.skills.map((s) => s.name)).toEqual(["karpathy-principles"]);
-    expect(reads).toContain("/pkg/orchestrator/captain.generic.md");
-    expect(reads).toContain("/pkg/orchestrator/crew.generic.md");
+    expect(reads).toContain("/pkg/templates/captain.generic.md");
+    expect(reads).toContain("/pkg/templates/crew.generic.md");
   });
 
   it("emits role sections in fixed order: captain then crew", async () => {
