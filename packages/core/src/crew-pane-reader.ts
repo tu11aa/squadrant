@@ -1,7 +1,6 @@
 import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
-import type { DaemonCmux } from "./cmux/daemon-cmux.js";
-import type { TaskRecord } from "@cockpit/shared";
+import type { RuntimeDriver, CockpitConfig, TaskRecord } from "@cockpit/shared";
+import type { DirectCmuxReader } from "./interfaces.js";
 
 const TAIL_LINES = 25;
 
@@ -29,17 +28,20 @@ export function surfaceVerdict(surfaceTitles: string[] | null, wantTitle: string
 }
 
 /**
- * I/O: enumerate the captain workspace's surface titles for a crew's project,
- * the same way the pane reader does. Returns null on ANY failure (cmux down, no
- * captain, no project) — surfaceVerdict maps null → "unknown" so we never reap
- * on an inconclusive probe. Never throws (the daemon sweep must not trip).
+ * I/O: enumerate the captain workspace's surface titles for a crew's project.
+ * Returns null on ANY failure — surfaceVerdict maps null → "unknown" so we never
+ * reap on an inconclusive probe. Never throws.
  */
-async function listCaptainSurfaceTitles(rec: TaskRecord): Promise<string[] | null> {
+async function listCaptainSurfaceTitles(
+  rec: TaskRecord,
+  makeRuntime: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+): Promise<string[] | null> {
   try {
     const config = loadConfig();
     const proj = config.projects[rec.project];
     if (!proj) return null;
-    const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(rec.project, config);
+    const runtime = makeRuntime(rec.project, config);
+    if (!runtime) return null;
     const captain = await runtime.status(proj.captainName);
     if (!captain) return null;
     const surfaces = await runtime.listSurfaces(captain.id);
@@ -50,34 +52,35 @@ async function listCaptainSurfaceTitles(rec: TaskRecord): Promise<string[] | nul
 }
 
 /**
- * Build the daemon's interactive surface-liveness probe (#139 backstop). Wired
- * into createDaemon as `isSurfaceAlive`: the sweep/reconcile reaper terminalizes
- * a non-terminal interactive record whose pane is provably gone. Non-interactive
- * or unnamed records short-circuit to "unknown" (never reaped).
+ * Build the daemon's interactive surface-liveness probe (#139 backstop).
+ * @param makeRuntime  Factory provided by the host (root package); omit for tests.
  */
-export function createSurfaceLivenessProbe(): (rec: TaskRecord) => Promise<SurfaceLiveness> {
+export function createSurfaceLivenessProbe(
+  makeRuntime?: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+): (rec: TaskRecord) => Promise<SurfaceLiveness> {
   return async (rec) => {
     if (rec.mode !== "interactive" || !rec.name) return "unknown";
-    const titles = await listCaptainSurfaceTitles(rec);
+    if (!makeRuntime) return "unknown";
+    const titles = await listCaptainSurfaceTitles(rec, makeRuntime);
     return surfaceVerdict(titles, crewPaneTitle(rec.project, rec.name));
   };
 }
 
 /**
- * Build the daemon's best-effort crew-pane reader (Phase 2b). Resolves the
- * crew's cmux pane the same way `cockpit crew read` does — captain workspace →
- * surfaces → the crew tab by title — and returns the LAST ~25 lines of its
- * screen. Returns null on ANY failure (cmux down, no captain, pane gone, no
- * name) and NEVER throws, so the probe loop can't take the daemon down.
+ * Build the daemon's best-effort crew-pane reader (Phase 2b).
+ * @param makeRuntime  Factory provided by the host; required for real pane reads.
  */
-export function createCrewPaneReader(): (rec: TaskRecord) => Promise<string | null> {
+export function createCrewPaneReader(
+  makeRuntime?: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+): (rec: TaskRecord) => Promise<string | null> {
   return async (rec) => {
     try {
-      if (!rec.name) return null;
+      if (!rec.name || !makeRuntime) return null;
       const config = loadConfig();
       const proj = config.projects[rec.project];
       if (!proj) return null;
-      const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(rec.project, config);
+      const runtime = makeRuntime(rec.project, config);
+      if (!runtime) return null;
       const captain = await runtime.status(proj.captainName);
       if (!captain) return null;
       const surfaces = await runtime.listSurfaces(captain.id);
@@ -95,13 +98,10 @@ export function createCrewPaneReader(): (rec: TaskRecord) => Promise<string | nu
 
 /**
  * Build a direct surface-liveness probe for daemon-direct mode (#332).
- * Uses DaemonCmux to list surfaces directly (bypassing the relay/proxy).
- * Fail-soft: `listSurfaces` returning `[]` (error or empty) → "unknown"
- * so a transient cmux outage never false-reaps a live crew. Non-empty list
- * without the wanted pane → "gone". Never throws.
+ * Uses DirectCmuxReader (seam interface implemented by DaemonCmux in root).
  */
 export function createDirectSurfaceLivenessProbe(
-  cmux: DaemonCmux,
+  cmux: DirectCmuxReader,
   getCaptainTitle: (project: string) => string,
 ): (rec: TaskRecord) => Promise<SurfaceLiveness> {
   return async (rec) => {
@@ -123,12 +123,10 @@ export function createDirectSurfaceLivenessProbe(
 
 /**
  * Build a direct crew-pane reader for daemon-direct mode (#332).
- * Uses DaemonCmux.readScreen directly instead of the RuntimeRegistry path
- * (which relies on relay-proxy). Returns the last ~25 lines of the crew's
- * cmux pane, or null on any failure. Never throws.
+ * Uses DirectCmuxReader (seam interface implemented by DaemonCmux in root).
  */
 export function createDirectCrewPaneReader(
-  cmux: DaemonCmux,
+  cmux: DirectCmuxReader,
   getCaptainTitle: (project: string) => string,
 ): (rec: TaskRecord) => Promise<string | null> {
   return async (rec) => {

@@ -3,7 +3,7 @@
 // Two probes:
 //   proxiedSurfaceAlive — relay-proxy path (#239 Phase B)
 //   buildInteractiveProbe — daemon-direct blocked-crew detection (#332)
-import { createInteractiveProbe } from "../../commands/notify-relay.js";
+import { createInteractiveProbe } from "./interactive-probe.js";
 import { createDirectCrewPaneReader, createDirectSurfaceLivenessProbe } from "../crew-pane-reader.js";
 import { loadConfig } from "@cockpit/shared";
 import type { TaskRecord } from "@cockpit/shared";

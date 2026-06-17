@@ -4,21 +4,23 @@
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import { buildContext } from "./daemon/context.js";
-import { createAttach } from "./daemon/attach.js";
-import { startDaemon } from "./daemon/start.js";
-export type { CockpitdOpts } from "./daemon/context.js";
-export { defaultIsPidAlive } from "./daemon/context.js";
-import type { AttachFrame } from "./protocol.js";
+import { buildContext } from "@cockpit/core";
+import { createAttach } from "@cockpit/core";
+import { startDaemon } from "@cockpit/core";
+import { createRelayHealer } from "@cockpit/core";
+export type { CockpitdOpts } from "@cockpit/core";
+export { defaultIsPidAlive } from "@cockpit/core";
+export { discoverCaptainSurface } from "@cockpit/core";
+import type { AttachFrame } from "@cockpit/core";
+import type { PaneRef } from "@cockpit/shared";
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver } from "./codex/driver.js";
 import { OpencodeSseBridge } from "./opencode/sse-bridge.js";
 import { CmuxEventsBridge } from "./cmux/events-bridge.js";
-import { createRelayHealer } from "./relay-healer.js";
 import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
-import type { PaneRef } from "../runtimes/types.js";
 import { DaemonCmux } from "./cmux/daemon-cmux.js";
 import { createCmuxDriver } from "../runtimes/index.js";
+import { RuntimeRegistry } from "../runtimes/index.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 function readPkgVersion(): string {
@@ -31,15 +33,7 @@ const PKG_VERSION = readPkgVersion();
 
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
 
-/**
- * Pure: search a list of surfaces for one whose title matches the captain name.
- * Part of #332 daemon-direct captain-surface discovery.
- */
-export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
-  return surfaces.find((s) => s.title === captainTitle) ?? null;
-}
-
-export function startCockpitd(opts: import("./daemon/context.js").CockpitdOpts = {}) {
+export function startCockpitd(opts: import("@cockpit/core").CockpitdOpts = {}) {
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -129,7 +123,13 @@ export function startCockpitd(opts: import("./daemon/context.js").CockpitdOpts =
     }
   });
 
-  return startDaemon(ctx, { ...opts, launchHeadless, healRelay: opts.healRelay ?? createRelayHealer(log) }, PKG_VERSION);
+  const healRelay = opts.healRelay ?? createRelayHealer(log, (project, config) => {
+    const proj = config.projects[project];
+    if (!proj) return null;
+    return new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
+  });
+
+  return startDaemon(ctx, { ...opts, launchHeadless, healRelay }, PKG_VERSION);
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).

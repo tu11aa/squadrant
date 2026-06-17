@@ -1,6 +1,6 @@
 // src/control/__tests__/daemon-gate-resolve.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { createDaemon } from "../daemon.js";
+import { createDaemon } from "@cockpit/core";
 
 describe("daemon gate-resolve", () => {
   it("resolves a pending gate and invokes resolveInteractiveGate dep", async () => {

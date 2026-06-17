@@ -8,7 +8,7 @@ import {
   RELAY_GONE_MS,
   type RelayHealth,
   type ComponentHealth,
-} from "../liveness.js";
+} from "@cockpit/core";
 
 const relay = (o: Partial<RelayHealth> = {}): RelayHealth => ({
   project: "p",

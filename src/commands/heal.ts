@@ -13,10 +13,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
-import { createRelayHealer } from "../control/relay-healer.js";
-import type { RelayHealOutcome } from "../control/daemon.js";
-import { ensureDaemon as _ensureDaemon } from "../control/launchd.js";
-import type { ComponentHealth, HealthState } from "../control/liveness.js";
+import { createRelayHealer } from "@cockpit/core";
+import type { RelayHealOutcome } from "@cockpit/core";
+import { ensureDaemon as _ensureDaemon } from "@cockpit/core";
+import type { ComponentHealth, HealthState } from "@cockpit/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 

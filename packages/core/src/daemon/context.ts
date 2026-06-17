@@ -12,7 +12,7 @@ import { createDaemon } from "../daemon.js";
 import { loadConfig } from "@cockpit/shared";
 import type { TaskRecord, ControlEvent, Gate, AutoConfigResult } from "@cockpit/shared";
 import type { Socket } from "node:net";
-import type { PaneRef } from "../../runtimes/types.js";
+import type { PaneRef } from "@cockpit/shared";
 import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "../interfaces.js";
 import type { AttachFrame } from "../protocol.js";
 

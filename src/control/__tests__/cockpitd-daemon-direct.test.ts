@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, appendFileSync, readFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd, discoverCaptainSurface } from "../cockpitd.js";
-import { appendToMailbox, writeCursor, readCursor } from "../mailbox.js";
+import { appendToMailbox, writeCursor, readCursor } from "@cockpit/core";
 import { STALE_THRESHOLD_MS } from "../../commands/notify-relay.js";
-import { sendRequest } from "../protocol.js";
-import { crewPaneTitle } from "../crew-pane-reader.js";
+import { sendRequest } from "@cockpit/core";
+import { crewPaneTitle } from "@cockpit/core";
 import type { DaemonCmux } from "../cmux/daemon-cmux.js";
 import type { PaneRef } from "../../runtimes/types.js";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";

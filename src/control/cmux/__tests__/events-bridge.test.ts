@@ -7,8 +7,8 @@ import { describe, it, expect, vi } from "vitest";
 import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import { CmuxEventsBridge, deriveRunState } from "../events-bridge.js";
-import { reduce } from "../../state-machine.js";
-import { evaluateStall } from "../../watchdog.js";
+import { reduce } from "@cockpit/core";
+import { evaluateStall } from "@cockpit/core";
 import type { ControlEvent, TaskRecord } from "@cockpit/shared";
 
 /** A fake `cmux events` child: stdout streams the given lines, then exits. */

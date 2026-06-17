@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced } from "@cockpit/shared";
-import { ensureDaemon } from "./control/launchd.js";
+import { ensureDaemon } from "@cockpit/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";

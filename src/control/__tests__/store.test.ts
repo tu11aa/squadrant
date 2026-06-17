@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStore } from "../store.js";
+import { createStore } from "@cockpit/core";
 import type { TaskRecord } from "@cockpit/shared";
 
 function rec(id: string): TaskRecord {

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const sendRequestMock = vi.hoisted(() => vi.fn());
 const execSyncMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../../control/protocol.js", () => ({
+vi.mock("@cockpit/core", () => ({
   sendRequest: sendRequestMock,
 }));
 

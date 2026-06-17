@@ -7,8 +7,8 @@
 // (separate PID, read-only socket client) and bound to 127.0.0.1 with no auth.
 // Zero new deps: Node's built-in `http` + `EventSource` on the client.
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { sendRequest } from "../control/protocol.js";
-import type { DaemonSnapshot } from "../control/snapshot.js";
+import { sendRequest } from "@cockpit/core";
+import type { DaemonSnapshot } from "@cockpit/core";
 import { mergeSnapshot, type FullSnapshot } from "./snapshot-merge.js";
 import { runExternalProbes, type ProbeRunners } from "./probes.js";
 import { renderHtml, renderTickJson } from "./web-render.js";

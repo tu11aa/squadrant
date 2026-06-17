@@ -5,7 +5,7 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { decodeFrames, type AttachFrame, type AttachInbound } from "../control/protocol.js";
+import { decodeFrames, type AttachFrame, type AttachInbound } from "@cockpit/core";
 
 function socketPath(): string {
   return process.env.COCKPITD_SOCK ?? join(homedir(), ".config", "cockpit", "cockpit.sock");

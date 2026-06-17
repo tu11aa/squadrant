@@ -19,7 +19,7 @@ import {
   releaseDaemonLock,
   daemonLockPath,
   _resetRestartInFlightForTest,
-} from "../launchd.js";
+} from "@cockpit/core";
 
 const LOCK_PATH = daemonLockPath();
 
@@ -160,7 +160,7 @@ describe("in-process restartInFlight dedup", () => {
       return 7 as unknown as number;
     });
 
-    const { ensureDaemon, _resetRestartInFlightForTest: reset } = await import("../launchd.js");
+    const { ensureDaemon, _resetRestartInFlightForTest: reset } = await import("@cockpit/core");
     reset();
 
     ensureDaemon();

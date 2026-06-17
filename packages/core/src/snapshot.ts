@@ -7,6 +7,8 @@
 // performs the I/O (dist stat, log read, mailbox/store/results reads) and feeds
 // the gathered numbers in here; this module never touches the filesystem.
 import type { ComponentHealth } from "./liveness.js";
+import type { MailboxStats } from "./mailbox.js";
+export type { MailboxStats };
 
 export type BuildState = "fresh" | "stale";
 
@@ -33,12 +35,6 @@ export interface DaemonRoot {
 }
 
 // ── Tier 2: per-project data plane + global results ───────────────────────────
-export interface MailboxStats {
-  maxSeq: number;
-  sizeBytes: number;
-  oldestEntryAgeMs: number;
-  rotationCount: number;
-}
 
 export interface DeliveryLag {
   maxSeq: number;

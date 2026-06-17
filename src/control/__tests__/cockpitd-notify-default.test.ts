@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "../protocol.js";
+import { sendRequest } from "@cockpit/core";
 import { runNotifyRelay } from "../../commands/notify-relay.js";
 import type { TaskRecord } from "@cockpit/shared";
 

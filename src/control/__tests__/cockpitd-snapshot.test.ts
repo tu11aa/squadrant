@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "../protocol.js";
-import type { DaemonSnapshot } from "../snapshot.js";
+import { sendRequest } from "@cockpit/core";
+import type { DaemonSnapshot } from "@cockpit/core";
 
 describe("cockpitd snapshot verb", () => {
   let stop: (() => void) | undefined;

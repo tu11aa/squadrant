@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "../protocol.js";
-import type { ComponentHealth } from "../liveness.js";
+import { sendRequest } from "@cockpit/core";
+import type { ComponentHealth } from "@cockpit/core";
 
 const find = (cs: ComponentHealth[], kind: ComponentHealth["kind"]) =>
   cs.find((c) => c.kind === kind);

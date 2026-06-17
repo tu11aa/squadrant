@@ -2,16 +2,20 @@
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
 import { CaptainDelivery } from "../delivery/captain-delivery.js";
-import { discoverCaptainSurface } from "../cockpitd.js";
 import { loadConfig } from "@cockpit/shared";
-import { STALE_THRESHOLD_MS } from "../../commands/notify-relay.js";
+import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
-import type { PaneRef } from "../../runtimes/types.js";
+import type { PaneRef } from "@cockpit/shared";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import type { DaemonContext } from "./context.js";
 
 const CURSOR_SUBSCRIBER = "captain";
 const CAPTAIN_GONE_STREAK_K = 3;
+
+/** Pure: find the captain surface by title in a surface list (#332). */
+export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
+  return surfaces.find((s) => s.title === captainTitle) ?? null;
+}
 
 export interface DeliveryResult {
   defaultNotify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void>;

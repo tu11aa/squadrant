@@ -16,16 +16,9 @@ export class CmuxTimeoutError extends Error {
   }
 }
 
-// #258 Approach B: thrown by sendToSurface when the captain has any draft in
-// the input box. The relay defers delivery until the input is empty.
-// #302: carries the observed draft text so the relay can detect content
-// stability (same content for K polls = not actively typing → safe to probe).
-export class DeferDelivery extends Error {
-  constructor(public readonly draft: string | null = null) {
-    super("deferred: captain composing");
-    this.name = "DeferDelivery";
-  }
-}
+// Re-exported so root consumers keep the same import path (root → core direction).
+import { DeferDelivery } from "@cockpit/core";
+export { DeferDelivery };
 
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
