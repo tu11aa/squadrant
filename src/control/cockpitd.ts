@@ -1,12 +1,12 @@
 // src/control/cockpitd.ts
-import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn as realSpawn } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { createStore } from "./store.js";
 import { createDaemon } from "./daemon.js";
+import { buildContext } from "./daemon/context.js";
+export type { CockpitdOpts } from "./daemon/context.js";
+export { defaultIsPidAlive } from "./daemon/context.js";
 import { startServer, encodeFrame, type AttachFrame, type AttachInbound } from "./protocol.js";
 import { runHeadless } from "./headless-launcher.js";
 import { CodexInteractiveDriver, shouldReattachCodex } from "./codex/driver.js";
@@ -29,7 +29,6 @@ import type { PaneRef } from "../runtimes/types.js";
 import { DaemonCmux } from "./cmux/daemon-cmux.js";
 import { ensureCmuxAutoConfig, type AutoConfigResult } from "@cockpit/shared";
 import { createCmuxDriver } from "../runtimes/index.js";
-import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "./interfaces.js";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./daemon/snapshot-gather.js";
 
 // This module's own compiled file — its mtime is used in readPkgVersion() only.
@@ -45,71 +44,6 @@ const PKG_VERSION = readPkgVersion();
 const SNAPSHOT_LOG_WINDOW_MS = 60 * 60 * 1000; // count daemon-log errors in the last hour
 const CURSOR_SUBSCRIBER = "captain"; // the relay drains the mailbox as "captain" (#207)
 
-export interface CockpitdOpts {
-  stateRoot?: string;
-  sockPath?: string;
-  sweepMs?: number; // 0 disables the interval (tests)
-  isPidAlive?: (pid: number) => boolean; // injectable for the headless reconcile path (tests)
-  // injectable for the #139 interactive surface-liveness reaper (tests); defaults
-  // to the real cmux probe. Returns "alive" | "gone" | "unknown".
-  isSurfaceAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
-  spawn?: typeof realSpawn;
-  /**
-   * Push-notification hook (#109). Defaults to appending a structured event
-   * to the mailbox file at <stateRoot>/inbox/<project>.log; an injector
-   * process inside the captain workspace tails the file and delivers entries
-   * to the captain pane. Tests inject a fake to assert call shape.
-   */
-  notify?: (args: {
-    project: string;
-    message: string;
-    record: TaskRecord;
-    event: ControlEvent;
-  }) => Promise<void> | void;
-  /** Background rotation timer interval (ms). 0 disables. Default 60_000. */
-  rotationIntervalMs?: number;
-  /** Mailbox rotation thresholds (size/age/retention). */
-  mailboxConfig?: {
-    maxBytes?: number;
-    maxAgeMs?: number;
-    keepCount?: number;
-  };
-  /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
-  codexDriver?: AgentDriver;
-  /** #207 best-effort relay healer. Defaults to a real cmux spawnInjector
-   *  re-spawn (mostly inert under launchd). Tests inject a fake/spy. */
-  healRelay?: (project: string) => Promise<void> | void;
-  /** Inject a fake headless launcher for tests to avoid real process spawns. */
-  launchHeadless?: (rec: TaskRecord) => Promise<void>;
-  /** Override which projects appear in the Tier 2 per-project snapshot. Defaults
-   *  to Object.keys(loadConfig().projects). Tests inject this to avoid real config. */
-  registeredProjects?: string[];
-  /** Inject a fake opencode SSE bridge for tests. Defaults to a real one. */
-  opencodeBridge?: OpencodeBridge;
-  /** B1: inject a fake cmux events bridge for tests. Defaults to a real one
-   *  (gated on defaults.cmuxEventsBridge). */
-  cmuxEventsBridge?: CmuxEventsBridge;
-  /** #332: inject a fake DaemonCmux for testing daemon-direct delivery. When
-   *  absent and daemonDirectCmux is ON, a real cmux driver is created. */
-  daemonCmux?: DaemonSurfaceDriver | DaemonCmux;
-  /** #332: factory for constructing DaemonCmux in production when daemonCmux
-   *  is not injected. Defaults to () => new DaemonCmux(createCmuxDriver()).
-   *  Tests inject this to avoid real cmux. */
-  makeDaemonCmux?: () => DaemonCmux;
-  /** #332: override for daemonDirectCmux flag (bypasses config file load).
-   *  When true and daemonCmux is provided/injected, runs the daemon-direct
-   *  delivery loop instead of relying on the notify-relay. */
-  daemonDirectCmux?: boolean;
-  /** #332: injected captain-surface mapping (project → PaneRef) for the
-   *  daemon-direct delivery loop. Used as fallback when real discovery (Task 5)
-   *  returns no surface (e.g. cmux not reachable or captain not yet running). */
-  captainSurfaces?: Record<string, PaneRef>;
-  /** #348: override the cmux socket auto-config re-check (write+probe). Tests
-   *  inject a fake; in production it runs only when daemonDirectCmux is ON and
-   *  not under vitest. See cmux-autoconfig.ts. */
-  runCmuxAutoConfig?: () => Promise<AutoConfigResult>;
-}
-
 const CAPTAIN_GONE_STREAK_K = 3;
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
 
@@ -121,54 +55,14 @@ export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string
   return surfaces.find((s) => s.title === captainTitle) ?? null;
 }
 
-export function defaultIsPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; }
-  catch (e: any) { return e?.code === "EPERM"; } // EPERM = alive but not ours; ESRCH = dead
-}
-
 export function startCockpitd(opts: CockpitdOpts = {}) {
-  const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "cockpit", "state");
-  const sockPath = opts.sockPath ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
-  const store = createStore(stateRoot);
-  // #44 dashboard: process start-time (for uptime + build-freshness) and the
-  // timestamp of the most recent sweep (Tier 0 "sweep last Ns ago").
-  const bootedAt = Date.now();
-  let lastSweepAt: number | null = null;
-  // #225: hard crew task-timeout ceiling, read once at boot. Falls back to the
-  // daemon's DEFAULT_TASK_TIMEOUT_MS (8h) when unset in config.
-  const taskTimeoutMs = loadConfig().defaults.taskTimeoutMs;
-  const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
-  const spawn = opts.spawn ?? realSpawn;
-  const resultsDir = join(stateRoot, "_results");
-  mkdirSync(resultsDir, { recursive: true });
-  const writeResult = (id: string, payload: string) => {
-    const p = join(resultsDir, `${id}.txt`);
-    writeFileSync(p, payload);
-    return p;
-  };
-  // Minimal lifecycle logging (red-team #2: the log was a timestampless wall
-  // of crash stacks with no "started" marker).
-  const log = (m: string) => process.stderr.write(`[cockpitd] ${new Date().toISOString()} ${m}\n`);
-
-  // ── Attach fan-out (spec §4.5/§4.6) ──────────────────────────────────────
-  // Per-task set of live attach connections. Populated in onAttach, cleaned up
-  // in onAttachClose. Not exposed outside this closure.
-  const attachConns = new Map<string, Set<Socket>>();
-
-  // #239 Phase B: relay-as-cmux-proxy for crew-surface liveness.
-  // The relay (running inside the captain's cmux tree) polls relay-proxy-poll
-  // each tick, executes each probe in-lineage, and posts results via relay-proxy-result.
-  // The daemon never calls cmux directly; it only reads this result cache.
-  type ProbeRequest = { taskId: string; name: string };
-  const pendingProbes = new Map<string, ProbeRequest[]>(); // per-project queue
-  const probeResults = new Map<string, "alive" | "gone" | "unknown">(); // per-taskId cache
-  // taskIds handed to the relay (poll sent) but not yet answered (result received).
-  // Prevents the sweep from re-enqueuing a probe that's already in-flight, which
-  // would cause the second relay-proxy-poll to return non-empty despite the queue
-  // being cleared on the first poll.
-  const inFlightProbes = new Set<string>();
-  const inFlightHeadlessIds = new Set<string>(); // #259: tasks being launched (no pid yet)
-  const activeHeadlessKills = new Set<() => void>();
+  const ctx = buildContext(opts);
+  const {
+    stateRoot, sockPath, store, log, isPidAlive, spawn, resultsDir, writeResult,
+    taskTimeoutMs, attachConns, pendingProbes, probeResults, inFlightProbes,
+    inFlightHeadlessIds, activeHeadlessKills, captainMissingStreak, stoppedProjects,
+  } = ctx;
+  const bootedAt = ctx.bootedAt;
 
   // Replaces createSurfaceLivenessProbe(): enqueues a probe for the relay to
   // execute, then returns the most-recent cached result ("unknown" when nothing
@@ -513,7 +407,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
       processStartedAt: bootedAt,
       version: PKG_VERSION,
       distBuiltAt: distBuiltAt(),
-      lastSweepAt,
+      lastSweepAt: ctx.lastSweepAt.value,
       sweepCadenceMs: opts.sweepMs ?? 30_000,
       log: gatherLogStats(logPath, now, SNAPSHOT_LOG_WINDOW_MS),
       health: buildHealth(),
@@ -700,8 +594,6 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
   // entrypoint below adds one).
   let deliveryTick: (() => Promise<void>) | undefined;
   let probeTick: (() => Promise<void>) | undefined;
-  const captainMissingStreak = new Map<string, number>();
-  const stoppedProjects = new Set<string>();
 
   if (daemonDirectCmux && daemonCmux) {
     const cmux = daemonCmux;
@@ -882,7 +774,7 @@ export function startCockpitd(opts: CockpitdOpts = {}) {
     timer = setInterval(() => {
       if (sweeping) return;
       sweeping = true;
-      lastSweepAt = Date.now(); // Tier 0 observability: time of the most recent sweep
+      ctx.lastSweepAt.value = Date.now(); // Tier 0 observability: time of the most recent sweep
       void d.sweep()
         .catch((e: unknown) => log(`sweep failed: ${(e as Error).message}`))
         .finally(() => { sweeping = false; });
