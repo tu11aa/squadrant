@@ -21,6 +21,9 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
     devDependencies:
+      '@cockpit/agents':
+        specifier: workspace:*
+        version: link:packages/agents
       '@cockpit/core':
         specifier: workspace:*
         version: link:packages/core
@@ -39,6 +42,15 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.6(@types/node@22.19.21)
+
+  packages/agents:
+    dependencies:
+      '@cockpit/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cockpit/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/core:
     dependencies:

@@ -6,6 +6,7 @@ import type { Plugin } from "esbuild";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sharedDist = path.resolve(__dirname, "packages/shared/dist/index.js");
 const coreDist = path.resolve(__dirname, "packages/core/dist/index.js");
+const agentsDist = path.resolve(__dirname, "packages/agents/dist/index.js");
 
 // Resolve @cockpit/* directly to their dist outputs, bypassing the global
 // Yarn PnP manifest which would otherwise intercept and block inlining.
@@ -17,6 +18,9 @@ const inlinePackagesPlugin: Plugin = {
     }));
     build.onResolve({ filter: /^@cockpit\/core$/ }, () => ({
       path: coreDist,
+    }));
+    build.onResolve({ filter: /^@cockpit\/agents$/ }, () => ({
+      path: agentsDist,
     }));
   },
 };
@@ -36,7 +40,7 @@ export default defineConfig({
   dts: false,              // bin/daemon don't ship types; faster build
   // npm deps stay external (commander, chalk, etc.); @cockpit/* are inlined
   // via inlinePackagesPlugin which resolves them to their dist outputs.
-  noExternal: ["@cockpit/shared", "@cockpit/core"],
+  noExternal: ["@cockpit/shared", "@cockpit/core", "@cockpit/agents"],
   esbuildPlugins: [inlinePackagesPlugin],
   // src/index.ts already has #!/usr/bin/env node; tsup preserves it. No banner needed.
 });
