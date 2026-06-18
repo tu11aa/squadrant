@@ -1,5 +1,5 @@
 {
-  "references": [{ "path": "packages/shared" }, { "path": "packages/core" }, { "path": "packages/agents" }, { "path": "packages/workspaces" }],
+  "references": [{ "path": "packages/shared" }, { "path": "packages/core" }, { "path": "packages/agents" }, { "path": "packages/workspaces" }, { "path": "packages/web" }],
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -14,7 +14,8 @@
       "@cockpit/shared": ["./packages/shared/src/index.ts"],
       "@cockpit/core": ["./packages/core/src/index.ts"],
       "@cockpit/agents": ["./packages/agents/src/index.ts"],
-      "@cockpit/workspaces": ["./packages/workspaces/src/index.ts"]
+      "@cockpit/workspaces": ["./packages/workspaces/src/index.ts"],
+      "@cockpit/web": ["./packages/web/src/index.ts"]
     }
   },
   "include": ["src/**/*"],

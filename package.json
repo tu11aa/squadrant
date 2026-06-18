@@ -14,7 +14,7 @@
     "templates/"
   ],
   "scripts": {
-    "build": "tsc -b --force packages/shared packages/core packages/agents packages/workspaces && tsup",
+    "build": "tsc -b --force packages/shared packages/core packages/agents packages/workspaces packages/web && tsup",
     "dev": "tsup --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
@@ -43,6 +43,7 @@
     "@cockpit/agents": "workspace:*",
     "@cockpit/shared": "workspace:*",
     "@cockpit/workspaces": "workspace:*",
+    "@cockpit/web": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",

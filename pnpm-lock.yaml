@@ -30,6 +30,9 @@ importers:
       '@cockpit/shared':
         specifier: workspace:*
         version: link:packages/shared
+      '@cockpit/web':
+        specifier: workspace:*
+        version: link:packages/web
       '@cockpit/workspaces':
         specifier: workspace:*
         version: link:packages/workspaces
@@ -62,6 +65,18 @@ importers:
         version: link:../shared
 
   packages/shared: {}
+
+  packages/web:
+    dependencies:
+      '@cockpit/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cockpit/shared':
+        specifier: workspace:*
+        version: link:../shared
+      chalk:
+        specifier: ^5.4.0
+        version: 5.6.2
 
   packages/workspaces:
     dependencies:
