@@ -1,6 +1,6 @@
 # Docs — claude-cockpit
 
-Master index of the `docs/` directory. Every active document and archive subdirectory is linked here.
+Master index of the `docs/` directory. Every active document is linked here. Shipped/superseded planning docs and historical research are **archived to the hub vault** (zipped, out of the repo — see [Archive](#archive)); they remain recoverable from git history too.
 
 ---
 
@@ -54,31 +54,9 @@ Architectural or strategic decisions with recorded rationale.
 
 ---
 
-## Research
+## Reports (active)
 
-Historical reference material. Dated snapshots — kept in place, not archived.
-
-| File | Purpose |
-|---|---|
-| [research/2026-05-16-idle-detection-and-inter-agent-orchestration.md](research/2026-05-16-idle-detection-and-inter-agent-orchestration.md) | Idle detection + inter-agent orchestration research |
-| [research/2026-05-17-cockpit-system-audit-and-orchestration-advice.md](research/2026-05-17-cockpit-system-audit-and-orchestration-advice.md) | System audit + orchestration advice (HTML/PDF also present) |
-| [research/2026-05-19-orca-codex-wrapping-study.md](research/2026-05-19-orca-codex-wrapping-study.md) | Orca codex-wrapping study |
-| [research/2026-05-19-orca-derived-cockpit-improvements.md](research/2026-05-19-orca-derived-cockpit-improvements.md) | Improvements derived from Orca study |
-| [research/2026-05-19-orca-full-system-study.md](research/2026-05-19-orca-full-system-study.md) | Full Orca system study |
-| [research/2026-05-21-phase2-start-handoff.md](research/2026-05-21-phase2-start-handoff.md) | Phase 2 interactive-codex start handoff |
-| [research/2026-05-27-multi-session-orchestrator-notification-patterns.md](research/2026-05-27-multi-session-orchestrator-notification-patterns.md) | Multi-session orchestrator notification patterns (VI companion present) |
-| [research/2026-05-27-tracking-codex-while-keeping-native-tui.md](research/2026-05-27-tracking-codex-while-keeping-native-tui.md) | Tracking codex while keeping native TUI (VI companion present) |
-| [research/2026-06-16-cmux-agent-lifecycle-and-daemon-architecture.md](research/2026-06-16-cmux-agent-lifecycle-and-daemon-architecture.md) | cmux agent lifecycle + daemon architecture dossier |
-| [research/2026-06-16-cmux-events-stream.md](research/2026-06-16-cmux-events-stream.md) | cmux native events stream research |
-| [research/2026-06-16-cmux-workspace-groups-audit-C1.md](research/2026-06-16-cmux-workspace-groups-audit-C1.md) | cmux workspace groups audit (C1) |
-
-Additional research files (HTML/PDF): `2026-05-17-cockpit-system-audit-and-orchestration-advice.html/.pdf`, `2026-05-19-cockpit-vs-orca-system-comparison.html`, `2026-05-19-orca-*.html`, `2026-05-27-*.vi.html`, `research/llm-wiki-research-report.pdf`.
-
----
-
-## Reports
-
-Debugging artifacts and compatibility audits. Kept as-is.
+Debugging artifacts and compatibility audits still referenced.
 
 | File | Purpose |
 |---|---|
@@ -90,13 +68,8 @@ Debugging artifacts and compatibility audits. Kept as-is.
 
 ## Archive
 
-Shipped/superseded documents are moved here with status banners. Nothing is deleted — all content remains in-tree.
+Shipped/superseded planning docs, pre-reorg diagrams/reports, and historical research are bundled into a single zip in the **hub vault**, out of the code repo (the working tree stays active-docs-only). Nothing is lost — the same files also remain in git history.
 
-| Subdirectory | Contents |
-|---|---|
-| [specs/archive/](specs/archive/) | 26 shipped/superseded specs (plugin system, multi-agent, control-plane, etc.) |
-| [plans/archive/](plans/archive/) | 7 shipped implementation plans (control-plane, codex, mailbox, service-health, etc.) |
-| [superpowers/specs/archive/](superpowers/specs/archive/) | 11 shipped superpowers specs (reorg steps 1–7, side-sessions, daemon-direct, etc.) |
-| [superpowers/plans/archive/](superpowers/plans/archive/) | 11 shipped superpowers plans (reorg steps 2–7, phase-b, side-sessions, etc.) |
-| [diagrams/archive/](diagrams/archive/) | 6 pre-reorg architecture diagrams with ⛔ superseded banners |
-| [reports/archive/](reports/archive/) | 3 pre-reorg report HTMLs (cockpitd structure, daemon flow, relation graphs) |
+- **Location:** `~/cockpit-hub/spokes/cockpit/archive/cockpit-docs-archive-2026-06-18.zip`
+- **Contains (~85 docs):** shipped `specs/` + `plans/` + `superpowers/{specs,plans}/` (incl. reorg steps 1–7, plugin system, multi-agent, control-plane, side-sessions, daemon-direct, …), the 6 pre-reorg architecture diagrams, 3 pre-reorg report HTMLs, and the full historical `research/` set (Orca studies, cmux lifecycle dossiers, notification-pattern research, …).
+- **Recover a single file from git instead:** `git log --all -- docs/<path>` then `git checkout <sha> -- docs/<path>`.
