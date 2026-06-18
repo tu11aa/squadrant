@@ -23,7 +23,7 @@ import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
 const SELF_PATH = fileURLToPath(import.meta.url);
 function readPkgVersion(): string {
   try {
-    const pkgPath = join(dirname(SELF_PATH), "..", "..", "package.json");
+    const pkgPath = join(dirname(SELF_PATH), "..", "package.json");
     return (JSON.parse(readFileSync(pkgPath, "utf-8")).version as string) ?? "unknown";
   } catch { return "unknown"; }
 }

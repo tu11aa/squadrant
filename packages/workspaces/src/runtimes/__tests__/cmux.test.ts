@@ -5,13 +5,22 @@ import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifySt
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
-  execFileSync: execFileMock,
+  // Bridge: execFileMock is kept synchronous so assertions on mock.calls stay
+  // unchanged; this wrapper adapts it to the callback-based execFile signature.
+  execFile: (bin: string, args: string[], opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
+    try {
+      const result = execFileMock(bin, args, opts);
+      cb(null, result ?? "");
+    } catch (err) {
+      cb(err as Error, "");
+    }
+  },
 }));
 
-// cmux() now invokes execFileSync(CMUX_BIN, argv[], opts) with no shell, so the
-// command + its arguments arrive as an argv array (calls[i][1]). These helpers
-// surface the argv for assertions; the binary path itself (calls[i][0]) is
-// irrelevant to behavior.
+// cmux() now invokes execFile(CMUX_BIN, argv[], opts, callback) with no shell,
+// so the command + its arguments arrive as an argv array (calls[i][1]). These
+// helpers surface the argv for assertions; the binary path itself (calls[i][0])
+// is irrelevant to behavior.
 const argvOf = (call: unknown[]): string[] => call[1] as string[];
 const cmdOf = (call: unknown[]): string => (call[1] as string[]).join(" ");
 

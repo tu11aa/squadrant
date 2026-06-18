@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { runConfigCheck } from "../config.js";
 import { getDefaultConfig } from "@cockpit/shared";
+
+const __thisDir = dirname(fileURLToPath(import.meta.url));
+// Built CLI lives at <repo>/dist/index.js — three levels up from src/commands/__tests__/
+const DIST_CLI = join(__thisDir, "..", "..", "..", "dist", "index.js");
 
 let dir: string;
 let cfgPath: string;
@@ -52,5 +59,22 @@ describe("runConfigCheck", () => {
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk._cockpitVersion).toBe("0.5.3");
     expect(onDisk.defaults.roles.crew.model).toBe("sonnet");
+  });
+});
+
+// #363: readPkgVersion() used "../../package.json" relative to import.meta.url
+// which overshoots to the parent of the repo root when bundled in dist/index.js.
+// Fixed to "../package.json" (one level up from dist/, landing on repo root).
+// This test runs the built CLI from /tmp to confirm no ENOENT (#363 regression).
+describe("readPkgVersion (bundled path, #363)", () => {
+  it.skipIf(!fs.existsSync(DIST_CLI))("config check does not ENOENT when invoked from outside the repo", () => {
+    const result = spawnSync("node", [DIST_CLI, "config", "check"], {
+      cwd: os.tmpdir(),
+      encoding: "utf-8",
+      timeout: 15_000,
+      env: { ...process.env, COCKPIT_DAEMON_SKIP: "1" },
+    });
+    expect(result.stderr ?? "").not.toMatch(/ENOENT/);
+    expect(result.error).toBeUndefined();
   });
 });

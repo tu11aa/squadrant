@@ -260,6 +260,7 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
       try { ctx.cmuxEventsBridge.stop(); } catch { /* best-effort */ }
+      try { ctx.codexDriver.stop?.(); } catch { /* best-effort */ }
       for (const kill of ctx.activeHeadlessKills) kill();
       return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
     },

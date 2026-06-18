@@ -13,6 +13,8 @@ export interface AgentDriver {
   interrupt: (taskId: string) => Promise<void>;
   answer: (taskId: string, payload: unknown) => Promise<void>;
   close: (taskId: string) => Promise<void>;
+  /** Tear down any long-lived child process (e.g. codex app-server) on daemon stop. */
+  stop?: () => void;
 }
 
 /** Opencode SSE bridge seam (start/stop per-crew subscription + approve/deny). */
