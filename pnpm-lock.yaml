@@ -24,6 +24,9 @@ importers:
       '@cockpit/agents':
         specifier: workspace:*
         version: link:packages/agents
+      '@cockpit/cli':
+        specifier: workspace:*
+        version: link:packages/cli
       '@cockpit/core':
         specifier: workspace:*
         version: link:packages/core
@@ -57,6 +60,33 @@ importers:
       '@cockpit/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/cli:
+    dependencies:
+      '@cockpit/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@cockpit/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cockpit/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@cockpit/web':
+        specifier: workspace:*
+        version: link:../web
+      '@cockpit/workspaces':
+        specifier: workspace:*
+        version: link:../workspaces
+      chalk:
+        specifier: ^5.4.0
+        version: 5.6.2
+      commander:
+        specifier: ^13.0.0
+        version: 13.1.0
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
 
   packages/core:
     dependencies:

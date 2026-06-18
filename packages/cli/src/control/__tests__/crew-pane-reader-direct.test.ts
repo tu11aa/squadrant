@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "@cockpit/core";
-import type { DaemonCmux } from "../cmux/daemon-cmux.js";
+import type { DaemonCmux } from "@cockpit/workspaces";
 import type { TaskRecord } from "@cockpit/shared";
 
 function mockCmux(overrides?: Partial<DaemonCmux>): DaemonCmux {

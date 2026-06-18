@@ -14,7 +14,7 @@
     "templates/"
   ],
   "scripts": {
-    "build": "tsc -b --force packages/shared packages/core packages/agents packages/workspaces packages/web && tsup",
+    "build": "tsc -b --force packages/shared packages/core packages/agents packages/workspaces packages/web packages/cli && tsup",
     "dev": "tsup --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
@@ -39,6 +39,7 @@
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
+    "@cockpit/cli": "workspace:*",
     "@cockpit/core": "workspace:*",
     "@cockpit/agents": "workspace:*",
     "@cockpit/shared": "workspace:*",

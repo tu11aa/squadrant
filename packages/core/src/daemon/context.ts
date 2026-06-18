@@ -9,6 +9,7 @@ import { spawn as realSpawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { createStore } from "../store.js";
 import { createDaemon } from "../daemon.js";
+import type { RelayHealOutcome } from "../daemon.js";
 import { loadConfig } from "@cockpit/shared";
 import type { TaskRecord, ControlEvent, Gate, AutoConfigResult } from "@cockpit/shared";
 import type { Socket } from "node:net";
@@ -48,7 +49,7 @@ export interface CockpitdOpts {
   /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
   codexDriver?: AgentDriver;
   /** #207 best-effort relay healer. */
-  healRelay?: (project: string) => Promise<void> | void;
+  healRelay?: (project: string) => Promise<RelayHealOutcome | void> | RelayHealOutcome | void;
   /** Inject a fake headless launcher for tests to avoid real process spawns. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /** Override which projects appear in the Tier 2 per-project snapshot. */

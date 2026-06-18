@@ -9,8 +9,8 @@ import { runConfigCheck } from "../config.js";
 import { getDefaultConfig } from "@cockpit/shared";
 
 const __thisDir = dirname(fileURLToPath(import.meta.url));
-// Built CLI lives at <repo>/dist/index.js — three levels up from src/commands/__tests__/
-const DIST_CLI = join(__thisDir, "..", "..", "..", "dist", "index.js");
+// Built CLI lives at <repo>/dist/index.js — five levels up from packages/cli/src/commands/__tests__/
+const DIST_CLI = join(__thisDir, "..", "..", "..", "..", "..", "dist", "index.js");
 
 let dir: string;
 let cfgPath: string;

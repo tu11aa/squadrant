@@ -1,6 +1,6 @@
 // src/commands/__tests__/heal.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ComponentHealth } from "../../control/liveness.js";
+import type { ComponentHealth } from "@cockpit/core";
 
 // ── pure helper (no I/O) ─────────────────────────────────────────────────────
 
