@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cockpit — Monorepo Architecture · 6-package layout post-reorg</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
+    --shared:#58a6ff; --core:#d29922; --agents:#3fb950; --workspaces:#bc8cff; --web:#39c5cf; --cli:#f85149;
+    --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace; --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #deck{height:100vh;display:flex;flex-direction:column}
+  header{padding:14px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex:0 0 auto}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  .slide{flex:1;display:none;padding:20px 44px 6px;overflow:auto}
+  .slide.active{display:flex;flex-direction:column;animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  .slide h2{margin:0 0 5px;font-size:21px}
+  .slide .sub{color:var(--dim);font-size:14px;margin:0;max-width:1100px;line-height:1.55}
+  .stage{flex:1;display:grid;place-items:center;padding:6px 0}
+  svg{width:100%;height:auto;max-height:68vh;display:block}
+  .bt{font-family:var(--sans);font-weight:600;font-size:14px;fill:var(--ink)}
+  .bs{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .chip{font-family:var(--mono);font-size:11.5px;fill:var(--ink)}
+  .edge{stroke:#52606d;stroke-width:2;fill:none;marker-end:url(#ar)}
+  .edgew{stroke:#52606d;stroke-width:1.5;fill:none;stroke-dasharray:4 4;marker-end:url(#ar)}
+  .elabel{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding:6px 0 2px}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);padding:10px 28px;display:flex;align-items:center;gap:16px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--shared)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer} .dots i.on{background:var(--shared);transform:scale(1.25)}
+  .num{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:54px;text-align:right}
+  code{font-family:var(--mono);background:#1f2530;padding:1px 5px;border-radius:4px;font-size:.9em}
+  table{border-collapse:collapse;width:100%;max-width:1100px;font-size:13.5px}
+  td,th{border:1px solid var(--line);padding:9px 14px;text-align:left;vertical-align:top}
+  th{background:var(--panel);color:var(--dim);font-weight:600}
+</style>
+</head>
+<body>
+<div id="deck">
+  <header>
+    <h1>⚓ Cockpit — Monorepo Architecture</h1>
+    <span class="tag">6-package layout · post-reorg 2026-06-18</span>
+    <div class="spacer"></div>
+    <span class="tag">space / → · A = autoplay</span>
+  </header>
+
+  <!-- SLIDE 1: Package DAG -->
+  <section class="slide active">
+    <h2>1 · Package DAG</h2>
+    <p class="sub">Six internal packages in a strict one-way dependency graph. <code>@cockpit/shared</code> is the leaf — no internal deps. <code>@cockpit/cli</code> is the root — depends on everything. Nothing flows backwards.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 480">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker>
+        </defs>
+
+        <!-- shared (bottom / leaf) -->
+        <rect x="465" y="380" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--shared)" stroke-width="2"/>
+        <text class="bt" x="590" y="406" text-anchor="middle" fill="var(--shared)">@cockpit/shared</text>
+        <text class="bs" x="590" y="424" text-anchor="middle">config schema · types · constants</text>
+        <text class="bs" x="590" y="440" text-anchor="middle">leaf lib — zero internal deps</text>
+
+        <!-- core -->
+        <rect x="465" y="265" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
+        <text class="bt" x="590" y="291" text-anchor="middle" fill="var(--core)">@cockpit/core</text>
+        <text class="bs" x="590" y="309" text-anchor="middle">daemon · state-machine · protocol</text>
+        <text class="bs" x="590" y="325" text-anchor="middle">AgentDriver interface · task/crew bus</text>
+
+        <!-- agents -->
+        <rect x="60" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--agents)" stroke-width="2"/>
+        <text class="bt" x="185" y="166" text-anchor="middle" fill="var(--agents)">@cockpit/agents</text>
+        <text class="bs" x="185" y="184" text-anchor="middle">AgentDriver seam</text>
+        <text class="bs" x="185" y="200" text-anchor="middle">claude · codex · opencode · gemini</text>
+
+        <!-- workspaces -->
+        <rect x="360" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="bt" x="485" y="166" text-anchor="middle" fill="var(--workspaces)">@cockpit/workspaces</text>
+        <text class="bs" x="485" y="184" text-anchor="middle">runtime · workspace · notifier seams</text>
+        <text class="bs" x="485" y="200" text-anchor="middle">cmux · obsidian drivers</text>
+
+        <!-- web -->
+        <rect x="660" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--web)" stroke-width="2"/>
+        <text class="bt" x="785" y="166" text-anchor="middle" fill="var(--web)">@cockpit/web</text>
+        <text class="bs" x="785" y="184" text-anchor="middle">dashboard (observability UI)</text>
+        <text class="bs" x="785" y="200" text-anchor="middle">bundled HTML/JS served by CLI</text>
+
+        <!-- cli (root) -->
+        <rect x="365" y="20" width="450" height="72" rx="10" fill="var(--panel)" stroke="var(--cli)" stroke-width="2.5"/>
+        <text class="bt" x="590" y="46" text-anchor="middle" fill="var(--cli)">@cockpit/cli</text>
+        <text class="bs" x="590" y="64" text-anchor="middle">commands · bin entry (dist/index.js) · daemon host (dist/cockpitd.js)</text>
+        <text class="bs" x="590" y="80" text-anchor="middle">root — depends on all other packages</text>
+
+        <!-- edges: shared → core -->
+        <line class="edge" x1="590" y1="380" x2="590" y2="339"/>
+
+        <!-- edges: core → agents, workspaces, web -->
+        <line class="edge" x1="530" y1="265" x2="230" y2="214"/>
+        <line class="edge" x1="570" y1="265" x2="520" y2="214"/>
+        <line class="edge" x1="650" y1="265" x2="760" y2="214"/>
+
+        <!-- edges: agents,workspaces,web → cli -->
+        <line class="edge" x1="200" y1="140" x2="420" y2="94"/>
+        <line class="edge" x1="500" y1="140" x2="540" y2="94"/>
+        <line class="edge" x1="770" y1="140" x2="760" y2="94"/>
+
+        <!-- shared → agents,workspaces,web (direct, dashed) -->
+        <line class="edgew" x1="530" y1="380" x2="205" y2="214"/>
+        <line class="edgew" x1="590" y1="380" x2="490" y2="214"/>
+        <line class="edgew" x1="650" y1="380" x2="775" y2="214"/>
+
+        <!-- DAG label -->
+        <text class="elabel" x="840" y="300">shared ◄ core ◄ {agents, workspaces, web} ◄ cli</text>
+        <text class="elabel" x="840" y="320">solid = primary · dashed = also @cockpit/shared</text>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><b style="background:var(--shared)"></b>shared</span>
+      <span><b style="background:var(--core)"></b>core</span>
+      <span><b style="background:var(--agents)"></b>agents</span>
+      <span><b style="background:var(--workspaces)"></b>workspaces</span>
+      <span><b style="background:var(--web)"></b>web</span>
+      <span><b style="background:var(--cli)"></b>cli</span>
+    </div>
+  </section>
+
+  <!-- SLIDE 2: Driver Seams -->
+  <section class="slide">
+    <h2>2 · Driver Seams</h2>
+    <p class="sub">Two plugin slots isolate cockpitd from concrete tool choices. Swap a driver without touching core. The <b style="color:var(--agents)">agent seam</b> abstracts which AI runs; the <b style="color:var(--workspaces)">workspace seam</b> abstracts how the terminal, vault, and notifier work.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 480">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <!-- Core box -->
+        <rect x="440" y="185" width="300" height="110" rx="10" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="bt" x="590" y="215" text-anchor="middle" fill="var(--core)">@cockpit/core</text>
+        <text class="bs" x="590" y="235" text-anchor="middle">cockpitd daemon logic</text>
+        <text class="chip" x="590" y="262" text-anchor="middle">AgentDriver interface</text>
+        <text class="bs" x="590" y="282" text-anchor="middle">+ DaemonSurfaceDriver</text>
+
+        <!-- Agent seam label -->
+        <rect x="30" y="20" width="320" height="36" rx="6" fill="none" stroke="var(--agents)" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <text x="190" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--agents)" font-weight="600">@cockpit/agents — AI driver seam</text>
+
+        <!-- agent drivers -->
+        <rect x="40" y="80" width="140" height="50" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
+        <text class="chip" x="110" y="108" text-anchor="middle">claude.ts</text>
+        <text class="bs" x="110" y="124" text-anchor="middle">ClaudeDriver</text>
+
+        <rect x="200" y="80" width="140" height="50" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
+        <text class="chip" x="270" y="108" text-anchor="middle">codex.ts</text>
+        <text class="bs" x="270" y="124" text-anchor="middle">CodexDriver</text>
+
+        <rect x="40" y="150" width="140" height="50" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
+        <text class="chip" x="110" y="178" text-anchor="middle">opencode.ts</text>
+        <text class="bs" x="110" y="194" text-anchor="middle">OpencodeDriver</text>
+
+        <rect x="200" y="150" width="140" height="50" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
+        <text class="chip" x="270" y="178" text-anchor="middle">gemini.ts</text>
+        <text class="bs" x="270" y="194" text-anchor="middle">GeminiDriver</text>
+
+        <!-- agents → core arrow -->
+        <line class="edge" x1="360" y1="150" x2="440" y2="230"/>
+        <text class="elabel" x="370" y="208">AgentDriver</text>
+
+        <!-- Workspace seam label -->
+        <rect x="830" y="20" width="320" height="36" rx="6" fill="none" stroke="var(--workspaces)" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <text x="990" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--workspaces)" font-weight="600">@cockpit/workspaces — env seam</text>
+
+        <!-- workspace drivers -->
+        <rect x="840" y="80" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="913" y="108" text-anchor="middle">runtimes/cmux.ts</text>
+        <text class="bs" x="913" y="124" text-anchor="middle">CmuxRuntime</text>
+
+        <rect x="1005" y="80" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="1078" y="108" text-anchor="middle">workspaces/</text>
+        <text class="bs" x="1078" y="124" text-anchor="middle">ObsidianWorkspace</text>
+
+        <rect x="840" y="150" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="913" y="178" text-anchor="middle">notifiers/cmux.ts</text>
+        <text class="bs" x="913" y="194" text-anchor="middle">CmuxNotifier</text>
+
+        <rect x="1005" y="150" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text class="chip" x="1078" y="178" text-anchor="middle">+ future</text>
+        <text class="bs" x="1078" y="194" text-anchor="middle">tmux · Slack · …</text>
+
+        <!-- workspaces → core arrow -->
+        <line class="edge" x1="840" y1="200" x2="742" y2="250"/>
+        <text class="elabel" x="758" y="208">DaemonSurfaceDriver</text>
+
+        <!-- core → CLI note -->
+        <rect x="440" y="370" width="300" height="70" rx="8" fill="var(--panel)" stroke="var(--cli)" stroke-width="1.5"/>
+        <text class="bt" x="590" y="396" text-anchor="middle" fill="var(--cli)">@cockpit/cli</text>
+        <text class="bs" x="590" y="414" text-anchor="middle">wires drivers + starts daemon</text>
+        <text class="bs" x="590" y="430" text-anchor="middle">dist/index.js · dist/cockpitd.js</text>
+        <line class="edge" x1="590" y1="370" x2="590" y2="297"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- SLIDE 3: Build artifacts + Captain→Crew -->
+  <section class="slide">
+    <h2>3 · Build Artifacts &amp; Runtime Model</h2>
+    <p class="sub"><code>pnpm build</code> (tsup) produces two self-contained bundles — all internal packages are inlined. The <b style="color:var(--agents)">Captain</b> is an interactive agent session in cmux; it spawns <b style="color:var(--workspaces)">Crew</b> members via <code>cockpit crew spawn</code>.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 440">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <!-- Build output -->
+        <rect x="30" y="20" width="520" height="180" rx="10" fill="var(--panel2)" stroke="var(--line)" stroke-width="1.5"/>
+        <text class="bt" x="290" y="50" text-anchor="middle">tsup build output</text>
+
+        <rect x="60" y="70" width="210" height="100" rx="8" fill="var(--panel)" stroke="var(--cli)" stroke-width="2"/>
+        <text class="chip" x="165" y="98" text-anchor="middle" fill="var(--cli)">dist/index.js</text>
+        <text class="bs" x="165" y="116" text-anchor="middle">CLI bin · cockpit command</text>
+        <text class="bs" x="165" y="132" text-anchor="middle">entry: packages/cli/src/index.ts</text>
+        <text class="bs" x="165" y="150" text-anchor="middle">inlines: all 5 lib pkgs</text>
+
+        <rect x="310" y="70" width="210" height="100" rx="8" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="415" y="98" text-anchor="middle" fill="var(--core)">dist/cockpitd.js</text>
+        <text class="bs" x="415" y="116" text-anchor="middle">daemon process · cockpitd</text>
+        <text class="bs" x="415" y="132" text-anchor="middle">entry: packages/cli/src/daemon-host.ts</text>
+        <text class="bs" x="415" y="150" text-anchor="middle">inlines: core + shared</text>
+
+        <!-- Captain→Crew -->
+        <rect x="620" y="20" width="530" height="380" rx="10" fill="var(--panel2)" stroke="var(--line)" stroke-width="1.5"/>
+        <text class="bt" x="885" y="50" text-anchor="middle">Runtime Model — Captain → Crew</text>
+
+        <!-- cmux workspace box -->
+        <rect x="650" y="70" width="470" height="300" rx="8" fill="var(--panel)" stroke="var(--dim)" stroke-width="1" stroke-dasharray="5 4"/>
+        <text class="elabel" x="885" y="92" text-anchor="middle">cmux workspace (terminal multiplexer)</text>
+
+        <!-- Captain tab -->
+        <rect x="670" y="105" width="200" height="90" rx="6" fill="var(--panel2)" stroke="var(--agents)" stroke-width="2"/>
+        <text class="chip" x="770" y="132" text-anchor="middle" fill="var(--agents)">⚓ Captain</text>
+        <text class="bs" x="770" y="150" text-anchor="middle">interactive agent session</text>
+        <text class="bs" x="770" y="166" text-anchor="middle">reads task · spawns crew</text>
+        <text class="bs" x="770" y="182" text-anchor="middle">cockpit crew spawn …</text>
+
+        <!-- Crew tabs -->
+        <rect x="890" y="105" width="200" height="75" rx="6" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="990" y="130" text-anchor="middle" fill="var(--workspaces)">🔧 Crew 1</text>
+        <text class="bs" x="990" y="148" text-anchor="middle">worktree branch</text>
+        <text class="bs" x="990" y="164" text-anchor="middle">signals done/blocked</text>
+
+        <rect x="890" y="200" width="200" height="75" rx="6" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="990" y="225" text-anchor="middle" fill="var(--workspaces)">🔧 Crew 2</text>
+        <text class="bs" x="990" y="243" text-anchor="middle">isolated worktree</text>
+        <text class="bs" x="990" y="259" text-anchor="middle">parallel to Crew 1</text>
+
+        <!-- Daemon -->
+        <rect x="670" y="235" width="200" height="110" rx="6" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="770" y="262" text-anchor="middle" fill="var(--core)">cockpitd daemon</text>
+        <text class="bs" x="770" y="280" text-anchor="middle">unix socket</text>
+        <text class="bs" x="770" y="296" text-anchor="middle">task state-machine</text>
+        <text class="bs" x="770" y="312" text-anchor="middle">crew signals → events</text>
+        <text class="bs" x="770" y="328" text-anchor="middle">dashboard data source</text>
+
+        <!-- arrows Captain→Crew, Captain→daemon -->
+        <line class="edge" x1="870" y1="145" x2="892" y2="145"/>
+        <line class="edge" x1="870" y1="180" x2="892" y2="237"/>
+        <line class="edge" x1="770" y1="195" x2="770" y2="235"/>
+        <text class="elabel" x="874" y="200">crew spawn</text>
+
+        <!-- dist → daemon note -->
+        <line class="edge" x1="415" y1="170" x2="720" y2="248"/>
+        <text class="elabel" x="450" y="225">spawns</text>
+        <line class="edge" x1="165" y1="170" x2="670" y2="290"/>
+        <text class="elabel" x="290" y="256">talks to via socket</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- SLIDE 4: Package table -->
+  <section class="slide">
+    <h2>4 · Package Reference</h2>
+    <p class="sub">Each package ships its own <code>tsconfig.json</code> + <code>src/</code>. All are private (not published to npm). <code>@cockpit/cli</code> is the only entry point for the outside world.</p>
+    <div class="stage" style="place-items:start;overflow:auto">
+      <table>
+        <thead><tr><th>Package</th><th>Contents</th><th>Depends on</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code style="color:var(--shared)">@cockpit/shared</code></td><td>Config schema, TypeScript types, leaf constants</td><td>—</td><td>Zero internal deps. Imported by everything.</td></tr>
+          <tr><td><code style="color:var(--core)">@cockpit/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, relay, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
+          <tr><td><code style="color:var(--agents)">@cockpit/agents</code></td><td>AI driver seam: <code>claude.ts</code>, <code>codex.ts</code>, <code>opencode.ts</code>, <code>gemini.ts</code> + registry</td><td>core, shared</td><td>Implements <code>AgentDriver</code>. Swap here to add a new AI agent.</td></tr>
+          <tr><td><code style="color:var(--workspaces)">@cockpit/workspaces</code></td><td>Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
+          <tr><td><code style="color:var(--web)">@cockpit/web</code></td><td>Observability dashboard — bundled HTML/JS served by CLI</td><td>core, shared</td><td>Read-only UI; no agent-facing code. Bundled inline by CLI's tsup build.</td></tr>
+          <tr><td><code style="color:var(--cli)">@cockpit/cli</code></td><td>CLI commands, bin entry (<code>dist/index.js</code>), daemon host (<code>dist/cockpitd.js</code>), templates, plugin dir</td><td>all packages</td><td>Root. Wires drivers. Two tsup entry points produce the two dist bundles.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <button id="prev">← Prev</button>
+    <div class="dots">
+      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i>
+    </div>
+    <button id="next">Next →</button>
+    <span class="num" id="num">1 / 4</span>
+  </footer>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const dots = document.querySelectorAll('.dots i');
+  let cur = 0, timer;
+  function go(n) {
+    slides[cur].classList.remove('active');
+    dots[cur].classList.remove('on');
+    cur = (n + slides.length) % slides.length;
+    slides[cur].classList.add('active');
+    dots[cur].classList.add('on');
+    document.getElementById('num').textContent = (cur + 1) + ' / ' + slides.length;
+  }
+  document.getElementById('next').onclick = () => { stopAuto(); go(cur + 1); };
+  document.getElementById('prev').onclick = () => { stopAuto(); go(cur - 1); };
+  dots.forEach(d => d.onclick = () => { stopAuto(); go(+d.dataset.i); });
+  function startAuto() { timer = setInterval(() => go(cur + 1), 4000); }
+  function stopAuto() { clearInterval(timer); }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { stopAuto(); go(cur + 1); }
+    if (e.key === 'ArrowLeft') { stopAuto(); go(cur - 1); }
+    if (e.key === 'a' || e.key === 'A') { stopAuto(); startAuto(); }
+  });
+</script>
+</body>
+</html>

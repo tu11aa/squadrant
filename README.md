@@ -90,6 +90,27 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit shutdown [project]` | Graceful shutdown |
 | `cockpit feedback` | Open opt-in feedback issue |
 
+## Monorepo structure
+
+Six internal packages in a one-way dependency DAG. All are private (not published to npm).
+
+| Package | Owns | Notes |
+|---|---|---|
+| `@cockpit/shared` | Config schema, TypeScript types, constants | Leaf lib — zero internal deps |
+| `@cockpit/core` | Daemon logic, state-machine, protocol, `AgentDriver` interface, task/crew bus | No concrete drivers — pure interfaces + orchestration |
+| `@cockpit/agents` | AI driver seam — `claude`, `codex`, `opencode`, `gemini` drivers + registry | Implements `AgentDriver`. Add a new AI agent here. |
+| `@cockpit/workspaces` | Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries | Implements surface/workspace/notifier seams |
+| `@cockpit/web` | Observability dashboard — bundled HTML/JS served by CLI | Read-only UI; inlined by CLI's tsup build |
+| `@cockpit/cli` | Commands, bin entry, daemon host, templates, plugin dir | Root — depends on all other packages |
+
+**Dependency DAG:** `shared ◄ core ◄ {agents, workspaces, web} ◄ cli`
+
+**Build outputs** (`pnpm build` via tsup, all internal packages inlined):
+- `dist/index.js` — CLI bin (`cockpit` command), entry: `packages/cli/src/index.ts`
+- `dist/cockpitd.js` — daemon process, entry: `packages/cli/src/daemon-host.ts`
+
+See the [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html) for a visual overview.
+
 ## Architecture
 
 ### Roles
@@ -107,27 +128,27 @@ Each role runs on the optimal model for cost/quality tradeoff. Configured in `co
 
 ### Runtime Abstraction
 
-Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `cockpit runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `src/runtimes/` — see `docs/specs/2026-04-20-plugin-system-runtime-design.md`.
+Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `cockpit runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `@cockpit/workspaces` (`packages/workspaces/runtimes/`) — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
 
 ### Workspace Abstraction
 
-Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `cockpit workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `src/workspaces/` — see `docs/specs/2026-04-21-plugin-system-workspace-design.md`.
+Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `cockpit workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@cockpit/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
 
 ### Notifier Abstraction
 
-User-facing notifications run behind a pluggable **notifier driver** (currently only `cmux`). Escalations and other "tell the user" events go through `cockpit notify <message>`. The default `CmuxNotifier` delegates to `cockpit runtime send --command` — the abstraction exists as a swap-point for future Slack/Discord/email/pager drivers. Notifier is global (no per-project override). See `docs/specs/2026-04-21-plugin-system-notifier-design.md`.
+User-facing notifications run behind a pluggable **notifier driver** (currently only `cmux`). Escalations and other "tell the user" events go through `cockpit notify <message>`. The default `CmuxNotifier` delegates to `cockpit runtime send --command` — the abstraction exists as a swap-point for future Slack/Discord/email/pager drivers. Notifier is global (no per-project override). See `docs/specs/archive/2026-04-21-plugin-system-notifier-design.md`.
 
 ### Crew Spawn (Interactive Sub-Sessions)
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `cockpit crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `cockpit crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
-Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `cockpit shutdown`. Non-Claude agents (codex/gemini) currently still launch in print-mode; full interactive support is a follow-up. See [`docs/specs/2026-05-05-cockpit-thin-redirect-design.md`](docs/specs/2026-05-05-cockpit-thin-redirect-design.md).
+Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `cockpit shutdown`. Non-Claude agents (codex/gemini) currently still launch in print-mode; full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-cockpit-thin-redirect-design.md`](docs/specs/archive/2026-05-05-cockpit-thin-redirect-design.md).
 
 ### Projection (Cross-Agent Config Sync)
 
-Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `cockpit projection emit`. User-level projection pushes cockpit's skills to `~/.cursor/rules/cockpit-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/cockpit.mdc`, `{project}/GEMINI.md` — zero cockpit-global content leaks into the project repo. Shared files use `<!-- cockpit:start --> ... <!-- cockpit:end -->` markers; dedicated files overwrite. See `docs/specs/2026-04-24-plugin-system-projection-design.md`.
+Cockpit rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `cockpit projection emit`. User-level projection pushes cockpit's skills to `~/.cursor/rules/cockpit-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/cockpit.mdc`, `{project}/GEMINI.md` — zero cockpit-global content leaks into the project repo. Shared files use `<!-- cockpit:start --> ... <!-- cockpit:end -->` markers; dedicated files overwrite. See `docs/specs/archive/2026-04-24-plugin-system-projection-design.md`.
 
-The user-level projection now also inlines `templates/captain.generic.md` and `templates/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the cockpit marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/2026-05-05-multi-agent-template-parity-plan.md` (#45).
+The user-level projection now also inlines `templates/captain.generic.md` and `templates/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the cockpit marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/archive/2026-05-05-multi-agent-template-parity-plan.md` (#45).
 
 ### Obsidian Vaults (Hub-and-Spoke)
 

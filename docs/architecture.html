@@ -195,6 +195,12 @@ li { margin-bottom: 4px; }
 </style>
 </head>
 <body>
+<div style="background:#0d2137;border-left:4px solid #58a6ff;padding:10px 16px;margin:12px;font-family:sans-serif;font-size:13px;border-radius:0 4px 4px 0;">
+  <strong style="color:#58a6ff;">ℹ️ Updated for monorepo layout (2026-06-18)</strong> — paths now reflect the 6-package structure
+  (<code style="background:#0a1a2a;padding:1px 4px;border-radius:3px;">packages/{shared,core,agents,workspaces,web,cli}/</code>).
+  For a visual overview see <a href="diagrams/2026-06-18-cockpit-monorepo-architecture.html" style="color:#58a6ff;">diagrams/2026-06-18-cockpit-monorepo-architecture.html</a>.
+</div>
+
 
 <nav class="toc">
   <h2>Contents</h2>
@@ -414,13 +420,13 @@ running in isolated git worktrees.
 
 <p>
 Cockpit defines three roles that form a strict hierarchy. Each role maps to a distinct agent session
-type, with its own template file in <code>orchestrator/</code> and its own configuration in
+type, with its own template file in <code>plugin/templates/</code> and its own configuration in
 <code>~/.config/cockpit/</code>.
 </p>
 
 <h3 id="command">Command — Orchestration Overseer</h3>
 <p>
-<strong>Template:</strong> <code>orchestrator/command.claude.md</code><br>
+<strong>Template:</strong> <code>plugin/templates/command.claude.md</code><br>
 <strong>Spawned by:</strong> <code>cockpit command --task &lt;briefing|learnings-review|wiki-aggregate&gt;</code><br>
 <strong>Skill:</strong> <code>cockpit:command-ops</code>
 </p>
@@ -433,8 +439,8 @@ status to the user. It may never read, write, or search project source code. It 
 
 <h3 id="captain">Captain — Project Leader</h3>
 <p>
-<strong>Templates:</strong> <code>orchestrator/captain.claude.md</code> (Claude),
-<code>orchestrator/captain.generic.md</code> (non-Claude agents)<br>
+<strong>Templates:</strong> <code>plugin/templates/captain.claude.md</code> (Claude),
+<code>plugin/templates/captain.generic.md</code> (non-Claude agents)<br>
 <strong>Spawned by:</strong> <code>cockpit launch &lt;project&gt;</code><br>
 <strong>Skill:</strong> <code>cockpit:captain-ops</code>
 </p>
@@ -453,8 +459,8 @@ Its responsibilities:
 
 <h3 id="crew">Crew — Worker Context</h3>
 <p>
-<strong>Templates:</strong> <code>orchestrator/crew.claude.md</code> (Claude),
-<code>orchestrator/crew.generic.md</code> (generic), <code>orchestrator/crew.opencode.md</code>
+<strong>Templates:</strong> <code>plugin/templates/crew.claude.md</code> (Claude),
+<code>plugin/templates/crew.generic.md</code> (generic), <code>plugin/templates/crew.opencode.md</code>
 (OpenCode)<br>
 <strong>Spawned by:</strong> <code>cockpit crew spawn &lt;project&gt; "&lt;task&gt;" [--agent &lt;agent&gt;]</code><br>
 <strong>Lifecycle:</strong> spawned as a cmux tab, given a task prompt, operates in a git worktree,
@@ -534,10 +540,10 @@ The configuration in <code>~/.config/cockpit/config.json</code> selects which dr
 </tbody>
 </table>
 
-<h3>Runtime Driver (src/runtimes/)</h3>
+<h3>Runtime Driver (<code>@cockpit/workspaces</code>)</h3>
 <p>
 The runtime abstracts the terminal multiplexer. Today only <strong>cmux</strong> is
-implemented (<code>src/runtimes/cmux.ts</code>). It wraps the <code>cmux</code> binary using
+implemented (<code>packages/workspaces/runtimes/cmux.ts</code>). It wraps the <code>cmux</code> binary using
 <code>execFileSync</code> with argv arrays (no shell injection). The <code>RuntimeRegistry</code>
 resolves which driver to use per-project from config.
 </p>
@@ -547,7 +553,7 @@ The runtime is the thickest plugin interface: it manages workspaces (captain ses
 implements all 10 interface methods.
 </p>
 
-<h3>Workspace Driver (src/workspaces/)</h3>
+<h3>Workspace Driver (<code>@cockpit/workspaces</code>)</h3>
 <p>
 The workspace abstracts persistent storage for cockpit's knowledge vaults (wiki, learnings, daily
 logs, handoffs). Today only <strong>Obsidian</strong> is implemented, which is a local filesystem
@@ -557,7 +563,7 @@ driver with path-escape protection. The <code>WorkspaceRegistry</code> resolves 
 (e.g., Obsidian Remote, Notion API, S3).
 </p>
 
-<h3>Notifier Driver (src/notifiers/)</h3>
+<h3>Notifier Driver (<code>@cockpit/workspaces</code>)</h3>
 <p>
 The notifier is the simplest plugin slot: a single <code>notify(message)</code> call. Today only
 <strong>cmux</strong> is implemented, which routes notifications through the
@@ -570,7 +576,7 @@ The notifier is the simplest plugin slot: a single <code>notify(message)</code> 
 <h2 id="agent-drivers">4. Agent Drivers</h2>
 
 <p>
-Agent drivers (<code>src/drivers/</code>) abstract the coding agent CLI. Each driver is a factory
+Agent drivers (<code>packages/agents/drivers/</code>) abstract the coding agent CLI. Each driver is a factory
 function returning an <code>AgentDriver</code> interface with four methods: <code>probe</code>,
 <code>buildCommand</code>, <code>parseOutput</code>, and <code>stop</code>. The
 <code>CapabilityRegistry</code> holds all registered drivers, probes each for installed
@@ -584,28 +590,28 @@ version/capabilities, and validates agent suitability per role.
 <tbody>
 <tr>
   <td><strong>Claude</strong></td>
-  <td><code>src/drivers/claude.ts</code></td>
+  <td><code>packages/agents/drivers/claude.ts</code></td>
   <td><code>claude</code> (bare TUI, no <code>-p</code>)</td>
   <td><code>claude -p "..." --print</code></td>
   <td><code>--dangerously-skip-permissions</code></td>
 </tr>
 <tr>
   <td><strong>Codex</strong></td>
-  <td><code>src/drivers/codex.ts</code></td>
+  <td><code>packages/agents/drivers/codex.ts</code></td>
   <td><code>codex</code> (via daemon AppServer)</td>
   <td><code>codex exec "..." --json --full-auto</code></td>
   <td><code>--full-auto</code></td>
 </tr>
 <tr>
   <td><strong>OpenCode</strong></td>
-  <td><code>src/drivers/opencode.ts</code></td>
+  <td><code>packages/agents/drivers/opencode.ts</code></td>
   <td><code>opencode</code> (bare TUI)</td>
   <td><code>opencode run "..."</code></td>
   <td>via per-crew <code>opencode.json</code> config (all-permissions)</td>
 </tr>
 <tr>
   <td><strong>Gemini</strong></td>
-  <td><code>src/drivers/gemini.ts</code></td>
+  <td><code>packages/agents/drivers/gemini.ts</code></td>
   <td>generates Gemini CLI interactive command</td>
   <td>via prompt flag</td>
   <td>via driver config</td>
@@ -618,7 +624,7 @@ version/capabilities, and validates agent suitability per role.
 Each agent driver exposes a set of <code>AgentCapability</code> values: <code>teams</code>,
 <code>json_output</code>, <code>sandbox</code>, <code>model_routing</code>, <code>skills</code>,
 <code>auto_approve</code>, <code>streaming</code>, <code>prompt_file</code>. The <code>ROLE_REQUIREMENTS</code>
-map in <code>src/drivers/types.ts:59</code> defines which capabilities each role requires:
+map in <code>packages/agents/drivers/types.ts:59</code> defines which capabilities each role requires:
 </p>
 <ul>
   <li>All roles require <strong>auto_approve</strong></li>
@@ -633,29 +639,29 @@ map in <code>src/drivers/types.ts:59</code> defines which capabilities each role
 <h2 id="control-plane">5. Control Plane (cockpitd Daemon)</h2>
 
 <p>
-The control plane daemon (<code>src/control/</code>, 14 files) is a macOS launchd-managed background
+The control plane daemon (<code>packages/core/</code>, 14 files) is a macOS launchd-managed background
 process that supervises all crew execution. It provides a task state machine, watchdog/heartbeat,
 push notification mailbox, interactive hook bridge, and Codex interactive driver.
 </p>
 
 <p>
-The daemon is defined in <code>src/control/launchd.ts</code> as a launchd agent
+The daemon is defined in <code>packages/core/launchd.ts</code> as a launchd agent
 (<code>com.cockpit.daemon</code>) with <code>KeepAlive</code> + <code>ThrottleInterval</code> (10s)
 to prevent crash loops. <code>ensureDaemon()</code> writes the plist and bootstraps the service.
-On startup (<code>src/index.ts:47</code>), <code>ensureDaemon()</code> runs before any command.
+On startup (<code>packages/cli/index.ts:47</code>), <code>ensureDaemon()</code> runs before any command.
 </p>
 
 <p>
 The daemon listens on a Unix domain socket at <code>~/.config/cockpit/cockpit.sock</code> using a
-JSON-line protocol (<code>src/control/protocol.ts</code>). Communication includes request/response
+JSON-line protocol (<code>packages/core/protocol.ts</code>). Communication includes request/response
 RPC and long-lived attach streaming connections for interactive Codex sessions.
 </p>
 
 <h3 id="state-machine">Task State Machine</h3>
 <p>
-The state machine (<code>src/control/state-machine.ts</code>) is a <strong>pure reducer function</strong>:
+The state machine (<code>packages/core/state-machine.ts</code>) is a <strong>pure reducer function</strong>:
 <code>reduce(record: TaskRecord, event: ControlEvent, now: number) =&gt; TaskRecord</code>. It is
-fully testable without I/O. The daemon (<code>src/control/daemon.ts</code>) injects side effects
+fully testable without I/O. The daemon (<code>packages/core/daemon.ts</code>) injects side effects
 (store, clock, process launcher, notifier).
 </p>
 
@@ -741,7 +747,7 @@ fully testable without I/O. The daemon (<code>src/control/daemon.ts</code>) inje
 </div>
 
 <p>
-Key state machine properties (<code>src/control/state-machine.ts</code>):
+Key state machine properties (<code>packages/core/state-machine.ts</code>):
 </p>
 <ul>
   <li><strong>Terminal states</strong> (<code>TERMINAL_STATES</code>): only <code>done</code> and
@@ -756,7 +762,7 @@ Key state machine properties (<code>src/control/state-machine.ts</code>):
 
 <h3 id="watchdog">Watchdog / Heartbeat</h3>
 <p>
-The watchdog (<code>src/control/watchdog.ts</code>) implements stall detection as a pure function:
+The watchdog (<code>packages/core/watchdog.ts</code>) implements stall detection as a pure function:
 </p>
 <ul>
   <li><code>evaluateStall(rec, now)</code> — if a <em>working</em> task has not received a heartbeat
@@ -765,7 +771,7 @@ The watchdog (<code>src/control/watchdog.ts</code>) implements stall detection a
   <code>stalled</code> record (caller must verify heartbeat freshness).</li>
 </ul>
 <p>
-The daemon sweeps all tasks on a 30-second interval (<code>src/control/cockpitd.ts:287-290</code>).
+The daemon sweeps all tasks on a 30-second interval (<code>packages/cli/packages/core/cockpitd.ts:287-290</code>).
 Interactive tasks (Claude, OpenCode, Codex) receive heartbeats from the PostToolUse hook
 (Claude), from the daemon's state ledger (OpenCode), or from the AppServer event stream (Codex).
 </p>
@@ -786,7 +792,7 @@ The daemon's role is purely the <strong>state ledger</strong>:
   <code>task.done</code> → <code>done</code></li>
 </ul>
 <p>
-The hooks are injected per-crew via <code>src/lib/per-crew-settings.ts</code>:
+The hooks are injected per-crew via <code>packages/cli/lib/per-crew-settings.ts</code>:
 <code>writePerCrewSettings()</code> writes a <code>--settings</code>-compatible JSON file with
 Stop/SubagentStop/SessionEnd hooks merged. <code>writePerCrewSettingsLocal()</code> writes
 <code>.claude/settings.local.json</code> at the project level (auto-loaded, not clobbered by
@@ -797,7 +803,7 @@ cmux wrapper settings).
 <p>
 Codex interactive crews use a fundamentally different architecture: the daemon
 <strong>owns the Codex child process</strong> via its <code>CodexInteractiveDriver</code>
-(<code>src/control/codex/</code>), which manages a single <code>AppServerClient</code> instance.
+(<code>packages/agents/src/codex/</code>), which manages a single <code>AppServerClient</code> instance.
 Each task maps to a thread inside that child.
 </p>
 <p>
@@ -821,7 +827,7 @@ The Codex architecture supports:
 <h2 id="projection">6. Cross-Agent Projection Layer</h2>
 
 <p>
-The projection layer (<code>src/projection/</code>, 9 files) implements <strong>issue #31</strong>:
+The projection layer (<code>packages/agents/projection/</code>, 9 files) implements <strong>issue #31</strong>:
 synchronizing cockpit's instruction templates into each agent's native configuration format.
 </p>
 
@@ -835,10 +841,10 @@ files (user-level and project-level):
 <tr><th>Target</th><th>File</th><th>Destination</th><th>Format</th></tr>
 </thead>
 <tbody>
-<tr><td>Cursor</td><td><code>src/projection/cursor.ts</code></td><td><code>.cursor/rules/*.mdc</code></td><td><code>.mdc</code> rule format</td></tr>
-<tr><td>Codex</td><td><code>src/projection/codex.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (marker merge)</td></tr>
-<tr><td>Gemini CLI</td><td><code>src/projection/gemini.ts</code></td><td><code>GEMINI.md</code></td><td>Markdown (marker merge)</td></tr>
-<tr><td>OpenCode</td><td><code>src/projection/opencode.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (marker merge)</td></tr>
+<tr><td>Cursor</td><td><code>packages/agents/projection/cursor.ts</code></td><td><code>.cursor/rules/*.mdc</code></td><td><code>.mdc</code> rule format</td></tr>
+<tr><td>Codex</td><td><code>packages/agents/projection/codex.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (marker merge)</td></tr>
+<tr><td>Gemini CLI</td><td><code>packages/agents/projection/gemini.ts</code></td><td><code>GEMINI.md</code></td><td>Markdown (marker merge)</td></tr>
+<tr><td>OpenCode</td><td><code>packages/agents/projection/opencode.ts</code></td><td><code>AGENTS.md</code></td><td>Markdown (marker merge)</td></tr>
 </tbody>
 </table>
 
@@ -849,16 +855,16 @@ canonical/source instruction format that Claude Code reads natively — other ag
 </p>
 
 <p>
-All emitters use a <strong>marker-based merge</strong> strategy (<code>src/projection/marker.ts</code>):
+All emitters use a <strong>marker-based merge</strong> strategy (<code>packages/agents/projection/marker.ts</code>):
 content is inserted between <code>&lt;!-- cockpit:start --&gt;</code> and <code>&lt;!-- cockpit:end --&gt;</code>
 markers. This allows surgical updates without clobbering user content outside the markers.
 </p>
 
 <p>
-The <code>ProjectionRegistry</code> (<code>src/projection/registry.ts</code>) holds emitter factories
+The <code>ProjectionRegistry</code> (<code>packages/agents/projection/registry.ts</code>) holds emitter factories
 and creates the correct emitter by name. The <code>cockpit projection</code> CLI command
-(<code>src/commands/projection.ts</code>) drives this: it reads user-level source
-(<code>orchestrator/</code> templates + <code>plugin/skills/</code>) and project-level source
+(<code>packages/cli/commands/projection.ts</code>) drives this: it reads user-level source
+(<code>plugin/templates/</code> templates + <code>plugin/skills/</code>) and project-level source
 (project <code>AGENTS.md</code>), then emits to all configured targets via
 <code>ProjectionEmitter.emit()</code>.
 </p>
@@ -874,7 +880,7 @@ markdown — Claude reads via Skill tool, others via AGENTS.md inclusion.
 <!-- ============================================================ -->
 <h2 id="other-modules">7. Other Modules</h2>
 
-<h3 id="commands">CLI Commands (src/commands/)</h3>
+<h3 id="commands">CLI Commands (<code>@cockpit/cli</code>)</h3>
 <p>
 25 files implementing the Commander-based CLI. Key commands:
 </p>
@@ -902,9 +908,9 @@ markdown — Claude reads via Skill tool, others via AGENTS.md inclusion.
 </tbody>
 </table>
 
-<h3 id="config">Configuration (src/config.ts)</h3>
+<h3 id="config">Configuration (packages/shared/config.ts)</h3>
 <p>
-The <code>CockpitConfig</code> interface (<code>src/config.ts:110-134</code>) defines the top-level
+The <code>CockpitConfig</code> interface (<code>packages/shared/config.ts:110-134</code>) defines the top-level
 configuration shape:
 </p>
 <ul>
@@ -922,7 +928,7 @@ configuration shape:
   <li><strong>metrics</strong> — flag + metrics file path</li>
 </ul>
 
-<h3 id="dashboard">Dashboard (src/dashboard/)</h3>
+<h3 id="dashboard">Dashboard (<code>@cockpit/web</code>)</h3>
 <p>
 Three files implementing the terminal dashboard:
 </p>
@@ -934,11 +940,11 @@ Three files implementing the terminal dashboard:
   <code>{hubVault}/projects/{project}.md</code></li>
 </ul>
 
-<h3>Library (src/lib/)</h3>
+<h3>Library (packages/cli/lib/)</h3>
 <p>Seven utility files:</p>
 <ul>
   <li><code>runtime-sync.ts</code> — mirrors <code>plugin/</code>, <code>scripts/</code>,
-  <code>orchestrator/</code> from source to <code>~/.config/cockpit/</code></li>
+  <code>plugin/templates/</code> from source to <code>~/.config/cockpit/</code></li>
   <li><code>cmux-bin.ts</code> — resolves cmux binary path (env → config → PATH → fallback)</li>
   <li><code>per-crew-settings.ts</code> — writes per-crew Claude settings and OpenCode config</li>
   <li><code>canonical-source.ts</code> — reads skills and AGENTS.md for projection</li>
@@ -946,9 +952,9 @@ Three files implementing the terminal dashboard:
   <li><code>daily-logs.ts</code> — read/write daily log files</li>
 </ul>
 
-<h3>Entry Point (src/index.ts)</h3>
+<h3>Entry Point (packages/cli/index.ts)</h3>
 <p>
-The CLI entrypoint (<code>src/index.ts</code>) does two things before registering any command:
+The CLI entrypoint (<code>packages/cli/index.ts</code>) does two things before registering any command:
 </p>
 <ul>
   <li>Calls <code>ensureRuntimeSynced()</code> — idempotent mirror of source-managed dirs to
@@ -971,7 +977,7 @@ Cockpit has three distinct storage areas:
 </p>
 
 <h3>Source Tree (~/me/claude-cockpit)</h3>
-<pre><code>src/                      # TypeScript source
+<pre><code>packages/*/src/          # TypeScript source (monorepo)
   index.ts                # CLI entrypoint
   config.ts               # Configuration interfaces + load/save
   commands/               # 25 CLI command files
@@ -988,7 +994,7 @@ Cockpit has three distinct storage areas:
   workspaces/            # Workspace plugin slot
 docs/                    # Specs and documentation
   specs/                 # 25 spec documents
-orchestrator/            # Role templates (7 files)
+plugin/templates/            # Role templates (7 files)
   command.claude.md      # Command template (Claude)
   captain.claude.md      # Captain template (Claude)
   captain.generic.md     # Captain template (generic)
@@ -1007,7 +1013,7 @@ inbox/                   # Mailbox push notification logs (*.log per project)
 cockpit.sock             # Unix domain socket for daemon RPC
 plugin/                  # Mirrored from source (plugin/skills/)
 scripts/                 # Mirrored from source (.sh files)
-orchestrator/            # Mirrored from source (role templates)
+plugin/templates/            # Mirrored from source (role templates)
 dist/                    # Compiled JS
 metrics.json             # Metrics data
 </code></pre>
@@ -1031,7 +1037,7 @@ spokes/{project}/        # Per-project spoke vaults
 The hub and spoke vaults are filesystem-based workspaces managed through the
 <a href="#workspace">workspace plugin slot</a>. The hub vault holds cross-project knowledge;
 each project's spoke vault holds project-specific knowledge. The <code>ensureSpokeLayout()</code>
-function in <code>src/lib/vault-layout.ts</code> idempotently creates the spoke subdirectory
+function in <code>packages/cli/lib/vault-layout.ts</code> idempotently creates the spoke subdirectory
 structure when a project is registered.
 </p>
 
@@ -1052,7 +1058,7 @@ structure when a project is registered.
 </table>
 <p>
 This report reflects the state of the <code>develop</code> branch at commit <code>75c8d38</code>.
-Every claim is grounded in the actual source code: src/ tree, docs/specs/, orchestrator/ templates,
+Every claim is grounded in the actual source code: src/ tree, docs/specs/, plugin/templates/ templates,
 and the GitNexus code knowledge graph (clusters, processes, queries).
 </p>
 <p>
