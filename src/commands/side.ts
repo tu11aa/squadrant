@@ -15,12 +15,11 @@ import {
 } from "@cockpit/agents";
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew.js";
 import { resolveTextInput } from "@cockpit/shared";
-import { addWorktree, removeWorktree, worktreePath } from "@cockpit/shared";
+import { addWorktree, removeWorktree, worktreePath, resolveWorktreeBase } from "@cockpit/shared";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 
-// Debug scratch worktrees branch off develop (same as crew --worktree).
-const WORKTREE_BASE_BRANCH = "develop";
+// Base branch derived at spawn time from origin/HEAD (#359).
 
 const SIDE_ROLES = ["research", "debug"] as const;
 type SideRole = (typeof SIDE_ROLES)[number];
@@ -136,7 +135,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
         worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
         project: input.project,
         name,
-        base: WORKTREE_BASE_BRANCH,
+        base: resolveWorktreeBase(proj.path),
       })
     : proj.path;
 

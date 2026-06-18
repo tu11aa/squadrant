@@ -34,6 +34,24 @@ export function crewBranch(name: string): string {
   return `crew/${name}`;
 }
 
+// #359: derive the branch a new worktree should be based on. Reads origin/HEAD
+// so main-based repos work without a hand-created `develop`. Falls back to
+// `fallback` (default "develop") when origin/HEAD is unset.
+export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): string {
+  try {
+    const ref = execFileSync(
+      "git",
+      ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    ).toString().trim();
+    const m = ref.match(/^refs\/remotes\/origin\/(.+)$/);
+    if (m) return m[1];
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
 /**
  * Create the crew's worktree + branch and return its absolute path.
  * Fails loud (throws) if git refuses — e.g. the base branch is missing or the
