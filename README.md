@@ -90,6 +90,27 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit shutdown [project]` | Graceful shutdown |
 | `cockpit feedback` | Open opt-in feedback issue |
 
+## Monorepo structure
+
+Six internal packages in a one-way dependency DAG. All are private (not published to npm).
+
+| Package | Owns | Notes |
+|---|---|---|
+| `@cockpit/shared` | Config schema, TypeScript types, constants | Leaf lib — zero internal deps |
+| `@cockpit/core` | Daemon logic, state-machine, protocol, `AgentDriver` interface, task/crew bus | No concrete drivers — pure interfaces + orchestration |
+| `@cockpit/agents` | AI driver seam — `claude`, `codex`, `opencode`, `gemini` drivers + registry | Implements `AgentDriver`. Add a new AI agent here. |
+| `@cockpit/workspaces` | Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries | Implements surface/workspace/notifier seams |
+| `@cockpit/web` | Observability dashboard — bundled HTML/JS served by CLI | Read-only UI; inlined by CLI's tsup build |
+| `@cockpit/cli` | Commands, bin entry, daemon host, templates, plugin dir | Root — depends on all other packages |
+
+**Dependency DAG:** `shared ◄ core ◄ {agents, workspaces, web} ◄ cli`
+
+**Build outputs** (`pnpm build` via tsup, all internal packages inlined):
+- `dist/index.js` — CLI bin (`cockpit` command), entry: `packages/cli/src/index.ts`
+- `dist/cockpitd.js` — daemon process, entry: `packages/cli/src/daemon-host.ts`
+
+See the [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html) for a visual overview.
+
 ## Architecture
 
 ### Roles
@@ -107,11 +128,11 @@ Each role runs on the optimal model for cost/quality tradeoff. Configured in `co
 
 ### Runtime Abstraction
 
-Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `cockpit runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `packages/workspaces/src/runtimes/` — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
+Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `cockpit runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `@cockpit/workspaces` (`packages/workspaces/runtimes/`) — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
 
 ### Workspace Abstraction
 
-Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `cockpit workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `packages/workspaces/src/workspaces/` — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
+Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `cockpit workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@cockpit/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
 
 ### Notifier Abstraction
 

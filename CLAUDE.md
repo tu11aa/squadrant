@@ -54,6 +54,21 @@ When working on cockpit:
 
 Full direction statement: [`docs/specs/2026-04-24-multi-agent-direction.md`](docs/specs/2026-04-24-multi-agent-direction.md).
 
+## Repository layout
+
+Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} ◄ cli`
+
+| Package | Owns |
+|---|---|
+| `@cockpit/shared` | Config schema, types, constants — leaf, zero internal deps |
+| `@cockpit/core` | Daemon, state-machine, protocol, `AgentDriver` interface |
+| `@cockpit/agents` | AI driver seam: claude / codex / opencode / gemini |
+| `@cockpit/workspaces` | Runtime (cmux), workspace (obsidian), notifier drivers |
+| `@cockpit/web` | Observability dashboard (bundled HTML/JS) |
+| `@cockpit/cli` | Commands, bin entry, daemon host — root package |
+
+Build outputs: `dist/index.js` (CLI bin) · `dist/cockpitd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
+
 ## Coding Discipline: Karpathy Principles
 
 Every coding task in this repo (captain, crew, and direct edits) follows [`plugin/skills/karpathy-principles/SKILL.md`](plugin/skills/karpathy-principles/SKILL.md):
