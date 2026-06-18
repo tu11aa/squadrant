@@ -61,9 +61,9 @@ vi.mock("@cockpit/shared", async () => {
 });
 
 // Avoid accidentally touching a real workspace: stub obsidian factory.
-vi.mock("../../workspaces/index.js", async () => {
-  const actual = await vi.importActual<typeof import("../../workspaces/index.js")>(
-    "../../workspaces/index.js",
+vi.mock("@cockpit/workspaces", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/workspaces")>(
+    "@cockpit/workspaces",
   );
   return {
     ...actual,

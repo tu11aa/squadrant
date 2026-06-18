@@ -5,7 +5,7 @@ import chalk from "chalk";
 import matter from "gray-matter";
 import { loadConfig, resolveHome, type ProjectConfig, type CockpitConfig } from "@cockpit/shared";
 import { readDailyLog, getGitCommits, iso, daysAgo } from "@cockpit/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import { createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
 
 interface StatusFrontmatter {
   project?: string;

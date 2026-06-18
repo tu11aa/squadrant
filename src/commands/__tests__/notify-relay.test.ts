@@ -10,7 +10,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToMailbox, writeCursor, readCursor } from "@cockpit/core";
 import { runNotifyRelay, DEFAULT_STATE_ROOT, STALE_THRESHOLD_MS, DEFAULT_MAX_DEFERS, DEFAULT_STABLE_PROBE_POLLS } from "../notify-relay.js";
-import { DeferDelivery } from "../../runtimes/cmux.js";
+import { DeferDelivery } from "@cockpit/workspaces";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 function freshState(): string {

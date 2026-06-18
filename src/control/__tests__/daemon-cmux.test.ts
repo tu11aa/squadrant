@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DaemonCmux } from "../cmux/daemon-cmux.js";
-import { DeferDelivery } from "../../runtimes/cmux.js";
+import { DaemonCmux, DeferDelivery } from "@cockpit/workspaces";
 
 describe("DaemonCmux", () => {
   it("listSurfaces failure returns [] (never throws into the caller)", async () => {

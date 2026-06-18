@@ -14,9 +14,8 @@ export { discoverCaptainSurface } from "@cockpit/core";
 import type { AttachFrame } from "@cockpit/core";
 import type { PaneRef } from "@cockpit/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@cockpit/agents";
-import { CmuxEventsBridge } from "./cmux/events-bridge.js";
+import { CmuxEventsBridge, DaemonCmux } from "@cockpit/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
-import { DaemonCmux } from "./cmux/daemon-cmux.js";
 import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
 
 const SELF_PATH = fileURLToPath(import.meta.url);

@@ -13,7 +13,7 @@ import {
   type ProjectionEmitter,
   type ProjectionSource,
 } from "@cockpit/agents";
-import { createObsidianDriver } from "../workspaces/index.js";
+import { createObsidianDriver } from "@cockpit/workspaces";
 import type { WorkspaceDriver } from "@cockpit/shared";
 import {
   readUserLevelSource,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readDailyLog, parseSection } from "@cockpit/shared";
-import { createMemoryDriver } from "../../workspaces/__tests__/helpers/memory-driver.js";
+import { createMemoryDriver } from "../../../packages/workspaces/src/workspaces/__tests__/helpers/memory-driver.js";
 
 describe("readDailyLog", () => {
   it("returns null when the daily log does not exist", async () => {

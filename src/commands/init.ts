@@ -10,7 +10,7 @@ import {
   DEFAULT_CONFIG_PATH,
   resolveHome,
 } from "@cockpit/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import { createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
 import { ensureRuntimeSynced } from "@cockpit/shared";
 
 function findPackageRoot(): string {

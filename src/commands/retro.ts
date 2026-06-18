@@ -13,7 +13,7 @@ import {
   iso,
   daysAgo,
 } from "@cockpit/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import { createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
 
 interface StatusFrontmatter {
   tasks_total?: number;
