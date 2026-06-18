@@ -29,13 +29,15 @@ vi.mock("@cockpit/shared", async () => {
 });
 
 const mockReadAllStatuses = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/web", () => ({
-  readAllStatuses: mockReadAllStatuses,
-  renderDashboard: vi.fn((statuses) => "grid\n"),
-  syncHub: vi.fn((input) => []),
-  startWebServer: vi.fn(),
-  defaultProbeRunners: vi.fn(() => ({})),
-}));
+vi.mock("@cockpit/web", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/web")>("@cockpit/web");
+  return {
+    ...actual,
+    readAllStatuses: mockReadAllStatuses,
+    startWebServer: vi.fn(),
+    defaultProbeRunners: vi.fn(() => ({})),
+  };
+});
 
 import { runDashboardOnce, runDashboardPane, runSyncHub } from "../dashboard.js";
 
