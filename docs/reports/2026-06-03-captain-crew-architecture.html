@@ -1,0 +1,1419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain ↔ Crew Architecture — claude-cockpit (develop, 2026-06-03)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
+    --muted: #9da7b3; --accent: #58a6ff; --warn: #d29922; --crit: #f85149;
+    --ok: #3fb950; --vi: #1c2733; --vi-border: #2d4257; --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px; line-height: 1.6;
+  }
+  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--border); padding: 20px 16px;
+    font-size: 14px;
+  }
+  nav.toc h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
+  nav.toc a { display: block; color: var(--fg); text-decoration: none; padding: 3px 8px; border-radius: 6px; }
+  nav.toc a:hover { background: #21262d; color: var(--accent); }
+  nav.toc .lvl2 { padding-left: 18px; color: var(--muted); font-size: 13px; }
+  main { padding: 32px 48px 120px; max-width: 1100px; }
+  header.hero { border-bottom: 1px solid var(--border); padding-bottom: 22px; margin-bottom: 28px; }
+  header.hero h1 { font-size: 30px; margin: 0 0 8px; line-height: 1.25; }
+  header.hero .sub { color: var(--muted); font-size: 15px; }
+  .pills { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { background: #21262d; border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; font-size: 12.5px; color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: #1f6f3a; }
+  h2.section { font-size: 25px; margin: 52px 0 6px; padding-top: 14px; border-top: 1px solid var(--border); }
+  h3 { font-size: 19px; margin: 30px 0 8px; }
+  h4 { font-size: 16px; margin: 20px 0 6px; color: var(--accent); }
+  p { margin: 10px 0; }
+  code.inline { background: #21262d; padding: 1px 6px; border-radius: 5px; font-size: 13.5px; font-family: "SF Mono", Menlo, Consolas, monospace; color: #ffa657; }
+  .lang { border-radius: 10px; padding: 2px 0 6px; margin: 14px 0; }
+  .lang.en { }
+  .lang.vi { background: var(--vi); border: 1px solid var(--vi-border); padding: 10px 18px 14px; border-radius: 10px; }
+  .lang h4.flag { font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 6px 0 4px; }
+  .lang.vi h4.flag { color: #79c0ff; }
+  figure.snippet { margin: 16px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--code-bg); }
+  figure.snippet figcaption { background: #11161d; color: var(--muted); font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+  figure.snippet figcaption .fp { color: #ffa657; }
+  pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .mermaid { background: #f7fafc; border-radius: 10px; padding: 18px; margin: 18px 0; text-align: center; overflow-x: auto; }
+  .callout { border-left: 4px solid var(--accent); background: #11202e; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout.warn { border-color: var(--warn); background: #2a2410; }
+  .callout.crit { border-color: var(--crit); background: #2d1414; }
+  .callout.ok { border-color: var(--ok); background: #112417; }
+  .callout strong { color: var(--fg); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #1b2129; color: var(--fg); }
+  td.pros { color: #8ddfa6; } td.cons { color: #f0a3a0; }
+  .rel { font-weight: 600; }
+  .rel.high { color: var(--ok); } .rel.med { color: var(--warn); } .rel.low { color: var(--crit); }
+  .toolbar { position: fixed; top: 12px; right: 18px; z-index: 50; display: flex; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px; }
+  .toolbar button { background: transparent; border: 1px solid transparent; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px 12px; border-radius: 999px; }
+  .toolbar button.active { background: var(--accent); color: #04121f; font-weight: 600; }
+  .anchor { position: relative; top: -10px; visibility: hidden; }
+  .ev { font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; color: #d2a8ff; }
+  ul, ol { margin: 8px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+  .legend { font-size: 13px; color: var(--muted); }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 24px 18px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar" role="group" aria-label="Language toggle">
+  <button data-mode="both" class="active">🇬🇧+🇻🇳 Both</button>
+  <button data-mode="en">🇬🇧 EN</button>
+  <button data-mode="vi">🇻🇳 VI</button>
+</div>
+<div class="layout">
+<nav class="toc">
+  <strong style="font-size:15px;">Contents</strong>
+  <h2>Overview</h2>
+  <a href="#intro">0 · Introduction</a>
+  <a href="#two-mechanisms">1 · Two signal mechanisms</a>
+  <a href="#shared">2 · Shared pipeline</a>
+  <h2>Per-provider graphs</h2>
+  <a href="#claude">3 · Captain ↔ Claude crew</a>
+  <a href="#claude-solutions" class="lvl2">3.x · Detect/dispatch options</a>
+  <a href="#codex">4 · Captain ↔ Codex crew</a>
+  <a href="#codex-solutions" class="lvl2">4.x · Detect/dispatch options</a>
+  <a href="#opencode">5 · Captain ↔ Opencode crew</a>
+  <a href="#opencode-solutions" class="lvl2">5.x · Detect/dispatch options</a>
+  <h2>Analysis</h2>
+  <a href="#reliability">6 · Reliability gaps (#207–#210)</a>
+  <a href="#redesign">7 · Toward a reliable design</a>
+  <a href="#appendix">8 · Event reference</a>
+</nav>
+<main>
+<header class="hero">
+  <h1>Captain ↔ Crew Lifecycle Architecture</h1>
+  <div class="sub">A code-grounded analysis of how a cockpit <strong>captain</strong> dispatches work to and receives signals from <strong>claude</strong>, <strong>codex</strong>, and <strong>opencode</strong> crews — on the current <code class="inline">develop</code> branch.</div>
+  <div class="pills">
+    <span class="pill">Branch: <strong>feat/docs-captain-crew-arch</strong></span>
+    <span class="pill">Base: develop @ 8efd1a3</span>
+    <span class="pill">Date: 2026-06-03</span>
+    <span class="pill ok">Docs only — no source changed</span>
+  </div>
+</header>
+
+<!-- ════════════════════════ 0 · INTRO ════════════════════════ -->
+<span class="anchor" id="intro"></span>
+<h2 class="section">0 · Introduction</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Cockpit is a multi-agent orchestration layer. The <strong>captain ↔ crew loop is the core</strong>: a <strong>captain</strong> is an interactive agent session running in a <code class="inline">cmux</code> workspace. It spawns <strong>crew</strong> sessions — one per task — as tabs in that same workspace, and needs to know when each crew finishes, gets blocked, or fails, <em>without</em> constantly scraping the crew's terminal.</p>
+<p class="legend">Note on scope: in practice you drive cockpit through the CLI to spawn workspaces (the CLI is the "ignition key, not the brain"). A <code class="inline">Command</code> session still exists but is now <strong>optional and on-demand</strong> (<code class="inline">cockpit command --task briefing|learnings-review|wiki-aggregate</code>, src/commands/command.ts) — it is not an always-on top-of-hierarchy role, and this report does not depend on it. The Reactor role was removed entirely (PR #155).</p>
+<p>The control plane that makes this work is a long-lived daemon (<code class="inline">cockpitd</code>) plus a per-captain <strong>notify-relay</strong>. The daemon owns the authoritative <em>task state ledger</em>; the relay tails the daemon's per-project mailbox file and injects human-readable lines (<span class="ev">CREW DONE</span>, <span class="ev">CREW BLOCKED</span>, …) into the captain's pane.</p>
+<p>This report documents the <strong>full round trip</strong> — captain → daemon → crew CLI, and crew → daemon → relay → captain — for all three crew providers, embeds the real code that implements each edge, enumerates every viable lifecycle-detection mechanism per provider, then catalogs the known reliability gaps (issues <a href="#reliability">#207–#210</a>) and proposes a more reliable design.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Cockpit là một lớp điều phối đa tác tử (multi-agent orchestration). <strong>Vòng lặp captain ↔ crew là cốt lõi</strong>: một <strong>captain</strong> là một phiên agent tương tác chạy trong workspace <code class="inline">cmux</code>. Nó sinh ra các phiên <strong>crew</strong> — mỗi task một crew — dưới dạng các tab trong cùng workspace đó, và cần biết khi nào mỗi crew hoàn thành, bị chặn (blocked), hay thất bại (failed) mà <em>không</em> phải liên tục đọc (scrape) terminal của crew.</p>
+<p class="legend">Ghi chú về phạm vi: trên thực tế bạn điều khiển cockpit qua CLI để spawn workspace (CLI là "chìa khóa khởi động, không phải bộ não"). Một phiên <code class="inline">Command</code> vẫn tồn tại nhưng giờ <strong>tùy chọn và theo-yêu-cầu</strong> (<code class="inline">cockpit command --task briefing|learnings-review|wiki-aggregate</code>, src/commands/command.ts) — nó không phải vai trò trên-cùng luôn-chạy, và báo cáo này không phụ thuộc vào nó. Vai trò Reactor đã bị loại bỏ hoàn toàn (PR #155).</p>
+<p>Control plane làm việc này gồm một daemon chạy lâu dài (<code class="inline">cockpitd</code>) cùng một <strong>notify-relay</strong> cho mỗi captain. Daemon nắm giữ <em>sổ cái trạng thái task</em> (task state ledger) làm nguồn chính thống; relay đọc đuôi (tail) file mailbox theo từng project của daemon và bơm (inject) các dòng dễ đọc (<span class="ev">CREW DONE</span>, <span class="ev">CREW BLOCKED</span>, …) vào pane của captain.</p>
+<p>Báo cáo này mô tả <strong>toàn bộ vòng khứ hồi</strong> — captain → daemon → crew CLI, và crew → daemon → relay → captain — cho cả ba nhà cung cấp crew, nhúng mã nguồn thật hiện thực từng cạnh (edge), liệt kê mọi cơ chế phát hiện vòng đời (lifecycle-detection) khả thi cho từng provider, rồi tổng hợp các lỗ hổng độ tin cậy đã biết (issue <a href="#reliability">#207–#210</a>) và đề xuất một thiết kế tin cậy hơn.</p>
+</div>
+
+<!-- ════════════════════════ 1 · TWO MECHANISMS ════════════════════════ -->
+<span class="anchor" id="two-mechanisms"></span>
+<h2 class="section">1 · The two distinct signal mechanisms</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Everything in this report hinges on one distinction. There are <strong>two completely separate ways</strong> the captain learns about a crew, and they must never be conflated:</p>
+<ul>
+  <li><strong>TYPE 1 — automatic turn-end / idle / liveness detection.</strong> The infrastructure observes that the crew <em>ended a turn</em> (or stopped heartbeating) and emits <span class="ev">task.turn.completed</span> → the state machine moves the task to <code class="inline">awaiting-input</code> (an answerable idle, <em>not</em> a finished task). Per provider:
+    <ul>
+      <li><strong>claude</strong>: the native <span class="ev">Stop</span> hook → <span class="ev">task.turn.completed</span></li>
+      <li><strong>opencode</strong>: an SSE <span class="ev">session.idle</span> event → <span class="ev">task.turn.completed</span></li>
+      <li><strong>codex</strong>: an app-server JSON-RPC <span class="ev">turn/completed</span> notification → <span class="ev">task.turn.completed</span></li>
+    </ul>
+  </li>
+  <li><strong>TYPE 2 — explicit terminal report (DONE / BLOCKED / FAILED).</strong> The model itself <em>runs a command</em> — <code class="inline">cockpit crew signal done|blocked|failed</code> — after its own settle-check (git clean, etc.). This is the only path that produces <span class="ev">task.done</span> / <span class="ev">task.failed</span>.</li>
+</ul>
+<div class="callout crit">
+<strong>HARD INVARIANT (anti-#2576):</strong> no automatic TYPE-1 event ever maps to <span class="ev">task.done</span>. A turn ending is liveness, never completion. The state machine, the claude hook mapper, the codex normalizer, and the opencode bridge all encode this independently. Terminal state is <em>exclusively</em> the explicit TYPE-2 signal.
+</div>
+<p>Why the split exists: a strong model often ends a turn (TYPE 1) many times before the work is actually done. If turn-end auto-completed the task, the captain would be told "DONE" prematurely and the crew would be abandoned mid-work. TYPE 1 keeps the captain aware the crew is idle and answerable; TYPE 2 is the crew's deliberate declaration that it is truly finished.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Mọi thứ trong báo cáo này xoay quanh một phân biệt cốt lõi. Có <strong>hai cách hoàn toàn tách biệt</strong> để captain biết về một crew, và tuyệt đối không được nhập nhằng hai cách này:</p>
+<ul>
+  <li><strong>LOẠI 1 — phát hiện tự động kết-thúc-lượt / nhàn rỗi / còn-sống (turn-end / idle / liveness).</strong> Hạ tầng quan sát thấy crew <em>vừa kết thúc một lượt</em> (hoặc ngừng gửi heartbeat) và phát ra <span class="ev">task.turn.completed</span> → máy trạng thái (state machine) chuyển task sang <code class="inline">awaiting-input</code> (trạng thái nhàn rỗi có thể trả lời, <em>không phải</em> task đã xong). Theo từng provider:
+    <ul>
+      <li><strong>claude</strong>: hook <span class="ev">Stop</span> gốc → <span class="ev">task.turn.completed</span></li>
+      <li><strong>opencode</strong>: sự kiện SSE <span class="ev">session.idle</span> → <span class="ev">task.turn.completed</span></li>
+      <li><strong>codex</strong>: thông báo JSON-RPC <span class="ev">turn/completed</span> từ app-server → <span class="ev">task.turn.completed</span></li>
+    </ul>
+  </li>
+  <li><strong>LOẠI 2 — báo cáo kết thúc tường minh (DONE / BLOCKED / FAILED).</strong> Chính model <em>chạy một lệnh</em> — <code class="inline">cockpit crew signal done|blocked|failed</code> — sau khi tự kiểm tra trạng thái ổn định (git sạch, v.v.). Đây là con đường <em>duy nhất</em> tạo ra <span class="ev">task.done</span> / <span class="ev">task.failed</span>.</li>
+</ul>
+<div class="callout crit">
+<strong>BẤT BIẾN CỨNG (anti-#2576):</strong> không một sự kiện LOẠI 1 tự động nào được ánh xạ sang <span class="ev">task.done</span>. Kết thúc một lượt là tín hiệu còn-sống, không bao giờ là hoàn-thành. Máy trạng thái, bộ ánh xạ hook của claude, bộ chuẩn hóa của codex, và cầu nối (bridge) của opencode đều mã hóa nguyên tắc này một cách độc lập. Trạng thái kết thúc <em>chỉ</em> đến từ tín hiệu LOẠI 2 tường minh.
+</div>
+<p>Lý do tách hai loại: một model mạnh thường kết thúc một lượt (LOẠI 1) nhiều lần trước khi công việc thực sự xong. Nếu kết-thúc-lượt tự động hoàn thành task, captain sẽ bị báo "DONE" quá sớm và crew bị bỏ rơi giữa chừng. LOẠI 1 giữ cho captain biết crew đang nhàn rỗi và có thể trả lời; LOẠI 2 là tuyên bố có chủ đích của crew rằng nó thực sự đã hoàn tất.</p>
+</div>
+
+<!-- ════════════════════════ 2 · SHARED PIPELINE ════════════════════════ -->
+<span class="anchor" id="shared"></span>
+<h2 class="section">2 · The shared pipeline (common to all three providers)</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Before the per-provider differences, here is the spine every crew shares: dispatch into the daemon, state reduction, mailbox append, and relay delivery back to the captain.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Trước khi vào khác biệt giữa các provider, đây là <em>xương sống</em> mọi crew dùng chung: dispatch vào daemon, rút gọn trạng thái (state reduction), ghi vào mailbox, và relay chuyển tín hiệu về captain.</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  CAP["Captain session<br/>(cmux pane)"]
+  CLI["cockpit crew spawn<br/>(src/commands/crew.ts)"]
+  DCALL["cockpitdCall → Unix socket<br/>(crew-control.ts)"]
+  DAEMON["cockpitd daemon<br/>handle / reduce / store"]
+  SM["state-machine.reduce()<br/>task state ledger"]
+  NOTIFY["defaultNotify → appendToMailbox<br/>(cockpitd.ts / mailbox.ts)"]
+  MBOX[("inbox/&lt;project&gt;.log<br/>mailbox file")]
+  RELAY["notify-relay drain()<br/>formatEntry → sendToSurface"]
+  CAPIN["Captain pane<br/>CREW DONE/BLOCKED/FAILED"]
+  CREW["Crew CLI<br/>(claude / codex / opencode)"]
+
+  CAP -->|"1 dispatch task"| CLI
+  CLI -->|"2 dispatch record"| DCALL
+  DCALL -->|"3"| DAEMON
+  DAEMON --> SM
+  DAEMON -->|"4 launchInteractive"| CREW
+  CREW -->|"5 TYPE-1 liveness / TYPE-2 signal events"| DAEMON
+  SM -->|"6 attention state"| NOTIFY
+  NOTIFY -->|"7 append JSON entry"| MBOX
+  RELAY -->|"8 tail from cursor"| MBOX
+  RELAY -->|"9 inject line"| CAPIN
+  CAPIN --> CAP
+</div>
+
+<h3>2.1 — Dispatch: building the task record</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Every spawn (any provider) builds a <code class="inline">TaskRecord</code> via <code class="inline">buildDispatchRequest</code> and hands it to the daemon. The record carries the provider, mode, cwd, and the <code class="inline">heartbeatBudgetMs</code> that the watchdog later uses. The default budget is 5 minutes (<code class="inline">300000</code>) — note this number, it becomes important for opencode and for issue #208.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Mọi lần spawn (bất kỳ provider nào) đều dựng một <code class="inline">TaskRecord</code> qua <code class="inline">buildDispatchRequest</code> rồi trao cho daemon. Bản ghi mang theo provider, mode, cwd, và <code class="inline">heartbeatBudgetMs</code> mà watchdog dùng về sau. Ngân sách mặc định là 5 phút (<code class="inline">300000</code>) — hãy ghi nhớ con số này, nó trở nên quan trọng với opencode và với issue #208.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew-control.ts</span> · L55–74 — buildDispatchRequest</figcaption>
+<pre><code class="language-typescript">export function buildDispatchRequest(o: {
+  project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
+  approvalPolicy?: string; roleInstructions?: string; name?: string; serverPort?: number;
+}): { kind: "dispatch"; record: TaskRecord } {
+  const now = Date.now();
+  const attemptId = randomUUID();
+  return {
+    kind: "dispatch",
+    record: {
+      id: randomUUID(), project: o.project, provider: o.provider, mode: o.mode,
+      state: "submitted", task: o.task, cwd: o.cwd, createdAt: now, lastHeartbeat: now,
+      lastEvent: "dispatch", heartbeatBudgetMs: o.budgetMs ?? 300000,
+      attempts: [{ attemptId, startedAt: now, lastHeartbeatAt: now }],
+      ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
+      ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
+      ...(o.name ? { name: o.name } : {}),
+      ...(o.serverPort ? { serverPort: o.serverPort } : {}),
+    },
+  };
+}</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew-control.ts</span> · L92–110 — cockpitdCall (fail-loud, no scrape fallback)</figcaption>
+<pre><code class="language-typescript">export async function cockpitdCall(req: unknown): Promise&lt;unknown&gt; {
+  try {
+    return await sendRequest(SOCK, req);
+  } catch {
+    ensureDaemon(); // resolves its own entrypoint — never pass a path here
+    // kickstart→socket is racy; bounded backoff. If all attempts fail,
+    // throw the last error (fail loud, no scrape fallback).
+    let lastErr: unknown;
+    for (let i = 0; i &lt; 3; i++) {
+      try {
+        return await sendRequest(SOCK, req);
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) =&gt; setTimeout(r, 200));
+      }
+    }
+    throw lastErr;
+  }
+}</code></pre></figure>
+
+<h3>2.2 — State reduction: the ledger and the anti-auto-done invariant</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>The daemon's <code class="inline">reduce()</code> is a pure transition function. Two arms below are the heart of the TYPE-1/TYPE-2 split: <span class="ev">task.turn.completed</span> (any provider's turn-end) lands in <code class="inline">awaiting-input</code> — explicitly <em>not</em> <code class="inline">done</code> — while <span class="ev">task.done</span> (only ever emitted by the explicit signal) is the lone path to the terminal <code class="inline">done</code> state. Note the blocked-state guard: a trailing turn-end after a <code class="inline">signal blocked</code> must not drop the question.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Hàm <code class="inline">reduce()</code> của daemon là một hàm chuyển trạng thái thuần (pure). Hai nhánh dưới đây là trái tim của phân tách LOẠI 1/LOẠI 2: <span class="ev">task.turn.completed</span> (kết-thúc-lượt của bất kỳ provider nào) rơi vào <code class="inline">awaiting-input</code> — tường minh <em>không phải</em> <code class="inline">done</code> — trong khi <span class="ev">task.done</span> (chỉ phát ra bởi tín hiệu tường minh) là con đường duy nhất tới trạng thái kết thúc <code class="inline">done</code>. Lưu ý lá chắn cho trạng thái blocked: một kết-thúc-lượt theo sau lệnh <code class="inline">signal blocked</code> không được làm rớt câu hỏi.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/state-machine.ts</span> · L71–88 — done vs turn.completed (anti-#2576)</figcaption>
+<pre><code class="language-typescript">    case "task.done":
+      return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
+    case "task.failed":
+      return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
+    case "task.cancelled":
+      return { ...base, state: "cancelled" };
+    case "task.session":
+      return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
+    case "task.turn.started":
+      return { ...stampAttempt(base, {}, now), state: "working" };
+    case "task.turn.completed":
+      // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
+      // A turn ending while blocked must NOT unblock — only the captain's answer
+      // (task.started via `crew send`) clears blocked. Mirrors task.progress: the
+      // opencode SSE bridge emits task.turn.completed right after an explicit
+      // `signal blocked`, and that trailing turn-end must not drop the question.
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      return { ...stampAttempt(base, {}, now), state: "awaiting-input" };</code></pre></figure>
+
+<h3>2.3 — Notify → mailbox → relay (the delivery path)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>When a task enters an attention state, the daemon's <code class="inline">firePush</code> computes a message and calls <code class="inline">notify</code>. The default notify <strong>discards the computed message</strong> and writes only the event to the mailbox; the entry's <code class="inline">kind</code> is the raw <code class="inline">event.type</code>. The relay then <em>re-derives</em> the human string from <code class="inline">kind</code> via <code class="inline">formatEntry</code>. This two-formatter design is exactly the drift that issue #210 is about — keep it in view.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Khi một task vào trạng thái cần chú ý (attention state), <code class="inline">firePush</code> của daemon tính một thông điệp rồi gọi <code class="inline">notify</code>. Bản notify mặc định <strong>vứt bỏ thông điệp đã tính</strong> và chỉ ghi sự kiện vào mailbox; trường <code class="inline">kind</code> của entry chính là <code class="inline">event.type</code> thô. Sau đó relay <em>suy diễn lại</em> chuỗi cho người đọc từ <code class="inline">kind</code> qua <code class="inline">formatEntry</code>. Thiết kế hai-bộ-định-dạng này chính là sự trôi lệch (drift) mà issue #210 nói tới — hãy ghi nhớ.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/cockpitd.ts</span> · L198–215 — defaultNotify (writes event, drops args.message)</figcaption>
+<pre><code class="language-typescript">  const defaultNotify = async (args: {
+    project: string;
+    message: string;
+    record: TaskRecord;
+    event: ControlEvent;
+  }): Promise&lt;void&gt; =&gt; {
+    try {
+      await appendToMailbox({
+        stateRoot,
+        project: args.project,
+        taskRecord: args.record,
+        event: args.event,
+      });
+    } catch (e) {
+      log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
+    }
+  };
+  const notify = opts.notify ?? defaultNotify;</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/control/mailbox.ts</span> · L107–117 — entry.kind = event.type (the only thing the relay sees)</figcaption>
+<pre><code class="language-typescript">    const entry: MailboxEntry = {
+      seq,
+      ts: new Date().toISOString(),
+      taskId: opts.taskRecord.id,
+      ...(opts.taskRecord.name !== undefined ? { name: opts.taskRecord.name } : {}),
+      kind: opts.event.type,
+      provider: opts.taskRecord.provider,
+      payload: extractPayload(opts.event),
+    };
+    await fs.appendFile(file, JSON.stringify(entry) + "\n", { encoding: "utf-8" });</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/commands/notify-relay.ts</span> · L45–67 — formatEntry (note: no task.turn.completed / task.idle arm → default null)</figcaption>
+<pre><code class="language-typescript">export function formatEntry(entry: MailboxEntry): string | null {
+  const tag = `[${entry.provider}/${entry.name != null ? entry.name : shortId(entry.taskId)}]`;
+  switch (entry.kind) {
+    case "task.started":
+    case "task.progress":
+      return null; // suppress liveness/start
+    case "task.done": {
+      const msg =
+        (entry.payload.message as string | undefined) ??
+        (entry.payload.resultRef as string | undefined) ??
+        "(no message)";
+      return `CREW DONE ${tag}: ${msg.toString().split(/\r?\n/)[0].slice(0, 200)}`;
+    }
+    case "task.blocked":
+      return `CREW BLOCKED ${tag}: ${(entry.payload.question as string | undefined) ?? "(no question)"}`;
+    case "task.failed":
+      return `CREW FAILED ${tag}: ${(entry.payload.error as string | undefined) ?? "(no error)"}`;
+    case "task.stalled":
+      return `CREW STALLED ${tag}: no heartbeat`;
+    default:
+      return null;
+  }
+}</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/commands/notify-relay.ts</span> · L242–261 — drain() (cursor advances even when msg is null)</figcaption>
+<pre><code class="language-typescript">        const msg = formatEntry(entry);
+        if (msg) {
+          try {
+            await (opts.runtime as RuntimeDriver &amp; {
+              sendToSurface: (s: unknown, m: string) =&gt; Promise&lt;void&gt;;
+            }).sendToSurface(captainSurface, msg);
+          } catch (e) {
+            log(`sendToSurface failed seq=${entry.seq}: ${(e as Error).message}`);
+            // Don't advance cursor; the next poll will retry from the same seq.
+            return;
+          }
+        }
+        await writeCursor({
+          stateRoot: opts.stateRoot,
+          project: opts.project,
+          subscriber: opts.subscriber,
+          lastAckedSeq: entry.seq,
+        });
+        lastAcked = entry.seq;</code></pre></figure>
+
+<h3>2.4 — The cmux edge (how everything actually reaches a pane)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Both the spawn path (launch the CLI, send the first turn) and the relay (inject signals) reach the terminal through one tiny function: <code class="inline">cmux()</code>. It runs the cmux binary with no shell (injection-safe, #118) — but also with <strong>no timeout</strong>, which is the entire surface of issue #209.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Cả con đường spawn (khởi chạy CLI, gửi lượt đầu) lẫn relay (bơm tín hiệu) đều chạm tới terminal qua một hàm nhỏ xíu: <code class="inline">cmux()</code>. Nó chạy binary cmux không qua shell (an toàn injection, #118) — nhưng cũng <strong>không có timeout</strong>, và đó chính là toàn bộ bề mặt của issue #209.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/runtimes/cmux.ts</span> · L8–10 — the single, un-timeout'd exec path</figcaption>
+<pre><code class="language-typescript">function cmux(args: string[]): string {
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8" }).trim();
+}</code></pre></figure>
+
+<h3>2.5 — TYPE-2 explicit signal (shared by claude &amp; opencode via env, codex via flags)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>The explicit terminal report is one CLI verb: <code class="inline">cockpit crew signal done|blocked|failed</code>. It resolves the task id and project from <code class="inline">COCKPIT_CREW_TASK_ID</code> / <code class="inline">COCKPIT_CREW_PROJECT</code> environment variables — which claude and opencode get on their shell launch line. Codex has <em>no</em> per-task env (one shared app-server serves all codex threads), so it passes explicit <code class="inline">--task-id</code> / <code class="inline">--project</code> flags instead, which take precedence over env.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Báo cáo kết thúc tường minh là một động từ CLI: <code class="inline">cockpit crew signal done|blocked|failed</code>. Nó phân giải task id và project từ biến môi trường <code class="inline">COCKPIT_CREW_TASK_ID</code> / <code class="inline">COCKPIT_CREW_PROJECT</code> — mà claude và opencode nhận trên dòng lệnh khởi chạy shell. Codex <em>không</em> có env theo từng task (một app-server dùng chung phục vụ mọi thread codex), nên nó truyền cờ tường minh <code class="inline">--task-id</code> / <code class="inline">--project</code> thay thế, và cờ này được ưu tiên hơn env.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew-control.ts</span> · L128–163 — buildSignalRequest (env default; explicit flags for codex)</figcaption>
+<pre><code class="language-typescript">export function buildSignalRequest(
+  signal: "done" | "blocked" | "failed",
+  o: {
+    message?: string;
+    question?: string;
+    error?: string;
+    /** Explicit override (codex); falls back to COCKPIT_CREW_TASK_ID env. */
+    taskId?: string;
+    /** Explicit override (codex); falls back to COCKPIT_CREW_PROJECT env. */
+    project?: string;
+    /** Injectable for tests; defaults to writing under ~/.config/cockpit/state/_results. */
+    writeResult?: (id: string, payload: string) =&gt; string;
+  },
+): { kind: "event"; project: string; event: ControlEvent } {
+  const taskId = o.taskId ?? process.env.COCKPIT_CREW_TASK_ID;
+  const project = o.project ?? process.env.COCKPIT_CREW_PROJECT;
+  if (!taskId)
+    throw new Error("not running under a crew (COCKPIT_CREW_TASK_ID unset)");
+  if (!project)
+    throw new Error("not running under a crew (COCKPIT_CREW_PROJECT unset)");
+  let event: ControlEvent;
+  if (signal === "done") {
+    const resultRef = o.writeResult ? o.writeResult(taskId, o.message ?? "") : "";
+    event = {
+      type: "task.done",
+      id: taskId,
+      resultRef,
+      ...(o.message !== undefined ? { message: o.message } : {}),
+    };
+  } else if (signal === "blocked") {
+    event = { type: "task.blocked", id: taskId, reason: "crew signaled blocked", question: o.question ?? "" };
+  } else {
+    event = { type: "task.failed", id: taskId, error: o.error ?? "crew signaled failed" };
+  }
+  return { kind: "event", project, event };
+}</code></pre></figure>
+
+<!-- ════════════════════════ 3 · CLAUDE ════════════════════════ -->
+<span class="anchor" id="claude"></span>
+<h2 class="section">3 · Captain ↔ CLAUDE crew</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>The Claude crew is the reference implementation. The daemon owns the state ledger but <em>not</em> the Claude process — the cmux tab does the actual CLI launch. TYPE-1 liveness flows through Claude's native hooks (<span class="ev">Stop</span>, <span class="ev">PostToolUse</span>, <span class="ev">Notification</span>) bridged into the daemon by <code class="inline">cockpit crew _hook</code>. TYPE-2 terminal state comes from the crew template running <code class="inline">cockpit crew signal</code>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Crew Claude là hiện thực tham chiếu. Daemon nắm sổ cái trạng thái nhưng <em>không</em> sở hữu tiến trình Claude — tab cmux mới thực sự khởi chạy CLI. Liveness LOẠI 1 chảy qua các hook gốc của Claude (<span class="ev">Stop</span>, <span class="ev">PostToolUse</span>, <span class="ev">Notification</span>) được cầu nối vào daemon bởi <code class="inline">cockpit crew _hook</code>. Trạng thái kết thúc LOẠI 2 đến từ việc template crew chạy <code class="inline">cockpit crew signal</code>.</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  subgraph CAPWS["Captain cmux workspace"]
+    CAP["Captain pane"]
+    CREWTAB["Crew tab: claude CLI<br/>env: COCKPIT_CREW_TASK_ID/PROJECT"]
+    RELAY["notify-relay (bg tab)"]
+  end
+  DAEMON["cockpitd daemon"]
+  MBOX[("inbox/&lt;project&gt;.log")]
+  HOOKS[".claude/settings.local.json<br/>Stop/PostToolUse/Notification hooks"]
+
+  CAP -->|"crew spawn --agent claude"| CREWTAB
+  CREWTAB -->|"dispatch (claude/interactive)"| DAEMON
+  DAEMON -->|"launchInteractive: emit task.started"| DAEMON
+  CREWTAB -->|"writes"| HOOKS
+  HOOKS -->|"TYPE-1: cockpit crew _hook Stop<br/>→ mapClaudeHookToEvent"| DAEMON
+  CREWTAB -->|"TYPE-2: cockpit crew signal done"| DAEMON
+  DAEMON -->|"firePush → appendToMailbox"| MBOX
+  RELAY -->|"tail + formatEntry"| MBOX
+  RELAY -->|"inject CREW DONE/BLOCKED/IDLE"| CAP
+</div>
+
+<h3>3.1 — Spawn: env prefix + hook bridge + first turn</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — captain → daemon → crew tab.</strong> The spawn dispatches a record to the daemon, writes the per-crew hook settings into <code class="inline">.claude/settings.local.json</code>, then launches the CLI in a new tab prefixed with <code class="inline">COCKPIT_CREW_TASK_ID=… COCKPIT_CREW_PROJECT=…</code> so both the hook bridge and the signal verb can identify their task. The first turn is sent once the TUI is ready.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — captain → daemon → tab crew.</strong> Lần spawn gửi một bản ghi tới daemon, ghi cấu hình hook theo từng crew vào <code class="inline">.claude/settings.local.json</code>, rồi khởi chạy CLI trong một tab mới có tiền tố <code class="inline">COCKPIT_CREW_TASK_ID=… COCKPIT_CREW_PROJECT=…</code> để cả cầu nối hook lẫn động từ signal đều nhận diện được task của mình. Lượt đầu được gửi khi TUI đã sẵn sàng.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew.ts</span> · L253–293 — claude spawn (dispatch, hooks, envPrefix, first turn)</figcaption>
+<pre><code class="language-typescript">  if (agentName === "claude") {
+    const req = buildDispatchRequest({
+      provider: "claude",
+      mode: "interactive",
+      project: input.project,
+      cwd: proj.path,
+      task: input.task,
+      name,
+    });
+    // Fail loud if daemon unreachable — refusal-to-degrade.
+    const rec = (await cockpitdCall(req)) as TaskRecord;
+    // Write cockpit hooks to &lt;cwd&gt;/.claude/settings.local.json so they are
+    // auto-loaded as a project-local settings source. [...]
+    writePerCrewSettingsLocal({ projectCwd: proj.path });
+    const cliCommand = agent.buildCommand({
+      prompt: input.task,
+      workdir: proj.path,
+      role: "crew",
+      promptFile,
+      interactive: true,
+      permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
+      ...(crewModel ? { model: crewModel } : {}),
+    });
+    const direction: PanePlacement = input.direction ?? "tab";
+    const title = titleFor(input.project, name);
+    const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
+    // Prefix the CLI command with env so the hook bridge + signal verb
+    // running inside the crew's cmux tab can identify their task.
+    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    await runtime.sendToPane(pane, `${envPrefix} ${cliCommand}`);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
+    return { ...pane, title };
+  }</code></pre></figure>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — daemon's role for claude.</strong> Because the daemon does not own the PID, its only launch action is to flip the ledger from <code class="inline">submitted</code> → <code class="inline">working</code> by emitting <span class="ev">task.started</span>; everything after is driven by the injected hooks and the explicit signal.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — vai trò của daemon với claude.</strong> Vì daemon không sở hữu PID, hành động khởi chạy duy nhất của nó là lật sổ cái từ <code class="inline">submitted</code> → <code class="inline">working</code> bằng cách phát <span class="ev">task.started</span>; mọi thứ sau đó do các hook được bơm vào và tín hiệu tường minh điều khiển.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/cockpitd.ts</span> · L230–239 — launchInteractive (claude): ledger only</figcaption>
+<pre><code class="language-typescript">      if (rec.provider === "claude") {
+        // Claude interactive crews run in a cmux tab — the daemon does NOT
+        // own a Claude process. The tab does the actual launch. The daemon's
+        // only role for Claude is the state ledger: emit task.started so the
+        // record transitions submitted → working, then wait for task.progress
+        // / task.done events from the injected hook bridge + explicit
+        // `cockpit crew signal` (see claude-interactive spec, §4.4).
+        ingest(rec.project)({ type: "task.started", id: rec.id });
+        return;
+      }</code></pre></figure>
+
+<h3>3.2 — TYPE-1: the hook bridge and mapClaudeHookToEvent</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — crew → daemon (liveness).</strong> Claude's native hooks invoke the hidden <code class="inline">cockpit crew _hook &lt;event&gt;</code>, which reads the hook JSON on stdin and maps it to a ControlEvent. The mapping codifies the anti-#2576 invariant: <span class="ev">Stop</span> → <span class="ev">task.turn.completed</span> (turn-end idle), with two narrow exceptions where it instead fires <span class="ev">task.blocked</span> — a trailing question (Stop), or a permission Notification.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — crew → daemon (liveness).</strong> Các hook gốc của Claude gọi lệnh ẩn <code class="inline">cockpit crew _hook &lt;event&gt;</code>, lệnh này đọc JSON của hook trên stdin và ánh xạ thành một ControlEvent. Ánh xạ này mã hóa bất biến anti-#2576: <span class="ev">Stop</span> → <span class="ev">task.turn.completed</span> (nhàn rỗi do kết-thúc-lượt), với hai ngoại lệ hẹp nơi nó thay vào đó phát <span class="ev">task.blocked</span> — một câu hỏi cuối lượt (Stop), hoặc một Notification xin quyền (permission).</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew-control.ts</span> · L248–273 — _hook bridge (liveness only, daemon-down resilient)</figcaption>
+<pre><code class="language-typescript">  crew
+    .command("_hook &lt;event&gt;", { hidden: true })
+    .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to cockpitd")
+    .action(async (event: string) =&gt; {
+      const taskId = process.env.COCKPIT_CREW_TASK_ID;
+      const project = process.env.COCKPIT_CREW_PROJECT;
+      if (!taskId || !project) { process.exit(0); }
+      // Drain stdin (Claude posts hook JSON there). Tolerate missing/malformed.
+      let stdin = "";
+      try {
+        for await (const chunk of process.stdin) stdin += chunk;
+      } catch { /* ignore */ }
+      let payload: unknown = undefined;
+      if (stdin.trim()) {
+        try { payload = JSON.parse(stdin); } catch { /* ignore malformed */ }
+      }
+      const ev = mapClaudeHookToEvent(event, payload, taskId);
+      if (!ev) { process.exit(0); }
+      try {
+        await cockpitdCall({ kind: "event", project, event: ev });
+      } catch {
+        // Daemon down: do NOT block Claude. Hook contract requires exit 0;
+        // a non-zero exit would block the conversation.
+      }
+      process.exit(0);
+    });</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/control/interactive/claude.ts</span> · L186–214 — mapClaudeHookToEvent (Stop→turn.completed; question/permission→blocked)</figcaption>
+<pre><code class="language-typescript">export function mapClaudeHookToEvent(
+  event: string,
+  payload: unknown,
+  taskId: string,
+): ControlEvent | null {
+  switch (event) {
+    case "Stop": {
+      const text = resolveLastAssistantText(payload);
+      const question = text ? detectTrailingQuestion(text) : null;
+      if (question) {
+        return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question };
+      }
+      return { type: "task.turn.completed", id: taskId, turnId: "hook-stop" };
+    }
+    case "Notification": {
+      const msg = (payload as any)?.message;
+      if (typeof msg === "string" &amp;&amp; isPermissionNotification(msg)) {
+        return { type: "task.blocked", id: taskId, reason: "crew awaiting permission (notification hook)", question: msg };
+      }
+      return { type: "task.progress", id: taskId, note: "notification" };
+    }
+    case "SubagentStop":
+    case "SessionEnd":
+    case "PostToolUse":
+      return { type: "task.progress", id: taskId, note: event.toLowerCase() };
+    default:
+      return null;
+  }
+}</code></pre></figure>
+
+<div class="callout">
+<strong>Component map — Claude.</strong> <code class="inline">crew.ts</code> spawns the tab + writes hooks; <code class="inline">cockpitd launchInteractive</code> flips the ledger to <code class="inline">working</code>; Claude's hooks → <code class="inline">_hook</code> → <code class="inline">mapClaudeHookToEvent</code> feed TYPE-1 liveness; the crew template's <code class="inline">crew signal</code> → <code class="inline">buildSignalRequest</code> feeds TYPE-2 terminal state; <code class="inline">firePush</code>/<code class="inline">defaultNotify</code> → mailbox → <code class="inline">notify-relay</code> deliver to the captain pane.
+</div>
+
+<span class="anchor" id="claude-solutions"></span>
+<h3>3.3 — All possible solutions to DETECT and DISPATCH a running Claude session lifecycle</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<table>
+<thead><tr><th>Mechanism</th><th>Type</th><th class="pros">Pros</th><th class="cons">Cons</th><th>Reliability</th></tr></thead>
+<tbody>
+<tr><td><strong>Stop hook</strong> → task.turn.completed</td><td>TYPE 1</td><td class="pros">Native, event-driven, fires at every turn boundary; carries last-assistant text for question detection</td><td class="cons">Can be suppressed by competing hooks (e.g. claude-mem) in some environments; fires only at turn end, not mid-turn</td><td class="rel med">Medium–High</td></tr>
+<tr><td><strong>PostToolUse hook</strong> → task.progress</td><td>TYPE 1</td><td class="pros">Only mid-turn liveness signal; refreshes heartbeat so a long turn never false-stalls</td><td class="cons">Silent while a permission prompt is up (no tool runs) — exactly when you most want a signal</td><td class="rel high">High (as heartbeat)</td></tr>
+<tr><td><strong>Notification hook</strong> → task.blocked (permission)</td><td>TYPE 1</td><td class="pros">Instant permission detection, bypasses the ~20–30s relay poll</td><td class="cons">Only permission/approval language; idle notifications are liveness-only</td><td class="rel high">High</td></tr>
+<tr><td><strong>Pane scraping</strong> (relay probe)</td><td>TYPE 1 (fallback)</td><td class="pros">Catches blocks the hooks miss; works without any agent cooperation</td><td class="cons">Heuristic classifier; needs in-cmux access; depends on un-timeout'd <code class="inline">cmux()</code> (#209)</td><td class="rel med">Medium</td></tr>
+<tr><td><strong>Process liveness</strong> (reconcile / watchdog)</td><td>TYPE 1 (backstop)</td><td class="pros">Daemon-side, no agent cooperation; recovers crashed/orphaned crews on restart</td><td class="cons">Daemon doesn't own the PID for claude; the 24h-budget watchdog effectively never fires (#208)</td><td class="rel low">Low (interactive)</td></tr>
+<tr><td><strong>Explicit <code class="inline">crew signal</code></strong></td><td>TYPE 2</td><td class="pros">The only honest terminal signal; carries a one-line summary; survives hook gaps</td><td class="cons">Depends on the model actually running it (weak models skip it); needs env vars set</td><td class="rel high">High (when run)</td></tr>
+</tbody>
+</table>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<table>
+<thead><tr><th>Cơ chế</th><th>Loại</th><th class="pros">Ưu điểm</th><th class="cons">Nhược điểm</th><th>Độ tin cậy</th></tr></thead>
+<tbody>
+<tr><td><strong>Hook Stop</strong> → task.turn.completed</td><td>LOẠI 1</td><td class="pros">Gốc, hướng sự kiện, kích hoạt tại mọi ranh giới lượt; mang theo văn bản assistant cuối để phát hiện câu hỏi</td><td class="cons">Có thể bị các hook cạnh tranh (vd claude-mem) chặn trong vài môi trường; chỉ kích hoạt cuối lượt, không giữa lượt</td><td class="rel med">Trung bình–Cao</td></tr>
+<tr><td><strong>Hook PostToolUse</strong> → task.progress</td><td>LOẠI 1</td><td class="pros">Tín hiệu liveness giữa-lượt duy nhất; làm tươi heartbeat nên lượt dài không bị báo stall nhầm</td><td class="cons">Im lặng khi đang có permission prompt (không tool nào chạy) — đúng lúc cần tín hiệu nhất</td><td class="rel high">Cao (như heartbeat)</td></tr>
+<tr><td><strong>Hook Notification</strong> → task.blocked (permission)</td><td>LOẠI 1</td><td class="pros">Phát hiện permission tức thì, bỏ qua vòng poll ~20–30s của relay</td><td class="cons">Chỉ với ngôn ngữ permission/approval; thông báo idle chỉ là liveness</td><td class="rel high">Cao</td></tr>
+<tr><td><strong>Đọc màn hình pane</strong> (probe của relay)</td><td>LOẠI 1 (dự phòng)</td><td class="pros">Bắt được các block mà hook bỏ sót; hoạt động mà không cần agent hợp tác</td><td class="cons">Bộ phân loại theo heuristic; cần truy cập trong cmux; phụ thuộc <code class="inline">cmux()</code> không timeout (#209)</td><td class="rel med">Trung bình</td></tr>
+<tr><td><strong>Tiến trình còn sống</strong> (reconcile / watchdog)</td><td>LOẠI 1 (chốt chặn)</td><td class="pros">Phía daemon, không cần agent hợp tác; phục hồi crew bị crash/mồ côi khi khởi động lại</td><td class="cons">Daemon không sở hữu PID của claude; watchdog ngân sách 24h gần như không bao giờ kích hoạt (#208)</td><td class="rel low">Thấp (tương tác)</td></tr>
+<tr><td><strong><code class="inline">crew signal</code> tường minh</strong></td><td>LOẠI 2</td><td class="pros">Tín hiệu kết thúc trung thực duy nhất; mang tóm tắt một dòng; sống sót qua các lỗ hổng hook</td><td class="cons">Phụ thuộc việc model thực sự chạy nó (model yếu hay bỏ qua); cần biến env được set</td><td class="rel high">Cao (khi được chạy)</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ════════════════════════ 4 · CODEX ════════════════════════ -->
+<span class="anchor" id="codex"></span>
+<h2 class="section">4 · Captain ↔ CODEX crew</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Codex is the structurally different one. Cockpit runs <strong>one long-lived <code class="inline">codex app-server</code> child</strong>, and each crew is a <em>thread</em> inside it. The cmux tab does <em>not</em> host the codex process — it hosts a <code class="inline">crew attach</code> renderer. TYPE-1 liveness arrives as JSON-RPC notifications (<span class="ev">turn/completed</span>) on the app-server's stdout, normalized by the driver. Because there is no per-task env, TYPE-2 terminal state is wired via per-thread <code class="inline">developerInstructions</code> that tell the crew the exact <code class="inline">--task-id</code>/<code class="inline">--project</code> flags to use (PR #173).</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Codex là kẻ khác biệt về cấu trúc. Cockpit chạy <strong>một tiến trình con <code class="inline">codex app-server</code> sống lâu dài</strong>, và mỗi crew là một <em>thread</em> bên trong đó. Tab cmux <em>không</em> chứa tiến trình codex — nó chứa một bộ kết xuất (renderer) <code class="inline">crew attach</code>. Liveness LOẠI 1 đến dưới dạng thông báo JSON-RPC (<span class="ev">turn/completed</span>) trên stdout của app-server, được driver chuẩn hóa. Vì không có env theo từng task, trạng thái kết thúc LOẠI 2 được nối dây qua <code class="inline">developerInstructions</code> theo từng thread, chỉ cho crew chính xác cờ <code class="inline">--task-id</code>/<code class="inline">--project</code> phải dùng (PR #173).</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  subgraph CAPWS["Captain cmux workspace"]
+    CAP["Captain pane"]
+    ATTACH["Crew tab: cockpit crew attach<br/>(renderer only — no codex proc)"]
+    RELAY["notify-relay (bg tab)"]
+  end
+  DAEMON["cockpitd daemon"]
+  DRIVER["CodexInteractiveDriver<br/>threadByTask / taskByThread"]
+  APPSRV["codex app-server (ONE shared child)<br/>JSON-RPC over stdio"]
+  THREAD["thread per crew<br/>developerInstructions: task-id+project"]
+  MBOX[("inbox/&lt;project&gt;.log")]
+
+  CAP -->|"crew spawn --agent codex"| DAEMON
+  DAEMON -->|"launchInteractive → driver.dispatch"| DRIVER
+  DRIVER -->|"startThread JSON-RPC"| APPSRV
+  APPSRV --> THREAD
+  ATTACH -->|"attach + say (first turn)"| DAEMON
+  DAEMON -->|"codexDriver.say → turn/start"| APPSRV
+  APPSRV -->|"TYPE-1: turn/completed notification"| DRIVER
+  DRIVER -->|"normalize → task.turn.completed"| DAEMON
+  THREAD -->|"TYPE-2: cockpit crew signal done --task-id …"| DAEMON
+  DAEMON -->|"firePush → mailbox"| MBOX
+  RELAY -->|"tail + formatEntry"| MBOX
+  RELAY -->|"inject CREW DONE/BLOCKED"| CAP
+</div>
+
+<h3>4.1 — Spawn: attach renderer + dispatch a thread</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — captain → daemon → app-server thread.</strong> The spawn dispatches to the daemon, opens a cmux tab running <code class="inline">cockpit crew attach &lt;id&gt;</code> (the streaming renderer), then fire-and-forgets the first turn via the attach socket's <code class="inline">say</code> op.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — captain → daemon → thread app-server.</strong> Lần spawn gửi tới daemon, mở một tab cmux chạy <code class="inline">cockpit crew attach &lt;id&gt;</code> (bộ kết xuất streaming), rồi gửi-rồi-quên lượt đầu qua thao tác <code class="inline">say</code> của socket attach.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew.ts</span> · L370–410 — runCodexInteractiveSpawn</figcaption>
+<pre><code class="language-typescript">async function runCodexInteractiveSpawn(o: {
+  project: string; task: string; cwd: string; runtime: RuntimeDriver;
+  workspaceId: string; name: string; direction: PanePlacement;
+  approvalPolicy?: string; roleInstructions?: string;
+}): Promise&lt;PaneRef&gt; {
+  const req = buildDispatchRequest({
+    provider: "codex",
+    mode: "interactive",
+    project: o.project,
+    cwd: o.cwd,
+    task: o.task,
+    name: o.name,
+    ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
+    ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
+  });
+  const rec = (await cockpitdCall(req)) as TaskRecord;
+  const title = titleFor(o.project, o.name);
+  const pane = await o.runtime.newPane({
+    workspaceId: o.workspaceId,
+    direction: o.direction,
+    title,
+  });
+  await o.runtime.sendToPane(pane, `cockpit crew attach ${rec.id}`);
+  // Match the claude UX where the task arg becomes the first turn. [...]
+  if (o.task &amp;&amp; o.task !== "(interactive)") {
+    void sendCodexFirstTurn(rec.id, o.task).catch((e: unknown) =&gt; {
+      process.stderr.write(`(first-turn delivery failed: ${(e as Error).message})\n`);
+    });
+  }
+  return { ...pane, title };
+}</code></pre></figure>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — daemon → driver → app-server.</strong> <code class="inline">launchInteractive</code> for codex calls <code class="inline">codexDriver.dispatch</code>, which handshakes the shared app-server, starts a thread with the model and <code class="inline">developerInstructions</code>, and stores the threadId↔taskId mapping. Note <code class="inline">sandbox: "danger-full-access"</code> — required so the in-thread <code class="inline">cockpit crew signal</code> can reach the daemon socket outside the workspace.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — daemon → driver → app-server.</strong> <code class="inline">launchInteractive</code> cho codex gọi <code class="inline">codexDriver.dispatch</code>, hàm này bắt tay (handshake) với app-server dùng chung, khởi tạo một thread với model và <code class="inline">developerInstructions</code>, rồi lưu ánh xạ threadId↔taskId. Lưu ý <code class="inline">sandbox: "danger-full-access"</code> — bắt buộc để <code class="inline">cockpit crew signal</code> trong thread có thể chạm tới socket daemon nằm ngoài workspace.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/codex/driver.ts</span> · L71–105 — CodexInteractiveDriver.dispatch (startThread + emit task.started)</figcaption>
+<pre><code class="language-typescript">  async dispatch(rec: TaskRecord &amp; { cwd?: string; model?: string }): Promise&lt;void&gt; {
+    try {
+      const c = await this.ensureClient();
+      await withTimeout(this.ensureHandshake(), 10_000, "handshake timed out");
+      const model = rec.model ?? await resolveCodexModel();
+      const { threadId } = await c.startThread({
+        cwd: rec.cwd ?? process.cwd(),
+        model,
+        // danger-full-access removes the FS jail so signals work; approvalPolicy
+        // still gates risky ops when set to "untrusted". [...]
+        sandbox: "danger-full-access",
+        approvalPolicy: rec.approvalPolicy ?? "never",
+        developerInstructions: buildCodexDeveloperInstructions(rec),
+      });
+      this.threadByTask.set(rec.id, threadId);
+      this.taskByThread.set(threadId, rec.id);
+      this.deps.emit({ type: "task.session", id: rec.id, resumeRef: threadId });
+      this.deps.emit({ type: "task.started", id: rec.id });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.deps.emit({ type: "task.failed", id: rec.id, error: `handshake/start failed: ${msg}` });
+      throw e;
+    }
+  }</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/control/codex/app-server-client.ts</span> · L71–112 — startThread + sendTurn (JSON-RPC over stdio)</figcaption>
+<pre><code class="language-typescript">  async startThread(params: { cwd: string; model?: string; sandbox?: string; approvalPolicy?: string; developerInstructions?: string }): Promise&lt;{ threadId: string }&gt; {
+    const res = await this._sendRequest("thread/start", params) as { thread?: { id?: string } };
+    const id = res?.thread?.id;
+    if (typeof id !== "string") throw new Error(`thread/start: unexpected response shape (no thread.id): ${JSON.stringify(res).slice(0, 200)}`);
+    return { threadId: id };
+  }
+
+  async sendTurn(threadId: string, text: string): Promise&lt;{ turnId: string }&gt; {
+    const ack = await this._sendRequest("turn/start", {
+      threadId, input: [{ type: "text", text }],
+    }) as { turn?: { id?: string } };
+    const turnId = ack?.turn?.id;
+    if (typeof turnId !== "string") throw new Error(`turn/start: unexpected ack shape (no turn.id): ${JSON.stringify(ack).slice(0, 200)}`);
+    return new Promise((resolve, reject) =&gt; {
+      const onNote = (n: { method: string; params?: any }) =&gt; {
+        if (n.params?.turn?.id !== turnId) return;
+        if (n.method === "turn/completed") { cleanup(); resolve({ turnId }); }
+        if (n.method === "turn/failed") { cleanup(); reject(new Error(n.params?.error ?? "turn failed")); }
+      };
+      const onClientClosed = () =&gt; { cleanup(); reject(new Error("AppServerClient: client closed before turn completed")); };
+      const cleanup = () =&gt; {
+        this.off("notification", onNote);
+        this.off("_clientClosed", onClientClosed);
+      };
+      this.on("notification", onNote);
+      this.once("_clientClosed", onClientClosed);
+    });
+  }</code></pre></figure>
+
+<h3>4.2 — TYPE-2 wiring: developerInstructions inject the signal command</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — how a codex crew knows its own ids.</strong> Since there is no shell env, the driver bakes the concrete task id, project, and the exact signal command into the thread's developer instructions. This is the codex equivalent of claude's <code class="inline">envPrefix</code>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — làm sao một crew codex biết id của chính nó.</strong> Vì không có env shell, driver nung sẵn task id cụ thể, project, và lệnh signal chính xác vào developer instructions của thread. Đây là tương đương của <code class="inline">envPrefix</code> bên claude cho codex.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/codex/driver.ts</span> · L250–258 — buildCodexDeveloperInstructions (PR #173)</figcaption>
+<pre><code class="language-typescript">export function buildCodexDeveloperInstructions(
+  rec: { id: string; project: string; roleInstructions?: string },
+): string {
+  const directive =
+    `You are cockpit crew task ${rec.id} in project ${rec.project}. ` +
+    `When you finish, run EXACTLY: cockpit crew signal done --task-id ${rec.id} --project ${rec.project} --message "&lt;one-line summary&gt;". ` +
+    `If you are blocked or fail, run cockpit crew signal blocked|failed with the same --task-id ${rec.id} --project ${rec.project} flags.`;
+  return rec.roleInstructions ? `${rec.roleInstructions}\n\n${directive}` : directive;
+}</code></pre></figure>
+
+<h3>4.3 — TYPE-1: notifications + server-requests → ControlEvents</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — app-server → driver → daemon.</strong> The driver subscribes to two app-server channels. <em>Notifications</em> (no id) route through <code class="inline">normalizeAppServerNotification</code>: <span class="ev">turn/completed</span> → <span class="ev">task.turn.completed</span> (TYPE-1 idle). <em>Server-requests</em> (carry an id — the app-server asking permission/input) route through <code class="inline">onServerRequest</code> → <span class="ev">task.approval.requested</span> / <span class="ev">task.input.requested</span> (which the state machine reduces to <code class="inline">blocked</code>).</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — app-server → driver → daemon.</strong> Driver lắng nghe hai kênh của app-server. <em>Notification</em> (không có id) đi qua <code class="inline">normalizeAppServerNotification</code>: <span class="ev">turn/completed</span> → <span class="ev">task.turn.completed</span> (idle LOẠI 1). <em>Server-request</em> (mang id — app-server xin permission/input) đi qua <code class="inline">onServerRequest</code> → <span class="ev">task.approval.requested</span> / <span class="ev">task.input.requested</span> (mà máy trạng thái rút gọn thành <code class="inline">blocked</code>).</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/codex/driver.ts</span> · L196–238 — onNotification / onServerRequest</figcaption>
+<pre><code class="language-typescript">  private onNotification(n: { method: string; params?: any }): void {
+    const tid = n.params?.threadId ?? n.params?.thread_id;
+    const taskId = tid ? this.taskByThread.get(tid) : undefined;
+    if (!taskId) return; // status-line only
+    const ev = normalizeAppServerNotification(taskId, n);
+    if (ev) this.deps.emit(ev);
+  }
+
+  private onServerRequest(r: { id: number; method: string; params?: any }): void {
+    const tid = r.params?.threadId ?? r.params?.thread_id;
+    let taskId = tid ? this.taskByThread.get(tid) : undefined;
+    if (!taskId &amp;&amp; !tid) {
+      // Codex approval-shaped server-requests don't reliably carry threadId.
+      // Fall back to the sole active task if exactly one exists; otherwise drop.
+      if (this.taskByThread.size === 1) {
+        taskId = this.taskByThread.values().next().value;
+      } else {
+        process.stderr.write(
+          `[codex/driver] serverRequest ${r.method} dropped: no threadId and ${this.taskByThread.size} active tasks\n`,
+        );
+        return;
+      }
+    }
+    if (!taskId) return;
+    this.serverRequestByTask.set(taskId, { id: r.id, method: r.method });
+    const isApproval = r.method.includes("Approval") || r.method.includes("approval");
+    if (isApproval) {
+      this.deps.emit({
+        type: "task.approval.requested",
+        id: taskId,
+        requestId: r.id,
+        question: String(r.params?.question ?? r.method),
+        kind: r.method,
+      });
+    } else {
+      this.deps.emit({
+        type: "task.input.requested",
+        id: taskId,
+        requestId: r.id,
+        question: String(r.params?.question ?? r.method),
+      });
+    }
+  }</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/control/codex/normalize.ts</span> · L40–46 — turn/completed → task.turn.completed (anti-#2576: never task.done)</figcaption>
+<pre><code class="language-typescript">    case "turn/completed":
+      return {
+        type: "task.turn.completed",
+        id: taskId,
+        // TurnCompletedNotification: same shape as TurnStartedNotification.
+        turnId: String((p["turn"] as Record&lt;string, unknown&gt;)?.["id"] ?? ""),
+      };</code></pre></figure>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — driver emit → daemon + attach broadcast.</strong> The <code class="inline">codexDriver</code>'s injected <code class="inline">emit</code> does double duty: it feeds the daemon's state machine via <code class="inline">d.handle</code> and broadcasts streaming AttachFrames to the cmux renderer.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — driver emit → daemon + phát attach.</strong> Hàm <code class="inline">emit</code> được tiêm vào <code class="inline">codexDriver</code> làm hai việc: nuôi máy trạng thái của daemon qua <code class="inline">d.handle</code> và phát các AttachFrame streaming tới renderer cmux.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/cockpitd.ts</span> · L147–172 — codexDriver emit (daemon ingest + attach broadcast)</figcaption>
+<pre><code class="language-typescript">  const codexDriver = opts.codexDriver ?? new CodexInteractiveDriver({
+    emit: (ev) =&gt; {
+      const found = store.listAll().find((r) =&gt; r.id === ev.id);
+      if (!found) return;
+      void d.handle({ kind: "event", project: found.project, event: ev });
+
+      // Map ControlEvent → AttachFrame and broadcast to any attached cmux clients.
+      if (ev.type === "task.delta")
+        broadcast(ev.id, { type: "delta", taskId: ev.id, text: ev.chunk });
+      else if (ev.type === "task.turn.started")
+        broadcast(ev.id, { type: "turn-started", taskId: ev.id });
+      else if (ev.type === "task.turn.completed")
+        broadcast(ev.id, { type: "turn-completed", taskId: ev.id });
+      else if (ev.type === "task.input.requested") {
+        broadcast(ev.id, { type: "input-requested", taskId: ev.id, requestId: ev.requestId, question: ev.question });
+        schedulePromotion(ev.id, ev.requestId, "input", ev.question);
+      } else if (ev.type === "task.approval.requested") {
+        broadcast(ev.id, { type: "approval-requested", taskId: ev.id, requestId: ev.requestId, question: ev.question, kind: ev.kind });
+        schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
+      }
+      else if (ev.type === "task.reattached")
+        broadcast(ev.id, { type: "reattached", taskId: ev.id });
+    },
+  });</code></pre></figure>
+
+<div class="callout">
+<strong>Component map — Codex.</strong> <code class="inline">crew.ts</code> dispatches + opens the <code class="inline">crew attach</code> renderer; <code class="inline">codexDriver.dispatch</code> → <code class="inline">app-server-client.startThread</code> opens a thread with injected <code class="inline">developerInstructions</code>; app-server notifications → <code class="inline">onNotification</code>/<code class="inline">normalize</code> feed TYPE-1; server-requests → <code class="inline">onServerRequest</code> feed blocked; the in-thread <code class="inline">crew signal --task-id …</code> feeds TYPE-2; <code class="inline">emit</code> bridges to both the ledger and the attach renderer.
+</div>
+
+<span class="anchor" id="codex-solutions"></span>
+<h3>4.4 — All possible solutions to DETECT and DISPATCH a running Codex session lifecycle</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<table>
+<thead><tr><th>Mechanism</th><th>Type</th><th class="pros">Pros</th><th class="cons">Cons</th><th>Reliability</th></tr></thead>
+<tbody>
+<tr><td><strong>app-server <code class="inline">turn/completed</code> notification</strong></td><td>TYPE 1</td><td class="pros">Structured JSON-RPC, no scraping, no env; precise turn boundaries; same channel the renderer uses</td><td class="cons">Requires the shared app-server to stay healthy; notification must carry a resolvable threadId</td><td class="rel high">High</td></tr>
+<tr><td><strong>app-server <code class="inline">turn/started</code> / delta stream</strong></td><td>TYPE 1</td><td class="pros">Fine-grained mid-turn liveness (deltas as heartbeats); drives the live renderer</td><td class="cons">Informational only; no terminal meaning</td><td class="rel high">High (as heartbeat)</td></tr>
+<tr><td><strong>Server-requests</strong> (approval/input)</td><td>TYPE 1</td><td class="pros">Native permission/input gating; maps straight to blocked; can be answered programmatically</td><td class="cons">Doesn't reliably carry threadId — falls back to "sole active task" heuristic, ambiguous with concurrent codex crews</td><td class="rel med">Medium</td></tr>
+<tr><td><strong>Thread state / <code class="inline">thread/read</code></strong></td><td>TYPE 1 (poll)</td><td class="pros">Authoritative thread status on demand; survives missed notifications</td><td class="cons">Pull-based; not wired into the lifecycle today; extra RPC load</td><td class="rel med">Medium (unused)</td></tr>
+<tr><td><strong>Process liveness</strong> of the app-server</td><td>TYPE 1 (backstop)</td><td class="pros">If the one child dies, all threads are known-dead at once</td><td class="cons">Coarse — one dead child kills every codex crew; reattach storm risk on restart (guarded by <code class="inline">shouldReattachCodex</code>)</td><td class="rel med">Medium</td></tr>
+<tr><td><strong>Explicit <code class="inline">crew signal --task-id</code></strong></td><td>TYPE 2</td><td class="pros">The only terminal signal; flag-based so it's correct under concurrent threads; needs <code class="inline">danger-full-access</code> to reach the socket</td><td class="cons">Relies on the model honoring developerInstructions; weaker codex models sometimes echo instead of run it</td><td class="rel med">Medium (model-dependent)</td></tr>
+</tbody>
+</table>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<table>
+<thead><tr><th>Cơ chế</th><th>Loại</th><th class="pros">Ưu điểm</th><th class="cons">Nhược điểm</th><th>Độ tin cậy</th></tr></thead>
+<tbody>
+<tr><td><strong>Thông báo <code class="inline">turn/completed</code> của app-server</strong></td><td>LOẠI 1</td><td class="pros">JSON-RPC có cấu trúc, không scraping, không env; ranh giới lượt chính xác; cùng kênh renderer dùng</td><td class="cons">Cần app-server dùng chung khỏe mạnh; thông báo phải mang threadId phân giải được</td><td class="rel high">Cao</td></tr>
+<tr><td><strong>Luồng <code class="inline">turn/started</code> / delta của app-server</strong></td><td>LOẠI 1</td><td class="pros">Liveness giữa-lượt chi tiết (delta như heartbeat); điều khiển renderer trực tiếp</td><td class="cons">Chỉ mang tính thông tin; không có ý nghĩa kết thúc</td><td class="rel high">Cao (như heartbeat)</td></tr>
+<tr><td><strong>Server-request</strong> (approval/input)</td><td>LOẠI 1</td><td class="pros">Cổng permission/input gốc; ánh xạ thẳng sang blocked; trả lời được bằng chương trình</td><td class="cons">Không mang threadId đáng tin — quay về heuristic "task đang hoạt động duy nhất", nhập nhằng khi có nhiều crew codex song song</td><td class="rel med">Trung bình</td></tr>
+<tr><td><strong>Trạng thái thread / <code class="inline">thread/read</code></strong></td><td>LOẠI 1 (poll)</td><td class="pros">Trạng thái thread chính thống theo yêu cầu; sống sót qua thông báo bị bỏ lỡ</td><td class="cons">Theo kiểu kéo (pull); chưa nối vào vòng đời hiện tại; tải RPC thêm</td><td class="rel med">Trung bình (chưa dùng)</td></tr>
+<tr><td><strong>Tiến trình app-server còn sống</strong></td><td>LOẠI 1 (chốt chặn)</td><td class="pros">Nếu tiến trình con duy nhất chết, mọi thread biết là chết cùng lúc</td><td class="cons">Thô — một con chết giết mọi crew codex; rủi ro bão reattach khi khởi động lại (được chặn bởi <code class="inline">shouldReattachCodex</code>)</td><td class="rel med">Trung bình</td></tr>
+<tr><td><strong><code class="inline">crew signal --task-id</code> tường minh</strong></td><td>LOẠI 2</td><td class="pros">Tín hiệu kết thúc duy nhất; theo cờ nên đúng với thread song song; cần <code class="inline">danger-full-access</code> để chạm socket</td><td class="cons">Phụ thuộc model tuân theo developerInstructions; model codex yếu đôi khi echo thay vì chạy</td><td class="rel med">Trung bình (phụ thuộc model)</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ════════════════════════ 5 · OPENCODE ════════════════════════ -->
+<span class="anchor" id="opencode"></span>
+<h2 class="section">5 · Captain ↔ OPENCODE crew</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Opencode sits between the two: like claude, it runs in a cmux tab with shell env vars and signals via env; like codex, its TYPE-1 liveness comes over a structured channel — an HTTP <strong>SSE</strong> stream the daemon subscribes to. The crew launches as <code class="inline">opencode --port &lt;N&gt;</code>, binding a local HTTP server; the daemon's <code class="inline">OpencodeSseBridge</code> subscribes to <code class="inline">GET /event</code> and maps <span class="ev">session.idle</span> → <span class="ev">task.turn.completed</span>. Because opencode has no heartbeat hook, the spawn sets a <strong>24h budget</strong> to disable stall detection and leans entirely on the SSE bridge for turn-end.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Opencode nằm giữa hai loại: giống claude, nó chạy trong tab cmux với biến env shell và signal qua env; giống codex, liveness LOẠI 1 của nó đến qua một kênh có cấu trúc — luồng HTTP <strong>SSE</strong> mà daemon đăng ký nghe. Crew khởi chạy dưới dạng <code class="inline">opencode --port &lt;N&gt;</code>, gắn một HTTP server cục bộ; <code class="inline">OpencodeSseBridge</code> của daemon đăng ký <code class="inline">GET /event</code> và ánh xạ <span class="ev">session.idle</span> → <span class="ev">task.turn.completed</span>. Vì opencode không có hook heartbeat, lần spawn đặt <strong>ngân sách 24h</strong> để vô hiệu hóa phát hiện stall và dựa hoàn toàn vào SSE bridge cho kết-thúc-lượt.</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  subgraph CAPWS["Captain cmux workspace"]
+    CAP["Captain pane"]
+    CREWTAB["Crew tab: opencode --port N<br/>env: COCKPIT_CREW_TASK_ID/PROJECT"]
+    RELAY["notify-relay (bg tab)"]
+  end
+  DAEMON["cockpitd daemon"]
+  BRIDGE["OpencodeSseBridge<br/>(daemon-side)"]
+  HTTP["opencode HTTP server :N<br/>GET /event (SSE)"]
+  MBOX[("inbox/&lt;project&gt;.log")]
+
+  CAP -->|"crew spawn --agent opencode"| CREWTAB
+  CREWTAB -->|"dispatch (budget 24h, serverPort N)"| DAEMON
+  DAEMON -->|"launchInteractive: task.started + bridge.start"| BRIDGE
+  CREWTAB --> HTTP
+  BRIDGE -->|"subscribe /event"| HTTP
+  HTTP -->|"TYPE-1: session.idle"| BRIDGE
+  BRIDGE -->|"emit task.turn.completed"| DAEMON
+  CREWTAB -->|"TYPE-2: cockpit crew signal done"| DAEMON
+  DAEMON -->|"firePush → mailbox"| MBOX
+  RELAY -->|"tail + formatEntry"| MBOX
+  RELAY -->|"inject CREW DONE/BLOCKED"| CAP
+</div>
+
+<h3>5.1 — Spawn: free port, 24h budget, SSE config</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — captain → daemon → crew tab.</strong> The spawn reserves an ephemeral port, dispatches with <code class="inline">budgetMs: 86400000</code> and <code class="inline">serverPort</code>, writes a per-crew opencode config, then launches <code class="inline">opencode --port N</code> with the same <code class="inline">COCKPIT_CREW_*</code> env prefix as claude.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — captain → daemon → tab crew.</strong> Lần spawn giữ một cổng tạm thời, dispatch với <code class="inline">budgetMs: 86400000</code> và <code class="inline">serverPort</code>, ghi cấu hình opencode theo từng crew, rồi khởi chạy <code class="inline">opencode --port N</code> với cùng tiền tố env <code class="inline">COCKPIT_CREW_*</code> như claude.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/crew.ts</span> · L301–340 — opencode spawn (24h budget + serverPort + envPrefix)</figcaption>
+<pre><code class="language-typescript">  if (agentName === "opencode") {
+    // Bind the crew's embedded opencode HTTP server on a known port so the
+    // daemon's SSE bridge can subscribe to /event for turn-end detection.
+    const serverPort = await getFreePort();
+    const req = buildDispatchRequest({
+      provider: "opencode",
+      mode: "interactive",
+      project: input.project,
+      cwd: proj.path,
+      task: input.task,
+      name,
+      // opencode has no heartbeat hook, so a normal budget would false-stall
+      // every crew after 5min; use a 24h budget to effectively disable stall
+      // detection. The SSE bridge (serverPort) provides turn-end liveness.
+      budgetMs: 86400000,
+      serverPort,
+    });
+    const rec = (await cockpitdCall(req)) as TaskRecord;
+    const opencodeConfigPath = writePerCrewOpencodeConfig({
+      stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
+      project: input.project,
+      taskId: rec.id,
+    });
+    const cliCommand = agent.buildCommand({
+      prompt: input.task,
+      workdir: proj.path,
+      role: "crew",
+      promptFile,
+      interactive: true,
+      model: crewModel,
+      port: serverPort,
+    });
+    const direction: PanePlacement = input.direction ?? "tab";
+    const title = titleFor(input.project, name);
+    const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
+    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    await runtime.sendToPane(pane, `${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
+    const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    await sendFirstTurnWhenReady(runtime, pane, input.task, preLaunchScreen);
+    return { ...pane, title };
+  }</code></pre></figure>
+
+<figure class="snippet"><figcaption><span class="fp">src/control/cockpitd.ts</span> · L240–249 — launchInteractive (opencode): ledger + start SSE bridge</figcaption>
+<pre><code class="language-typescript">      if (rec.provider === "opencode") {
+        // Opencode interactive crews run in a cmux tab — same approach as
+        // claude. [...] Emit task.started so the record transitions
+        // submitted → working. Terminal state still comes from explicit
+        // `cockpit crew signal` in the template; the SSE bridge (when serverPort
+        // is set) adds reliable turn-end (idle) detection on top [...]
+        ingest(rec.project)({ type: "task.started", id: rec.id });
+        if (rec.serverPort) opencodeBridge.start({ taskId: rec.id, port: rec.serverPort });
+        return;
+      }</code></pre></figure>
+
+<h3>5.2 — TYPE-1: the SSE bridge maps session.idle → task.turn.completed</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Edge — opencode HTTP → daemon.</strong> The bridge holds one long-lived SSE subscription per crew, parses each line, and on a <code class="inline">session.idle</code> event emits <span class="ev">task.turn.completed</span> — the same anti-#2576 idle that claude's Stop hook and codex's turn/completed produce.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Cạnh — opencode HTTP → daemon.</strong> Bridge giữ một đăng ký SSE sống lâu cho mỗi crew, phân tích từng dòng, và khi gặp sự kiện <code class="inline">session.idle</code> thì phát <span class="ev">task.turn.completed</span> — đúng loại idle anti-#2576 mà hook Stop của claude và turn/completed của codex tạo ra.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/opencode/sse-bridge.ts</span> · L125–146 — handleLine: session.idle → task.turn.completed</figcaption>
+<pre><code class="language-typescript">  private handleLine(taskId: string, rawLine: string): void {
+    let line = rawLine.trim();
+    if (!line) return;
+    // SSE field form `data: {json}`; opencode also emits bare JSON lines.
+    if (line.startsWith("data:")) line = line.slice(5).trim();
+    if (!line.startsWith("{")) return;
+    let json: { type?: string; properties?: { sessionID?: string } } | undefined;
+    try {
+      json = JSON.parse(line);
+    } catch {
+      return; // partial/non-JSON keepalive line
+    }
+    if (json?.type === "session.idle") {
+      // turnId is informational for opencode (no per-turn id on the bus); use
+      // the session id so the ledger attempt carries a stable correlation key.
+      this.deps.emit({
+        type: "task.turn.completed",
+        id: taskId,
+        turnId: json.properties?.sessionID ?? "opencode",
+      });
+    }
+  }</code></pre></figure>
+
+<div class="callout">
+<strong>Component map — Opencode.</strong> <code class="inline">crew.ts</code> reserves a port, dispatches with a 24h budget, launches <code class="inline">opencode --port N</code> with env; <code class="inline">cockpitd launchInteractive</code> flips the ledger to <code class="inline">working</code> and starts <code class="inline">OpencodeSseBridge</code>; the bridge subscribes to <code class="inline">/event</code> and maps <code class="inline">session.idle</code> → TYPE-1 idle; the crew template's <code class="inline">crew signal</code> (env-based, like claude) feeds TYPE-2; the rest of the delivery path is shared.
+</div>
+
+<span class="anchor" id="opencode-solutions"></span>
+<h3>5.3 — All possible solutions to DETECT and DISPATCH a running Opencode session lifecycle</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<table>
+<thead><tr><th>Mechanism</th><th>Type</th><th class="pros">Pros</th><th class="cons">Cons</th><th>Reliability</th></tr></thead>
+<tbody>
+<tr><td><strong>SSE <code class="inline">session.idle</code></strong> → task.turn.completed</td><td>TYPE 1</td><td class="pros">Structured HTTP event, no scraping, no agent cooperation; daemon-side; survives restart re-subscribe</td><td class="cons">Needs the embedded server up + reachable port (TOCTOU window on bind); the daemon must stay subscribed and ingesting</td><td class="rel high">High</td></tr>
+<tr><td><strong>SSE message / part events</strong></td><td>TYPE 1</td><td class="pros">Mid-turn liveness available on the same bus; could drive a heartbeat or a renderer</td><td class="cons">Not currently wired — only <code class="inline">session.idle</code> is handled; everything else is ignored</td><td class="rel med">Medium (unused)</td></tr>
+<tr><td><strong>TUI pane scrape</strong> (relay probe)</td><td>TYPE 1 (fallback)</td><td class="pros">Detects permission prompts the SSE idle can't express as blocked; same probe as claude</td><td class="cons">Heuristic; in-cmux only; shares the un-timeout'd <code class="inline">cmux()</code> hang surface (#209)</td><td class="rel med">Medium</td></tr>
+<tr><td><strong>Watchdog heartbeat budget</strong></td><td>TYPE 1 (backstop)</td><td class="pros">Would catch a silently-dead crew</td><td class="cons">Deliberately disabled — the 24h budget exists precisely because opencode has no heartbeat; backstop is therefore inert (#208)</td><td class="rel low">Low (disabled)</td></tr>
+<tr><td><strong>Explicit <code class="inline">crew signal</code></strong> (env-based)</td><td>TYPE 2</td><td class="pros">The only terminal signal; same env path as claude; no flags needed</td><td class="cons">Model must run it; opencode crews historically the most likely to skip the settle-check signal</td><td class="rel med">Medium (model-dependent)</td></tr>
+</tbody>
+</table>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<table>
+<thead><tr><th>Cơ chế</th><th>Loại</th><th class="pros">Ưu điểm</th><th class="cons">Nhược điểm</th><th>Độ tin cậy</th></tr></thead>
+<tbody>
+<tr><td><strong>SSE <code class="inline">session.idle</code></strong> → task.turn.completed</td><td>LOẠI 1</td><td class="pros">Sự kiện HTTP có cấu trúc, không scraping, không cần agent hợp tác; phía daemon; sống sót khi đăng ký lại sau khởi động lại</td><td class="cons">Cần server nhúng chạy + cổng chạm được (cửa sổ TOCTOU khi bind); daemon phải giữ đăng ký và tiếp nhận</td><td class="rel high">Cao</td></tr>
+<tr><td><strong>Sự kiện SSE message / part</strong></td><td>LOẠI 1</td><td class="pros">Liveness giữa-lượt có sẵn trên cùng bus; có thể nuôi heartbeat hay renderer</td><td class="cons">Hiện chưa nối — chỉ <code class="inline">session.idle</code> được xử lý; còn lại bị bỏ qua</td><td class="rel med">Trung bình (chưa dùng)</td></tr>
+<tr><td><strong>Đọc màn hình TUI</strong> (probe của relay)</td><td>LOẠI 1 (dự phòng)</td><td class="pros">Phát hiện permission prompt mà idle SSE không diễn đạt được thành blocked; cùng probe với claude</td><td class="cons">Heuristic; chỉ trong cmux; chia sẻ bề mặt treo của <code class="inline">cmux()</code> không timeout (#209)</td><td class="rel med">Trung bình</td></tr>
+<tr><td><strong>Ngân sách heartbeat của watchdog</strong></td><td>LOẠI 1 (chốt chặn)</td><td class="pros">Có thể bắt được crew chết âm thầm</td><td class="cons">Bị vô hiệu hóa có chủ đích — ngân sách 24h tồn tại chính vì opencode không có heartbeat; chốt chặn vì thế bất động (#208)</td><td class="rel low">Thấp (đã tắt)</td></tr>
+<tr><td><strong><code class="inline">crew signal</code> tường minh</strong> (theo env)</td><td>LOẠI 2</td><td class="pros">Tín hiệu kết thúc duy nhất; cùng đường env như claude; không cần cờ</td><td class="cons">Model phải chạy nó; crew opencode trong lịch sử hay bỏ qua bước signal sau settle-check nhất</td><td class="rel med">Trung bình (phụ thuộc model)</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- ════════════════════════ 6 · RELIABILITY ════════════════════════ -->
+<span class="anchor" id="reliability"></span>
+<h2 class="section">6 · Current-state reliability analysis (issues #207–#210)</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Four filed issues describe how the captain goes blind. They compound: each is independent, but all four converge on "the captain stops receiving signals." Each is tied below to the exact code edge in the diagrams above.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Bốn issue đã ghi nhận mô tả cách captain bị mù tín hiệu. Chúng cộng dồn: mỗi cái độc lập, nhưng cả bốn đều hội tụ về "captain ngừng nhận tín hiệu." Mỗi cái dưới đây được gắn với cạnh mã chính xác trong các sơ đồ phía trên.</p>
+</div>
+
+<h3>6.1 — #210: CREW IDLE silently dropped even when the relay is healthy (formatter drift)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Root cause (the top-priority production-silence bug).</strong> The daemon computes the correct <code class="inline">"CREW IDLE …"</code> string in <code class="inline">formatMessage</code> (§2.3), but <code class="inline">defaultNotify</code> throws it away and writes only the event; the mailbox entry's <code class="inline">kind</code> becomes <code class="inline">task.turn.completed</code>. The relay then re-derives via <code class="inline">formatEntry</code>, which has <strong>no arm</strong> for <code class="inline">task.turn.completed</code> or <code class="inline">task.idle</code> → <code class="inline">default → return null</code>. In <code class="inline">drain()</code>, a null message skips the send <strong>but still advances the cursor</strong> → the idle event is acked and lost, with no error. DONE/BLOCKED/FAILED have <code class="inline">formatEntry</code> cases and arrive — which is why this hid for so long.</p>
+<p><strong>Tied to:</strong> the §2.3 edge — <code class="inline">cockpitd.ts:198–215</code> (defaultNotify drops message) → <code class="inline">mailbox.ts:112</code> (kind = event.type) → <code class="inline">notify-relay.ts:45–67</code> (formatEntry default null) → <code class="inline">notify-relay.ts:242–261</code> (cursor advances on null).</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Nguyên nhân gốc (lỗi im-lặng-production ưu tiên cao nhất).</strong> Daemon tính đúng chuỗi <code class="inline">"CREW IDLE …"</code> trong <code class="inline">formatMessage</code> (§2.3), nhưng <code class="inline">defaultNotify</code> vứt nó đi và chỉ ghi sự kiện; trường <code class="inline">kind</code> của entry mailbox trở thành <code class="inline">task.turn.completed</code>. Relay sau đó suy diễn lại qua <code class="inline">formatEntry</code>, hàm này <strong>không có nhánh</strong> cho <code class="inline">task.turn.completed</code> hay <code class="inline">task.idle</code> → <code class="inline">default → return null</code>. Trong <code class="inline">drain()</code>, thông điệp null bỏ qua việc gửi <strong>nhưng vẫn đẩy con trỏ (cursor) tiến lên</strong> → sự kiện idle bị ack và mất, không lỗi nào nổi lên. DONE/BLOCKED/FAILED có nhánh <code class="inline">formatEntry</code> và đến nơi — đó là lý do lỗi này ẩn mình lâu vậy.</p>
+<p><strong>Gắn với:</strong> cạnh §2.3 — <code class="inline">cockpitd.ts:198–215</code> (defaultNotify bỏ message) → <code class="inline">mailbox.ts:112</code> (kind = event.type) → <code class="inline">notify-relay.ts:45–67</code> (formatEntry mặc định null) → <code class="inline">notify-relay.ts:242–261</code> (cursor tiến lên khi null).</p>
+</div>
+<div class="callout crit"><strong>Net effect:</strong> turn-end idle (<code class="inline">task.turn.completed</code>) and watchdog idle (<code class="inline">task.idle</code>) are <strong>never</strong> delivered to the captain — for every provider, always.</div>
+
+<h3>6.2 — #207: the relay is an unmonitored single point of failure</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Root cause.</strong> The daemon→captain path is mailbox-write (daemon) → mailbox-tail + inject (relay). The relay is a separate process in a cmux tab and the <em>only</em> thing turning a mailbox entry into something the captain sees. There is <strong>no registration</strong> (the daemon doesn't know a captain should have a live subscriber), <strong>no health signal</strong> in either direction, and the existing <code class="inline">buildRelaySupervisorCommand</code> self-restart loop only respawns on process <em>exit</em> — it does not cover a relay that is alive but not delivering (cmux refusing a non-app-descendant, a hung <code class="inline">cmux()</code> per #209), nor a relay launched as a bare command with no supervisor (observed 2026-06-03 — killing it left a shell prompt and the captain went silently blind).</p>
+<p><strong>Tied to:</strong> the §2.3 delivery edge in its entirety (the relay <code class="inline">drain</code> loop), plus the supervisor at <code class="inline">src/commands/launch.ts:198</code>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Nguyên nhân gốc.</strong> Đường daemon→captain là ghi-mailbox (daemon) → đọc-đuôi-mailbox + bơm (relay). Relay là một tiến trình riêng trong tab cmux và là thứ <em>duy nhất</em> biến một entry mailbox thành thứ captain thấy. <strong>Không có đăng ký</strong> (daemon không biết một captain cần có subscriber sống), <strong>không có tín hiệu sức khỏe</strong> theo cả hai chiều, và vòng tự-khởi-động-lại <code class="inline">buildRelaySupervisorCommand</code> hiện tại chỉ respawn khi tiến trình <em>thoát</em> — nó không bao phủ trường hợp relay còn sống nhưng không giao (cmux từ chối tiến trình không-hậu-duệ-app, một <code class="inline">cmux()</code> bị treo theo #209), cũng không bao phủ relay được khởi chạy như lệnh trần không supervisor (quan sát 2026-06-03 — giết nó để lại shell prompt và captain mù tín hiệu âm thầm).</p>
+<p><strong>Gắn với:</strong> toàn bộ cạnh giao §2.3 (vòng <code class="inline">drain</code> của relay), cộng supervisor tại <code class="inline">src/commands/launch.ts:198</code>.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/commands/launch.ts</span> · L198–205 — buildRelaySupervisorCommand (only respawns on exit)</figcaption>
+<pre><code class="language-typescript">export function buildRelaySupervisorCommand(project: string): string {
+  const relay = `cockpit notify-relay ${project} --as captain`;
+  return (
+    `while true; do ${relay}; ` +
+    `echo "[notify-relay ${project}] exited (code $?), restarting in ${RELAY_RESTART_DELAY_S}s"; ` +
+    `sleep ${RELAY_RESTART_DELAY_S}; done`
+  );
+}</code></pre></figure>
+<div class="callout warn"><strong>Maintainer's core ask (design deferred):</strong> the daemon should <em>own relay health</em> — relays register, the daemon detects a broken/silent relay (heartbeat or cursor-progress watchdog), and it reacts by surfacing an error or auto-healing the relay instead of writing into a void.</div>
+
+<h3>6.3 — #208: the watchdog 24h interactive budget disables the stall backstop</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Root cause B1 (primary).</strong> Interactive crews are spawned with <code class="inline">heartbeatBudgetMs: 86400000</code> (24h — §5.1, the opencode line, but the value propagates). <code class="inline">evaluateStall</code> only transitions a working task when <code class="inline">now - lastHeartbeat &gt; heartbeatBudgetMs</code>, so with a 24h budget the idle→<code class="inline">awaiting-input</code> backstop <strong>never fires within a real session</strong>. The sweep loop itself is healthy (every 30s); the problem is purely the threshold. The tension: the 24h value deliberately prevents false-stalling a legitimately-idle interactive crew — but the same single knob also gates the timely idle backstop. One threshold cannot serve both.</p>
+<p><strong>Root cause B2 (compounding).</strong> Even if the watchdog fired, its synthetic <code class="inline">task.idle</code> (daemon.ts:194–198) is dropped by the very same <code class="inline">formatEntry</code> gap as #210. The backstop is doubly dead.</p>
+<p><strong>Tied to:</strong> <code class="inline">crew.ts:315</code> (24h budget) → <code class="inline">watchdog.ts</code> <code class="inline">evaluateStall</code> → <code class="inline">daemon.ts:194–198</code> (sweep emits task.idle) → dropped at §2.3's <code class="inline">formatEntry</code>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Nguyên nhân gốc B1 (chính).</strong> Crew tương tác được spawn với <code class="inline">heartbeatBudgetMs: 86400000</code> (24h — §5.1, dòng opencode, nhưng giá trị này lan ra). <code class="inline">evaluateStall</code> chỉ chuyển một task working khi <code class="inline">now - lastHeartbeat &gt; heartbeatBudgetMs</code>, nên với ngân sách 24h, chốt chặn idle→<code class="inline">awaiting-input</code> <strong>không bao giờ kích hoạt trong một phiên thật</strong>. Bản thân vòng sweep khỏe mạnh (mỗi 30s); vấn đề thuần túy là ngưỡng. Sự căng thẳng: giá trị 24h cố ý ngăn báo-stall-nhầm một crew tương tác nhàn rỗi hợp lệ — nhưng cùng một núm điều khiển ấy cũng kiểm soát chốt chặn idle kịp thời. Một ngưỡng không thể phục vụ cả hai.</p>
+<p><strong>Nguyên nhân gốc B2 (cộng dồn).</strong> Ngay cả khi watchdog kích hoạt, <code class="inline">task.idle</code> tổng hợp của nó (daemon.ts:194–198) bị rớt bởi đúng lỗ hổng <code class="inline">formatEntry</code> như #210. Chốt chặn chết hai lần.</p>
+<p><strong>Gắn với:</strong> <code class="inline">crew.ts:315</code> (ngân sách 24h) → <code class="inline">watchdog.ts</code> <code class="inline">evaluateStall</code> → <code class="inline">daemon.ts:194–198</code> (sweep phát task.idle) → bị rớt tại <code class="inline">formatEntry</code> ở §2.3.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/watchdog.ts</span> · L19–26 — evaluateStall (fires only past heartbeatBudgetMs)</figcaption>
+<pre><code class="language-typescript">export function evaluateStall(rec: TaskRecord, now: number): TaskRecord | null {
+  if (rec.state !== "working") return null;
+  if (now - rec.lastHeartbeat &lt;= rec.heartbeatBudgetMs) return null;
+  if (rec.mode === "interactive") {
+    return { ...rec, state: "awaiting-input", lastEvent: "watchdog.idle" };
+  }
+  return { ...rec, state: "stalled", lastEvent: "watchdog.stall" };
+}</code></pre></figure>
+
+<h3>6.4 — #209: cmux() has no subprocess timeout → hung cmux wedges captain &amp; relay</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Root cause C1.</strong> <code class="inline">cmux()</code> (§2.4) uses <code class="inline">execFileSync</code> with no <code class="inline">timeout</code>. If the cmux server is unresponsive, the call hangs <em>forever</em>; there is no upper bound. This is the single exec path for every cmux op (read-screen, send, listSurfaces, …). Crucially, <code class="inline">readPaneScreen</code> wraps it in try/catch returning <code class="inline">""</code> — but a <em>hang does not throw</em>, so the catch cannot rescue it. <strong>Root cause C2:</strong> the captain self-blocks — the relay injects signals into the captain's pane, so when the captain runs a foreground <code class="inline">cockpit crew read</code> that hangs on C1, its turn never completes and injected signals queue unprocessed → permanently blind until interrupted. <strong>Root cause C3:</strong> the relay shares the same <code class="inline">cmux()</code>, so a wedged cmux hangs both sides at once. Contrast the daemon socket path, which <em>does</em> have a 5s timeout.</p>
+<p><strong>Tied to:</strong> the §2.4 edge — <code class="inline">cmux.ts:8–10</code>, with the asymmetry against <code class="inline">protocol.ts:120</code>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Nguyên nhân gốc C1.</strong> <code class="inline">cmux()</code> (§2.4) dùng <code class="inline">execFileSync</code> không có <code class="inline">timeout</code>. Nếu server cmux không phản hồi, lời gọi treo <em>mãi mãi</em>; không có giới hạn trên. Đây là đường exec duy nhất cho mọi thao tác cmux (read-screen, send, listSurfaces, …). Then chốt là: <code class="inline">readPaneScreen</code> bọc nó trong try/catch trả về <code class="inline">""</code> — nhưng <em>treo thì không ném lỗi</em>, nên catch không cứu được. <strong>Nguyên nhân gốc C2:</strong> captain tự chặn mình — relay bơm tín hiệu vào pane của captain, nên khi captain chạy lệnh tiền cảnh <code class="inline">cockpit crew read</code> bị treo do C1, lượt của nó không bao giờ xong và tín hiệu bơm vào xếp hàng chưa xử lý → mù vĩnh viễn tới khi bị ngắt. <strong>Nguyên nhân gốc C3:</strong> relay dùng chung cùng <code class="inline">cmux()</code>, nên một cmux kẹt treo cả hai phía cùng lúc. Đối lập với đường socket daemon vốn <em>có</em> timeout 5s.</p>
+<p><strong>Gắn với:</strong> cạnh §2.4 — <code class="inline">cmux.ts:8–10</code>, với sự bất đối xứng so với <code class="inline">protocol.ts:120</code>.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/protocol.ts</span> · L120–127 — the daemon path HAS a 5s timeout (the asymmetry #209 cites)</figcaption>
+<pre><code class="language-typescript">export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): Promise&lt;unknown&gt; {
+  return new Promise((resolve, reject) =&gt; {
+    const conn = createConnection(sockPath);
+    const dec = createDecoder();
+    const timer = setTimeout(() =&gt; {
+      conn.destroy();
+      reject(new Error("control plane unavailable: request timed out"));
+    }, timeoutMs);</code></pre></figure>
+
+<h3>6.5 — How the four compound</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<table>
+<thead><tr><th>Issue</th><th>Failure mode</th><th>Affects</th><th>Code edge</th></tr></thead>
+<tbody>
+<tr><td class="rel low">#210</td><td>Idle/turn-end formatted to null, acked, lost — even with a healthy relay</td><td>All providers, always</td><td>§2.3 defaultNotify→formatEntry→drain</td></tr>
+<tr><td class="rel low">#207</td><td>Relay dead/silent/detached and nothing notices — ALL signals lost</td><td>Whole captain</td><td>§2.3 drain + launch.ts supervisor</td></tr>
+<tr><td class="rel med">#208</td><td>Stall backstop never fires (24h) and would be dropped if it did (B2=#210)</td><td>Interactive crews</td><td>§6.3 watchdog + daemon sweep</td></tr>
+<tr><td class="rel med">#209</td><td>Hung cmux wedges captain commands and relay delivery indefinitely</td><td>Captain + relay</td><td>§2.4 cmux()</td></tr>
+</tbody>
+</table>
+<p>The throughline: <strong>delivery is a single un-monitored, un-bounded, formatter-divergent path</strong>, and the one backstop meant to cover it is disabled and would be dropped anyway. The redesign targets exactly these.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<table>
+<thead><tr><th>Issue</th><th>Kiểu hỏng</th><th>Ảnh hưởng</th><th>Cạnh mã</th></tr></thead>
+<tbody>
+<tr><td class="rel low">#210</td><td>Idle/kết-thúc-lượt định dạng thành null, bị ack, mất — kể cả relay khỏe mạnh</td><td>Mọi provider, luôn luôn</td><td>§2.3 defaultNotify→formatEntry→drain</td></tr>
+<tr><td class="rel low">#207</td><td>Relay chết/im lặng/tách rời mà không ai để ý — MẤT mọi tín hiệu</td><td>Toàn bộ captain</td><td>§2.3 drain + supervisor launch.ts</td></tr>
+<tr><td class="rel med">#208</td><td>Chốt chặn stall không bao giờ kích hoạt (24h) và sẽ bị rớt nếu có (B2=#210)</td><td>Crew tương tác</td><td>§6.3 watchdog + daemon sweep</td></tr>
+<tr><td class="rel med">#209</td><td>cmux treo làm kẹt lệnh captain và việc giao của relay vô hạn</td><td>Captain + relay</td><td>§2.4 cmux()</td></tr>
+</tbody>
+</table>
+<p>Mạch xuyên suốt: <strong>việc giao là một đường duy nhất không-giám-sát, không-giới-hạn, lệch-bộ-định-dạng</strong>, và chốt chặn duy nhất lẽ ra bao phủ nó thì bị tắt và dù sao cũng bị rớt. Thiết kế lại nhắm đúng vào những điểm này.</p>
+</div>
+
+<!-- ════════════════════════ 7 · REDESIGN ════════════════════════ -->
+<span class="anchor" id="redesign"></span>
+<h2 class="section">7 · Toward a reliable design</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>The following proposals are concrete and tied to the current code. They do not change the two-mechanism model (TYPE 1 / TYPE 2) or the anti-#2576 invariant — those are correct. They harden <em>delivery</em> and <em>detection</em>.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Các đề xuất sau cụ thể và gắn với mã hiện tại. Chúng không thay đổi mô hình hai-cơ-chế (LOẠI 1 / LOẠI 2) hay bất biến anti-#2576 — những thứ đó đúng. Chúng làm cứng cáp <em>việc giao</em> và <em>việc phát hiện</em>.</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  DAEMON["cockpitd daemon<br/>SINGLE SOURCE OF TRUTH"]
+  FMT["shared formatMessage()<br/>(one formatter, used by daemon AND relay)"]
+  MBOX[("inbox/&lt;project&gt;.log<br/>entry carries rendered message")]
+  REG["relay registry + heartbeat<br/>(daemon knows live subscribers)"]
+  HEAL["health watchdog<br/>cursor-progress + relay heartbeat"]
+  RELAY["notify-relay<br/>bounded cmux calls (timeout)"]
+  CAP["Captain pane"]
+
+  DAEMON --> FMT
+  FMT -->|"append rendered line"| MBOX
+  RELAY -->|"register + heartbeat"| REG
+  REG --> DAEMON
+  DAEMON --> HEAL
+  HEAL -->|"relay silent / cursor stuck → auto-heal"| RELAY
+  RELAY -->|"tail (message already rendered)"| MBOX
+  RELAY -->|"inject (bounded, fail-fast + retry)"| CAP
+  HEAL -.->|"escalate to captain if unhealable"| CAP
+</div>
+
+<h3>7.1 — Make the daemon the single source of truth for the rendered message</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Problem (=#210):</strong> two formatters — daemon <code class="inline">formatMessage</code> (daemon.ts:50–72) and relay <code class="inline">formatEntry</code> (notify-relay.ts:45–67) — drifted; idle has a daemon arm but no relay arm, so it formats to null and is dropped. <strong>Proposal:</strong> the daemon already computes the correct string in <code class="inline">firePush</code> and passes it as <code class="inline">args.message</code>. Stop discarding it: have <code class="inline">defaultNotify</code> persist <code class="inline">args.message</code> into the mailbox entry (e.g. a <code class="inline">message</code> field), and have the relay deliver <code class="inline">entry.message</code> verbatim when present, falling back to <code class="inline">formatEntry</code> only for legacy entries. One formatter, one source of truth — the relay never re-derives and can never disagree. This alone closes #210 (and #208's B2).</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Vấn đề (=#210):</strong> hai bộ định dạng — <code class="inline">formatMessage</code> của daemon (daemon.ts:50–72) và <code class="inline">formatEntry</code> của relay (notify-relay.ts:45–67) — trôi lệch; idle có nhánh ở daemon nhưng không có nhánh ở relay, nên định dạng thành null và bị rớt. <strong>Đề xuất:</strong> daemon đã tính đúng chuỗi trong <code class="inline">firePush</code> và truyền nó như <code class="inline">args.message</code>. Hãy ngừng vứt bỏ: cho <code class="inline">defaultNotify</code> lưu <code class="inline">args.message</code> vào entry mailbox (vd một trường <code class="inline">message</code>), và cho relay giao <code class="inline">entry.message</code> nguyên văn khi có, chỉ quay về <code class="inline">formatEntry</code> cho các entry cũ. Một bộ định dạng, một nguồn chân lý — relay không bao giờ suy diễn lại và không thể bất đồng. Riêng điều này đóng #210 (và B2 của #208).</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/control/daemon.ts</span> · L50–72 — formatMessage (the daemon already renders ALL states correctly, incl. CREW IDLE)</figcaption>
+<pre><code class="language-typescript">function formatMessage(rec: TaskRecord): string | null {
+  const tag = `[${rec.provider}/${rec.name != null ? rec.name : shortId(rec.id)}]`;
+  switch (rec.state) {
+    case "done": {
+      const snippet = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
+      return `CREW DONE ${tag}: ${snippet}`;
+    }
+    case "blocked":
+      return `CREW BLOCKED ${tag}: ${(rec.question ?? "(no question)").trim()}`;
+    case "failed":
+      return `CREW FAILED ${tag}: ${(rec.error ?? "(no error)").trim()}`;
+    case "stalled":
+      return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
+    case "awaiting-input":
+      return `CREW IDLE ${tag}: turn ended / awaiting your input — review and reply or close.`;
+    default:
+      return null;
+  }
+}</code></pre></figure>
+<div class="callout ok"><strong>Concrete change:</strong> <code class="inline">defaultNotify</code> (cockpitd.ts:198–215) currently calls <code class="inline">appendToMailbox({ ..., event })</code>. Add <code class="inline">message: args.message</code> to the append; extend <code class="inline">MailboxEntry</code> with an optional <code class="inline">message</code>; in <code class="inline">drain</code>, use <code class="inline">entry.message ?? formatEntry(entry)</code>. Delete the relay's divergent <code class="inline">formatEntry</code> arms over time. Also: do <strong>not</strong> advance the cursor when the resolved message is null due to an <em>unknown</em> kind — only advance for the intentional <code class="inline">task.started/task.progress</code> suppressions, so a genuine formatting miss is retried/visible rather than silently lost.</div>
+
+<h3>7.2 — Daemon ↔ relay registration + health + auto-heal</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Problem (=#207):</strong> the relay is unmonitored; if it dies/detaches/silently fails, the daemon writes into a void. <strong>Proposal:</strong> add a daemon-side relay registry. On boot, the relay sends a <code class="inline">register</code> request over the existing Unix socket (<code class="inline">{ kind: "relay-register", project, subscriber }</code>) and then a periodic <code class="inline">relay-heartbeat</code>. The daemon tracks, per project, whether a captain that should have a subscriber has a <em>live</em> one. A health watchdog (reusing the existing 30s sweep) flags a relay as broken when either (a) no heartbeat within N intervals, or (b) the cursor isn't advancing while unacked entries exist for a project with a registered captain. On a broken verdict the daemon auto-heals — re-spawns the relay via the runtime driver's <code class="inline">spawnInjector</code> (the same call <code class="inline">launch.ts</code> uses) — and, if it can't, escalates by writing a loud entry the next healthy relay (or the captain directly) will surface. This converts "silent void" into "detected + healed or escalated."</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Vấn đề (=#207):</strong> relay không được giám sát; nếu nó chết/tách rời/hỏng âm thầm, daemon ghi vào hư không. <strong>Đề xuất:</strong> thêm một sổ đăng ký relay phía daemon. Khi khởi động, relay gửi một yêu cầu <code class="inline">register</code> qua socket Unix sẵn có (<code class="inline">{ kind: "relay-register", project, subscriber }</code>) rồi gửi <code class="inline">relay-heartbeat</code> định kỳ. Daemon theo dõi, theo từng project, liệu một captain lẽ ra có subscriber có một subscriber <em>sống</em> hay không. Một watchdog sức khỏe (tái dùng sweep 30s sẵn có) đánh dấu relay là hỏng khi (a) không có heartbeat trong N chu kỳ, hoặc (b) cursor không tiến lên trong khi vẫn có entry chưa ack cho một project có captain đã đăng ký. Khi có phán quyết hỏng, daemon tự chữa — respawn relay qua <code class="inline">spawnInjector</code> của runtime driver (đúng lời gọi <code class="inline">launch.ts</code> dùng) — và nếu không thể, leo thang bằng cách ghi một entry to rõ mà relay khỏe kế tiếp (hoặc captain trực tiếp) sẽ làm nổi lên. Điều này biến "hư không im lặng" thành "phát hiện + chữa hoặc leo thang."</p>
+</div>
+
+<h3>7.3 — Eliminate formatter drift (one shared formatter)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>This is the structural form of §7.1: move the single <code class="inline">formatMessage</code> into a shared module imported by both the daemon (to render at write time) and the relay (only as a legacy fallback). Delete <code class="inline">formatEntry</code>'s independent arms so there is exactly one place a CREW-line string is constructed. No future state can be added to the daemon and silently dropped by the relay again — the class of bug that produced #210 and #208-B2 becomes structurally impossible.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Đây là dạng cấu trúc của §7.1: chuyển <code class="inline">formatMessage</code> duy nhất vào một module dùng chung, được nhập bởi cả daemon (để kết xuất lúc ghi) lẫn relay (chỉ như dự phòng cho dữ liệu cũ). Xóa các nhánh độc lập của <code class="inline">formatEntry</code> để chỉ có đúng một nơi dựng chuỗi dòng-CREW. Không trạng thái mới nào có thể được thêm vào daemon rồi bị relay rớt âm thầm lần nữa — lớp lỗi sinh ra #210 và #208-B2 trở nên bất khả thi về mặt cấu trúc.</p>
+</div>
+
+<h3>7.4 — Add execFileSync timeouts (bounded cmux)</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p><strong>Problem (=#209):</strong> <code class="inline">cmux()</code> can hang forever. <strong>Proposal:</strong> give it a bounded timeout and a maxBuffer, matching the daemon socket's 5s posture (protocol.ts:120). With a timeout, <code class="inline">execFileSync</code> throws on overrun — which <code class="inline">readPaneScreen</code>'s existing try/catch already converts to <code class="inline">""</code> — so a hung cmux becomes a fast, catchable error instead of an indefinite block. Pair this with the captain avoiding unbounded <code class="inline">crew read --full</code> on its own pane (use the bounded tail, the default), and with the relay's delivery failing fast and retrying on the next poll rather than freezing <code class="inline">drain()</code>. The fix is a few characters at the single choke point.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p><strong>Vấn đề (=#209):</strong> <code class="inline">cmux()</code> có thể treo mãi mãi. <strong>Đề xuất:</strong> cho nó một timeout có giới hạn và maxBuffer, khớp tư thế 5s của socket daemon (protocol.ts:120). Với timeout, <code class="inline">execFileSync</code> ném lỗi khi quá hạn — mà try/catch sẵn có của <code class="inline">readPaneScreen</code> đã chuyển thành <code class="inline">""</code> — nên một cmux treo trở thành lỗi nhanh, bắt được thay vì chặn vô hạn. Kết hợp với việc captain tránh <code class="inline">crew read --full</code> không giới hạn trên pane của mình (dùng tail có giới hạn, mặc định), và với việc giao của relay hỏng nhanh và thử lại ở vòng poll kế tiếp thay vì đóng băng <code class="inline">drain()</code>. Bản vá chỉ vài ký tự tại điểm thắt cổ chai duy nhất.</p>
+</div>
+<figure class="snippet"><figcaption><span class="fp">src/runtimes/cmux.ts</span> · L8–10 — TODAY (proposal: add <code style="color:inherit">{ timeout, maxBuffer }</code> here)</figcaption>
+<pre><code class="language-typescript">function cmux(args: string[]): string {
+  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8" }).trim();
+  // proposed: execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", timeout: 5000, maxBuffer: 8 * 1024 * 1024 })
+  // → a hung cmux now THROWS (caught by readPaneScreen's try/catch) instead of blocking forever.
+}</code></pre></figure>
+
+<h3>7.5 — A unified lifecycle-detection abstraction across the three drivers</h3>
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<p>Today each provider emits TYPE-1 idle through a different concrete path (Stop hook / SSE bridge / app-server notification) and each converges on the same <span class="ev">task.turn.completed</span>. That convergence is good but informal. <strong>Proposal:</strong> formalize a <code class="inline">LifecycleSource</code> interface — <code class="inline">start(taskId)</code> / <code class="inline">stop(taskId)</code> emitting a small closed set of normalized events (<code class="inline">turnCompleted</code>, <code class="inline">progress</code>, <code class="inline">blocked</code>) — with three implementations: <code class="inline">ClaudeHookSource</code> (wrapping <code class="inline">mapClaudeHookToEvent</code>), <code class="inline">CodexAppServerSource</code> (wrapping the driver's notification routing), and <code class="inline">OpencodeSseSource</code> (the existing bridge). The daemon then owns one detection contract, not three ad-hoc ones, and the anti-#2576 invariant lives in exactly one normalizer instead of being re-asserted in three files. This makes a fourth provider a single new <code class="inline">LifecycleSource</code>, and makes the per-provider heartbeat/budget asymmetry (claude has a heartbeat hook, opencode doesn't → the 24h budget) a property of each source rather than a magic number in <code class="inline">crew.ts</code> — which is the structural fix #208 actually wants.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<p>Hiện mỗi provider phát idle LOẠI 1 qua một đường cụ thể khác nhau (hook Stop / SSE bridge / thông báo app-server) và mỗi cái hội tụ về cùng <span class="ev">task.turn.completed</span>. Sự hội tụ đó tốt nhưng phi chính thức. <strong>Đề xuất:</strong> chính thức hóa một interface <code class="inline">LifecycleSource</code> — <code class="inline">start(taskId)</code> / <code class="inline">stop(taskId)</code> phát một tập đóng nhỏ các sự kiện chuẩn hóa (<code class="inline">turnCompleted</code>, <code class="inline">progress</code>, <code class="inline">blocked</code>) — với ba hiện thực: <code class="inline">ClaudeHookSource</code> (bọc <code class="inline">mapClaudeHookToEvent</code>), <code class="inline">CodexAppServerSource</code> (bọc định tuyến thông báo của driver), và <code class="inline">OpencodeSseSource</code> (bridge sẵn có). Khi đó daemon nắm một hợp đồng phát hiện duy nhất, không phải ba cái rời rạc, và bất biến anti-#2576 sống trong đúng một bộ chuẩn hóa thay vì được khẳng định lại trong ba file. Điều này khiến provider thứ tư chỉ là một <code class="inline">LifecycleSource</code> mới, và biến sự bất đối xứng heartbeat/ngân sách theo provider (claude có hook heartbeat, opencode không → ngân sách 24h) thành thuộc tính của từng source thay vì một con số ma thuật trong <code class="inline">crew.ts</code> — đúng là bản vá cấu trúc mà #208 thực sự muốn.</p>
+</div>
+
+<div class="callout ok">
+<strong>Priority order (from the issues' own severity):</strong> (1) §7.1/§7.3 single shared formatter → closes #210 + #208-B2 (the actual production silence); (2) §7.4 bounded cmux → closes #209; (3) §7.2 relay registration/heal → closes #207; (4) §7.5 unified detection → structural fix for #208's threshold tension and future providers.
+</div>
+
+<!-- ════════════════════════ 8 · APPENDIX ════════════════════════ -->
+<span class="anchor" id="appendix"></span>
+<h2 class="section">8 · Appendix — event &amp; state reference</h2>
+
+<div class="lang en">
+<h4 class="flag">🇬🇧 English</h4>
+<table>
+<thead><tr><th>Event</th><th>Source</th><th>Reduces to</th><th>Type</th></tr></thead>
+<tbody>
+<tr><td><span class="ev">task.started</span></td><td>daemon launchInteractive / codex dispatch</td><td>working</td><td>—</td></tr>
+<tr><td><span class="ev">task.progress</span> / <span class="ev">heartbeat</span></td><td>claude PostToolUse/SubagentStop/SessionEnd</td><td>liveness (awaiting-input→working)</td><td>TYPE 1</td></tr>
+<tr><td><span class="ev">task.turn.completed</span></td><td>claude Stop / codex turn/completed / opencode session.idle</td><td>awaiting-input (CREW IDLE)</td><td>TYPE 1</td></tr>
+<tr><td><span class="ev">task.blocked</span></td><td>Stop(question) / Notification(perm) / signal blocked / pane probe / codex server-request</td><td>blocked (CREW BLOCKED)</td><td>TYPE 1 &amp; 2</td></tr>
+<tr><td><span class="ev">task.idle</span></td><td>watchdog sweep (interactive)</td><td>no-op (state already set); CREW IDLE</td><td>TYPE 1</td></tr>
+<tr><td><span class="ev">task.stalled</span></td><td>watchdog sweep (headless) / reconcile</td><td>stalled (CREW STALLED)</td><td>TYPE 1</td></tr>
+<tr><td><span class="ev">task.done</span></td><td><strong>only</strong> cockpit crew signal done</td><td>done (CREW DONE)</td><td>TYPE 2</td></tr>
+<tr><td><span class="ev">task.failed</span></td><td>signal failed / codex error / pane-error probe / launch error</td><td>failed (CREW FAILED)</td><td>TYPE 2 &amp; auto</td></tr>
+<tr><td><span class="ev">task.cancelled</span></td><td>crew close (captain-initiated)</td><td>cancelled (silent — not an attention state)</td><td>—</td></tr>
+<tr><td><span class="ev">task.reopened</span></td><td>crew send to a terminal task</td><td>working (escapes terminal)</td><td>—</td></tr>
+</tbody>
+</table>
+<p class="legend">Attention states (fire a push): done, blocked, failed, stalled, awaiting-input. <code class="inline">cancelled</code> is terminal but deliberately silent. Only <code class="inline">task.done</code> from the explicit TYPE-2 signal reaches the <code class="inline">done</code> state — the anti-#2576 invariant, asserted independently in state-machine.ts, claude.ts, normalize.ts, and sse-bridge.ts.</p>
+</div>
+<div class="lang vi">
+<h4 class="flag">🇻🇳 Tiếng Việt</h4>
+<table>
+<thead><tr><th>Sự kiện</th><th>Nguồn</th><th>Rút gọn thành</th><th>Loại</th></tr></thead>
+<tbody>
+<tr><td><span class="ev">task.started</span></td><td>daemon launchInteractive / codex dispatch</td><td>working</td><td>—</td></tr>
+<tr><td><span class="ev">task.progress</span> / <span class="ev">heartbeat</span></td><td>claude PostToolUse/SubagentStop/SessionEnd</td><td>liveness (awaiting-input→working)</td><td>LOẠI 1</td></tr>
+<tr><td><span class="ev">task.turn.completed</span></td><td>claude Stop / codex turn/completed / opencode session.idle</td><td>awaiting-input (CREW IDLE)</td><td>LOẠI 1</td></tr>
+<tr><td><span class="ev">task.blocked</span></td><td>Stop(câu hỏi) / Notification(quyền) / signal blocked / probe pane / server-request codex</td><td>blocked (CREW BLOCKED)</td><td>LOẠI 1 &amp; 2</td></tr>
+<tr><td><span class="ev">task.idle</span></td><td>watchdog sweep (tương tác)</td><td>no-op (trạng thái đã đặt); CREW IDLE</td><td>LOẠI 1</td></tr>
+<tr><td><span class="ev">task.stalled</span></td><td>watchdog sweep (headless) / reconcile</td><td>stalled (CREW STALLED)</td><td>LOẠI 1</td></tr>
+<tr><td><span class="ev">task.done</span></td><td><strong>chỉ</strong> cockpit crew signal done</td><td>done (CREW DONE)</td><td>LOẠI 2</td></tr>
+<tr><td><span class="ev">task.failed</span></td><td>signal failed / lỗi codex / probe lỗi pane / lỗi khởi chạy</td><td>failed (CREW FAILED)</td><td>LOẠI 2 &amp; tự động</td></tr>
+<tr><td><span class="ev">task.cancelled</span></td><td>crew close (captain chủ động)</td><td>cancelled (im lặng — không phải attention state)</td><td>—</td></tr>
+<tr><td><span class="ev">task.reopened</span></td><td>crew send tới một task kết thúc</td><td>working (thoát khỏi kết thúc)</td><td>—</td></tr>
+</tbody>
+</table>
+<p class="legend">Trạng thái cần chú ý (kích hoạt push): done, blocked, failed, stalled, awaiting-input. <code class="inline">cancelled</code> là kết thúc nhưng im lặng có chủ đích. Chỉ <code class="inline">task.done</code> từ tín hiệu LOẠI 2 tường minh mới tới trạng thái <code class="inline">done</code> — bất biến anti-#2576, được khẳng định độc lập trong state-machine.ts, claude.ts, normalize.ts, và sse-bridge.ts.</p>
+</div>
+
+<footer style="margin-top:60px; padding-top:20px; border-top:1px solid var(--border); color:var(--muted); font-size:13px;">
+  <p>Generated 2026-06-03 · branch <code class="inline">feat/docs-captain-crew-arch</code> · base develop @ 8efd1a3 · all code snippets verbatim from the current tree · docs-only, no source modified.</p>
+</footer>
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+<script>
+  // Syntax highlighting
+  if (window.hljs) { document.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el)); }
+  // Mermaid
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral', flowchart: { useMaxWidth: true, htmlLabels: true } });
+  }
+  // Language toggle: both / en / vi
+  const buttons = document.querySelectorAll('.toolbar button');
+  function setMode(mode) {
+    document.querySelectorAll('.lang.en').forEach((e) => e.style.display = (mode === 'vi') ? 'none' : '');
+    document.querySelectorAll('.lang.vi').forEach((e) => e.style.display = (mode === 'en') ? 'none' : '');
+    buttons.forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  }
+  buttons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  setMode('both');
+</script>
+</body>
+</html>
