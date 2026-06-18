@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import chalk from "chalk";
 import { DEFAULT_CONFIG_PATH, getDefaultConfig, type CockpitConfig } from "@cockpit/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@cockpit/shared";
@@ -109,6 +111,6 @@ configCommand
   });
 
 function readPkgVersion(): string {
-  const url = new URL("../../package.json", import.meta.url);
-  return JSON.parse(fs.readFileSync(url, "utf-8")).version as string;
+  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  return JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version as string;
 }

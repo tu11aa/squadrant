@@ -170,6 +170,11 @@ export class CodexInteractiveDriver {
     }
   }
 
+  /** Kill the long-lived app-server child process on daemon shutdown. */
+  stop(): void {
+    this.client?.kill();
+  }
+
   async answer(taskId: string, payload: unknown): Promise<void> {
     const c = this.client!;
     const rec = this.serverRequestByTask.get(taskId);

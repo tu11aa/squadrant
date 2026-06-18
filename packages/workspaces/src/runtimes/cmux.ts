@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "@cockpit/shared";
 import { checkToolCompat } from "@cockpit/shared";
@@ -23,23 +23,28 @@ export { DeferDelivery };
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
 // literal argument — backticks, $(), quotes are never parsed. See #118.
-function cmux(args: string[]): string {
-  try {
-    // CMUX_QUIET=1 silences cmux 0.64's one-time deprecation hints (e.g. the
-    // "list-workspaces is now an alias for cmux workspace list" notice). Those
-    // notices print to the command's stdout and would otherwise pollute the
-    // output we parse. Inherit the rest of the environment unchanged.
-    return execFileSync(resolveCmuxBin(), args, {
-      encoding: "utf-8",
-      timeout: CMUX_TIMEOUT,
-      env: { ...process.env, CMUX_QUIET: "1" },
-    }).trim();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-      throw new CmuxTimeoutError(args.join(" "));
-    }
-    throw err;
-  }
+// Async to avoid blocking the Node.js event loop during daemon timer ticks.
+function cmux(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      resolveCmuxBin(),
+      args,
+      // CMUX_QUIET=1 silences cmux 0.64's one-time deprecation hints (e.g. the
+      // "list-workspaces is now an alias for cmux workspace list" notice). Those
+      // notices print to the command's stdout and would otherwise pollute the
+      // output we parse. Inherit the rest of the environment unchanged.
+      { encoding: "utf-8", timeout: CMUX_TIMEOUT, env: { ...process.env, CMUX_QUIET: "1" } },
+      (err, stdout) => {
+        if (err) {
+          reject((err as NodeJS.ErrnoException).code === "ETIMEDOUT"
+            ? new CmuxTimeoutError(args.join(" "))
+            : err);
+          return;
+        }
+        resolve((stdout as string).trim());
+      },
+    );
+  });
 }
 
 // Shape of `cmux workspace list --json` (cmux 0.64.16). Only the fields we
@@ -109,7 +114,7 @@ export function sanitizeForCmuxSend(text: string): string {
  * Handles both `>` (synthetic/test) and `❯` (U+276F, the real Claude Code
  * prompt character) as the input caret. The real prompt is followed by a
  * non-breaking space (U+00A0); JS `\s` covers it, so `\s+` matches either.
- * Also handles box-drawing `│ ❯ text │` variants.
+ * Also handles box-drawing `│ ❯ text │` variants.
  *
  * Three-state return (#268):
  *   "draft text" — input box found with content  → caller must DEFER
@@ -255,7 +260,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async probe(): Promise<RuntimeProbeResult> {
       try {
-        const version = cmux(["--version"]);
+        const version = await cmux(["--version"]);
         const warn = checkToolCompat("cmux", version, compatManifest.tools.cmux);
         if (warn) process.stderr.write(`[cockpit] ${warn}\n`);
         return { installed: true, version };
@@ -268,7 +273,7 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         // --json: structured output (B2); --id-format refs: ids as
         // workspace:N refs, not numeric (from #325). Both are required.
-        return parseList(cmux(["workspace", "list", "--json", "--id-format", "refs"]));
+        return parseList(await cmux(["workspace", "list", "--json", "--id-format", "refs"]));
       } catch {
         return [];
       }
@@ -283,29 +288,29 @@ export function createCmuxDriver(): RuntimeDriver {
     async spawn(opts: RuntimeSpawnOptions): Promise<WorkspaceRef> {
       const newWorkspaceArgs = ["workspace", "create", "--command", opts.command];
       if (opts.workdir) newWorkspaceArgs.push("--cwd", opts.workdir);
-      const output = cmux(newWorkspaceArgs);
+      const output = await cmux(newWorkspaceArgs);
       const id = output.match(/workspace:\d+/)?.[0] || output.split(/\s+/).pop() || "";
       if (!id) {
         throw new Error(`cmux spawn did not return a workspace id: ${output}`);
       }
-      cmux(["workspace", "rename", id, "--title", opts.name]);
+      await cmux(["workspace", "rename", id, "--title", opts.name]);
       // Rename the initial tab to the workspace name so send() can route to it
       let initialSurface: string | undefined;
       try {
-        const tree = cmux(["tree", "--workspace", id, "--id-format", "refs"]);
+        const tree = await cmux(["tree", "--workspace", id, "--id-format", "refs"]);
         const m = tree.match(/surface\s+(surface:\d+)\s+\[\w+\]\s+"([^"]*)"/);
         if (m) {
           initialSurface = m[1];
-          cmux(["rename-tab", "--workspace", id, "--surface", m[1], opts.name]);
+          await cmux(["rename-tab", "--workspace", id, "--surface", m[1], opts.name]);
         }
       } catch { /* rename is best-effort */ }
       if (opts.pinToTop) {
         try {
-          cmux(["workspace-action", "--workspace", id, "--action", "pin"]);
-        } catch { /* pin is best-effort */ }
+          await cmux(["workspace-action", "--workspace", id, "--action", "pin"]);
+        } catch { /* workspace may not be pinned — proceed to close regardless */ }
         if (initialSurface) {
           try {
-            cmux(["tab-action", "--workspace", id, "--surface", initialSurface, "--action", "pin"]);
+            await cmux(["tab-action", "--workspace", id, "--surface", initialSurface, "--action", "pin"]);
           } catch { /* tab pin is best-effort */ }
         }
       }
@@ -323,23 +328,23 @@ export function createCmuxDriver(): RuntimeDriver {
           const surfaces = await this.listSurfaces(ws.id);
           const target = surfaces.find((s) => s.title === ws.name);
           if (target) {
-            cmux(["send", "--workspace", ws.id, "--surface", target.surfaceId, sanitizeForCmuxSend(message)]);
-            cmux(["send-key", "--workspace", ws.id, "--surface", target.surfaceId, "Enter"]);
+            await cmux(["send", "--workspace", ws.id, "--surface", target.surfaceId, sanitizeForCmuxSend(message)]);
+            await cmux(["send-key", "--workspace", ws.id, "--surface", target.surfaceId, "Enter"]);
             return;
           }
         } catch { /* fall through to default */ }
       }
-      cmux(["send", "--workspace", ref, sanitizeForCmuxSend(message)]);
-      cmux(["send-key", "--workspace", ref, "Enter"]);
+      await cmux(["send", "--workspace", ref, sanitizeForCmuxSend(message)]);
+      await cmux(["send-key", "--workspace", ref, "Enter"]);
     },
 
     async sendKey(ref: string, key: string): Promise<void> {
-      cmux(["send-key", "--workspace", ref, key]);
+      await cmux(["send-key", "--workspace", ref, key]);
     },
 
     async readScreen(ref: string): Promise<string> {
       try {
-        return cmux(["read-screen", "--workspace", ref]);
+        return await cmux(["read-screen", "--workspace", ref]);
       } catch {
         return "";
       }
@@ -349,10 +354,10 @@ export function createCmuxDriver(): RuntimeDriver {
       // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
       // cockpit launch --fresh works even when the captain workspace is pinned.
       try {
-        cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
+        await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
       } catch { /* workspace may not be pinned — proceed to close regardless */ }
       try {
-        cmux(["workspace", "close", ref]);
+        await cmux(["workspace", "close", ref]);
       } catch { /* may already be closed */ }
     },
 
@@ -367,7 +372,7 @@ export function createCmuxDriver(): RuntimeDriver {
       const cmd = opts.direction === "tab"
         ? ["new-surface", "--type", "terminal", "--workspace", opts.workspaceId, "--focus", "false"]
         : ["new-pane", "--type", "terminal", "--direction", opts.direction, "--workspace", opts.workspaceId, "--focus", "false"];
-      const output = cmux(cmd);
+      const output = await cmux(cmd);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
         const verb = opts.direction === "tab" ? "new-surface" : "new-pane";
@@ -375,7 +380,7 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       if (opts.title) {
         try {
-          cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
+          await cmux(["rename-tab", "--workspace", opts.workspaceId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
       }
       return { workspaceId: opts.workspaceId, surfaceId };
@@ -383,18 +388,18 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async closePane(pane: PaneRef): Promise<void> {
       try {
-        cmux(["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
+        await cmux(["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
       } catch { /* may already be closed */ }
     },
 
     async sendToPane(pane: PaneRef, message: string): Promise<void> {
-      cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(message)]);
-      cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, "Enter"]);
+      await cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(message)]);
+      await cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, "Enter"]);
     },
 
     async readPaneScreen(pane: PaneRef): Promise<string> {
       try {
-        return cmux(["read-screen", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
+        return await cmux(["read-screen", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
       } catch {
         return "";
       }
@@ -421,34 +426,34 @@ export function createCmuxDriver(): RuntimeDriver {
       // debug tab focused for ergonomics.
       const wsId = opts.captainWorkspace.id;
       const focus = opts.placement === "visible" ? "true" : "false";
-      const output = cmux(["new-surface", "--type", "terminal", "--workspace", wsId, "--focus", focus]);
+      const output = await cmux(["new-surface", "--type", "terminal", "--workspace", wsId, "--focus", focus]);
       const surfaceId = output.match(/surface:\d+/)?.[0];
       if (!surfaceId) {
         throw new Error(`cmux spawnInjector did not return a surface id: ${output}`);
       }
       if (opts.title) {
         try {
-          cmux(["rename-tab", "--workspace", wsId, "--surface", surfaceId, "--title", opts.title]);
+          await cmux(["rename-tab", "--workspace", wsId, "--surface", surfaceId, "--title", opts.title]);
         } catch { /* rename is best-effort */ }
       }
-      cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
-      cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
+      await cmux(["send", "--workspace", wsId, "--surface", surfaceId, opts.command]);
+      await cmux(["send-key", "--workspace", wsId, "--surface", surfaceId, "Enter"]);
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
     async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void> {
       const ws = surface.workspaceId;
       const sf = surface.surfaceId;
-      const deliver = () => {
-        cmux(["send", "--workspace", ws, "--surface", sf, sanitizeForCmuxSend(text)]);
-        cmux(["send-key", "--workspace", ws, "--surface", sf, "Enter"]);
+      const deliver = async () => {
+        await cmux(["send", "--workspace", ws, "--surface", sf, sanitizeForCmuxSend(text)]);
+        await cmux(["send-key", "--workspace", ws, "--surface", sf, "Enter"]);
       };
 
       // #258/#268 Approach B: deliver only when the captain's input is positively
       // confirmed empty. null = box not visible (overlay/menu/scroll) → always defer.
       let screen = "";
       try {
-        screen = cmux(["read-screen", "--workspace", ws, "--surface", sf]);
+        screen = await cmux(["read-screen", "--workspace", ws, "--surface", sf]);
       } catch { /* screen unreadable — parseDraftFromScreen("") → null → defer below */ }
       const draft = parseDraftFromScreen(screen);
 
@@ -456,7 +461,7 @@ export function createCmuxDriver(): RuntimeDriver {
       if (draft === null) throw new DeferDelivery(null);
 
       // Empty input — nothing to protect, deliver directly.
-      if (draft === "") { deliver(); return; }
+      if (draft === "") { await deliver(); return; }
 
       // A draft is present. On the hot path (no probe) we NEVER keystroke — we
       // defer and carry the content so the relay can track stability (#302).
@@ -469,10 +474,10 @@ export function createCmuxDriver(): RuntimeDriver {
       // stays invariant or dismisses to empty. So we PROTECT only on that exact
       // signature, and we NEVER re-paste screen-read content.
       const before = readInputBoxRaw(screen);
-      cmux(["send-key", "--workspace", ws, "--surface", sf, "backspace"]);
+      await cmux(["send-key", "--workspace", ws, "--surface", sf, "backspace"]);
       let afterScreen = "";
       try {
-        afterScreen = cmux(["read-screen", "--workspace", ws, "--surface", sf]);
+        afterScreen = await cmux(["read-screen", "--workspace", ws, "--surface", sf]);
       } catch { /* unreadable after probe — treat as no real draft, fall through to deliver */ }
       const after = readInputBoxRaw(afterScreen);
 
@@ -480,12 +485,12 @@ export function createCmuxDriver(): RuntimeDriver {
         // Confirmed REAL draft. Restore the single char our probe removed (NOT a
         // full re-paste — at most one known char), then defer. Never clobber, and
         // a ghost can never reach this branch, so it can never be materialized.
-        cmux(["send", "--workspace", ws, "--surface", sf, before.slice(-1)]);
+        await cmux(["send", "--workspace", ws, "--surface", sf, before.slice(-1)]);
         throw new DeferDelivery(draft);
       }
 
       // No real draft (ghost dismissed/invariant, or buffer now empty) → deliver.
-      deliver();
+      await deliver();
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
@@ -493,7 +498,7 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         // --json: structured output (B2); --id-format refs: surface ids as
         // surface:N refs, not numeric (from #325). Both are required.
-        output = cmux(["tree", "--workspace", workspaceId, "--json", "--id-format", "refs"]);
+        output = await cmux(["tree", "--workspace", workspaceId, "--json", "--id-format", "refs"]);
       } catch {
         return [];
       }
