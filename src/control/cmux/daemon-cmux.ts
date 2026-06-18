@@ -1,5 +1,5 @@
-import type { RuntimeDriver, PaneRef } from "../../runtimes/types.js";
-import { DeferDelivery } from "../../runtimes/cmux.js";
+import type { RuntimeDriver, PaneRef } from "@cockpit/workspaces";
+import { DeferDelivery } from "@cockpit/workspaces";
 
 /**
  * #332: daemon-side cmux access. The daemon (a launchd process, NOT a cmux

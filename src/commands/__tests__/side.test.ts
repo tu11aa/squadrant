@@ -10,7 +10,7 @@ const listSurfaces = vi.hoisted(() => vi.fn());
 const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 
-vi.mock("../../runtimes/index.js", () => ({
+vi.mock("@cockpit/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
     probe: vi.fn(),

@@ -8,13 +8,13 @@ import chalk from "chalk";
 import { loadConfig, resolveHome, type ModelRoutingConfig } from "@cockpit/shared";
 import { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } from "@cockpit/agents";
 import type { AgentDriver, Role } from "@cockpit/agents";
-import { RuntimeRegistry, createCmuxDriver } from "../runtimes/index.js";
-import type { RuntimeDriver } from "../runtimes/index.js";
+import { RuntimeRegistry, createCmuxDriver } from "@cockpit/workspaces";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
+import type { RuntimeDriver } from "@cockpit/workspaces";
 import { ensureSpokeLayout } from "@cockpit/shared";
 import { resolveCmuxBin } from "@cockpit/shared";
 import { buildRelaySupervisorCommand, NOTIFY_RELAY_TAB_TITLE } from "../control/relay-supervisor.js";
-import { CMUX_TIMEOUT, classifyStartupSurface } from "../runtimes/cmux.js";
+import { CMUX_TIMEOUT, classifyStartupSurface } from "@cockpit/workspaces";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");

@@ -13,7 +13,7 @@ vi.mock("@cockpit/shared", async () => {
 
 const stopMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const listMock = vi.hoisted(() => vi.fn());
-vi.mock("../../runtimes/index.js", () => ({
+vi.mock("@cockpit/workspaces", () => ({
   createCmuxDriver: () => ({}),
   RuntimeRegistry: class {
     forProject() { return { list: listMock, stop: stopMock }; }

@@ -8,7 +8,8 @@ import os from "node:os";
 import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
 import { resolveCrewRoute } from "../control/crew-routing.js";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
+import type { PaneRef, PanePlacement, RuntimeDriver } from "@cockpit/workspaces";
 import {
   createClaudeDriver,
   createCodexDriver,
@@ -16,7 +17,6 @@ import {
   createOpencodeDriver,
   CapabilityRegistry,
 } from "@cockpit/agents";
-import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";

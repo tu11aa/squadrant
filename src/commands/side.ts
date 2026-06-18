@@ -4,7 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
+import type { PaneRef, PanePlacement } from "@cockpit/workspaces";
 import {
   createClaudeDriver,
   createCodexDriver,
@@ -12,7 +13,6 @@ import {
   createOpencodeDriver,
   CapabilityRegistry,
 } from "@cockpit/agents";
-import type { PaneRef, PanePlacement } from "../runtimes/types.js";
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew.js";
 import { resolveTextInput } from "@cockpit/shared";
 import { addWorktree, removeWorktree, worktreePath } from "@cockpit/shared";

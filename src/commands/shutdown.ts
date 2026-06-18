@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
-import type { RuntimeDriver } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
+import type { RuntimeDriver } from "@cockpit/workspaces";
 import { cockpitdCall } from "./crew-control.js";
 import type { TaskRecord } from "@cockpit/shared";
 import { TERMINAL_STATES } from "@cockpit/shared";

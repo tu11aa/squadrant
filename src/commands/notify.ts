@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
-import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
+import { createCmuxNotifier, NotifierRegistry } from "@cockpit/workspaces";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

@@ -7,9 +7,8 @@ import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
 import { compatManifest, type ToolEntry } from "@cockpit/shared";
 import { checkToolCompat } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry } from "@cockpit/workspaces";
 import { createObsidianDriver, WorkspaceRegistry } from "../workspaces/index.js";
-import { createCmuxNotifier, NotifierRegistry } from "../notifiers/index.js";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 import {
   createCursorEmitter,

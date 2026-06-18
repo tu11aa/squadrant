@@ -2,14 +2,14 @@ import { Command } from "commander";
 import { createConnection } from "node:net";
 import chalk from "chalk";
 import { loadConfig, type CockpitConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
+import type { RuntimeDriver } from "@cockpit/workspaces";
 import { runNotifyRelay, DEFAULT_STATE_ROOT } from "./notify-relay.js";
 import { runRelaySupervisor } from "../control/relay-supervisor-loop.js";
 import {
   createRelayLogBroadcaster,
   relayLogSockPath,
 } from "../control/relay-log-broadcaster.js";
-import type { RuntimeDriver } from "../runtimes/types.js";
 
 export interface RelaySuperviseArgs {
   project: string;

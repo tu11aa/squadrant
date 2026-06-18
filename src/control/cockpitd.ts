@@ -17,8 +17,7 @@ import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@cockpit
 import { CmuxEventsBridge } from "./cmux/events-bridge.js";
 import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
 import { DaemonCmux } from "./cmux/daemon-cmux.js";
-import { createCmuxDriver } from "../runtimes/index.js";
-import { RuntimeRegistry } from "../runtimes/index.js";
+import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 function readPkgVersion(): string {

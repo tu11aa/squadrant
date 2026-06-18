@@ -10,7 +10,7 @@ vi.mock("node:child_process", () => ({
   execSync: execSyncMock,
 }));
 
-vi.mock("../../runtimes/index.js", () => ({
+vi.mock("@cockpit/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
     probe,

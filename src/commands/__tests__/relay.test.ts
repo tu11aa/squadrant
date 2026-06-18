@@ -18,7 +18,7 @@ vi.mock("../../control/relay-log-broadcaster.js", () => ({
 
 const forProjectMock = vi.hoisted(() => vi.fn());
 const RuntimeRegistryMock = vi.hoisted(() => vi.fn().mockImplementation(() => ({ forProject: forProjectMock })));
-vi.mock("../../runtimes/index.js", () => ({
+vi.mock("@cockpit/workspaces", () => ({
   createCmuxDriver: () => ({}),
   RuntimeRegistry: RuntimeRegistryMock,
 }));
