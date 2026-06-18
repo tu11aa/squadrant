@@ -13,12 +13,16 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
-import { createRelayHealer } from "@cockpit/core";
+import { createRelayHealer, healCmdFor } from "@cockpit/core";
 import type { RelayHealOutcome } from "@cockpit/core";
 import { ensureDaemon as _ensureDaemon } from "@cockpit/core";
 import type { ComponentHealth, HealthState } from "@cockpit/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
+
+// Re-exported so existing consumers (tests + external code) that import from
+// this module continue to work without changes.
+export { healCmdFor };
 
 export interface HealComponent {
   kind: ComponentHealth["kind"];
@@ -32,23 +36,6 @@ export interface HealStatusResult {
   healthy: boolean;
   daemonUnreachable?: boolean;
   components: HealComponent[];
-}
-
-/**
- * Pure. Return the heal command string for a component that needs remediation,
- * or null when no action is needed (or when no heal verb exists for this kind).
- *
- * Relay idempotency rule (#240): the captain-owned 'relay supervise' process
- * is the PRIMARY relay lifecycle manager. 'cockpit heal relay' is the MANUAL
- * fallback for when NO supervised relay is running (captain wedged/dead). To
- * avoid competing with a partially-degraded but still-supervised relay, we
- * only spawn on 'gone' or 'unknown' — never on 'alive' or 'stale'.
- */
-export function healCmdFor(c: ComponentHealth): string | null {
-  if (c.kind === "relay" && (c.state === "gone" || c.state === "unknown")) {
-    return `cockpit heal relay --project ${c.project}`;
-  }
-  return null;
 }
 
 /**

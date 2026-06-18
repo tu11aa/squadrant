@@ -6,7 +6,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { sendRequest } from "@cockpit/core";
+import { sendRequest, ageText } from "@cockpit/core";
+export { ageText } from "@cockpit/core";
 import type { ComponentHealth, HealthState } from "@cockpit/core";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
@@ -42,16 +43,6 @@ export function colorState(state: HealthState): string {
     case "gone": return chalk.red(state);
     case "unknown": return chalk.dim(state);
   }
-}
-
-/** Human-friendly age of the last-seen timestamp, or em-dash when there is none. */
-export function ageText(lastSeenMs: number | null, now: number): string {
-  if (lastSeenMs == null) return "—";
-  const s = Math.max(0, Math.round((now - lastSeenMs) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
 }
 
 /** Pure plain-text row (no color) — kept colorless so it is trivially testable. */

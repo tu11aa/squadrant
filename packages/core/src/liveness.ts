@@ -185,3 +185,30 @@ function presence(p: boolean | null): HealthState {
   if (p === null) return "unknown";
   return p ? "alive" : "gone";
 }
+
+/** Human-friendly age of the last-seen timestamp, or em-dash when there is none. */
+export function ageText(lastSeenMs: number | null, now: number): string {
+  if (lastSeenMs == null) return "—";
+  const s = Math.max(0, Math.round((now - lastSeenMs) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
+}
+
+/**
+ * Pure. Return the heal command string for a component that needs remediation,
+ * or null when no action is needed (or when no heal verb exists for this kind).
+ *
+ * Relay idempotency rule (#240): the captain-owned 'relay supervise' process
+ * is the PRIMARY relay lifecycle manager. 'cockpit heal relay' is the MANUAL
+ * fallback for when NO supervised relay is running (captain wedged/dead). To
+ * avoid competing with a partially-degraded but still-supervised relay, we
+ * only spawn on 'gone' or 'unknown' — never on 'alive' or 'stale'.
+ */
+export function healCmdFor(c: ComponentHealth): string | null {
+  if (c.kind === "relay" && (c.state === "gone" || c.state === "unknown")) {
+    return `cockpit heal relay --project ${c.project}`;
+  }
+  return null;
+}
