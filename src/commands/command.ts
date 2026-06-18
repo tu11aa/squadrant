@@ -11,7 +11,7 @@ import {
   createGeminiDriver,
   createOpencodeDriver,
   CapabilityRegistry,
-} from "../drivers/index.js";
+} from "@cockpit/agents";
 import type { PaneRef } from "../runtimes/types.js";
 import { resolveCmuxBin } from "@cockpit/shared";
 

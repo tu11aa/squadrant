@@ -17,7 +17,7 @@ import {
   createGeminiEmitter,
   createOpencodeEmitter,
   ProjectionRegistry,
-} from "../projection/index.js";
+} from "@cockpit/agents";
 
 function commandExists(cmd: string): boolean {
   try {
@@ -249,7 +249,7 @@ export const doctorCommand = new Command("doctor")
     // --- Agent Probes ---
     console.log(chalk.bold("\nAgent Drivers\n"));
 
-    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } = await import("../drivers/index.js");
+    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } = await import("@cockpit/agents");
 
     const agentDrivers = {
       claude: createClaudeDriver(),

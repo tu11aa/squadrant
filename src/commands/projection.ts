@@ -12,7 +12,7 @@ import {
   ProjectionRegistry,
   type ProjectionEmitter,
   type ProjectionSource,
-} from "../projection/index.js";
+} from "@cockpit/agents";
 import { createObsidianDriver } from "../workspaces/index.js";
 import type { WorkspaceDriver } from "@cockpit/shared";
 import {

@@ -11,7 +11,7 @@ import {
   createGeminiDriver,
   createOpencodeDriver,
   CapabilityRegistry,
-} from "../drivers/index.js";
+} from "@cockpit/agents";
 import type { PaneRef, PanePlacement } from "../runtimes/types.js";
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew.js";
 import { resolveTextInput } from "@cockpit/shared";

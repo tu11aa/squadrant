@@ -5,9 +5,9 @@ const emitMock = vi.hoisted(() => vi.fn());
 const listMock = vi.hoisted(() => vi.fn());
 const getMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../../projection/index.js", async () => {
-  const actual = await vi.importActual<typeof import("../../projection/index.js")>(
-    "../../projection/index.js",
+vi.mock("@cockpit/agents", async () => {
+  const actual = await vi.importActual<typeof import("@cockpit/agents")>(
+    "@cockpit/agents",
   );
   return {
     ...actual,

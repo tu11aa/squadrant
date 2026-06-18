@@ -51,7 +51,7 @@ const claudeDriver = vi.hoisted(() => ({
   buildCommand,
 }));
 
-vi.mock("../../drivers/index.js", () => ({
+vi.mock("@cockpit/agents", () => ({
   createClaudeDriver: () => claudeDriver,
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),

@@ -15,7 +15,7 @@ import {
   createGeminiDriver,
   createOpencodeDriver,
   CapabilityRegistry,
-} from "../drivers/index.js";
+} from "@cockpit/agents";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "../runtimes/types.js";
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
