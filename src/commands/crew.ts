@@ -20,17 +20,16 @@ import {
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
-import { addWorktree, removeWorktree } from "@cockpit/shared";
+import { addWorktree, removeWorktree, resolveWorktreeBase } from "@cockpit/shared";
 import { resolveTextInput } from "@cockpit/shared";
 import { TERMINAL_STATES, type TaskRecord } from "@cockpit/shared";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 
-// Base branch for `--worktree` crew branches. GitFlow: feature work branches
-// off develop. Chosen over "current HEAD" deliberately — basing off the
-// captain's volatile HEAD would reintroduce the coupling this isolation feature
-// exists to remove (and the captain's HEAD is exactly what gets dragged today).
-const WORKTREE_BASE_BRANCH = "develop";
+// Base branch for `--worktree` crew branches is derived at spawn time from
+// origin/HEAD so repos using main, trunk, etc. work out of the box (#359).
+// Still avoids "current HEAD" deliberately — basing off the captain's volatile
+// HEAD would reintroduce the coupling this isolation feature exists to remove.
 
 // Poll-based first-turn delivery: after launching the CLI, poll the pane
 // until the agent is ready to accept input. Replaces a fixed delay (was 3s).
@@ -288,7 +287,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
         worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
         project: input.project,
         name,
-        base: WORKTREE_BASE_BRANCH,
+        base: resolveWorktreeBase(proj.path),
       })
     : proj.path;
 

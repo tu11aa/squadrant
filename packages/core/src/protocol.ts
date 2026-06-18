@@ -175,6 +175,21 @@ export function startServer(
   return server;
 }
 
+// #360: probe whether a live daemon owns this socket. Resolves true only when
+// a connection is accepted; false on ENOENT (no file) or ECONNREFUSED (stale
+// file / dead listener). Callers check this BEFORE startServer to avoid
+// unlink-then-bind stealing a live daemon's socket inode.
+export function isDaemonSocketLive(sockPath: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!existsSync(sockPath)) { resolve(false); return; }
+    const conn = createConnection(sockPath);
+    const finish = (v: boolean) => { try { conn.destroy(); } catch { /* already gone */ } resolve(v); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    conn.on("connect", () => { clearTimeout(timer); finish(true); });
+    conn.on("error", () => { clearTimeout(timer); finish(false); });
+  });
+}
+
 export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const conn = createConnection(sockPath);

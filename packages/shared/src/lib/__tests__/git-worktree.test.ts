@@ -8,7 +8,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { worktreePath, crewBranch, addWorktree, removeWorktree } from "../git-worktree.js";
+import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase } from "../git-worktree.js";
 
 describe("worktreePath", () => {
   it("resolves <repoRoot>/<worktreeDir>/<project>-<name>", () => {
@@ -49,6 +49,38 @@ describe("addWorktree", () => {
       ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/crew-1", "develop"],
       expect.objectContaining({ stdio: "pipe" }),
     );
+  });
+});
+
+describe("resolveWorktreeBase", () => {
+  beforeEach(() => execFileSyncMock.mockReset());
+
+  it("returns the branch name from origin/HEAD when set", () => {
+    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/main\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/repo", "symbolic-ref", "refs/remotes/origin/HEAD"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "ignore"] }),
+    );
+  });
+
+  it("returns a non-main default branch when origin/HEAD points to it", () => {
+    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/develop\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
+  });
+
+  it("falls back to 'develop' when git returns undefined (no origin/HEAD)", () => {
+    // vitest v3 re-reports errors thrown from mockImplementation even when caught
+    // by production code. Instead, return undefined so .toString() throws a
+    // TypeError inside the try block — same branch, correctly caught by catch{}.
+    execFileSyncMock.mockReturnValue(undefined);
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
+  });
+
+  it("uses a custom fallback when provided and git fails", () => {
+    execFileSyncMock.mockReturnValue(undefined);
+    expect(resolveWorktreeBase("/tmp/repo", "trunk")).toBe("trunk");
   });
 });
 

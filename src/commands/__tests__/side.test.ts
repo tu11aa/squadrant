@@ -40,9 +40,10 @@ const loadConfig = vi.hoisted(() => vi.fn());
 const addWorktreeMock = vi.hoisted(() => vi.fn());
 const removeWorktreeMock = vi.hoisted(() => vi.fn());
 const worktreePathMock = vi.hoisted(() => vi.fn());
+const resolveWorktreeBaseMock = vi.hoisted(() => vi.fn().mockReturnValue("develop"));
 vi.mock("@cockpit/shared", async () => {
   const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
-  return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree: addWorktreeMock, removeWorktree: removeWorktreeMock, worktreePath: worktreePathMock };
+  return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree: addWorktreeMock, removeWorktree: removeWorktreeMock, worktreePath: worktreePathMock, resolveWorktreeBase: resolveWorktreeBaseMock };
 });
 
 const claudeDriver = vi.hoisted(() => ({
