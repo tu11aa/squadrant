@@ -7,8 +7,8 @@ import { appendToMailbox, writeCursor, readCursor } from "@cockpit/core";
 import { STALE_THRESHOLD_MS } from "../../commands/notify-relay.js";
 import { sendRequest } from "@cockpit/core";
 import { crewPaneTitle } from "@cockpit/core";
-import type { DaemonCmux } from "../cmux/daemon-cmux.js";
-import type { PaneRef } from "../../runtimes/types.js";
+import type { DaemonCmux } from "@cockpit/workspaces";
+import type { PaneRef } from "@cockpit/shared";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 
 const TASK: TaskRecord = {
