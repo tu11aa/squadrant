@@ -34,6 +34,29 @@ vi.mock("@cockpit/workspaces", () => ({
     get(name: string) { return this.drivers[name]; }
     async probeAll() { return {}; }
   },
+  // Thin mock implementations of moved helpers — delegate to hoisted vi.fn()s so
+  // existing runCrewSpawn / runCrewClose / runCrewList tests work unchanged.
+  listProjectCrews: async (_runtime: unknown, workspaceId: string, project: string) => {
+    const surfaces: Array<{ title?: string }> = await listSurfaces(workspaceId);
+    return surfaces.filter((s) => s.title?.startsWith(`🔧 ${project}:`));
+  },
+  findCrew: async (_runtime: unknown, workspaceId: string, project: string, name: string) => {
+    const want = `🔧 ${project}:${name}`;
+    const surfaces: Array<{ title?: string }> = await listSurfaces(workspaceId);
+    return surfaces.find((s) => s.title === want) ?? null;
+  },
+  resolveCaptainWorkspace: async (project: string) => {
+    const config = loadConfig();
+    const proj = config.projects[project];
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    const ws = await status(proj.captainName);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
+  },
+  sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
+    await sendToPane(pane, task);
+  },
+  getFreePort: vi.fn().mockResolvedValue(12345),
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
@@ -93,7 +116,8 @@ vi.mock("node:fs", async (importOriginal) => {
 const resolveCrewRoute = vi.hoisted(() => vi.fn());
 vi.mock("../../control/crew-routing.js", () => ({ resolveCrewRoute }));
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, sendFirstTurnWhenReady, reapCrewChildren, isTurnAccepted, buildCompletionProtocol } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
+import { reapCrewChildren } from "@cockpit/core";
 
 const baseConfig = {
   commandName: "command",
@@ -712,239 +736,6 @@ describe("cockpit crew spawn", () => {
   });
 });
 
-describe("sendFirstTurnWhenReady", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    readPaneScreen.mockReset();
-    sendToPane.mockReset();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("polls until pane stabilizes then sends the task once", async () => {
-    let callCount = 0;
-    readPaneScreen.mockImplementation(async () => {
-      callCount++;
-      if (callCount <= 1) return "";
-      if (callCount <= 3) return "> ";        // stable prompt, advanced past launch
-      if (callCount === 4) return "> ";       // preSend snapshot
-      return "> do the thing";                // after-send: screen changed → no re-send
-    });
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(4000);
-    await promise;
-
-    expect(sendToPane).toHaveBeenCalledTimes(1);
-    expect(sendToPane).toHaveBeenCalledWith(pane, "do the thing");
-  });
-
-  it("falls back to sending even if pane never stabilises", async () => {
-    readPaneScreen.mockResolvedValue("");
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(21000);
-    await promise;
-
-    // Two calls: fallback send + one re-send (post-send check sees an unchanged screen)
-    expect(sendToPane).toHaveBeenCalledTimes(2);
-    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
-    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
-  }, 15000);
-
-  it("re-sends once when the screen is unchanged after the first send", async () => {
-    readPaneScreen.mockResolvedValue("> ");
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(5000);
-    await promise;
-
-    // Two calls: initial send + one re-send (preSend === afterScreen)
-    expect(sendToPane).toHaveBeenCalledTimes(2);
-    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
-    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
-  });
-
-  // #168: sendToPane (since #136) collapses newlines to spaces, so a multi-line
-  // task never appears verbatim in the pane render. The old post-send check
-  // `!afterScreen.includes(task)` therefore always re-sent → duplicate first
-  // turn. The fix compares the screen before vs after sending instead.
-  it("does NOT re-send a multi-line task when the pane render collapses newlines", async () => {
-    const task = "line one\nline two\nline three";
-    let callCount = 0;
-    readPaneScreen.mockImplementation(async () => {
-      callCount++;
-      // reads 1-2: poll (stable), read 3: preSend snapshot — all the bare prompt.
-      if (callCount <= 3) return "> ";
-      return "> line one line two line three";               // after-send: collapsed render
-    });
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      task,
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(4000);
-    await promise;
-
-    // The screen changed after the send (task was received), so no re-send —
-    // even though `afterScreen.includes(task)` is false for the multi-line task.
-    expect(sendToPane).toHaveBeenCalledTimes(1);
-    expect(sendToPane).toHaveBeenCalledWith(pane, task);
-  });
-
-  // opencode boot-race: the screen can be momentarily static while the launch
-  // command still sits un-entered on the shell line. Sending then concatenates
-  // onto that line → shell parse error. The readiness gate must require the
-  // screen to ADVANCE past the launch-line snapshot, not merely be static.
-  it("does NOT send the first turn while the pane still shows the un-entered launch line", async () => {
-    const launchLine = "$ COCKPIT_CREW_TASK_ID=t1 opencode";
-    readPaneScreen.mockResolvedValue(launchLine);
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      launchLine,
-    );
-
-    // Well under the 20s timeout: the screen never advanced past the launch
-    // line, so the readiness gate must not have fired yet.
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sendToPane).not.toHaveBeenCalled();
-
-    // Drain to the timeout so the fallback send fires and the promise resolves.
-    await vi.advanceTimersByTimeAsync(20000);
-    await promise;
-  }, 15000);
-});
-
-describe("isTurnAccepted", () => {
-  it("returns true when screen changed (claude: no splashMarker)", () => {
-    expect(isTurnAccepted("> ", "> do the thing")).toBe(true);
-  });
-
-  it("returns false when screen unchanged (claude)", () => {
-    expect(isTurnAccepted("> ", "> ")).toBe(false);
-  });
-
-  it("returns true when opencode splash marker is absent from afterScreen", () => {
-    expect(isTurnAccepted(
-      "Ask anything…",
-      "> do the thing",
-      { splashMarker: "Ask anything…" },
-    )).toBe(true);
-  });
-
-  it("returns false when opencode still at mutating splash (marker present)", () => {
-    expect(isTurnAccepted(
-      "Ask anything…",
-      "Ask anything… ▊",
-      { splashMarker: "Ask anything…" },
-    )).toBe(false);
-  });
-
-  it("returns false when opencode splash marker present despite screen change", () => {
-    expect(isTurnAccepted(
-      "Ask anything…",
-      "Ask anything… Build · DeepSeek… ▊",
-      { splashMarker: "Ask anything…" },
-    )).toBe(false);
-  });
-
-  it("returns true for opencode when splash marker absent even if afterScreen matches preSendScreen", () => {
-    expect(isTurnAccepted(
-      "Ask anything…",
-      "> ready",
-      { splashMarker: "Ask anything…" },
-    )).toBe(true);
-  });
-});
-
-describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    readPaneScreen.mockReset();
-    sendToPane.mockReset();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("retries up to retryLimit when opencode splash persists (splashMarker set)", async () => {
-    readPaneScreen.mockResolvedValue("Ask anything…");
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      "$ opencode",       // preLaunchScreen
-      { splashMarker: "Ask anything…", retryLimit: 3 },
-    );
-
-    // Floor (1500) + 2 poll cycles (1500) + 3 retry checks (2250) = 5250ms
-    await vi.advanceTimersByTimeAsync(6000);
-    await promise;
-
-    // 3 full retry rounds: initial send + 2 re-sends = 3 total
-    expect(sendToPane).toHaveBeenCalledTimes(3);
-  });
-
-  it("exits early on acceptance instead of exhausting retries", async () => {
-    let callCount = 0;
-    readPaneScreen.mockImplementation(async () => {
-      callCount++;
-      if (callCount <= 1) return "booting…";        // preLaunchScreen
-      if (callCount <= 3) return "Ask anything…";    // poll 1-2 (stabilizing)
-      if (callCount === 4) return "Ask anything…";   // preSend snapshot
-      return "> do the thing";                        // after-send: accepted
-    });
-
-    const pane = { workspaceId: "w:1", surfaceId: "s:1" };
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane } as any,
-      pane,
-      "do the thing",
-      "booting…",
-      { splashMarker: "Ask anything…", retryLimit: 3 },
-    );
-
-    await vi.advanceTimersByTimeAsync(5000);
-    await promise;
-
-    // 1 send only: acceptance detected on first retry check
-    expect(sendToPane).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe("cockpit crew send/read/close/list", () => {
   beforeEach(() => {
@@ -1209,33 +1000,6 @@ describe("cockpit crew send/read/close/list", () => {
       { name: "crew-1", surfaceId: "surface:10" },
       { name: "fix-typos", surfaceId: "surface:11" },
     ]);
-  });
-});
-
-describe("buildCompletionProtocol (#278)", () => {
-  it("includes the task-id and project in the done signal command", () => {
-    const result = buildCompletionProtocol("task-abc123", "my-project");
-    expect(result).toContain("--task-id task-abc123");
-    expect(result).toContain("--project my-project");
-    expect(result).toContain("crew signal done");
-  });
-
-  it("includes the blocked signal form with the same ids", () => {
-    const result = buildCompletionProtocol("task-abc123", "my-project");
-    expect(result).toContain("crew signal blocked");
-    expect(result).toContain("--task-id task-abc123");
-    expect(result).toContain("--project my-project");
-  });
-
-  it("substitutes both task-id and project independently", () => {
-    const a = buildCompletionProtocol("id-A", "proj-A");
-    const b = buildCompletionProtocol("id-B", "proj-B");
-    expect(a).toContain("--task-id id-A");
-    expect(a).toContain("--project proj-A");
-    expect(b).toContain("--task-id id-B");
-    expect(b).toContain("--project proj-B");
-    expect(a).not.toContain("id-B");
-    expect(b).not.toContain("id-A");
   });
 });
 

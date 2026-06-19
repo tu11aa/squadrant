@@ -5,3 +5,4 @@ export * from "./workspaces/index.js";
 export { CmuxEventsBridge, deriveRunState } from "./cmux/events-bridge.js";
 export type { RunState, CmuxEventsChild, CmuxAgentHook, CmuxEventsBridgeDeps } from "./cmux/events-bridge.js";
 export { DaemonCmux } from "./cmux/daemon-cmux.js";
+export { getFreePort, listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew-pane.js";

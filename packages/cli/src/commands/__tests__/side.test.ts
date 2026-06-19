@@ -34,6 +34,31 @@ vi.mock("@cockpit/workspaces", () => ({
     get(name: string) { return (this.drivers as Record<string, unknown>)[name]; }
     async probeAll() { return {}; }
   },
+  // side.ts + crew.ts (dynamically imported by regression test) pull these from
+  // @cockpit/workspaces after the crew.ts thin-wrapper refactor (#367). Every
+  // symbol either file imports must be declared here or the import resolves to
+  // undefined and calls throw at runtime.
+  resolveCaptainWorkspace: async (project: string) => {
+    const config = loadConfig();
+    const proj = config.projects[project];
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    const ws = await status(proj.captainName);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
+  },
+  listProjectCrews: async (_runtime: unknown, workspaceId: string, project: string) => {
+    const surfaces: Array<{ title?: string }> = await listSurfaces(workspaceId);
+    return surfaces.filter((s) => s.title?.startsWith(`🔧 ${project}:`));
+  },
+  findCrew: async (_runtime: unknown, workspaceId: string, project: string, name: string) => {
+    const want = `🔧 ${project}:${name}`;
+    const surfaces: Array<{ title?: string }> = await listSurfaces(workspaceId);
+    return surfaces.find((s) => s.title === want) ?? null;
+  },
+  sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
+    await sendToPane(pane, task);
+  },
+  getFreePort: async () => 12345,
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());

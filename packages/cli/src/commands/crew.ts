@@ -1,14 +1,14 @@
 import { Command } from "commander";
-import { exec as nodeExec } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { loadConfig } from "@cockpit/shared";
+import { addWorktree, removeWorktree, resolveWorktreeBase, resolveTextInput, TERMINAL_STATES } from "@cockpit/shared";
+import type { TaskRecord } from "@cockpit/shared";
 import { resolveCrewRoute } from "../control/crew-routing.js";
 import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
+import { listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady, getFreePort } from "@cockpit/workspaces";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "@cockpit/workspaces";
 import {
   createClaudeDriver,
@@ -20,9 +20,8 @@ import {
 import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
-import { addWorktree, removeWorktree, resolveWorktreeBase } from "@cockpit/shared";
-import { resolveTextInput } from "@cockpit/shared";
-import { TERMINAL_STATES, type TaskRecord } from "@cockpit/shared";
+import { buildCompletionProtocol, shellQuote, titleFor, nameFromTitle, nextAutoName, reapCrewChildren } from "@cockpit/core";
+import type { TurnAcceptanceConfig } from "@cockpit/core";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 
@@ -30,201 +29,6 @@ const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates")
 // origin/HEAD so repos using main, trunk, etc. work out of the box (#359).
 // Still avoids "current HEAD" deliberately — basing off the captain's volatile
 // HEAD would reintroduce the coupling this isolation feature exists to remove.
-
-// Poll-based first-turn delivery: after launching the CLI, poll the pane
-// until the agent is ready to accept input. Replaces a fixed delay (was 3s).
-// The stabilised-screen check is heuristic: non-empty + unchanged between two
-// consecutive reads suggests the TUI finished booting and is idle at its prompt.
-const SEND_FIRST_TURN_FLOOR_MS = 1500;
-const POLL_INTERVAL_MS = 750;
-const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
-const POST_SEND_CHECK_MS = 750;
-
-/** Configuration for the post-send acceptance check that replaces a naive
- *  screen-changed comparison. For agents whose idle splash keeps mutating
- *  (opencode's "Ask anything…" with blinking cursor / status line), the old
- *  check would always see a different screen and never re-send a dropped turn. */
-export interface TurnAcceptanceConfig {
-  /** Text that identifies the idle splash state. When set, acceptance requires
-   *  this marker to be absent from the screen (e.g. "Ask anything…" for opencode).
-   *  Without it, acceptance defaults to "screen changed" (claude behavior). */
-  splashMarker?: string;
-  /** Max rounds of "wait, check, re-send" after the initial send. Defaults to 2
-   *  (initial + 1 re-send) to match the pre-retry behavior for claude. Use 3 for
-   *  opencode which has a wider boot-race window. */
-  retryLimit?: number;
-}
-
-/** Pure-function decision: was the first turn accepted by the TUI?
- *  - With splashMarker: accepted = the marker is no longer visible (the TUI left
- *    its idle splash, confirming the keystroke was received).
- *  - Without splashMarker (claude): accepted = the screen changed after sending. */
-export function isTurnAccepted(
-  preSendScreen: string,
-  afterScreen: string,
-  config?: TurnAcceptanceConfig,
-): boolean {
-  if (config?.splashMarker) {
-    return !afterScreen.includes(config.splashMarker);
-  }
-  return afterScreen !== preSendScreen;
-}
-
-/** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
- *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
- *  between release and the crew binding the port; acceptable for local
- *  single-user spawns (and the SSE bridge retries until the server is up). */
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => (port ? resolve(port) : reject(new Error("no free port assigned"))));
-    });
-  });
-}
-
-function titleFor(project: string, name: string): string {
-  return `🔧 ${project}:${name}`;
-}
-
-function isCrewTitle(project: string, title: string): boolean {
-  return title.startsWith(`🔧 ${project}:`);
-}
-
-function nameFromTitle(project: string, title: string): string {
-  return title.slice(`🔧 ${project}:`.length);
-}
-
-async function listProjectCrews(
-  runtime: RuntimeDriver,
-  workspaceId: string,
-  project: string,
-): Promise<PaneRef[]> {
-  const surfaces = await runtime.listSurfaces(workspaceId);
-  return surfaces.filter((s) => s.title && isCrewTitle(project, s.title));
-}
-
-async function findCrew(
-  runtime: RuntimeDriver,
-  workspaceId: string,
-  project: string,
-  name: string,
-): Promise<PaneRef | null> {
-  const want = titleFor(project, name);
-  const surfaces = await runtime.listSurfaces(workspaceId);
-  return surfaces.find((s) => s.title === want) ?? null;
-}
-
-function nextAutoName(existingTitles: string[], project: string): string {
-  const used = new Set<number>();
-  for (const title of existingTitles) {
-    const n = nameFromTitle(project, title).match(/^crew-(\d+)$/);
-    if (n) used.add(Number(n[1]));
-  }
-  let i = 1;
-  while (used.has(i)) i++;
-  return `crew-${i}`;
-}
-
-export async function resolveCaptainWorkspace(project: string): Promise<{
-  runtime: RuntimeDriver;
-  workspaceId: string;
-}> {
-  const config = loadConfig();
-  const proj = config.projects[project];
-  if (!proj) {
-    throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
-  }
-  const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
-  const captain = await runtime.status(proj.captainName);
-  if (!captain) {
-    throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`,
-    );
-  }
-  return { runtime, workspaceId: captain.id };
-}
-
-export async function sendFirstTurnWhenReady(
-  runtime: RuntimeDriver,
-  pane: PaneRef,
-  task: string,
-  preLaunchScreen: string,
-  acceptanceConfig?: TurnAcceptanceConfig,
-): Promise<void> {
-  await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
-
-  const maxPolls = Math.floor(
-    (SEND_FIRST_TURN_TIMEOUT_MS - SEND_FIRST_TURN_FLOOR_MS) / POLL_INTERVAL_MS,
-  );
-  let previousScreen = "";
-  let stable = false;
-
-  for (let i = 0; i < maxPolls && !stable; i++) {
-    const screen = (await runtime.readPaneScreen(pane)) ?? "";
-    // Ready = the agent prompt is actually up: screen is non-empty, settled
-    // (unchanged between two consecutive reads), AND has advanced past the
-    // un-entered launch command line. The last condition prevents sending the
-    // task onto the shell line before the TUI takes over — which concatenates
-    // onto the launch command and triggers a shell parse error (opencode
-    // boot-race). A momentarily static launch line is not readiness.
-    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen) {
-      stable = true;
-    } else {
-      previousScreen = screen;
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    }
-  }
-
-  // Snapshot the screen immediately before sending so the post-send check can
-  // tell whether the keystrokes were received. Comparing against the raw task
-  // text is unreliable: sendToPane collapses newlines to spaces (#136), so a
-  // multi-line task never appears verbatim in the single-line pane render and
-  // the check would always re-send a duplicate first turn (#168).
-  const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
-  await runtime.sendToPane(pane, task);
-
-  // Bounded retry loop (#235): after sending, poll the pane for evidence that
-  // the TUI actually accepted the turn. opencode's idle splash ("Ask anything…")
-  // keeps mutating (cursor blink, status line), so the old single-shot check
-  // (afterScreen == preSendScreen) would always see a different screen and
-  // never re-send a dropped turn. The splashMarker config tells us what
-  // "still idle" looks like for this agent; absence of the marker means the
-  // TUI left splash (confirmation of acceptance). Cap at retryLimit attempts.
-  const retryLimit = acceptanceConfig?.retryLimit ?? 2;
-  for (let attempt = 0; attempt < retryLimit; attempt++) {
-    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
-    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
-      return;
-    }
-    if (attempt < retryLimit - 1) {
-      await runtime.sendToPane(pane, task);
-    }
-  }
-}
-
-/** Builds the completion-protocol suffix baked into claude + opencode first turns (#278).
- *  Substituting --task-id and --project at source makes the signal robust to env-var
- *  races (Mode 1) and gives the model a concrete imperative at the point of action (Mode 2). */
-export function buildCompletionProtocol(taskId: string, project: string): string {
-  return [
-    "---",
-    "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:",
-    `  cockpit crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
-    "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
-    `  cockpit crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
-  ].join("\n");
-}
-
-// POSIX single-quote a path so it is safe to embed in a shell command even
-// when the path contains spaces or special characters.
-function shellQuote(p: string): string {
-  return "'" + p.replace(/'/g, "'\\''") + "'";
-}
 
 export interface CrewSpawnInput {
   project: string;
@@ -456,7 +260,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       // opencode has a wider boot-race window than claude, so allow 3 retries
       // instead of the default 2.
       retryLimit: 3,
-    });
+    } satisfies TurnAcceptanceConfig);
     return { ...pane, title };
   }
 
@@ -565,44 +369,6 @@ export async function runCrewRead(project: string, name: string): Promise<string
     throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
   }
   return runtime.readPaneScreen(crew);
-}
-
-/** Kill every process that inherited COCKPIT_CREW_TASK_ID=<taskId> from the
- *  crew's shell env prefix. Uses `ps auxE` which exposes env vars for node
- *  processes on macOS (vitest workers, the crew CLI, etc.). Best-effort:
- *  swallows all errors so a childless crew still closes cleanly.
- *
- *  @param graceMs - ms between SIGTERM and SIGKILL (default 2 s; pass a short
- *    value in tests to avoid waiting)
- */
-export async function reapCrewChildren(taskId: string, graceMs = 2000): Promise<void> {
-  const marker = `COCKPIT_CREW_TASK_ID=${taskId}`;
-  try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      // `ps auxE` dumps every process's full env, which on a busy machine far
-      // exceeds exec's default 1 MB maxBuffer (~2.7 MB with ~1k procs). Without
-      // a raised cap the call errors with "maxBuffer length exceeded", the outer
-      // catch swallows it, and the reap silently no-ops — leaving crew children
-      // alive. 64 MB comfortably covers thousands of processes.
-      nodeExec("ps auxE", { maxBuffer: 64 * 1024 * 1024 }, (err, out) =>
-        err ? reject(err) : resolve(out),
-      );
-    });
-    const pids: number[] = [];
-    for (const line of stdout.split("\n").slice(1)) {
-      if (!line.includes(marker)) continue;
-      const pid = parseInt(line.trim().split(/\s+/)[1], 10);
-      if (!isNaN(pid) && pid !== process.pid) pids.push(pid);
-    }
-    if (pids.length === 0) return;
-    for (const pid of pids) {
-      try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
-    }
-    await new Promise<void>((r) => setTimeout(r, graceMs));
-    for (const pid of pids) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-    }
-  } catch { /* best-effort */ }
 }
 
 export async function runCrewClose(project: string, name: string): Promise<void> {

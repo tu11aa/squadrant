@@ -19,3 +19,5 @@ export * from "./daemon/interactive-probe.js";
 export * from "./delivery/captain-delivery.js";
 export * from "./delivery/defer-delivery.js";
 export * from "./session-freshness.js";
+export * from "./crew-protocol.js";
+export * from "./crew-lifecycle.js";

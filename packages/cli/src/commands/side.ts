@@ -13,7 +13,7 @@ import {
   createOpencodeDriver,
   CapabilityRegistry,
 } from "@cockpit/agents";
-import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "./crew.js";
+import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@cockpit/workspaces";
 import { resolveTextInput } from "@cockpit/shared";
 import { addWorktree, removeWorktree, worktreePath, resolveWorktreeBase } from "@cockpit/shared";
 
