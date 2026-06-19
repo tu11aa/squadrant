@@ -2,7 +2,7 @@
 
 **Purpose:** Validate that a crew transitions correctly through every lifecycle state **and**
 that the captain is notified at each captain-relevant moment. Run this whenever you change
-anything that touches crews: `cockpit crew` commands, the daemon (`cockpitd`), the notify-relay,
+anything that touches crews: `cockpit crew` commands, the daemon (`cockpitd`),
 the per-crew hooks, or the crew templates (`orchestrator/crew.*.md`).
 
 **Subject:** A Claude crew is the reference. Repeat the same checklist for `codex` and `opencode`
@@ -16,7 +16,7 @@ silently stuck. Every pause (question / permission / idle) and the finish must r
 ## Pre-flight
 
 - [ ] Daemon running — `cockpit` reports a live `cockpitd` (or it auto-starts on spawn)
-- [ ] notify-relay running (in-cmux; required for prompt/block detection)
+- [ ] Captain notifications are delivered daemon-direct (no relay tab required — daemon calls cmux directly since #332/PR#373)
 - [ ] Record `develop` HEAD so you can attribute any regression: `git rev-parse --short HEAD`
 - [ ] No stale crews: `cockpit crew list cockpit` is clean
 
@@ -78,17 +78,51 @@ notification reaching the captain session, not just the crew screen.
 > Note: #2 and #3 both surface as CREW BLOCKED but via **different feeders** — #2 is an explicit
 > `signal blocked`, #3 is the live Notification hook on a real prompt. Verify both paths.
 
-### 4. Idle — daemon transitions to awaiting-input (Type 1); captain ping is GAP (#210)
+### 4. Idle / thinking / stalled — three distinct signals (#354/PR#375)
+
+> **Changed in #354/PR#375.** The old single wall-clock pulse that flipped any quiet crew to
+> `awaiting-input` is replaced by three accurate, non-overlapping signals. The old false
+> `CREW IDLE` on thinking crews is gone. Relay deletion (#332/PR#373) removed the
+> `formatEntry` drop that was the root cause of the former GAP (#210).
+
 - **Action:** Tell the crew to finish the current turn's work and **wait for the next turn
-  without signaling done**.
-- **Expect (daemon side):** The crew completes the turn. The Type 1 mechanism fires per agent:
-  - claude: Stop hook (flaky, #187) → `task.turn.completed` → daemon transitions `working → awaiting-input`.
-  - opencode: SSE `session.idle` → `OpencodeSseBridge` → `task.turn.completed` → awaiting-input. Reliable.
-  - codex: app-server JSON-RPC `turn/completed` → `task.turn.completed` → awaiting-input. Reliable.
-  The daemon task state is **non-terminal** (`awaiting-input`, NOT `done`).
-- **Captain signal:** **GAP (#210).** The relay's `formatEntry` drops `task.turn.completed` / `task.idle` events before they reach the captain mailbox. The captain currently receives NO idle/awaiting ping. Until #210 is fixed, expect this to FAIL for ALL agents.
-- **Verify state (workaround):** `cockpit crew list cockpit` shows the crew alive and non-terminal (`awaiting-input`). This confirms the daemon transitioned correctly even without the captain notification.
-- [ ] STATE VERIFIED — daemon state is non-terminal (`awaiting-input`); captain ping is **GAP (#210)** across all agents until the relay is fixed
+  without signaling done**. For full coverage, also exercise a long-thinking turn and (claude only)
+  a hung tool call.
+
+- **Three signals the daemon now emits — understand each:**
+
+  **CREW IDLE (real turn-end)** — fires ONLY from the agent's Type 1 turn-end mechanism:
+  - claude: Stop hook (flaky, #187) → `task.turn.completed` → `working → awaiting-input`
+  - opencode: SSE `session.idle` → `OpencodeSseBridge` → `task.turn.completed` → `awaiting-input`
+  - codex: app-server JSON-RPC `turn/completed` → `task.turn.completed` → `awaiting-input`
+  The daemon task state is **non-terminal** (`awaiting-input`, NOT `done`). This is the only
+  signal that advances the daemon out of `working`. Captain sees: **CREW IDLE**.
+
+  **CREW QUIET (deep thinking)** — the crew is quiet past the heartbeat budget but
+  **no tool is in flight** (`pendingTool` is unset). Daemon **keeps the task `working`**
+  (NOT `awaiting-input`). A distinct **CREW QUIET** notification fires once per quiet episode.
+  This replaces the old wall-clock→`awaiting-input` flip that mislabeled thinking crews as idle.
+
+  **CREW STALLED (hung tool)** — a `PreToolUse` event (tool name in `pendingTool`) with
+  no matching `PostToolUse` past `TOOL_STALL_BUDGET_MS` (10 minutes). Captain sees:
+  **CREW STALLED({tool})** — a recoverable warn "still running {tool} ~{N}min — possibly hung".
+  Auto-clears the instant `PostToolUse` arrives; reducer recovers `stalled → working`.
+  **Degrades to QUIET-only for opencode/codex** — no `PreToolUse` feed → never stalled.
+
+- **Captain signals to verify:**
+  - Real turn-end → **CREW IDLE** in the captain mailbox; `cockpit crew list` shows `awaiting-input`.
+  - Long-thinking turn (no tool) → **CREW QUIET** in captain mailbox; daemon stays `working`.
+  - (claude only) Hung tool past 10min → **CREW STALLED({tool})** warn; auto-clears on PostToolUse.
+
+> **Note on GAP (#210):** The former gap was the relay's `formatEntry` dropping `task.turn.completed`
+> events before they reached the captain mailbox. The relay is deleted (#332/PR#373) and delivery is
+> now daemon-direct, so this route is unblocked. CREW QUIET provides a positive captain signal
+> (#354) for the case that previously had none. Verify #210 is closed by confirming captain
+> notifications arrive on real turn-end.
+
+- [ ] CREW IDLE received in captain mailbox on real turn-end; daemon → `awaiting-input`
+- [ ] CREW QUIET received (not CREW IDLE) during a long-thinking turn; daemon stays `working`
+- [ ] (claude only) CREW STALLED fires past 10 min on a hung tool; auto-clears on completion
 
 ### 5. Finish — pings captain (done)
 - **Action:** Tell the crew to run `cockpit crew signal done --message "<one-line summary>"`.
@@ -125,6 +159,7 @@ notification reaching the captain session, not just the crew screen.
 | 2026-06-03 | claude | ffc97f6 | PASS | PASS | DEFERRED (auto mode) | GAP (#210) | PASS | PASS | CP3 no longer gates — crews default to `--permission-mode auto` (#199). CP4 idle ping = #210. |
 | 2026-06-03 | codex | ffc97f6 | PASS | PASS | DEFERRED (--approval) | GAP (#210) | PASS | PASS | Signals via `--task-id` (PR #173) self-injected in `developerInstructions`; verified live. Earlier 'fail' was a test error (bare signal w/o `--task-id`). |
 | 2026-06-03 | opencode | ffc97f6 | PASS | PASS | DEFERRED (config) | GAP (#210) | PASS | PASS | All explicit signals + SSE turn-end work; CP4 ping blocked by #210. |
+| 2026-06-19 | (all agents) | e06bc3a | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING — captain live run in progress; validates #354 three-state CP4 (QUIET/STALLED/IDLE) + #332 daemon-direct delivery (relay deleted) |
 
 ---
 
