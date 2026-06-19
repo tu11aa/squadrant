@@ -34,6 +34,18 @@ vi.mock("@cockpit/workspaces", () => ({
     get(name: string) { return (this.drivers as Record<string, unknown>)[name]; }
     async probeAll() { return {}; }
   },
+  // side.ts imports these from @cockpit/workspaces after the crew.ts thin-wrapper refactor.
+  resolveCaptainWorkspace: async (project: string) => {
+    const config = loadConfig();
+    const proj = config.projects[project];
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    const ws = await status(proj.captainName);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
+  },
+  sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
+    await sendToPane(pane, task);
+  },
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
