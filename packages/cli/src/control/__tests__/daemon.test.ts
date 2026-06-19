@@ -744,6 +744,49 @@ describe("sweep: task-timeout (#225)", () => {
     await d2.sweep();
     expect(timeoutCalls()).toBe(1);
   });
+
+  // ── #378 regression: zombie resurrection ────────────────────────────────────
+  // A timed-out interactive task with a hung pendingTool would have evaluateStall
+  // operate on the stale `r` (still 'working'), clobbering the just-written
+  // 'cancelled' state back to 'stalled'. This caused infinite CREW TIMEOUT re-fire.
+  it("#378: timeout-cancelled state is NOT clobbered by evaluateStall on the same sweep", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
+    // createdAt=0, now=2000, ceiling=1000 → age 2000ms > ceiling (triggers timeout)
+    // pendingTool.since = 2000 - (TOOL_STALL_BUDGET_MS + 1000) → hung > tool-stall budget
+    // → without the fix, evaluateStall would return state='stalled' and clobber 'cancelled'
+    const now = 2000;
+    store.put(rec("t378a", {
+      state: "working", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+      pendingTool: { name: "Bash", since: now - TOOL_STALL_BUDGET_MS - 1000 },
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    // Terminal state must survive — evaluateStall must not clobber it
+    const r = store.get("p", "t378a");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.task-timeout");
+  });
+
+  it("#378: second sweep on a timeout-cancelled task fires CREW TIMEOUT exactly once total", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
+    const now = 2000;
+    store.put(rec("t378b", {
+      state: "working", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+      pendingTool: { name: "Bash", since: now - TOOL_STALL_BUDGET_MS - 1000 },
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    await d.sweep(); // second sweep — must see cancelled, skip entirely
+    const timeoutCalls = calls.filter((c) => c.message.includes("CREW TIMEOUT")).length;
+    expect(timeoutCalls).toBe(1);
+    expect(store.get("p", "t378b")?.state).toBe("cancelled");
+  });
 });
 
 // ── Issue #87: socket-boundary schema validation ──────────────────────────────
