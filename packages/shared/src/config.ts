@@ -72,7 +72,7 @@ export interface CockpitConfig {
   projection?: {
     targets?: string[];
   };
-  relay?: {
+  delivery?: {
     /** Max consecutive defers before force-delivering a message (~1s poll cadence). Default: 300 (~5min). */
     maxDeferDeliveries?: number;
     /** Consecutive stable-content polls before probing early to avoid a stall (#302). Default: 3 (~3s). */
@@ -92,10 +92,6 @@ export interface CockpitConfig {
     /** B1: consume cmux's native event stream for crew turn-end (idle) detection
      *  alongside the scrape fallback. Default true; set false for scrape-only. */
     cmuxEventsBridge?: boolean;
-    /** #332: daemon calls cmux directly (bypass notify-relay).
-     *  TRANSPORT ONLY — does not change lifecycle source-of-truth.
-     *  Default false for safe rollout; set true to retire the relay process. */
-    daemonDirectCmux?: boolean;
     /**
      * Audit C2 — agent hibernation (reclaim idle-crew RAM). INTENTIONALLY OFF and
      * INERT: cmux 0.64.16's `cmux agent-hibernation <on|off>` is GLOBAL (app-wide,
@@ -151,10 +147,8 @@ export function getDefaultConfig(): CockpitConfig {
       taskTimeoutMs: 8 * 60 * 60 * 1000,
       cmuxEventsBridge: true,
       // Audit C2: OFF by design — cmux hibernation is global-only and would
-      // hibernate the captain/relay. See the field doc above.
+      // hibernate the captain. See the field doc above.
       cmuxAgentHibernation: false,
-      // #332: daemon-direct cmux — OFF for safe rollout; set true to retire the relay.
-      daemonDirectCmux: false,
       crewRouting: {
         rules: [
           { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
