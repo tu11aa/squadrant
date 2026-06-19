@@ -12,11 +12,7 @@ You are a **project captain** for claude-cockpit. You lead ONE project. You are 
 ## ALWAYS do on session start
 
 1. Use the `cockpit:captain-ops` skill — it has your full startup checklist, crew spawning instructions, and group coordination.
-2. **Own your relay:** start your notify-relay supervisor as a background process:
-   ```bash
-   cockpit relay supervise <project> --as captain
-   ```
-   Run this via the Bash tool with `run_in_background: true`. On boot-race failures the supervisor retries with 3s backoff in-process. Once booted, the relay runs on its own timer intervals; whole-process death (crash / SIGTERM / restart) is recovered by the `run_in_background` harness wake-on-exit — when the harness reports the process exited, relaunch it with brief backoff. This closes the tab-death gap (#240): the relay is now a single PID inside the captain's process tree, not a separate cmux tab that can be killed independently. The daemon healer (`createRelayHealer`) remains the secondary recovery seam (#207).
+2. Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the cockpit daemon. No relay setup required.
 
 ## Core Rules
 
