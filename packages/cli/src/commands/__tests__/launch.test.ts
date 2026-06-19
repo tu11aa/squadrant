@@ -21,7 +21,7 @@ vi.mock("@cockpit/shared", async () => {
   return { ...actual, resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux", resetCmuxBinCache: vi.fn() };
 });
 
-import { cmuxLocal, buildRelaySupervisorCommand, deliverStartupPrompt } from "../launch.js";
+import { cmuxLocal, deliverStartupPrompt } from "../launch.js";
 
 describe("cmuxLocal (launch.ts direct-cmux helper)", () => {
   beforeEach(() => {
@@ -52,31 +52,6 @@ describe("cmuxLocal (launch.ts direct-cmux helper)", () => {
   it("returns trimmed stdout for callers that need the output", () => {
     execFileMock.mockReturnValue("  workspace:7 cockpit-captain  \n");
     expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 cockpit-captain");
-  });
-});
-
-// #186: the relay can die (e.g. a boot race during a daemon restart throws
-// "captain workspace not running" → process.exit(1)) and, with no supervisor,
-// stays dead — silently blinding the captain to all crew notifications. The
-// relay tab therefore runs a self-restarting shell loop so any exit respawns.
-describe("buildRelaySupervisorCommand (#186 self-healing relay)", () => {
-  it("wraps the relay in an infinite restart loop, not a bare invocation", () => {
-    const cmd = buildRelaySupervisorCommand("cockpit");
-    // A bare `cockpit notify-relay ...` would die-and-stay-dead. The loop must
-    // re-run it after every exit.
-    expect(cmd).toMatch(/while .*; do .*; done/);
-    expect(cmd).toContain("cockpit notify-relay cockpit --as captain");
-  });
-
-  it("sleeps between restarts so a crash-loop doesn't spin hot", () => {
-    const cmd = buildRelaySupervisorCommand("cockpit");
-    expect(cmd).toMatch(/sleep \d+/);
-  });
-
-  it("re-runs the relay (relay invocation appears inside the loop body)", () => {
-    const cmd = buildRelaySupervisorCommand("brove");
-    const body = cmd.replace(/^while .*?; do /, "").replace(/; done$/, "");
-    expect(body).toContain("cockpit notify-relay brove --as captain");
   });
 });
 

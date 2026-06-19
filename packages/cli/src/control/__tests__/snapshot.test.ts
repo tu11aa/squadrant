@@ -21,7 +21,6 @@ describe("buildFreshness", () => {
 
 // ── assembleDaemonSnapshot ────────────────────────────────────────────────────
 const HEALTH: ComponentHealth[] = [
-  { kind: "relay", project: "cockpit", ref: "relay", state: "alive", lastSeenMs: 900 },
   { kind: "captain", project: "cockpit", ref: "cockpit-captain", state: "alive", lastSeenMs: 900 },
 ];
 

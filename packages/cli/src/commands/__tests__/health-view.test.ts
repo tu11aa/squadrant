@@ -17,17 +17,6 @@ describe("health-view (pure rendering)", () => {
     expect(ageText(100_000 - 2 * 3_600_000, 100_000)).toBe("2h ago");
   });
 
-  it("healthRow surfaces a down relay's actionable detail (never silently blind)", () => {
-    const c: ComponentHealth = {
-      kind: "relay", project: "brove", ref: "relay", state: "gone",
-      lastSeenMs: null, detail: "relay DOWN — run: cockpit launch brove (re-establishes the notify-relay tab)",
-    };
-    const row = healthRow(c, 1_000);
-    expect(row).toContain("relay");
-    expect(row).toContain("gone");
-    expect(row).toContain("cockpit launch brove");
-  });
-
   it("healthRow includes ref + state for an alive crew", () => {
     const c: ComponentHealth = {
       kind: "crew", project: "p", ref: "alpha", state: "alive", lastSeenMs: 900, detail: "working",

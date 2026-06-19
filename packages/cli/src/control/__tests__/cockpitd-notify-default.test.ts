@@ -6,13 +6,12 @@
 // cockpitd-push.test.ts; this file covers what defaultNotify writes once it
 // fires.
 
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd } from "../cockpitd.js";
 import { sendRequest } from "@cockpit/core";
-import { runNotifyRelay } from "../../commands/notify-relay.js";
 import type { TaskRecord } from "@cockpit/shared";
 
 function seedRec(id: string): TaskRecord {
@@ -58,12 +57,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     expect(typeof lines[0].ts).toBe("string");
   });
 
-  it("#214: task.approval.requested → CREW BLOCKED message persisted AND delivered by the relay", async () => {
-    // Regression for #214 (approval dropped) via the unified formatter. The
-    // daemon reduces task.approval.requested → blocked and renders CREW BLOCKED;
-    // defaultNotify must persist that message; the relay must deliver it
-    // verbatim. The OLD relay re-derived from event.kind (no approval case) and
-    // silently dropped it, leaving the captain blind to permission gates.
+  it("#214: task.approval.requested → CREW BLOCKED message persisted to mailbox", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -84,32 +78,12 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     });
     await new Promise((r) => setTimeout(r, 100));
 
-    // 1) The daemon-rendered CREW BLOCKED message is persisted on the entry.
+    // The daemon-rendered CREW BLOCKED message is persisted on the mailbox entry.
     const inboxPath = join(stateRoot, "inbox", "p.log");
     const entry = JSON.parse(readFileSync(inboxPath, "utf-8").trim());
     expect(entry.kind).toBe("task.approval.requested");
     expect(entry.message).toMatch(/^CREW BLOCKED \[claude\//);
     expect(entry.message).toContain("Allow edit to src/foo.ts?");
-
-    // 2) The relay delivers that message verbatim to the captain surface.
-    const sendSpy = vi.fn().mockResolvedValue(undefined);
-    const runtime = {
-      sendToSurface: sendSpy,
-      status: vi.fn().mockResolvedValue({ id: "ws1", name: "captain", status: "running" }),
-      listSurfaces: vi.fn().mockResolvedValue([{ workspaceId: "ws1", surfaceId: "s1", title: "captain" }]),
-    };
-    const stopRelay = await runNotifyRelay({
-      project: "p",
-      subscriber: "captain",
-      stateRoot,
-      runtime: runtime as never,
-      captainName: "captain",
-      pollMs: 50,
-    });
-    await new Promise((r) => setTimeout(r, 200));
-    stopRelay();
-    expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy.mock.calls[0][1]).toBe(entry.message);
   });
 
   it("assigns monotonic seq across multiple notifies in the same project", async () => {

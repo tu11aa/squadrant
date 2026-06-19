@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCockpitd, discoverCaptainSurface } from "../cockpitd.js";
 import { appendToMailbox, writeCursor, readCursor } from "@cockpit/core";
-import { STALE_THRESHOLD_MS } from "../../commands/notify-relay.js";
+import { STALE_THRESHOLD_MS } from "@cockpit/core";
 import { sendRequest } from "@cockpit/core";
 import { crewPaneTitle } from "@cockpit/core";
 import type { DaemonCmux } from "@cockpit/workspaces";
@@ -50,7 +50,7 @@ describe("cockpitd daemon-direct (#332)", () => {
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-  it("flag ON: daemon delivers queued captain messages via DaemonCmux + CaptainDelivery", async () => {
+  it("daemon delivers queued captain messages via DaemonCmux + CaptainDelivery", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -67,7 +67,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       sockPath: sock,
       sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
       captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
     });
     stop = handle.stop;
@@ -83,7 +83,7 @@ describe("cockpitd daemon-direct (#332)", () => {
   // entire historical backlog (the same CREW DONE events fired dozens of times).
   // Entries older than sessionStart - STALE_THRESHOLD_MS must be silently acked
   // (cursor advanced) WITHOUT being delivered.
-  it("flag ON: daemon silently acks stale backlog entries without delivering them", async () => {
+  it("daemon silently acks stale backlog entries without delivering them", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-stale-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -109,7 +109,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       sockPath: sock,
       sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
       captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
     });
     stop = handle.stop;
@@ -170,7 +170,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     const handle = startCockpitd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
     });
     stop = handle.stop;
 
@@ -231,7 +231,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     const handle = startCockpitd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
     });
     stop = handle.stop;
 
@@ -291,7 +291,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     const handle = startCockpitd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
     });
     stop = handle.stop;
 
@@ -304,7 +304,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     expect(cmux.sent.length).toBe(1);
   });
 
-  it("flag ON without injected daemonCmux: constructs DaemonCmux via makeDaemonCmux and wires delivery (prod path)", async () => {
+  it("without injected daemonCmux: constructs DaemonCmux via makeDaemonCmux and wires delivery (prod path)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-prod-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -318,7 +318,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       stateRoot,
       sockPath: sock,
       sweepMs: 0,
-      daemonDirectCmux: true,
+
       makeDaemonCmux: () => ({
         send: async (_surface: PaneRef, text: string) => { sent.push({ text }); },
         listSurfaces: async () => [],
@@ -336,37 +336,13 @@ describe("cockpitd daemon-direct (#332)", () => {
     expect(sent[0].text).toMatch(/CREW DONE/);
   });
 
-  it("flag OFF: daemon does NOT run the delivery loop (relay path owns it)", async () => {
-    dir = mkdtempSync(join(tmpdir(), "cp-dd-off-"));
-    const sock = join(dir, "c.sock");
-    const stateRoot = join(dir, "state");
-    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
-
-    await appendToMailbox({ stateRoot, project: "p", taskRecord: TASK, event: EVENT, message: "CREW DONE [claude/t1]" });
-    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
-
-    const cmux = fakeCmux();
-    const handle = startCockpitd({
-      stateRoot,
-      sockPath: sock,
-      sweepMs: 0,
-      daemonCmux: cmux,
-      daemonDirectCmux: false,
-      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
-    });
-    stop = handle.stop;
-
-    expect((handle as any).tickDelivery).toBeUndefined();
-    expect(cmux.sent).toEqual([]);
-  });
-
   // #332 storm BUG (re-entrancy): each deliveryTick does multiple slow cmux
   // subprocess calls and can exceed the 1s interval. Without a re-entrancy guard,
   // the interval fires again while the previous tick is still mid-flight; both
   // ticks read the SAME cursor seq and both deliver the entries after it →
   // duplicate/storm delivery. The guard must skip an overlapping tick so every
   // mailbox entry is delivered EXACTLY ONCE even when ticks overlap.
-  it("flag ON: overlapping delivery ticks deliver each entry exactly once (re-entrancy guard)", async () => {
+  it("overlapping delivery ticks deliver each entry exactly once (re-entrancy guard)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-reentrancy-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -394,7 +370,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     const handle = startCockpitd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
       captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
     });
     stop = handle.stop;
@@ -422,7 +398,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     expect(sent.length).toBe(1);
   });
 
-  it("flag ON: daemon-direct probe emits task.blocked when interactive crew pane shows a permission prompt", async () => {
+  it("daemon-direct probe emits task.blocked when interactive crew pane shows a permission prompt", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-probe-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -452,7 +428,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     const handle = startCockpitd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
-      daemonDirectCmux: true,
+
     });
     stop = handle.stop;
 
