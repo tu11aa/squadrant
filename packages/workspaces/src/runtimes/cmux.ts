@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "@cockpit/shared";
 import { checkToolCompat } from "@cockpit/shared";
@@ -19,6 +19,23 @@ export class CmuxTimeoutError extends Error {
 // Re-exported so root consumers keep the same import path (root → core direction).
 import { DeferDelivery } from "@cockpit/core";
 export { DeferDelivery };
+
+/** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
+export function isInsideCmux(): boolean {
+  return !!process.env.CMUX_WORKSPACE_ID;
+}
+
+// Synchronous cmux invocation for select-workspace / current-workspace calls
+// not yet abstracted behind RuntimeDriver. Uses execFileSync (no shell) with
+// stderr piped so cmux diagnostic messages (e.g. "Pane not found") don't leak
+// to the parent terminal. Returns trimmed stdout.
+export function cmuxLocal(args: string[]): string {
+  return execFileSync(resolveCmuxBin(), args, {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: CMUX_TIMEOUT,
+  }).trim();
+}
 
 // Invoke cmux with an argv array and NO shell. Every element (especially crew
 // prompt text passed through send/send-to-surface) reaches cmux as a single
