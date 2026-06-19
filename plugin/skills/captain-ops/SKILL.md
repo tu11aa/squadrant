@@ -165,6 +165,22 @@ cockpit crew spawn brove "fix typo" --model opus           # forces opus despite
 
 To add, edit, or remove routing rules: use the `cockpit:add-pick-crew-rule` skill.
 
+### Effort mode
+
+Before spawning a crew, read `defaults.effort` from `~/.config/cockpit/config.json` (run `cockpit effort` to check). Apply the following bias to your crew agent/model choice:
+
+| Mode | Directive |
+|------|-----------|
+| **max** | Tokens are plentiful. Prefer claude/opus for crew spawns; don't downshift for cost. |
+| **balance** | Normal. Use default crew routing rules unchanged. (Absent field = balance.) |
+| **low** | Conserve tokens. Prefer opencode/sonnet for crews; reserve opus for work that genuinely needs it. |
+
+**Effort is crew-only.** Captain, command, and side roles are unaffected — keep them at their configured model regardless of effort.
+
+**Effort is the weakest signal.** An explicit `--agent` / `--model` on a spawn always wins. Effort only nudges your default choice when nothing more specific applies.
+
+To change the effort dial: `cockpit effort <max|balance|low>` or use the `cockpit:set-effort` skill.
+
 ### Rules
 
 - **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.
