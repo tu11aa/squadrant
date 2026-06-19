@@ -21,9 +21,10 @@ vi.mock("@cockpit/shared", async () => {
   return { ...actual, resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux", resetCmuxBinCache: vi.fn() };
 });
 
-import { cmuxLocal, deliverStartupPrompt } from "../launch.js";
+import { cmuxLocal } from "@cockpit/workspaces";
+import { deliverStartupPrompt } from "../launch.js";
 
-describe("cmuxLocal (launch.ts direct-cmux helper)", () => {
+describe("cmuxLocal (@cockpit/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
     execFileMock.mockReset();
   });

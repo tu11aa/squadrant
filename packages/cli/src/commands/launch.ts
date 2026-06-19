@@ -1,120 +1,22 @@
 import { Command } from "commander";
-import { execSync, execFileSync } from "node:child_process";
-import crypto from "node:crypto";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, type ModelRoutingConfig } from "@cockpit/shared";
-import { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } from "@cockpit/agents";
-import type { AgentDriver, Role } from "@cockpit/agents";
-import { RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
+import { loadConfig, resolveHome } from "@cockpit/shared";
+import type { ModelRoutingConfig } from "@cockpit/shared";
+import { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry, buildAgentCmd } from "@cockpit/agents";
+import type { AgentDriver } from "@cockpit/agents";
+import { RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry, isInsideCmux, cmuxLocal } from "@cockpit/workspaces";
 import type { RuntimeDriver } from "@cockpit/workspaces";
 import { ensureSpokeLayout } from "@cockpit/shared";
-import { resolveCmuxBin } from "@cockpit/shared";
-import { CMUX_TIMEOUT, classifyStartupSurface } from "@cockpit/workspaces";
+import { classifyStartupSurface } from "@cockpit/workspaces";
+import { shouldStartFresh, recordSession } from "@cockpit/core";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
 const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.json");
-
-// Direct cmux invocation for the select-workspace / current-workspace calls
-// not yet abstracted behind RuntimeDriver. Uses execFileSync (no shell) with
-// stderr piped, NOT inherited — cmux prints diagnostics like
-// "Error: not_found: Pane not found" to stderr and exits 0 when focusing a
-// surface that vanished mid-launch (e.g. --fresh closes a stale workspace).
-// The default execSync/execFileSync stdio forwards that stderr to the parent
-// terminal, which is exactly the #121 Issue B leak. Capturing fd 2 here
-// swallows it. Returns trimmed stdout for callers that need it.
-export function cmuxLocal(args: string[]): string {
-  return execFileSync(resolveCmuxBin(), args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: CMUX_TIMEOUT }).trim();
-}
-
-interface SessionRecord {
-  lastLaunched: string; // YYYY-MM-DD
-  templateHash: string;
-}
-
-interface SessionsFile {
-  workspaces: Record<string, SessionRecord>;
-}
-
-function loadSessions(): SessionsFile {
-  try {
-    return JSON.parse(fs.readFileSync(SESSIONS_PATH, "utf-8"));
-  } catch {
-    return { workspaces: {} };
-  }
-}
-
-function saveSessions(sessions: SessionsFile): void {
-  const dir = path.dirname(SESSIONS_PATH);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(SESSIONS_PATH, JSON.stringify(sessions, null, 2) + "\n");
-}
-
-function computeTemplateHash(role: string): string {
-  const hash = crypto.createHash("sha256");
-
-  // Hash the role template
-  const roleFile = path.join(TEMPLATES_DIR, `${role}.claude.md`);
-  const legacyRoleFile = path.join(TEMPLATES_DIR, `${role}.CLAUDE.md`);
-  if (fs.existsSync(roleFile)) {
-    hash.update(fs.readFileSync(roleFile, "utf-8"));
-  } else if (fs.existsSync(legacyRoleFile)) {
-    hash.update(fs.readFileSync(legacyRoleFile, "utf-8"));
-  }
-
-  // Also hash plugin skills so template changes trigger fresh sessions
-  const pluginSkillsDir = path.join(TEMPLATES_DIR, "..", "plugin", "skills");
-  if (fs.existsSync(pluginSkillsDir)) {
-    for (const skill of fs.readdirSync(pluginSkillsDir).sort()) {
-      const skillFile = path.join(pluginSkillsDir, skill, "SKILL.md");
-      if (fs.existsSync(skillFile)) {
-        hash.update(fs.readFileSync(skillFile, "utf-8"));
-      }
-    }
-  }
-
-  return hash.digest("hex").slice(0, 16);
-}
-
-function shouldStartFresh(
-  workspaceName: string,
-  role: string,
-): { fresh: boolean; reason?: string } {
-  const sessions = loadSessions();
-  const record = sessions.workspaces[workspaceName];
-  const today = new Date().toISOString().slice(0, 10);
-  const currentHash = computeTemplateHash(role);
-
-  if (!record) {
-    return { fresh: true, reason: "first launch" };
-  }
-
-  if (record.lastLaunched !== today) {
-    return { fresh: true, reason: "new day — starting fresh session" };
-  }
-
-  if (record.templateHash !== currentHash) {
-    return { fresh: true, reason: "template instructions updated" };
-  }
-
-  return { fresh: false };
-}
-
-function recordSession(workspaceName: string, role: string): void {
-  const sessions = loadSessions();
-  sessions.workspaces[workspaceName] = {
-    lastLaunched: new Date().toISOString().slice(0, 10),
-    templateHash: computeTemplateHash(role),
-  };
-  saveSessions(sessions);
-}
-
-function isInsideCmux(): boolean {
-  return !!process.env.CMUX_WORKSPACE_ID;
-}
 
 function ensureCmuxReady(): void {
   if (isInsideCmux()) return;
@@ -123,59 +25,6 @@ function ensureCmuxReady(): void {
   execSync(`open "${CMUX_APP}"`, { stdio: "inherit" });
   console.log(chalk.bold("  Run `cockpit launch` from inside a cmux workspace.\n"));
   process.exit(0);
-}
-
-function buildAgentCmd(
-  agentName: string,
-  registry: CapabilityRegistry,
-  role: string,
-  fresh: boolean,
-  permissionMode: string,
-  model?: string,
-): string {
-  const driver = registry.getDriver(agentName);
-
-  // For Claude, handle fresh vs continue and permission mode specially
-  if (driver.name === "claude") {
-    let cmd = fresh ? "claude" : "claude -c";
-
-    if (permissionMode === "acceptEdits") {
-      cmd += " --permission-mode acceptEdits";
-    } else if (permissionMode === "auto") {
-      cmd += " --permission-mode auto";
-    } else if (permissionMode === "bypassPermissions") {
-      cmd += " --dangerously-skip-permissions";
-    }
-
-    if (model) {
-      cmd += ` --model ${model}`;
-    }
-
-    const roleFile = path.join(TEMPLATES_DIR, `${role}.claude.md`);
-    const legacyRoleFile = path.join(TEMPLATES_DIR, `${role}.CLAUDE.md`);
-    const actualRoleFile = fs.existsSync(roleFile) ? roleFile : (fs.existsSync(legacyRoleFile) ? legacyRoleFile : null);
-    if (actualRoleFile) {
-      cmd += ` --append-system-prompt-file ${actualRoleFile}`;
-    }
-
-    const pluginDir = path.join(TEMPLATES_DIR, "..", "plugin");
-    if (fs.existsSync(pluginDir)) {
-      cmd += ` --plugin-dir ${pluginDir}`;
-    }
-
-    return cmd;
-  }
-
-  // For non-Claude agents, use the driver's buildCommand
-  const roleFile = path.join(TEMPLATES_DIR, `${role}.${driver.templateSuffix}.md`);
-  return driver.buildCommand({
-    prompt: `You are a cockpit ${role}. Read your instructions from ${roleFile} and begin.`,
-    workdir: process.cwd(),
-    role: role as Role,
-    model,
-    autoApprove: true,
-    promptFile: fs.existsSync(roleFile) ? roleFile : undefined,
-  });
 }
 
 export interface StartupDeliveryOptions {
@@ -348,7 +197,7 @@ export const launchCommand = new Command("launch")
     ): Promise<void> {
       let forceFresh = !!opts.fresh;
       if (!forceFresh) {
-        const auto = shouldStartFresh(workspaceName, role);
+        const auto = shouldStartFresh(workspaceName, role, { sessionsPath: SESSIONS_PATH, templatesDir: TEMPLATES_DIR });
         if (auto.fresh) {
           console.log(chalk.cyan(`  ↻ ${auto.reason}`));
           forceFresh = true;
@@ -358,8 +207,8 @@ export const launchCommand = new Command("launch")
       const roleConfig = config.defaults.roles?.[role as keyof NonNullable<typeof config.defaults.roles>];
       const agentName = roleConfig?.agent || "claude";
       const model = roleConfig?.model || config.defaults.models?.[role as keyof ModelRoutingConfig];
-      const agentCmd = buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model);
-      recordSession(workspaceName, role);
+      const agentCmd = buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR);
+      recordSession(workspaceName, role, { sessionsPath: SESSIONS_PATH, templatesDir: TEMPLATES_DIR });
 
       // Auto-trigger startup checklist
       let initialPrompt: string | undefined;
