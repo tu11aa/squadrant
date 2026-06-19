@@ -35,12 +35,12 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
     taskTimeoutMs, inFlightHeadlessIds, activeHeadlessKills,
     broadcast, cancelPromotionsFor,
   } = ctx;
-  const { daemonDirectCmux, daemonCmux } = ctx;
+  const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick } = createDelivery(ctx, daemonCmux, daemonDirectCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick } = createDelivery(ctx, daemonCmux);
   const notify = opts.notify ?? defaultNotify;
-  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonDirectCmux, daemonCmux);
+  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
 
   const ingest = (project: string) => (e: import("@cockpit/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });
@@ -48,7 +48,6 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   const d = createDaemon({
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
     isSurfaceAlive: surfaceProbe,
-    healRelay: opts.healRelay,
     launchHeadless: opts.launchHeadless!,
     isHeadlessInFlight: (id) => inFlightHeadlessIds.has(id),
     launchInteractive: async (rec) => {
@@ -78,11 +77,9 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
 
   function buildHealth(only?: string): ComponentHealth[] {
     const config = loadConfig();
-    const relays = d.getRelayHealth();
     const now = Date.now();
     const known = new Set<string>([
       ...Object.keys(config.projects),
-      ...relays.map((r) => r.project),
       ...store.listAll().map((t) => t.project),
     ]);
     const names = only ? [only] : [...known];
@@ -90,10 +87,15 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
     for (const project of names) {
       const proj = config.projects[project];
       const captainName = proj?.captainName ?? `${project}-captain`;
+      // Captain liveness from the delivery loop: stopped=true → gone,
+      // streak===0 → alive (last tick found the surface), else unknown.
+      const stopped = ctx.stoppedProjects.has(project);
+      const streak = ctx.captainMissingStreak.get(project);
+      const captainStopped: boolean | null = stopped ? true : streak === 0 ? false : null;
       out.push(
         ...projectHealth({
           project, now, captainName,
-          relay: relays.find((r) => r.project === project) ?? null,
+          captainStopped,
           commandPresent: null,
           crews: store.list(project),
         }),
@@ -172,9 +174,9 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
       catch (e) { log(`cmux events bridge start failed: ${(e as Error).message}`); }
     }
 
-    // #348: cmux socket auto-config on boot when daemon-direct is ON.
+    // #348: cmux socket auto-config on boot.
     const autoConfigSafe = !!opts.runCmuxAutoConfig || !process.env.VITEST;
-    if (daemonDirectCmux && autoConfigSafe) {
+    if (autoConfigSafe) {
       try {
         const r = await (opts.runCmuxAutoConfig ?? ensureCmuxAutoConfig)();
         if (r.configChanged) log(`cmux autoconfig: wrote automation socket mode to ${r.configPath}`);
@@ -195,12 +197,12 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   let deliveryTick: (() => Promise<void>) | undefined = initialDeliveryTick;
   let probeTick: (() => Promise<void>) | undefined;
 
-  if (daemonDirectCmux && daemonCmux) {
+  if (daemonCmux) {
     probeTick = probes.buildInteractiveProbe({ cmux: daemonCmux });
   }
 
   let deliveryTimer: NodeJS.Timeout | undefined;
-  if (daemonDirectCmux && daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
+  if (daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
     deliveryTimer = setInterval(() => {
       void deliveryTick!().catch((e: unknown) => log(`delivery tick error: ${(e as Error).message}`));
     }, 1000);
@@ -208,7 +210,7 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   }
 
   let probeTimer: NodeJS.Timeout | undefined;
-  if (daemonDirectCmux && daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
+  if (daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
     probeTimer = setInterval(() => {
       void probeTick!().catch((e: unknown) => log(`probe tick error: ${(e as Error).message}`));
     }, 10_000);

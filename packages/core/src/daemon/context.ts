@@ -9,7 +9,6 @@ import { spawn as realSpawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { createStore } from "../store.js";
 import { createDaemon } from "../daemon.js";
-import type { RelayHealOutcome } from "../daemon.js";
 import { loadConfig } from "@cockpit/shared";
 import type { TaskRecord, ControlEvent, Gate, AutoConfigResult } from "@cockpit/shared";
 import type { Socket } from "node:net";
@@ -48,8 +47,6 @@ export interface CockpitdOpts {
   };
   /** Inject a fake driver for tests. Defaults to a real CodexInteractiveDriver. */
   codexDriver?: AgentDriver;
-  /** #207 best-effort relay healer. */
-  healRelay?: (project: string) => Promise<RelayHealOutcome | void> | RelayHealOutcome | void;
   /** Inject a fake headless launcher for tests to avoid real process spawns. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /** Override which projects appear in the Tier 2 per-project snapshot. */
@@ -58,13 +55,11 @@ export interface CockpitdOpts {
   opencodeBridge?: OpencodeBridge;
   /** B1: inject a fake cmux events bridge for tests. */
   cmuxEventsBridge?: CmuxEventsBridge;
-  /** #332: inject a fake surface driver for testing daemon-direct delivery. */
+  /** Inject a fake surface driver for testing daemon-direct delivery. */
   daemonCmux?: DaemonSurfaceDriver;
-  /** #332: factory for constructing the surface driver in production. */
+  /** Factory for constructing the surface driver in production. */
   makeDaemonCmux?: () => DaemonSurfaceDriver;
-  /** #332: override for daemonDirectCmux flag (bypasses config file load). */
-  daemonDirectCmux?: boolean;
-  /** #332: injected captain-surface mapping (project → PaneRef) for tests. */
+  /** Injected captain-surface mapping (project → PaneRef) for tests. */
   captainSurfaces?: Record<string, PaneRef>;
   /** #348: override the cmux socket auto-config re-check. */
   runCmuxAutoConfig?: () => Promise<AutoConfigResult>;
@@ -76,9 +71,6 @@ export function defaultIsPidAlive(pid: number): boolean {
 }
 
 // ── Shared state bag ──────────────────────────────────────────────────────────
-
-/** Relay-proxy probe request queued for the relay to execute (#239 Phase B). */
-export type ProbeRequest = { taskId: string; name: string };
 
 /** All shared mutable state for the running daemon. Most fields are set in
  *  buildContext; late-bound fields (d, notify, broadcast, etc.) are assigned
@@ -99,12 +91,6 @@ export interface DaemonContext {
   log: (m: string) => void;
   /** Per-task live attach connections (spec §4.5/§4.6). */
   attachConns: Map<string, Set<Socket>>;
-  /** Per-project relay-proxy probe queue (#239 Phase B). */
-  pendingProbes: Map<string, ProbeRequest[]>;
-  /** Per-taskId liveness result cache. */
-  probeResults: Map<string, "alive" | "gone" | "unknown">;
-  /** taskIds handed to relay but not yet answered. */
-  inFlightProbes: Set<string>;
   /** Tasks being launched headlessly with no pid yet (#259). */
   inFlightHeadlessIds: Set<string>;
   /** Cancel handles for in-flight headless runs. */
@@ -120,9 +106,7 @@ export interface DaemonContext {
   d: ReturnType<typeof createDaemon>;
   /** Resolved notify function. */
   notify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
-  /** Daemon-direct flag (#332). */
-  daemonDirectCmux: boolean;
-  /** Resolved surface driver (undefined when relay mode). */
+  /** Resolved surface driver for daemon-direct delivery. */
   daemonCmux: DaemonSurfaceDriver | undefined;
   /** Resolved agent driver. */
   codexDriver: AgentDriver;
@@ -173,9 +157,6 @@ export function buildContext(opts: CockpitdOpts): DaemonContext {
     writeResult,
     log,
     attachConns: new Map(),
-    pendingProbes: new Map(),
-    probeResults: new Map(),
-    inFlightProbes: new Set(),
     inFlightHeadlessIds: new Set(),
     activeHeadlessKills: new Set(),
     captainMissingStreak: new Map(),
@@ -183,7 +164,6 @@ export function buildContext(opts: CockpitdOpts): DaemonContext {
     // Late-bound — start.ts fills these before first use:
     d: null as unknown as ReturnType<typeof createDaemon>,
     notify: null as unknown as DaemonContext["notify"],
-    daemonDirectCmux: false,
     daemonCmux: undefined,
     codexDriver: null as unknown as AgentDriver,
     opencodeBridge: null as unknown as OpencodeBridge,

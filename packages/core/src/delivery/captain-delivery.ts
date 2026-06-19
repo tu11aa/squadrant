@@ -3,13 +3,10 @@ import { DeferDelivery } from "./defer-delivery.js";
 /**
  * #332: extracted defer-while-typing state machine (#258/#302).
  *
- * Behaviour is ported VERBATIM from notify-relay.ts drain() (lines 276-309):
+ * Behaviour ported from notify-relay.ts drain() (#332):
  *   - per-seq deferCounts / stableCounts / lastContent maps
  *   - maxDefers / stableProbePolls thresholds
  *   - stable-content probe escalation (#302)
- *
- * Both the relay (flag OFF) and the daemon (flag ON) consume this same module
- * so flag-OFF parity is guaranteed.
  */
 export interface CaptainDeliveryOptions {
   maxDefers: number;

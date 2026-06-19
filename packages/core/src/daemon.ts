@@ -4,17 +4,6 @@ import type { ControlEvent, TaskRecord, TaskState } from "@cockpit/shared";
 import { TERMINAL_STATES } from "@cockpit/shared";
 import { reduce } from "./state-machine.js";
 import { evaluateStall, recoverStall } from "./watchdog.js";
-import { classifyHealth, RELAY_STALE_MS, RELAY_GONE_MS, type RelayHealth } from "./liveness.js";
-
-/**
- * Result of a relay-heal attempt (audit STEP 3). "captain-absent" tells the
- * sweep the captain workspace is permanently gone — the relay can never be
- * healed, so its health record is pruned to stop per-cycle "captain workspace
- * not present" log spam. Any other value (or void, for legacy impls) leaves the
- * record in place so the liveness surface keeps reporting it.
- */
-export type RelayHealOutcome = "captain-absent" | "healed" | "skipped";
-
 export interface DaemonDeps {
   store: Store;
   now: () => number;
@@ -66,16 +55,6 @@ export interface DaemonDeps {
     record: TaskRecord;
     event: ControlEvent;
   }) => Promise<void> | void;
-  /**
-   * #207 relay heal (SECONDARY — best-effort). Called once per "down" episode
-   * when the sweep finds a registered relay gone dark. The default impl
-   * (cockpitd) attempts a `spawnInjector` re-spawn, but is mostly inert in prod:
-   * the launchd daemon is outside cmux's process-lineage and cannot inject. The
-   * non-negotiable guarantee — "captain never SILENTLY blind" — is delivered by
-   * getRelayHealth() + the liveness surface, not by this hook. Errors are
-   * swallowed by the sweep so a refused cmux write never trips the daemon.
-   */
-  healRelay?: (project: string) => Promise<RelayHealOutcome | void> | RelayHealOutcome | void;
   /**
    * #225 hard crew task-timeout: wall-clock ceiling in ms. When a non-terminal
    * task's age (now - createdAt) exceeds this, the sweep fires a CREW TIMEOUT
@@ -144,7 +123,7 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
 
 /** #246: cross-project delegation report-back message. Called when a task
  *  with originProject settles to a terminal state. Returns a captain-facing
- *  one-liner that the origin's relay delivers verbatim. */
+ *  one-liner delivered verbatim to the origin project's captain. */
 function formatDelegationReport(rec: TaskRecord, originProject: string, targetProject: string): string | null {
   const shortTask = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
   switch (rec.state) {
@@ -239,34 +218,7 @@ export function createDaemon(deps: DaemonDeps) {
   // active back-and-forth. Bounded by the live task set; never read after a
   // task terminates (terminal states don't transition to awaiting-input).
   const lastCaptainTurnAt = new Map<string, number>();
-  // #207: per-project relay registration + last heartbeat. The relay registers
-  // over the socket on boot and beats every ~10s; the sweep health-checks these.
-  const relayHealth = new Map<string, RelayHealth>();
-  // Per-project last heal attempt, so a persistently-dark relay is healed once
-  // per episode, not every 30s sweep. Re-armed (deleted) when a fresh heartbeat
-  // proves the relay recovered.
-  const lastHealAttempt = new Map<string, number>();
   return {
-    /** #207: a notify-relay announced itself (boot). */
-    registerRelay(r: { project: string; pid: number; startedAt: number }): void {
-      relayHealth.set(r.project, { ...r, lastSeenMs: now() });
-      lastHealAttempt.delete(r.project);
-    },
-    /** #207: a notify-relay heartbeat (every ~10s). Re-arms heal. */
-    relayHeartbeat(r: { project: string; pid: number }): void {
-      const prev = relayHealth.get(r.project);
-      relayHealth.set(r.project, {
-        project: r.project,
-        pid: r.pid,
-        startedAt: prev?.startedAt ?? now(),
-        lastSeenMs: now(),
-      });
-      lastHealAttempt.delete(r.project);
-    },
-    /** #207/#77: snapshot of every registered relay's health (for the surface). */
-    getRelayHealth(): RelayHealth[] {
-      return [...relayHealth.values()];
-    },
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "dispatch": {
@@ -437,33 +389,6 @@ export function createDaemon(deps: DaemonDeps) {
         const recovered = recoverStall(r, t);
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
-      }
-      // #207 relay health-check: a registered relay gone dark past the gone
-      // window is down. Best-effort heal, debounced to once per episode. The
-      // surface (getRelayHealth) already exposes the "gone" state regardless —
-      // that is the never-silently-blind guarantee; heal is the secondary try.
-      if (deps.healRelay) {
-        // Snapshot first: a "captain-absent" prune deletes from relayHealth mid-loop.
-        for (const rh of [...relayHealth.values()]) {
-          if (classifyHealth(rh.lastSeenMs, t, RELAY_STALE_MS, RELAY_GONE_MS) !== "gone") continue;
-          const last = lastHealAttempt.get(rh.project);
-          if (last != null && t - last <= RELAY_GONE_MS) continue; // debounce
-          lastHealAttempt.set(rh.project, t);
-          try {
-            const outcome = await deps.healRelay(rh.project);
-            // audit STEP 3 stale-ref prune: the captain workspace is permanently
-            // gone, so this relay can never be healed and re-probing it every
-            // sweep just spams "captain workspace not present". Drop the record
-            // (and its debounce) so the loop goes quiet after a single attempt; a
-            // captain restart re-registers a fresh relay via registerRelay.
-            if (outcome === "captain-absent") {
-              relayHealth.delete(rh.project);
-              lastHealAttempt.delete(rh.project);
-            }
-          } catch {
-            // best-effort — a refused cmux write (lineage) must not trip the sweep
-          }
-        }
       }
     },
     async reconcile(): Promise<void> {

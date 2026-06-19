@@ -8,7 +8,6 @@ export * from "./watchdog.js";
 export * from "./store.js";
 export * from "./snapshot.js";
 export * from "./launchd.js";
-export * from "./relay-healer.js";
 export * from "./crew-pane-reader.js";
 export * from "./interfaces.js";
 export * from "./gate.js";

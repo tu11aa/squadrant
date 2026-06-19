@@ -3,7 +3,6 @@
 // All state lives on DaemonContext; callbacks that can't yet be on ctx are
 // passed via ServerHandlers (built once in cockpitd.ts/start.ts).
 import { startServer, encodeFrame } from "../protocol.js";
-import { TERMINAL_STATES } from "@cockpit/shared";
 import type { AttachFrame, AttachInbound } from "../protocol.js";
 import type { ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
@@ -24,7 +23,7 @@ export function createServer(
   ctx: DaemonContext,
   handlers: ServerHandlers,
 ) {
-  const { store, log, pendingProbes, inFlightProbes, probeResults, attachConns } = ctx;
+  const { store, log, attachConns } = ctx;
   const { buildHealth, gatherSnapshotInputs, cancelPromotionsFor, broadcast } = handlers;
 
   return startServer(ctx.sockPath, {
@@ -39,35 +38,6 @@ export function createServer(
         await ctx.codexDriver.close(msg.taskId).catch((e: unknown) => log(`codex close err: ${e}`));
         return { ok: true };
       }
-      // #207 relay registration: the notify-relay announces itself on boot and
-      // heartbeats every ~10s so the daemon can health-check it on the sweep.
-      if (msg.kind === "relay-register") {
-        ctx.d.registerRelay({ project: msg.project, pid: msg.pid, startedAt: msg.startedAt ?? Date.now() });
-        return { ok: true };
-      }
-      if (msg.kind === "relay-heartbeat") {
-        ctx.d.relayHeartbeat({ project: msg.project, pid: msg.pid });
-        return { ok: true };
-      }
-      // #239 Phase B: relay proxy — crew-surface liveness probes.
-      // The relay polls for pending probes, executes them in-lineage (cmux-accessible),
-      // and posts results back. Handled inline so they never reach d.handle()'s
-      // unknown-kind guard.
-      if (msg.kind === "relay-proxy-poll") {
-        const project = msg.project as string;
-        const probes = pendingProbes.get(project) ?? [];
-        pendingProbes.set(project, []); // clear after handing off to the relay
-        for (const p of probes) inFlightProbes.add(p.taskId); // mark in-flight
-        return probes;
-      }
-      if (msg.kind === "relay-proxy-result") {
-        const results = msg.results as Array<{ taskId: string; liveness: "alive" | "gone" | "unknown" }>;
-        for (const r of results) {
-          probeResults.set(r.taskId, r.liveness);
-          inFlightProbes.delete(r.taskId); // result received — no longer in-flight
-        }
-        return { ok: true };
-      }
       // #77 service-health surface: per-component liveness for the queried project (or all).
       if (msg.kind === "health") {
         return buildHealth(msg.project as string | undefined);
@@ -78,15 +48,8 @@ export function createServer(
         const { assembleDaemonSnapshot } = await import("../snapshot.js");
         return assembleDaemonSnapshot(await gatherSnapshotInputs(now), now);
       }
-      // #239 Phase B: on any event that terminates a task, evict its entries from
-      // inFlightProbes and probeResults so the Sets never leak.
       if (msg.kind === "event") {
-        const rec = await ctx.d.handle(msg);
-        if (TERMINAL_STATES.has((rec as any).state)) {
-          inFlightProbes.delete((rec as any).id);
-          probeResults.delete((rec as any).id);
-        }
-        return rec;
+        return ctx.d.handle(msg);
       }
       return ctx.d.handle(msg);
     },

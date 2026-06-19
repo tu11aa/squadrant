@@ -26,7 +26,6 @@ export interface DeliveryResult {
 export function createDelivery(
   ctx: DaemonContext,
   daemonCmux: DaemonSurfaceDriver | undefined,
-  daemonDirectCmux: boolean,
 ): DeliveryResult {
   const { stateRoot, store, log, captainMissingStreak, stoppedProjects, opts } = ctx;
 
@@ -43,8 +42,8 @@ export function createDelivery(
         project: args.project,
         taskRecord: args.record,
         event: args.event,
-        // Persist the daemon-rendered message (#214/#210): the relay delivers it
-        // verbatim instead of re-deriving from the raw event (which drifted).
+        // Persist the daemon-rendered message (#214/#210): delivered verbatim
+        // rather than re-derived from the raw event (which drifted).
         message: args.message,
       });
     } catch (e) {
@@ -52,22 +51,22 @@ export function createDelivery(
     }
   };
 
-  // ── Daemon-direct delivery loop (#332) ───────────────────────────────────
-  if (!daemonDirectCmux || !daemonCmux) {
+  // ── Daemon-direct delivery loop ───────────────────────────────────────────
+  if (!daemonCmux) {
     return { defaultNotify, deliveryTick: undefined };
   }
 
   const cmux = daemonCmux;
   const cfg = loadConfig();
   const deliveries = new Map<string, CaptainDelivery>();
-  // #332 storm BUG 3: captured once at delivery-loop setup. Entries older than
+  // Captured once at delivery-loop setup. Entries older than
   // sessionStartMs - STALE_THRESHOLD_MS are silently acked (cursor advanced)
-  // without delivery, mirroring the relay's drain(). This stops a fresh/empty
-  // cursor from re-delivering the entire historical backlog.
+  // without delivery. This stops a fresh/empty cursor from re-delivering the
+  // entire historical backlog.
   const sessionStartMs = Date.now();
 
-  // #332 storm BUG (re-entrancy): each tick does multiple slow cmux subprocess
-  // calls and can exceed the 1s interval. Mirror the relay's drain() guard.
+  // Re-entrancy guard: each tick does multiple slow cmux subprocess calls and
+  // can exceed the 1s interval.
   let delivering = false;
 
   const deliveryCore = async () => {
@@ -125,8 +124,8 @@ export function createDelivery(
       let d = deliveries.get(project);
       if (!d) {
         d = new CaptainDelivery({
-          maxDefers: cfg.relay?.maxDeferDeliveries ?? 300,
-          stableProbePolls: cfg.relay?.stableProbePolls ?? 3,
+          maxDefers: cfg.delivery?.maxDeferDeliveries ?? 300,
+          stableProbePolls: cfg.delivery?.stableProbePolls ?? 3,
         });
         deliveries.set(project, d);
       }
