@@ -141,13 +141,13 @@ function trendCard(key: string, label: string, value: string, sub: string): stri
   ].join("");
 }
 
-/** Sum delivery lag across projects whose relay is alive or stale (online only).
+/** Sum delivery lag across projects whose captain is alive (online only).
  *  A captain that is offline with unread mail is not a live delivery problem. */
 function liveDeliveryBehind(d: DaemonSnapshot): number {
   return d.tier2.projects.reduce((sum, p) => {
-    const relay = d.tier1.find((c) => c.kind === "relay" && c.project === p.project);
-    const relayState = relay?.state ?? "unknown";
-    return relayState === "alive" || relayState === "stale" ? sum + p.delivery.behind : sum;
+    const captain = d.tier1.find((c) => c.kind === "captain" && c.project === p.project);
+    const captainState = captain?.state ?? "unknown";
+    return captainState === "alive" ? sum + p.delivery.behind : sum;
   }, 0);
 }
 
@@ -255,7 +255,7 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
   out.push(
     `<div class="tier-grid">`,
     tierCard("Daemon", col.daemonT, "cockpitd process, build freshness & log volume (Tier 0)"),
-    tierCard("Projects", col.projT, "relays, captains, crews & message data plane (Tier 1/2)"),
+    tierCard("Projects", col.projT, "captains, crews & message data plane (Tier 1/2)"),
     tierCard("Environment", col.envT, "agent CLIs, vaults & config integrity (Tier 3/4)"),
     `</div>`,
   );
@@ -302,7 +302,7 @@ function deliveryBar(behind: number, maxSeq: number): string {
 
 function renderProjects(snap: FullSnapshot, now: number): string {
   const out: string[] = [`<section class="panel" data-panel="projects" role="tabpanel" aria-label="Projects">`];
-  out.push(sectionHead("Projects", "Per-project relays, captains, and crews, plus each project's mailbox delivery and task store."));
+  out.push(sectionHead("Projects", "Per-project captains and crews, plus each project's mailbox delivery and task store."));
   if (snap.daemon === "unreachable") {
     out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>cockpit heal daemon</code></div></section>`);
     return out.join("");

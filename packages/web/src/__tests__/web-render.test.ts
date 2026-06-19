@@ -208,27 +208,19 @@ describe("daemon unreachable", () => {
 });
 
 describe("severity rollup + remediation", () => {
-  const goneRelay: DaemonSnapshot["tier1"] = [
-    { kind: "relay", project: "pact", ref: "relay", state: "gone", lastSeenMs: 1, detail: "relay DOWN" },
+  const goneCaptain: DaemonSnapshot["tier1"] = [
     { kind: "captain", project: "pact", ref: "pact-captain", state: "gone", lastSeenMs: 1 },
   ];
 
   it("bubbles a gone component up to its project card rollup", () => {
-    const out = renderContent(full(daemon({}, goneRelay)));
+    const out = renderContent(full(daemon({}, goneCaptain)));
     expect(out).toMatch(/data-rollup="gone"/);
     expect(out).toContain("pact");
   });
 
-  it("renders the heal command as copy-able remediation under the gone relay", () => {
-    const out = renderContent(full(daemon({}, goneRelay)));
-    expect(out).toContain("cockpit heal relay --project pact");
-  });
-
-  it("does not render remediation for healthy components", () => {
-    const aliveRelay: DaemonSnapshot["tier1"] = [
-      { kind: "relay", project: "cockpit", ref: "relay", state: "alive", lastSeenMs: 999_000 },
-    ];
-    expect(renderContent(full(daemon({}, aliveRelay)))).not.toContain("cockpit heal relay");
+  it("does not render relay heal commands (relay removed)", () => {
+    const out = renderContent(full(daemon({}, goneCaptain)));
+    expect(out).not.toContain("cockpit heal relay");
   });
 });
 
@@ -243,44 +235,39 @@ describe("delivery lag bar", () => {
   });
 });
 
-describe("global delivery-lag excludes offline-relay projects", () => {
-  it("global behind in metrics blob is 0 when the only relay is gone", () => {
+describe("global delivery-lag excludes offline-captain projects", () => {
+  it("global behind is 0 when captain is gone (offline)", () => {
     const d = daemon();
     d.tier1 = [
-      { kind: "relay", project: "cockpit", ref: "relay", state: "gone", lastSeenMs: 1 },
       { kind: "captain", project: "cockpit", ref: "captain", state: "gone", lastSeenMs: 1 },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
     const out = renderContent(full(d));
     const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
-    expect(metrics.behind).toBe(0); // relay gone → not a live delivery problem
+    expect(metrics.behind).toBe(0); // captain gone → not a live delivery problem
   });
-  it("global behind is 0 when relay state is unknown (no relay registered)", () => {
+  it("global behind is 0 when captain state is unknown", () => {
     const d = daemon();
     d.tier1 = [
-      { kind: "relay", project: "cockpit", ref: "relay", state: "unknown", lastSeenMs: null },
       { kind: "captain", project: "cockpit", ref: "captain", state: "unknown", lastSeenMs: null },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
     const out = renderContent(full(d));
     const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
-    expect(metrics.behind).toBe(0); // relay unknown → offline, excluded
+    expect(metrics.behind).toBe(0); // captain unknown → excluded
   });
-  it("global behind includes lag for projects whose relay is alive", () => {
+  it("global behind includes lag for projects whose captain is alive", () => {
     const d = daemon();
-    // default tier1 from daemon() has no relay entries — relay is implicitly absent
-    // override with an alive relay
     d.tier1 = [
-      { kind: "relay", project: "cockpit", ref: "relay", state: "alive", lastSeenMs: 999_000 },
       { kind: "captain", project: "cockpit", ref: "captain", state: "alive", lastSeenMs: 999_000 },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 7, behind: 3 };
     const out = renderContent(full(d));
     const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
-    expect(metrics.behind).toBe(3); // relay alive → included
+    expect(metrics.behind).toBe(3); // captain alive → included
   });
 });
 
