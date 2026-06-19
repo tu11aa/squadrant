@@ -116,12 +116,51 @@ describe("daemon handler", () => {
     expect(store.get("p", "s1")?.state).toBe("stalled");
   });
 
-  it("sweep: marks an over-budget working INTERACTIVE task awaiting-input (not stalled)", async () => {
+  // #354: a quiet INTERACTIVE crew with no tool in flight is alive-thinking, NOT
+  // awaiting-input — the watchdog no longer flips it. It stays `working` and the
+  // sweep emits a distinct, non-alarming CREW QUIET notify (once per episode).
+  it("sweep: over-budget INTERACTIVE task with no tool in flight stays working + CREW QUIET (#354)", async () => {
     const store = createStore(dir);
-    store.put(rec("s1i", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
-    const d = createDaemon({ store, now: () => 1000 });
+    const calls: any[] = [];
+    store.put(rec("s1i", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
     await d.sweep();
-    expect(store.get("p", "s1i")?.state).toBe("awaiting-input");
+    expect(store.get("p", "s1i")?.state).toBe("working");
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW QUIET/);
+    expect(calls[0].event.type).toBe("task.quiet");
+  });
+
+  // #354: an interactive crew with a tool in flight (PreToolUse, no PostToolUse)
+  // past the tool-stall budget IS a hung tool call → stalled, with a tool-named,
+  // recoverable CREW STALLED warn.
+  it("sweep: INTERACTIVE crew with a hung tool past tool-stall budget → stalled + CREW STALLED(tool) (#354)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s1t", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      heartbeatBudgetMs: 100, pendingTool: { name: "Bash", since: 0 },
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    // now far beyond the 10-min default tool-stall budget
+    const d = createDaemon({ store, now: () => 11 * 60_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "s1t")?.state).toBe("stalled");
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW STALLED.*Bash.*possibly hung/);
+  });
+
+  // #354: a long-but-live tool (within the tool-stall budget) does NOT trip —
+  // the false-stalled guard for legit multi-minute test suites / builds.
+  it("sweep: INTERACTIVE crew with a tool in flight WITHIN tool-stall budget → no stall, no QUIET (#354)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s1l", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      heartbeatBudgetMs: 100, pendingTool: { name: "Bash", since: 0 },
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 5 * 60_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "s1l")?.state).toBe("working");
+    expect(calls.length).toBe(0);
   });
 
   it("sweep: recovers a stalled task that has a fresh heartbeat", async () => {
@@ -175,22 +214,25 @@ describe("daemon handler", () => {
   });
 
   // The critical non-regression: a LEGITIMATELY-IDLE live crew (surface alive)
-  // that is over its heartbeat budget must still become awaiting-input (CREW
-  // IDLE), NEVER reaped. This preserves the #131/#133 24h-budget false-stall fix.
-  it("sweep: interactive over-budget record with a LIVE surface → awaiting-input, not reaped (#139)", async () => {
+  // that is over its heartbeat budget must NEVER be reaped. Post-#354 a quiet
+  // thinking crew stays `working` (CREW QUIET, not awaiting-input); the point of
+  // this test — alive/unknown surfaces are not false-reaped — still holds.
+  it("sweep: interactive over-budget record with a LIVE surface → stays working, not reaped (#139/#354)", async () => {
     const store = createStore(dir);
-    store.put(rec("g4", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    store.put(rec("g4", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100,
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
     const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "alive" });
     await d.sweep();
-    expect(store.get("p", "g4")?.state).toBe("awaiting-input");
+    expect(store.get("p", "g4")?.state).toBe("working");
   });
 
-  it("sweep: interactive over-budget record with UNKNOWN surface → awaiting-input, never false-reaped (#139)", async () => {
+  it("sweep: interactive over-budget record with UNKNOWN surface → stays working, never false-reaped (#139/#354)", async () => {
     const store = createStore(dir);
-    store.put(rec("g5", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    store.put(rec("g5", { mode: "interactive", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100,
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
     const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "unknown" });
     await d.sweep();
-    expect(store.get("p", "g5")?.state).toBe("awaiting-input");
+    expect(store.get("p", "g5")?.state).toBe("working");
   });
 
   it("sweep: headless records are never surface-reaped (pid is their liveness) (#139)", async () => {

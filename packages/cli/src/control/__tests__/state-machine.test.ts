@@ -173,6 +173,58 @@ describe("state-machine reduce", () => {
     expect(postToolUse.lastEvent).toBe("task.progress");
   });
 
+  // ── #354: pendingTool lifecycle (hung-tool vs thinking discriminator) ────────
+  it("task.progress PreToolUse opens a pendingTool window with the tool name", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    expect(next.pendingTool).toEqual({ name: "Bash", since: 7000 });
+  });
+
+  it("task.progress PreToolUse with no tool name falls back to a generic label", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse" }, 7000);
+    expect(next.pendingTool).toEqual({ name: "tool", since: 7000 });
+  });
+
+  it("task.progress PostToolUse closes the pendingTool window", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "posttooluse" }, 8000);
+    expect(closed.pendingTool).toBeUndefined();
+  });
+
+  it("task.progress UserPromptSubmit (new turn) closes the pendingTool window", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "agent.hook.UserPromptSubmit" }, 8000);
+    expect(closed.pendingTool).toBeUndefined();
+  });
+
+  it("a non-bounding liveness note (notification) leaves pendingTool untouched", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const still = reduce(open, { type: "task.progress", id: "t1", note: "notification" }, 8000);
+    expect(still.pendingTool).toEqual({ name: "Bash", since: 7000 });
+  });
+
+  it("turn boundaries clear pendingTool (turn.completed / task.started)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const ended = reduce(open, { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
+    expect(ended.pendingTool).toBeUndefined();
+    const started = reduce(reduce(open, { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 8000),
+      { type: "task.started", id: "t1" }, 9000);
+    expect(started.pendingTool).toBeUndefined();
+  });
+
+  it("stalled + task.progress (matching PostToolUse) recovers to working AND clears pendingTool (#354 auto-clear)", () => {
+    const stalledHung = rec({ state: "stalled", pendingTool: { name: "Bash", since: 1000 } });
+    const recovered = reduce(stalledHung, { type: "task.progress", id: "t1", note: "posttooluse" }, 9000);
+    expect(recovered.state).toBe("working");
+    expect(recovered.pendingTool).toBeUndefined();
+    expect(recovered.lastHeartbeat).toBe(9000);
+  });
+
+  it("task.quiet is a no-op (notify-only; crew stays in its current state)", () => {
+    const working = rec({ state: "working" });
+    const next = reduce(working, { type: "task.quiet", id: "t1", quietMs: 400000 }, 9000);
+    expect(next).toBe(working); // same reference — pure no-op
+  });
+
   it("awaiting-input + task.done still transitions to done (terminal not blocked)", () => {
     const next = reduce(rec({ state: "awaiting-input" }), { type: "task.done", id: "t1", resultRef: "/r" }, 10000);
     expect(next.state).toBe("done");

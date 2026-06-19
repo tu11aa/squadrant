@@ -19,6 +19,25 @@ function stampAttempt(
 }
 
 /**
+ * #354: compute the next pendingTool marker for a task.progress liveness signal.
+ * A PreToolUse (carried from the cmux events-bridge, with the tool name) opens a
+ * tool-in-flight window; a PostToolUse or a new UserPromptSubmit closes it. Other
+ * liveness notes (subagentstop / notification) leave the marker untouched — they
+ * do not bound a tool call. The note strings match the two feeds: the events-bridge
+ * emits the raw cmux hook name ("agent.hook.PreToolUse"); the claude hook bridge
+ * emits the lower-cased event ("posttooluse").
+ */
+function nextPendingTool(
+  current: TaskRecord["pendingTool"],
+  ev: Extract<ControlEvent, { type: "task.progress" }>,
+  now: number,
+): TaskRecord["pendingTool"] {
+  if (ev.note === "agent.hook.PreToolUse") return { name: ev.tool ?? "tool", since: now };
+  if (ev.note === "posttooluse" || ev.note === "agent.hook.UserPromptSubmit") return undefined;
+  return current;
+}
+
+/**
  * Pure transition. `now` is injected (epoch ms) so callers control time.
  * Returns a new record; never mutates the input.
  */
@@ -43,17 +62,24 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
         pid: ev.pid ?? rec.pid,
         sessionId: ev.sessionId ?? rec.sessionId,
         question: undefined, // resuming after a blocked→reply clears the question
+        pendingTool: undefined, // #354: a new turn closes any prior tool window
       };
-    case "task.progress":
+    case "task.progress": {
       // task.progress is a real-activity signal (stdout chunk for headless,
-      // PostToolUse/SubagentStop hook for interactive). Stamp the attempt so
-      // lastHeartbeatAt stays current and the watchdog stall-check (#89) can
-      // key off it without false-stalling long-running headless tasks.
+      // PreToolUse/PostToolUse/SubagentStop hook for interactive). Stamp the
+      // attempt so lastHeartbeatAt stays current and the watchdog stall-check
+      // (#89) can key off it without false-stalling long-running headless tasks.
+      // #354: also track the in-flight tool (PreToolUse opens, PostToolUse closes)
+      // so a hung tool call is distinguishable from a quiet thinking turn.
       // From blocked: liveness only — do not auto-unblock (explicit reply required).
-      // From awaiting-input: resume to working (PostToolUse on the next turn).
-      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
-      if (rec.state === "awaiting-input") return { ...stampAttempt(base, {}, now), state: "working" };
-      return stampAttempt(base, {}, now);
+      // From awaiting-input OR stalled: resume to working — the next real activity
+      // (e.g. the matching PostToolUse) auto-clears a hung-tool warn instantly.
+      const pendingTool = nextPendingTool(rec.pendingTool, ev, now);
+      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type, pendingTool };
+      const b = { ...base, pendingTool };
+      if (rec.state === "awaiting-input" || rec.state === "stalled") return { ...stampAttempt(b, {}, now), state: "working" };
+      return stampAttempt(b, {}, now);
+    }
     case "heartbeat":
       // Raw liveness ping — intentionally does NOT stamp the attempt so a late
       // heartbeat from a dead dispatch cannot mask stalls on the new one (#89).
@@ -70,7 +96,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // no-op so the FIRST (explicit) question wins and no duplicate CREW
       // BLOCKED fires. Terminal states are already absorbed above.
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
-      return { ...base, state: "blocked", question: ev.question };
+      return { ...base, state: "blocked", question: ev.question, pendingTool: undefined };
     case "task.done":
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":
@@ -85,7 +111,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.session":
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":
-      return { ...stampAttempt(base, {}, now), state: "working" };
+      return { ...stampAttempt(base, {}, now), state: "working", pendingTool: undefined };
     case "task.turn.completed":
       // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
       // A turn ending while blocked must NOT unblock — only the captain's answer
@@ -93,20 +119,22 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // opencode SSE bridge emits task.turn.completed right after an explicit
       // `signal blocked`, and that trailing turn-end must not drop the question.
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
-      return { ...stampAttempt(base, {}, now), state: "awaiting-input" };
+      return { ...stampAttempt(base, {}, now), state: "awaiting-input", pendingTool: undefined };
     case "task.delta":
       return stampAttempt(base, {}, now);  // heartbeat-only
     case "task.input.requested":
     case "task.approval.requested":
-      return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question };
+      return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question, pendingTool: undefined };
     case "task.reattached":
       return stampAttempt(base, {}, now);
     case "task.stalled":
     case "task.idle":
+    case "task.quiet":
     case "task.timeout":
     case "task.reconcile-failed":
       // Synthetic notify-only events; the daemon has already updated state
-      // directly via the watchdog/reconcile paths. Reducer is a no-op.
+      // directly via the watchdog/reconcile paths (task.quiet carries no state
+      // change at all — the crew stays `working`). Reducer is a no-op.
       return rec;
     default:
       // #87: unknown/future event type from the wire — safe no-op.

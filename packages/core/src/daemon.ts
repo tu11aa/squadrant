@@ -112,8 +112,17 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       return `CREW BLOCKED ${tag}: ${(rec.question ?? "(no question)").trim()}`;
     case "failed":
       return `CREW FAILED ${tag}: ${(rec.error ?? "(no error)").trim()}`;
-    case "stalled":
+    case "stalled": {
+      // #354: a hung interactive tool call reads differently from a headless
+      // heartbeat stall — name the tool and how long it has been outstanding,
+      // and frame it as "possibly hung" (recoverable, auto-clears on the tool's
+      // PostToolUse), NOT a death notice.
+      if (event?.type === "task.stalled" && event.tool) {
+        const mins = event.elapsedMs != null ? Math.max(1, Math.round(event.elapsedMs / 60000)) : null;
+        return `CREW STALLED ${tag}: still running ${event.tool}${mins != null ? ` ~${mins}min` : ""} — possibly hung (no result yet).`;
+      }
       return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
+    }
     case "awaiting-input":
       return `CREW IDLE ${tag}: turn ended / awaiting your input — review and reply or close.`;
     default:
@@ -207,7 +216,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.session", "task.turn.started", "task.turn.completed",
   "task.delta", "task.input.requested", "task.approval.requested",
   "task.reattached", "task.reopened",
-  "task.stalled", "task.idle", "task.timeout", "task.reconcile-failed",
+  "task.stalled", "task.idle", "task.quiet", "task.timeout", "task.reconcile-failed",
   "task.cancelled", "task.session.ended",
 ]);
 
@@ -218,6 +227,10 @@ export function createDaemon(deps: DaemonDeps) {
   // active back-and-forth. Bounded by the live task set; never read after a
   // task terminates (terminal states don't transition to awaiting-input).
   const lastCaptainTurnAt = new Map<string, number>();
+  // #354: per-task debounce for CREW QUIET. Keyed to the liveness timestamp of
+  // the quiet episode so exactly one QUIET fires per episode; when the crew shows
+  // activity again, liveness advances and a later quiet episode re-notifies.
+  const quietNotifiedAt = new Map<string, number>();
   return {
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
@@ -373,19 +386,48 @@ export function createDaemon(deps: DaemonDeps) {
             continue;
           }
         }
+        // #354: evaluateStall now only stalls a HEADLESS heartbeat timeout or a
+        // hung INTERACTIVE tool call (PreToolUse with no PostToolUse past the
+        // tool-stall budget). A quiet interactive thinking turn no longer stalls
+        // here — it is surfaced as CREW QUIET below, keeping the crew `working`.
         const idle = evaluateStall(r, t);
         if (idle) {
           store.put(idle);
-          // Interactive idle → awaiting-input (task.idle); headless → stalled
-          // (task.stalled). The synth event only carries the notify payload;
-          // the reducer treats both as no-ops (state already updated above).
-          const synthEvent: ControlEvent =
-            idle.state === "awaiting-input"
-              ? { type: "task.idle", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs }
-              : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
+          // The synth event only carries the notify payload; the reducer treats
+          // it as a no-op (state already updated above). A hung-tool stall carries
+          // the tool name + elapsed so the notifier renders the accurate message.
+          const synthEvent: ControlEvent = idle.pendingTool
+            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: idle.pendingTool.name, elapsedMs: t - idle.pendingTool.since }
+            : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
           firePush(deps, r.project, r.state, idle, synthEvent, lastCaptainTurnAt.get(r.id));
           continue;
         }
+        // #354 CREW QUIET: a `working` interactive crew quiet past its heartbeat
+        // budget with NO tool in flight is alive but deep-thinking (no hook fires
+        // during pure model thinking). Surface a distinct, non-alarming nudge —
+        // NOT 'awaiting-input' (the turn never ended; real CREW IDLE comes only
+        // from the Stop hook). State stays `working`; notify once per episode.
+        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool) {
+          const liveness = r.attempts.at(-1)?.lastHeartbeatAt ?? r.lastHeartbeat;
+          const quiet = t - liveness;
+          if (quiet > r.heartbeatBudgetMs) {
+            if (deps.notify && quietNotifiedAt.get(r.id) !== liveness) {
+              quietNotifiedAt.set(r.id, liveness);
+              const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
+              const mins = Math.max(1, Math.round(quiet / 60000));
+              const message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
+              const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: quiet };
+              try {
+                const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+              } catch { /* swallowed — a flaky notifier must never trip the sweep */ }
+            }
+            continue;
+          }
+        }
+        // Activity resumed (or never went quiet) → drop any QUIET debounce marker
+        // so the next genuine quiet episode notifies again, and avoid map growth.
+        if (quietNotifiedAt.has(r.id)) quietNotifiedAt.delete(r.id);
         const recovered = recoverStall(r, t);
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);

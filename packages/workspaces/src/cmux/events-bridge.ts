@@ -192,7 +192,7 @@ export class CmuxEventsBridge {
           category?: string;
           name?: string;
           source?: string;
-          payload?: { _source?: string; session_id?: string; cwd?: string; phase?: string };
+          payload?: { _source?: string; session_id?: string; cwd?: string; phase?: string; tool_name?: string };
         }
       | undefined;
     try {
@@ -231,6 +231,9 @@ export class CmuxEventsBridge {
     // that is mid long tool-call but screen-quiet is NOT false-stalled (#292),
     // and a crew the scrape path wrongly idled resumes to 'working'. ADDITIVE:
     // the reducer absorbs this idempotently, and a blocked crew stays blocked.
-    this.deps.emit({ type: "task.progress", id: rec.id, note: f.name });
+    // #354: carry the tool name on PreToolUse so the reducer can open a
+    // tool-in-flight window (pendingTool) — the discriminator the watchdog uses
+    // to tell a hung tool call apart from a quiet thinking turn.
+    this.deps.emit({ type: "task.progress", id: rec.id, note: f.name, tool: p.tool_name });
   }
 }

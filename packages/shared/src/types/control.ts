@@ -77,11 +77,19 @@ export interface TaskRecord {
    *  name when this task was dispatched by a sibling captain. When the task
    *  settles, the daemon fans the outcome back to originProject's mailbox. */
   originProject?: string;
+  /** #354: the tool call currently in flight, if any. Set when a PreToolUse
+   *  liveness signal arrives (cmux events-bridge carries the tool name); cleared
+   *  the moment its PostToolUse / next turn boundary arrives. A `working` crew
+   *  whose pendingTool has been outstanding past TOOL_STALL_BUDGET_MS is treated
+   *  as hung-on-a-tool (CREW STALLED warn) — distinct from a quiet thinking turn
+   *  (no pendingTool → CREW QUIET). Auto-clears: the next PostToolUse recovers
+   *  the record to `working` (state-machine + recoverStall). */
+  pendingTool?: { name: string; since: number };
 }
 
 export type ControlEvent =
   | { type: "task.started"; id: string; pid?: number; sessionId?: string }
-  | { type: "task.progress"; id: string; note?: string }
+  | { type: "task.progress"; id: string; note?: string; tool?: string }
   | { type: "heartbeat"; id: string }
   | { type: "task.blocked"; id: string; reason: string; question: string }
   | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean }
@@ -100,11 +108,21 @@ export type ControlEvent =
   // Synthetic events: emitted by the daemon (watchdog / reconcile) purely as
   // notify payloads. They are never sent over the wire and the reducer treats
   // them as no-ops; the watchdog has already updated state directly.
-  | { type: "task.stalled"; id: string; heartbeatBudgetMs: number }
+  // #354: `tool`/`elapsedMs` are set when the stall is a hung interactive tool
+  // call (PreToolUse with no matching PostToolUse past TOOL_STALL_BUDGET_MS),
+  // letting the notifier render "still running {tool} ~{N}min" instead of the
+  // generic headless "no heartbeat" message.
+  | { type: "task.stalled"; id: string; heartbeatBudgetMs: number; tool?: string; elapsedMs?: number }
   // task.idle is the interactive analogue of task.stalled: the watchdog has
   // already moved an idle interactive task to 'awaiting-input', and this carries
   // the accurate (non-alarming) notify payload to the captain.
   | { type: "task.idle"; id: string; heartbeatBudgetMs: number }
+  // #354: a `working` interactive crew that has been quiet past its heartbeat
+  // budget with NO tool in flight — alive but deep-thinking (no hook fires
+  // during pure model thinking). Notify-only (reducer no-op): the crew stays
+  // `working`, NOT awaiting-input. Real CREW IDLE still comes only from the Stop
+  // hook (a genuine turn-end). `quietMs` = how long it has been silent.
+  | { type: "task.quiet"; id: string; quietMs: number }
   // #225: emitted by the sweep when a task's wall-clock age exceeds the ceiling.
   // Notify-only (detect-first, #77); reducer is a no-op.
   | { type: "task.timeout"; id: string; taskTimeoutMs: number }

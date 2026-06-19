@@ -202,6 +202,26 @@ describe("CmuxEventsBridge working hooks → task.progress", () => {
     bridge.stop();
   });
 
+  it("#354: carries the tool name from a PreToolUse frame onto task.progress", async () => {
+    const events: ControlEvent[] = [];
+    const frame = JSON.stringify({
+      type: "event", category: "agent", name: "agent.hook.PreToolUse", seq: 3, source: "claude",
+      payload: { _source: "claude", session_id: "claude-abc", cwd: "/wt/crew-a", phase: "completed", tool_name: "Bash" },
+    }) + "\n";
+    const bridge = new CmuxEventsBridge({
+      emit: (e) => events.push(e),
+      resolve: () => ({ id: "task-a" }),
+      cursorFile: "/tmp/seq",
+      spawnImpl: (() => fakeChild([ack, frame])) as never,
+      stopAfterFirstRun: true,
+    });
+    bridge.start();
+    await flush();
+    await flush();
+    expect(events).toEqual([{ type: "task.progress", id: "task-a", note: "agent.hook.PreToolUse", tool: "Bash" }]);
+    bridge.stop();
+  });
+
   it("maps agent.hook.UserPromptSubmit → task.progress", async () => {
     const events: ControlEvent[] = [];
     const bridge = new CmuxEventsBridge({
@@ -274,17 +294,19 @@ describe("working-hook run-state suppresses false-stall (#292)", () => {
     };
   }
 
-  it("without a working hook, a quiet crew past budget false-idles", () => {
+  it("a quiet crew past budget with no tool in flight is NOT stalled by the watchdog (#354)", () => {
     const now = 100_000; // 100s since the last heartbeat at t=0, budget 60s
-    const idle = evaluateStall(workingCrew(0), now);
-    expect(idle?.state).toBe("awaiting-input");
+    // Post-#354 the watchdog never flips a quiet interactive crew to awaiting-input;
+    // a deep-thinking turn stays working (the sweep surfaces CREW QUIET instead).
+    expect(evaluateStall(workingCrew(0), now)).toBeNull();
   });
 
-  it("a PreToolUse-derived task.progress refreshes liveness so the crew does NOT idle", () => {
+  it("a PreToolUse-derived task.progress opens a tool window that does NOT immediately stall (#292/#354)", () => {
     const now = 100_000;
     // The bridge's working-hook event lands as task.progress just before the sweep.
-    const progressed = reduce(workingCrew(0), { type: "task.progress", id: "task-a", note: "agent.hook.PreToolUse" }, now);
-    // evaluateStall now keys off the refreshed lastHeartbeatAt → no false idle.
+    const progressed = reduce(workingCrew(0), { type: "task.progress", id: "task-a", note: "agent.hook.PreToolUse", tool: "Bash" }, now);
+    // The tool window just opened (since=now) → well within the tool-stall budget.
+    expect(progressed.pendingTool).toEqual({ name: "Bash", since: now });
     expect(evaluateStall(progressed, now)).toBeNull();
     expect(progressed.state).toBe("working");
   });

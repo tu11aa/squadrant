@@ -99,29 +99,31 @@ describe("cockpitd push notifications (#109)", () => {
     expect(n.calls[0]?.message).toMatch(/no heartbeat/i);
   });
 
-  it("INTERACTIVE idle (from sweep) triggers exactly one CREW IDLE notify", async () => {
+  it("INTERACTIVE quiet (from sweep) triggers exactly one CREW QUIET notify, stays working (#354)", async () => {
     const store = createStore(dir);
-    // rec() defaults to mode: "interactive"
+    // rec() defaults to mode: "interactive"; no pendingTool → alive-thinking path.
     store.put(rec("task-idle-1", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
     await d.sweep();
-    expect(store.get("p", "task-idle-1")?.state).toBe("awaiting-input");
+    // Stays working — a quiet thinking turn is NOT awaiting-input (that lie is gone).
+    expect(store.get("p", "task-idle-1")?.state).toBe("working");
     expect(n.calls).toHaveLength(1);
-    expect(n.calls[0]?.message).toMatch(/^CREW IDLE \[claude\/task-idl/);
-    expect(n.calls[0]?.message).not.toMatch(/stall/i); // reads as idle, not failure
-    expect(n.calls[0]?.message).toMatch(/awaiting your input/i);
+    expect(n.calls[0]?.message).toMatch(/^CREW QUIET \[claude\/task-idl/);
+    expect(n.calls[0]?.message).not.toMatch(/stall/i);              // not a failure
+    expect(n.calls[0]?.message).not.toMatch(/awaiting your input/i); // not idle/turn-end
+    expect(n.calls[0]?.message).toMatch(/deep thinking/i);
   });
 
-  it("awaiting-input sits idle across repeated sweeps → no notification storm", async () => {
+  it("CREW QUIET fires once per quiet episode across repeated sweeps → no storm (#354)", async () => {
     const store = createStore(dir);
     store.put(rec("task-idle-2", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
-    await d.sweep(); // working → awaiting-input, one push
-    await d.sweep(); // awaiting-input is not 'working' → no re-stall, no re-notify
+    await d.sweep(); // quiet → one CREW QUIET
+    await d.sweep(); // same liveness episode → debounced, no re-notify
     await d.sweep();
-    expect(store.get("p", "task-idle-2")?.state).toBe("awaiting-input");
+    expect(store.get("p", "task-idle-2")?.state).toBe("working");
     expect(n.calls).toHaveLength(1);
   });
 
