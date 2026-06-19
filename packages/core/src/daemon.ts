@@ -369,6 +369,7 @@ export function createDaemon(deps: DaemonDeps) {
                 // swallowed — a flaky notifier must never trip the sweep
               }
             }
+            continue; // #378: skip remaining sweep body — stale `r` must not clobber just-written terminal state
           }
         }
         // #139 backstop: reap interactive records whose backing surface is
