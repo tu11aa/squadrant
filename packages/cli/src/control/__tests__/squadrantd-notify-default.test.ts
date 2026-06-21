@@ -1,16 +1,16 @@
-// src/control/__tests__/cockpitd-notify-default.test.ts
+// src/control/__tests__/squadrantd-notify-default.test.ts
 //
 // Mailbox-injector: cover the default-notify path which now appends a JSON
 // entry to the mailbox file. Replaces the prior subscribe-notify broadcast
 // path (PR #112). The daemon's decision to notify is covered separately by
-// cockpitd-push.test.ts; this file covers what defaultNotify writes once it
+// squadrantd-push.test.ts; this file covers what defaultNotify writes once it
 // fires.
 
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import { sendRequest } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 
@@ -23,7 +23,7 @@ function seedRec(id: string): TaskRecord {
   };
 }
 
-describe("cockpitd defaultNotify writes to mailbox", () => {
+describe("squadrantd defaultNotify writes to mailbox", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -32,7 +32,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: seedRec("task-mbx-1") });
@@ -61,7 +61,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: seedRec("task-appr-1") });
@@ -90,7 +90,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
     for (let i = 0; i < 3; i++) {
@@ -113,7 +113,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot,
       sockPath: sock,
       sweepMs: 0,
@@ -139,7 +139,7 @@ describe("cockpitd defaultNotify writes to mailbox", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-notify-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: seedRec("task-mbx-quiet") });

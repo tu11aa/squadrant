@@ -89,7 +89,7 @@ export function buildGateResolveRequest(o: { project: string; gateId: string; me
   };
 }
 
-export async function cockpitdCall(req: unknown): Promise<unknown> {
+export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
@@ -189,7 +189,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--cwd <dir>", "working dir for the crew (project/worktree); required for codex to edit code")
     .action(async (project: string, task: string, opts: { provider: Provider; mode: Mode; cwd?: string }) => {
       const req = buildDispatchRequest({ project, task, provider: opts.provider, mode: opts.mode, cwd: opts.cwd });
-      const r = await cockpitdCall(req);
+      const r = await squadrantdCall(req);
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -197,7 +197,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .command("status <project> <id>")
     .description("Read a control-plane task's state")
     .action(async (project: string, id: string) => {
-      const r = await cockpitdCall(buildStatusRequest(project, id));
+      const r = await squadrantdCall(buildStatusRequest(project, id));
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -212,11 +212,11 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--force", "Force-purge a non-terminal record (use with --purge)")
     .action(async (project: string, opts: { json?: boolean; id?: string; state?: string; stateOnly?: string; purge?: string; force?: boolean }) => {
       if (opts.purge) {
-        const r = await cockpitdCall({ kind: "purge", project, id: opts.purge, force: opts.force ?? false }) as TaskRecord;
+        const r = await squadrantdCall({ kind: "purge", project, id: opts.purge, force: opts.force ?? false }) as TaskRecord;
         console.log(`purged ${r.provider}/${r.id} (was ${r.state})`);
         return;
       }
-      const raw = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+      const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
       let records = raw;
       if (opts.stateOnly) {
         records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
@@ -229,7 +229,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     });
 
   // TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
-  // cockpitd, so this transitions task state but never reaches the agent. Deferred.
+  // squadrantd, so this transitions task state but never reaches the agent. Deferred.
   // --gate <gateId> routes through the gate-resolve verb instead (spec §4.9).
   crew
     .command("reply <project> <id> <message>")
@@ -237,12 +237,12 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--gate <gateId>", "resolve a pending gate by id (codex interactive, spec §4.9)")
     .action(async (project: string, id: string, message: string, opts: { gate?: string }) => {
       if (opts.gate) {
-        const r = await cockpitdCall(buildGateResolveRequest({ project, gateId: opts.gate, message }));
+        const r = await squadrantdCall(buildGateResolveRequest({ project, gateId: opts.gate, message }));
         process.stdout.write(JSON.stringify(r) + "\n");
         return;
       }
       process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
-      const r = await cockpitdCall({ kind: "reply", project, id, message });
+      const r = await squadrantdCall({ kind: "reply", project, id, message });
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -254,7 +254,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
   // `cockpit crew signal` (explicit, post-settle-check).
   crew
     .command("_hook <event>", { hidden: true })
-    .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to cockpitd")
+    .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to squadrantd")
     .action(async (event: string) => {
       const taskId = process.env.COCKPIT_CREW_TASK_ID;
       const project = process.env.COCKPIT_CREW_PROJECT;
@@ -271,7 +271,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       const ev = mapClaudeHookToEvent(event, payload, taskId);
       if (!ev) { process.exit(0); }
       try {
-        await cockpitdCall({ kind: "event", project, event: ev });
+        await squadrantdCall({ kind: "event", project, event: ev });
       } catch {
         // Daemon down: do NOT block Claude. Hook contract requires exit 0;
         // a non-zero exit would block the conversation.
@@ -304,7 +304,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           ...(opts.project !== undefined ? { project: opts.project } : {}),
           writeResult: defaultWriteResult,
         });
-        await cockpitdCall(req);
+        await squadrantdCall(req);
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);

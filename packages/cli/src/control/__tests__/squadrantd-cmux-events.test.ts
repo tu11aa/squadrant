@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-cmux-events.test.ts
+// src/control/__tests__/squadrantd-cmux-events.test.ts
 //
 // B1: the daemon wires the cmux native-events bridge additively — it starts on
 // boot and stops on daemon shutdown. An injected fake keeps this off the real
@@ -7,9 +7,9 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 
-describe("cockpitd cmux events bridge wiring", () => {
+describe("squadrantd cmux events bridge wiring", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -17,7 +17,7 @@ describe("cockpitd cmux events bridge wiring", () => {
   it("starts the injected bridge on boot and stops it on shutdown", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-cmuxev-"));
     const bridge = { start: vi.fn(), stop: vi.fn() };
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot: join(dir, "state"),
       sockPath: join(dir, "c.sock"),
       sweepMs: 0,

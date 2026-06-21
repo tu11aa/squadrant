@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-push.test.ts
+// src/control/__tests__/squadrantd-push.test.ts
 //
 // Phase 3.5 (#109): daemon-side push notifications to captain on terminal
 // task events. Tests the daemon.ts injection point with a fake `notify`
@@ -37,7 +37,7 @@ function fakeNotify() {
   };
 }
 
-describe("cockpitd push notifications (#109)", () => {
+describe("squadrantd push notifications (#109)", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-push-")); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

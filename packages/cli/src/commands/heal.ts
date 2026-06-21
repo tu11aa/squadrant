@@ -5,7 +5,7 @@
 //
 // Subcommands:
 //   heal status  — dry-run: print unhealthy components + the exact heal command
-//   heal daemon  — restart cockpitd via the existing launchd kickstart path
+//   heal daemon  — restart squadrantd via the existing launchd kickstart path
 //
 // DEFERRED: heal crew <id> — re-attach a stuck crew task (overlaps #100, more
 // complex; explicitly out of MVP scope).
@@ -116,7 +116,7 @@ export interface HealDaemonOpts {
 /** Returns exit code: 0=success, 1=error */
 export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
   const { stdout, stderr } = opts;
-  stdout.write("restarting cockpitd via launchd kickstart...\n");
+  stdout.write("restarting squadrantd via launchd kickstart...\n");
   try {
     opts.ensureDaemon();
     stdout.write(chalk.green("✔ daemon kickstart complete\n"));
@@ -150,7 +150,7 @@ export const healCommand = new Command("heal")
   )
   .addCommand(
     new Command("daemon")
-      .description("Restart cockpitd via the idempotent launchd kickstart path")
+      .description("Restart squadrantd via the idempotent launchd kickstart path")
       .action(async () => {
         const code = await runHealDaemon({
           ensureDaemon: _ensureDaemon,

@@ -22,7 +22,7 @@ export interface DaemonDeps {
    * and any non-cmux deployment are unaffected.
    */
   isSurfaceAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
-  /** Wired in cockpitd to runHeadless; absent in pure unit tests. */
+  /** Wired in squadrantd to runHeadless; absent in pure unit tests. */
   launchHeadless?: (rec: TaskRecord) => Promise<void>;
   /**
    * #259: true when a launchHeadless call for this task ID is currently in
@@ -39,7 +39,7 @@ export interface DaemonDeps {
    */
   launchInteractive?: (rec: TaskRecord) => Promise<void>;
   /**
-   * Wired in cockpitd to codexDriver.answer(). Delivers the captain's gate
+   * Wired in squadrantd to codexDriver.answer(). Delivers the captain's gate
    * resolution payload back to the interactive session (spec §4.9).
    */
   resolveInteractiveGate?: (taskId: string, payload: unknown) => Promise<void> | void;

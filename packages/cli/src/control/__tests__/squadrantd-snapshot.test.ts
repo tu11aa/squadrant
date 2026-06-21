@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-snapshot.test.ts
+// src/control/__tests__/squadrantd-snapshot.test.ts
 //
 // Thin integration smoke for the read-only `snapshot` verb: boots a daemon
 // against a temp state root, seeds a task, and asserts the assembled
@@ -7,11 +7,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import { sendRequest } from "@squadrant/core";
 import type { DaemonSnapshot } from "@squadrant/core";
 
-describe("cockpitd snapshot verb", () => {
+describe("squadrantd snapshot verb", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -20,7 +20,7 @@ describe("cockpitd snapshot verb", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-snap-"));
     const sock = join(dir, "c.sock");
     // registeredProjects scopes Tier 2 to known projects (avoids config.json dependency in tests)
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["demo"] });
+    const handle = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["demo"] });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: {
@@ -58,7 +58,7 @@ describe("cockpitd snapshot verb", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-snap-orphan-"));
     const sock = join(dir, "c.sock");
     // "registered" is the only registered project; "orphan" has a task but is not registered
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["registered"] });
+    const handle = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, registeredProjects: ["registered"] });
     stop = handle.stop;
 
     await sendRequest(sock, { kind: "seed", record: {

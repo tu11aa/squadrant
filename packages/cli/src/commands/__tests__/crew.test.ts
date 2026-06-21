@@ -86,11 +86,11 @@ vi.mock("@squadrant/agents", () => ({
   },
 }));
 
-const cockpitdCall = vi.hoisted(() => vi.fn());
+const squadrantdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
 const sendCodexFirstTurn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../crew-control.js", () => ({
-  cockpitdCall,
+  squadrantdCall,
   buildDispatchRequest,
   sendCodexFirstTurn,
 }));
@@ -150,7 +150,7 @@ describe("cockpit crew spawn", () => {
     status.mockReset();
     buildCommand.mockReset();
     loadConfig.mockReset();
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     buildDispatchRequest.mockReset();
     sendCodexFirstTurn.mockReset();
     sendCodexFirstTurn.mockResolvedValue(undefined);
@@ -185,7 +185,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-cl1" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-cl1", project: "brove", provider: "claude", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-cl1", project: "brove", provider: "claude", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "do the thing" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -199,7 +199,7 @@ describe("cockpit crew spawn", () => {
       cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
-    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
     // Cockpit hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
       projectCwd: "/tmp/brove/.worktrees/brove-crew-1",
@@ -235,7 +235,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-wt1" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-wt1", project: "brove", provider: "claude", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-wt1", project: "brove", provider: "claude", mode: "interactive" });
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
@@ -264,7 +264,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-shared" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-shared" });
+    squadrantdCall.mockResolvedValue({ id: "task-shared" });
 
     const promise = runCrewSpawn({ project: "brove", task: "do the thing", shared: true });
     await vi.advanceTimersByTimeAsync(3000);
@@ -285,7 +285,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-wtc" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-wtc" });
+    squadrantdCall.mockResolvedValue({ id: "task-wtc" });
     addWorktree.mockReturnValue("/tmp/brove/.wt/brove-crew-1");
 
     const promise = runCrewSpawn({ project: "brove", task: "task" });
@@ -302,7 +302,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude --append-system-prompt-file /tmp/crew.md");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-wtcd" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-wtcd", project: "brove", provider: "claude", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-wtcd", project: "brove", provider: "claude", mode: "interactive" });
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
@@ -322,7 +322,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nowt2" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-nowt2", project: "brove", provider: "claude", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-nowt2", project: "brove", provider: "claude", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "small fix", shared: true });
     await vi.advanceTimersByTimeAsync(3000);
@@ -340,7 +340,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("opencode");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-ocwt" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-ocwt", project: "brove", provider: "opencode", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-ocwt", project: "brove", provider: "opencode", mode: "interactive" });
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
     addWorktree.mockReturnValue(wtPath);
 
@@ -363,7 +363,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:13" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-an" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-an" });
+    squadrantdCall.mockResolvedValue({ id: "task-an" });
 
     const promise = runCrewSpawn({ project: "brove", task: "task" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -390,7 +390,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("opencode");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-oc1" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-oc1", project: "brove", provider: "opencode", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-oc1", project: "brove", provider: "opencode", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "do the thing", agent: "opencode" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -405,7 +405,7 @@ describe("cockpit crew spawn", () => {
       task: "do the thing",
       budgetMs: 86400000,
     }));
-    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
     // Per-crew opencode config uses the daemon-assigned taskId.
     expect(writePerCrewOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({
       project: "brove",
@@ -438,7 +438,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("opencode");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-oc2" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-oc2", project: "brove", provider: "opencode", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-oc2", project: "brove", provider: "opencode", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "do it", agent: "opencode", approval: true });
     await vi.advanceTimersByTimeAsync(3000);
@@ -453,7 +453,7 @@ describe("cockpit crew spawn", () => {
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-abc" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-abc", project: "brove", provider: "codex", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-abc", project: "brove", provider: "codex", mode: "interactive" });
 
     const result = await runCrewSpawn({ project: "brove", task: "do the thing", agent: "codex" });
 
@@ -465,7 +465,7 @@ describe("cockpit crew spawn", () => {
       cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
-    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
     expect(buildCommand).not.toHaveBeenCalled();
     // tab placed in captain with crew-1 title (same UX as claude)
     expect(newPane).toHaveBeenCalledWith(expect.objectContaining({
@@ -490,7 +490,7 @@ describe("cockpit crew spawn", () => {
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-noop" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-noop" });
+    squadrantdCall.mockResolvedValue({ id: "task-noop" });
 
     await runCrewSpawn({ project: "brove", task: "(interactive)", agent: "codex" });
 
@@ -503,7 +503,7 @@ describe("cockpit crew spawn", () => {
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-role" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-role" });
+    squadrantdCall.mockResolvedValue({ id: "task-role" });
 
     existsSyncMock.mockReturnValue(true);
     readFileSyncMock.mockReturnValue(
@@ -528,7 +528,7 @@ describe("cockpit crew spawn", () => {
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-xyz" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-xyz" });
+    squadrantdCall.mockResolvedValue({ id: "task-xyz" });
 
     await runCrewSpawn({ project: "brove", task: "task", agent: "codex", approvalPolicy: "untrusted" });
 
@@ -555,7 +555,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude --model sonnet ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-cm" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-cm" });
+    squadrantdCall.mockResolvedValue({ id: "task-cm" });
 
     const promise = runCrewSpawn({ project: "brove", task: "task" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -603,7 +603,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude --permission-mode auto ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-pm" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-pm" });
+    squadrantdCall.mockResolvedValue({ id: "task-pm" });
 
     const promise = runCrewSpawn({ project: "brove", task: "task" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -620,7 +620,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-pmf" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-pmf" });
+    squadrantdCall.mockResolvedValue({ id: "task-pmf" });
 
     const promise = runCrewSpawn({ project: "brove", task: "task" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -636,7 +636,7 @@ describe("cockpit crew spawn", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-d" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-d" });
+    squadrantdCall.mockResolvedValue({ id: "task-d" });
 
     const promise = runCrewSpawn({ project: "brove", task: "task", direction: "down" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -666,7 +666,7 @@ describe("cockpit crew spawn", () => {
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
       buildCommand.mockReturnValue("claude --model sonnet ...");
       buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-route1" } }));
-      cockpitdCall.mockResolvedValue({ id: "task-route1" });
+      squadrantdCall.mockResolvedValue({ id: "task-route1" });
       resolveCrewRoute.mockReturnValue({ agent: "claude", model: "sonnet", tier: "hard", matchedRule: "refactor|implement" });
 
       const promise = runCrewSpawn({ project: "brove", task: "refactor the daemon" });
@@ -700,7 +700,7 @@ describe("cockpit crew spawn", () => {
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
       buildCommand.mockReturnValue("claude --model opus ...");
       buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-modelx" } }));
-      cockpitdCall.mockResolvedValue({ id: "task-modelx" });
+      squadrantdCall.mockResolvedValue({ id: "task-modelx" });
 
       const promise = runCrewSpawn({ project: "brove", task: "refactor the daemon", model: "opus" });
       await vi.advanceTimersByTimeAsync(3000);
@@ -724,7 +724,7 @@ describe("cockpit crew spawn", () => {
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
       buildCommand.mockReturnValue("claude --model opus ...");
       buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-fallthrough" } }));
-      cockpitdCall.mockResolvedValue({ id: "task-fallthrough" });
+      squadrantdCall.mockResolvedValue({ id: "task-fallthrough" });
       resolveCrewRoute.mockReturnValue(null);
 
       const promise = runCrewSpawn({ project: "brove", task: "some unmatched task" });
@@ -747,7 +747,7 @@ describe("cockpit crew send/read/close/list", () => {
     loadConfig.mockReset();
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     removeWorktree.mockReset();
   });
 
@@ -775,7 +775,7 @@ describe("cockpit crew send/read/close/list", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
     // Simulate a daemon with a done task matching the crew name.
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string; project?: string };
       if (r.kind === "list") {
         return [{ id: "task-done-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "old task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -786,8 +786,8 @@ describe("cockpit crew send/read/close/list", () => {
     await runCrewSend("brove", "crew-1", "follow up");
 
     // Should have called list then event (task.reopened)
-    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
-    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+    expect(squadrantdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
+    expect(squadrantdCall).toHaveBeenCalledWith(expect.objectContaining({
       kind: "event",
       project: "brove",
       event: { type: "task.reopened", id: "task-done-1" },
@@ -802,7 +802,7 @@ describe("cockpit crew send/read/close/list", () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-w-1", name: "crew-1", project: "brove", state: "working", provider: "claude", mode: "interactive", task: "current", createdAt: 2000, lastHeartbeat: 2000, lastEvent: "task.started", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -812,8 +812,8 @@ describe("cockpit crew send/read/close/list", () => {
 
     await runCrewSend("brove", "crew-1", "follow up");
 
-    // Only one call to cockpitdCall — the list to check state; no event emitted.
-    const callKinds = (cockpitdCall.mock.calls as Array<[{ kind: string }]>)
+    // Only one call to squadrantdCall — the list to check state; no event emitted.
+    const callKinds = (squadrantdCall.mock.calls as Array<[{ kind: string }]>)
       .map(([req]) => req.kind);
     expect(callKinds).toEqual(["list"]);
     expect(sendToPane).toHaveBeenCalledWith(
@@ -827,7 +827,7 @@ describe("cockpit crew send/read/close/list", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
     // Daemon throws on every call.
-    cockpitdCall.mockRejectedValue(new Error("daemon unreachable"));
+    squadrantdCall.mockRejectedValue(new Error("daemon unreachable"));
 
     await runCrewSend("brove", "crew-1", "follow up");
 
@@ -867,7 +867,7 @@ describe("cockpit crew send/read/close/list", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
     const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-wt-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: wtPath, createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -885,7 +885,7 @@ describe("cockpit crew send/read/close/list", () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-root-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: "/tmp/brove", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -903,7 +903,7 @@ describe("cockpit crew send/read/close/list", () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-b1", name: "crew-1", project: "brove", state: "blocked", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.blocked", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -913,8 +913,8 @@ describe("cockpit crew send/read/close/list", () => {
 
     await runCrewClose("brove", "crew-1");
 
-    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
-    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+    expect(squadrantdCall).toHaveBeenCalledWith(expect.objectContaining({ kind: "list", project: "brove" }));
+    expect(squadrantdCall).toHaveBeenCalledWith(expect.objectContaining({
       kind: "event",
       project: "brove",
       event: { type: "task.cancelled", id: "task-b1", reason: "closed by captain" },
@@ -926,7 +926,7 @@ describe("cockpit crew send/read/close/list", () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-d1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
@@ -936,7 +936,7 @@ describe("cockpit crew send/read/close/list", () => {
 
     await runCrewClose("brove", "crew-1");
 
-    const callKinds = (cockpitdCall.mock.calls as Array<[{ kind: string }]>).map(([req]) => req.kind);
+    const callKinds = (squadrantdCall.mock.calls as Array<[{ kind: string }]>).map(([req]) => req.kind);
     expect(callKinds).toEqual(["list"]); // only list, no event emitted
     expect(closePane).toHaveBeenCalled();
   });
@@ -945,7 +945,7 @@ describe("cockpit crew send/read/close/list", () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
-    cockpitdCall.mockRejectedValue(new Error("ENOENT: daemon socket not found"));
+    squadrantdCall.mockRejectedValue(new Error("ENOENT: daemon socket not found"));
 
     await runCrewClose("brove", "crew-1");
 
@@ -958,7 +958,7 @@ describe("cockpit crew send/read/close/list", () => {
   // the zombie record to re-emit false CREW STALLED forever.
   it("close terminalizes the daemon task when the crew pane is already gone (#139)", async () => {
     listSurfaces.mockResolvedValue([]); // pane gone — crew session died
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
         return [{ id: "task-dead-1", name: "crew-1", project: "brove", state: "working", provider: "claude", mode: "interactive", task: "task", createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.started", heartbeatBudgetMs: 86400000, attempts: [] }];
@@ -968,7 +968,7 @@ describe("cockpit crew send/read/close/list", () => {
 
     await runCrewClose("brove", "crew-1"); // must NOT throw
 
-    expect(cockpitdCall).toHaveBeenCalledWith(expect.objectContaining({
+    expect(squadrantdCall).toHaveBeenCalledWith(expect.objectContaining({
       kind: "event",
       project: "brove",
       event: { type: "task.cancelled", id: "task-dead-1", reason: "closed by captain" },
@@ -978,7 +978,7 @@ describe("cockpit crew send/read/close/list", () => {
 
   it("close throws when neither a pane nor a daemon task exists (typo guard) (#139)", async () => {
     listSurfaces.mockResolvedValue([]); // no pane
-    cockpitdCall.mockImplementation(async (req: unknown) => {
+    squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") return []; // no daemon task either
       return undefined;
@@ -1013,7 +1013,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     status.mockReset();
     buildCommand.mockReset();
     loadConfig.mockReset();
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     buildDispatchRequest.mockReset();
     sendCodexFirstTurn.mockReset();
     sendCodexFirstTurn.mockResolvedValue(undefined);
@@ -1047,7 +1047,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-cl" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-proto-cl", project: "brove", provider: "claude", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-proto-cl", project: "brove", provider: "claude", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "fix the bug" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -1069,7 +1069,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildCommand.mockReturnValue("opencode");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-oc" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-proto-oc", project: "brove", provider: "opencode", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-proto-oc", project: "brove", provider: "opencode", mode: "interactive" });
 
     const promise = runCrewSpawn({ project: "brove", task: "fix the bug", agent: "opencode" });
     await vi.advanceTimersByTimeAsync(3000);
@@ -1090,7 +1090,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     listSurfaces.mockResolvedValue([]);
     newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-proto-cx" } }));
-    cockpitdCall.mockResolvedValue({ id: "task-proto-cx", project: "brove", provider: "codex", mode: "interactive" });
+    squadrantdCall.mockResolvedValue({ id: "task-proto-cx", project: "brove", provider: "codex", mode: "interactive" });
 
     await runCrewSpawn({ project: "brove", task: "fix the bug", agent: "codex" });
 

@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-opencode-approval.test.ts
+// src/control/__tests__/squadrantd-opencode-approval.test.ts
 //
 // CP3 (opencode permission gate): the captain's gate-resolve for an OPENCODE
 // task must route to opencodeBridge.answer (which POSTs the decision to the
@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import { sendRequest } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 
@@ -28,7 +28,7 @@ function seedRecord(o: { id: string; provider: TaskRecord["provider"]; gateKind:
   };
 }
 
-describe("cockpitd opencode approval routing (CP3)", () => {
+describe("squadrantd opencode approval routing (CP3)", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -38,7 +38,7 @@ describe("cockpitd opencode approval routing (CP3)", () => {
     const sock = join(dir, "c.sock");
     const ocAnswer = vi.fn().mockResolvedValue(true);
     const codexAnswer = vi.fn().mockResolvedValue(undefined);
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0,
       opencodeBridge: { start: vi.fn(), stop: vi.fn(), answer: ocAnswer },
       codexDriver: fakeCodexDriver(codexAnswer),
@@ -57,7 +57,7 @@ describe("cockpitd opencode approval routing (CP3)", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-cp3-"));
     const sock = join(dir, "c.sock");
     const ocAnswer = vi.fn().mockResolvedValue(true);
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0,
       opencodeBridge: { start: vi.fn(), stop: vi.fn(), answer: ocAnswer },
       codexDriver: fakeCodexDriver(vi.fn()),
@@ -76,7 +76,7 @@ describe("cockpitd opencode approval routing (CP3)", () => {
     const sock = join(dir, "c.sock");
     const ocAnswer = vi.fn().mockResolvedValue(true);
     const codexAnswer = vi.fn().mockResolvedValue(undefined);
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0,
       opencodeBridge: { start: vi.fn(), stop: vi.fn(), answer: ocAnswer },
       codexDriver: fakeCodexDriver(codexAnswer),

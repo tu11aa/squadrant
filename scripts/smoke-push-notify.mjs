@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/smoke-push-notify.mjs
 //
-// Live(ish) smoke for #109: spins up a real cockpitd from the worktree
+// Live(ish) smoke for #109: spins up a real squadrantd from the worktree
 // dist on a temp socket, injects a capturing `notify`, seeds a task, then
 // drives the same control events that `cockpit crew signal done|blocked|
 // failed` would emit. Asserts that each terminal/attention transition
@@ -15,7 +15,7 @@
 // shell-out path, and (b) restarting the launchd-managed daemon to point
 // at the worktree build would interrupt unrelated in-flight sessions
 // (cockpit memory: "never auto-restart running captain/crew sessions").
-// This smoke validates startCockpitd → createDaemon → notify wiring
+// This smoke validates startSquadrantd → createDaemon → notify wiring
 // end-to-end through the real socket; the shell-out is one execFileSync
 // call away in the default `notify` and is covered by the cmux notifier
 // tests.
@@ -26,9 +26,9 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const distEntry = pathToFileURL(join(__dirname, "..", "dist", "control", "cockpitd.js")).href;
+const distEntry = pathToFileURL(join(__dirname, "..", "dist", "control", "squadrantd.js")).href;
 const distProto = pathToFileURL(join(__dirname, "..", "dist", "control", "protocol.js")).href;
-const { startCockpitd } = await import(distEntry);
+const { startSquadrantd } = await import(distEntry);
 const { sendRequest } = await import(distProto);
 
 const evidencePath = join(__dirname, "..", ".phase-3-5-smoke-evidence.local");
@@ -39,7 +39,7 @@ const dir = mkdtempSync(join(tmpdir(), "cp-phase35-"));
 const sock = join(dir, "c.sock");
 const captured = []; // {project, message}
 
-const handle = startCockpitd({
+const handle = startSquadrantd({
   stateRoot: join(dir, "state"),
   sockPath: sock,
   sweepMs: 0,
@@ -117,7 +117,7 @@ try {
   // still apply events to the store.
   record("\n[5] notifier throwing → daemon survives, store still updated");
   handle.stop();
-  const handle2 = startCockpitd({
+  const handle2 = startSquadrantd({
     stateRoot: join(dir, "state"),
     sockPath: sock,
     sweepMs: 0,

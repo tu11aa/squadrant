@@ -32,7 +32,7 @@ it("no call site recomputes the daemon entry path", () => {
 });
 
 // #259: in vitest context import.meta.url resolves to the src/ tree, so
-// daemonEntryPath() resolves to src/control/cockpitd.js which doesn't exist.
+// daemonEntryPath() resolves to src/control/squadrantd.js which doesn't exist.
 // The guard must throw so ensureDaemon() catches it and never writes a bad plist.
 it("daemonEntryPath throws when compiled entry not found (src-tree guard, #259)", () => {
   expect(() => daemonEntryPath()).toThrow(/compiled entry not found|run.*build/i);

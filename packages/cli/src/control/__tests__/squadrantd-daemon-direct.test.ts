@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd, discoverCaptainSurface } from "../cockpitd.js";
+import { startSquadrantd, discoverCaptainSurface } from "../squadrantd.js";
 import { appendToMailbox, writeCursor, readCursor } from "@squadrant/core";
 import { STALE_THRESHOLD_MS } from "@squadrant/core";
 import { sendRequest } from "@squadrant/core";
@@ -45,7 +45,7 @@ const APPROVAL_TAIL = [
   "  accept edits on (shift+tab to cycle)                    ",
 ].join("\n");
 
-describe("cockpitd daemon-direct (#332)", () => {
+describe("squadrantd daemon-direct (#332)", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -62,7 +62,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
 
     const cmux = fakeCmux();
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot,
       sockPath: sock,
       sweepMs: 0,
@@ -104,7 +104,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
 
     const cmux = fakeCmux();
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot,
       sockPath: sock,
       sweepMs: 0,
@@ -167,7 +167,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
 
@@ -228,7 +228,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
 
@@ -301,7 +301,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux });
     stop = handle.stop;
 
     // Let boot reconcile settle (consumes index 0) before the manual ticks.
@@ -350,7 +350,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
 
@@ -376,7 +376,7 @@ describe("cockpitd daemon-direct (#332)", () => {
     await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
 
     const sent: Array<{ text: string }> = [];
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot,
       sockPath: sock,
       sweepMs: 0,
@@ -429,7 +429,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async () => null,
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
 
@@ -487,7 +487,7 @@ describe("cockpitd daemon-direct (#332)", () => {
       findWorkspaceId: async () => "ws:1",
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot, sockPath: sock, sweepMs: 0,
       daemonCmux: cmux,
 

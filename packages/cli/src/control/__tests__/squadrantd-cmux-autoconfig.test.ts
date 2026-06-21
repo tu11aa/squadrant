@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-cmux-autoconfig.test.ts
+// src/control/__tests__/squadrantd-cmux-autoconfig.test.ts
 //
 // #348: the daemon runs the cmux socket auto-config re-check on boot.
 // Delivery is now unconditional (daemon-direct always on) so autoconfig
@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import type { AutoConfigResult } from "@squadrant/shared";
 
 const okResult: AutoConfigResult = {
@@ -19,7 +19,7 @@ const okResult: AutoConfigResult = {
   promptedThisRun: false,
 };
 
-describe("cockpitd cmux autoconfig re-check (#348)", () => {
+describe("squadrantd cmux autoconfig re-check (#348)", () => {
   let stop: (() => void) | undefined;
   let dir: string;
   afterEach(async () => { await stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
@@ -27,7 +27,7 @@ describe("cockpitd cmux autoconfig re-check (#348)", () => {
   it("runs the re-check on boot (delivery always on — no flag required)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-autoconf-on-"));
     const runCmuxAutoConfig = vi.fn(async () => okResult);
-    const handle = startCockpitd({
+    const handle = startSquadrantd({
       stateRoot: join(dir, "state"),
       sockPath: join(dir, "c.sock"),
       sweepMs: 0,

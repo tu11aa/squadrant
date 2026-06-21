@@ -1,5 +1,5 @@
 export { readAllStatuses } from "./read-status.js";
-export type { CockpitdCall, DashboardState, ProjectStatus, ReadStatusDeps } from "./read-status.js";
+export type { SquadrantdCall, DashboardState, ProjectStatus, ReadStatusDeps } from "./read-status.js";
 export { renderDashboard } from "./render.js";
 export type { RenderOptions } from "./render.js";
 export { syncHub } from "./sync-hub.js";

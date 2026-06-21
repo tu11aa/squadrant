@@ -1,5 +1,5 @@
 // src/control/interfaces.ts
-// Driver-seam interfaces: the contracts that cockpitd's driver-agnostic core depends on.
+// Driver-seam interfaces: the contracts that squadrantd's driver-agnostic core depends on.
 // Concrete implementations (CodexInteractiveDriver, OpencodeSseBridge, CmuxEventsBridge,
 // DaemonCmux) live in the root package host and implement these structurally.
 import type { PaneRef } from "@squadrant/shared";

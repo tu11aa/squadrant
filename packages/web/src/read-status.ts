@@ -1,7 +1,7 @@
 import type { CockpitConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 
-export type CockpitdCall = (req: unknown) => Promise<unknown>;
+export type SquadrantdCall = (req: unknown) => Promise<unknown>;
 
 export type DashboardState = "idle" | "busy" | "blocked" | "errored" | "offline" | "unknown";
 
@@ -15,7 +15,7 @@ export interface ProjectStatus {
 
 export interface ReadStatusDeps {
   config: CockpitConfig;
-  call?: CockpitdCall;
+  call?: SquadrantdCall;
   listTasks?: (project: string) => Promise<TaskRecord[]>;
 }
 

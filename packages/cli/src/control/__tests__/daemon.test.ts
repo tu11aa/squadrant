@@ -406,7 +406,7 @@ describe("daemon handler", () => {
   });
 
   // Regression: daemon must route provider=codex interactive dispatch to the
-  // injected launchInteractive hook (which cockpitd wires to CodexInteractiveDriver).
+  // injected launchInteractive hook (which squadrantd wires to CodexInteractiveDriver).
   it("daemon routes codex interactive dispatch to the driver", async () => {
     const calls: any[] = [];
     const fakeDriver = {

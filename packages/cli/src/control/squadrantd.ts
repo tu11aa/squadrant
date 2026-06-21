@@ -1,4 +1,4 @@
-// src/control/cockpitd.ts — host: constructs concrete drivers + thin shim.
+// src/control/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
 import { join, dirname } from "node:path";
@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-export type { CockpitdOpts } from "@squadrant/core";
+export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
@@ -30,7 +30,7 @@ const PKG_VERSION = readPkgVersion();
 
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
 
-export function startCockpitd(opts: import("@squadrant/core").CockpitdOpts = {}) {
+export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -121,14 +121,14 @@ export function startCockpitd(opts: import("@squadrant/core").CockpitdOpts = {})
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).
-if (process.argv[1] && process.argv[1].endsWith("cockpitd.js")) {
+if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
   void (async () => {
     // #360 layer 1: this entry takes no CLI flags. A build smoke-test like
-    // `node dist/cockpitd.js --help` must NOT boot a daemon — it would hang
+    // `node dist/squadrantd.js --help` must NOT boot a daemon — it would hang
     // and steal the shared socket. Print a one-liner and exit.
     const arg = process.argv[2];
     if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") {
-      process.stdout.write("cockpitd: launchd-managed daemon entry (no CLI args). Use `cockpit` for commands.\n");
+      process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `cockpit` for commands.\n");
       process.exit(0);
     }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.
@@ -137,10 +137,10 @@ if (process.argv[1] && process.argv[1].endsWith("cockpitd.js")) {
     // inode so every new connect() to the path is refused.
     const sock = join(homedir(), ".config", "cockpit", "cockpit.sock");
     if (await isDaemonSocketLive(sock)) {
-      process.stderr.write(`[cockpitd] refusing to start: a live daemon already owns ${sock}\n`);
+      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${sock}\n`);
       process.exit(0);
     }
-    const h = startCockpitd({ sweepMs: 30000 });
+    const h = startSquadrantd({ sweepMs: 30000 });
     process.on("SIGTERM", () => { h.stop(); process.exit(0); });
   })();
 }

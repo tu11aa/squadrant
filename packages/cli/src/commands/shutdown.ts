@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { loadConfig } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
 import type { RuntimeDriver } from "@squadrant/workspaces";
-import { cockpitdCall } from "./crew-control.js";
+import { squadrantdCall } from "./crew-control.js";
 import type { TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
 
@@ -77,10 +77,10 @@ export const shutdownCommand = new Command("shutdown")
       // closing workspaces — prevents ghost records from flooding on restart.
       for (const proj of Object.keys(config.projects)) {
         try {
-          const tasks = (await cockpitdCall({ kind: "list", project: proj })) as TaskRecord[];
+          const tasks = (await squadrantdCall({ kind: "list", project: proj })) as TaskRecord[];
           for (const task of tasks) {
             if (!TERMINAL_STATES.has(task.state)) {
-              await cockpitdCall({ kind: "event", project: proj, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+              await squadrantdCall({ kind: "event", project: proj, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
             }
           }
         } catch { /* best-effort — daemon miss must not block workspace close */ }
@@ -115,10 +115,10 @@ export const shutdownCommand = new Command("shutdown")
     // Terminalize non-terminal crew tasks for this project before closing the
     // captain workspace — prevents ghost records from flooding on restart (#225).
     try {
-      const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+      const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
       for (const task of tasks) {
         if (!TERMINAL_STATES.has(task.state)) {
-          await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+          await squadrantdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
         }
       }
     } catch { /* best-effort — daemon miss must not block workspace close */ }

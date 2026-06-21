@@ -17,7 +17,7 @@ import {
   createOpencodeDriver,
   CapabilityRegistry,
 } from "@squadrant/agents";
-import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
+import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 import { buildCompletionProtocol, shellQuote, titleFor, nameFromTitle, nextAutoName, reapCrewChildren } from "@squadrant/core";
@@ -172,7 +172,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       name,
     });
     // Fail loud if daemon unreachable — refusal-to-degrade.
-    const rec = (await cockpitdCall(req)) as TaskRecord;
+    const rec = (await squadrantdCall(req)) as TaskRecord;
     // Write cockpit hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. The cmux claude wrapper
     // injects its own hooks via --settings (level 2 precedence), but hooks
@@ -227,7 +227,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       budgetMs: 86400000,
       serverPort,
     });
-    const rec = (await cockpitdCall(req)) as TaskRecord;
+    const rec = (await squadrantdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({
       stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
       project: input.project,
@@ -312,7 +312,7 @@ async function runCodexInteractiveSpawn(o: {
     ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
     ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
   });
-  const rec = (await cockpitdCall(req)) as TaskRecord;
+  const rec = (await squadrantdCall(req)) as TaskRecord;
   const title = titleFor(o.project, o.name);
   const pane = await o.runtime.newPane({
     workspaceId: o.workspaceId,
@@ -346,13 +346,13 @@ export async function runCrewSend(project: string, name: string, message: string
   // hits the idempotency guard (state-machine:69) and the captain misses it.
   // Awaiting-input task: same resume — crew re-enters working so the next block fires.
   try {
-    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
     const task = tasks.find((t) => t.name === name);
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
       } else if (task.state === "blocked" || task.state === "awaiting-input") {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.started", id: task.id } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.started", id: task.id } });
       }
     }
   } catch {
@@ -390,7 +390,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   // close is unaffected (#216).
   let worktreeCwd: string | undefined;
   try {
-    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
     const task = tasks.find((t) => t.name === name);
     if (task) {
       taskId = task.id;
@@ -398,7 +398,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
         worktreeCwd = task.cwd;
       }
       if (!TERMINAL_STATES.has(task.state)) {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
       }
       // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
       // (and its per-thread MCP servers) live on the shared app-server, so closing
@@ -406,7 +406,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
       // terminal and non-terminal crews alike (a finished codex crew still holds a
       // live thread until archived).
       if (task.provider === "codex") {
-        await cockpitdCall({ kind: "codex-close", taskId: task.id });
+        await squadrantdCall({ kind: "codex-close", taskId: task.id });
       }
     }
   } catch {

@@ -1,7 +1,7 @@
 // src/control/daemon/server.ts
 // IPC socket server: message router + attach fan-in.
 // All state lives on DaemonContext; callbacks that can't yet be on ctx are
-// passed via ServerHandlers (built once in cockpitd.ts/start.ts).
+// passed via ServerHandlers (built once in squadrantd.ts/start.ts).
 import { startServer, encodeFrame } from "../protocol.js";
 import type { AttachFrame, AttachInbound } from "../protocol.js";
 import type { ComponentHealth } from "../liveness.js";

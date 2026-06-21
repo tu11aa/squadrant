@@ -98,12 +98,12 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
 }));
 
 
-// cockpitdCall and buildDispatchRequest are the daemon dispatch path.
+// squadrantdCall and buildDispatchRequest are the daemon dispatch path.
 // side.ts MUST NOT call these — the mocks let us assert that invariant.
-const cockpitdCall = vi.hoisted(() => vi.fn());
+const squadrantdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
 vi.mock("../crew-control.js", () => ({
-  cockpitdCall,
+  squadrantdCall,
   buildDispatchRequest,
   sendCodexFirstTurn: vi.fn().mockResolvedValue(undefined),
 }));
@@ -157,7 +157,7 @@ describe("cockpit side spawn", () => {
     status.mockReset();
     buildCommand.mockReset();
     loadConfig.mockReset();
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     buildDispatchRequest.mockReset();
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(true);
@@ -181,7 +181,7 @@ describe("cockpit side spawn", () => {
     vi.useRealTimers();
   });
 
-  it("CRITICAL: does NOT call cockpitdCall or buildDispatchRequest (off daemon lifecycle)", async () => {
+  it("CRITICAL: does NOT call squadrantdCall or buildDispatchRequest (off daemon lifecycle)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -192,7 +192,7 @@ describe("cockpit side spawn", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
     expect(buildDispatchRequest).not.toHaveBeenCalled();
   });
 
@@ -302,7 +302,7 @@ describe("cockpit side spawn", () => {
     expect(addWorktreeMock).not.toHaveBeenCalled();
   });
 
-  it("debug spawn is off the daemon lifecycle (no cockpitdCall)", async () => {
+  it("debug spawn is off the daemon lifecycle (no squadrantdCall)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -313,7 +313,7 @@ describe("cockpit side spawn", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
     expect(buildDispatchRequest).not.toHaveBeenCalled();
   });
 
@@ -515,7 +515,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
       expect.objectContaining({ surfaceId: "s1" }),
       "follow-up message",
     );
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
   });
 
   it("runSideSend throws when session not found", async () => {
@@ -526,7 +526,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 });
 
 describe("crew spawn regression — daemon path unchanged", () => {
-  it("cockpit crew spawn still calls cockpitdCall (daemon path intact)", async () => {
+  it("cockpit crew spawn still calls squadrantdCall (daemon path intact)", async () => {
     const { runCrewSpawn } = await import("../crew.js");
 
     vi.useFakeTimers();
@@ -548,7 +548,7 @@ describe("crew spawn regression — daemon path unchanged", () => {
       kind: "dispatch",
       record: { ...(o as object), id: "task-cl1" },
     }));
-    cockpitdCall.mockResolvedValue({
+    squadrantdCall.mockResolvedValue({
       id: "task-cl1",
       project: "brove",
       provider: "claude",
@@ -560,7 +560,7 @@ describe("crew spawn regression — daemon path unchanged", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 });

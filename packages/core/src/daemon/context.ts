@@ -1,8 +1,8 @@
 // src/control/daemon/context.ts
-// CockpitdOpts, defaultIsPidAlive, DaemonContext, and buildContext.
-// Kept here (not in cockpitd.ts) so daemon/* modules can import this file
+// SquadrantdOpts, defaultIsPidAlive, DaemonContext, and buildContext.
+// Kept here (not in squadrantd.ts) so daemon/* modules can import this file
 // without creating a circular dependency on the host entrypoint.
-// cockpitd.ts re-exports CockpitdOpts and defaultIsPidAlive for backward compat.
+// squadrantd.ts re-exports SquadrantdOpts and defaultIsPidAlive for backward compat.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn as realSpawn } from "node:child_process";
@@ -16,9 +16,9 @@ import type { PaneRef } from "@squadrant/shared";
 import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "../interfaces.js";
 import type { AttachFrame } from "../protocol.js";
 
-// ── Public injectable options (equivalent of old cockpitd.ts CockpitdOpts) ───
+// ── Public injectable options (equivalent of old squadrantd.ts SquadrantdOpts) ───
 
-export interface CockpitdOpts {
+export interface SquadrantdOpts {
   stateRoot?: string;
   sockPath?: string;
   sweepMs?: number; // 0 disables the interval (tests)
@@ -76,7 +76,7 @@ export function defaultIsPidAlive(pid: number): boolean {
  *  buildContext; late-bound fields (d, notify, broadcast, etc.) are assigned
  *  by start.ts after building the daemon and factories, before any event fires. */
 export interface DaemonContext {
-  opts: CockpitdOpts;
+  opts: SquadrantdOpts;
   stateRoot: string;
   sockPath: string;
   store: ReturnType<typeof createStore>;
@@ -124,8 +124,8 @@ export interface DaemonContext {
 
 /** Initialize the pure-state fields of DaemonContext from opts.
  *  Late-bound fields are zero-initialized and MUST be set by start.ts
- *  (or cockpitd.ts for drivers) before any event, timer, or socket fires. */
-export function buildContext(opts: CockpitdOpts): DaemonContext {
+ *  (or squadrantd.ts for drivers) before any event, timer, or socket fires. */
+export function buildContext(opts: SquadrantdOpts): DaemonContext {
   const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "cockpit", "state");
   const sockPath = opts.sockPath ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
   const store = createStore(stateRoot);
@@ -141,7 +141,7 @@ export function buildContext(opts: CockpitdOpts): DaemonContext {
     return p;
   };
   const log = (m: string) =>
-    process.stderr.write(`[cockpitd] ${new Date().toISOString()} ${m}\n`);
+    process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${m}\n`);
 
   return {
     opts,

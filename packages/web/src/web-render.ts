@@ -259,7 +259,7 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
   out.push(sectionHead("Health by Tier", "How many components are healthy in each layer of the stack."));
   out.push(
     `<div class="tier-grid">`,
-    tierCard("Daemon", col.daemonT, "cockpitd process, build freshness & log volume (Tier 0)"),
+    tierCard("Daemon", col.daemonT, "squadrantd process, build freshness & log volume (Tier 0)"),
     tierCard("Projects", col.projT, "captains, crews & message data plane (Tier 1/2)"),
     tierCard("Environment", col.envT, "agent CLIs, vaults & config integrity (Tier 3/4)"),
     `</div>`,
@@ -363,7 +363,7 @@ function instr(label: string, value: string, extra = ""): string {
 
 function renderDaemon(snap: FullSnapshot): string {
   const out: string[] = [`<section class="panel" data-panel="daemon" role="tabpanel" aria-label="Daemon">`];
-  out.push(sectionHead("Daemon · Tier 0", "The cockpitd process at the root of everything — uptime, build freshness, sweep cadence, and log volume."));
+  out.push(sectionHead("Daemon · Tier 0", "The squadrantd process at the root of everything — uptime, build freshness, sweep cadence, and log volume."));
   if (snap.daemon === "unreachable") {
     out.push(`<div class="empty">Daemon unreachable — no Tier 0 telemetry. ${remediation("cockpit heal daemon")}</div></section>`);
     return out.join("");
@@ -382,7 +382,7 @@ function renderDaemon(snap: FullSnapshot): string {
 
   out.push(
     `<div class="instr-grid">`,
-    instr("process", `<span class="mono">cockpitd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
+    instr("process", `<span class="mono">squadrantd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
     instr("uptime", `<span class="mono">${fmtDur(t0.uptimeMs)}</span>`),
     instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && cockpit heal daemon") : ""),
     instr("sweep", `${pill(sweepState, sweep)}`),

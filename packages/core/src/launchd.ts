@@ -13,13 +13,13 @@ export function plistPath(): string {
 
 /**
  * Canonical path to the compiled daemon entrypoint, resolved relative to THIS
- * module (cockpitd.js is a sibling of the bundled entry in <dist>/). This is
+ * module (squadrantd.js is a sibling of the bundled entry in <dist>/). This is
  * the single source of truth — callers must NOT recompute it (a hardcoded
  * ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
  * because runtime-sync never mirrors compiled output there).
  */
 export function daemonEntryPath(): string {
-  const p = join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
+  const p = join(dirname(fileURLToPath(import.meta.url)), "squadrantd.js");
   if (!existsSync(p)) {
     throw new Error(
       `daemonEntryPath: compiled entry not found at '${p}'; ` +
@@ -106,7 +106,7 @@ export function buildDaemonPath(shellPath: string): string {
  * daemon and its spawned crew children resolve the provider binaries.
  */
 export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""): string {
-  const logPath = join(homedir(), ".config", "cockpit", "cockpitd.log");
+  const logPath = join(homedir(), ".config", "cockpit", "squadrantd.log");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

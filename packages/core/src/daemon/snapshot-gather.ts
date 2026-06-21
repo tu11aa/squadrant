@@ -9,7 +9,7 @@ import {
 import type { DaemonSnapshotInputs, ResultArtifacts } from "../snapshot.js";
 import type { TaskRecord } from "@squadrant/shared";
 
-// The compiled snapshot-gather.js shares the dist/ build time with cockpitd.js
+// The compiled snapshot-gather.js shares the dist/ build time with squadrantd.js
 // (tsup compiles all entries in the same pass), so its mtime == dist build-time.
 const SELF_PATH = fileURLToPath(import.meta.url);
 
@@ -41,7 +41,7 @@ export function gatherLogStats(path: string, now: number, windowMs: number): Dae
   let errorCount = 0;
   for (const line of text.split("\n")) {
     if (!/error|failed/i.test(line)) continue;
-    // Lines carry an ISO timestamp ("[cockpitd] 2026-... msg"); skip ones older
+    // Lines carry an ISO timestamp ("[squadrantd] 2026-... msg"); skip ones older
     // than the window. Lines without a parseable timestamp are counted (conservative).
     const m = line.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/);
     if (m) { const ts = Date.parse(m[0]); if (!Number.isNaN(ts) && ts < cutoff) continue; }

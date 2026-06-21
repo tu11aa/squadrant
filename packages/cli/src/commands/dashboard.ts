@@ -14,7 +14,7 @@ import {
   defaultProbeRunners,
 } from "@squadrant/web";
 import type { SyncHubResult } from "@squadrant/web";
-import { cockpitdCall } from "./crew-control.js";
+import { squadrantdCall } from "./crew-control.js";
 import { resolveCmuxBin } from "@squadrant/shared";
 
 const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
@@ -38,7 +38,7 @@ export async function runDashboardOnce(deps: DashboardOnceDeps = {}): Promise<vo
   const now = (deps.now ?? (() => new Date().toISOString()))();
   const write = deps.write ?? ((s) => process.stdout.write(s));
 
-  const statuses = await readAllStatuses({ config, call: cockpitdCall });
+  const statuses = await readAllStatuses({ config, call: squadrantdCall });
   const width = process.stdout.columns ?? 100;
   write(renderDashboard(statuses, { now, width }));
   write("\n");
@@ -51,7 +51,7 @@ export interface SyncHubCliDeps {
 
 export async function runSyncHub(deps: SyncHubCliDeps = {}): Promise<SyncHubResult[]> {
   const config = loadConfig();
-  const statuses = await readAllStatuses({ config, call: cockpitdCall });
+  const statuses = await readAllStatuses({ config, call: squadrantdCall });
   return syncHub({ config, statuses, writeFile: deps.writeFile, mkdir: deps.mkdir });
 }
 

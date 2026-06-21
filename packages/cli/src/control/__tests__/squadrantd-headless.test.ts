@@ -1,13 +1,13 @@
-// src/control/__tests__/cockpitd-headless.test.ts
+// src/control/__tests__/squadrantd-headless.test.ts
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import { sendRequest } from "@squadrant/core";
 
-describe("cockpitd headless wiring", () => {
+describe("squadrantd headless wiring", () => {
   let stop: (() => void) | undefined; let dir: string;
   afterEach(() => { stop?.(); if (dir) rmSync(dir, { recursive: true, force: true }); });
 
@@ -17,7 +17,7 @@ describe("cockpitd headless wiring", () => {
     const child: any = new EventEmitter();
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 4321;
     const spawn = vi.fn(() => child);
-    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, spawn: spawn as any });
+    const h = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, spawn: spawn as any });
     stop = h.stop;
     const disp: any = await sendRequest(sock, { kind: "dispatch", record: {
       id: "h1", project: "p", provider: "claude", mode: "headless",
@@ -39,7 +39,7 @@ describe("cockpitd headless wiring", () => {
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 5678;
     child.kill = vi.fn();
     const spawn = vi.fn(() => child);
-    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, spawn: spawn as any });
+    const h = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, spawn: spawn as any });
     stop = h.stop;
     await sendRequest(sock, { kind: "dispatch", record: {
       id: "h2", project: "p", provider: "claude", mode: "headless",

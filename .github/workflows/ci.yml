@@ -36,7 +36,7 @@ jobs:
         run: |
           node dist/index.js --help
           node dist/index.js crew --help
-          node dist/cockpitd.js --help
+          node dist/squadrantd.js --help
 
       - name: Test
         run: pnpm test

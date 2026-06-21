@@ -177,7 +177,7 @@ describe("protocol version (#92)", () => {
     });
     cleanup = () => { raw.close(); rmSync(dir, { recursive: true, force: true }); };
     raw.listen(sock);
-    await expect(sendRequest(sock, { kind: "test" })).rejects.toThrow(/cockpitd protocol v9999.*expects v1/i);
+    await expect(sendRequest(sock, { kind: "test" })).rejects.toThrow(/squadrantd protocol v9999.*expects v1/i);
   });
 
   it("sendRequest resolves on the real reply when a keepalive arrives first", async () => {

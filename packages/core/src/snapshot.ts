@@ -3,7 +3,7 @@
 // PURE Tier 0/1/2 snapshot assembly (no I/O, no clock) for the read-only
 // `snapshot` socket verb — the observability-dashboard counterpart to
 // liveness.ts. Every derived value comes from already-gathered inputs + an
-// explicit `now`, so the whole module is trivially unit-testable. cockpitd.ts
+// explicit `now`, so the whole module is trivially unit-testable. squadrantd.ts
 // performs the I/O (dist stat, log read, mailbox/store/results reads) and feeds
 // the gathered numbers in here; this module never touches the filesystem.
 import type { ComponentHealth } from "./liveness.js";
