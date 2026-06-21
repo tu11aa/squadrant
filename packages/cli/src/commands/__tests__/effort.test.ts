@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, saveConfig } from "@cockpit/shared";
-import { runEffortGet, runEffortSet } from "../effort.js";
+import type { CockpitConfig, ProjectConfig } from "@cockpit/shared";
+import { runEffortGet, runEffortSet, notifyCaptainsOfEffort } from "../effort.js";
 
 let dir: string;
 let cfgPath: string;
@@ -93,5 +94,73 @@ describe("effort set", () => {
     expect(onDisk.defaults.effort).toBe("balance");
     expect(onDisk.defaults.maxCrew).toBe(config.defaults.maxCrew);
     expect(onDisk.defaults.worktreeDir).toBe(config.defaults.worktreeDir);
+  });
+});
+
+describe("effort notify (self-notification exclusion)", () => {
+  // Records every (captainName, message) the fake driver was asked to send.
+  function makeDriver(sent: Array<{ captain: string; message: string }>) {
+    return {
+      async status(name: string) {
+        return { id: name }; // captainName doubles as the surface id
+      },
+      async send(ref: string, message: string) {
+        sent.push({ captain: ref, message });
+      },
+    };
+  }
+
+  function configWithProjects(projects: Record<string, ProjectConfig>): CockpitConfig {
+    const config = getDefaultConfig();
+    config.projects = projects;
+    return config;
+  }
+
+  function project(p: string, captainName: string): ProjectConfig {
+    return { path: p, captainName, spokeVault: "", host: "" };
+  }
+
+  it("does NOT notify the captain whose project path is the cwd, but DOES notify the others", async () => {
+    const projA = fs.mkdtempSync(path.join(dir, "projA-"));
+    const projB = fs.mkdtempSync(path.join(dir, "projB-"));
+    const config = configWithProjects({
+      a: project(projA, "captain-a"),
+      b: project(projB, "captain-b"),
+    });
+    const sent: Array<{ captain: string; message: string }> = [];
+
+    await notifyCaptainsOfEffort("low", config, makeDriver(sent), projA);
+
+    const captains = sent.map((s) => s.captain);
+    expect(captains).not.toContain("captain-a"); // self — already saw stdout
+    expect(captains).toContain("captain-b"); // other running captain still notified
+    expect(captains).toHaveLength(1);
+  });
+
+  it("matches cwd through symlinks (realpath), still excluding self", async () => {
+    const projA = fs.realpathSync(fs.mkdtempSync(path.join(dir, "projA-")));
+    const link = path.join(dir, "link-to-a");
+    fs.symlinkSync(projA, link);
+    const config = configWithProjects({ a: project(projA, "captain-a") });
+    const sent: Array<{ captain: string; message: string }> = [];
+
+    // cwd given via the symlink should still resolve to projA and skip it.
+    await notifyCaptainsOfEffort("max", config, makeDriver(sent), link);
+
+    expect(sent).toHaveLength(0);
+  });
+
+  it("notifies every captain when cwd matches no project path", async () => {
+    const projA = fs.mkdtempSync(path.join(dir, "projA-"));
+    const projB = fs.mkdtempSync(path.join(dir, "projB-"));
+    const config = configWithProjects({
+      a: project(projA, "captain-a"),
+      b: project(projB, "captain-b"),
+    });
+    const sent: Array<{ captain: string; message: string }> = [];
+
+    await notifyCaptainsOfEffort("balance", config, makeDriver(sent), path.join(dir, "elsewhere"));
+
+    expect(sent.map((s) => s.captain).sort()).toEqual(["captain-a", "captain-b"]);
   });
 });
