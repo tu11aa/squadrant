@@ -515,7 +515,7 @@ describe("cmux driver", () => {
     });
     const pane = await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
-      command: "cockpit notify-relay proj --as captain",
+      command: "squadrant notify-relay proj --as captain",
       title: "✉ notify-relay",
       placement: "background",
     });
@@ -534,11 +534,11 @@ describe("cmux driver", () => {
     });
     await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
-      command: "cockpit notify-relay proj --as captain",
+      command: "squadrant notify-relay proj --as captain",
       placement: "background",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
-    expect(cmds.some((c) => c.includes("send ") && c.includes("--surface surface:8") && c.includes("cockpit notify-relay proj") && !c.includes("send-key"))).toBe(true);
+    expect(cmds.some((c) => c.includes("send ") && c.includes("--surface surface:8") && c.includes("squadrant notify-relay proj") && !c.includes("send-key"))).toBe(true);
     expect(cmds.some((c) => c.includes("send-key") && c.includes("--surface surface:8") && c.includes("Enter"))).toBe(true);
   });
 
@@ -552,7 +552,7 @@ describe("cmux driver", () => {
     });
     await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
-      command: "cockpit notify-relay proj --as captain",
+      command: "squadrant notify-relay proj --as captain",
       placement: "background",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
@@ -569,7 +569,7 @@ describe("cmux driver", () => {
     });
     await driver.spawnInjector({
       captainWorkspace: { id: "workspace:1", name: "cap", status: "running" },
-      command: "cockpit notify-relay proj --as captain",
+      command: "squadrant notify-relay proj --as captain",
       placement: "visible",
     });
     const cmds = execFileMock.mock.calls.map(cmdOf);
@@ -823,7 +823,7 @@ describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () =>
 
     const debugLine = stderrWrites.find((w) => w.includes("send-debug"));
     expect(debugLine).toBeDefined();
-    const frame = JSON.parse(debugLine!.replace(/^\[cockpit\] send-debug /, "").trim());
+    const frame = JSON.parse(debugLine!.replace(/^\[squadrant\] send-debug /, "").trim());
     expect(frame.surface).toBe("surface:8");
     expect(frame.payload).toBe("crew done");
     expect(frame.verdict).toBe("submitted");
@@ -846,7 +846,7 @@ describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () =>
 
     const debugLine = stderrWrites.find((w) => w.includes("send-debug"));
     expect(debugLine).toBeDefined();
-    const frame = JSON.parse(debugLine!.replace(/^\[cockpit\] send-debug /, "").trim());
+    const frame = JSON.parse(debugLine!.replace(/^\[squadrant\] send-debug /, "").trim());
     expect(frame.verdict).toBe("stuck");
     expect(frame.postBox).toContain("crew done");
   });

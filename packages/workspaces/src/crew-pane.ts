@@ -59,13 +59,13 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
   const config = loadConfig();
   const proj = config.projects[project];
   if (!proj) {
-    throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
   }
   const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
   const captain = await runtime.status(proj.captainName);
   if (!captain) {
     throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`,
+      `Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`,
     );
   }
   return { runtime, workspaceId: captain.id };

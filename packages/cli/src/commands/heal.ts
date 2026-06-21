@@ -1,6 +1,6 @@
 // src/commands/heal.ts
 //
-// cockpit heal <component> — targeted, idempotent, machine-readable remediation
+// squadrant heal <component> — targeted, idempotent, machine-readable remediation
 // surface for the detect → notify → remediate loop (#234).
 //
 // Subcommands:
@@ -82,7 +82,7 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
     if (json) {
       stdout.write(JSON.stringify({ healthy: false, daemonUnreachable: true, components: [] }) + "\n");
     } else {
-      stderr.write("daemon unreachable — start the daemon first (cockpit heal daemon)\n");
+      stderr.write("daemon unreachable — start the daemon first (squadrant heal daemon)\n");
     }
     return 1;
   }
@@ -130,8 +130,8 @@ export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
 // ── Commander command tree ────────────────────────────────────────────────────
 
 export const healCommand = new Command("heal")
-  .description("Targeted, idempotent remediation for cockpit components (daemon, health)")
-  .addHelpText("after", "\nDeferred: 'cockpit heal crew <id>' (re-attach) — see issue #100.")
+  .description("Targeted, idempotent remediation for squadrant components (daemon, health)")
+  .addHelpText("after", "\nDeferred: 'squadrant heal crew <id>' (re-attach) — see issue #100.")
   .addCommand(
     new Command("status")
       .description("Dry-run: print unhealthy components and the exact heal command for each")

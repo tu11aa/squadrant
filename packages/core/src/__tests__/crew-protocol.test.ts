@@ -83,9 +83,9 @@ describe("buildCompletionProtocol (#278)", () => {
     expect(buildCompletionProtocol("TASK-ID", "PROJECT")).toBe(
       "---\n" +
       "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:\n" +
-      "  cockpit crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
+      "  squadrant crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
       "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:\n" +
-      "  cockpit crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\""
+      "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\""
     );
   });
 });

@@ -48,7 +48,7 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --settings ${opts.settingsPath}`;
       }
 
-      // Load cockpit plugin for skills
+      // Load squadrant plugin for skills
       const pluginDir = `${process.env.HOME}/.config/squadrant/plugin`;
       cmd += ` --plugin-dir ${pluginDir}`;
 

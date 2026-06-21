@@ -91,7 +91,7 @@ interface CmuxTreeJson {
 // Parse `cmux workspace list --json` into WorkspaceRefs. Replaces the old
 // regex over the human-readable `list-workspaces` text (audit B2). The display
 // name is the workspace's custom title when set (byte-identical to what the
-// text form showed, e.g. "⚓ cockpit-captain" — this is what cockpit matches
+// text form showed, e.g. "⚓ squadrant-captain" — this is what squadrant matches
 // captains by), falling back to the cwd for untitled workspaces.
 function parseList(output: string): WorkspaceRef[] {
   let parsed: CmuxWorkspaceListJson;
@@ -300,7 +300,7 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         const version = await cmux(["--version"]);
         const warn = checkToolCompat("cmux", version, compatManifest.tools.cmux);
-        if (warn) process.stderr.write(`[cockpit] ${warn}\n`);
+        if (warn) process.stderr.write(`[squadrant] ${warn}\n`);
         return { installed: true, version };
       } catch {
         return { installed: false, version: "" };
@@ -390,7 +390,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async stop(ref: string): Promise<void> {
       // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
-      // cockpit launch --fresh works even when the captain workspace is pinned.
+      // squadrant launch --fresh works even when the captain workspace is pinned.
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
       } catch { /* workspace may not be pinned — proceed to close regardless */ }
@@ -506,7 +506,7 @@ export function createCmuxDriver(): RuntimeDriver {
             postBox = readInputBoxRaw(await cmux(["read-screen", "--workspace", ws, "--surface", sf]));
           } catch { /* unreadable — leave postBox null, classified box-gone */ }
           const verdict = classifySendOutcome(payload, postBox);
-          process.stderr.write(`[cockpit] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
+          process.stderr.write(`[squadrant] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
         }
       };
 

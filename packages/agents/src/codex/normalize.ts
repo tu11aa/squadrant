@@ -1,5 +1,5 @@
 // src/control/codex/normalize.ts
-// Pure mapping from app-server ServerNotification → cockpit ControlEvent.
+// Pure mapping from app-server ServerNotification → squadrant ControlEvent.
 // Spec §4.7. Unknown methods return null (status-line only / forward-compat).
 //
 // Anti-#2576 invariant: NO codex notification maps to task.done.
@@ -16,9 +16,9 @@ export type AppServerNotification = { method: string; params?: Record<string, un
 /**
  * Map one app-server notification to a ControlEvent, or null when the
  * notification is informational (token-usage, compaction, status-change)
- * and does not need to enter the cockpit event bus.
+ * and does not need to enter the squadrant event bus.
  *
- * @param taskId  The cockpit task ID that owns this notification stream.
+ * @param taskId  The squadrant task ID that owns this notification stream.
  * @param n       Raw notification frame from the app-server JSON-RPC channel.
  */
 export function normalizeAppServerNotification(

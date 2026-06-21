@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(join(here, "..", "..", rel), "utf-8");
 
 // Guard test: index.ts must call ensureDaemon so the daemon self-heals
-// on every cockpit invocation (mirrors ensureRuntimeSynced philosophy).
+// on every squadrant invocation (mirrors ensureRuntimeSynced philosophy).
 it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
   const idx = read("index.ts");
   expect(idx).toMatch(/ensureDaemon/);
@@ -27,7 +27,7 @@ it("no call site recomputes the daemon entry path", () => {
     // ensureDaemon is called with no path argument (resolved internally)
     expect(src).toMatch(/ensureDaemon\(\)/);
     // and the buggy hardcoded path is absent
-    expect(src).not.toMatch(/"\.config",\s*"cockpit",\s*"dist"/);
+    expect(src).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
   }
 });
 

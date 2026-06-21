@@ -61,7 +61,7 @@ vi.mock("@squadrant/agents", () => ({
 
 import { runCommandSpawn } from "../command.js";
 
-describe("cockpit command", () => {
+describe("squadrant command", () => {
   beforeEach(() => {
     newPane.mockReset();
     sendToPane.mockReset();

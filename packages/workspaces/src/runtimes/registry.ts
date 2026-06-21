@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type { RuntimeDriver, RuntimeProbeResult } from "./types.js";
 
 const DEFAULT_RUNTIME = "cmux";
@@ -6,13 +6,13 @@ const DEFAULT_RUNTIME = "cmux";
 export class RuntimeRegistry {
   constructor(private drivers: Record<string, RuntimeDriver>) {}
 
-  forProject(projectName: string, config: CockpitConfig): RuntimeDriver {
+  forProject(projectName: string, config: SquadrantConfig): RuntimeDriver {
     const projectRuntime = config.projects[projectName]?.runtime;
     const runtimeName = projectRuntime ?? config.runtime ?? DEFAULT_RUNTIME;
     return this.get(runtimeName);
   }
 
-  global(config: CockpitConfig): RuntimeDriver {
+  global(config: SquadrantConfig): RuntimeDriver {
     const runtimeName = config.runtime ?? DEFAULT_RUNTIME;
     return this.get(runtimeName);
   }

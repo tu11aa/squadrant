@@ -39,7 +39,7 @@ export interface SpawnOptions {
   port?: number;
   // Per-invocation settings file (Claude's --settings flag). The
   // daemon-supervised claude crew spawn writes a per-crew settings.json
-  // containing the cockpit Stop hook and passes the path here so the hook
+  // containing the squadrant Stop hook and passes the path here so the hook
   // is scoped to this session only (no global ~/.claude/settings.json edit).
   settingsPath?: string;
 }

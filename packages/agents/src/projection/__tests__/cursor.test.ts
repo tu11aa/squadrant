@@ -27,18 +27,18 @@ describe("CursorEmitter", () => {
     expect(createCursorEmitter().name).toBe("cursor");
   });
 
-  it("destinations(user) targets ~/.cursor/rules/cockpit-global.mdc as dedicated", () => {
+  it("destinations(user) targets ~/.cursor/rules/squadrant-global.mdc as dedicated", () => {
     const dests = createCursorEmitter().destinations("user");
     expect(dests).toHaveLength(1);
-    expect(dests[0].path).toMatch(/\.cursor\/rules\/cockpit-global\.mdc$/);
+    expect(dests[0].path).toMatch(/\.cursor\/rules\/squadrant-global\.mdc$/);
     expect(dests[0].shared).toBe(false);
     expect(dests[0].format).toBe("mdc");
   });
 
-  it("destinations(project, root) targets {root}/.cursor/rules/cockpit.mdc as dedicated", () => {
+  it("destinations(project, root) targets {root}/.cursor/rules/squadrant.mdc as dedicated", () => {
     const dests = createCursorEmitter().destinations("project", "/brove");
     expect(dests).toHaveLength(1);
-    expect(dests[0].path).toBe("/brove/.cursor/rules/cockpit.mdc");
+    expect(dests[0].path).toBe("/brove/.cursor/rules/squadrant.mdc");
     expect(dests[0].shared).toBe(false);
   });
 
@@ -66,7 +66,7 @@ describe("CursorEmitter", () => {
     await emitter.emit(source, dest);
     const written = fsMock.writeFile.mock.calls[0][1] as string;
     expect(written).not.toContain("STALE CONTENT");
-    expect(written).not.toContain("cockpit:start");
+    expect(written).not.toContain("squadrant:start");
   });
 
   it("emit with dryRun returns diff and does not write", async () => {

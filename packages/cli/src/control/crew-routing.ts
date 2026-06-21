@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 export interface CrewRouteResult {
   agent: string;
@@ -12,7 +12,7 @@ export interface CrewRouteResult {
  * Returns the first matching rule's agent/model, or null if no rule matches or
  * crewRouting is absent. Pure — no side effects.
  */
-export function resolveCrewRoute(taskText: string, config: CockpitConfig): CrewRouteResult | null {
+export function resolveCrewRoute(taskText: string, config: SquadrantConfig): CrewRouteResult | null {
   const rules = config.defaults.crewRouting?.rules;
   if (!rules || rules.length === 0) return null;
   for (const rule of rules) {

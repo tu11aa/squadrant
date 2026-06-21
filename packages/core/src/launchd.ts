@@ -35,7 +35,7 @@ function xmlEscape(s: string): string {
 
 /**
  * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
- * dedupe so the plist content is stable across cockpit invocations from
+ * dedupe so the plist content is stable across squadrant invocations from
  * different shells. Without this, a captain shell (PATH includes
  * ~/.claude/plugins/cache/* bin dirs) vs a fresh login shell would each
  * rewrite the plist and kickstart -k the daemon, killing in-flight tasks
@@ -139,7 +139,7 @@ export function programArgsBlock(nodeBin: string, daemonEntry: string): string {
  * Pure: which kickstart argv to use. `-k` (kill-then-restart) ONLY when the
  * plist changed. A plain `kickstart` starts a down daemon and is a no-op for a
  * healthy one — so a routine CLI call never bounces a running daemon (this was
- * a real bug: ensureDaemon ran on every `cockpit` invocation and `kickstart -k`
+ * a real bug: ensureDaemon ran on every `squadrant` invocation and `kickstart -k`
  * killed+restarted the daemon each time, orphaning in-flight headless crew).
  */
 export function kickstartArgv(target: string, plistChanged: boolean): string[] {
@@ -219,7 +219,7 @@ export function releaseDaemonLock(): void {
  *
  * Concurrency guards:
  *   - restartInFlight flag: prevents sequential re-calls within this process.
- *   - tryAcquireDaemonLock: serialises concurrent SEPARATE cockpit processes
+ *   - tryAcquireDaemonLock: serialises concurrent SEPARATE squadrant processes
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
@@ -269,7 +269,7 @@ export function ensureDaemon(nodeBin: string = process.execPath): void {
     execFileSync("launchctl", ["kickstart", target], { stdio: "ignore" });
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
-    process.stderr.write(`[cockpit] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
+    process.stderr.write(`[squadrant] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
   } finally {
     releaseDaemonLock();
   }

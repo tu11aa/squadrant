@@ -128,7 +128,7 @@ describe("runDashboardPane", () => {
   it("sends a refreshing loop command into the new pane", async () => {
     await runDashboardPane({});
     const sent = sendToPane.mock.calls[0][1] as string;
-    expect(sent).toContain("cockpit dashboard --once");
+    expect(sent).toContain("squadrant dashboard --once");
     expect(sent).toContain("sleep 10");
     expect(sent).toMatch(/while true/i);
   });

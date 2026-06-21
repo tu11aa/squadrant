@@ -71,7 +71,7 @@ export function buildAgentCmd(
     ? path.join(templatesDir, `${role}.${driver.templateSuffix}.md`)
     : undefined;
   return driver.buildCommand({
-    prompt: `You are a cockpit ${role}. Read your instructions from ${roleFile ?? role} and begin.`,
+    prompt: `You are a squadrant ${role}. Read your instructions from ${roleFile ?? role} and begin.`,
     workdir: process.cwd(),
     role: role as Role,
     model,

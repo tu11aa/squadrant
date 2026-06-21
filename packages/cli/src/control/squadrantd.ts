@@ -128,7 +128,7 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     // and steal the shared socket. Print a one-liner and exit.
     const arg = process.argv[2];
     if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") {
-      process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `cockpit` for commands.\n");
+      process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `squadrant` for commands.\n");
       process.exit(0);
     }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.

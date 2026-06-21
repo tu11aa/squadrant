@@ -65,7 +65,7 @@ describe("crew-attach formatters", () => {
   it("formatReattachFailed contains task id and re-run command", () => {
     const plain = stripAnsi(formatReattachFailed("task-abc-123"));
     expect(plain).toContain("reattach failed");
-    expect(plain).toContain("cockpit crew attach task-abc-123");
+    expect(plain).toContain("squadrant crew attach task-abc-123");
   });
 });
 

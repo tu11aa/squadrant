@@ -281,7 +281,7 @@ describe("working-hook run-state suppresses false-stall (#292)", () => {
     return {
       id: "task-a",
       name: "crew-a",
-      project: "cockpit",
+      project: "squadrant",
       provider: "claude",
       mode: "interactive",
       state: "working",

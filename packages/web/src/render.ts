@@ -56,11 +56,11 @@ export function renderDashboard(rows: ProjectStatus[], opts: RenderOptions): str
   const lines: string[] = [];
 
   lines.push("");
-  lines.push("  " + chalk.bold("📊 Cockpit Dashboard") + "  " + chalk.dim(opts.now));
+  lines.push("  " + chalk.bold("📊 Squadrant Dashboard") + "  " + chalk.dim(opts.now));
   lines.push("");
 
   if (rows.length === 0) {
-    lines.push("  " + chalk.yellow("No projects registered. Add one with: cockpit projects add <name> <path>"));
+    lines.push("  " + chalk.yellow("No projects registered. Add one with: squadrant projects add <name> <path>"));
     lines.push("");
     return lines.join("\n");
   }

@@ -46,7 +46,7 @@ ensureRuntimeSynced({
   runtimeRoot: join(homedir(), ".config", "squadrant"),
 });
 
-// Non-blocking config-drift banner. Suppressed during "cockpit config" —
+// Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
 // Detect + print only — never mutates config and never throws.
 if (process.argv[2] !== "config") {
@@ -61,8 +61,8 @@ if (process.argv[2] !== "config") {
         } else {
           const from = cfg._squadrantVersion ?? "an earlier version";
           process.stderr.write(
-            `\n\u26A1 cockpit updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
-            `   Run \`cockpit config check\` (or use the config-doctor skill) to reconcile.\n\n`,
+            `\n\u26A1 squadrant updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
+            `   Run \`squadrant config check\` (or use the config-doctor skill) to reconcile.\n\n`,
           );
         }
       }
@@ -85,8 +85,8 @@ if (!process.env.SQUADRANT_DAEMON_SKIP) {
 const program = new Command();
 
 program
-  .name("cockpit")
-  .description("Multi-project agent orchestration for Claude Code")
+  .name("squadrant")
+  .description("Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)")
   .version(pkg.version);
 
 program.addCommand(doctorCommand);
@@ -95,7 +95,7 @@ program.addCommand(projectsCommand);
 program.addCommand(statusCommand);
 // Legacy crew verbs (spawn/send/read/close/list) stay intact for live captains;
 // control-plane verbs (dispatch/status/tasks/reply) are attached onto the same
-// `cockpit crew` command so PR #85 doesn't break the captain-ops playbook.
+// `squadrant crew` command so PR #85 doesn't break the captain-ops playbook.
 addControlPlaneCrewCommands(crewCommand);
 program.addCommand(crewCommand);
 program.addCommand(sideCommand);

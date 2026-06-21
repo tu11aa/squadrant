@@ -126,10 +126,10 @@ describe("squadrantd daemon-direct (#332)", () => {
 
   it("discoverCaptainSurface finds the matching captain pane by title", () => {
     const surfaces: PaneRef[] = [
-      { workspaceId: "ws:1", surfaceId: "s9", title: "⚓ cockpit-captain" },
-      { workspaceId: "ws:1", surfaceId: "s10", title: "🔧 cockpit:crew-1" },
+      { workspaceId: "ws:1", surfaceId: "s9", title: "⚓ squadrant-captain" },
+      { workspaceId: "ws:1", surfaceId: "s10", title: "🔧 squadrant:crew-1" },
     ];
-    expect(discoverCaptainSurface(surfaces, "⚓ cockpit-captain")?.surfaceId).toBe("s9");
+    expect(discoverCaptainSurface(surfaces, "⚓ squadrant-captain")?.surfaceId).toBe("s9");
     expect(discoverCaptainSurface(surfaces, "nonexistent")).toBeNull();
   });
 

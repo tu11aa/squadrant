@@ -7,7 +7,7 @@ import { mirrorDir, mirrorFlat, ensureRuntimeSynced } from "../runtime-sync.js";
 let tmp: string;
 
 beforeEach(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-sync-"));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-sync-"));
 });
 
 afterEach(() => {
@@ -148,7 +148,7 @@ describe("ensureRuntimeSynced", () => {
     const runtimeRoot = path.join(tmp, "rt-root");
     // plugin: tree target
     write(path.join(sourceRoot, "plugin", "skills", "captain-ops", "SKILL.md"), "captain");
-    write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"cockpit"}');
+    write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"squadrant"}');
     // templates: flat target sourced from templates/, filtered by extension
     write(path.join(sourceRoot, "templates", "captain.claude.md"), "tmpl");
     write(path.join(sourceRoot, "templates", "notes.txt"), "ignore me");
@@ -166,7 +166,7 @@ describe("ensureRuntimeSynced", () => {
 
     expect(
       fs.readFileSync(path.join(runtimeRoot, "plugin", ".claude-plugin", "plugin.json"), "utf-8"),
-    ).toBe('{"name":"cockpit"}');
+    ).toBe('{"name":"squadrant"}');
     // templates sourced from templates/, filtered
     expect(fs.existsSync(path.join(runtimeRoot, "templates", "captain.claude.md"))).toBe(true);
     expect(fs.existsSync(path.join(runtimeRoot, "templates", "notes.txt"))).toBe(false);
@@ -233,7 +233,7 @@ describe("ensureRuntimeSynced", () => {
     // source is unchanged — must still repair (no state cache that can lie)
     ensureRuntimeSynced({ sourceRoot, runtimeRoot });
 
-    expect(fs.readFileSync(victim, "utf-8")).toBe('{"name":"cockpit"}');
+    expect(fs.readFileSync(victim, "utf-8")).toBe('{"name":"squadrant"}');
   });
 
   it("does not write a .sync-state.json (no cache)", () => {

@@ -7,7 +7,7 @@ import { squadrantdCall } from "./crew-control.js";
 import type { TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
 
-// Captain workspaces gained the leading "⚓ " prefix partway through cockpit's
+// Captain workspaces gained the leading "⚓ " prefix partway through squadrant's
 // life. Workspaces created before that convention persist with the un-prefixed
 // name and shutdown needs to match both shapes.
 function nameVariants(name: string): string[] {
@@ -61,16 +61,16 @@ export const shutdownCommand = new Command("shutdown")
       const commandName = config.commandName || "command";
       const commandVariants = nameVariants(commandName);
       const allVariants = new Set([...captainVariants, ...commandVariants]);
-      const cockpitWorkspaces = workspaces.filter((w) => allVariants.has(w.name));
+      const squadrantWorkspaces = workspaces.filter((w) => allVariants.has(w.name));
 
-      if (cockpitWorkspaces.length === 0) {
-        console.log(chalk.yellow("\nNo cockpit workspaces found to close.\n"));
+      if (squadrantWorkspaces.length === 0) {
+        console.log(chalk.yellow("\nNo squadrant workspaces found to close.\n"));
         return;
       }
 
       console.log(
         chalk.bold(
-          `\nShutting down ${cockpitWorkspaces.length} workspace(s)...\n`,
+          `\nShutting down ${squadrantWorkspaces.length} workspace(s)...\n`,
         ),
       );
       // Terminalize all non-terminal crew tasks across every project before
@@ -85,7 +85,7 @@ export const shutdownCommand = new Command("shutdown")
           }
         } catch { /* best-effort — daemon miss must not block workspace close */ }
       }
-      for (const ws of cockpitWorkspaces) {
+      for (const ws of squadrantWorkspaces) {
         try {
           await globalRuntime.stop(ws.id);
           console.log(chalk.green(`  ✔ Closed: ${ws.name}`));
@@ -100,7 +100,7 @@ export const shutdownCommand = new Command("shutdown")
     if (!config.projects[project]) {
       console.error(
         chalk.red(
-          `\n  ✘ Project '${project}' not found. Run 'cockpit projects list' to see registered projects.\n`,
+          `\n  ✘ Project '${project}' not found. Run 'squadrant projects list' to see registered projects.\n`,
         ),
       );
       process.exit(1);

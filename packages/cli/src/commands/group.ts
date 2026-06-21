@@ -1,6 +1,6 @@
 // src/commands/group.ts
 //
-// #246: cross-project intra-group delegation. `cockpit group dispatch`
+// #246: cross-project intra-group delegation. `squadrant group dispatch`
 // sends a task to a sibling project in the same group. The target's captain
 // is woken via the existing mailbox/relay path. A dispatches-and-yields;
 // the origin captain is auto-woken when the task settles (report-back).
@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { loadConfig, resolveHome, type CockpitConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, type SquadrantConfig } from "@squadrant/shared";
 import { sendRequest } from "@squadrant/core";
 import type { TaskRecord, Provider, Mode } from "@squadrant/shared";
 
@@ -23,7 +23,7 @@ const WARMUP_TIMEOUT_MS = 120_000;
 const WARMUP_POLL_MS = 1_000;
 
 /** Resolve the current project name by matching cwd against config paths. */
-export function resolveCurrentProject(config: CockpitConfig): string | null {
+export function resolveCurrentProject(config: SquadrantConfig): string | null {
   const cwd = process.cwd();
   for (const [name, proj] of Object.entries(config.projects)) {
     const resolvedPath = resolveHome(proj.path);
@@ -99,9 +99,9 @@ export async function runGroupDispatch(opts: GroupDispatchOpts): Promise<TaskRec
   const alive = await isCaptainAlive(opts.toProject);
   if (!alive) {
     try {
-      execSync(`cockpit launch ${opts.toProject}`, { stdio: "ignore", timeout: 15_000 });
+      execSync(`squadrant launch ${opts.toProject}`, { stdio: "ignore", timeout: 15_000 });
     } catch {
-      throw new Error(`failed to launch captain for '${opts.toProject}' — is cockpit installed?`);
+      throw new Error(`failed to launch captain for '${opts.toProject}' — is squadrant installed?`);
     }
 
     const warmed = await waitForWarmup(opts.toProject, opts.warmupTimeoutMs, opts.warmupPollMs);

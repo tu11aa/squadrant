@@ -1,5 +1,5 @@
-export const MARKER_START = "<!-- cockpit:start -->";
-export const MARKER_END = "<!-- cockpit:end -->";
+export const MARKER_START = "<!-- squadrant:start -->";
+export const MARKER_END = "<!-- squadrant:end -->";
 
 export function mergeWithMarkers(existing: string | null, generated: string): string {
   const body = generated.replace(/\s+$/, "");
@@ -17,13 +17,13 @@ export function mergeWithMarkers(existing: string | null, generated: string): st
 
   if (startIdx === -1 || endIdx === -1) {
     throw new Error(
-      `Corrupted cockpit markers — found only ${startIdx === -1 ? "end" : "start"} marker. ` +
+      `Corrupted squadrant markers — found only ${startIdx === -1 ? "end" : "start"} marker. ` +
       `Remove the stray marker or delete the file and re-run projection emit.`,
     );
   }
 
   if (endIdx < startIdx) {
-    throw new Error(`Corrupted cockpit markers — end appears before start. Manual repair needed.`);
+    throw new Error(`Corrupted squadrant markers — end appears before start. Manual repair needed.`);
   }
 
   const before = existing.slice(0, startIdx);

@@ -1,6 +1,6 @@
 // src/dashboard/web-server.ts
 //
-// The `cockpit dashboard --web` process: a localhost-only HTTP + SSE server that,
+// The `squadrant dashboard --web` process: a localhost-only HTTP + SSE server that,
 // on each tick, queries the daemon's read-only `snapshot` verb, runs the Tier 3/4
 // external probes (which the daemon cannot — lineage wall), merges them, and
 // pushes the result to every connected browser. Crash-isolated from the daemon

@@ -1,7 +1,7 @@
 // src/commands/health-view.ts
 //
 // Client + pure renderer for the daemon's #77 service-health surface. Shared by
-// `cockpit doctor` and `cockpit status --detailed`. The query is a RAW socket
+// `squadrant doctor` and `squadrant status --detailed`. The query is a RAW socket
 // call (never kickstarts the daemon); rendering is pure and unit-tested.
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +61,7 @@ export function healthRow(c: ComponentHealth, now: number): string {
 export function printServiceHealth(rows: ComponentHealth[] | null, now: number = Date.now()): void {
   console.log(chalk.bold("\nService Health\n"));
   if (rows == null) {
-    console.log(`  ${chalk.red("✘")} daemon unreachable — cockpit liveness is unknown (start the daemon)`);
+    console.log(`  ${chalk.red("✘")} daemon unreachable — squadrant liveness is unknown (start the daemon)`);
     return;
   }
   if (rows.length === 0) {

@@ -1,5 +1,5 @@
 import { loadConfig } from "@squadrant/shared";
-import type { RuntimeDriver, CockpitConfig, TaskRecord } from "@squadrant/shared";
+import type { RuntimeDriver, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { DirectCmuxReader } from "./interfaces.js";
 
 const TAIL_LINES = 25;
@@ -34,7 +34,7 @@ export function surfaceVerdict(surfaceTitles: string[] | null, wantTitle: string
  */
 async function listCaptainSurfaceTitles(
   rec: TaskRecord,
-  makeRuntime: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+  makeRuntime: (project: string, config: SquadrantConfig) => RuntimeDriver | null,
 ): Promise<string[] | null> {
   try {
     const config = loadConfig();
@@ -56,7 +56,7 @@ async function listCaptainSurfaceTitles(
  * @param makeRuntime  Factory provided by the host (root package); omit for tests.
  */
 export function createSurfaceLivenessProbe(
-  makeRuntime?: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+  makeRuntime?: (project: string, config: SquadrantConfig) => RuntimeDriver | null,
 ): (rec: TaskRecord) => Promise<SurfaceLiveness> {
   return async (rec) => {
     if (rec.mode !== "interactive" || !rec.name) return "unknown";
@@ -71,7 +71,7 @@ export function createSurfaceLivenessProbe(
  * @param makeRuntime  Factory provided by the host; required for real pane reads.
  */
 export function createCrewPaneReader(
-  makeRuntime?: (project: string, config: CockpitConfig) => RuntimeDriver | null,
+  makeRuntime?: (project: string, config: SquadrantConfig) => RuntimeDriver | null,
 ): (rec: TaskRecord) => Promise<string | null> {
   return async (rec) => {
     try {

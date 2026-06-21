@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { mergeClaudeHooks } from "../interactive/claude.js";
 
-const HOOK_CMD = "cockpit crew _hook";
+const HOOK_CMD = "squadrant crew _hook";
 
 describe("claude interactive hook merge", () => {
   it("adds Stop+SubagentStop+SessionEnd hooks to empty settings", () => {
@@ -18,12 +18,12 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.PostToolUse[0].hooks[0].command).toContain("PostToolUse");
   });
 
-  it("is idempotent — merging twice yields one cockpit entry per event", () => {
+  it("is idempotent — merging twice yields one squadrant entry per event", () => {
     const once = mergeClaudeHooks({}, HOOK_CMD);
     const twice = mergeClaudeHooks(once, HOOK_CMD);
-    const cockpitEntries = twice.hooks.Stop.flatMap((m: any) => m.hooks)
+    const squadrantEntries = twice.hooks.Stop.flatMap((m: any) => m.hooks)
       .filter((h: any) => h.command.includes(HOOK_CMD));
-    expect(cockpitEntries).toHaveLength(1);
+    expect(squadrantEntries).toHaveLength(1);
   });
 
   it("preserves a user's pre-existing unrelated Stop hook", () => {
@@ -62,7 +62,7 @@ describe("claude interactive hook merge", () => {
     expect(cmds.some((c: string) => c.includes(HOOK_CMD))).toBe(true);
   });
 
-  it("adds cockpit hooks when settings has no hooks key at all", () => {
+  it("adds squadrant hooks when settings has no hooks key at all", () => {
     const out = mergeClaudeHooks({ other: 1 }, HOOK_CMD);
     expect(out.hooks.Stop[0].hooks[0].command).toContain(HOOK_CMD);
     expect(out.hooks.SubagentStop[0].hooks[0].command).toContain(HOOK_CMD);

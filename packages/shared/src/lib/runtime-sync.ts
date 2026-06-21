@@ -139,7 +139,7 @@ export function ensureRuntimeSynced(opts: EnsureRuntimeSyncedOptions): void {
       }
     } catch (err) {
       process.stderr.write(
-        `cockpit: runtime sync skipped for ${t.name}: ${(err as Error).message}\n`,
+        `squadrant: runtime sync skipped for ${t.name}: ${(err as Error).message}\n`,
       );
     }
   }

@@ -21,7 +21,7 @@ describe("buildFreshness", () => {
 
 // ── assembleDaemonSnapshot ────────────────────────────────────────────────────
 const HEALTH: ComponentHealth[] = [
-  { kind: "captain", project: "cockpit", ref: "cockpit-captain", state: "alive", lastSeenMs: 900 },
+  { kind: "captain", project: "squadrant", ref: "squadrant-captain", state: "alive", lastSeenMs: 900 },
 ];
 
 function inputs(over: Partial<DaemonSnapshotInputs> = {}): DaemonSnapshotInputs {
@@ -36,7 +36,7 @@ function inputs(over: Partial<DaemonSnapshotInputs> = {}): DaemonSnapshotInputs 
     health: HEALTH,
     projects: [
       {
-        project: "cockpit",
+        project: "squadrant",
         mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
         lastAckedSeq: 12,
         storeByState: { working: 3, blocked: 1 },
@@ -80,7 +80,7 @@ describe("assembleDaemonSnapshot", () => {
   it("assembles Tier 2 per-project mailbox, delivery lag and store counts", () => {
     const snap = assembleDaemonSnapshot(inputs(), NOW);
     const p = snap.tier2.projects[0];
-    expect(p.project).toBe("cockpit");
+    expect(p.project).toBe("squadrant");
     expect(p.mailbox).toEqual({ maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 });
     expect(p.delivery).toEqual({ maxSeq: 12, lastAckedSeq: 12, behind: 0 });
     expect(p.store).toEqual({ byState: { working: 3, blocked: 1 }, corruptCount: 0 });

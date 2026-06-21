@@ -23,7 +23,7 @@ function ensureCmuxReady(): void {
 
   console.log(chalk.yellow("\n  Not running inside cmux. Opening cmux app...\n"));
   execSync(`open "${CMUX_APP}"`, { stdio: "inherit" });
-  console.log(chalk.bold("  Run `cockpit launch` from inside a cmux workspace.\n"));
+  console.log(chalk.bold("  Run `squadrant launch` from inside a cmux workspace.\n"));
   process.exit(0);
 }
 
@@ -166,7 +166,7 @@ async function launchWorkspace(
 
 export const launchCommand = new Command("launch")
   .description(
-    "Launch a project captain (with project arg) or all captains (--all). Use `cockpit command` for one-shot Command tasks.",
+    "Launch a project captain (with project arg) or all captains (--all). Use `squadrant command` for one-shot Command tasks.",
   )
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
@@ -213,9 +213,9 @@ export const launchCommand = new Command("launch")
       // Auto-trigger startup checklist
       let initialPrompt: string | undefined;
       if (role === "captain") {
-        initialPrompt = "Run your startup checklist: use the cockpit:captain-ops skill, complete all startup steps, then report ready.";
+        initialPrompt = "Run your startup checklist: use the squadrant:captain-ops skill, complete all startup steps, then report ready.";
       } else if (role === "command") {
-        initialPrompt = "Run your startup checklist: use the cockpit:command-ops skill, complete your daily briefing, then report ready.";
+        initialPrompt = "Run your startup checklist: use the squadrant:command-ops skill, complete your daily briefing, then report ready.";
       }
 
       const runtime = projectName
@@ -252,7 +252,7 @@ export const launchCommand = new Command("launch")
       console.error(
         chalk.red(
           "\n  ✘ Specify a project name, or pass --all to launch every captain.\n" +
-            "    For one-shot Command tasks, use `cockpit command --task <briefing|learnings-review|wiki-aggregate>`.\n",
+            "    For one-shot Command tasks, use `squadrant command --task <briefing|learnings-review|wiki-aggregate>`.\n",
         ),
       );
       process.exit(1);
@@ -261,7 +261,7 @@ export const launchCommand = new Command("launch")
       if (!config.projects[project]) {
         console.error(
           chalk.red(
-            `\n  ✘ Project '${project}' not found. Run 'cockpit projects list' to see registered projects.\n`,
+            `\n  ✘ Project '${project}' not found. Run 'squadrant projects list' to see registered projects.\n`,
           ),
         );
         process.exit(1);

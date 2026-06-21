@@ -49,7 +49,7 @@ export const statusCommand = new Command("status")
     const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
 
     if (projects.length === 0) {
-      console.log(chalk.yellow("\nNo projects registered. Use: cockpit projects add <name> <path>\n"));
+      console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
     }
 

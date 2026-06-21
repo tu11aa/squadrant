@@ -77,7 +77,7 @@ describe("squadrantd claude interactive wiring", () => {
     expect(prog.state).toBe("working");
     expect(prog.lastEvent).toBe("task.progress");
 
-    // Simulate `cockpit crew signal done`.
+    // Simulate `squadrant crew signal done`.
     const done = (await sendRequest(sock, {
       kind: "event",
       project: "p",

@@ -48,9 +48,9 @@ vi.mock("@squadrant/workspaces", () => ({
   resolveCaptainWorkspace: async (project: string) => {
     const config = loadConfig();
     const proj = config.projects[project];
-    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
     const ws = await status(proj.captainName);
-    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`);
     return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
   },
   sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
@@ -129,7 +129,7 @@ const baseConfig = {
   metrics: { enabled: false, path: "" },
 };
 
-describe("cockpit crew spawn", () => {
+describe("squadrant crew spawn", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     newPane.mockReset();
@@ -200,7 +200,7 @@ describe("cockpit crew spawn", () => {
       task: "do the thing",
     }));
     expect(squadrantdCall).toHaveBeenCalledTimes(1);
-    // Cockpit hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
+    // Squadrant hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
       projectCwd: "/tmp/brove/.worktrees/brove-crew-1",
     }));
@@ -478,7 +478,7 @@ describe("cockpit crew spawn", () => {
     expect(sendToPane).toHaveBeenCalledTimes(1);
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
-      "cockpit crew attach task-abc",
+      "squadrant crew attach task-abc",
     );
     expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "do the thing");
     expect(result.title).toBe("🔧 brove:crew-1");
@@ -737,7 +737,7 @@ describe("cockpit crew spawn", () => {
 });
 
 
-describe("cockpit crew send/read/close/list", () => {
+describe("squadrant crew send/read/close/list", () => {
   beforeEach(() => {
     listSurfaces.mockReset();
     status.mockReset();

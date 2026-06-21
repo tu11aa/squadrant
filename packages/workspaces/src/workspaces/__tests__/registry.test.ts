@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { WorkspaceRegistry } from "../registry.js";
 import type { WorkspaceDriver, WorkspaceScope } from "@squadrant/shared";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 function stubFactory(name: string): (scope: WorkspaceScope) => WorkspaceDriver {
   return (scope) => ({
@@ -15,7 +15,7 @@ function stubFactory(name: string): (scope: WorkspaceScope) => WorkspaceDriver {
   });
 }
 
-function baseConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
+function baseConfig(overrides: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "cmd",
     hubVault: "~/hub",

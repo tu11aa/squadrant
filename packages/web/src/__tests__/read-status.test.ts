@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 import { readAllStatuses } from "../read-status.js";
 
-function makeConfig(): CockpitConfig {
+function makeConfig(): SquadrantConfig {
   return {
     commandName: "command",
     hubVault: "/tmp/hub",

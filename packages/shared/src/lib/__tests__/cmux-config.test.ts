@@ -15,7 +15,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("ensureSocketAutomation", () => {
-  it("creates a minimal cockpit-managed file when none exists", () => {
+  it("creates a minimal squadrant-managed file when none exists", () => {
     const r = ensureSocketAutomation({ path });
     expect(r.changed).toBe(true);
     expect(r.alreadySet).toBe(false);

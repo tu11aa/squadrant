@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "../config.js";
+import type { SquadrantConfig } from "../config.js";
 
 export type DriftKind = "missing" | "deprecated" | "changed-default" | "invalid";
 export type DriftSeverity = "info" | "advisory" | "warn";
@@ -26,7 +26,7 @@ const MANAGED_PATHS: string[] = [
   "runtime",
 ];
 
-const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: CockpitConfig) => boolean; note: string }> = [
+const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: SquadrantConfig) => boolean; note: string }> = [
   {
     path: "defaults.models",
     when: (u) => u.defaults?.roles !== undefined,
@@ -55,7 +55,7 @@ function hasPath(obj: unknown, dotted: string): boolean {
   return true;
 }
 
-function expandManaged(managed: string, def: CockpitConfig): string[] {
+function expandManaged(managed: string, def: SquadrantConfig): string[] {
   if (!managed.endsWith(".*")) return [managed];
   const parent = managed.slice(0, -2);
   const node = getPath(def, parent);
@@ -63,7 +63,7 @@ function expandManaged(managed: string, def: CockpitConfig): string[] {
   return Object.keys(node as Record<string, unknown>).map((k) => `${parent}.${k}`);
 }
 
-export function detectDrift(user: CockpitConfig, def: CockpitConfig): DriftItem[] {
+export function detectDrift(user: SquadrantConfig, def: SquadrantConfig): DriftItem[] {
   const items: DriftItem[] = [];
 
   for (const managed of MANAGED_PATHS) {
@@ -147,11 +147,11 @@ function deletePath(obj: Record<string, unknown>, dotted: string): void {
 }
 
 export function applySafeFixes(
-  user: CockpitConfig,
+  user: SquadrantConfig,
   items: DriftItem[],
-  _def: CockpitConfig,
-): { config: CockpitConfig; applied: string[] } {
-  const config = JSON.parse(JSON.stringify(user)) as CockpitConfig;
+  _def: SquadrantConfig,
+): { config: SquadrantConfig; applied: string[] } {
+  const config = JSON.parse(JSON.stringify(user)) as SquadrantConfig;
   const applied: string[] = [];
   const root = config as unknown as Record<string, unknown>;
   for (const item of items) {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readStamp, needsCheck, withStamp } from "../config-version.js";
-import type { CockpitConfig } from "../../config.js";
+import type { SquadrantConfig } from "../../config.js";
 
-const base = (over: Partial<CockpitConfig> = {}): CockpitConfig =>
+const base = (over: Partial<SquadrantConfig> = {}): SquadrantConfig =>
   ({ commandName: "x", hubVault: "/h", projects: {}, defaults: {} as any, metrics: { enabled: false, path: "/m" }, ...over });
 
 describe("config-version", () => {

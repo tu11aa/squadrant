@@ -6,22 +6,22 @@ import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlo
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
-    const xml = renderPlist("/usr/local/bin/node", "/opt/cockpit/dist/control/squadrantd.js");
+    const xml = renderPlist("/usr/local/bin/node", "/opt/squadrant/dist/control/squadrantd.js");
     expect(xml).toContain(`<string>${LABEL}</string>`);
     expect(xml).toContain("<key>KeepAlive</key>");
     expect(xml).toContain("<true/>");
     expect(xml).toContain("<key>RunAtLoad</key>");
-    expect(xml).toContain("/opt/cockpit/dist/control/squadrantd.js");
+    expect(xml).toContain("/opt/squadrant/dist/control/squadrantd.js");
   });
 
   it("sets ThrottleInterval so a crash can't tight-respawn (red-team #2)", () => {
-    const xml = renderPlist("/usr/local/bin/node", "/opt/cockpit/dist/control/squadrantd.js");
+    const xml = renderPlist("/usr/local/bin/node", "/opt/squadrant/dist/control/squadrantd.js");
     expect(xml).toMatch(/<key>ThrottleInterval<\/key><integer>\d+<\/integer>/);
   });
 
   it("bakes PATH into EnvironmentVariables so launchd headless spawn resolves (red-team #3)", () => {
     const p = "/Users/me/.nvm/versions/node/v24/bin:/Applications/cmux.app/Contents/Resources/bin:/usr/bin";
-    const xml = renderPlist("/usr/local/bin/node", "/opt/cockpit/dist/control/squadrantd.js", p);
+    const xml = renderPlist("/usr/local/bin/node", "/opt/squadrant/dist/control/squadrantd.js", p);
     expect(xml).toContain("<key>EnvironmentVariables</key>");
     expect(xml).toContain(`<key>PATH</key><string>${p}</string>`);
   });
@@ -32,7 +32,7 @@ describe("launchd plist", () => {
     expect(xml).not.toContain("/a&b:/c<d>");
   });
 
-  // Follow-up bug: ensureDaemon ran on EVERY cockpit invocation and
+  // Follow-up bug: ensureDaemon ran on EVERY squadrant invocation and
   // `kickstart -k` killed+restarted a healthy daemon each time (orphaning
   // in-flight headless crew). -k must be used ONLY when the plist changed.
   it("kickstartArgv: no -k when plist unchanged (don't bounce a healthy daemon)", () => {
@@ -76,8 +76,8 @@ describe("launchd plist", () => {
   // programArgsBlock: used by ensureDaemon to detect semantic drift (PATH vs
   // program-args changes). Only program-arg changes warrant a full restart.
   it("programArgsBlock renders an XML array with both escaped entries", () => {
-    expect(programArgsBlock("/usr/local/bin/node", "/opt/cockpit/dist/control/squadrantd.js")).toBe(
-      "<array><string>/usr/local/bin/node</string><string>/opt/cockpit/dist/control/squadrantd.js</string></array>"
+    expect(programArgsBlock("/usr/local/bin/node", "/opt/squadrant/dist/control/squadrantd.js")).toBe(
+      "<array><string>/usr/local/bin/node</string><string>/opt/squadrant/dist/control/squadrantd.js</string></array>"
     );
   });
 

@@ -1,6 +1,6 @@
 // src/commands/cmux.ts
 //
-// cockpit cmux autoconfig — #348 (part of #332). User-facing surface for the
+// squadrant cmux autoconfig — #348 (part of #332). User-facing surface for the
 // cmux socket auto-config: write the comment-preserving automation config, probe
 // the live socket from a non-cmux process, and tell the user whether a cmux
 // restart is needed to enable daemon-direct delivery.

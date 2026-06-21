@@ -23,7 +23,7 @@ const CODEX_FIRST_TURN_DELAY_MS = 1500;
 
 /**
  * Send the spawn task arg to a freshly-dispatched codex interactive task as
- * the first turn — mirrors how `cockpit crew spawn --agent claude "<task>"`
+ * the first turn — mirrors how `squadrant crew spawn --agent claude "<task>"`
  * sends the task arg into the claude CLI's first prompt.
  *
  * Reuses the existing attach-socket `say` op (same one used by `crew send` and
@@ -113,7 +113,7 @@ export async function squadrantdCall(req: unknown): Promise<unknown> {
  * Build an explicit terminal/blocked event request from a crew's `signal`
  * verb. Defaults to reading `SQUADRANT_CREW_TASK_ID` and `SQUADRANT_CREW_PROJECT`
  * from env so the claude/opencode crew templates can run e.g.
- * `cockpit crew signal done --message "…"` without knowing their own ids.
+ * `squadrant crew signal done --message "…"` without knowing their own ids.
  *
  * Explicit `taskId`/`project` (from `--task-id`/`--project` flags) take
  * precedence over env. This is the codex path: a single long-lived app-server
@@ -172,7 +172,7 @@ function defaultWriteResult(id: string, payload: string): string {
 }
 
 /**
- * Attach the control-plane verbs onto an existing `cockpit crew` command so
+ * Attach the control-plane verbs onto an existing `squadrant crew` command so
  * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
  * The control-plane task listing is `tasks` (not `list`) to avoid colliding
  * with the legacy `list` that captains' playbook still uses. This is the
@@ -247,11 +247,11 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     });
 
   // Bridge from Claude's native Stop/SubagentStop/SessionEnd hooks to the
-  // cockpit control plane. Reads hook payload JSON on stdin (Claude hook
+  // squadrant control plane. Reads hook payload JSON on stdin (Claude hook
   // contract); env-gated on SQUADRANT_CREW_TASK_ID/SQUADRANT_CREW_PROJECT so the
   // hook is a no-op outside spawned crews. Anti-#2576: maps only to
   // task.progress (liveness), never task.done — terminal state comes from
-  // `cockpit crew signal` (explicit, post-settle-check).
+  // `squadrant crew signal` (explicit, post-settle-check).
   crew
     .command("_hook <event>", { hidden: true })
     .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to squadrantd")
@@ -319,5 +319,5 @@ export function addControlPlaneCrewCommands(crew: Command): void {
 // Standalone control-plane-only command (kept for back-compat / direct use;
 // the CLI composes these onto the legacy `crew` command via the function above).
 export const crewControlCommand = new Command("crew")
-  .description("Dispatch and track crew via the cockpit control plane");
+  .description("Dispatch and track crew via the squadrant control plane");
 addControlPlaneCrewCommands(crewControlCommand);

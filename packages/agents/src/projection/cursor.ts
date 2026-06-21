@@ -21,7 +21,7 @@ function renderMdc(source: ProjectionSource): string {
 
   const frontmatter = [
     "---",
-    "description: Cockpit-projected rules and skills",
+    "description: Squadrant-projected rules and skills",
     "globs: ['**/*']",
     "alwaysApply: true",
     "---",
@@ -54,7 +54,7 @@ export function createCursorEmitter(): ProjectionEmitter {
       if (scope === "user") {
         return [
           {
-            path: path.join(os.homedir(), ".cursor/rules/cockpit-global.mdc"),
+            path: path.join(os.homedir(), ".cursor/rules/squadrant-global.mdc"),
             shared: false,
             format: "mdc",
           },
@@ -63,7 +63,7 @@ export function createCursorEmitter(): ProjectionEmitter {
       if (!projectRoot) return [];
       return [
         {
-          path: path.join(projectRoot, ".cursor/rules/cockpit.mdc"),
+          path: path.join(projectRoot, ".cursor/rules/squadrant.mdc"),
           shared: false,
           format: "mdc",
         },

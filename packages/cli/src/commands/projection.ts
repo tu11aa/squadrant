@@ -145,7 +145,7 @@ async function runEmit(opts: Opts & { dryRun?: boolean }) {
 }
 
 export const projectionCommand = new Command("projection").description(
-  "Project cockpit instructions and skills to supported agent formats",
+  "Project squadrant instructions and skills to supported agent formats",
 );
 
 projectionCommand

@@ -13,7 +13,7 @@ export interface ProjectConfig {
   groupRole?: string;
   runtime?: string;
   workspace?: string;
-  /** #246: when false, `cockpit group dispatch` rejects delegations to this
+  /** #246: when false, `squadrant group dispatch` rejects delegations to this
    *  project. Defaults to true when absent. */
   acceptDelegations?: boolean;
 }
@@ -59,7 +59,7 @@ export interface RoleAssignment {
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
-export interface CockpitConfig {
+export interface SquadrantConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _squadrantVersion?: string;
   commandName: string;
@@ -116,7 +116,7 @@ export interface CockpitConfig {
 const CONFIG_DIR = path.join(os.homedir(), ".config", "squadrant");
 export const DEFAULT_CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
-export function getDefaultConfig(): CockpitConfig {
+export function getDefaultConfig(): SquadrantConfig {
   return {
     commandName: "\u{1F3DB}\u{FE0F} command",
     hubVault: path.join(os.homedir(), "squadrant-hub"),
@@ -168,10 +168,10 @@ export function getDefaultConfig(): CockpitConfig {
   };
 }
 
-export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
+export function loadConfig(configPath = DEFAULT_CONFIG_PATH): SquadrantConfig {
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
-    const config = JSON.parse(raw) as CockpitConfig;
+    const config = JSON.parse(raw) as SquadrantConfig;
 
     // Backward compat: migrate models → roles if roles not set
     if (config.defaults.models && !config.defaults.roles) {
@@ -195,8 +195,8 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
       saveConfig(config, configPath);
       console.error(
         chalk.cyan(
-          "⬆ cockpit upgrade: added default crew routing rules to your config (leveled routing now active). " +
-          "Edit defaults.crewRouting in ~/.config/squadrant/config.json or use the cockpit:add-pick-crew-rule skill.",
+          "⬆ squadrant upgrade: added default crew routing rules to your config (leveled routing now active). " +
+          "Edit defaults.crewRouting in ~/.config/squadrant/config.json or use the squadrant:add-pick-crew-rule skill.",
         ),
       );
     }
@@ -208,7 +208,7 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
 }
 
 export function saveConfig(
-  config: CockpitConfig,
+  config: SquadrantConfig,
   configPath = DEFAULT_CONFIG_PATH,
 ): void {
   const dir = path.dirname(configPath);

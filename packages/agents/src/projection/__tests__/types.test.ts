@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type {
   ProjectionSource,
   ProjectionDestination,
@@ -9,8 +9,8 @@ import type {
 } from "@squadrant/shared";
 
 describe("projection types", () => {
-  it("CockpitConfig accepts optional projection.targets", () => {
-    const cfg: CockpitConfig = {
+  it("SquadrantConfig accepts optional projection.targets", () => {
+    const cfg: SquadrantConfig = {
       commandName: "cmd",
       hubVault: "~/hub",
       projects: {},

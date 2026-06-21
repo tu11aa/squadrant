@@ -41,9 +41,9 @@ vi.mock("@squadrant/workspaces", () => ({
   resolveCaptainWorkspace: async (project: string) => {
     const config = loadConfig();
     const proj = config.projects[project];
-    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
     const ws = await status(proj.captainName);
-    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`);
     return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
   },
   listProjectCrews: async (_runtime: unknown, workspaceId: string, project: string) => {
@@ -146,7 +146,7 @@ const baseConfig = {
   metrics: { enabled: false, path: "" },
 };
 
-describe("cockpit side spawn", () => {
+describe("squadrant side spawn", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     newPane.mockReset();
@@ -526,7 +526,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 });
 
 describe("crew spawn regression — daemon path unchanged", () => {
-  it("cockpit crew spawn still calls squadrantdCall (daemon path intact)", async () => {
+  it("squadrant crew spawn still calls squadrantdCall (daemon path intact)", async () => {
     const { runCrewSpawn } = await import("../crew.js");
 
     vi.useFakeTimers();

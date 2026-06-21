@@ -91,7 +91,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   const config = loadConfig();
   const proj = config.projects[input.project];
   if (!proj) {
-    throw new Error(`Project '${input.project}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${input.project}' not found. Run 'squadrant projects list'.`);
   }
 
   if (!SIDE_ROLES.includes(input.role as SideRole)) {
@@ -107,7 +107,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   const captain = await runtime.status(proj.captainName);
   if (!captain) {
     throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${input.project}' first.`,
+      `Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${input.project}' first.`,
     );
   }
 
@@ -198,7 +198,7 @@ export async function runSideSend(
   const pane = surfaces.find((s) => s.title === want) ?? null;
   if (!pane) {
     throw new Error(
-      `Side session '${name}' not found for ${project}. Run 'cockpit side list ${project}'.`,
+      `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
   await runtime.sendToPane(pane, message);
@@ -226,7 +226,7 @@ export async function runSideClose(project: string, name: string): Promise<void>
   const pane = surfaces.find((s) => s.title === want) ?? null;
   if (!pane) {
     throw new Error(
-      `Side session '${name}' not found for ${project}. Run 'cockpit side list ${project}'.`,
+      `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
   await runtime.closePane(pane);

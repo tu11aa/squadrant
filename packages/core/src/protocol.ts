@@ -222,7 +222,7 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Streaming-subscribe frames for `cockpit crew chat / attach` (spec §4.5).
+// Streaming-subscribe frames for `squadrant crew chat / attach` (spec §4.5).
 // Additive; existing request/response verbs untouched. Cooperates with #87.
 
 export type AttachFrame =

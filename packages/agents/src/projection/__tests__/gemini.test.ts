@@ -38,7 +38,7 @@ describe("GeminiEmitter", () => {
     expect(dest.shared).toBe(true);
   });
 
-  it("emit wraps body in cockpit markers", async () => {
+  it("emit wraps body in squadrant markers", async () => {
     const emitter = createGeminiEmitter();
     const [dest] = emitter.destinations("project", "/brove");
     await emitter.emit(source, dest);
@@ -67,7 +67,7 @@ describe("GeminiEmitter", () => {
     expect(fsMock.writeFile).not.toHaveBeenCalled();
   });
 
-  it("emit writes role-template sections inside the cockpit marker block (#45)", async () => {
+  it("emit writes role-template sections inside the squadrant marker block (#45)", async () => {
     const roleSource: ProjectionSource = {
       instructions: "## Captain Role\n\nC body\n\n## Crew Role\n\nW body",
       skills: [],

@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { loadConfig } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
 import type { RuntimeDriver } from "@squadrant/workspaces";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 function buildRegistry(): RuntimeRegistry {
   return new RuntimeRegistry({
@@ -18,7 +18,7 @@ interface ResolvedTarget {
 
 function resolveTarget(
   registry: RuntimeRegistry,
-  config: CockpitConfig,
+  config: SquadrantConfig,
   target: string | undefined,
   useCommand: boolean,
 ): ResolvedTarget {
@@ -33,7 +33,7 @@ function resolveTarget(
   }
   const proj = config.projects[target];
   if (!proj) {
-    throw new Error(`Project '${target}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${target}' not found. Run 'squadrant projects list'.`);
   }
   return {
     driver: registry.forProject(target, config),

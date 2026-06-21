@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
 import matter from "gray-matter";
-import { loadConfig, resolveHome, type ProjectConfig, type CockpitConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
   readDailyLog,
   parseSection,
@@ -63,7 +63,7 @@ async function getProjectRetro(
   fromStr: string,
   toStr: string,
   registry: WorkspaceRegistry,
-  config: CockpitConfig,
+  config: SquadrantConfig,
 ): Promise<ProjectRetro> {
   const workspace = registry.forProject(name, config);
   const spokeVault = resolveHome(project.spokeVault);
@@ -177,7 +177,7 @@ export const retroCommand = new Command("retro")
     const projects = Object.entries(config.projects);
 
     if (projects.length === 0) {
-      console.log(chalk.yellow("\nNo projects registered. Use: cockpit projects add <name> <path>\n"));
+      console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
     }
 

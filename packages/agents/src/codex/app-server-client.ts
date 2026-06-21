@@ -54,7 +54,7 @@ export class AppServerClient extends EventEmitter {
   async initialize(): Promise<unknown> {
     if (this._handshakeDone) return;
     if (!this.proc) throw new Error("AppServerClient not started");
-    const info = this.opts.clientInfo ?? { name: "cockpit", version: "0" };
+    const info = this.opts.clientInfo ?? { name: "squadrant", version: "0" };
     // Send initialize directly (bypass gate) — only initialize may pre-handshake.
     const id = this.nextId++;
     const env = { jsonrpc: "2.0", id, method: "initialize", params: { clientInfo: info } };

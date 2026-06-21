@@ -16,7 +16,7 @@ let dir: string;
 let cfgPath: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-cfg-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-cfg-"));
   cfgPath = path.join(dir, "config.json");
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));

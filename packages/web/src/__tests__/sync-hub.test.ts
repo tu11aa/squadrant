@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type { ProjectStatus } from "../read-status.js";
 import { syncHub, buildMirrorMarkdown } from "../sync-hub.js";
 
-function makeConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
+function makeConfig(overrides: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "command",
     hubVault: "/tmp/hub",
@@ -14,7 +14,7 @@ function makeConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
     defaults: { maxCrew: 5, worktreeDir: ".worktrees", teammateMode: "in-process", permissions: { command: "auto", captain: "auto" } },
     metrics: { enabled: false, path: "" },
     ...overrides,
-  } as CockpitConfig;
+  } as SquadrantConfig;
 }
 
 const STATUSES: ProjectStatus[] = [

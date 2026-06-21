@@ -21,11 +21,11 @@ type CommandTask = "briefing" | "learnings-review" | "wiki-aggregate";
 
 const TASK_PROMPTS: Record<CommandTask, string> = {
   briefing:
-    "Run your daily briefing using the cockpit:command-ops skill. Read all spoke handoffs, yesterday's logs, current status; produce a concise cross-project briefing; save to {hubVault}/daily-logs/YYYY-MM-DD.md; then exit.",
+    "Run your daily briefing using the squadrant:command-ops skill. Read all spoke handoffs, yesterday's logs, current status; produce a concise cross-project briefing; save to {hubVault}/daily-logs/YYYY-MM-DD.md; then exit.",
   "learnings-review":
-    "Run a learnings review using the cockpit:command-ops skill. Scan {spokeVault}/learnings across all projects, identify cross-project patterns, propose captured-skill or fix actions, and exit when done.",
+    "Run a learnings review using the squadrant:command-ops skill. Scan {spokeVault}/learnings across all projects, identify cross-project patterns, propose captured-skill or fix actions, and exit when done.",
   "wiki-aggregate":
-    "Run a wiki aggregation pass using the cockpit:command-ops skill. Scan each spoke wiki index, identify shared knowledge worth promoting, write hub wiki pages, and exit when done.",
+    "Run a wiki aggregation pass using the squadrant:command-ops skill. Scan each spoke wiki index, identify shared knowledge worth promoting, write hub wiki pages, and exit when done.",
 };
 
 export interface CommandSpawnInput {
@@ -38,7 +38,7 @@ function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
-    throw new Error("Could not detect current cmux workspace. Run `cockpit command` from inside a cmux workspace.");
+    throw new Error("Could not detect current cmux workspace. Run `squadrant command` from inside a cmux workspace.");
   }
   return match[0];
 }

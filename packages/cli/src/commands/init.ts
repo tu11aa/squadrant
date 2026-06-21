@@ -43,9 +43,9 @@ export const initCommand = new Command("init")
     const pkgRoot = findPackageRoot();
     const configDir = path.join(os.homedir(), ".config", "squadrant");
 
-    console.log(chalk.bold("\nCockpit Init\n"));
+    console.log(chalk.bold("\nSquadrant Init\n"));
 
-    // Verify the default workspace provider is registered (cockpit ships obsidian;
+    // Verify the default workspace provider is registered (squadrant ships obsidian;
     // if user already has a config pointing to an unknown provider, bail early)
     const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
     try {
@@ -130,7 +130,7 @@ export const initCommand = new Command("init")
     console.log("  3. Open Obsidian and add the hub vault:");
     console.log(chalk.cyan(`       ${hubPath}`));
     console.log("");
-    console.log("  4. Run " + chalk.cyan("cockpit doctor") + " to verify setup\n");
+    console.log("  4. Run " + chalk.cyan("squadrant doctor") + " to verify setup\n");
 
     if (!fs.existsSync("/Applications/cmux.app")) {
       console.log(chalk.yellow("  ⚠ cmux not found — download from https://cmux.dev\n"));

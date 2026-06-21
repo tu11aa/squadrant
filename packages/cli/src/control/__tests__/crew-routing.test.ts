@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { resolveCrewRoute } from "../crew-routing.js";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
-function makeConfig(overrides?: Partial<CockpitConfig["defaults"]>): CockpitConfig {
+function makeConfig(overrides?: Partial<SquadrantConfig["defaults"]>): SquadrantConfig {
   return {
     commandName: "command",
     hubVault: "~/hub",

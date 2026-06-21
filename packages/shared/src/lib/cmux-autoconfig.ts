@@ -7,8 +7,8 @@
 // See docs/specs/2026-06-16-cmux-socket-auth-daemon-direct-design.md §4.3–§4.4.
 //
 // This module decides WHAT to surface (configChanged / verdict / one-time
-// prompt); it does not print or log. The caller — the `cockpit cmux autoconfig`
-// CLI or the daemon-start re-check — renders the result. cockpit NEVER restarts
+// prompt); it does not print or log. The caller — the `squadrant cmux autoconfig`
+// CLI or the daemon-start re-check — renders the result. squadrant NEVER restarts
 // cmux for the user (that disrupts live sessions); we write config and prompt.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";

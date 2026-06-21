@@ -12,8 +12,8 @@ const externalHealthy: ExternalProbes = {
     { cli: "gemini", state: "alive" },
     { cli: "opencode", state: "alive" },
   ],
-  vaults: { hub: { path: "/h", state: "alive" }, spokes: [{ project: "cockpit", path: "/s", state: "alive" }] },
-  config: { parseable: { state: "alive" }, projectPaths: [{ project: "cockpit", path: "/r", state: "alive" }], sessions: { state: "alive" } },
+  vaults: { hub: { path: "/h", state: "alive" }, spokes: [{ project: "squadrant", path: "/s", state: "alive" }] },
+  config: { parseable: { state: "alive" }, projectPaths: [{ project: "squadrant", path: "/r", state: "alive" }], sessions: { state: "alive" } },
 };
 
 function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapshot["tier1"] = []): DaemonSnapshot {
@@ -29,7 +29,7 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
     tier2: {
       projects: [
         {
-          project: "cockpit",
+          project: "squadrant",
           mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
           delivery: { maxSeq: 12, lastAckedSeq: 12, behind: 0 },
           store: { byState: { working: 3, blocked: 1 }, corruptCount: 0 },
@@ -48,7 +48,7 @@ describe("renderHtml", () => {
   it("emits a full HTML document with the live content and an SSE connection indicator", () => {
     const html = renderHtml(full(daemon()));
     expect(html).toMatch(/^<!DOCTYPE html>/i);
-    expect(html).toContain("COCKPIT SYSTEM HEALTH"); // visible page heading
+    expect(html).toContain("SQUADRANT SYSTEM HEALTH"); // visible page heading
     expect(html).toContain('id="content"');
     expect(html).toContain('id="conn"');
     expect(html).toContain('id="led"'); // pulsing live indicator in the flight deck
@@ -71,7 +71,7 @@ describe("explanatory titles + captions", () => {
     const out = renderContent(full(daemon()));
     expect(out).toContain('class="page-title"');
     expect(out).toContain('class="page-sub"');
-    expect(out).toContain("Live health of the cockpit daemon");
+    expect(out).toContain("Live health of the squadrant daemon");
   });
 
   it("titles every Overview block with a heading + caption", () => {
@@ -131,8 +131,8 @@ describe("overview gauge + charts", () => {
 
   it("emits a machine-readable metrics blob for client-side trends", () => {
     const out = renderContent(full(daemon()));
-    expect(out).toContain('id="cockpit-metrics"');
-    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    expect(out).toContain('id="squadrant-metrics"');
+    const m = out.match(/id="squadrant-metrics">(.*?)<\/script>/s);
     expect(m).not.toBeNull();
     const metrics = JSON.parse(m![1]);
     expect(metrics.t).toBe(1_000_000);
@@ -141,7 +141,7 @@ describe("overview gauge + charts", () => {
 
   it("escalates the master annunciator to CRITICAL when a component is gone", () => {
     const goneCrew: DaemonSnapshot["tier1"] = [
-      { kind: "crew", project: "cockpit", ref: "x", state: "gone", lastSeenMs: 1 },
+      { kind: "crew", project: "squadrant", ref: "x", state: "gone", lastSeenMs: 1 },
     ];
     const out = renderContent(full(daemon({}, goneCrew)));
     expect(out).toContain('class="annunciator a-crit');
@@ -152,7 +152,7 @@ describe("overview gauge + charts", () => {
 describe("status pills", () => {
   it("renders color-coded status pills with a dot", () => {
     const tier1: DaemonSnapshot["tier1"] = [
-      { kind: "captain", project: "cockpit", ref: "cap", state: "alive", lastSeenMs: 999_000 },
+      { kind: "captain", project: "squadrant", ref: "cap", state: "alive", lastSeenMs: 999_000 },
     ];
     const out = renderContent(full(daemon({}, tier1)));
     expect(out).toContain('class="pill s-alive"');
@@ -220,7 +220,7 @@ describe("severity rollup + remediation", () => {
 
   it("does not render relay heal commands (relay removed)", () => {
     const out = renderContent(full(daemon({}, goneCaptain)));
-    expect(out).not.toContain("cockpit heal relay");
+    expect(out).not.toContain("squadrant heal relay");
   });
 });
 
@@ -285,33 +285,33 @@ describe("global delivery-lag excludes offline-captain projects", () => {
   it("global behind is 0 when captain is gone (offline)", () => {
     const d = daemon();
     d.tier1 = [
-      { kind: "captain", project: "cockpit", ref: "captain", state: "gone", lastSeenMs: 1 },
+      { kind: "captain", project: "squadrant", ref: "captain", state: "gone", lastSeenMs: 1 },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
     const out = renderContent(full(d));
-    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const m = out.match(/id="squadrant-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
     expect(metrics.behind).toBe(0); // captain gone → not a live delivery problem
   });
   it("global behind is 0 when captain state is unknown", () => {
     const d = daemon();
     d.tier1 = [
-      { kind: "captain", project: "cockpit", ref: "captain", state: "unknown", lastSeenMs: null },
+      { kind: "captain", project: "squadrant", ref: "captain", state: "unknown", lastSeenMs: null },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 5, behind: 5 };
     const out = renderContent(full(d));
-    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const m = out.match(/id="squadrant-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
     expect(metrics.behind).toBe(0); // captain unknown → excluded
   });
   it("global behind includes lag for projects whose captain is alive", () => {
     const d = daemon();
     d.tier1 = [
-      { kind: "captain", project: "cockpit", ref: "captain", state: "alive", lastSeenMs: 999_000 },
+      { kind: "captain", project: "squadrant", ref: "captain", state: "alive", lastSeenMs: 999_000 },
     ];
     d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 7, behind: 3 };
     const out = renderContent(full(d));
-    const m = out.match(/id="cockpit-metrics">(.*?)<\/script>/s);
+    const m = out.match(/id="squadrant-metrics">(.*?)<\/script>/s);
     const metrics = JSON.parse(m![1].replace(/\\u003c/g, "<"));
     expect(metrics.behind).toBe(3); // captain alive → included
   });
@@ -338,7 +338,7 @@ describe("global results location", () => {
 describe("escaping", () => {
   it("HTML-escapes crew refs/details to prevent injection", () => {
     const evil: DaemonSnapshot["tier1"] = [
-      { kind: "crew", project: "cockpit", ref: "<img src=x>", state: "alive", lastSeenMs: 999_000, detail: "working" },
+      { kind: "crew", project: "squadrant", ref: "<img src=x>", state: "alive", lastSeenMs: 999_000, detail: "working" },
     ];
     const out = renderContent(full(daemon({}, evil)));
     expect(out).not.toContain("<img src=x>");

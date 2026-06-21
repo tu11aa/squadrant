@@ -54,9 +54,9 @@ describe("canonical-source", () => {
     expect(k.content).toContain("K body");
   });
 
-  it("readUserLevelSource does NOT include cockpit's own AGENTS.md", async () => {
+  it("readUserLevelSource does NOT include squadrant's own AGENTS.md", async () => {
     const driver = memDriver({
-      "AGENTS.md": "# Cockpit-specific content\ngitnexus stuff",
+      "AGENTS.md": "# Squadrant-specific content\ngitnexus stuff",
       "plugin/skills/karpathy-principles/SKILL.md":
         "---\nname: karpathy-principles\ndescription: K\n---\n\nK body",
     });
@@ -98,12 +98,12 @@ describe("canonical-source", () => {
   });
 
   // Regression: project-scope projection silently skipped every managed project
-  // whose path was not under the cockpit repo, because the source-reading driver
+  // whose path was not under the squadrant repo, because the source-reading driver
   // was rooted at process.cwd() and the obsidian sandbox guard rejected the
   // absolute out-of-cwd project path. readProjectLevelSource must read a project
   // whose directory lives OUTSIDE process.cwd().
   it("readProjectLevelSource reads a project rooted outside process.cwd()", async () => {
-    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "cockpit-proj-"));
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "squadrant-proj-"));
     try {
       await fsp.writeFile(path.join(tmp, "AGENTS.md"), "# OnePlan rules\nuse design tokens");
       await fsp.mkdir(path.join(tmp, "plugin/skills/op-style"), { recursive: true });

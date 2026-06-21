@@ -23,7 +23,7 @@ function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
-    throw new Error("Could not detect current cmux workspace. Run `cockpit dashboard --pane` from inside a cmux workspace.");
+    throw new Error("Could not detect current cmux workspace. Run `squadrant dashboard --pane` from inside a cmux workspace.");
   }
   return match[0];
 }
@@ -71,7 +71,7 @@ export async function runDashboardPane(input: DashboardPaneInput): Promise<PaneR
 
   // Portable refresh loop — no `watch` install dependency.
   // FORCE_COLOR=1 makes chalk emit ANSI even when run through the loop.
-  const loop = `clear; while true; do clear; FORCE_COLOR=1 cockpit dashboard --once; sleep ${interval}; done`;
+  const loop = `clear; while true; do clear; FORCE_COLOR=1 squadrant dashboard --once; sleep ${interval}; done`;
 
   const pane = await runtime.newPane({ workspaceId, direction, title });
   await runtime.sendToPane(pane, loop);
@@ -95,7 +95,7 @@ export async function runDashboardWeb(input: DashboardWebInput): Promise<void> {
     sockPath: SOCK,
     runners: defaultProbeRunners(),
   });
-  console.log(chalk.green(`✔ Cockpit system dashboard → http://127.0.0.1:${handle.port}`));
+  console.log(chalk.green(`✔ Squadrant system dashboard → http://127.0.0.1:${handle.port}`));
   console.log(chalk.dim(`  polling the daemon every ${input.interval}s · localhost only · read-only · Ctrl-C to stop`));
 }
 
@@ -118,7 +118,7 @@ export const dashboardCommand = new Command("dashboard")
         console.log(chalk.green(`✔ Dashboard pane opened in ${pane.workspaceId} ${pane.surfaceId}`));
         return;
       }
-      // Default behaviour: --once. (Bare `cockpit dashboard` prints once and exits.)
+      // Default behaviour: --once. (Bare `squadrant dashboard` prints once and exits.)
       await runDashboardOnce();
     } catch (err) {
       console.error(chalk.red((err as Error).message));

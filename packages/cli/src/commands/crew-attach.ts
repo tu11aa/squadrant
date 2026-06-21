@@ -88,7 +88,7 @@ export function formatConnectionLost(): string {
 }
 
 export function formatReattachFailed(taskId: string): string {
-  return chalk.red(`(reattach failed — re-run: cockpit crew attach ${taskId})`);
+  return chalk.red(`(reattach failed — re-run: squadrant crew attach ${taskId})`);
 }
 
 export function formatGatePromoted(gateId: string): string {

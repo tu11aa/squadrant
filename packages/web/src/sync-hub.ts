@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import { resolveHome } from "@squadrant/shared";
 import type { ProjectStatus } from "./read-status.js";
 
@@ -10,7 +10,7 @@ export interface SyncHubResult {
 }
 
 export interface SyncHubDeps {
-  config: CockpitConfig;
+  config: SquadrantConfig;
   statuses: ProjectStatus[];
   writeFile?: (path: string, content: string) => void;
   mkdir?: (dirPath: string) => void;
@@ -28,7 +28,7 @@ export function buildMirrorMarkdown(s: ProjectStatus): string {
     "",
     `# ${s.project}`,
     "",
-    "> Mirror of `{spokeVault}/status.md`. Updated by `cockpit dashboard sync-hub` (#44).",
+    "> Mirror of `{spokeVault}/status.md`. Updated by `squadrant dashboard sync-hub` (#44).",
     "",
     "## Last activity excerpt",
     "",

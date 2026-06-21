@@ -1,7 +1,7 @@
 // src/commands/__tests__/launch.test.ts
 //
 // #121 Issue B: a raw "Error: not_found: Pane not found" line leaked to the
-// captain's terminal on `cockpit launch <project> --fresh`. Root cause: the
+// captain's terminal on `squadrant launch <project> --fresh`. Root cause: the
 // select-workspace / current-workspace calls in launch.ts used the default
 // execSync/execFileSync stdio, which forwards the child's stderr straight to
 // the parent terminal. The fix routes them through cmuxLocal, which pipes
@@ -51,8 +51,8 @@ describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   });
 
   it("returns trimmed stdout for callers that need the output", () => {
-    execFileMock.mockReturnValue("  workspace:7 cockpit-captain  \n");
-    expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 cockpit-captain");
+    execFileMock.mockReturnValue("  workspace:7 squadrant-captain  \n");
+    expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 squadrant-captain");
   });
 });
 
@@ -165,7 +165,7 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   // Source of truth: live capture of an Opus 4.8 startup turn (frames g01–g11).
   it("does NOT re-send when the captain is thinking with an unrecognized spinner", async () => {
     const SYNTHESIZING = [
-      "❯ Run your startup checklist: use the cockpit:captain-ops skill",
+      "❯ Run your startup checklist: use the squadrant:captain-ops skill",
       "⏺ Thinking about the startup checklist:",
       "✽ Synthesizing… ",
       HR, "❯ ", HR,

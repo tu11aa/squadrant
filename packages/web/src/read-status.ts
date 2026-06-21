@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 
 export type SquadrantdCall = (req: unknown) => Promise<unknown>;
@@ -14,7 +14,7 @@ export interface ProjectStatus {
 }
 
 export interface ReadStatusDeps {
-  config: CockpitConfig;
+  config: SquadrantConfig;
   call?: SquadrantdCall;
   listTasks?: (project: string) => Promise<TaskRecord[]>;
 }

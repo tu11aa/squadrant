@@ -19,7 +19,7 @@ const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notificati
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
  * daemon-supervised crew path needs per-invocation settings to inject the
- * cockpit Stop hook without polluting the user's global `~/.claude/settings.json`
+ * squadrant Stop hook without polluting the user's global `~/.claude/settings.json`
  * (the scrapped PR #71 mistake). Returns "flag" when --settings is available
  * (the happy path), "project-dir" when the fallback (write `.claude/settings.json`
  * under the project dir + cd) is needed.
@@ -45,7 +45,7 @@ export function isPermissionNotification(message: string): boolean {
   return lower.includes("permission") || lower.includes("approve");
 }
 
-/** Pure, idempotent merge of cockpit hooks into a Claude settings object. */
+/** Pure, idempotent merge of squadrant hooks into a Claude settings object. */
 export function mergeClaudeHooks(settings: any, hookCmd: string): any {
   const next = structuredClone(settings ?? {});
   next.hooks ??= {};
@@ -161,12 +161,12 @@ function resolveLastAssistantText(payload: unknown): string | null {
 }
 
 /**
- * Map a Claude hook event name to a cockpit ControlEvent. Codifies the anti-#2576
+ * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
  * the lone terminalizing hook: the session is gone, so it maps to
  * task.session.ended → cancelled (#139) — silent, never done/failed.
- * Terminal `done`/`failed` come exclusively from explicit `cockpit crew signal`.
+ * Terminal `done`/`failed` come exclusively from explicit `squadrant crew signal`.
  *
  * Stop = turn boundary. It normally maps to task.turn.completed → awaiting-input
  * (stall-immune) so a captain reviewing output never trips a false CREW STALLED

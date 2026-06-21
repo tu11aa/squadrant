@@ -1,4 +1,4 @@
-import { resolveHome, type CockpitConfig } from "@squadrant/shared";
+import { resolveHome, type SquadrantConfig } from "@squadrant/shared";
 import type {
   WorkspaceDriver,
   WorkspaceFactory,
@@ -10,12 +10,12 @@ const DEFAULT_WORKSPACE = "obsidian";
 export class WorkspaceRegistry {
   constructor(private factories: Record<string, WorkspaceFactory>) {}
 
-  hub(config: CockpitConfig): WorkspaceDriver {
+  hub(config: SquadrantConfig): WorkspaceDriver {
     const name = config.workspace ?? DEFAULT_WORKSPACE;
     return this.get(name)({ root: resolveHome(config.hubVault) });
   }
 
-  forProject(projectName: string, config: CockpitConfig): WorkspaceDriver {
+  forProject(projectName: string, config: SquadrantConfig): WorkspaceDriver {
     const proj = config.projects[projectName];
     if (!proj) throw new Error(`Project '${projectName}' not found`);
     const name = proj.workspace ?? config.workspace ?? DEFAULT_WORKSPACE;
@@ -30,7 +30,7 @@ export class WorkspaceRegistry {
     return factory;
   }
 
-  async probeAll(config: CockpitConfig): Promise<Record<string, WorkspaceProbeResult>> {
+  async probeAll(config: SquadrantConfig): Promise<Record<string, WorkspaceProbeResult>> {
     const results: Record<string, WorkspaceProbeResult> = {};
     for (const [name, factory] of Object.entries(this.factories)) {
       const scope = { root: resolveHome(config.hubVault) };

@@ -93,7 +93,7 @@ function check(label: string, pass: boolean): boolean {
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
   .action(async () => {
-    console.log(chalk.bold("\nCockpit Doctor\n"));
+    console.log(chalk.bold("\nSquadrant Doctor\n"));
 
     const results: boolean[] = [];
 
@@ -198,7 +198,7 @@ export const doctorCommand = new Command("doctor")
 
     results.push(
       check(
-        "Cockpit config exists",
+        "Squadrant config exists",
         fs.existsSync(
           process.env.SQUADRANT_CONFIG ||
             `${process.env.HOME}/.config/squadrant/config.json`,

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, type CockpitConfig } from "@squadrant/shared";
+import { loadConfig, type SquadrantConfig } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import type { WorkspaceDriver } from "@squadrant/shared";
 
@@ -12,7 +12,7 @@ function buildRegistry(): WorkspaceRegistry {
 
 function resolveDriver(
   registry: WorkspaceRegistry,
-  config: CockpitConfig,
+  config: SquadrantConfig,
   projectTarget: string | undefined,
   useHub: boolean,
 ): WorkspaceDriver {
