@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mergeSnapshot } from "../snapshot-merge.js";
-import type { DaemonSnapshot } from "@cockpit/core";
+import type { DaemonSnapshot } from "@squadrant/core";
 import type { ExternalProbes } from "../probes.js";
 
 const external: ExternalProbes = {

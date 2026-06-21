@@ -1,4 +1,4 @@
-import type { WorkspaceDriver } from "@cockpit/shared";
+import type { WorkspaceDriver } from "@squadrant/shared";
 
 export function createMemoryDriver(initial: Record<string, string> = {}): WorkspaceDriver & {
   files: Map<string, string>;

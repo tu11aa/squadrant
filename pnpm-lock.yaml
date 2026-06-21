@@ -21,22 +21,22 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
     devDependencies:
-      '@cockpit/agents':
+      '@squadrant/agents':
         specifier: workspace:*
         version: link:packages/agents
-      '@cockpit/cli':
+      '@squadrant/cli':
         specifier: workspace:*
         version: link:packages/cli
-      '@cockpit/core':
+      '@squadrant/core':
         specifier: workspace:*
         version: link:packages/core
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:packages/shared
-      '@cockpit/web':
+      '@squadrant/web':
         specifier: workspace:*
         version: link:packages/web
-      '@cockpit/workspaces':
+      '@squadrant/workspaces':
         specifier: workspace:*
         version: link:packages/workspaces
       '@types/node':
@@ -54,28 +54,28 @@ importers:
 
   packages/agents:
     dependencies:
-      '@cockpit/core':
+      '@squadrant/core':
         specifier: workspace:*
         version: link:../core
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
 
   packages/cli:
     dependencies:
-      '@cockpit/agents':
+      '@squadrant/agents':
         specifier: workspace:*
         version: link:../agents
-      '@cockpit/core':
+      '@squadrant/core':
         specifier: workspace:*
         version: link:../core
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
-      '@cockpit/web':
+      '@squadrant/web':
         specifier: workspace:*
         version: link:../web
-      '@cockpit/workspaces':
+      '@squadrant/workspaces':
         specifier: workspace:*
         version: link:../workspaces
       chalk:
@@ -90,7 +90,7 @@ importers:
 
   packages/core:
     dependencies:
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
 
@@ -98,10 +98,10 @@ importers:
 
   packages/web:
     dependencies:
-      '@cockpit/core':
+      '@squadrant/core':
         specifier: workspace:*
         version: link:../core
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
       chalk:
@@ -110,10 +110,10 @@ importers:
 
   packages/workspaces:
     dependencies:
-      '@cockpit/core':
+      '@squadrant/core':
         specifier: workspace:*
         version: link:../core
-      '@cockpit/shared':
+      '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
 

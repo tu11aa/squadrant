@@ -1,13 +1,13 @@
-import type { CockpitConfig } from "../config.js";
+import type { SquadrantConfig } from "../config.js";
 
-export function readStamp(config: CockpitConfig): string | null {
-  return config._cockpitVersion ?? null;
+export function readStamp(config: SquadrantConfig): string | null {
+  return config._squadrantVersion ?? null;
 }
 
-export function needsCheck(config: CockpitConfig, pkgVersion: string): boolean {
+export function needsCheck(config: SquadrantConfig, pkgVersion: string): boolean {
   return readStamp(config) !== pkgVersion;
 }
 
-export function withStamp(config: CockpitConfig, pkgVersion: string): CockpitConfig {
-  return { ...config, _cockpitVersion: pkgVersion };
+export function withStamp(config: SquadrantConfig, pkgVersion: string): SquadrantConfig {
+  return { ...config, _squadrantVersion: pkgVersion };
 }

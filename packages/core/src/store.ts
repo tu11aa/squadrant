@@ -4,7 +4,7 @@ import {
   rmSync, statSync,
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import type { TaskRecord } from "@cockpit/shared";
+import type { TaskRecord } from "@squadrant/shared";
 
 export interface Store {
   put(rec: TaskRecord): void;

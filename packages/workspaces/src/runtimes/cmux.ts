@@ -1,8 +1,8 @@
 import { execFile, execFileSync } from "node:child_process";
 import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
-import { resolveCmuxBin } from "@cockpit/shared";
-import { checkToolCompat } from "@cockpit/shared";
-import { compatManifest } from "@cockpit/shared";
+import { resolveCmuxBin } from "@squadrant/shared";
+import { checkToolCompat } from "@squadrant/shared";
+import { compatManifest } from "@squadrant/shared";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -17,7 +17,7 @@ export class CmuxTimeoutError extends Error {
 }
 
 // Re-exported so root consumers keep the same import path (root → core direction).
-import { DeferDelivery } from "@cockpit/core";
+import { DeferDelivery } from "@squadrant/core";
 export { DeferDelivery };
 
 /** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
@@ -91,7 +91,7 @@ interface CmuxTreeJson {
 // Parse `cmux workspace list --json` into WorkspaceRefs. Replaces the old
 // regex over the human-readable `list-workspaces` text (audit B2). The display
 // name is the workspace's custom title when set (byte-identical to what the
-// text form showed, e.g. "⚓ cockpit-captain" — this is what cockpit matches
+// text form showed, e.g. "⚓ squadrant-captain" — this is what squadrant matches
 // captains by), falling back to the cwd for untitled workspaces.
 function parseList(output: string): WorkspaceRef[] {
   let parsed: CmuxWorkspaceListJson;
@@ -274,10 +274,10 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a
 // SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
 // lands as a newline instead of a submit, stranding the payload in the input box.
-// Root-causing needs ONE real frame in the wild. Gated behind COCKPIT_DEBUG_SEND
+// Root-causing needs ONE real frame in the wild. Gated behind SQUADRANT_DEBUG_SEND
 // so it is a strict no-op — zero extra reads, zero latency — when unset.
 export function sendDebugEnabled(): boolean {
-  return !!process.env.COCKPIT_DEBUG_SEND;
+  return !!process.env.SQUADRANT_DEBUG_SEND;
 }
 
 // Classify a post-send input-box read into a submit verdict for #339:
@@ -300,7 +300,7 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         const version = await cmux(["--version"]);
         const warn = checkToolCompat("cmux", version, compatManifest.tools.cmux);
-        if (warn) process.stderr.write(`[cockpit] ${warn}\n`);
+        if (warn) process.stderr.write(`[squadrant] ${warn}\n`);
         return { installed: true, version };
       } catch {
         return { installed: false, version: "" };
@@ -390,7 +390,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async stop(ref: string): Promise<void> {
       // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
-      // cockpit launch --fresh works even when the captain workspace is pinned.
+      // squadrant launch --fresh works even when the captain workspace is pinned.
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
       } catch { /* workspace may not be pinned — proceed to close regardless */ }
@@ -506,7 +506,7 @@ export function createCmuxDriver(): RuntimeDriver {
             postBox = readInputBoxRaw(await cmux(["read-screen", "--workspace", ws, "--surface", sf]));
           } catch { /* unreadable — leave postBox null, classified box-gone */ }
           const verdict = classifySendOutcome(payload, postBox);
-          process.stderr.write(`[cockpit] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
+          process.stderr.write(`[squadrant] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
         }
       };
 

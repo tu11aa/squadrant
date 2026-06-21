@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { TaskRecord, ControlEvent } from "@cockpit/shared";
+import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 
 export interface MailboxEntry {
   seq: number;
@@ -92,7 +92,7 @@ async function readMaxSeq(stateRoot: string, project: string): Promise<number> {
 //
 // For cross-process serialization (multi-daemon scenarios, e.g. launchctl
 // restart races), an OS-level flock would be needed on `<project>.log`.
-// Today cockpit runs a single daemon instance; the in-process mutex covers
+// Today squadrant runs a single daemon instance; the in-process mutex covers
 // the realistic concurrency model. flock can be added later if multi-process
 // access becomes a requirement.
 const projectLocks = new Map<string, Promise<unknown>>();

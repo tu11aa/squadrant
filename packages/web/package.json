@@ -1,5 +1,5 @@
 {
-  "name": "@cockpit/web",
+  "name": "@squadrant/web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,8 +8,8 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -b" },
   "dependencies": {
-    "@cockpit/core": "workspace:*",
-    "@cockpit/shared": "workspace:*",
+    "@squadrant/core": "workspace:*",
+    "@squadrant/shared": "workspace:*",
     "chalk": "^5.4.0"
   }
 }

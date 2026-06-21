@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import matter from "gray-matter";
-import { loadConfig } from "@cockpit/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
+import { loadConfig } from "@squadrant/shared";
+import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 
 interface StatusFrontmatter {
@@ -49,7 +49,7 @@ export const statusCommand = new Command("status")
     const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
 
     if (projects.length === 0) {
-      console.log(chalk.yellow("\nNo projects registered. Use: cockpit projects add <name> <path>\n"));
+      console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
     }
 

@@ -2,8 +2,8 @@
 // Surface-liveness probe logic for the daemon-direct delivery path.
 import { createInteractiveProbe } from "./interactive-probe.js";
 import { createDirectCrewPaneReader, createDirectSurfaceLivenessProbe } from "../crew-pane-reader.js";
-import { loadConfig } from "@cockpit/shared";
-import type { TaskRecord } from "@cockpit/shared";
+import { loadConfig } from "@squadrant/shared";
+import type { TaskRecord } from "@squadrant/shared";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import type { DaemonContext } from "./context.js";
 

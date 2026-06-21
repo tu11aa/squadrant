@@ -36,7 +36,7 @@ export interface Gate {
 
 export interface TaskRecord {
   id: string;
-  /** Human-readable crew name (e.g. the `--name` arg to `cockpit crew spawn`).
+  /** Human-readable crew name (e.g. the `--name` arg to `squadrant crew spawn`).
    *  Optional for backward-compat with records written before this field
    *  existed; relay/daemon fall back to the short id when absent. */
   name?: string;
@@ -102,7 +102,7 @@ export type ControlEvent =
   | { type: "task.approval.requested"; id: string; requestId: number; question: string; kind: string }
   | { type: "task.reattached"; id: string }
   // Reopen: the only event allowed to revive a terminal task. Emitted by
-  // `cockpit crew send` when the target crew's daemon task is in a terminal
+  // `squadrant crew send` when the target crew's daemon task is in a terminal
   // state, allowing the next `signal done` to be a real transition.
   | { type: "task.reopened"; id: string }
   // Synthetic events: emitted by the daemon (watchdog / reconcile) purely as

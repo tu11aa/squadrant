@@ -10,7 +10,7 @@ vi.mock("node:child_process", () => ({
   execSync: execSyncMock,
 }));
 
-vi.mock("@cockpit/workspaces", () => ({
+vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
     probe,
@@ -36,8 +36,8 @@ vi.mock("@cockpit/workspaces", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/shared", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+vi.mock("@squadrant/shared", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return { ...actual, loadConfig, resolveHome: (p: string) => p };
 });
 
@@ -48,7 +48,7 @@ const claudeDriver = vi.hoisted(() => ({
   buildCommand,
 }));
 
-vi.mock("@cockpit/agents", () => ({
+vi.mock("@squadrant/agents", () => ({
   createClaudeDriver: () => claudeDriver,
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
@@ -61,7 +61,7 @@ vi.mock("@cockpit/agents", () => ({
 
 import { runCommandSpawn } from "../command.js";
 
-describe("cockpit command", () => {
+describe("squadrant command", () => {
   beforeEach(() => {
     newPane.mockReset();
     sendToPane.mockReset();

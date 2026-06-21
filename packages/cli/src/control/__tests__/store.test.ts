@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStore } from "@cockpit/core";
-import type { TaskRecord } from "@cockpit/shared";
+import { createStore } from "@squadrant/core";
+import type { TaskRecord } from "@squadrant/shared";
 
 function rec(id: string): TaskRecord {
   return {

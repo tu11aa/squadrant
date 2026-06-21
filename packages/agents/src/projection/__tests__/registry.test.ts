@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ProjectionRegistry } from "../registry.js";
-import type { ProjectionEmitter } from "@cockpit/shared";
+import type { ProjectionEmitter } from "@squadrant/shared";
 
 function stub(name: string): () => ProjectionEmitter {
   return () => ({

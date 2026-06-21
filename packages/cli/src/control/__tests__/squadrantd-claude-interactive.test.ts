@@ -1,12 +1,12 @@
-// src/control/__tests__/cockpitd-claude-interactive.test.ts
+// src/control/__tests__/squadrantd-claude-interactive.test.ts
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "@cockpit/core";
+import { startSquadrantd } from "../squadrantd.js";
+import { sendRequest } from "@squadrant/core";
 
-describe("cockpitd claude interactive wiring", () => {
+describe("squadrantd claude interactive wiring", () => {
   let stop: (() => Promise<void>) | undefined;
   let dir: string;
   afterEach(async () => {
@@ -17,7 +17,7 @@ describe("cockpitd claude interactive wiring", () => {
   it("dispatch claude interactive → state transitions submitted → working", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-claude-iv-"));
     const sock = join(dir, "c.sock");
-    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
+    const h = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
     stop = h.stop;
 
     const disp = (await sendRequest(sock, {
@@ -47,7 +47,7 @@ describe("cockpitd claude interactive wiring", () => {
   it("task.progress events keep state working; task.done transitions to done", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-claude-iv-"));
     const sock = join(dir, "c.sock");
-    const h = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
+    const h = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0 });
     stop = h.stop;
 
     await sendRequest(sock, {
@@ -77,7 +77,7 @@ describe("cockpitd claude interactive wiring", () => {
     expect(prog.state).toBe("working");
     expect(prog.lastEvent).toBe("task.progress");
 
-    // Simulate `cockpit crew signal done`.
+    // Simulate `squadrant crew signal done`.
     const done = (await sendRequest(sock, {
       kind: "event",
       project: "p",
@@ -97,7 +97,7 @@ describe("cockpitd claude interactive wiring", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-claude-iv-"));
     const sock = join(dir, "c.sock");
     const launched: string[] = [];
-    const h = startCockpitd({
+    const h = startSquadrantd({
       stateRoot: join(dir, "state"),
       sockPath: sock,
       sweepMs: 0,

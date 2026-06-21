@@ -290,7 +290,7 @@
         <thead><tr><th>Package</th><th>Contents</th><th>Depends on</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code style="color:var(--shared)">@cockpit/shared</code></td><td>Config schema, TypeScript types, leaf constants</td><td>—</td><td>Zero internal deps. Imported by everything.</td></tr>
-          <tr><td><code style="color:var(--core)">@cockpit/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, relay, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
+          <tr><td><code style="color:var(--core)">@cockpit/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
           <tr><td><code style="color:var(--agents)">@cockpit/agents</code></td><td>AI driver seam: <code>claude.ts</code>, <code>codex.ts</code>, <code>opencode.ts</code>, <code>gemini.ts</code> + registry</td><td>core, shared</td><td>Implements <code>AgentDriver</code>. Swap here to add a new AI agent.</td></tr>
           <tr><td><code style="color:var(--workspaces)">@cockpit/workspaces</code></td><td>Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
           <tr><td><code style="color:var(--web)">@cockpit/web</code></td><td>Observability dashboard — bundled HTML/JS served by CLI</td><td>core, shared</td><td>Read-only UI; no agent-facing code. Bundled inline by CLI's tsup build.</td></tr>

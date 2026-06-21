@@ -11,10 +11,10 @@ A side-session is a dedicated tab with **fresh context** running the captain mod
 
 ```bash
 # Research a topic, discuss an idea, produce a spec or GH issue
-cockpit side spawn <project> "<topic>" --role research
+squadrant side spawn <project> "<topic>" --role research
 
 # Debug a bug in an isolated scratch worktree
-cockpit side spawn <project> "<topic>" --role debug
+squadrant side spawn <project> "<topic>" --role debug
 ```
 
 Options:
@@ -26,9 +26,9 @@ Options:
 ## Manage side-sessions
 
 ```bash
-cockpit side list <project>                               # see live side tabs
-cockpit side send <project> <name> "<follow-up>"          # send a follow-up turn
-cockpit side close <project> <name>                       # close when done
+squadrant side list <project>                               # see live side tabs
+squadrant side send <project> <name> "<follow-up>"          # send a follow-up turn
+squadrant side close <project> <name>                       # close when done
 ```
 
 ## Role: research
@@ -62,8 +62,8 @@ If the topic already contains all of this, it confirms and proceeds. Otherwise i
 2. Session asks: "Notify the primary captain now? (y/n)"
 3. On yes:
    - Writes durable record: {spokeVault}/side-handoffs/<topic>.md
-   - Sends: cockpit runtime send <project> "🗒 Side handoff [<role>] — <topic> ..."
-4. Primary captain receives handoff via relay.
+   - Sends: squadrant runtime send <project> "🗒 Side handoff [<role>] — <topic> ..."
+4. Primary captain receives handoff delivered daemon-direct via cmux (#332).
 5. Captain does NOT auto-spawn a crew — waits for user's go.
 ```
 
@@ -91,23 +91,23 @@ When the user asks you to start a side session, spawn one:
 
 ```bash
 # Research
-cockpit side spawn <project> "<the research question or topic>" --role research
+squadrant side spawn <project> "<the research question or topic>" --role research
 
 # Debug — creates a scratch worktree; pruned automatically on close
-cockpit side spawn <project> "<the bug description>" --role debug
+squadrant side spawn <project> "<the bug description>" --role debug
 ```
 
 Note the session name from the output (e.g. `side-1`) and tell the user they can steer it with:
 
 ```bash
-cockpit side send <project> side-1 "<follow-up>"
-cockpit side close <project> side-1
+squadrant side send <project> side-1 "<follow-up>"
+squadrant side close <project> side-1
 ```
 
-When the session completes, its handoff will arrive via relay with the `🗒 Side handoff` prefix.
+When the session completes, its handoff is delivered daemon-direct via cmux (#332) with the `🗒 Side handoff` prefix.
 
 ## Key invariants
 
-`cockpit side spawn` does **NOT** create a daemon task record. There is no `CREW IDLE/DONE` event for side-sessions. The only signal path is the explicit `cockpit runtime send` the side-session sends on user confirmation.
+`squadrant side spawn` does **NOT** create a daemon task record. There is no `CREW IDLE/DONE` event for side-sessions. The only signal path is the explicit `squadrant runtime send` the side-session sends on user confirmation.
 
-`cockpit side close` on a debug session automatically prunes its scratch worktree (the branch is preserved so the draft patch survives).
+`squadrant side close` on a debug session automatically prunes its scratch worktree (the branch is preserved so the draft patch survives).

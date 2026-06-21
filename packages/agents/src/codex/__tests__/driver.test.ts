@@ -115,7 +115,7 @@ describe("CodexInteractiveDriver.dispatch", () => {
     expect(resolveCodexModelMock).not.toHaveBeenCalled();
   });
 
-  it("runs codex crews with danger-full-access (parity with unsandboxed claude/opencode) so `cockpit crew signal` reaches the daemon socket", async () => {
+  it("runs codex crews with danger-full-access (parity with unsandboxed claude/opencode) so `squadrant crew signal` reaches the daemon socket", async () => {
     const client = fakeClient();
     const drv = new CodexInteractiveDriver({ makeClient: () => client, emit: () => {} });
     await drv.dispatch({
@@ -171,7 +171,7 @@ describe("CodexInteractiveDriver.dispatch", () => {
     expect(dev).toContain("ROLE BODY");
     expect(dev).toContain("task-42");
     expect(dev).toContain("demo");
-    expect(dev).toContain("cockpit crew signal done --task-id task-42 --project demo");
+    expect(dev).toContain("squadrant crew signal done --task-id task-42 --project demo");
   });
 
   it("routes serverRequest with no threadId to the sole active task", async () => {

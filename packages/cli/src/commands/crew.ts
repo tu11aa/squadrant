@@ -3,27 +3,27 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
-import { addWorktree, removeWorktree, resolveWorktreeBase, resolveTextInput, TERMINAL_STATES } from "@cockpit/shared";
-import type { TaskRecord } from "@cockpit/shared";
+import { loadConfig } from "@squadrant/shared";
+import { addWorktree, removeWorktree, resolveWorktreeBase, resolveTextInput, TERMINAL_STATES } from "@squadrant/shared";
+import type { TaskRecord } from "@squadrant/shared";
 import { resolveCrewRoute } from "../control/crew-routing.js";
-import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
-import { listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady, getFreePort } from "@cockpit/workspaces";
-import type { PaneRef, PanePlacement, RuntimeDriver } from "@cockpit/workspaces";
+import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
+import { listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady, getFreePort } from "@squadrant/workspaces";
+import type { PaneRef, PanePlacement, RuntimeDriver } from "@squadrant/workspaces";
 import {
   createClaudeDriver,
   createCodexDriver,
   createGeminiDriver,
   createOpencodeDriver,
   CapabilityRegistry,
-} from "@cockpit/agents";
-import { buildDispatchRequest, cockpitdCall, sendCodexFirstTurn } from "./crew-control.js";
+} from "@squadrant/agents";
+import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
-import { buildCompletionProtocol, shellQuote, titleFor, nameFromTitle, nextAutoName, reapCrewChildren } from "@cockpit/core";
-import type { TurnAcceptanceConfig } from "@cockpit/core";
+import { buildCompletionProtocol, shellQuote, titleFor, nameFromTitle, nextAutoName, reapCrewChildren } from "@squadrant/core";
+import type { TurnAcceptanceConfig } from "@squadrant/core";
 
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
 // Base branch for `--worktree` crew branches is derived at spawn time from
 // origin/HEAD so repos using main, trunk, etc. work out of the box (#359).
@@ -56,14 +56,14 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   const config = loadConfig();
   const proj = config.projects[input.project];
   if (!proj) {
-    throw new Error(`Project '${input.project}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${input.project}' not found. Run 'squadrant projects list'.`);
   }
 
   const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(input.project, config);
   const captain = await runtime.status(proj.captainName);
   if (!captain) {
     throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${input.project}' first.`,
+      `Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${input.project}' first.`,
     );
   }
 
@@ -73,7 +73,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const wantTitle = titleFor(input.project, input.name);
     if (existingTitles.includes(wantTitle)) {
       throw new Error(
-        `Crew '${input.name}' already exists for ${input.project}. Use 'cockpit crew send ${input.project} ${input.name}' to send a follow-up, or pick a different --name.`,
+        `Crew '${input.name}' already exists for ${input.project}. Use 'squadrant crew send ${input.project} ${input.name}' to send a follow-up, or pick a different --name.`,
       );
     }
   }
@@ -156,12 +156,12 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   const crewModel = input.model ?? route?.model ?? configModel;
 
   // Claude crews route through the control-plane daemon (PR #85 + this spec)
-  // so the captain learns terminal state via `cockpit crew status` instead
+  // so the captain learns terminal state via `squadrant crew status` instead
   // of scraping the pane. The cmux tab still does the actual CLI launch —
   // the daemon doesn't own Claude's PID (Approach 3 boundary). Hook bridge
-  // (per-crew settings.json with Stop/SubagentStop/SessionEnd → cockpit
+  // (per-crew settings.json with Stop/SubagentStop/SessionEnd → squadrant
   // crew _hook) keeps the daemon's heartbeat fresh; explicit
-  // `cockpit crew signal done` from the crew template emits terminal state.
+  // `squadrant crew signal done` from the crew template emits terminal state.
   if (agentName === "claude") {
     const req = buildDispatchRequest({
       provider: "claude",
@@ -172,8 +172,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       name,
     });
     // Fail loud if daemon unreachable — refusal-to-degrade.
-    const rec = (await cockpitdCall(req)) as TaskRecord;
-    // Write cockpit hooks to <cwd>/.claude/settings.local.json so they are
+    const rec = (await squadrantdCall(req)) as TaskRecord;
+    // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. The cmux claude wrapper
     // injects its own hooks via --settings (level 2 precedence), but hooks
     // merge across *different* settings sources — only multiple --settings
@@ -186,7 +186,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       role: "crew",
       promptFile,
       interactive: true,
-      // Permission mode is config-driven (defaults.permissions.crew) so cockpit
+      // Permission mode is config-driven (defaults.permissions.crew) so squadrant
       // can default crews to 'auto' or keep the semi-automatic 'acceptEdits'
       // gate (auto-accept edits, still prompt for risky ops). Falls back to
       // 'acceptEdits' when unset.
@@ -198,7 +198,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     // Prefix the CLI command with env so the hook bridge + signal verb
     // running inside the crew's cmux tab can identify their task.
-    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
     await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
@@ -206,10 +206,10 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
   }
 
   // Opencode crews route through the control-plane daemon so the captain
-  // learns terminal state via `cockpit crew status` instead of scraping the
+  // learns terminal state via `squadrant crew status` instead of scraping the
   // pane. Same approach as claude: daemon owns the state ledger, cmux tab
   // does the actual CLI launch. No hook bridge (opencode has no hooks); the
-  // crew template instructs explicit `cockpit crew signal done|blocked|failed`.
+  // crew template instructs explicit `squadrant crew signal done|blocked|failed`.
   if (agentName === "opencode") {
     // Bind the crew's embedded opencode HTTP server on a known port so the
     // daemon's SSE bridge can subscribe to /event for turn-end detection.
@@ -227,9 +227,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
       budgetMs: 86400000,
       serverPort,
     });
-    const rec = (await cockpitdCall(req)) as TaskRecord;
+    const rec = (await squadrantdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({
-      stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
+      stateRoot: path.join(os.homedir(), ".config", "squadrant", "state"),
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.
@@ -248,7 +248,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
-    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
     await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
@@ -312,14 +312,14 @@ async function runCodexInteractiveSpawn(o: {
     ...(o.approvalPolicy ? { approvalPolicy: o.approvalPolicy } : {}),
     ...(o.roleInstructions ? { roleInstructions: o.roleInstructions } : {}),
   });
-  const rec = (await cockpitdCall(req)) as TaskRecord;
+  const rec = (await squadrantdCall(req)) as TaskRecord;
   const title = titleFor(o.project, o.name);
   const pane = await o.runtime.newPane({
     workspaceId: o.workspaceId,
     direction: o.direction,
     title,
   });
-  await o.runtime.sendToPane(pane, `cockpit crew attach ${rec.id}`);
+  await o.runtime.sendToPane(pane, `squadrant crew attach ${rec.id}`);
   // Match the claude UX where the task arg becomes the first turn. The codex
   // dispatch only opens the thread; the task text never reaches the model
   // unless we send it. Fire-and-forget: the renderer in the tab will pick up
@@ -337,7 +337,7 @@ export async function runCrewSend(project: string, name: string, message: string
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const crew = await findCrew(runtime, workspaceId, project, name);
   if (!crew) {
-    throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
+    throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
   // Best-effort attention-state handling before delivering the captain's answer.
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
@@ -346,13 +346,13 @@ export async function runCrewSend(project: string, name: string, message: string
   // hits the idempotency guard (state-machine:69) and the captain misses it.
   // Awaiting-input task: same resume — crew re-enters working so the next block fires.
   try {
-    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
     const task = tasks.find((t) => t.name === name);
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.reopened", id: task.id } });
       } else if (task.state === "blocked" || task.state === "awaiting-input") {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.started", id: task.id } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.started", id: task.id } });
       }
     }
   } catch {
@@ -366,7 +366,7 @@ export async function runCrewRead(project: string, name: string): Promise<string
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const crew = await findCrew(runtime, workspaceId, project, name);
   if (!crew) {
-    throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
+    throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
   return runtime.readPaneScreen(crew);
 }
@@ -390,7 +390,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   // close is unaffected (#216).
   let worktreeCwd: string | undefined;
   try {
-    const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
     const task = tasks.find((t) => t.name === name);
     if (task) {
       taskId = task.id;
@@ -398,7 +398,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
         worktreeCwd = task.cwd;
       }
       if (!TERMINAL_STATES.has(task.state)) {
-        await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
+        await squadrantdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "closed by captain" } });
       }
       // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
       // (and its per-thread MCP servers) live on the shared app-server, so closing
@@ -406,7 +406,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
       // terminal and non-terminal crews alike (a finished codex crew still holds a
       // live thread until archived).
       if (task.provider === "codex") {
-        await cockpitdCall({ kind: "codex-close", taskId: task.id });
+        await squadrantdCall({ kind: "codex-close", taskId: task.id });
       }
     }
   } catch {
@@ -420,7 +420,7 @@ export async function runCrewClose(project: string, name: string): Promise<void>
   if (crew) {
     await runtime.closePane(crew);
   } else if (taskId === undefined) {
-    throw new Error(`Crew '${name}' not found for ${project}. Run 'cockpit crew list ${project}'.`);
+    throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
   // Reap any surviving child processes (vitest workers, node subprocs, etc.)
   // that the cmux pane-close cascade may have missed.

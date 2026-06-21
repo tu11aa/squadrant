@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
-import type { CockpitConfig } from "@cockpit/shared";
-import { loadConfig } from "@cockpit/shared";
-import { resolveCmuxBin } from "@cockpit/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
+import { loadConfig } from "@squadrant/shared";
+import { resolveCmuxBin } from "@squadrant/shared";
 
 export type ProbeState = "alive" | "stale" | "gone" | "unknown";
 
@@ -46,7 +46,7 @@ export interface ProbeRunners {
   /** a directory/file exists (sync stat). */
   pathExists: (p: string) => boolean;
   /** load + parse config.json; throws when unparseable. */
-  loadConfig: () => CockpitConfig;
+  loadConfig: () => SquadrantConfig;
   /** distinct templateHash values recorded in sessions.json; throws when unreadable. */
   loadSessionsHashes: () => string[];
 }
@@ -115,7 +115,7 @@ function spokeProbe(run: ProbeRunners, dir: string): Probe {
   }
 }
 
-export function probeVaults(run: ProbeRunners, config: CockpitConfig): ExternalProbes["vaults"] {
+export function probeVaults(run: ProbeRunners, config: SquadrantConfig): ExternalProbes["vaults"] {
   return {
     hub: { path: config.hubVault, ...vaultProbe(run, config.hubVault) },
     spokes: Object.entries(config.projects).map(([project, p]) => ({
@@ -130,7 +130,7 @@ export function probeVaults(run: ProbeRunners, config: CockpitConfig): ExternalP
 
 export function probeProjectPaths(
   run: ProbeRunners,
-  config: CockpitConfig,
+  config: SquadrantConfig,
 ): Array<{ project: string; path: string } & Probe> {
   return Object.entries(config.projects).map(([project, p]) => {
     try {
@@ -179,7 +179,7 @@ export async function runExternalProbes(
     probeAgentClis(run, timeoutMs),
   ]);
 
-  let config: CockpitConfig | null = null;
+  let config: SquadrantConfig | null = null;
   let parseable: Probe;
   try {
     config = run.loadConfig();
@@ -199,7 +199,7 @@ export async function runExternalProbes(
 
 // ── Default real-I/O runners (dashboard process; not unit-tested) ──────────────
 
-const SESSIONS_PATH = join(homedir(), ".config", "cockpit", "sessions.json");
+const SESSIONS_PATH = join(homedir(), ".config", "squadrant", "sessions.json");
 
 /** Resolve a bare binary name against the PATH dirs (dependency-free `which`). */
 function onPath(cli: string): boolean {
@@ -218,7 +218,7 @@ function readSessionsHashes(): string[] {
   return [...new Set(hashes)];
 }
 
-/** The real runners used by `cockpit dashboard --web`. */
+/** The real runners used by `squadrant dashboard --web`. */
 export function defaultProbeRunners(): ProbeRunners {
   return {
     probeCmuxBin: () =>

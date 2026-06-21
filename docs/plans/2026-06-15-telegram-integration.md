@@ -1,5 +1,7 @@
 # Telegram Integration Implementation Plan
 
+> **POST-#332 NOTE:** This plan assumes the `notify-relay` transport, which was **deleted in #332**. Inbound/outbound messages now ride **daemon-direct cmux delivery**. Rebase the transport assumptions below onto daemon-direct before resuming implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Drive cockpit from Telegram — push curated crew lifecycle events to per-session Telegram forum topics, and route replies back to the captain.

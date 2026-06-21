@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeGate, resolveGate, timeoutGate } from "@cockpit/core";
+import { makeGate, resolveGate, timeoutGate } from "@squadrant/core";
 
 describe("gate helpers (pure)", () => {
   it("makeGate creates a pending gate with given id, createdAt, kind, question", () => {

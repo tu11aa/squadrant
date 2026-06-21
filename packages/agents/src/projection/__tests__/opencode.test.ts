@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpencodeEmitter } from "../opencode.js";
-import type { ProjectionSource } from "@cockpit/shared";
+import type { ProjectionSource } from "@squadrant/shared";
 import { MARKER_START, MARKER_END } from "../marker.js";
 
 const fsMock = vi.hoisted(() => ({
@@ -39,7 +39,7 @@ describe("OpencodeEmitter", () => {
     expect(dest.shared).toBe(true);
   });
 
-  it("emit wraps content in cockpit markers when file is new", async () => {
+  it("emit wraps content in squadrant markers when file is new", async () => {
     const emitter = createOpencodeEmitter();
     const [dest] = emitter.destinations("user");
     await emitter.emit(source, dest);
@@ -84,7 +84,7 @@ describe("OpencodeEmitter", () => {
     expect(fsMock.writeFile).not.toHaveBeenCalled();
   });
 
-  it("emit writes role-template sections inside the cockpit marker block (#45)", async () => {
+  it("emit writes role-template sections inside the squadrant marker block (#45)", async () => {
     const roleSource: ProjectionSource = {
       instructions: "## Captain Role\n\nC body\n\n## Crew Role\n\nW body",
       skills: [],

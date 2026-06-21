@@ -3,8 +3,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "@cockpit/core";
+import { startSquadrantd } from "../squadrantd.js";
+import { sendRequest } from "@squadrant/core";
 
 describe("integration: daemon restart mid-task (success criterion)", () => {
   let stop: (() => void) | undefined; let dir: string;
@@ -18,7 +18,7 @@ describe("integration: daemon restart mid-task (success criterion)", () => {
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
 
-    let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    let h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     // Construct the precondition (a WORKING interactive task) via `seed`, not
     // `dispatch`: red-team #4 fix makes interactive dispatch fail-loud until the
     // deferred interactive launcher exists.
@@ -32,7 +32,7 @@ describe("integration: daemon restart mid-task (success criterion)", () => {
     h.stop();
 
     // restart — reconcile() runs on boot; the crew's pane is gone (session died)
-    h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, isSurfaceAlive: async () => "gone" });
+    h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, isSurfaceAlive: async () => "gone" });
     stop = h.stop;
 
     const st: any = await pollStatus(sock, "t1", (s) => s.state === "cancelled");
@@ -50,7 +50,7 @@ describe("integration: daemon restart mid-task (success criterion)", () => {
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
 
-    let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+    let h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
     await sendRequest(sock, { kind: "seed", record: {
       id: "t1", project: "p", provider: "claude", mode: "interactive",
       state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
@@ -58,7 +58,7 @@ describe("integration: daemon restart mid-task (success criterion)", () => {
       attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
     h.stop();
 
-    h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, isSurfaceAlive: async () => "unknown" });
+    h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, isSurfaceAlive: async () => "unknown" });
     stop = h.stop;
 
     const st: any = await sendRequest(sock, { kind: "status", project: "p", id: "t1" });
@@ -92,7 +92,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
     const stateRoot = join(dir, "state");
     try {
       // Seed a working headless task with a pid into a live daemon, then stop it.
-      const first = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+      const first = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
       await sendRequest(sock, { kind: "seed", record: {
         id: "h1", project: "p", provider: "claude", mode: "headless",
         state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
@@ -102,7 +102,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
       first.stop();
 
       // Restart with isPidAlive: () => false (simulating the child died while daemon was down).
-      const dead = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, isPidAlive: () => false });
+      const dead = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, isPidAlive: () => false });
       const st: any = await sendRequest(sock, { kind: "status", project: "p", id: "h1" });
       dead.stop();
 
@@ -123,7 +123,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
     const stateRoot = join(dir, "state");
     try {
       // Seed a working headless task with a pid, then stop daemon.
-      const first = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+      const first = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
       await sendRequest(sock, { kind: "seed", record: {
         id: "h2", project: "p", provider: "claude", mode: "headless",
         state: "working", task: "x", createdAt: 1, lastHeartbeat: 1,
@@ -133,7 +133,7 @@ describe("integration: headless dead-pid conservative crash recovery", () => {
       first.stop();
 
       // Restart with isPidAlive: () => true (child survived the daemon bounce).
-      const alive = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, isPidAlive: () => true });
+      const alive = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, isPidAlive: () => true });
       const st: any = await sendRequest(sock, { kind: "status", project: "p", id: "h2" });
       alive.stop();
 

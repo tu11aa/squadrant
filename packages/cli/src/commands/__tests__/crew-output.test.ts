@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { tailLines, formatTaskLine, filterTasks, formatCompactTasks } from "../crew-output.js";
-import type { TaskRecord, TaskState } from "@cockpit/shared";
+import type { TaskRecord, TaskState } from "@squadrant/shared";
 
 // ─── tailLines ───────────────────────────────────────────────────
 

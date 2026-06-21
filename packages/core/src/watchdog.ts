@@ -1,5 +1,5 @@
 // src/control/watchdog.ts
-import type { TaskRecord } from "@cockpit/shared";
+import type { TaskRecord } from "@squadrant/shared";
 
 /**
  * #354: how long an interactive tool call may be in flight before it is treated

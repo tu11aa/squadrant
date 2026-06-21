@@ -5,8 +5,8 @@ describe("buildSignalRequest", () => {
   const SAVED = { ...process.env };
 
   beforeEach(() => {
-    process.env.COCKPIT_CREW_TASK_ID = "task-xyz";
-    process.env.COCKPIT_CREW_PROJECT = "alpha";
+    process.env.SQUADRANT_CREW_TASK_ID = "task-xyz";
+    process.env.SQUADRANT_CREW_PROJECT = "alpha";
   });
 
   afterEach(() => {
@@ -67,22 +67,22 @@ describe("buildSignalRequest", () => {
     expect((req.event as { type: string; error: string }).error).toBe("crew signaled failed");
   });
 
-  it("missing COCKPIT_CREW_TASK_ID → throws", () => {
-    delete process.env.COCKPIT_CREW_TASK_ID;
-    expect(() => buildSignalRequest("done", {})).toThrow(/COCKPIT_CREW_TASK_ID/);
+  it("missing SQUADRANT_CREW_TASK_ID → throws", () => {
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    expect(() => buildSignalRequest("done", {})).toThrow(/SQUADRANT_CREW_TASK_ID/);
   });
 
-  it("missing COCKPIT_CREW_PROJECT → throws", () => {
-    delete process.env.COCKPIT_CREW_PROJECT;
-    expect(() => buildSignalRequest("done", {})).toThrow(/COCKPIT_CREW_PROJECT/);
+  it("missing SQUADRANT_CREW_PROJECT → throws", () => {
+    delete process.env.SQUADRANT_CREW_PROJECT;
+    expect(() => buildSignalRequest("done", {})).toThrow(/SQUADRANT_CREW_PROJECT/);
   });
 
   // The codex case: a long-lived shared app-server serves all codex tasks as
   // threads, so a process-level env var is unsafe. Explicit flags let a codex
   // crew signal its own task with NO env vars set.
   it("explicit taskId+project flags build a targeted request with NO env set (codex case)", () => {
-    delete process.env.COCKPIT_CREW_TASK_ID;
-    delete process.env.COCKPIT_CREW_PROJECT;
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    delete process.env.SQUADRANT_CREW_PROJECT;
     const req = buildSignalRequest("done", { taskId: "X", project: "P", message: "m" });
     expect(req.project).toBe("P");
     expect(req.event).toMatchObject({ type: "task.done", id: "X", message: "m" });

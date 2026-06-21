@@ -80,7 +80,7 @@ export interface ServerCallbacks {
  * paces the restart instead of tight-looping. Tests inject a spy.
  */
 export function defaultListenError(e: Error): void {
-  process.stderr.write(`[cockpitd] ${new Date().toISOString()} server error: ${e.message}\n`);
+  process.stderr.write(`[squadrantd] ${new Date().toISOString()} server error: ${e.message}\n`);
   process.exit(1);
 }
 
@@ -205,7 +205,7 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
         clearTimeout(timer);
         conn.destroy();
         if (m._v !== undefined && m._v !== PROTOCOL_VERSION) {
-          reject(new Error(`cockpitd protocol v${m._v}, this client expects v${PROTOCOL_VERSION} — upgrade cockpitd or this CLI`));
+          reject(new Error(`squadrantd protocol v${m._v}, this client expects v${PROTOCOL_VERSION} — upgrade squadrantd or this CLI`));
         } else if (m.ok) {
           resolve(m.reply);
         } else {
@@ -216,13 +216,13 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
     });
     conn.on("error", () => {
       clearTimeout(timer);
-      reject(new Error("control plane unavailable: cannot reach cockpitd socket"));
+      reject(new Error("control plane unavailable: cannot reach squadrantd socket"));
     });
   });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Streaming-subscribe frames for `cockpit crew chat / attach` (spec §4.5).
+// Streaming-subscribe frames for `squadrant crew chat / attach` (spec §4.5).
 // Additive; existing request/response verbs untouched. Cooperates with #87.
 
 export type AttachFrame =

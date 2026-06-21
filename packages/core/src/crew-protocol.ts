@@ -43,9 +43,9 @@ export function buildCompletionProtocol(taskId: string, project: string): string
   return [
     "---",
     "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:",
-    `  cockpit crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
+    `  squadrant crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
     "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
-    `  cockpit crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
+    `  squadrant crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
   ].join("\n");
 }
 

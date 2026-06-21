@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { AppServerClient } from "@cockpit/agents";
+import { AppServerClient } from "@squadrant/agents";
 import { resolve } from "node:path";
 
 export const codexChatSmokeCommand = new Command("codex-chat-smoke")
@@ -12,7 +12,7 @@ export const codexChatSmokeCommand = new Command("codex-chat-smoke")
     false
   )
   .action(async (opts: { cwd: string; model?: string; approval: boolean }) => {
-    const c = new AppServerClient({ clientInfo: { name: "cockpit", version: "smoke" } });
+    const c = new AppServerClient({ clientInfo: { name: "squadrant", version: "smoke" } });
     const transcript: string[] = [];
     c.on("notification", (n) =>
       transcript.push(`> ${n.method} ${JSON.stringify(n.params).slice(0, 200)}`)
@@ -47,7 +47,7 @@ export const codexChatSmokeCommand = new Command("codex-chat-smoke")
         c.respondToServerRequest(r.id, { decision: "approve" });
       });
       // Ask codex to do something that needs approval (writing a file).
-      await c.sendTurn(threadId, `Write the text "approval-ok" to a file at ${resolve(opts.cwd)}/.cockpit-smoke.txt`);
+      await c.sendTurn(threadId, `Write the text "approval-ok" to a file at ${resolve(opts.cwd)}/.squadrant-smoke.txt`);
       if (pendingApprovals.length === 0) {
         throw new Error("approval gate: expected at least one server-request (approval/input) during the turn");
       }

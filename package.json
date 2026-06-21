@@ -1,11 +1,12 @@
 {
-  "name": "claude-cockpit",
+  "name": "squadrant",
   "packageManager": "pnpm@10.30.3",
-  "version": "0.8.2",
-  "description": "Multi-project agent orchestration for Claude Code",
+  "version": "0.9.0",
+  "description": "Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)",
   "type": "module",
   "bin": {
-    "cockpit": "./dist/index.js"
+    "squadrant": "./dist/index.js",
+    "squad": "./dist/index.js"
   },
   "files": [
     "dist/",
@@ -21,7 +22,8 @@
     "codex:gen-types": "bash scripts/gen-codex-types.sh"
   },
   "keywords": [
-    "claude-code",
+    "squadrant",
+    "multi-agent",
     "agent",
     "orchestration",
     "cmux",
@@ -39,12 +41,12 @@
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
-    "@cockpit/cli": "workspace:*",
-    "@cockpit/core": "workspace:*",
-    "@cockpit/agents": "workspace:*",
-    "@cockpit/shared": "workspace:*",
-    "@cockpit/workspaces": "workspace:*",
-    "@cockpit/web": "workspace:*",
+    "@squadrant/cli": "workspace:*",
+    "@squadrant/core": "workspace:*",
+    "@squadrant/agents": "workspace:*",
+    "@squadrant/shared": "workspace:*",
+    "@squadrant/workspaces": "workspace:*",
+    "@squadrant/web": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
@@ -54,5 +56,13 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tu11aa/squadrant.git"
+  },
+  "homepage": "https://github.com/tu11aa/squadrant#readme",
+  "bugs": {
+    "url": "https://github.com/tu11aa/squadrant/issues"
   }
 }

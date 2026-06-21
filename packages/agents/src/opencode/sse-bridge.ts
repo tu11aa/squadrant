@@ -1,18 +1,18 @@
 // src/control/opencode/sse-bridge.ts
-// Daemon-side bridge from an opencode crew's HTTP event bus to cockpit
+// Daemon-side bridge from an opencode crew's HTTP event bus to squadrant
 // ControlEvents. Interactive opencode crews launch as `opencode --port <N>`,
 // which binds a local HTTP server exposing an SSE stream at GET /event. The TUI
 // itself is just one client of that server; the daemon is another. We subscribe
 // once per crew and translate the documented `session.idle` event (emitted when
 // a turn finishes) into `task.turn.completed`, which the state-machine reduces
 // to `awaiting-input`. This gives opencode the same reliable turn-end signal
-// codex gets from its app-server — WITHOUT the crew shelling out to cockpit.
+// codex gets from its app-server — WITHOUT the crew shelling out to squadrant.
 //
 // `session.idle` is liveness, NOT completion (anti-#2576): a finished turn is
 // not a finished task. Terminal state still comes from the explicit
-// `cockpit crew signal done` in the crew template; the reducer absorbs any
+// `squadrant crew signal done` in the crew template; the reducer absorbs any
 // session.idle that arrives after the task is already terminal.
-import type { ControlEvent } from "@cockpit/shared";
+import type { ControlEvent } from "@squadrant/shared";
 
 export interface OpencodeSseBridgeDeps {
   /** Ingress into the daemon's event pipeline (resolves project + handles). */

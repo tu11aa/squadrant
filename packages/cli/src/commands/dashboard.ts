@@ -3,27 +3,27 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
-import type { PaneRef } from "@cockpit/workspaces";
+import { loadConfig } from "@squadrant/shared";
+import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
+import type { PaneRef } from "@squadrant/workspaces";
 import {
   readAllStatuses,
   renderDashboard,
   syncHub,
   startWebServer,
   defaultProbeRunners,
-} from "@cockpit/web";
-import type { SyncHubResult } from "@cockpit/web";
-import { cockpitdCall } from "./crew-control.js";
-import { resolveCmuxBin } from "@cockpit/shared";
+} from "@squadrant/web";
+import type { SyncHubResult } from "@squadrant/web";
+import { squadrantdCall } from "./crew-control.js";
+import { resolveCmuxBin } from "@squadrant/shared";
 
-const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
 function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
   const match = out.match(/workspace:\d+/);
   if (!match) {
-    throw new Error("Could not detect current cmux workspace. Run `cockpit dashboard --pane` from inside a cmux workspace.");
+    throw new Error("Could not detect current cmux workspace. Run `squadrant dashboard --pane` from inside a cmux workspace.");
   }
   return match[0];
 }
@@ -38,7 +38,7 @@ export async function runDashboardOnce(deps: DashboardOnceDeps = {}): Promise<vo
   const now = (deps.now ?? (() => new Date().toISOString()))();
   const write = deps.write ?? ((s) => process.stdout.write(s));
 
-  const statuses = await readAllStatuses({ config, call: cockpitdCall });
+  const statuses = await readAllStatuses({ config, call: squadrantdCall });
   const width = process.stdout.columns ?? 100;
   write(renderDashboard(statuses, { now, width }));
   write("\n");
@@ -51,7 +51,7 @@ export interface SyncHubCliDeps {
 
 export async function runSyncHub(deps: SyncHubCliDeps = {}): Promise<SyncHubResult[]> {
   const config = loadConfig();
-  const statuses = await readAllStatuses({ config, call: cockpitdCall });
+  const statuses = await readAllStatuses({ config, call: squadrantdCall });
   return syncHub({ config, statuses, writeFile: deps.writeFile, mkdir: deps.mkdir });
 }
 
@@ -71,7 +71,7 @@ export async function runDashboardPane(input: DashboardPaneInput): Promise<PaneR
 
   // Portable refresh loop — no `watch` install dependency.
   // FORCE_COLOR=1 makes chalk emit ANSI even when run through the loop.
-  const loop = `clear; while true; do clear; FORCE_COLOR=1 cockpit dashboard --once; sleep ${interval}; done`;
+  const loop = `clear; while true; do clear; FORCE_COLOR=1 squadrant dashboard --once; sleep ${interval}; done`;
 
   const pane = await runtime.newPane({ workspaceId, direction, title });
   await runtime.sendToPane(pane, loop);
@@ -95,7 +95,7 @@ export async function runDashboardWeb(input: DashboardWebInput): Promise<void> {
     sockPath: SOCK,
     runners: defaultProbeRunners(),
   });
-  console.log(chalk.green(`✔ Cockpit system dashboard → http://127.0.0.1:${handle.port}`));
+  console.log(chalk.green(`✔ Squadrant system dashboard → http://127.0.0.1:${handle.port}`));
   console.log(chalk.dim(`  polling the daemon every ${input.interval}s · localhost only · read-only · Ctrl-C to stop`));
 }
 
@@ -118,7 +118,7 @@ export const dashboardCommand = new Command("dashboard")
         console.log(chalk.green(`✔ Dashboard pane opened in ${pane.workspaceId} ${pane.surfaceId}`));
         return;
       }
-      // Default behaviour: --once. (Bare `cockpit dashboard` prints once and exits.)
+      // Default behaviour: --once. (Bare `squadrant dashboard` prints once and exits.)
       await runDashboardOnce();
     } catch (err) {
       console.error(chalk.red((err as Error).message));

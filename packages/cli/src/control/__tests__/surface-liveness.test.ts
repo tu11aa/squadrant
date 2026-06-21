@@ -1,6 +1,6 @@
 // src/control/__tests__/surface-liveness.test.ts
 import { describe, it, expect } from "vitest";
-import { surfaceVerdict } from "@cockpit/core";
+import { surfaceVerdict } from "@squadrant/core";
 
 // #139: the pure decision behind the daemon's interactive surface-liveness
 // backstop. "gone" must mean PROVABLY absent (cmux answered, the crew's pane is

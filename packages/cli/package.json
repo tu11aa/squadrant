@@ -1,15 +1,15 @@
 {
-  "name": "@cockpit/cli",
+  "name": "@squadrant/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": { "build": "tsc -b" },
   "dependencies": {
-    "@cockpit/agents": "workspace:*",
-    "@cockpit/core": "workspace:*",
-    "@cockpit/shared": "workspace:*",
-    "@cockpit/web": "workspace:*",
-    "@cockpit/workspaces": "workspace:*",
+    "@squadrant/agents": "workspace:*",
+    "@squadrant/core": "workspace:*",
+    "@squadrant/shared": "workspace:*",
+    "@squadrant/web": "workspace:*",
+    "@squadrant/workspaces": "workspace:*",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
     "gray-matter": "^4.0.3"

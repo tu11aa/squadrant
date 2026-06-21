@@ -1,11 +1,21 @@
 # Changelog
 
-All notable changes to claude-cockpit are documented in this file.
+All notable changes to Squadrant (formerly claude-cockpit) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-06-22
+
+### Changed
+
+- **Rebrand: `claude-cockpit` → Squadrant.** The project grew from a Claude-Code-only tool into a multi-agent orchestration layer (Claude, Codex, opencode, Gemini), so the `claude-` brand was retired. Every brand surface is renamed:
+  - npm package `claude-cockpit` → **`squadrant`**; CLI command `cockpit` → **`squadrant`** (+ alias **`squad`**).
+  - Internal packages `@cockpit/*` → `@squadrant/*`; daemon bundle `dist/cockpitd.js` → `dist/squadrantd.js`.
+  - Runtime config dir `~/.config/cockpit` → `~/.config/squadrant`; launchd label `com.cockpit.daemon` → `com.squadrant.daemon`; hub vault `~/cockpit-hub` → `~/squadrant-hub`; skill namespace `cockpit:*` → `squadrant:*`; crew env vars `COCKPIT_*` → `SQUADRANT_*`.
+- A one-time migration script (`scripts/migrate-to-squadrant.sh`, idempotent, with `--dry-run` + automatic backup) performs the live cutover: moves the config dir and hub vault and rewrites `config.json` to the new paths/labels.
 
 ## [0.8.2] - 2026-06-21
 

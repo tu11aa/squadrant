@@ -1,6 +1,6 @@
 // src/commands/__tests__/heal.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ComponentHealth } from "@cockpit/core";
+import type { ComponentHealth } from "@squadrant/core";
 
 // ── pure helper (no I/O) ─────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ description: Add, edit, or remove a leveled crew routing rule in config.json wit
 
 # Manage Crew Routing Rules
 
-Crew routing rules live in `defaults.crewRouting.rules` inside `~/.config/cockpit/config.json`.
+Crew routing rules live in `defaults.crewRouting.rules` inside `~/.config/squadrant/config.json`.
 Each rule has the shape:
 
 ```jsonc
@@ -23,7 +23,7 @@ Rules are evaluated in order; the **first match wins**.
 
 1. Read the current config:
    ```bash
-   cat ~/.config/cockpit/config.json
+   cat ~/.config/squadrant/config.json
    ```
 
 2. Identify the `defaults.crewRouting.rules` array. If it is absent, add it.
@@ -48,9 +48,9 @@ Rules are evaluated in order; the **first match wins**.
    ```bash
    # Quick smoke-test (no live crew spawned):
    node -e "
-     const {loadConfig} = require(process.env.HOME + '/.config/cockpit/node_modules/...');
+     const {loadConfig} = require(process.env.HOME + '/.config/squadrant/node_modules/...');
      // or just log the matching rule manually
-     const rules = require(process.env.HOME + '/.config/cockpit/config.json')
+     const rules = require(process.env.HOME + '/.config/squadrant/config.json')
        .defaults?.crewRouting?.rules ?? [];
      const task = 'YOUR TEST TASK HERE';
      const hit = rules.find(r => new RegExp(r.match,'i').test(task));
@@ -68,7 +68,7 @@ Read → filter out the rule by `tier` or `match` → write back.
 
 ## Precedence reminder
 
-- Explicit `--agent` / `--model` on `cockpit crew spawn` **always** override routing.
+- Explicit `--agent` / `--model` on `squadrant crew spawn` **always** override routing.
 - If no rule matches, the spawn falls through to `defaults.roles.crew` behavior (unchanged from pre-routing behavior).
 
 ## Example rules

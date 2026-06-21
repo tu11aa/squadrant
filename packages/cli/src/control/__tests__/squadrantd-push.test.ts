@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-push.test.ts
+// src/control/__tests__/squadrantd-push.test.ts
 //
 // Phase 3.5 (#109): daemon-side push notifications to captain on terminal
 // task events. Tests the daemon.ts injection point with a fake `notify`
@@ -8,9 +8,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemon } from "@cockpit/core";
-import { createStore } from "@cockpit/core";
-import type { TaskRecord, ControlEvent } from "@cockpit/shared";
+import { createDaemon } from "@squadrant/core";
+import { createStore } from "@squadrant/core";
+import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 
 function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -37,7 +37,7 @@ function fakeNotify() {
   };
 }
 
-describe("cockpitd push notifications (#109)", () => {
+describe("squadrantd push notifications (#109)", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-push-")); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));

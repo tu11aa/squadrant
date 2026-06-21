@@ -1,4 +1,4 @@
-// @cockpit/agents — AI-agent driver seam (claude · codex · opencode · gemini).
+// @squadrant/agents — AI-agent driver seam (claude · codex · opencode · gemini).
 export * from "./drivers/index.js";
 export * from "./projection/index.js";
 export * from "./codex/app-server-client.js";

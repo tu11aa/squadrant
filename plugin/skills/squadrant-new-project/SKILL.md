@@ -1,11 +1,11 @@
 ---
-name: cockpit-new-project
-description: Create a brand-new GitHub repo, clone it, and register it in cockpit. Handles both new workspace (new group) and existing workspace (join existing group).
+name: squadrant-new-project
+description: Create a brand-new GitHub repo, clone it, and register it in squadrant. Handles both new workspace (new group) and existing workspace (join existing group).
 ---
 
 # Create and Register a New Project
 
-Use when the project does not exist yet — you need to create the GitHub repo, clone it locally, and wire it into cockpit.
+Use when the project does not exist yet — you need to create the GitHub repo, clone it locally, and wire it into squadrant.
 
 ## Step 1 — Collect inputs
 
@@ -22,7 +22,7 @@ You need:
 - No `--group-role` needed.
 
 **Existing workspace** (joining an existing group):
-- Run `cockpit projects list` to see current groups.
+- Run `squadrant projects list` to see current groups.
 - Pick the group to join and specify a role for this project (e.g. `"landing page"`, `"mobile client"`, `"CLI tool"`).
 - The role must NOT be `"primary"` — that slot is already taken.
 
@@ -47,10 +47,10 @@ git push
 
 Skip if the repo already has content or the user wants to scaffold separately.
 
-## Step 5 — Register in cockpit
+## Step 5 — Register in squadrant
 
 ```bash
-cockpit projects add <repo-name> <parent-dir>/<repo-name> \
+squadrant projects add <repo-name> <parent-dir>/<repo-name> \
   --captain "⚓ <repo-name>-captain" \
   [--group <group-name>] \
   [--group-role "<role description>"]
@@ -61,7 +61,7 @@ Omit `--group` and `--group-role` for a standalone project with no group.
 ## Step 6 — Verify
 
 ```bash
-cockpit projects list
+squadrant projects list
 ```
 
 Confirm the new entry appears with the correct path, group, and role.

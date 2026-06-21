@@ -3,12 +3,12 @@
 // they are unit-testable with a mock RuntimeDriver.
 
 import net from "node:net";
-import { loadConfig } from "@cockpit/shared";
-import type { PaneRef, RuntimeDriver } from "@cockpit/shared";
+import { loadConfig } from "@squadrant/shared";
+import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
 import { createCmuxDriver } from "./runtimes/cmux.js";
-import { titleFor, isCrewTitle, isTurnAccepted } from "@cockpit/core";
-import type { TurnAcceptanceConfig } from "@cockpit/core";
+import { titleFor, isCrewTitle, isTurnAccepted } from "@squadrant/core";
+import type { TurnAcceptanceConfig } from "@squadrant/core";
 
 // Poll-based first-turn delivery timing constants.
 const SEND_FIRST_TURN_FLOOR_MS = 1500;
@@ -59,13 +59,13 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
   const config = loadConfig();
   const proj = config.projects[project];
   if (!proj) {
-    throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
   }
   const runtime = new RuntimeRegistry({ cmux: createCmuxDriver() }).forProject(project, config);
   const captain = await runtime.status(proj.captainName);
   if (!captain) {
     throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`,
+      `Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`,
     );
   }
   return { runtime, workspaceId: captain.id };

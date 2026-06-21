@@ -5,7 +5,7 @@ Agents record, evolve, and reuse knowledge. Inspired by OpenSpace's skill evolut
 ## Record Learnings (with tags)
 
 ```bash
-~/.config/cockpit/scripts/record-learning.sh "{spokeVault}" "{category}" "{description}" "{tags}"
+~/.config/squadrant/scripts/record-learning.sh "{spokeVault}" "{category}" "{description}" "{tags}"
 ```
 - Categories: `workflow`, `template`, `convention`, `bug`, `insight`
 - Tags: comma-separated keywords for selective retrieval
@@ -14,14 +14,14 @@ Agents record, evolve, and reuse knowledge. Inspired by OpenSpace's skill evolut
 
 After a successful novel pattern, capture it as a reusable skill:
 ```bash
-~/.config/cockpit/scripts/capture-skill.sh "{spokeVault}" "{name}" "{description}" "{body}"
+~/.config/squadrant/scripts/capture-skill.sh "{spokeVault}" "{name}" "{description}" "{body}"
 ```
 
 ## Fix Skills (FIX)
 
 When a skill's instructions are broken or outdated:
 ```bash
-~/.config/cockpit/scripts/fix-skill.sh "{spokeVault}" "{name}" "{corrected body}"
+~/.config/squadrant/scripts/fix-skill.sh "{spokeVault}" "{name}" "{corrected body}"
 ```
 
 ## Quality Tracking

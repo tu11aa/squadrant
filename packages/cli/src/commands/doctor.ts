@@ -4,10 +4,10 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
-import { compatManifest, type ToolEntry } from "@cockpit/shared";
-import { checkToolCompat } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
+import { loadConfig } from "@squadrant/shared";
+import { compatManifest, type ToolEntry } from "@squadrant/shared";
+import { checkToolCompat } from "@squadrant/shared";
+import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 import {
   createCursorEmitter,
@@ -15,7 +15,7 @@ import {
   createGeminiEmitter,
   createOpencodeEmitter,
   ProjectionRegistry,
-} from "@cockpit/agents";
+} from "@squadrant/agents";
 
 function commandExists(cmd: string): boolean {
   try {
@@ -93,7 +93,7 @@ function check(label: string, pass: boolean): boolean {
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
   .action(async () => {
-    console.log(chalk.bold("\nCockpit Doctor\n"));
+    console.log(chalk.bold("\nSquadrant Doctor\n"));
 
     const results: boolean[] = [];
 
@@ -198,10 +198,10 @@ export const doctorCommand = new Command("doctor")
 
     results.push(
       check(
-        "Cockpit config exists",
+        "Squadrant config exists",
         fs.existsSync(
-          process.env.COCKPIT_CONFIG ||
-            `${process.env.HOME}/.config/cockpit/config.json`,
+          process.env.SQUADRANT_CONFIG ||
+            `${process.env.HOME}/.config/squadrant/config.json`,
         ),
       ),
     );
@@ -247,7 +247,7 @@ export const doctorCommand = new Command("doctor")
     // --- Agent Probes ---
     console.log(chalk.bold("\nAgent Drivers\n"));
 
-    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } = await import("@cockpit/agents");
+    const { createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, CapabilityRegistry } = await import("@squadrant/agents");
 
     const agentDrivers = {
       claude: createClaudeDriver(),

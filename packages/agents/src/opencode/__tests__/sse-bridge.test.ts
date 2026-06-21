@@ -1,11 +1,11 @@
 // Tests for the opencode SSE → ControlEvent bridge.
 // The bridge subscribes to a crew's `opencode --port <N>` server at /event and
-// maps the documented `session.idle` event to a cockpit `task.turn.completed`
+// maps the documented `session.idle` event to a squadrant `task.turn.completed`
 // (which the reducer turns into awaiting-input). This closes the opencode idle
-// gap: the daemon learns a turn ended without the crew shelling out to cockpit.
+// gap: the daemon learns a turn ended without the crew shelling out to squadrant.
 import { describe, it, expect, vi } from "vitest";
 import { OpencodeSseBridge } from "../sse-bridge.js";
-import type { ControlEvent } from "@cockpit/shared";
+import type { ControlEvent } from "@squadrant/shared";
 
 /** Build a Response whose body streams the given SSE text in one or more chunks. */
 function sseResponse(chunks: string[], ok = true, status = 200): Response {

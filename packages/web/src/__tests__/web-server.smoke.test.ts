@@ -52,7 +52,7 @@ describe("web-server smoke (Gate 4)", () => {
   });
 
   it("binds on an ephemeral port and serves HTML on /", async () => {
-    const sockPath = `/tmp/cockpit-smoke-${process.pid}.sock`;
+    const sockPath = `/tmp/squadrant-smoke-${process.pid}.sock`;
     handle = await startWebServer({
       port: 0,            // OS picks an ephemeral port
       intervalMs: 60_000, // long interval — we close immediately after one tick
@@ -76,7 +76,7 @@ describe("web-server smoke (Gate 4)", () => {
   it("serves ≥1 SSE frame on /events", async () => {
     // handle is set by the previous test; if not, boot a fresh server
     if (!handle) {
-      const sockPath = `/tmp/cockpit-smoke-sse-${process.pid}.sock`;
+      const sockPath = `/tmp/squadrant-smoke-sse-${process.pid}.sock`;
       handle = await startWebServer({
         port: 0,
         intervalMs: 60_000,

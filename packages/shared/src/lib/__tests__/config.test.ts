@@ -1,12 +1,12 @@
 // src/config.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getDefaultConfig, loadConfig, saveConfig } from "@cockpit/shared";
+import { getDefaultConfig, loadConfig, saveConfig } from "@squadrant/shared";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 describe("config", () => {
-  const tmpDir = path.join(os.tmpdir(), "cockpit-test-" + Date.now());
+  const tmpDir = path.join(os.tmpdir(), "squadrant-test-" + Date.now());
   const configPath = path.join(tmpDir, "config.json");
 
   beforeEach(() => fs.mkdirSync(tmpDir, { recursive: true }));
@@ -27,7 +27,7 @@ describe("config", () => {
     config.projects.brove = {
       path: "/tmp/brove",
       captainName: "brove-captain",
-      spokeVault: "/tmp/brove/.cockpit-vault",
+      spokeVault: "/tmp/brove/.squadrant-vault",
       host: "local",
     };
     saveConfig(config, configPath);
@@ -152,7 +152,7 @@ describe("config", () => {
 
     // notice fired exactly once
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.calls[0][0]).toMatch(/cockpit upgrade/i);
+    expect(spy.mock.calls[0][0]).toMatch(/squadrant upgrade/i);
     spy.mockRestore();
   });
 

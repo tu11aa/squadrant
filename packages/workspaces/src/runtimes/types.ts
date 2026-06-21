@@ -1,4 +1,4 @@
-// Re-exported from @cockpit/shared — types live there now.
+// Re-exported from @squadrant/shared — types live there now.
 export type {
   WorkspaceRef,
   PaneRef,
@@ -7,4 +7,4 @@ export type {
   RuntimePaneOptions,
   RuntimeProbeResult,
   RuntimeDriver,
-} from "@cockpit/shared";
+} from "@squadrant/shared";

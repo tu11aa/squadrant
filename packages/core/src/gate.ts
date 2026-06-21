@@ -1,6 +1,6 @@
 // src/control/codex/gate.ts
 // Pure helpers for the interactive-codex HITL gate primitive (spec §4.9).
-import type { Gate } from "@cockpit/shared";
+import type { Gate } from "@squadrant/shared";
 
 export function makeGate(opts: {
   taskId: string;

@@ -104,12 +104,12 @@ describe("AppServerClient handshake", () => {
   });
   it("initialize sends a request, awaits response, then sends 'initialized' notification", async () => {
     const proc = fakeChild();
-    const c = new AppServerClient({ spawn: () => proc, clientInfo: { name: "cockpit", version: "test" } });
+    const c = new AppServerClient({ spawn: () => proc, clientInfo: { name: "squadrant", version: "test" } });
     c.start();
     const p = c.initialize();
     const first = JSON.parse((proc.stdin as any)._written.trim().split("\n")[0]);
     expect(first.method).toBe("initialize");
-    expect(first.params.clientInfo).toEqual({ name: "cockpit", version: "test" });
+    expect(first.params.clientInfo).toEqual({ name: "squadrant", version: "test" });
     proc.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", id: first.id, result: { capabilities: {} } }) + "\n");
     await p;
     const lines = (proc.stdin as any)._written.trim().split("\n");

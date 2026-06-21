@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "@cockpit/core";
-import type { DaemonCmux } from "@cockpit/workspaces";
-import type { TaskRecord } from "@cockpit/shared";
+import { createDirectSurfaceLivenessProbe, crewPaneTitle } from "@squadrant/core";
+import type { DaemonCmux } from "@squadrant/workspaces";
+import type { TaskRecord } from "@squadrant/shared";
 
 function mockCmux(overrides?: Partial<DaemonCmux>): DaemonCmux {
   return {

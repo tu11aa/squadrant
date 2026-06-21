@@ -61,8 +61,8 @@ describe("generic role templates — audit", () => {
     expect(findForbidden(fake)).toContain("TaskCreate");
   });
 
-  it("captain.generic.md uses the cockpit crew spawn primitive", () => {
+  it("captain.generic.md uses the squadrant crew spawn primitive", () => {
     const body = readTemplate("captain.generic.md");
-    expect(body).toMatch(/cockpit crew spawn/);
+    expect(body).toMatch(/squadrant crew spawn/);
   });
 });

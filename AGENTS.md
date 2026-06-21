@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 relationships, 144 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Squadrant** (3890 symbols, 6862 relationships, 144 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 re
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/claude-cockpit/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claude-cockpit/clusters` | All functional areas |
-| `gitnexus://repo/claude-cockpit/processes` | All execution flows |
-| `gitnexus://repo/claude-cockpit/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/squadrant/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/squadrant/clusters` | All functional areas |
+| `gitnexus://repo/squadrant/processes` | All execution flows |
+| `gitnexus://repo/squadrant/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
@@ -44,9 +44,9 @@ This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 re
 
 ## Project Direction: Multi-Agent
 
-Cockpit is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
+Squadrant is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
 
-When working on cockpit:
+When working on squadrant:
 - Prefer **`AGENTS.md`** as the canonical instruction format. `CLAUDE.md` is becoming a thin wrapper.
 - When adding agent-facing features, ask: *"does this work for non-Claude agents too?"* If not, file a follow-up issue to generalize it.
 - Don't add Claude-only surface area without a migration path. The three plugin slots (runtime / workspace / notifier) exist specifically to avoid this.
@@ -60,14 +60,14 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 
 | Package | Owns |
 |---|---|
-| `@cockpit/shared` | Config schema, types, constants — leaf, zero internal deps |
-| `@cockpit/core` | Daemon, state-machine, protocol, `AgentDriver` interface |
-| `@cockpit/agents` | AI driver seam: claude / codex / opencode / gemini |
-| `@cockpit/workspaces` | Runtime (cmux), workspace (obsidian), notifier drivers |
-| `@cockpit/web` | Observability dashboard (bundled HTML/JS) |
-| `@cockpit/cli` | Commands, bin entry, daemon host — root package |
+| `@squadrant/shared` | Config schema, types, constants — leaf, zero internal deps |
+| `@squadrant/core` | Daemon, state-machine, protocol, `AgentDriver` interface |
+| `@squadrant/agents` | AI driver seam: claude / codex / opencode / gemini |
+| `@squadrant/workspaces` | Runtime (cmux), workspace (obsidian), notifier drivers |
+| `@squadrant/web` | Observability dashboard (bundled HTML/JS) |
+| `@squadrant/cli` | Commands, bin entry, daemon host — root package |
 
-Build outputs: `dist/index.js` (CLI bin) · `dist/cockpitd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
+Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
 
 ## Coding Discipline: Karpathy Principles
 
@@ -79,7 +79,7 @@ Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL
 4. **Goal-driven execution** — define verifiable success criteria before implementing
 # Memory Context
 
-# [claude-cockpit] recent context, 2026-06-01 10:23pm GMT+7
+# [Squadrant] recent context, 2026-06-01 10:23pm GMT+7
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
@@ -108,27 +108,27 @@ S3647 Update PR #189 with danger-full-access implementation and revise PR metada
 12146 6:19p ✅ Updated PR #189 with danger-full-access implementation
 12147 6:20p ✅ Updated PR #189 description to reflect danger-full-access solution
 S3649 Verify codex sandbox writable_roots fix and prepare for merge (Jun 1 at 6:20 PM)
-12148 6:35p 🔵 Cockpit crew signal daemon communication verified
-12149 6:36p 🔵 Cockpit daemon fails to start due to LaunchAgents permission errors
+12148 6:35p 🔵 Squadrant crew signal daemon communication verified
+12149 6:36p 🔵 Squadrant daemon fails to start due to LaunchAgents permission errors
 S3654 Review completed opencode permission gate implementation and decide next steps (Jun 1 at 6:38 PM)
 12196 7:01p 🟣 Semi-automatic permission gate for bash tool calls
 12197 7:03p 🔵 Test failure detected in test suite
-S3655 Investigate process leaks and memory overflow in claude-cockpit test suite after system restart (Jun 1 at 7:09 PM)
+S3655 Investigate process leaks and memory overflow in Squadrant test suite after system restart (Jun 1 at 7:09 PM)
 12200 7:41p 🔵 Orphaned workspaces causing system crashes and daemon loss
 12201 7:42p 🔵 Process leak investigation identified test files spawning real processes
 12202 7:43p 🔵 app-server-client.test.ts uses dependency injection with fake processes
 12203 " 🔵 Process orphan analysis reveals opencode potential leaks and proper socket test cleanup
 12204 7:44p ✅ Killed stray vitest workers and confirmed no test process orphans
-S3659 Distinguish cockpit vs oneplan vitest processes and prevent RAM overflow from concurrent test runs (Jun 1 at 7:45 PM)
-12220 8:00p 🔵 Vitest worker configuration uncapped in cockpit project
+S3659 Distinguish squadrant vs oneplan vitest processes and prevent RAM overflow from concurrent test runs (Jun 1 at 7:45 PM)
+12220 8:00p 🔵 Vitest worker configuration uncapped in squadrant project
 12221 8:01p 🔵 CP3 opencode permission gate work preserved on feature branch
 12222 " 🔴 Capped vitest worker pool to prevent RAM exhaustion
 12223 8:02p 🔴 Shipped vitest worker cap fix via PR #192
-S3660 Investigate excessive node processes (25 gitnexus, ~1.3GB RAM) suspected from oneplan/cockpit (Jun 1 at 8:02 PM)
+S3660 Investigate excessive node processes (25 gitnexus, ~1.3GB RAM) suspected from oneplan/squadrant (Jun 1 at 8:02 PM)
 12224 10:00p 🔵 Node process investigation reveals gitnexus as primary resource consumer
 12225 " 🔵 All 25 gitnexus processes are MCP server instances from common parent
 12227 10:01p 🔴 Fixed gitnexus MCP server resource leak from codex app-server
-12228 " 🔵 Gitnexus configured as MCP server in codex with cockpit protocol support
+12228 " 🔵 Gitnexus configured as MCP server in codex with squadrant protocol support
 12229 10:02p 🔵 Codex driver lacks thread cleanup on task completion
 S3662 Simple acknowledgment and wait instruction - no active work requested (Jun 1 at 10:03 PM)
 12230 10:10p 🔵 Process Snapshot Tool Created for Crew Cleanup Verification
@@ -143,7 +143,7 @@ S3663 Verify crew cleanup: all crew types (claude, codex, opencode) must termina
 12239 " 🟣 Added archiveThread Method to AppServerClient
 12240 " 🟣 Added close Method to CodexInteractiveDriver for Thread Teardown
 12244 10:21p ✅ Extended Codex Driver Interface to Include close Method
-12245 " 🔴 Wired Cockpitd to Archive Codex Threads on Crew Close
+12245 " 🔴 Wired Squadrantd to Archive Codex Threads on Crew Close
 12246 10:22p 🔄 Refactored Codex Cleanup to Use Dedicated codex-close Message Kind
 12247 " 🔴 Completed Codex Crew Cleanup Fix: runCrewClose Now Sends codex-close to Daemon
 12248 " ✅ Added Test Coverage for CodexInteractiveDriver.close Method

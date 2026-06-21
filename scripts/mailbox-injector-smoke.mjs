@@ -2,7 +2,7 @@
 // scripts/mailbox-injector-smoke.mjs
 //
 // E2E smoke for mailbox-injector refactor (replaces #109/#111 socket push).
-// Spins up a real cockpitd on a temp socket + stateRoot, drives a few
+// Spins up a real squadrantd on a temp socket + stateRoot, drives a few
 // task.done events through the daemon, then verifies:
 //   1. defaultNotify writes structured entries to <stateRoot>/inbox/<project>.log
 //   2. readFromCursor yields each entry exactly once, in order
@@ -10,7 +10,7 @@
 //   4. After a simulated "injector offline" window, resuming from the cursor
 //      reads only the entries added during the outage (no duplicates, no gaps)
 //
-// Uses startCockpitd + sendRequest directly (same pattern as
+// Uses startSquadrantd + sendRequest directly (same pattern as
 // scripts/smoke-push-notify.mjs) rather than env vars — the daemon's CLI
 // surface takes stateRoot/sockPath as arguments, not env vars.
 
@@ -20,11 +20,11 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const distEntry = pathToFileURL(join(__dirname, "..", "dist", "control", "cockpitd.js")).href;
+const distEntry = pathToFileURL(join(__dirname, "..", "dist", "control", "squadrantd.js")).href;
 const distProto = pathToFileURL(join(__dirname, "..", "dist", "control", "protocol.js")).href;
 const distMailbox = pathToFileURL(join(__dirname, "..", "dist", "control", "mailbox.js")).href;
 
-const { startCockpitd } = await import(distEntry);
+const { startSquadrantd } = await import(distEntry);
 const { sendRequest } = await import(distProto);
 const mailbox = await import(distMailbox);
 
@@ -36,7 +36,7 @@ const dir = mkdtempSync(join(tmpdir(), "mailbox-smoke-"));
 const stateRoot = join(dir, "state");
 const sock = join(dir, "c.sock");
 
-const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0 });
+const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0 });
 
 const baseRec = (id, overrides = {}) => ({
   id, project: "demo", provider: "claude", mode: "headless",

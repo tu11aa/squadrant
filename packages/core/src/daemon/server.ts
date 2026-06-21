@@ -1,7 +1,7 @@
 // src/control/daemon/server.ts
 // IPC socket server: message router + attach fan-in.
 // All state lives on DaemonContext; callbacks that can't yet be on ctx are
-// passed via ServerHandlers (built once in cockpitd.ts/start.ts).
+// passed via ServerHandlers (built once in squadrantd.ts/start.ts).
 import { startServer, encodeFrame } from "../protocol.js";
 import type { AttachFrame, AttachInbound } from "../protocol.js";
 import type { ComponentHealth } from "../liveness.js";
@@ -31,7 +31,7 @@ export function createServer(
       if (msg.kind === "seed") { store.put(msg.record); return { ok: true }; }
       // Crew-close teardown for codex: the cmux pane only hosts the `crew attach`
       // renderer — the thread lives on the shared app-server, so closing the pane
-      // doesn't reap it. `cockpit crew close` calls this to archive the thread and
+      // doesn't reap it. `squadrant crew close` calls this to archive the thread and
       // its per-thread MCP servers (else they leak ~53MB/crew). Fires for terminal
       // and non-terminal crews alike.
       if (msg.kind === "codex-close") {

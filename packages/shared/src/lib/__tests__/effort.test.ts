@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveEffort, getDefaultConfig } from "@cockpit/shared";
+import { resolveEffort, getDefaultConfig } from "@squadrant/shared";
 
 describe("resolveEffort", () => {
   it("returns 'balance' when effort is absent", () => {

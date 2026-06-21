@@ -3,9 +3,9 @@
 // PURE service-health layer (no I/O, no clock) — the #77 foundation. Mirrors
 // watchdog.ts: every function derives a verdict from records + an explicit `now`
 // so it is fully unit-testable. All runtime probing (cmux reads for captain
-// presence) is gathered by the caller (cockpitd) and passed in already-resolved;
+// presence) is gathered by the caller (squadrantd) and passed in already-resolved;
 // this module never touches cmux.
-import type { TaskState, Mode } from "@cockpit/shared";
+import type { TaskState, Mode } from "@squadrant/shared";
 
 export type ComponentKind = "captain" | "crew" | "command";
 

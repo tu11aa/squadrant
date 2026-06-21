@@ -19,7 +19,7 @@ import type { CapabilityRegistry } from "./registry.js";
  * @param fresh         - true → new session; false → continue last session
  * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions"
  * @param model         - optional model override
- * @param templatesDir  - resolved path to ~/.config/cockpit/templates
+ * @param templatesDir  - resolved path to ~/.config/squadrant/templates
  */
 export function buildAgentCmd(
   agentName: string,
@@ -71,7 +71,7 @@ export function buildAgentCmd(
     ? path.join(templatesDir, `${role}.${driver.templateSuffix}.md`)
     : undefined;
   return driver.buildCommand({
-    prompt: `You are a cockpit ${role}. Read your instructions from ${roleFile ?? role} and begin.`,
+    prompt: `You are a squadrant ${role}. Read your instructions from ${roleFile ?? role} and begin.`,
     workdir: process.cwd(),
     role: role as Role,
     model,

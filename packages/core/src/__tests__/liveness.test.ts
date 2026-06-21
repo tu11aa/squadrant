@@ -1,6 +1,6 @@
 // packages/core/src/__tests__/liveness.test.ts
 //
-// Unit tests for the pure liveness helpers in @cockpit/core.
+// Unit tests for the pure liveness helpers in @squadrant/core.
 import { describe, it, expect } from "vitest";
 import { ageText, healCmdFor } from "../liveness.js";
 import type { ComponentHealth } from "../liveness.js";

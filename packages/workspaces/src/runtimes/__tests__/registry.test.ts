@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { RuntimeRegistry } from "../registry.js";
 import type { RuntimeDriver } from "../types.js";
-import type { CockpitConfig } from "@cockpit/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 function stubDriver(name: string): RuntimeDriver {
   return {
@@ -24,7 +24,7 @@ function stubDriver(name: string): RuntimeDriver {
   };
 }
 
-function baseConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
+function baseConfig(overrides: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "cmd",
     hubVault: "~/hub",

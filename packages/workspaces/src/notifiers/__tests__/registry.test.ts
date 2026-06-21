@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { NotifierRegistry } from "../registry.js";
 import type { NotifierDriver, NotifierScope } from "../types.js";
-import type { CockpitConfig } from "@cockpit/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 function stubFactory(name: string): (scope: NotifierScope) => NotifierDriver {
   return (_scope) => ({
@@ -11,7 +11,7 @@ function stubFactory(name: string): (scope: NotifierScope) => NotifierDriver {
   });
 }
 
-function baseConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
+function baseConfig(overrides: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "cmd",
     hubVault: "~/hub",

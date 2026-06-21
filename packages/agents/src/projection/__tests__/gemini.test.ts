@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createGeminiEmitter } from "../gemini.js";
-import type { ProjectionSource } from "@cockpit/shared";
+import type { ProjectionSource } from "@squadrant/shared";
 import { MARKER_START, MARKER_END } from "../marker.js";
 
 const fsMock = vi.hoisted(() => ({
@@ -38,7 +38,7 @@ describe("GeminiEmitter", () => {
     expect(dest.shared).toBe(true);
   });
 
-  it("emit wraps body in cockpit markers", async () => {
+  it("emit wraps body in squadrant markers", async () => {
     const emitter = createGeminiEmitter();
     const [dest] = emitter.destinations("project", "/brove");
     await emitter.emit(source, dest);
@@ -67,7 +67,7 @@ describe("GeminiEmitter", () => {
     expect(fsMock.writeFile).not.toHaveBeenCalled();
   });
 
-  it("emit writes role-template sections inside the cockpit marker block (#45)", async () => {
+  it("emit writes role-template sections inside the squadrant marker block (#45)", async () => {
     const roleSource: ProjectionSource = {
       instructions: "## Captain Role\n\nC body\n\n## Crew Role\n\nW body",
       skills: [],

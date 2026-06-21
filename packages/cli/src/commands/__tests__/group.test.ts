@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const sendRequestMock = vi.hoisted(() => vi.fn());
 const execSyncMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@cockpit/core", () => ({
+vi.mock("@squadrant/core", () => ({
   sendRequest: sendRequestMock,
 }));
 
@@ -12,7 +12,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/shared", () => ({
+vi.mock("@squadrant/shared", () => ({
   loadConfig,
   resolveHome: (p: string) => p,
 }));

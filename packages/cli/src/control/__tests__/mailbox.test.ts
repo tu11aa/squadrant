@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToMailbox } from "@cockpit/core";
-import { readCursor, writeCursor } from "@cockpit/core";
-import { readFromCursor } from "@cockpit/core";
-import { rotateIfNeeded, mailboxStats } from "@cockpit/core";
+import { appendToMailbox } from "@squadrant/core";
+import { readCursor, writeCursor } from "@squadrant/core";
+import { readFromCursor } from "@squadrant/core";
+import { rotateIfNeeded, mailboxStats } from "@squadrant/core";
 import { statSync } from "node:fs";
-import type { TaskRecord, ControlEvent } from "@cockpit/shared";
+import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 
 function freshState(): string {
   return mkdtempSync(join(tmpdir(), "mbox-"));

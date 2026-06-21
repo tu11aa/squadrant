@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { encodeFrame } from "../protocol.js";
 import { makeGate } from "../gate.js";
 import type { AttachFrame } from "../protocol.js";
-import type { Gate } from "@cockpit/shared";
+import type { Gate } from "@squadrant/shared";
 import type { DaemonContext } from "./context.js";
 
 export interface AttachHandlers {

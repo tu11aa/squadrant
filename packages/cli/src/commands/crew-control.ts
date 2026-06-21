@@ -5,15 +5,15 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { sendRequest } from "@cockpit/core";
-import { ensureDaemon } from "@cockpit/core";
-import type { ControlEvent, Mode, Provider, TaskRecord } from "@cockpit/shared";
-import { mapClaudeHookToEvent } from "@cockpit/agents";
+import { sendRequest } from "@squadrant/core";
+import { ensureDaemon } from "@squadrant/core";
+import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
+import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
 import { crewChatCommand } from "./crew-chat.js";
 
-const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
 // Codex thread setup is async after `dispatch` returns; let startThread finish
 // before sending the first turn. Empirically codex handshake completes in well
@@ -23,7 +23,7 @@ const CODEX_FIRST_TURN_DELAY_MS = 1500;
 
 /**
  * Send the spawn task arg to a freshly-dispatched codex interactive task as
- * the first turn — mirrors how `cockpit crew spawn --agent claude "<task>"`
+ * the first turn — mirrors how `squadrant crew spawn --agent claude "<task>"`
  * sends the task arg into the claude CLI's first prompt.
  *
  * Reuses the existing attach-socket `say` op (same one used by `crew send` and
@@ -89,7 +89,7 @@ export function buildGateResolveRequest(o: { project: string; gateId: string; me
   };
 }
 
-export async function cockpitdCall(req: unknown): Promise<unknown> {
+export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
@@ -111,9 +111,9 @@ export async function cockpitdCall(req: unknown): Promise<unknown> {
 
 /**
  * Build an explicit terminal/blocked event request from a crew's `signal`
- * verb. Defaults to reading `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT`
+ * verb. Defaults to reading `SQUADRANT_CREW_TASK_ID` and `SQUADRANT_CREW_PROJECT`
  * from env so the claude/opencode crew templates can run e.g.
- * `cockpit crew signal done --message "…"` without knowing their own ids.
+ * `squadrant crew signal done --message "…"` without knowing their own ids.
  *
  * Explicit `taskId`/`project` (from `--task-id`/`--project` flags) take
  * precedence over env. This is the codex path: a single long-lived app-server
@@ -131,20 +131,20 @@ export function buildSignalRequest(
     message?: string;
     question?: string;
     error?: string;
-    /** Explicit override (codex); falls back to COCKPIT_CREW_TASK_ID env. */
+    /** Explicit override (codex); falls back to SQUADRANT_CREW_TASK_ID env. */
     taskId?: string;
-    /** Explicit override (codex); falls back to COCKPIT_CREW_PROJECT env. */
+    /** Explicit override (codex); falls back to SQUADRANT_CREW_PROJECT env. */
     project?: string;
-    /** Injectable for tests; defaults to writing under ~/.config/cockpit/state/_results. */
+    /** Injectable for tests; defaults to writing under ~/.config/squadrant/state/_results. */
     writeResult?: (id: string, payload: string) => string;
   },
 ): { kind: "event"; project: string; event: ControlEvent } {
-  const taskId = o.taskId ?? process.env.COCKPIT_CREW_TASK_ID;
-  const project = o.project ?? process.env.COCKPIT_CREW_PROJECT;
+  const taskId = o.taskId ?? process.env.SQUADRANT_CREW_TASK_ID;
+  const project = o.project ?? process.env.SQUADRANT_CREW_PROJECT;
   if (!taskId)
-    throw new Error("not running under a crew (COCKPIT_CREW_TASK_ID unset)");
+    throw new Error("not running under a crew (SQUADRANT_CREW_TASK_ID unset)");
   if (!project)
-    throw new Error("not running under a crew (COCKPIT_CREW_PROJECT unset)");
+    throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
   let event: ControlEvent;
   if (signal === "done") {
     const resultRef = o.writeResult ? o.writeResult(taskId, o.message ?? "") : "";
@@ -164,7 +164,7 @@ export function buildSignalRequest(
 
 /** Default writer used by the `signal done` subcommand. Tests inject their own. */
 function defaultWriteResult(id: string, payload: string): string {
-  const dir = join(homedir(), ".config", "cockpit", "state", "_results");
+  const dir = join(homedir(), ".config", "squadrant", "state", "_results");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${id}.txt`);
   writeFileSync(file, payload);
@@ -172,7 +172,7 @@ function defaultWriteResult(id: string, payload: string): string {
 }
 
 /**
- * Attach the control-plane verbs onto an existing `cockpit crew` command so
+ * Attach the control-plane verbs onto an existing `squadrant crew` command so
  * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
  * The control-plane task listing is `tasks` (not `list`) to avoid colliding
  * with the legacy `list` that captains' playbook still uses. This is the
@@ -189,7 +189,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--cwd <dir>", "working dir for the crew (project/worktree); required for codex to edit code")
     .action(async (project: string, task: string, opts: { provider: Provider; mode: Mode; cwd?: string }) => {
       const req = buildDispatchRequest({ project, task, provider: opts.provider, mode: opts.mode, cwd: opts.cwd });
-      const r = await cockpitdCall(req);
+      const r = await squadrantdCall(req);
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -197,7 +197,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .command("status <project> <id>")
     .description("Read a control-plane task's state")
     .action(async (project: string, id: string) => {
-      const r = await cockpitdCall(buildStatusRequest(project, id));
+      const r = await squadrantdCall(buildStatusRequest(project, id));
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
@@ -212,11 +212,11 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--force", "Force-purge a non-terminal record (use with --purge)")
     .action(async (project: string, opts: { json?: boolean; id?: string; state?: string; stateOnly?: string; purge?: string; force?: boolean }) => {
       if (opts.purge) {
-        const r = await cockpitdCall({ kind: "purge", project, id: opts.purge, force: opts.force ?? false }) as TaskRecord;
+        const r = await squadrantdCall({ kind: "purge", project, id: opts.purge, force: opts.force ?? false }) as TaskRecord;
         console.log(`purged ${r.provider}/${r.id} (was ${r.state})`);
         return;
       }
-      const raw = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+      const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
       let records = raw;
       if (opts.stateOnly) {
         records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
@@ -229,7 +229,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     });
 
   // TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
-  // cockpitd, so this transitions task state but never reaches the agent. Deferred.
+  // squadrantd, so this transitions task state but never reaches the agent. Deferred.
   // --gate <gateId> routes through the gate-resolve verb instead (spec §4.9).
   crew
     .command("reply <project> <id> <message>")
@@ -237,27 +237,27 @@ export function addControlPlaneCrewCommands(crew: Command): void {
     .option("--gate <gateId>", "resolve a pending gate by id (codex interactive, spec §4.9)")
     .action(async (project: string, id: string, message: string, opts: { gate?: string }) => {
       if (opts.gate) {
-        const r = await cockpitdCall(buildGateResolveRequest({ project, gateId: opts.gate, message }));
+        const r = await squadrantdCall(buildGateResolveRequest({ project, gateId: opts.gate, message }));
         process.stdout.write(JSON.stringify(r) + "\n");
         return;
       }
       process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
-      const r = await cockpitdCall({ kind: "reply", project, id, message });
+      const r = await squadrantdCall({ kind: "reply", project, id, message });
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 
   // Bridge from Claude's native Stop/SubagentStop/SessionEnd hooks to the
-  // cockpit control plane. Reads hook payload JSON on stdin (Claude hook
-  // contract); env-gated on COCKPIT_CREW_TASK_ID/COCKPIT_CREW_PROJECT so the
+  // squadrant control plane. Reads hook payload JSON on stdin (Claude hook
+  // contract); env-gated on SQUADRANT_CREW_TASK_ID/SQUADRANT_CREW_PROJECT so the
   // hook is a no-op outside spawned crews. Anti-#2576: maps only to
   // task.progress (liveness), never task.done — terminal state comes from
-  // `cockpit crew signal` (explicit, post-settle-check).
+  // `squadrant crew signal` (explicit, post-settle-check).
   crew
     .command("_hook <event>", { hidden: true })
-    .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to cockpitd")
+    .description("internal: bridge from claude Stop/SubagentStop/SessionEnd hooks to squadrantd")
     .action(async (event: string) => {
-      const taskId = process.env.COCKPIT_CREW_TASK_ID;
-      const project = process.env.COCKPIT_CREW_PROJECT;
+      const taskId = process.env.SQUADRANT_CREW_TASK_ID;
+      const project = process.env.SQUADRANT_CREW_PROJECT;
       if (!taskId || !project) { process.exit(0); }
       // Drain stdin (Claude posts hook JSON there). Tolerate missing/malformed.
       let stdin = "";
@@ -271,7 +271,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       const ev = mapClaudeHookToEvent(event, payload, taskId);
       if (!ev) { process.exit(0); }
       try {
-        await cockpitdCall({ kind: "event", project, event: ev });
+        await squadrantdCall({ kind: "event", project, event: ev });
       } catch {
         // Daemon down: do NOT block Claude. Hook contract requires exit 0;
         // a non-zero exit would block the conversation.
@@ -284,12 +284,12 @@ export function addControlPlaneCrewCommands(crew: Command): void {
   // (git status clean, etc.) to declare terminal state to the captain.
   crew
     .command("signal <state>")
-    .description("Emit explicit terminal signal from a crew session: done|blocked|failed (reads COCKPIT_CREW_* env, or --task-id/--project for codex)")
+    .description("Emit explicit terminal signal from a crew session: done|blocked|failed (reads SQUADRANT_CREW_* env, or --task-id/--project for codex)")
     .option("--message <m>", "Summary written to resultRef (done)")
     .option("--question <q>", "Question to surface to captain (blocked)")
     .option("--error <e>", "Error message (failed)")
-    .option("--task-id <id>", "Explicit task id (codex; overrides COCKPIT_CREW_TASK_ID env)")
-    .option("--project <p>", "Explicit project (codex; overrides COCKPIT_CREW_PROJECT env)")
+    .option("--task-id <id>", "Explicit task id (codex; overrides SQUADRANT_CREW_TASK_ID env)")
+    .option("--project <p>", "Explicit project (codex; overrides SQUADRANT_CREW_PROJECT env)")
     .action(async (state: string, opts: { message?: string; question?: string; error?: string; taskId?: string; project?: string }) => {
       if (state !== "done" && state !== "blocked" && state !== "failed") {
         process.stderr.write(`unknown signal '${state}' (expected: done|blocked|failed)\n`);
@@ -304,7 +304,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           ...(opts.project !== undefined ? { project: opts.project } : {}),
           writeResult: defaultWriteResult,
         });
-        await cockpitdCall(req);
+        await squadrantdCall(req);
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
@@ -319,5 +319,5 @@ export function addControlPlaneCrewCommands(crew: Command): void {
 // Standalone control-plane-only command (kept for back-compat / direct use;
 // the CLI composes these onto the legacy `crew` command via the function above).
 export const crewControlCommand = new Command("crew")
-  .description("Dispatch and track crew via the cockpit control plane");
+  .description("Dispatch and track crew via the squadrant control plane");
 addControlPlaneCrewCommands(crewControlCommand);
