@@ -4,7 +4,8 @@
 #
 # Renames the runtime config dir, hub vault, this project's spoke vault, the
 # repo folder, the local project key (projects.cockpit -> projects.squadrant),
-# the daemon launchd label, and rewrites config.json to the new brand.
+# the daemon launchd label, Claude Code's per-project session/memory dirs, and
+# rewrites config.json to the new brand.
 # Idempotent (safe to re-run) and supports --dry-run (prints every action and a
 # concrete config-rewrite preview WITHOUT mutating anything).
 #
@@ -29,6 +30,11 @@ case "${1:-}" in
   * ) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
 esac
 
+# Claude Code munges a project's absolute path into its state-dir name by
+# replacing every '/' and '.' with '-' (e.g. /Users/me/claude-cockpit ->
+# -Users-me-claude-cockpit, and the inner /.worktrees/ -> --worktrees-).
+munge_path() { local p="${1//\//-}"; printf '%s' "${p//./-}"; }
+
 OLD_CONFIG="$HOME/.config/cockpit"
 NEW_CONFIG="$HOME/.config/squadrant"
 OLD_HUB="$HOME/cockpit-hub"
@@ -41,6 +47,12 @@ NEW_SPOKE="$NEW_HUB/spokes/squadrant"
 OLD_LABEL="com.cockpit.daemon"
 NEW_LABEL="com.squadrant.daemon"
 OLD_PLIST="$HOME/Library/LaunchAgents/${OLD_LABEL}.plist"
+# Claude Code's per-project state (session .jsonl transcripts + memory/ auto-memory)
+# is keyed by the munged repo path, so the folder rename orphans it (the new path
+# starts empty). Renaming the state dir prefix re-links it to the renamed repo.
+CLAUDE_PROJECTS="$HOME/.claude/projects"
+OLD_MUNGED="$(munge_path "$OLD_REPO")"
+NEW_MUNGED="$(munge_path "$NEW_REPO")"
 # MIGRATE_REPO_ROOT lets --dry-run simulate running from the renamed repo
 # (to preview the full plan past the Step-0 guard); unset in real runs.
 REPO_ROOT="${MIGRATE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -110,6 +122,7 @@ note "config:      $OLD_CONFIG  ->  $NEW_CONFIG"
 note "hub:         $OLD_HUB  ->  $NEW_HUB"
 note "spoke:       $OLD_SPOKE  ->  $NEW_SPOKE"
 note "project key: projects.cockpit  ->  projects.squadrant"
+note "sessions:    $CLAUDE_PROJECTS/$OLD_MUNGED*  ->  $NEW_MUNGED*"
 note "daemon:      $OLD_LABEL  ->  $NEW_LABEL"
 note "running from: $REPO_ROOT"
 
@@ -181,6 +194,35 @@ else
   fi
 fi
 
+step "4.5 Preserve Claude Code session history + auto-memory (rename per-project state dirs)"
+# The main project dir ($OLD_MUNGED) holds the session .jsonl transcripts and the
+# memory/ subdir; its worktree dirs ($OLD_MUNGED--worktrees-*) share the prefix and
+# are orphaned by the SAME folder rename. Swap the prefix on each so the renamed
+# repo finds them. Pure rename — no data is copied or deleted (idempotent: skips
+# any dir whose new-name target already exists).
+if [ -d "$CLAUDE_PROJECTS" ] && [ -n "$OLD_MUNGED" ]; then
+  main_dir="$CLAUDE_PROJECTS/$OLD_MUNGED"
+  if [ -d "$main_dir" ]; then
+    sessions="$(find "$main_dir" -maxdepth 1 -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+    mem="$([ -d "$main_dir/memory" ] && find "$main_dir/memory" -type f 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+    note "main project dir: $sessions session transcript(s), $mem auto-memory file(s) to preserve"
+  fi
+  migrated=0; skipped=0
+  shopt -s nullglob
+  for src in "$CLAUDE_PROJECTS/$OLD_MUNGED" "$CLAUDE_PROJECTS/$OLD_MUNGED-"*; do
+    [ -d "$src" ] || continue
+    base="$(basename "$src")"
+    dest="$CLAUDE_PROJECTS/${NEW_MUNGED}${base#"$OLD_MUNGED"}"
+    if [ -e "$dest" ]; then note "skip (target exists): $base"; skipped=$((skipped + 1)); continue; fi
+    run "mv '$src' '$dest'"
+    migrated=$((migrated + 1))
+  done
+  shopt -u nullglob
+  note "$([ "$DRY_RUN" -eq 1 ] && echo 'would migrate' || echo 'migrated') $migrated state dir(s) (main + worktrees); skipped $skipped"
+else
+  note "no $CLAUDE_PROJECTS dir — skipping session/memory preservation"
+fi
+
 step "5. Remove old launchd plist (the rebuilt daemon installs com.squadrant.daemon.plist on first run)"
 [ -f "$OLD_PLIST" ] && run "rm -f '$OLD_PLIST'" || note "old plist absent"
 
@@ -200,10 +242,15 @@ cat <<EOF
     2. Verify CLI:      squadrant --version   (expect 0.9.0)   and   squad --help
     3. Relaunch captains:  squadrant launch <project>   (recreates the ⚓ squadrant-captain workspaces)
     4. Tail the log:    tail -f ${NEW_CONFIG}/squadrantd.log
+    5. Verify sessions: ls ${CLAUDE_PROJECTS}/${NEW_MUNGED}/   (your history + memory/ should be here)
   Rollback (if needed):
     launchctl bootout gui/${UID_NUM}/${NEW_LABEL} 2>/dev/null || true
     rm -rf ${NEW_CONFIG} ${NEW_HUB}
     tar xzf ${BACKUP} -C ${HOME}
     mv ${NEW_REPO} ${OLD_REPO}    # move the repo folder back
+    # session/memory dirs are pure renames — move them back by prefix:
+    for d in ${CLAUDE_PROJECTS}/${NEW_MUNGED} ${CLAUDE_PROJECTS}/${NEW_MUNGED}-*; do
+      [ -d "\$d" ] && mv "\$d" "${CLAUDE_PROJECTS}/${OLD_MUNGED}\${d#${CLAUDE_PROJECTS}/${NEW_MUNGED}}"
+    done
     # then reinstall the old plist + relink the old 'cockpit' bin
 EOF
