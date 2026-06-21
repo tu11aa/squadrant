@@ -7,7 +7,7 @@
 - `daemon/` modules: start, context, server, attach, delivery, probes, gates, snapshot-gather
 - `delivery/` — CaptainDelivery
 - Driver-seam interfaces (AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver)
-- Pure helpers: gate, DeferDelivery, interactive-probe, launchd, relay-healer, crew-pane-reader
+- Pure helpers: gate, DeferDelivery, interactive-probe, launchd, crew-pane-reader
 
 **Public interface:** Everything exported from `packages/core/src/index.ts`.
 

@@ -17,7 +17,7 @@ Current references that stay accurate as the project evolves.
 | [architecture.vi.html](architecture.vi.html) | Vietnamese companion to architecture.html | Active (refreshed 2026-06-18) |
 | [diagrams/2026-06-18-cockpit-monorepo-architecture.html](diagrams/2026-06-18-cockpit-monorepo-architecture.html) | **Current** — 6-package monorepo architecture diagram (EN) | Active |
 | [diagrams/2026-06-18-cockpit-monorepo-architecture.vi.html](diagrams/2026-06-18-cockpit-monorepo-architecture.vi.html) | Vietnamese companion to current architecture diagram | Active |
-| [testing/crew-lifecycle-checklist.md](testing/crew-lifecycle-checklist.md) | Regression checklist — crew/daemon/relay/template changes | Active (living) |
+| [testing/crew-lifecycle-checklist.md](testing/crew-lifecycle-checklist.md) | Regression checklist — crew/daemon/delivery/template changes | Active (living) |
 
 ---
 

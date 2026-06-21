@@ -1,5 +1,7 @@
 # Telegram Integration — Design Spec
 
+> **POST-#332 NOTE:** This spec assumes the `notify-relay` transport, which was **deleted in #332**. Inbound/outbound messages now ride **daemon-direct cmux delivery**. Rebase the transport assumptions below onto daemon-direct before resuming implementation.
+
 **Issue:** #65 — Telegram integration for remote cockpit control
 **Date:** 2026-06-15
 **Status:** Approved design → ready for implementation plan

@@ -11,7 +11,7 @@ etc.). Those live in the host (`cockpitd.ts`).
 | `start.ts` | `startDaemon(ctx, opts, pkgVersion)` — wires all factories, runs boot recovery, starts timers, returns `DaemonHandle` |
 | `context.ts` | `DaemonContext` shared state bag + `buildContext(opts)` + `CockpitdOpts` type |
 | `attach.ts` | `createAttach(ctx)` — broadcast fan-out + gate-promotion timers |
-| `probes.ts` | `createProbes(ctx)` — relay-proxy and daemon-direct surface-liveness probes |
+| `probes.ts` | `createProbes(ctx)` — daemon-direct surface-liveness probes |
 | `delivery.ts` | `createDelivery(ctx, ...)` — mailbox append + daemon-direct captain delivery loop (#332) |
 | `gates.ts` | `createGateResolver(ctx)` — routes captain approve/deny to the owning driver |
 | `server.ts` | `createServer(ctx, handlers)` — IPC socket server + message router |
@@ -33,7 +33,6 @@ const handle = startDaemon(ctx, opts, pkgVersion);
 - `../mailbox.ts` — mailbox I/O
 - `../liveness.ts` — health assembly
 - `../snapshot.ts` — dashboard snapshot assembly
-- `../relay-healer.ts` — relay health
 - `@cockpit/shared` — types, config, constants
 
 ## Doesn't Belong Here

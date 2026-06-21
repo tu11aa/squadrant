@@ -12,6 +12,17 @@ Cockpit v0.1.x is a working multi-project agent orchestration system with:
 - Self-enhancement via learnings system
 - CLI: init, launch, status, doctor, projects, shutdown, feedback
 
+## ✅ Shipped
+
+Landed since the entries below were written (as of v0.8.2):
+
+- **Global effort dial** — `cockpit effort max|balance|low` tokenomics dial (#317 / #381).
+- **Monorepo reorg** — six internal packages (`shared`/`core`/`agents`/`workspaces`/`web`/`cli`) in a one-way DAG, single bundled bin.
+- **Daemon-direct delivery** — crew/handoff delivery moved onto the daemon→cmux path; `notify-relay` deleted (#332).
+- **Semantic crew heartbeat** — CREW IDLE / QUIET / STALLED lifecycle signal (#354).
+- **`stopped` project status + orphan-crew reap** — daemon reaps orphaned crews and marks intentional shutdown as `stopped` (#324 / #323 / #388).
+- **Control-plane store hygiene** — task-store GC / purge to keep the daemon store bounded.
+
 ## Roadmap
 
 ### P0 — Critical (Next 2 weeks) — ✅ ALL DONE
