@@ -2,10 +2,15 @@
 #
 # migrate-to-squadrant.sh — one-time live cutover from claude-cockpit → squadrant.
 #
-# Renames the runtime config dir, hub vault, daemon launchd label, and rewrites
-# config.json to the new brand. Idempotent (safe to re-run) and supports
-# --dry-run (prints every action and a concrete config-rewrite preview WITHOUT
-# mutating anything).
+# Renames the runtime config dir, hub vault, this project's spoke vault, the
+# repo folder, the local project key (projects.cockpit -> projects.squadrant),
+# the daemon launchd label, and rewrites config.json to the new brand.
+# Idempotent (safe to re-run) and supports --dry-run (prints every action and a
+# concrete config-rewrite preview WITHOUT mutating anything).
+#
+# The repo folder cannot mv itself while it is the running checkout, so Step 0
+# guards that: if invoked from the old repo it prints the exact `mv` to run and
+# exits. Re-run from the new path ($HOME/me/squadrant) to do the full cutover.
 #
 # This is run MANUALLY by the user at cutover — it terminates the live captain
 # session and bounces the daemon. The old daemon keeps running old `dist` until
@@ -28,10 +33,17 @@ OLD_CONFIG="$HOME/.config/cockpit"
 NEW_CONFIG="$HOME/.config/squadrant"
 OLD_HUB="$HOME/cockpit-hub"
 NEW_HUB="$HOME/squadrant-hub"
+OLD_REPO="$HOME/me/claude-cockpit"
+NEW_REPO="$HOME/me/squadrant"
+# Spoke vault for THIS project, addressed after the hub move (step 3).
+OLD_SPOKE="$NEW_HUB/spokes/cockpit"
+NEW_SPOKE="$NEW_HUB/spokes/squadrant"
 OLD_LABEL="com.cockpit.daemon"
 NEW_LABEL="com.squadrant.daemon"
 OLD_PLIST="$HOME/Library/LaunchAgents/${OLD_LABEL}.plist"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# MIGRATE_REPO_ROOT lets --dry-run simulate running from the renamed repo
+# (to preview the full plan past the Step-0 guard); unset in real runs.
+REPO_ROOT="${MIGRATE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 UID_NUM="$(id -u)"
 TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$HOME/squadrant-migration-backup-${TS}.tgz"
@@ -40,8 +52,9 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 run() { printf '  $ %s\n' "$*"; [ "$DRY_RUN" -eq 1 ] || eval "$@"; }
 note() { printf '  · %s\n' "$*"; }
 
-# ---- config.json rewrite (pure, no claude-cockpit collisions: none of the
-#      rules match inside "claude-cockpit", so the real repo path is untouched).
+# ---- config.json rewrite (pure). Rules are scoped so only THIS project's
+#      brand strings change: "me/claude-cockpit" + "spokes/cockpit" are unique
+#      to the cockpit project, so the other 20+ projects' paths are untouched.
 rewrite_config() {  # $1=src json  $2=mode (apply <dest> | preview)
   local src="$1" mode="$2" dest="${3:-}"
   SRC="$src" MODE="$mode" DEST="$dest" python3 - <<'PY'
@@ -51,6 +64,8 @@ with open(src) as f:
     d = json.load(f)
 RULES = [("cockpit-hub", "squadrant-hub"),
          (".config/cockpit", ".config/squadrant"),
+         ("me/claude-cockpit", "me/squadrant"),
+         ("spokes/cockpit", "spokes/squadrant"),
          ("⚓ cockpit-captain", "⚓ squadrant-captain")]
 changes = []
 def fix(s):
@@ -69,6 +84,11 @@ def walk(o):
         return fix(o)
     return o
 d = walk(d)
+# Rename the project key projects.cockpit -> projects.squadrant (preserve order).
+if isinstance(d.get("projects"), dict) and "cockpit" in d["projects"]:
+    d["projects"] = {("squadrant" if k == "cockpit" else k): v
+                     for k, v in d["projects"].items()}
+    changes.append(("key:projects.cockpit", "key:projects.squadrant"))
 if "_cockpitVersion" in d:
     d["_squadrantVersion"] = d.pop("_cockpitVersion")
     changes.append(("key:_cockpitVersion", "key:_squadrantVersion"))
@@ -85,16 +105,44 @@ PY
 }
 
 printf '\033[1mSquadrant migration%s\033[0m\n' "$([ "$DRY_RUN" -eq 1 ] && echo ' (DRY RUN — nothing will change)')"
-note "repo:        $REPO_ROOT"
+note "repo:        $OLD_REPO  ->  $NEW_REPO"
 note "config:      $OLD_CONFIG  ->  $NEW_CONFIG"
 note "hub:         $OLD_HUB  ->  $NEW_HUB"
+note "spoke:       $OLD_SPOKE  ->  $NEW_SPOKE"
+note "project key: projects.cockpit  ->  projects.squadrant"
 note "daemon:      $OLD_LABEL  ->  $NEW_LABEL"
+note "running from: $REPO_ROOT"
 
 # Already migrated? (new dir present, old gone) — nothing to do.
 if [ -d "$NEW_CONFIG" ] && [ ! -d "$OLD_CONFIG" ]; then
   step "Already migrated — $NEW_CONFIG exists and $OLD_CONFIG is gone. Nothing to do."
   exit 0
 fi
+
+# ---- Step 0: the repo folder must already live at its new name. The script
+#      cannot mv its own running checkout, so if we are not in $NEW_REPO we
+#      print the exact move + re-run command and stop here.
+step "0. Repo folder rename (must run from the NEW path)"
+if [ "$REPO_ROOT" != "$NEW_REPO" ]; then
+  note "running from: $REPO_ROOT"
+  note "expected:     $NEW_REPO"
+  cat <<EOF
+
+  The repo folder still needs to be renamed, and this script cannot move its own
+  running checkout. Do it manually, then re-run from the new location:
+
+    # 1. close captains (cmux) so nothing holds the old path open
+    # 2. move the repo folder:
+    mv '$OLD_REPO' '$NEW_REPO'
+    # 3. re-run this script from the renamed repo:
+    bash '$NEW_REPO/scripts/migrate-to-squadrant.sh'$([ "$DRY_RUN" -eq 1 ] && echo ' --dry-run')
+
+  (The daemon plist and the global npm link both point at the repo dir; moving it
+   first lets steps 6-7 relink and bootstrap from the new location.)
+EOF
+  exit 0
+fi
+note "running from $NEW_REPO ✓"
 
 step "1. Backup ~/.config/cockpit and ~/cockpit-hub"
 # Archive with paths RELATIVE to $HOME so rollback is `tar xzf <backup> -C $HOME`.
@@ -112,11 +160,13 @@ step "2. Stop captains + bootout the old daemon"
 note "Captains are cmux workspaces — close them in cmux, or let the relaunch below recreate them."
 run "launchctl bootout gui/${UID_NUM}/${OLD_LABEL} 2>/dev/null || true"
 
-step "3. Move config dir and hub vault"
+step "3. Move config dir, hub vault, and this project's spoke vault"
 if [ -d "$OLD_CONFIG" ] && [ ! -d "$NEW_CONFIG" ]; then run "mv '$OLD_CONFIG' '$NEW_CONFIG'"; else note "config move skipped (old absent or new exists)"; fi
 if [ -d "$OLD_HUB" ] && [ ! -d "$NEW_HUB" ]; then run "mv '$OLD_HUB' '$NEW_HUB'"; else note "hub move skipped (old absent or new exists)"; fi
+# Spoke lives under the hub; source check covers both pre- and post-hub-move location.
+if { [ -d "$OLD_SPOKE" ] || [ -d "$OLD_HUB/spokes/cockpit" ]; } && [ ! -d "$NEW_SPOKE" ]; then run "mv '$OLD_SPOKE' '$NEW_SPOKE'"; else note "spoke move skipped (source absent or target exists)"; fi
 
-step "4. Rewrite config.json (cockpit-hub→squadrant-hub, .config/cockpit→.config/squadrant, ⚓ cockpit-captain→⚓ squadrant-captain, _cockpitVersion key)"
+step "4. Rewrite config.json (cockpit-hub→squadrant-hub, .config/cockpit→.config/squadrant, me/claude-cockpit→me/squadrant, spokes/cockpit→spokes/squadrant, ⚓ cockpit-captain→⚓ squadrant-captain, projects.cockpit→projects.squadrant key, _cockpitVersion key)"
 if [ "$DRY_RUN" -eq 1 ]; then
   CFG_SRC="$OLD_CONFIG/config.json"; [ -f "$CFG_SRC" ] || CFG_SRC="$NEW_CONFIG/config.json"
   if [ -f "$CFG_SRC" ]; then rewrite_config "$CFG_SRC" preview; else note "no config.json found to preview"; fi
@@ -154,5 +204,6 @@ cat <<EOF
     launchctl bootout gui/${UID_NUM}/${NEW_LABEL} 2>/dev/null || true
     rm -rf ${NEW_CONFIG} ${NEW_HUB}
     tar xzf ${BACKUP} -C ${HOME}
+    mv ${NEW_REPO} ${OLD_REPO}    # move the repo folder back
     # then reinstall the old plist + relink the old 'cockpit' bin
 EOF
