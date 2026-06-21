@@ -20,11 +20,13 @@ import type { ExternalProbes, Probe, ProbeState } from "./probes.js";
 
 type AnyState = HealthState | ProbeState;
 
-const ICON: Record<AnyState, string> = { alive: "✔", stale: "•", gone: "✘", unknown: "○" };
-// Rollup ordering: gone is worst, unknown never out-ranks a real degradation.
-const SEV: Record<AnyState, number> = { alive: 0, unknown: 1, stale: 2, gone: 3 };
+const ICON: Record<AnyState, string> = { alive: "✔", stale: "•", gone: "✘", stopped: "⏻", unknown: "○" };
+// Rollup ordering: gone (fault) is worst. `stopped` is an intentional shutdown —
+// it out-ranks a stale caution (it is the headline state of an offline project)
+// but never a genuine fault. unknown never out-ranks a real degradation.
+const SEV: Record<AnyState, number> = { alive: 0, unknown: 1, stale: 2, stopped: 3, gone: 4 };
 // Cockpit annunciator vernacular for each state.
-const STATE_WORD: Record<AnyState, string> = { alive: "nominal", stale: "caution", gone: "fault", unknown: "unknown" };
+const STATE_WORD: Record<AnyState, string> = { alive: "nominal", stale: "caution", gone: "fault", stopped: "stopped", unknown: "unknown" };
 
 function esc(s: string): string {
   return s
@@ -61,10 +63,10 @@ function worst(states: AnyState[]): AnyState {
 }
 
 // ── Health tallies ────────────────────────────────────────────────────────────
-interface Tally { alive: number; stale: number; gone: number; unknown: number; total: number }
+interface Tally { alive: number; stale: number; gone: number; stopped: number; unknown: number; total: number }
 
 function tally(states: AnyState[]): Tally {
-  const t: Tally = { alive: 0, stale: 0, gone: 0, unknown: 0, total: states.length };
+  const t: Tally = { alive: 0, stale: 0, gone: 0, stopped: 0, unknown: 0, total: states.length };
   for (const s of states) t[s]++;
   return t;
 }
@@ -104,7 +106,7 @@ function probeCell(label: string, p: Probe): string {
 }
 
 // ── Donut gauge (inline SVG) ────────────────────────────────────────────────────
-const DONUT_ORDER: AnyState[] = ["alive", "stale", "gone", "unknown"];
+const DONUT_ORDER: AnyState[] = ["alive", "stale", "stopped", "gone", "unknown"];
 
 /** The signature element: a four-segment health ring. Segment arc lengths are
  *  proportional to the tally; everything is plain SVG math so it is deterministic
@@ -209,6 +211,7 @@ function sectionHead(title: string, sub: string): string {
 function tierCard(name: string, t: Tally, desc: string): string {
   const w = t.total ? worst(([] as AnyState[]).concat(
     ...Array.from({ length: t.gone }, () => "gone" as AnyState),
+    ...Array.from({ length: t.stopped }, () => "stopped" as AnyState),
     ...Array.from({ length: t.stale }, () => "stale" as AnyState),
     ...Array.from({ length: t.unknown }, () => "unknown" as AnyState),
     ...Array.from({ length: t.alive }, () => "alive" as AnyState),
@@ -221,6 +224,7 @@ function tierCard(name: string, t: Tally, desc: string): string {
     `<span class="tc s-alive">${t.alive}<i>ok</i></span>`,
     `<span class="tc s-stale">${t.stale}<i>caution</i></span>`,
     `<span class="tc s-gone">${t.gone}<i>fault</i></span>`,
+    ...(t.stopped > 0 ? [`<span class="tc s-stopped">${t.stopped}<i>stopped</i></span>`] : []),
     `<span class="tc s-unknown">${t.unknown}<i>unknown</i></span>`,
     `</div></div>`,
   ].join("");
@@ -246,6 +250,7 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
     legendRow("alive", col.overall.alive),
     legendRow("stale", col.overall.stale),
     legendRow("gone", col.overall.gone),
+    ...(col.overall.stopped > 0 ? [legendRow("stopped", col.overall.stopped)] : []),
     legendRow("unknown", col.overall.unknown),
     `</div>`,
     `</div>`,
@@ -313,9 +318,14 @@ function renderProjects(snap: FullSnapshot, now: number): string {
   for (const project of projects) {
     const comps = d.tier1.filter((c) => c.project === project);
     const dp = d.tier2.projects.find((p) => p.project === project);
+    // A stopped captain means the project is intentionally offline — its unread
+    // mail is expected backlog, not a live caution, so the delivery lag does not
+    // contribute a `stale` to the rollup (#324/#323). A genuine fault (corrupt
+    // store) still bubbles `gone` and out-ranks the stopped headline.
+    const captainStopped = comps.some((c) => c.kind === "captain" && c.state === "stopped");
     const rollupStates: AnyState[] = [
       ...comps.map((c) => c.state),
-      dp && dp.delivery.behind > 0 ? "stale" : "alive",
+      !captainStopped && dp && dp.delivery.behind > 0 ? "stale" : "alive",
       dp && dp.store.corruptCount > 0 ? "gone" : "alive",
     ];
     const rollup = worst(rollupStates);
@@ -459,7 +469,7 @@ function metricsBlob(col: Collected, linkLost: boolean): string {
     errors: linkLost ? 0 : col.errors,
     behind: linkLost ? 0 : col.behind,
     crewAgeMs: linkLost ? 0 : col.crewAgeMs,
-    alive: col.overall.alive, stale: col.overall.stale, gone: col.overall.gone, unknown: col.overall.unknown,
+    alive: col.overall.alive, stale: col.overall.stale, gone: col.overall.gone, stopped: col.overall.stopped, unknown: col.overall.unknown,
   };
   // Escape `</` defensively so the JSON can never close the <script> early.
   const json = JSON.stringify(m).replace(/</g, "\\u003c");
@@ -481,7 +491,8 @@ export function renderContent(snap: FullSnapshot): string {
   ];
 
   // Master annunciator (status summary) — glanceable on every tab.
-  const sumLine = `${col.overall.alive} nominal · ${col.overall.stale} caution · ${col.overall.gone} fault · ${col.overall.unknown} unknown`;
+  const stoppedPart = col.overall.stopped > 0 ? ` · ${col.overall.stopped} stopped` : "";
+  const sumLine = `${col.overall.alive} nominal · ${col.overall.stale} caution · ${col.overall.gone} fault${stoppedPart} · ${col.overall.unknown} unknown`;
   out.push(
     `<section class="annunciator a-${mc}" role="status" aria-label="Status summary">`,
     `<div class="ann-main"><span class="ann-eyebrow">Status summary</span><span class="ann-word">${esc(word)}</span></div>`,
@@ -518,7 +529,7 @@ const STYLE = `
 :root{
   --bg:#f6f7f9;--panel:#ffffff;--panel-2:#eef1f6;--bezel:#e3e7ef;--track:#e9ecf2;
   --ink:#1b2333;--ink-dim:#5b6678;--hud:#0b6fc2;--hud-deep:#0b6fc2;
-  --ok:#157f3c;--warn:#b45309;--crit:#c01f2e;--unk:#5f6b7d;
+  --ok:#157f3c;--warn:#b45309;--crit:#c01f2e;--unk:#5f6b7d;--stopped:#7c5cbf;
   --shadow:0 1px 2px rgba(16,24,40,.05),0 4px 14px rgba(16,24,40,.06);
 }
 *{box-sizing:border-box}
@@ -591,7 +602,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .donut{width:172px;height:172px;animation:rise .55s ease}
 .donut-track{stroke:var(--track)}
 .seg{transition:stroke-dasharray .5s ease}
-.seg.s-alive{stroke:var(--ok)}.seg.s-stale{stroke:var(--warn)}.seg.s-gone{stroke:var(--crit)}.seg.s-unknown{stroke:var(--unk)}
+.seg.s-alive{stroke:var(--ok)}.seg.s-stale{stroke:var(--warn)}.seg.s-gone{stroke:var(--crit)}.seg.s-stopped{stroke:var(--stopped)}.seg.s-unknown{stroke:var(--unk)}
 .a-ok .seg.s-alive{filter:drop-shadow(0 0 4px var(--ok))}
 .gauge-core{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px}
 .gauge-n{font-size:38px;font-weight:800;font-family:system-ui,sans-serif;line-height:1}
@@ -603,7 +614,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .leg-n{font-size:20px;font-weight:700;font-family:system-ui,sans-serif;min-width:1.4em;text-align:right}
 .leg-l{color:var(--ink-dim);text-transform:uppercase;letter-spacing:.1em;font-size:10px;font-family:system-ui,sans-serif}
 .leg.s-alive .pdot{background:var(--ok)}.leg.s-stale .pdot{background:var(--warn)}
-.leg.s-gone .pdot{background:var(--crit)}.leg.s-unknown .pdot{background:var(--unk)}
+.leg.s-gone .pdot{background:var(--crit)}.leg.s-stopped .pdot{background:var(--stopped)}.leg.s-unknown .pdot{background:var(--unk)}
 
 /* Tier + trend cards */
 .tier-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px}
@@ -614,7 +625,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .tier-counts{display:flex;gap:14px}
 .tc{display:flex;flex-direction:column;font-size:21px;font-weight:700;font-family:system-ui,sans-serif;line-height:1.1}
 .tc i{font-size:9px;font-weight:600;font-style:normal;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim)}
-.tc.s-alive{color:var(--ok)}.tc.s-stale{color:var(--warn)}.tc.s-gone{color:var(--crit)}.tc.s-unknown{color:var(--unk)}
+.tc.s-alive{color:var(--ok)}.tc.s-stale{color:var(--warn)}.tc.s-gone{color:var(--crit)}.tc.s-stopped{color:var(--stopped)}.tc.s-unknown{color:var(--unk)}
 
 .trend-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:16px}
 .trend{border:1px solid var(--bezel);border-radius:12px;background:var(--panel);padding:13px 15px;box-shadow:var(--shadow)}
@@ -631,6 +642,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .card{border:1px solid var(--bezel);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);padding:14px 16px;margin-bottom:14px;border-left:3px solid var(--bezel)}
 .card[data-rollup="gone"]{border-left-color:var(--crit)}
 .card[data-rollup="stale"]{border-left-color:var(--warn)}
+.card[data-rollup="stopped"]{border-left-color:var(--stopped)}
 .card[data-rollup="alive"]{border-left-color:var(--ok)}
 .card[data-rollup="unknown"]{border-left-color:var(--unk)}
 .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
@@ -651,6 +663,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .pill.s-alive{color:var(--ok)}.pill.s-alive .pdot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .pill.s-stale{color:var(--warn)}.pill.s-stale .pdot{background:var(--warn);box-shadow:0 0 6px var(--warn)}
 .pill.s-gone{color:var(--crit)}.pill.s-gone .pdot{background:var(--crit);box-shadow:0 0 6px var(--crit)}
+.pill.s-stopped{color:var(--stopped)}.pill.s-stopped .pdot{background:var(--stopped);box-shadow:0 0 6px var(--stopped)}
 .pill.s-unknown{color:var(--unk)}.pill.s-unknown .pdot{background:var(--unk)}
 .cell-detail{color:var(--ink-dim)}
 

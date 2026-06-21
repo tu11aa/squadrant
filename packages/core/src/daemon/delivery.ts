@@ -2,10 +2,11 @@
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
 import { CaptainDelivery } from "../delivery/captain-delivery.js";
-import { loadConfig } from "@cockpit/shared";
+import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import type { TaskRecord, ControlEvent } from "@cockpit/shared";
 import type { PaneRef } from "@cockpit/shared";
+import type { Store } from "../store.js";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import type { DaemonContext } from "./context.js";
 
@@ -15,6 +16,27 @@ const CAPTAIN_GONE_STREAK_K = 3;
 /** Pure: find the captain surface by title in a surface list (#332). */
 export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
   return surfaces.find((s) => s.title === captainTitle) ?? null;
+}
+
+/**
+ * Reap a stopped project's orphaned crews (#324). When the user closes the
+ * captain workspace, its crew panes die with it — every non-terminal
+ * interactive crew is orphaned. Terminalize them to 'cancelled' with a distinct
+ * `captain-stopped` marker (traceable; not a fault). Silent: no push fires (the
+ * captain that would receive it is gone). Returns the count reaped.
+ *
+ * Headless crews are excluded — they run as detached processes, not panes in the
+ * captain's workspace, and are reconciled by their own pid liveness instead.
+ */
+export function reapOrphanedCrews(store: Pick<Store, "list" | "put">, project: string): number {
+  let reaped = 0;
+  for (const r of store.list(project)) {
+    if (TERMINAL_STATES.has(r.state)) continue;
+    if (r.mode !== "interactive") continue;
+    store.put({ ...r, state: "cancelled", lastEvent: "captain-stopped" });
+    reaped++;
+  }
+  return reaped;
 }
 
 export interface DeliveryResult {
@@ -112,7 +134,8 @@ export function createDelivery(
           if (streak >= CAPTAIN_GONE_STREAK_K) {
             if (!stoppedProjects.has(project)) {
               stoppedProjects.add(project);
-              log(`captain ${captainTitle}: surface gone for ${CAPTAIN_GONE_STREAK_K} sweeps — stopping delivery`);
+              const reaped = reapOrphanedCrews(store, project);
+              log(`captain ${captainTitle}: surface gone for ${CAPTAIN_GONE_STREAK_K} sweeps — stopping delivery${reaped > 0 ? `, reaped ${reaped} orphaned crew(s)` : ""}`);
             }
           }
         }

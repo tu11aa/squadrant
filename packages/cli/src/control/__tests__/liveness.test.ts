@@ -43,9 +43,12 @@ describe("projectHealth (pure projection)", () => {
     expect(find(cs, "captain")!.state).toBe("alive");
   });
 
-  it("captainStopped=true → captain gone", () => {
+  it("captainStopped=true → captain stopped (intentional close, distinct from fault)", () => {
     const cs = projectHealth({ ...base, now: 1_000, captainStopped: true });
-    expect(find(cs, "captain")!.state).toBe("gone");
+    const captain = find(cs, "captain")!;
+    expect(captain.state).toBe("stopped");
+    // A stopped captain carries a calm, explanatory detail — not an alarm.
+    expect(captain.detail).toMatch(/closed/i);
   });
 
   it("captainStopped=null → captain unknown (no signal yet)", () => {
