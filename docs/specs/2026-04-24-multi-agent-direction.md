@@ -6,7 +6,7 @@
 
 ## Decision
 
-Cockpit is a **multi-agent orchestration layer**, not a Claude Code accessory. It should support Claude Code, Codex, Cursor, Gemini CLI, Aider, and future coding agents equally. Features that only work for Claude Code are a migration target, not a permanent state.
+Cockpit is a **multi-agent orchestration layer**, not a Claude Code accessory. It should support Claude Code, Codex, Cursor, Gemini CLI, and future coding agents equally. Features that only work for Claude Code are a migration target, not a permanent state.
 
 ## Why now
 
@@ -21,13 +21,13 @@ The abstraction proved out. The missing layer is **agent-side**: templates, skil
 
 ## What "supports all" means concretely
 
-| Layer | Claude Code | Codex | Cursor | Gemini CLI | Aider |
-|---|---|---|---|---|---|
-| Runtime | ✅ cmux | ✅ (runtime driver) | ✅ (runtime driver) | ✅ (runtime driver) | ✅ (runtime driver) |
-| Instructions | `CLAUDE.md` | `AGENTS.md` | `.cursor/rules/*.mdc` | `GEMINI.md` | `CONVENTIONS.md` |
-| Skills | `SKILL.md` via Skill tool | via AGENTS.md include | via rule include | via GEMINI.md include | via CONVENTIONS include |
-| MCP config | `~/.claude/settings.json` | `~/.codex/config.toml` | `~/.cursor/mcp.json` | varies | varies |
-| Memory | claude-mem (MCP) | claude-mem (MCP, if MCP supported) | claude-mem (MCP) | claude-mem (MCP) | — |
+| Layer | Claude Code | Codex | Cursor | Gemini CLI |
+|---|---|---|---|---|
+| Runtime | ✅ cmux | ✅ (runtime driver) | ✅ (runtime driver) | ✅ (runtime driver) |
+| Instructions | `CLAUDE.md` | `AGENTS.md` | `.cursor/rules/*.mdc` | `GEMINI.md` |
+| Skills | `SKILL.md` via Skill tool | via AGENTS.md include | via rule include | via GEMINI.md include |
+| MCP config | `~/.claude/settings.json` | `~/.codex/config.toml` | `~/.cursor/mcp.json` | varies |
+| Memory | claude-mem (MCP) | claude-mem (MCP, if MCP supported) | claude-mem (MCP) | claude-mem (MCP) |
 
 ## Pain points when using non-Claude agents today
 

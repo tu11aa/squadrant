@@ -22,11 +22,19 @@ Captain → cockpit crew spawn …    → Crew (new tab in the captain workspace
 
 ## Install
 
+The packages are private (not yet on npm), so install from source and link the bin:
+
 ```bash
-npm install -g claude-cockpit
+git clone https://github.com/tu11aa/claude-cockpit.git
+cd claude-cockpit
+pnpm install
+pnpm build                       # produces dist/index.js (the cockpit bin)
+npm link                         # symlinks the global `cockpit` to dist/index.js
 cockpit init
 cockpit doctor
 ```
+
+> npm publishing is pending a package-name decision (the bare name `claude-cockpit` is taken on npm).
 
 ## Prerequisites
 
@@ -88,6 +96,12 @@ See `obsidian/plugins.md` for Dataview, Templater setup.
 | `cockpit crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `cockpit crew list <project>` | List live crews for a project |
 | `cockpit shutdown [project]` | Graceful shutdown |
+| `cockpit effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
+| `cockpit retro` | Generate a retro (weekly/sprint summary) from daily logs and git (zero tokens) |
+| `cockpit config check` | Detect config drift vs the current default schema |
+| `cockpit heal [--dry-run\|daemon]` | Targeted, idempotent remediation for cockpit components (daemon, health) |
+| `cockpit group dispatch …` | Cross-project intra-group operations (dispatch a task to a sibling project) |
+| `cockpit cmux …` | cmux integration helpers |
 | `cockpit feedback` | Open opt-in feedback issue |
 
 ## Monorepo structure
@@ -143,6 +157,16 @@ User-facing notifications run behind a pluggable **notifier driver** (currently 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `cockpit crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `cockpit crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
 Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `cockpit shutdown`. Non-Claude agents (codex/gemini) currently still launch in print-mode; full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-cockpit-thin-redirect-design.md`](docs/specs/archive/2026-05-05-cockpit-thin-redirect-design.md).
+
+### Effort Dial (Tokenomics)
+
+`cockpit effort max|balance|low` is a single global dial that biases how aggressively crews consume tokens — a captain-discretion signal, not mechanical routing. `max` favors quality/tokens, `low` biases toward economy (e.g. preferring opencode for cheap work); `balance` sits between. Run `cockpit effort` with no argument to print the current setting. The value lives in config and is honored by captains via the captain-ops playbook ([#317](https://github.com/tu11aa/claude-cockpit/issues/317) / [#381](https://github.com/tu11aa/claude-cockpit/pull/381)).
+
+### Crew Lifecycle & Delivery
+
+- **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/claude-cockpit/issues/332)).
+- **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/claude-cockpit/issues/354)).
+- **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/claude-cockpit/issues/324) / [#323](https://github.com/tu11aa/claude-cockpit/issues/323) / [#388](https://github.com/tu11aa/claude-cockpit/pull/388)).
 
 ### Projection (Cross-Agent Config Sync)
 

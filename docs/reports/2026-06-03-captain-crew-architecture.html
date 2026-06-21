@@ -103,6 +103,10 @@
   <a href="#appendix">8 · Event reference</a>
 </nav>
 <main>
+<div style="background:#3d1d1d;border:1px solid var(--crit);border-radius:8px;padding:16px 20px;margin-bottom:24px;color:var(--fg);">
+  <strong style="color:var(--crit);">⚠ SUPERSEDED (post-#332).</strong>
+  This report documents <code class="inline">notify-relay</code> as a live component. The relay was <strong>deleted in <a href="https://github.com/tu11aa/claude-cockpit/issues/332">#332</a></strong>; crew delivery is now <strong>daemon-direct cmux</strong> (the daemon writes to the surface directly, no relay supervisor). Treat all relay references below as historical.
+</div>
 <header class="hero">
   <h1>Captain ↔ Crew Lifecycle Architecture</h1>
   <div class="sub">A code-grounded analysis of how a cockpit <strong>captain</strong> dispatches work to and receives signals from <strong>claude</strong>, <strong>codex</strong>, and <strong>opencode</strong> crews — on the current <code class="inline">develop</code> branch.</div>

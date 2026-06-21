@@ -63,7 +63,7 @@ If the topic already contains all of this, it confirms and proceeds. Otherwise i
 3. On yes:
    - Writes durable record: {spokeVault}/side-handoffs/<topic>.md
    - Sends: cockpit runtime send <project> "🗒 Side handoff [<role>] — <topic> ..."
-4. Primary captain receives handoff via relay.
+4. Primary captain receives handoff delivered daemon-direct via cmux (#332).
 5. Captain does NOT auto-spawn a crew — waits for user's go.
 ```
 
@@ -104,7 +104,7 @@ cockpit side send <project> side-1 "<follow-up>"
 cockpit side close <project> side-1
 ```
 
-When the session completes, its handoff will arrive via relay with the `🗒 Side handoff` prefix.
+When the session completes, its handoff is delivered daemon-direct via cmux (#332) with the `🗒 Side handoff` prefix.
 
 ## Key invariants
 

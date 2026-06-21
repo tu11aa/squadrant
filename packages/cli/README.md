@@ -5,9 +5,9 @@
 ## Owns
 
 - `src/index.ts` — bin entry (compiled by tsup to `dist/index.js`)
-- `src/commands/` — 29 CLI commands (captain, crew, config, launch, relay, etc.)
+- `src/commands/` — 22 top-level CLI commands (crew, config, launch, effort, etc.)
 - `src/control/cockpitd.ts` — daemon-host entry (compiled by tsup to `dist/cockpitd.js`)
-- `src/control/{crew-routing,relay-supervisor,relay-supervisor-loop,relay-log-broadcaster}.ts` — cli-side control plane
+- `src/control/crew-routing.ts` — cli-side control plane
 - `src/lib/per-crew-settings.ts` — per-crew settings helper
 
 ## Depends on
