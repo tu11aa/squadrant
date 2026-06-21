@@ -260,6 +260,68 @@ describe("cockpitd daemon-direct (#332)", () => {
     // If tick 9 had captain found, delivery would resume to 3.
   });
 
+  it("reaps the stopped project's orphaned interactive crews to 'cancelled' (captain-stopped)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-orphan-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
+
+    // A live interactive crew running in the captain's workspace.
+    const crew: TaskRecord = {
+      id: "orphan-1", project: "p", provider: "claude", mode: "interactive",
+      state: "working", task: "build", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "task.started", heartbeatBudgetMs: 1000,
+      name: "orphan",
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    await appendToMailbox({ stateRoot, project: "p", taskRecord: crew, event: EVENT, message: "CREW DONE #1" });
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+    mkdirSync(join(stateRoot, "p"), { recursive: true });
+    writeFileSync(join(stateRoot, "p", `${crew.id}.json`), JSON.stringify(crew));
+
+    const captainTitle = "p-captain";
+    const crewPane = crewPaneTitle("p", "orphan");
+    let surfCall = 0;
+    // Index 0 is consumed by boot d.reconcile() (probes the crew's own pane —
+    // keep BOTH panes present so the crew survives reconcile and is reaped only
+    // by the captain-stopped path). Then tick N uses index N.
+    const surfResults: PaneRef[][] = [
+      [{ workspaceId: "ws:1", surfaceId: "s0", title: captainTitle }, { workspaceId: "ws:1", surfaceId: "sc", title: crewPane }], // reconcile: captain+crew present
+      [{ workspaceId: "ws:1", surfaceId: "s1", title: captainTitle }, { workspaceId: "ws:1", surfaceId: "sc", title: crewPane }], // tick 1: found → deliver
+      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 2: gone, streak=1
+      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 3: gone, streak=2
+      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 4: gone, streak=3 → reap crews + stop
+    ];
+    const cmux = {
+      sent: [] as Array<{ text: string }>,
+      send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
+      listSurfaces: async () => surfResults[Math.min(surfCall++, surfResults.length - 1)],
+      readScreen: async () => null,
+      isAvailable: async () => true,
+      findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
+    } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
+
+    const handle = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux });
+    stop = handle.stop;
+
+    // Let boot reconcile settle (consumes index 0) before the manual ticks.
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Crew is still live (working) before the captain goes away.
+    const before = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
+    expect(before.state).toBe("working");
+
+    if (handle.tickDelivery) await handle.tickDelivery(); // tick 1: captain found → deliver
+    if (handle.tickDelivery) await handle.tickDelivery(); // tick 2: streak=1
+    if (handle.tickDelivery) await handle.tickDelivery(); // tick 3: streak=2
+    if (handle.tickDelivery) await handle.tickDelivery(); // tick 4: streak=3 → reap
+
+    // The orphaned crew is reaped to a terminal state with the captain-stopped marker.
+    const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
+    expect(after.state).toBe("cancelled");
+    expect(after.lastEvent).toBe("captain-stopped");
+  });
+
   it("does NOT reap on a single transient empty sweep (K>1)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-transient-"));
     const sock = join(dir, "c.sock");

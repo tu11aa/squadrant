@@ -103,6 +103,9 @@ export interface CockpitConfig {
      * See docs/research/2026-06-16-cmux-events-stream.md (C2 finding).
      */
     cmuxAgentHibernation?: boolean;
+    /** #317 global crew tokenomics dial. Absent ⇒ "balance" (today's behavior).
+     *  Biases the captain toward stronger ("max") or cheaper ("low") crew models. */
+    effort?: "max" | "balance" | "low";
   };
   metrics: {
     enabled: boolean;

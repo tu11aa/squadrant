@@ -224,6 +224,52 @@ describe("severity rollup + remediation", () => {
   });
 });
 
+describe("stopped distinguished from fault (#324/#323)", () => {
+  const stoppedCaptain: DaemonSnapshot["tier1"] = [
+    { kind: "captain", project: "pact", ref: "pact-captain", state: "stopped", lastSeenMs: null },
+  ];
+
+  it("a stopped captain rolls its project card up to 'stopped', not 'gone'", () => {
+    const out = renderContent(full(daemon({}, stoppedCaptain)));
+    expect(out).toMatch(/data-rollup="stopped"/);
+    expect(out).not.toMatch(/data-rollup="gone"/);
+  });
+
+  it("a stopped captain does NOT trip the master CRITICAL alarm", () => {
+    // A genuinely-gone captain trips CRITICAL; a stopped (intentionally closed)
+    // one must not — it is an expected, calm state, not a fault.
+    const out = renderContent(full(daemon({}, stoppedCaptain)));
+    expect(out).not.toContain('class="annunciator a-crit');
+    expect(out).not.toContain("CRITICAL");
+    expect(out).toContain("stopped");
+  });
+
+  it("a stopped project's unread mail is not counted as a stale caution", () => {
+    const d = daemon({}, stoppedCaptain);
+    d.tier2.projects = [{
+      project: "pact",
+      mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
+      delivery: { maxSeq: 10, lastAckedSeq: 2, behind: 8 },
+      store: { byState: { cancelled: 2 }, corruptCount: 0 },
+    }];
+    const out = renderContent(full(d));
+    // The card stays 'stopped' — delivery lag behind a closed captain is expected.
+    expect(out).toMatch(/data-rollup="stopped"/);
+  });
+
+  it("a real fault (corrupt store) still rolls up to 'gone' even when captain is stopped", () => {
+    const d = daemon({}, stoppedCaptain);
+    d.tier2.projects = [{
+      project: "pact",
+      mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
+      delivery: { maxSeq: 10, lastAckedSeq: 10, behind: 0 },
+      store: { byState: {}, corruptCount: 1 },
+    }];
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="gone"/);
+  });
+});
+
 describe("delivery lag bar", () => {
   it("renders an SVG-free delivery bar with acked + behind segments", () => {
     const d = daemon();

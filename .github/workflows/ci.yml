@@ -32,5 +32,11 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Runtime smoke (catch ESM resolution crashes)
+        run: |
+          node dist/index.js --help
+          node dist/index.js crew --help
+          node dist/cockpitd.js --help
+
       - name: Test
         run: pnpm test

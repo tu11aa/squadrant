@@ -203,12 +203,19 @@ export function addControlPlaneCrewCommands(crew: Command): void {
 
   crew
     .command("tasks <project>")
-    .description("List control-plane tasks for a project (control-plane analogue of legacy `list`)")
+    .description("List control-plane tasks for a project (control-plane analogue of legacy `list`), or purge a task with --purge")
     .option("--json", "Full JSON output (one or more records)")
     .option("--id <taskId>", "Show only tasks matching this id prefix")
     .option("--state <state>", "Filter by task state")
     .option("--state-only <taskId>", "Print just the state string for a single task")
-    .action(async (project: string, opts: { json?: boolean; id?: string; state?: string; stateOnly?: string }) => {
+    .option("--purge <taskId>", "Purge a task record from the store (default: only terminal records)")
+    .option("--force", "Force-purge a non-terminal record (use with --purge)")
+    .action(async (project: string, opts: { json?: boolean; id?: string; state?: string; stateOnly?: string; purge?: string; force?: boolean }) => {
+      if (opts.purge) {
+        const r = await cockpitdCall({ kind: "purge", project, id: opts.purge, force: opts.force ?? false }) as TaskRecord;
+        console.log(`purged ${r.provider}/${r.id} (was ${r.state})`);
+        return;
+      }
       const raw = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
       let records = raw;
       if (opts.stateOnly) {

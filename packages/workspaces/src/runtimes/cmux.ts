@@ -271,6 +271,27 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
   return "loading";
 }
 
+// #339 instrumentation gate. The DONE→captain submit is a text burst then a
+// SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
+// lands as a newline instead of a submit, stranding the payload in the input box.
+// Root-causing needs ONE real frame in the wild. Gated behind COCKPIT_DEBUG_SEND
+// so it is a strict no-op — zero extra reads, zero latency — when unset.
+export function sendDebugEnabled(): boolean {
+  return !!process.env.COCKPIT_DEBUG_SEND;
+}
+
+// Classify a post-send input-box read into a submit verdict for #339:
+//   "submitted" — box empty after Enter (the payload left the input box)
+//   "stuck"     — box still holds the payload (Enter inserted a newline, no submit)
+//   "box-gone"  — box not visible post-send (overlay/scroll — inconclusive)
+//   "unknown"   — box has unrelated content (a fresh draft / next turn rendered)
+export function classifySendOutcome(payload: string, postBox: string | null): string {
+  if (postBox === null) return "box-gone";
+  if (postBox === "") return "submitted";
+  if (postBox === payload || postBox.includes(payload)) return "stuck";
+  return "unknown";
+}
+
 export function createCmuxDriver(): RuntimeDriver {
   return {
     name: "cmux",
@@ -462,8 +483,31 @@ export function createCmuxDriver(): RuntimeDriver {
       const ws = surface.workspaceId;
       const sf = surface.surfaceId;
       const deliver = async () => {
-        await cmux(["send", "--workspace", ws, "--surface", sf, sanitizeForCmuxSend(text)]);
+        // #339 debug-gated instrumentation. When OFF this is the exact two-write
+        // submit it always was (no extra reads, no latency). When ON we capture
+        // one real frame: the input box BEFORE the send, the payload, and the box
+        // AFTER the Enter — so a stranded submit can be told apart from a clean one.
+        const dbg = sendDebugEnabled();
+        let preBox: string | null = null;
+        if (dbg) {
+          try {
+            preBox = readInputBoxRaw(await cmux(["read-screen", "--workspace", ws, "--surface", sf]));
+          } catch { /* unreadable — leave preBox null, logged as such */ }
+        }
+        const payload = sanitizeForCmuxSend(text);
+        await cmux(["send", "--workspace", ws, "--surface", sf, payload]);
         await cmux(["send-key", "--workspace", ws, "--surface", sf, "Enter"]);
+        // Post-send read-back is READ-ONLY — never a re-send — so it can NEVER
+        // double-submit (the #339 constraint). It only observes whether the box
+        // still holds the payload (Enter mis-landed) or is empty (submit took).
+        if (dbg) {
+          let postBox: string | null = null;
+          try {
+            postBox = readInputBoxRaw(await cmux(["read-screen", "--workspace", ws, "--surface", sf]));
+          } catch { /* unreadable — leave postBox null, classified box-gone */ }
+          const verdict = classifySendOutcome(payload, postBox);
+          process.stderr.write(`[cockpit] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
+        }
       };
 
       // #258/#268 Approach B: deliver only when the captain's input is positively

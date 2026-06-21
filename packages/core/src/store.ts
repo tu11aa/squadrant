@@ -1,7 +1,7 @@
 // src/control/store.ts
 import {
   mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync,
-  statSync,
+  rmSync, statSync,
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { TaskRecord } from "@cockpit/shared";
@@ -12,6 +12,7 @@ export interface Store {
   list(project: string): TaskRecord[];
   listAll(): TaskRecord[];
   quarantine(project: string, id: string): void;
+  delete(project: string, id: string): void;
 }
 
 /**
@@ -87,6 +88,10 @@ export function createStore(root: string): Store {
       const f = taskFile(project, id);
       // suffix prevents clobber across process restarts
       if (existsSync(f)) renameSync(f, `${f}.corrupt.${Date.now()}`);
+    },
+    delete(project, id) {
+      const f = taskFile(project, id);
+      if (existsSync(f)) rmSync(f);
     },
   };
 }

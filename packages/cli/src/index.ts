@@ -30,6 +30,7 @@ import { configCommand } from "./commands/config.js";
 import { healCommand } from "./commands/heal.js";
 import { groupCommand } from "./commands/group.js";
 import { cmuxCommand } from "./commands/cmux.js";
+import { effortCommand } from "./commands/effort.js";
 import { detectDrift } from "@cockpit/shared";
 import { needsCheck, withStamp } from "@cockpit/shared";
 import { getDefaultConfig } from "@cockpit/shared";
@@ -114,6 +115,7 @@ program.addCommand(configCommand);
 program.addCommand(healCommand);
 program.addCommand(groupCommand);
 program.addCommand(cmuxCommand);
+program.addCommand(effortCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

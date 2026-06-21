@@ -69,6 +69,10 @@ export interface DaemonDeps {
 // catch it. This ceiling does. Configurable via DaemonDeps.taskTimeoutMs.
 export const DEFAULT_TASK_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
+// #378: GC TTL for terminal records (done/failed/cancelled). Records older
+// than this are pruned from the store during sweep().
+export const TERMINAL_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 // 'awaiting-input' is an attention state: entering it (idle watchdog OR a
 // Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
 // firePush prev===next guard keeps it from re-firing while the task sits idle.
@@ -93,8 +97,21 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/**
+ * Build a disambiguated notification tag for a task record. Always appends
+ * the short id so reused crew names are distinguishable across distinct ids.
+ * Named: [provider/name · shortId]  Unnamed: [provider/shortId]
+ */
+export function crewTag(r: TaskRecord): string {
+  const suffix = shortId(r.id);
+  if (r.name != null) {
+    return `[${r.provider}/${r.name} · ${suffix}]`;
+  }
+  return `[${r.provider}/${suffix}]`;
+}
+
 function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
-  const tag = `[${rec.provider}/${rec.name != null ? rec.name : shortId(rec.id)}]`;
+  const tag = crewTag(rec);
   switch (rec.state) {
     case "done": {
       // Prefer the crew's own done message (`signal done --message`), carried on
@@ -205,7 +222,8 @@ type Req =
   | { kind: "status"; project: string; id: string }
   | { kind: "list"; project: string }
   | { kind: "reply"; project: string; id: string; message: string }
-  | { kind: "gate-resolve"; project: string; gateId: string; resolvedBy: string; payload: unknown };
+  | { kind: "gate-resolve"; project: string; gateId: string; resolvedBy: string; payload: unknown }
+  | { kind: "purge"; project: string; id: string; force?: boolean };
 
 // #87: exhaustive set of known ControlEvent types for socket-boundary validation.
 // Any event.type arriving from the wire that is not in this set is rejected with
@@ -337,6 +355,15 @@ export function createDaemon(deps: DaemonDeps) {
           if (deps.resolveInteractiveGate) await deps.resolveInteractiveGate(owning.id, req.payload);
           return { ...owning, gates: updatedGates };
         }
+        case "purge": {
+          const r = store.get(req.project, req.id);
+          if (!r) throw new Error(`unknown task ${req.id}`);
+          if (!TERMINAL_STATES.has(r.state) && !req.force) {
+            throw new Error(`task ${req.id} is not terminal (state=${r.state}); use --force to purge anyway`);
+          }
+          store.delete(req.project, req.id);
+          return r;
+        }
         default: { const _exhaustive: never = req; throw new Error(`unhandled request kind`); }
       }
     },
@@ -344,6 +371,11 @@ export function createDaemon(deps: DaemonDeps) {
       const t = now();
       const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
       for (const r of store.listAll()) {
+        // #378: GC terminal records whose last heartbeat is older than the TTL.
+        if (TERMINAL_STATES.has(r.state) && t - r.lastHeartbeat > TERMINAL_RECORD_TTL_MS) {
+          store.delete(r.project, r.id);
+          continue;
+        }
         // #225 root-fix: terminate non-terminal tasks that exceeded the wall-clock
         // ceiling. Terminalization is the persistent dedup — a daemon restart sees
         // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
@@ -352,7 +384,7 @@ export function createDaemon(deps: DaemonDeps) {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           if (t - r.createdAt > ceiling) {
             const prevState = r.state; // capture BEFORE terminalization (shown in message)
-            const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
+            const tag = crewTag(r);
             const hrs = Math.round(ceiling / 3_600_000);
             const msg = `CREW TIMEOUT ${tag}: wall-clock exceeded ${hrs}h (id: ${r.id}, state: ${prevState})`;
             const synthEvent: ControlEvent = { type: "task.timeout", id: r.id, taskTimeoutMs: ceiling };
@@ -369,6 +401,7 @@ export function createDaemon(deps: DaemonDeps) {
                 // swallowed — a flaky notifier must never trip the sweep
               }
             }
+            continue; // #378: skip remaining sweep body — stale `r` must not clobber just-written terminal state
           }
         }
         // #139 backstop: reap interactive records whose backing surface is
@@ -413,7 +446,7 @@ export function createDaemon(deps: DaemonDeps) {
           if (quiet > r.heartbeatBudgetMs) {
             if (deps.notify && quietNotifiedAt.get(r.id) !== liveness) {
               quietNotifiedAt.set(r.id, liveness);
-              const tag = `[${r.provider}/${r.name != null ? r.name : shortId(r.id)}]`;
+              const tag = crewTag(r);
               const mins = Math.max(1, Math.round(quiet / 60000));
               const message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
               const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: quiet };

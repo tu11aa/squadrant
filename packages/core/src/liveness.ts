@@ -9,11 +9,14 @@ import type { TaskState, Mode } from "@cockpit/shared";
 
 export type ComponentKind = "captain" | "crew" | "command";
 
-// alive  = seen within the stale window (healthy)
-// stale  = quiet past stale but not yet gone (degrading)
-// gone   = dark past the gone window (treat as down)
+// alive   = seen within the stale window (healthy)
+// stale   = quiet past stale but not yet gone (degrading)
+// gone    = dark past the gone window (treat as down — a FAULT)
+// stopped = intentionally offline (user closed the captain workspace) — NOT a
+//           fault. Distinct from `gone` so the surface never red-alarms an
+//           expected shutdown (#324/#323).
 // unknown = no signal / not applicable (never alarms)
-export type HealthState = "alive" | "stale" | "gone" | "unknown";
+export type HealthState = "alive" | "stale" | "gone" | "stopped" | "unknown";
 
 export interface ComponentHealth {
   kind: ComponentKind;
@@ -72,7 +75,9 @@ export interface CrewLiveness {
  *
  * Captain liveness (#332): driven by the daemon-direct delivery loop.
  *   captainStopped === false  → captain surface was found on last delivery tick → ALIVE
- *   captainStopped === true   → surface gone for 3+ consecutive ticks → GONE
+ *   captainStopped === true   → surface gone for 3+ consecutive ticks → STOPPED
+ *                               (intentional close — its crews are reaped and
+ *                               delivery is paused; NOT a fault — #324/#323)
  *   captainStopped === null   → not yet checked / cmux unreachable → UNKNOWN
  */
 export function projectHealth(input: {
@@ -90,7 +95,7 @@ export function projectHealth(input: {
 
   // ── captain ────────────────────────────────────────────────────────────
   const captainState: HealthState =
-    captainStopped === true ? "gone" :
+    captainStopped === true ? "stopped" :
     captainStopped === false ? "alive" :
     "unknown";
   out.push({
@@ -99,7 +104,7 @@ export function projectHealth(input: {
     ref: captainName,
     state: captainState,
     lastSeenMs: null,
-    detail: captainState === "gone" ? "captain surface gone — delivery stopped" : undefined,
+    detail: captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" : undefined,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────

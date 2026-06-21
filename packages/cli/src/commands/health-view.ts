@@ -31,6 +31,7 @@ export function healthIcon(state: HealthState): string {
     case "alive": return "✔";
     case "stale": return "•";
     case "gone": return "✘";
+    case "stopped": return "⏻";
     case "unknown": return "○";
   }
 }
@@ -41,6 +42,8 @@ export function colorState(state: HealthState): string {
     case "alive": return chalk.green(state);
     case "stale": return chalk.yellow(state);
     case "gone": return chalk.red(state);
+    // stopped = intentional shutdown, not a fault — magenta, never alarm-red.
+    case "stopped": return chalk.magenta(state);
     case "unknown": return chalk.dim(state);
   }
 }

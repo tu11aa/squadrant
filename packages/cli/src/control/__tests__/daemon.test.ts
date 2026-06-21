@@ -3,8 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemon } from "@cockpit/core";
-import { createStore } from "@cockpit/core";
+import { createDaemon, createStore, crewTag } from "@cockpit/core";
 import type { TaskRecord } from "@cockpit/shared";
 
 function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -233,6 +232,26 @@ describe("daemon handler", () => {
     const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "unknown" });
     await d.sweep();
     expect(store.get("p", "g5")?.state).toBe("working");
+  });
+
+  it("sweep: deletes terminal records older than TTL, keeps fresh terminal and old non-terminal (#378 GC)", async () => {
+    const store = createStore(dir);
+    const EIGHT_DAYS_MS = 8 * 24 * 60 * 60 * 1000;
+    const NOW = 1_000_000_000;
+
+    // (a) cancelled, lastHeartbeat 8 days ago → should be GC'd
+    store.put(rec("gc-old-term", { state: "cancelled", createdAt: NOW - EIGHT_DAYS_MS, lastHeartbeat: NOW - EIGHT_DAYS_MS, heartbeatBudgetMs: 86_400_000 }));
+    // (b) cancelled, lastHeartbeat 1 min ago → should stay
+    store.put(rec("gc-fresh-term", { state: "cancelled", createdAt: NOW - 60000, lastHeartbeat: NOW - 60000, heartbeatBudgetMs: 86_400_000 }));
+    // (c) working, lastHeartbeat 8 days ago → should stay (non-terminal)
+    store.put(rec("gc-old-live", { state: "working", createdAt: NOW - EIGHT_DAYS_MS, lastHeartbeat: NOW - EIGHT_DAYS_MS, heartbeatBudgetMs: 86_400_000, mode: "headless" }));
+
+    const d = createDaemon({ store, now: () => NOW });
+    await d.sweep();
+
+    expect(store.get("p", "gc-old-term")).toBeUndefined();
+    expect(store.get("p", "gc-fresh-term")?.state).toBe("cancelled");
+    expect(store.get("p", "gc-old-live")).toBeTruthy();
   });
 
   it("sweep: headless records are never surface-reaped (pid is their liveness) (#139)", async () => {
@@ -744,6 +763,49 @@ describe("sweep: task-timeout (#225)", () => {
     await d2.sweep();
     expect(timeoutCalls()).toBe(1);
   });
+
+  // ── #378 regression: zombie resurrection ────────────────────────────────────
+  // A timed-out interactive task with a hung pendingTool would have evaluateStall
+  // operate on the stale `r` (still 'working'), clobbering the just-written
+  // 'cancelled' state back to 'stalled'. This caused infinite CREW TIMEOUT re-fire.
+  it("#378: timeout-cancelled state is NOT clobbered by evaluateStall on the same sweep", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
+    // createdAt=0, now=2000, ceiling=1000 → age 2000ms > ceiling (triggers timeout)
+    // pendingTool.since = 2000 - (TOOL_STALL_BUDGET_MS + 1000) → hung > tool-stall budget
+    // → without the fix, evaluateStall would return state='stalled' and clobber 'cancelled'
+    const now = 2000;
+    store.put(rec("t378a", {
+      state: "working", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+      pendingTool: { name: "Bash", since: now - TOOL_STALL_BUDGET_MS - 1000 },
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    // Terminal state must survive — evaluateStall must not clobber it
+    const r = store.get("p", "t378a");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.task-timeout");
+  });
+
+  it("#378: second sweep on a timeout-cancelled task fires CREW TIMEOUT exactly once total", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
+    const now = 2000;
+    store.put(rec("t378b", {
+      state: "working", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+      pendingTool: { name: "Bash", since: now - TOOL_STALL_BUDGET_MS - 1000 },
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    await d.sweep(); // second sweep — must see cancelled, skip entirely
+    const timeoutCalls = calls.filter((c) => c.message.includes("CREW TIMEOUT")).length;
+    expect(timeoutCalls).toBe(1);
+    expect(store.get("p", "t378b")?.state).toBe("cancelled");
+  });
 });
 
 // ── Issue #87: socket-boundary schema validation ──────────────────────────────
@@ -894,6 +956,74 @@ describe("daemon report-back on settle with originProject (#246)", () => {
     const bCalls = calls.filter((c) => c.project === "projB");
     expect(bCalls.length).toBe(1);
     expect(bCalls[0].message).toMatch(/cross.project|projA/i);
+  });
+});
+
+// ── Issue #378: crewTag helper (notification tag disambiguation) ────────────
+describe("crewTag (#378)", () => {
+  it("named record includes name and short id", () => {
+    const r: TaskRecord = {
+      id: "abc123def456", project: "p", provider: "claude", mode: "interactive",
+      state: "working", name: "my-crew", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    const tag = crewTag(r);
+    expect(tag).toBe("[claude/my-crew · abc123de]");
+  });
+
+  it("unnamed record includes short id only", () => {
+    const r: TaskRecord = {
+      id: "abc123def456", project: "p", provider: "opencode", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", resultRef: "/r", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    const tag = crewTag(r);
+    expect(tag).toBe("[opencode/abc123de]");
+  });
+});
+
+// ── Issue #378: purge request kind ──────────────────────────────────────────
+describe("purge (#378)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-purge-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("purge a terminal record succeeds and record is gone", async () => {
+    const store = createStore(dir);
+    store.put(rec("p-term", { state: "done", resultRef: "/r" }));
+    const d = createDaemon({ store, now: () => 2000 });
+    const r = await d.handle({ kind: "purge", project: "p", id: "p-term" });
+    expect((r as TaskRecord).id).toBe("p-term");
+    expect(store.get("p", "p-term")).toBeUndefined();
+  });
+
+  it("purge a non-terminal record without force errors", async () => {
+    const store = createStore(dir);
+    store.put(rec("p-live", { state: "working" }));
+    const d = createDaemon({ store, now: () => 2000 });
+    await expect(
+      d.handle({ kind: "purge", project: "p", id: "p-live" }),
+    ).rejects.toThrow(/not terminal/i);
+    expect(store.get("p", "p-live")?.state).toBe("working");
+  });
+
+  it("purge a non-terminal record with force succeeds", async () => {
+    const store = createStore(dir);
+    store.put(rec("p-force", { state: "working" }));
+    const d = createDaemon({ store, now: () => 2000 });
+    const r = await d.handle({ kind: "purge", project: "p", id: "p-force", force: true });
+    expect((r as TaskRecord).id).toBe("p-force");
+    expect(store.get("p", "p-force")).toBeUndefined();
+  });
+
+  it("purge an unknown task errors", async () => {
+    const store = createStore(dir);
+    const d = createDaemon({ store, now: () => 2000 });
+    await expect(
+      d.handle({ kind: "purge", project: "p", id: "no-such-id" }),
+    ).rejects.toThrow(/unknown/i);
   });
 });
 
