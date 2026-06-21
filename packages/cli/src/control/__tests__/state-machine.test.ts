@@ -1,7 +1,7 @@
 // src/control/__tests__/state-machine.test.ts
 import { describe, it, expect } from "vitest";
-import { reduce } from "@cockpit/core";
-import type { TaskRecord, DispatchAttempt } from "@cockpit/shared";
+import { reduce } from "@squadrant/core";
+import type { TaskRecord, DispatchAttempt } from "@squadrant/shared";
 
 function rec(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -49,7 +49,7 @@ describe("state-machine reduce", () => {
   });
 
   it("blocked + task.blocked is idempotent — the FIRST question wins, no overwrite (#174)", () => {
-    // The explicit `cockpit crew signal blocked` fires BEFORE the turn ends; the
+    // The explicit `squadrant crew signal blocked` fires BEFORE the turn ends; the
     // auto-detect Stop hook may re-emit task.blocked afterward. The first question
     // must survive so the captain sees what the crew actually typed.
     const next = reduce(

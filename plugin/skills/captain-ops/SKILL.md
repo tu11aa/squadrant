@@ -7,10 +7,10 @@ description: Complete captain playbook — session startup, crew spawning, statu
 
 ## Session Startup
 
-1. Read `~/.config/cockpit/config.json` — match your current working directory. Note your `spokeVault`, `group`, `groupRole`, and `maxCrew` (default: 5).
+1. Read `~/.config/squadrant/config.json` — match your current working directory. Note your `spokeVault`, `group`, `groupRole`, and `maxCrew` (default: 5).
 2. **Check for handoff from previous session:**
 ```bash
-~/.config/cockpit/scripts/read-handoff.sh "{spokeVaultPath}"
+~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"
 ```
 If a handoff exists (`"exists"` is not false), read the context carefully:
 - `currentState` — what was happening when the last session ended
@@ -25,18 +25,18 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 6. Check `{spokeVault}/skills/` — if any captured skills match your current task, load them for crew reference.
 7. Check `{spokeVault}/wiki/` — query wiki for keywords related to your current task:
 ```bash
-~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
+~/.config/squadrant/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
 ```
 If relevant pages exist, read them for context before starting work.
-8. Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the cockpit daemon via daemon-direct cmux delivery (#332). No relay setup required.
+8. Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
 
-9. (Opt-in) Status writes are not required on every event. Only run `~/.config/cockpit/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
+9. (Opt-in) Status writes are not required on every event. Only run `~/.config/squadrant/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
 
 ## Crew Setup
 
-You do NOT create an Agent Team. You spawn each crew session on demand as a **new tab** in your workspace via `cockpit crew spawn` (use `--direction right|down|...` to split into a pane instead). The surface is a fresh CLI session with the crew template loaded as system prompt — disposable, restartable, runtime-agnostic.
+You do NOT create an Agent Team. You spawn each crew session on demand as a **new tab** in your workspace via `squadrant crew spawn` (use `--direction right|down|...` to split into a pane instead). The surface is a fresh CLI session with the crew template loaded as system prompt — disposable, restartable, runtime-agnostic.
 
-You don't need to create or persist anything up front. Each `cockpit crew spawn` call creates a new surface.
+You don't need to create or persist anything up front. Each `squadrant crew spawn` call creates a new surface.
 
 ## Task Decomposition with Task Master
 
@@ -85,7 +85,7 @@ A crew is an **interactive Claude sub-session** running in a tab inside your wor
 ### Spawn a NEW crew
 
 ```bash
-cockpit crew spawn <project> "<task description>" \
+squadrant crew spawn <project> "<task description>" \
     [--name <name>] \
     [--direction tab|right|left|up|down] \
     [--agent claude|codex|gemini|opencode]
@@ -102,46 +102,46 @@ What it does:
 DO NOT spawn a new crew for every turn — that's how you get tab pollution. Use `send`:
 
 ```bash
-cockpit crew send <project> <name> "<message>"
+squadrant crew send <project> <name> "<message>"
 ```
 
 ### Inspect & shutdown
 
 ```bash
-cockpit crew list <project>                 # see all live crews for the project
-cockpit crew tasks <project>                # compact task listing (use --json for verbose)
-cockpit crew tasks <project> --state-only <id>  # fast state check (prints one word)
-cockpit crew read <project> <name>          # read tail of a crew's screen (~40 lines)
-cockpit crew read <project> <name> --full   # entire scrollback (may be large)
-cockpit crew read <project> <name> --lines 100  # custom tail length
-cockpit crew close <project> <name>         # shutdown the crew (closes its tab)
+squadrant crew list <project>                 # see all live crews for the project
+squadrant crew tasks <project>                # compact task listing (use --json for verbose)
+squadrant crew tasks <project> --state-only <id>  # fast state check (prints one word)
+squadrant crew read <project> <name>          # read tail of a crew's screen (~40 lines)
+squadrant crew read <project> <name> --full   # entire scrollback (may be large)
+squadrant crew read <project> <name> --lines 100  # custom tail length
+squadrant crew close <project> <name>         # shutdown the crew (closes its tab)
 ```
 
 ### Examples
 
 Spawn a fresh crew (auto-named `crew-1`):
 ```bash
-cockpit crew spawn brove "Add preinstall hook to package.json. Branch: feat/preinstall."
+squadrant crew spawn brove "Add preinstall hook to package.json. Branch: feat/preinstall."
 ```
 
 Named crew for a specific work track:
 ```bash
-cockpit crew spawn brove "Refactor src/api/handlers.ts" --name api-refactor --agent codex
+squadrant crew spawn brove "Refactor src/api/handlers.ts" --name api-refactor --agent codex
 ```
 
 Send a follow-up turn:
 ```bash
-cockpit crew send brove crew-1 "Also wire that into the install script"
+squadrant crew send brove crew-1 "Also wire that into the install script"
 ```
 
 Open as a side-by-side pane when you want live preview:
 ```bash
-cockpit crew spawn brove "Fix typo in README" --direction right
+squadrant crew spawn brove "Fix typo in README" --direction right
 ```
 
 ### Leveled crew routing
 
-When you spawn a crew without an explicit `--agent` or `--model`, cockpit automatically
+When you spawn a crew without an explicit `--agent` or `--model`, squadrant automatically
 consults the routing rules in `defaults.crewRouting.rules` (config.json) and picks the
 right tier for the task:
 
@@ -159,15 +159,15 @@ routed: tier=hard → claude/sonnet (rule: "refactor|migrate|implement|feature|d
 
 **Override at any time** — explicit flags always win over routing:
 ```bash
-cockpit crew spawn brove "refactor auth" --agent codex     # forces codex despite "hard" tier
-cockpit crew spawn brove "fix typo" --model opus           # forces opus despite "daily" tier
+squadrant crew spawn brove "refactor auth" --agent codex     # forces codex despite "hard" tier
+squadrant crew spawn brove "fix typo" --model opus           # forces opus despite "daily" tier
 ```
 
-To add, edit, or remove routing rules: use the `cockpit:add-pick-crew-rule` skill.
+To add, edit, or remove routing rules: use the `squadrant:add-pick-crew-rule` skill.
 
 ### Effort mode
 
-Before spawning a crew, read `defaults.effort` from `~/.config/cockpit/config.json` (run `cockpit effort` to check). Apply the following bias to your crew agent/model choice:
+Before spawning a crew, read `defaults.effort` from `~/.config/squadrant/config.json` (run `squadrant effort` to check). Apply the following bias to your crew agent/model choice:
 
 | Mode | Directive |
 |------|-----------|
@@ -179,13 +179,13 @@ Before spawning a crew, read `defaults.effort` from `~/.config/cockpit/config.js
 
 **Effort is the weakest signal.** An explicit `--agent` / `--model` on a spawn always wins. Effort only nudges your default choice when nothing more specific applies.
 
-To change the effort dial: `cockpit effort <max|balance|low>` or use the `cockpit:set-effort` skill.
+To change the effort dial: `squadrant effort <max|balance|low>` or use the `squadrant:set-effort` skill.
 
 ### Rules
 
 - **Reuse with `send` before spawning a new one.** Same task track, same crew. New track = new crew.
-- **Close crews you're done with** (`cockpit crew close ...`) so they don't accumulate.
-- Crews run in **isolated worktrees by default** (parallel-safe, branch per crew). Pass `--shared` only for tiny/one-off tasks that don't need branch isolation. Never hand-run `git worktree add` — `cockpit crew spawn` handles it.
+- **Close crews you're done with** (`squadrant crew close ...`) so they don't accumulate.
+- Crews run in **isolated worktrees by default** (parallel-safe, branch per crew). Pass `--shared` only for tiny/one-off tasks that don't need branch isolation. Never hand-run `git worktree add` — `squadrant crew spawn` handles it.
 - Do NOT edit source code yourself — always delegate to crew.
 - Respect `maxCrew` — don't exceed the configured concurrent crew count.
 - **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
@@ -195,13 +195,13 @@ To change the effort dial: `cockpit effort <max|balance|low>` or use the `cockpi
 
 ## Task Coordination
 
-**HARD RULE: Do NOT poll crew screens in a loop.** Crew lifecycle events (idle / done / blocked) are delivered to your captain pane automatically by the cockpit daemon — trust the daemon signal. Polling loops hang indefinitely, exhaust context, and mask real blockers.
+**HARD RULE: Do NOT poll crew screens in a loop.** Crew lifecycle events (idle / done / blocked) are delivered to your captain pane automatically by the squadrant daemon — trust the daemon signal. Polling loops hang indefinitely, exhaust context, and mask real blockers.
 
 You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were Claude-specific. When you need crew status:
 1. **Wait for the daemon to notify you.** When a crew finishes, signals blocked, or goes idle, the daemon delivers the event to your captain pane via daemon-direct cmux delivery. This is the primary mechanism — do not replace it with polling.
-2. `cockpit crew read <project> <name>` — **on-demand spot-check only** (a single read when you have a specific reason, e.g. reviewing a finished diff). Never in a loop, never with `until`.
-3. `cockpit crew tasks <project>` — **on-demand** compact task listing; `--id <prefix>` to filter; `--state-only <id>` for a single-word state check.
-4. `cockpit crew list <project>` — see all live crews and pick the right one.
+2. `squadrant crew read <project> <name>` — **on-demand spot-check only** (a single read when you have a specific reason, e.g. reviewing a finished diff). Never in a loop, never with `until`.
+3. `squadrant crew tasks <project>` — **on-demand** compact task listing; `--id <prefix>` to filter; `--state-only <id>` for a single-word state check.
+4. `squadrant crew list <project>` — see all live crews and pick the right one.
 5. Inspecting the crew tab visually in cmux when you want richer context (you have its surface ref from the spawn output).
 6. Asking the user to check the dashboard if you need a cross-project view (see issue #44).
 
@@ -210,7 +210,7 @@ If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attemp
 ### Handling CREW IDLE
 
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
-- **(a)** The crew finished but never ran `cockpit crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
+- **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
 - **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).
 - **(c)** The crew is still mid-task and the idle pulse was transient.
 
@@ -226,7 +226,7 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 
 This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE.
 
-When a crew sends you a status message via `cockpit runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
+When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
 ## When Crew Finishes
 
@@ -234,7 +234,7 @@ After a crew task completes:
 
 1. Review the work — read the diff, check the branch.
 2. Merge their branch if appropriate.
-3. Close the crew with `cockpit crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
+3. Close the crew with `squadrant crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
 4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. Do NOT run the full test suite repeatedly or concurrently across worktrees (a single `vitest run` spawns a ~per-CPU worker pool that uses gigabytes; several at once exhaust RAM). Prefer one verification on the authoritative checkout.
 5. Record learnings if any (see "Recording Learnings" below).
 6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
@@ -245,12 +245,12 @@ Status writes (`write-status.sh`) are opt-in; you don't need to write status aft
 
 End-of-session writes are **opt-in**, not on a schedule. Only write what is meaningful:
 
-1. **Daily log (opt-in):** if you accomplished something worth a daily log, use the `cockpit:daily-log` skill. Skip it if today was uneventful.
-2. **Wiki promotion (opt-in):** if a learning crystallized into reusable knowledge, promote to a wiki page using `cockpit:wiki-ops`. Otherwise skip.
+1. **Daily log (opt-in):** if you accomplished something worth a daily log, use the `squadrant:daily-log` skill. Skip it if today was uneventful.
+2. **Wiki promotion (opt-in):** if a learning crystallized into reusable knowledge, promote to a wiki page using `squadrant:wiki-ops`. Otherwise skip.
 3. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
 
 ```bash
-~/.config/cockpit/scripts/write-handoff.sh "{spokeVaultPath}" '{
+~/.config/squadrant/scripts/write-handoff.sh "{spokeVaultPath}" '{
   "currentState": "Brief description of where things stand",
   "openBranches": ["feat/branch-name — what it contains"],
   "nextSteps": ["First thing to do tomorrow", "Second thing"],
@@ -264,7 +264,7 @@ If everything is shipped and there is no in-flight work, you do not need to writ
 
 4. (Optional) If a Command session is running and you want to notify it:
    ```bash
-   cockpit runtime send --command "Captain {project} ending session — handoff written."
+   squadrant runtime send --command "Captain {project} ending session — handoff written."
    ```
    Skip this entirely if no Command session is up — Command is on-demand now.
 
@@ -280,13 +280,13 @@ If your config has `group` / `groupRole`:
 
 ## Cross-Project Delegation
 
-When a task genuinely belongs to a sibling project in the same group, use **`cockpit group dispatch <to-project> '<task>'`** instead of hand-writing a message. This records a tracked task on the sibling's project and auto-wakes its captain via the mailbox.
+When a task genuinely belongs to a sibling project in the same group, use **`squadrant group dispatch <to-project> '<task>'`** instead of hand-writing a message. This records a tracked task on the sibling's project and auto-wakes its captain via the mailbox.
 
 ### Rules
 
 1. **Same-group only.** `group dispatch` rejects any target whose `group` field differs from yours. Cross-group dispatch is out of scope — use claude-mem / wiki queries for awareness.
 2. **`acceptDelegations`.** If the sibling's project config has `acceptDelegations: false`, the command rejects with a clear error. The default is `true`.
-3. **Boot-if-down.** If the sibling's captain workspace is not running, `group dispatch` boots it (`cockpit launch <project>`) and waits for warmup with a bounded poll (30s hard timeout). If warmup fails, the dispatch is rejected (task not recorded).
+3. **Boot-if-down.** If the sibling's captain workspace is not running, `group dispatch` boots it (`squadrant launch <project>`) and waits for warmup with a bounded poll (30s hard timeout). If warmup fails, the dispatch is rejected (task not recorded).
 
 ### Dispatch-and-yield (do NOT poll)
 
@@ -307,7 +307,7 @@ HARD RULE: Do NOT add a polling loop after `group dispatch`. The report-back is 
 
 ```bash
 # You are captain of "scaffold-stylus". Ask the docs sibling to update docs.
-cockpit group dispatch scaffold-stylus-docs "Document the new --format flag added in PR #42"
+squadrant group dispatch scaffold-stylus-docs "Document the new --format flag added in PR #42"
 # → "✔ Dispatched to 'scaffold-stylus-docs' (task abc12345)"
 # → (returns immediately; you are notified when settled)
 ```
@@ -318,20 +318,20 @@ Recording learnings is **opt-in**. Record when something genuinely surprised you
 
 Record after tasks complete, unexpected issues, or discovered patterns:
 ```bash
-~/.config/cockpit/scripts/record-learning.sh "{spokeVaultPath}" "{category}" "{description}" "{tags}"
+~/.config/squadrant/scripts/record-learning.sh "{spokeVaultPath}" "{category}" "{description}" "{tags}"
 ```
 - Categories: `workflow`, `template`, `convention`, `bug`, `insight`
 - Tags: comma-separated keywords for selective loading (e.g., `cairo,escrow,pvp`)
 
 ## Wiki Compilation
 
-Wiki writes are **opt-in**. Compile knowledge when you have something worth recording — not on a schedule. Use the `cockpit:wiki-ops` skill for full instructions.
+Wiki writes are **opt-in**. Compile knowledge when you have something worth recording — not on a schedule. Use the `squadrant:wiki-ops` skill for full instructions.
 
 1. **After each task**: If you learned how something works, create/update a wiki page
 2. **During session shutdown**: Review today's learnings — promote useful ones to wiki pages
 3. **Before starting work**: Query the wiki for relevant context:
 ```bash
-~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{task-keywords}"
+~/.config/squadrant/scripts/wiki-query.sh "{spokeVaultPath}" "{task-keywords}"
 ```
 
 **Learnings vs Wiki**: Learnings are raw observations (quick to record). Wiki pages are compiled, structured knowledge (worth maintaining). Promote a learning when it's been useful 2+ times or represents how a system works.
@@ -345,7 +345,7 @@ Do NOT read all learnings. Instead, filter by relevance:
 4. For each learning you load, increment its `times_loaded` counter
 5. If a learning actually helps your current work, run:
 ```bash
-~/.config/cockpit/scripts/mark-learning-useful.sh "{learning-file-path}"
+~/.config/squadrant/scripts/mark-learning-useful.sh "{learning-file-path}"
 ```
 
 Learnings with `times_loaded > 5` and `times_useful: 0` are stale — ignore them.
@@ -354,7 +354,7 @@ Learnings with `times_loaded > 5` and `times_useful: 0` are stale — ignore the
 
 After a crew member completes a task that used a **novel or reusable pattern**, capture it as a skill:
 ```bash
-~/.config/cockpit/scripts/capture-skill.sh "{spokeVaultPath}" "{skill-name}" "{one-line description}" "{full markdown body}"
+~/.config/squadrant/scripts/capture-skill.sh "{spokeVaultPath}" "{skill-name}" "{one-line description}" "{full markdown body}"
 ```
 
 **When to capture:**
@@ -370,7 +370,7 @@ Captured skills live in `{spokeVault}/skills/{name}/SKILL.md` and can be referen
 
 When a learning identifies that an existing skill's instructions are **wrong or outdated**:
 ```bash
-~/.config/cockpit/scripts/fix-skill.sh "{spokeVaultPath}" "{skill-name}" "{corrected markdown body}"
+~/.config/squadrant/scripts/fix-skill.sh "{spokeVaultPath}" "{skill-name}" "{corrected markdown body}"
 ```
 
 This backs up the old version and writes the fix. Use when:

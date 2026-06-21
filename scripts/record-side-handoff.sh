@@ -26,7 +26,7 @@ ${SUMMARY}
 
 ## Full handoff
 
-(Appended by side-session — see cockpit relay for the captain's copy.)
+(Appended by side-session — see squadrant relay for the captain's copy.)
 EOF
 
 echo "Recorded side handoff: $FILENAME"

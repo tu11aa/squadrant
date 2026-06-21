@@ -1,4 +1,4 @@
-import type { CockpitConfig } from "@cockpit/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 import type {
   NotifierDriver,
   NotifierFactory,
@@ -10,7 +10,7 @@ const DEFAULT_NOTIFIER = "cmux";
 export class NotifierRegistry {
   constructor(private factories: Record<string, NotifierFactory>) {}
 
-  get(config: CockpitConfig): NotifierDriver {
+  get(config: SquadrantConfig): NotifierDriver {
     const name = config.notifier ?? DEFAULT_NOTIFIER;
     return this.getFactory(name)({});
   }

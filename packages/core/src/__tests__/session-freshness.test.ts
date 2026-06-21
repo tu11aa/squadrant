@@ -19,7 +19,7 @@ let sessionsPath: string;
 let templatesDir: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-sf-test-"));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-sf-test-"));
   sessionsPath = path.join(tmpDir, "sessions.json");
   templatesDir = path.join(tmpDir, "templates");
   fs.mkdirSync(templatesDir, { recursive: true });

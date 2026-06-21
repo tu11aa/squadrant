@@ -1,7 +1,7 @@
 // src/commands/__tests__/health-view.test.ts
 import { describe, it, expect } from "vitest";
 import { healthIcon, ageText, healthRow } from "../health-view.js";
-import type { ComponentHealth } from "@cockpit/core";
+import type { ComponentHealth } from "@squadrant/core";
 
 describe("health-view (pure rendering)", () => {
   it("healthIcon maps every state", () => {

@@ -2,7 +2,7 @@
 //
 // #348 (part of #332): comment-preserving JSONC merge for the cmux control
 // socket auth mode. Writes ONLY `automation.socketControlMode = "automation"`
-// into ~/.config/cmux/cmux.json so the launchd cockpit daemon (NOT a cmux
+// into ~/.config/cmux/cmux.json so the launchd squadrant daemon (NOT a cmux
 // descendant) may connect to the cmux control socket for daemon-direct delivery.
 //
 // See docs/specs/2026-06-16-cmux-socket-auth-daemon-direct-design.md §2–§4.1.
@@ -32,13 +32,13 @@ export interface EnsureSocketAutomationResult {
   alreadySet: boolean;
 }
 
-// Minimal cockpit-managed template used only when cmux.json does not yet exist
+// Minimal squadrant-managed template used only when cmux.json does not yet exist
 // (clean install before cmux has created its own template). It is a strict
 // subset of cmux's schema, so cmux merges its full template keys on next launch
 // without conflict.
 const MINIMAL_TEMPLATE = [
   `{`,
-  `  // [cockpit] file-managed: allow the launchd cockpit daemon to reach the cmux`,
+  `  // [squadrant] file-managed: allow the launchd squadrant daemon to reach the cmux`,
   `  // control socket for daemon-direct notification delivery (#348/#332).`,
   `  "automation": {`,
   `    "socketControlMode": "${AUTOMATION_MODE}"`,
@@ -52,7 +52,7 @@ const MINIMAL_TEMPLATE = [
  *
  * Idempotent: a no-op (changed=false) when already set. Comment- and
  * formatting-preserving when adding/overwriting an existing file. Creates a
- * minimal cockpit-managed file when none exists.
+ * minimal squadrant-managed file when none exists.
  */
 export function ensureSocketAutomation(
   opts: { path?: string } = {},

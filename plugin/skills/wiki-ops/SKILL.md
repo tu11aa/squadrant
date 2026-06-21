@@ -23,7 +23,7 @@ The wiki is your project's compiled knowledge base. Unlike learnings (individual
 ## Creating/Updating a Wiki Page
 
 ```bash
-~/.config/cockpit/scripts/wiki-ingest.sh "{spokeVaultPath}" "{slug}" "{title}" "{category}" "{body}" "{tags}" "{source}"
+~/.config/squadrant/scripts/wiki-ingest.sh "{spokeVaultPath}" "{slug}" "{title}" "{category}" "{body}" "{tags}" "{source}"
 ```
 
 **Parameters:**
@@ -36,7 +36,7 @@ The wiki is your project's compiled knowledge base. Unlike learnings (individual
 
 **Example:**
 ```bash
-~/.config/cockpit/scripts/wiki-ingest.sh "/path/to/spoke" "starknet-account-deploy" "StarkNet Account Deployment" "Patterns" "Account deployment on StarkNet requires a two-step process:
+~/.config/squadrant/scripts/wiki-ingest.sh "/path/to/spoke" "starknet-account-deploy" "StarkNet Account Deployment" "Patterns" "Account deployment on StarkNet requires a two-step process:
 
 1. Compute the address from the class hash and constructor args
 2. Fund the computed address with ETH
@@ -50,12 +50,12 @@ Common pitfall: the salt must match between compute and deploy." "starknet,deplo
 Before starting a new task, check if the wiki has relevant knowledge:
 
 ```bash
-~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{keyword}"
+~/.config/squadrant/scripts/wiki-query.sh "{spokeVaultPath}" "{keyword}"
 ```
 
 For a quick overview:
 ```bash
-~/.config/cockpit/scripts/wiki-query.sh "{spokeVaultPath}" "{keyword}" --titles-only
+~/.config/squadrant/scripts/wiki-query.sh "{spokeVaultPath}" "{keyword}" --titles-only
 ```
 
 To browse the full index:
@@ -66,7 +66,7 @@ cat "{spokeVaultPath}/wiki/index.md"
 ## Viewing Recent Changes
 
 ```bash
-~/.config/cockpit/scripts/wiki-log.sh "{spokeVaultPath}" 10
+~/.config/squadrant/scripts/wiki-log.sh "{spokeVaultPath}" 10
 ```
 
 ## Promoting Learnings to Wiki

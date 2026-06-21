@@ -5,8 +5,8 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { ensureRuntimeSynced } from "@cockpit/shared";
-import { ensureDaemon } from "@cockpit/core";
+import { ensureRuntimeSynced } from "@squadrant/shared";
+import { ensureDaemon } from "@squadrant/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -31,27 +31,27 @@ import { healCommand } from "./commands/heal.js";
 import { groupCommand } from "./commands/group.js";
 import { cmuxCommand } from "./commands/cmux.js";
 import { effortCommand } from "./commands/effort.js";
-import { detectDrift } from "@cockpit/shared";
-import { needsCheck, withStamp } from "@cockpit/shared";
-import { getDefaultConfig } from "@cockpit/shared";
+import { detectDrift } from "@squadrant/shared";
+import { needsCheck, withStamp } from "@squadrant/shared";
+import { getDefaultConfig } from "@squadrant/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
 // Self-heal the runtime copy of source-managed dirs before any command runs,
 // so source changes (skills, role templates, scripts) can never silently
-// drift from ~/.config/cockpit. Never throws.
+// drift from ~/.config/squadrant. Never throws.
 ensureRuntimeSynced({
   sourceRoot: join(__dirname, ".."),
-  runtimeRoot: join(homedir(), ".config", "cockpit"),
+  runtimeRoot: join(homedir(), ".config", "squadrant"),
 });
 
-// Non-blocking config-drift banner. Suppressed during "cockpit config" —
+// Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
 // Detect + print only — never mutates config and never throws.
 if (process.argv[2] !== "config") {
   try {
-    const cfgPath = join(homedir(), ".config", "cockpit", "config.json");
+    const cfgPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(cfgPath)) {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       if (needsCheck(cfg, pkg.version)) {
@@ -59,10 +59,10 @@ if (process.argv[2] !== "config") {
         if (items.length === 0) {
           writeFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
         } else {
-          const from = cfg._cockpitVersion ?? "an earlier version";
+          const from = cfg._squadrantVersion ?? "an earlier version";
           process.stderr.write(
-            `\n\u26A1 cockpit updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
-            `   Run \`cockpit config check\` (or use the config-doctor skill) to reconcile.\n\n`,
+            `\n\u26A1 squadrant updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
+            `   Run \`squadrant config check\` (or use the config-doctor skill) to reconcile.\n\n`,
           );
         }
       }
@@ -76,17 +76,17 @@ if (process.argv[2] !== "config") {
 // best-effort, never throws; the CLI fails loud later if the socket is unreachable.
 // ensureDaemon resolves its own entrypoint (see launchd.daemonEntryPath) — no
 // path is passed here so no call site can get it wrong.
-// COCKPIT_DAEMON_SKIP short-circuits this for read-only / CI invocations that must
+// SQUADRANT_DAEMON_SKIP short-circuits this for read-only / CI invocations that must
 // not attempt to boot the daemon (e.g. config-check tests on Linux without launchctl).
-if (!process.env.COCKPIT_DAEMON_SKIP) {
+if (!process.env.SQUADRANT_DAEMON_SKIP) {
   ensureDaemon();
 }
 
 const program = new Command();
 
 program
-  .name("cockpit")
-  .description("Multi-project agent orchestration for Claude Code")
+  .name("squadrant")
+  .description("Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)")
   .version(pkg.version);
 
 program.addCommand(doctorCommand);
@@ -95,7 +95,7 @@ program.addCommand(projectsCommand);
 program.addCommand(statusCommand);
 // Legacy crew verbs (spawn/send/read/close/list) stay intact for live captains;
 // control-plane verbs (dispatch/status/tasks/reply) are attached onto the same
-// `cockpit crew` command so PR #85 doesn't break the captain-ops playbook.
+// `squadrant crew` command so PR #85 doesn't break the captain-ops playbook.
 addControlPlaneCrewCommands(crewCommand);
 program.addCommand(crewCommand);
 program.addCommand(sideCommand);

@@ -1,5 +1,5 @@
 // src/control/cmux/events-bridge.ts
-// Daemon-side bridge from cmux's native event stream to cockpit ControlEvents
+// Daemon-side bridge from cmux's native event stream to squadrant ControlEvents
 // (audit item B1 — reduce fragile screen-scraping).
 //
 // Unlike the per-crew OpencodeSseBridge, `cmux events` is a SINGLE global stream
@@ -17,14 +17,14 @@
 //
 // ADDITIVE & SAFE: this runs ALONGSIDE the existing relay-proxy/pane-reader path,
 // which stays as the fallback. Both emissions are liveness, NOT completion
-// (anti-#2576): terminal state still comes from the explicit `cockpit crew signal
+// (anti-#2576): terminal state still comes from the explicit `squadrant crew signal
 // done`. The state-machine reducer already absorbs duplicate/late
 // task.turn.completed and task.progress (a blocked crew stays blocked), so
 // feeding them from BOTH paths is harmless.
 import type { ChildProcess } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
-import { resolveCmuxBin } from "@cockpit/shared";
-import type { ControlEvent } from "@cockpit/shared";
+import { resolveCmuxBin } from "@squadrant/shared";
+import type { ControlEvent } from "@squadrant/shared";
 
 /** Minimal subset of ChildProcess this bridge needs (injectable for tests). */
 export interface CmuxEventsChild {

@@ -3,13 +3,13 @@ import { it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { daemonEntryPath } from "@cockpit/core";
+import { daemonEntryPath } from "@squadrant/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(join(here, "..", "..", rel), "utf-8");
 
 // Guard test: index.ts must call ensureDaemon so the daemon self-heals
-// on every cockpit invocation (mirrors ensureRuntimeSynced philosophy).
+// on every squadrant invocation (mirrors ensureRuntimeSynced philosophy).
 it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
   const idx = read("index.ts");
   expect(idx).toMatch(/ensureDaemon/);
@@ -19,7 +19,7 @@ it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
 // Regression guard (PR #85, found in real-env testing — hermetic tests inject
 // their own paths so could not catch it): the daemon entry must be resolved
 // inside launchd.daemonEntryPath, NOT recomputed at call sites. A hardcoded
-// ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
+// ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
 // because runtime-sync never mirrors compiled output there.
 it("no call site recomputes the daemon entry path", () => {
   for (const f of ["index.ts", "commands/crew-control.ts"]) {
@@ -27,12 +27,12 @@ it("no call site recomputes the daemon entry path", () => {
     // ensureDaemon is called with no path argument (resolved internally)
     expect(src).toMatch(/ensureDaemon\(\)/);
     // and the buggy hardcoded path is absent
-    expect(src).not.toMatch(/"\.config",\s*"cockpit",\s*"dist"/);
+    expect(src).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
   }
 });
 
 // #259: in vitest context import.meta.url resolves to the src/ tree, so
-// daemonEntryPath() resolves to src/control/cockpitd.js which doesn't exist.
+// daemonEntryPath() resolves to src/control/squadrantd.js which doesn't exist.
 // The guard must throw so ensureDaemon() catches it and never writes a bad plist.
 it("daemonEntryPath throws when compiled entry not found (src-tree guard, #259)", () => {
   expect(() => daemonEntryPath()).toThrow(/compiled entry not found|run.*build/i);

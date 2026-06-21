@@ -1,6 +1,6 @@
 // src/control/daemon/gates.ts
 // resolveInteractiveGate: route the captain's approve/deny to the owning driver.
-// Reads ctx.codexDriver and ctx.opencodeBridge lazily (set by cockpitd.ts before
+// Reads ctx.codexDriver and ctx.opencodeBridge lazily (set by squadrantd.ts before
 // any gate message can arrive on the socket).
 import type { DaemonContext } from "./context.js";
 

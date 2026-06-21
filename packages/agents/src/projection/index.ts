@@ -10,4 +10,4 @@ export type {
   ProjectionEmitter,
   ProjectionEmitResult,
   ProjectionEmitterFactory,
-} from "@cockpit/shared";
+} from "@squadrant/shared";

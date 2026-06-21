@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mergeClaudeHooks } from "@cockpit/agents";
+import { mergeClaudeHooks } from "@squadrant/agents";
 
 /**
  * Bash permission allowlist for crews running under `--permission-mode
@@ -20,7 +20,7 @@ import { mergeClaudeHooks } from "@cockpit/agents";
  * <prefix>. Patterns match the raw command string — NOT the resolved binary.
  *
  * Known limitation: commands with a leading env-var assignment
- * (e.g. `COCKPIT_CREW_TASK_ID=x sleep 5`) still prompt because the line
+ * (e.g. `SQUADRANT_CREW_TASK_ID=x sleep 5`) still prompt because the line
  * starts with the variable name, not the command. This is rare and acceptable;
  * it's not a bug.
  */
@@ -118,7 +118,7 @@ export function mergeCrewPermissions(settings: Record<string, unknown>): Record<
 }
 
 /**
- * Write a Claude `--settings`-compatible JSON file containing the cockpit
+ * Write a Claude `--settings`-compatible JSON file containing the squadrant
  * Stop/SubagentStop/SessionEnd hooks merged onto an empty base. Per-crew
  * scoping (one file per spawned task) keeps the hook out of the user's
  * global `~/.claude/settings.json` — captain/command Claude sessions are
@@ -133,13 +133,13 @@ export function writePerCrewSettings(o: {
   const dir = join(o.stateRoot, o.project, o.taskId);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "settings.json");
-  const merged = mergeClaudeHooks({}, o.hookCmd ?? "cockpit crew _hook");
+  const merged = mergeClaudeHooks({}, o.hookCmd ?? "squadrant crew _hook");
   writeFileSync(file, JSON.stringify(merged, null, 2));
   return file;
 }
 
 /**
- * Write cockpit hooks into `<projectCwd>/.claude/settings.local.json` so they
+ * Write squadrant hooks into `<projectCwd>/.claude/settings.local.json` so they
  * are auto-loaded by Claude Code as a project-local settings source (level 3
  * in the precedence hierarchy). Unlike the per-crew settings.json passed via
  * `--settings` (level 2), this auto-loaded file merges with the cmux wrapper's
@@ -162,7 +162,7 @@ export function writePerCrewSettingsLocal(o: {
   } catch {
     // File doesn't exist or isn't valid JSON — start fresh
   }
-  const withHooks = mergeClaudeHooks(existing, o.hookCmd ?? "cockpit crew _hook");
+  const withHooks = mergeClaudeHooks(existing, o.hookCmd ?? "squadrant crew _hook");
   const merged = mergeCrewPermissions(withHooks);
   writeFileSync(file, JSON.stringify(merged, null, 2));
   return file;
@@ -170,7 +170,7 @@ export function writePerCrewSettingsLocal(o: {
 
 /**
  * Write an opencode config file that auto-approves edit/bash/webfetch so
- * cockpit-spawned opencode crews never block on a manual permission prompt.
+ * squadrant-spawned opencode crews never block on a manual permission prompt.
  * OPENCODE_CONFIG merges with (does not replace) the global config, so only
  * the permission block is needed — model/plugin/mcp flow through from
  * ~/.config/opencode/opencode.json automatically.

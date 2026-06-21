@@ -1,6 +1,6 @@
 // src/control/__tests__/protocol.test.ts
 import { describe, it, expect } from "vitest";
-import { encodeMsg, createDecoder } from "@cockpit/core";
+import { encodeMsg, createDecoder } from "@squadrant/core";
 
 describe("framing", () => {
   it("encodeMsg appends a newline and JSON-encodes", () => {

@@ -1,8 +1,8 @@
 // src/control/__tests__/watchdog.test.ts
 import { describe, it, expect } from "vitest";
-import { evaluateStall, recoverStall } from "@cockpit/core";
-import { reduce } from "@cockpit/core";
-import type { TaskRecord } from "@cockpit/shared";
+import { evaluateStall, recoverStall } from "@squadrant/core";
+import { reduce } from "@squadrant/core";
+import type { TaskRecord } from "@squadrant/shared";
 
 function rec(o: Partial<TaskRecord> = {}): TaskRecord {
   return {

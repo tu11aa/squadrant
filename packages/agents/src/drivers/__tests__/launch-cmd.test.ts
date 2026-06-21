@@ -27,7 +27,7 @@ let tmpDir: string;
 let templatesDir: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-launch-cmd-test-"));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-launch-cmd-test-"));
   templatesDir = path.join(tmpDir, "templates");
   fs.mkdirSync(templatesDir, { recursive: true });
 });

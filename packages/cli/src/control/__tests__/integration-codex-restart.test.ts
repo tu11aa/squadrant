@@ -3,8 +3,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "@cockpit/core";
+import { startSquadrantd } from "../squadrantd.js";
+import { sendRequest } from "@squadrant/core";
 
 describe("integration: interactive-codex restart-reattach (closes #86 interactive slice)", () => {
   let stop: (() => void) | undefined; let dir: string;
@@ -21,7 +21,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
       dispatch: vi.fn(), reattach: vi.fn().mockResolvedValue(undefined),
       say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn(),
     };
-    let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fakeDriver1 } as any);
+    let h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fakeDriver1 } as any);
     // Fresh heartbeat = a still-live crew. The reattach guard only resumes
     // recently-active tasks; stale zombies (dead crews) are skipped to avoid the
     // boot MCP storm. See shouldReattachCodex.
@@ -39,7 +39,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
       dispatch: vi.fn(), reattach: vi.fn().mockResolvedValue(undefined),
       say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn(),
     };
-    h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fakeDriver2 } as any);
+    h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fakeDriver2 } as any);
     stop = h.stop;
 
     // Give the fire-and-forget reattach loop one microtask tick.
@@ -56,7 +56,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
     const stateRoot = join(dir, "state");
 
     const fake1: any = { dispatch: vi.fn(), reattach: vi.fn(), say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn() };
-    let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake1 } as any);
+    let h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake1 } as any);
     await sendRequest(sock, { kind: "seed", record: {
       id: "tc2", project: "p", provider: "codex", mode: "interactive",
       state: "submitted", task: "x", createdAt: 1, lastHeartbeat: 1,
@@ -66,7 +66,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
     h.stop();
 
     const fake2: any = { dispatch: vi.fn(), reattach: vi.fn(), say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn() };
-    h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake2 } as any);
+    h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake2 } as any);
     stop = h.stop;
     await new Promise((r) => setTimeout(r, 0));
     expect(fake2.reattach).not.toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
     const stateRoot = join(dir, "state");
 
     const fake1: any = { dispatch: vi.fn(), reattach: vi.fn(), say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn() };
-    let h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake1 } as any);
+    let h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake1 } as any);
     await sendRequest(sock, { kind: "seed", record: {
       id: "tc3", project: "p", provider: "codex", mode: "interactive",
       state: "done", task: "x", createdAt: 1, lastHeartbeat: 1,
@@ -88,7 +88,7 @@ describe("integration: interactive-codex restart-reattach (closes #86 interactiv
     h.stop();
 
     const fake2: any = { dispatch: vi.fn(), reattach: vi.fn(), say: vi.fn(), steer: vi.fn(), interrupt: vi.fn(), answer: vi.fn() };
-    h = startCockpitd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake2 } as any);
+    h = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, codexDriver: fake2 } as any);
     stop = h.stop;
     await new Promise((r) => setTimeout(r, 0));
     expect(fake2.reattach).not.toHaveBeenCalled();

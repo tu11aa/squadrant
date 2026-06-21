@@ -1,6 +1,6 @@
 // src/control/state-machine.ts
-import type { ControlEvent, TaskRecord, DispatchAttempt } from "@cockpit/shared";
-import { TERMINAL_STATES } from "@cockpit/shared";
+import type { ControlEvent, TaskRecord, DispatchAttempt } from "@squadrant/shared";
+import { TERMINAL_STATES } from "@squadrant/shared";
 
 /**
  * Pure helper: merges `patch` into the last attempt and updates lastHeartbeatAt.
@@ -90,7 +90,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.blocked":
       // ev.reason is protocol/logging-only and intentionally not persisted;
       // only `question` is stored on the record.
-      // Idempotency (#174): the explicit `cockpit crew signal blocked` fires
+      // Idempotency (#174): the explicit `squadrant crew signal blocked` fires
       // BEFORE the turn ends; the auto-detect Stop hook may then re-emit
       // task.blocked on an already-blocked task. Treat a repeat block as a
       // no-op so the FIRST (explicit) question wins and no duplicate CREW

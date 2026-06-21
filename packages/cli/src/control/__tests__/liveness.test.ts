@@ -4,7 +4,7 @@ import {
   classifyHealth,
   projectHealth,
   type ComponentHealth,
-} from "@cockpit/core";
+} from "@squadrant/core";
 
 const find = (cs: ComponentHealth[], kind: ComponentHealth["kind"]) =>
   cs.find((c) => c.kind === kind);

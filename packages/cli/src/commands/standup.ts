@@ -3,9 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
 import matter from "gray-matter";
-import { loadConfig, resolveHome, type ProjectConfig, type CockpitConfig } from "@cockpit/shared";
-import { readDailyLog, getGitCommits, iso, daysAgo } from "@cockpit/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "@cockpit/workspaces";
+import { loadConfig, resolveHome, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
+import { readDailyLog, getGitCommits, iso, daysAgo } from "@squadrant/shared";
+import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 
 interface StatusFrontmatter {
   project?: string;
@@ -35,7 +35,7 @@ async function getProjectStandup(
   project: ProjectConfig,
   dateStr: string,
   registry: WorkspaceRegistry,
-  config: CockpitConfig,
+  config: SquadrantConfig,
 ): Promise<ProjectStandup> {
   const workspace = registry.forProject(name, config);
   // TODO(workspace): status.md still read via raw fs — migrate to workspace driver (see #24)
@@ -158,7 +158,7 @@ export const standupCommand = new Command("standup")
     const projects = Object.entries(config.projects);
 
     if (projects.length === 0) {
-      console.log(chalk.yellow("\nNo projects registered. Use: cockpit projects add <name> <path>\n"));
+      console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
     }
 

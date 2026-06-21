@@ -79,7 +79,7 @@ export async function readUserLevelSource(
 // `driver` must be rooted at the project directory itself (createObsidianDriver
 // with root: proj.path). Reading via a driver rooted at process.cwd() — as the
 // projection command previously did — made the sandbox guard reject every
-// managed project living outside the cockpit repo, silently skipping them.
+// managed project living outside the squadrant repo, silently skipping them.
 export async function readProjectLevelSource(
   driver: WorkspaceDriver,
 ): Promise<ProjectionSource | null> {

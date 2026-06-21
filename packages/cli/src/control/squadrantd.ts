@@ -1,23 +1,23 @@
-// src/control/cockpitd.ts — host: constructs concrete drivers + thin shim.
+// src/control/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import { buildContext } from "@cockpit/core";
-import { createAttach } from "@cockpit/core";
-import { startDaemon } from "@cockpit/core";
-import { isDaemonSocketLive } from "@cockpit/core";
-export type { CockpitdOpts } from "@cockpit/core";
-export { defaultIsPidAlive } from "@cockpit/core";
-export { discoverCaptainSurface } from "@cockpit/core";
-import type { AttachFrame } from "@cockpit/core";
-import type { PaneRef } from "@cockpit/shared";
-import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@cockpit/agents";
-import { CmuxEventsBridge, DaemonCmux } from "@cockpit/workspaces";
-import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
-import { createCmuxDriver } from "@cockpit/workspaces";
+import { buildContext } from "@squadrant/core";
+import { createAttach } from "@squadrant/core";
+import { startDaemon } from "@squadrant/core";
+import { isDaemonSocketLive } from "@squadrant/core";
+export type { SquadrantdOpts } from "@squadrant/core";
+export { defaultIsPidAlive } from "@squadrant/core";
+export { discoverCaptainSurface } from "@squadrant/core";
+import type { AttachFrame } from "@squadrant/core";
+import type { PaneRef } from "@squadrant/shared";
+import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@squadrant/agents";
+import { CmuxEventsBridge, DaemonCmux } from "@squadrant/workspaces";
+import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
+import { createCmuxDriver } from "@squadrant/workspaces";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 function readPkgVersion(): string {
@@ -30,7 +30,7 @@ const PKG_VERSION = readPkgVersion();
 
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
 
-export function startCockpitd(opts: import("@cockpit/core").CockpitdOpts = {}) {
+export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -103,7 +103,7 @@ export function startCockpitd(opts: import("@cockpit/core").CockpitdOpts = {}) {
   // ── launchHeadless default ────────────────────────────────────────────────
   // Kept here so this file is the sole importer of headless-launcher (daemon/* can't).
   const launchHeadless = opts.launchHeadless ?? (async (rec) => {
-    const ingest = (e: import("@cockpit/shared").ControlEvent) =>
+    const ingest = (e: import("@squadrant/shared").ControlEvent) =>
       void ctx.d.handle({ kind: "event", project: rec.project, event: e });
     const handle = runHeadless({
       provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
@@ -121,26 +121,26 @@ export function startCockpitd(opts: import("@cockpit/core").CockpitdOpts = {}) {
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).
-if (process.argv[1] && process.argv[1].endsWith("cockpitd.js")) {
+if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
   void (async () => {
     // #360 layer 1: this entry takes no CLI flags. A build smoke-test like
-    // `node dist/cockpitd.js --help` must NOT boot a daemon — it would hang
+    // `node dist/squadrantd.js --help` must NOT boot a daemon — it would hang
     // and steal the shared socket. Print a one-liner and exit.
     const arg = process.argv[2];
     if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") {
-      process.stdout.write("cockpitd: launchd-managed daemon entry (no CLI args). Use `cockpit` for commands.\n");
+      process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `squadrant` for commands.\n");
       process.exit(0);
     }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.
     // startServer does unlink-then-bind; without this guard a second invocation
     // unlinks the live socket, orphaning the running daemon on its now-anonymous
     // inode so every new connect() to the path is refused.
-    const sock = join(homedir(), ".config", "cockpit", "cockpit.sock");
+    const sock = join(homedir(), ".config", "squadrant", "squadrant.sock");
     if (await isDaemonSocketLive(sock)) {
-      process.stderr.write(`[cockpitd] refusing to start: a live daemon already owns ${sock}\n`);
+      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${sock}\n`);
       process.exit(0);
     }
-    const h = startCockpitd({ sweepMs: 30000 });
+    const h = startSquadrantd({ sweepMs: 30000 });
     process.on("SIGTERM", () => { h.stop(); process.exit(0); });
   })();
 }

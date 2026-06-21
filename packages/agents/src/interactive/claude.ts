@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { InteractiveHookAdapter } from "./types.js";
-import type { ControlEvent } from "@cockpit/shared";
+import type { ControlEvent } from "@squadrant/shared";
 
 // PostToolUse fires after EVERY tool call mid-turn — it is the only liveness
 // signal that refreshes the heartbeat while a crew is still working.
@@ -19,7 +19,7 @@ const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notificati
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
  * daemon-supervised crew path needs per-invocation settings to inject the
- * cockpit Stop hook without polluting the user's global `~/.claude/settings.json`
+ * squadrant Stop hook without polluting the user's global `~/.claude/settings.json`
  * (the scrapped PR #71 mistake). Returns "flag" when --settings is available
  * (the happy path), "project-dir" when the fallback (write `.claude/settings.json`
  * under the project dir + cd) is needed.
@@ -45,7 +45,7 @@ export function isPermissionNotification(message: string): boolean {
   return lower.includes("permission") || lower.includes("approve");
 }
 
-/** Pure, idempotent merge of cockpit hooks into a Claude settings object. */
+/** Pure, idempotent merge of squadrant hooks into a Claude settings object. */
 export function mergeClaudeHooks(settings: any, hookCmd: string): any {
   const next = structuredClone(settings ?? {});
   next.hooks ??= {};
@@ -140,7 +140,7 @@ function readLastAssistantText(transcriptPath: string): string | null {
  *   1. else payload.transcript_path (documented field, when present + readable);
  *   2. else the path derived from payload.session_id + cwd (defensive fallback for
  *      older clients that omit both of the above).
- * cwd preference: payload.cwd (Claude hook contract) → COCKPIT_CREW_CWD → cwd().
+ * cwd preference: payload.cwd (Claude hook contract) → SQUADRANT_CREW_CWD → cwd().
  * Best-effort: a null/miss from one source falls through to the next; never throws.
  */
 function resolveLastAssistantText(payload: unknown): string | null {
@@ -150,7 +150,7 @@ function resolveLastAssistantText(payload: unknown): string | null {
   const candidates: string[] = [];
   const tp = p?.transcript_path;
   if (typeof tp === "string" && tp) candidates.push(tp);
-  const cwd = (typeof p?.cwd === "string" && p.cwd) ? p.cwd : (process.env.COCKPIT_CREW_CWD || process.cwd());
+  const cwd = (typeof p?.cwd === "string" && p.cwd) ? p.cwd : (process.env.SQUADRANT_CREW_CWD || process.cwd());
   const derived = deriveTranscriptPath(p?.session_id, cwd);
   if (derived) candidates.push(derived);
   for (const path of candidates) {
@@ -161,12 +161,12 @@ function resolveLastAssistantText(payload: unknown): string | null {
 }
 
 /**
- * Map a Claude hook event name to a cockpit ControlEvent. Codifies the anti-#2576
+ * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
  * the lone terminalizing hook: the session is gone, so it maps to
  * task.session.ended → cancelled (#139) — silent, never done/failed.
- * Terminal `done`/`failed` come exclusively from explicit `cockpit crew signal`.
+ * Terminal `done`/`failed` come exclusively from explicit `squadrant crew signal`.
  *
  * Stop = turn boundary. It normally maps to task.turn.completed → awaiting-input
  * (stall-immune) so a captain reviewing output never trips a false CREW STALLED

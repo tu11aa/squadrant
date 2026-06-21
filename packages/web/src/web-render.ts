@@ -5,7 +5,7 @@
 // every age is derived from snapshot-time deltas or `snap.generatedAt`, so the
 // render is deterministic and unit-tested.
 //
-// Visual language: a glass-cockpit flight deck. A master-status ANNUNCIATOR and
+// Visual language: a glass-squadrant flight deck. A master-status ANNUNCIATOR and
 // an inline-SVG health DONUT read the fleet at a glance; OVERVIEW / PROJECTS /
 // DAEMON / ENVIRONMENT tabs (vanilla-JS, one SSE stream) hold the detail. Charts
 // are inline SVG only (donut server-rendered; sparklines drawn client-side from a
@@ -13,8 +13,8 @@
 // red rollup to its project header); the stale-build / link-lost banners render
 // only when applicable; remediation is COPY-ABLE TEXT (never buttons — read-only
 // beta). Zero new deps: vanilla JS + modern CSS + inline SVG.
-import type { HealthState, ComponentHealth, DaemonSnapshot } from "@cockpit/core";
-import { healCmdFor, ageText } from "@cockpit/core";
+import type { HealthState, ComponentHealth, DaemonSnapshot } from "@squadrant/core";
+import { healCmdFor, ageText } from "@squadrant/core";
 import type { FullSnapshot } from "./snapshot-merge.js";
 import type { ExternalProbes, Probe, ProbeState } from "./probes.js";
 
@@ -25,7 +25,7 @@ const ICON: Record<AnyState, string> = { alive: "✔", stale: "•", gone: "✘"
 // it out-ranks a stale caution (it is the headline state of an offline project)
 // but never a genuine fault. unknown never out-ranks a real degradation.
 const SEV: Record<AnyState, number> = { alive: 0, unknown: 1, stale: 2, stopped: 3, gone: 4 };
-// Cockpit annunciator vernacular for each state.
+// Squadrant annunciator vernacular for each state.
 const STATE_WORD: Record<AnyState, string> = { alive: "nominal", stale: "caution", gone: "fault", stopped: "stopped", unknown: "unknown" };
 
 function esc(s: string): string {
@@ -259,7 +259,7 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
   out.push(sectionHead("Health by Tier", "How many components are healthy in each layer of the stack."));
   out.push(
     `<div class="tier-grid">`,
-    tierCard("Daemon", col.daemonT, "cockpitd process, build freshness & log volume (Tier 0)"),
+    tierCard("Daemon", col.daemonT, "squadrantd process, build freshness & log volume (Tier 0)"),
     tierCard("Projects", col.projT, "captains, crews & message data plane (Tier 1/2)"),
     tierCard("Environment", col.envT, "agent CLIs, vaults & config integrity (Tier 3/4)"),
     `</div>`,
@@ -309,7 +309,7 @@ function renderProjects(snap: FullSnapshot, now: number): string {
   const out: string[] = [`<section class="panel" data-panel="projects" role="tabpanel" aria-label="Projects">`];
   out.push(sectionHead("Projects", "Per-project captains and crews, plus each project's mailbox delivery and task store."));
   if (snap.daemon === "unreachable") {
-    out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>cockpit heal daemon</code></div></section>`);
+    out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>squadrant heal daemon</code></div></section>`);
     return out.join("");
   }
   const d = snap.daemon;
@@ -363,9 +363,9 @@ function instr(label: string, value: string, extra = ""): string {
 
 function renderDaemon(snap: FullSnapshot): string {
   const out: string[] = [`<section class="panel" data-panel="daemon" role="tabpanel" aria-label="Daemon">`];
-  out.push(sectionHead("Daemon · Tier 0", "The cockpitd process at the root of everything — uptime, build freshness, sweep cadence, and log volume."));
+  out.push(sectionHead("Daemon · Tier 0", "The squadrantd process at the root of everything — uptime, build freshness, sweep cadence, and log volume."));
   if (snap.daemon === "unreachable") {
-    out.push(`<div class="empty">Daemon unreachable — no Tier 0 telemetry. ${remediation("cockpit heal daemon")}</div></section>`);
+    out.push(`<div class="empty">Daemon unreachable — no Tier 0 telemetry. ${remediation("squadrant heal daemon")}</div></section>`);
     return out.join("");
   }
   const t0 = snap.daemon.tier0;
@@ -382,9 +382,9 @@ function renderDaemon(snap: FullSnapshot): string {
 
   out.push(
     `<div class="instr-grid">`,
-    instr("process", `<span class="mono">cockpitd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
+    instr("process", `<span class="mono">squadrantd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
     instr("uptime", `<span class="mono">${fmtDur(t0.uptimeMs)}</span>`),
-    instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && cockpit heal daemon") : ""),
+    instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && squadrant heal daemon") : ""),
     instr("sweep", `${pill(sweepState, sweep)}`),
     `</div>`,
   );
@@ -420,7 +420,7 @@ function probeTable(rows: Array<[string, Probe]>): string {
 
 function renderEnv(ext: ExternalProbes): string {
   const out: string[] = [`<section class="panel" data-panel="environment" role="tabpanel" aria-label="Environment">`];
-  out.push(sectionHead("Environment · Tier 3 / 4", "External tools and on-disk state the cockpit depends on but does not own — agent CLIs, vaults, and config."));
+  out.push(sectionHead("Environment · Tier 3 / 4", "External tools and on-disk state the squadrant depends on but does not own — agent CLIs, vaults, and config."));
 
   out.push(`<article class="card"><header class="card-head"><span class="card-title">Runtime & CLIs</span></header>`);
   out.push(probeTable([
@@ -473,7 +473,7 @@ function metricsBlob(col: Collected, linkLost: boolean): string {
   };
   // Escape `</` defensively so the JSON can never close the <script> early.
   const json = JSON.stringify(m).replace(/</g, "\\u003c");
-  return `<script type="application/json" id="cockpit-metrics">${json}</script>`;
+  return `<script type="application/json" id="squadrant-metrics">${json}</script>`;
 }
 
 /** Pure. The live inner content (everything inside #content), re-pushed each tick. */
@@ -485,8 +485,8 @@ export function renderContent(snap: FullSnapshot): string {
 
   const out: string[] = [
     `<header class="page-head">`,
-    `<h1 class="page-title">COCKPIT SYSTEM HEALTH</h1>`,
-    `<p class="page-sub">Live health of the cockpit daemon, sessions, message data plane, and environment — refreshed automatically every few seconds.</p>`,
+    `<h1 class="page-title">SQUADRANT SYSTEM HEALTH</h1>`,
+    `<p class="page-sub">Live health of the squadrant daemon, sessions, message data plane, and environment — refreshed automatically every few seconds.</p>`,
     `</header>`,
   ];
 
@@ -502,10 +502,10 @@ export function renderContent(snap: FullSnapshot): string {
 
   // Caution banners (loud, only when applicable).
   if (snap.daemon === "unreachable") {
-    out.push(banner("err", "✘ DAEMON UNREACHABLE — start it: cockpit heal daemon  (external checks below still live)"));
+    out.push(banner("err", "✘ DAEMON UNREACHABLE — start it: squadrant heal daemon  (external checks below still live)"));
   } else if (snap.daemon.tier0.build.state === "stale") {
     out.push(banner("warn", "⚠ DAEMON RUNNING STALE CODE — process started before the current dist build"));
-    out.push(remediation("npm run build && cockpit heal daemon"));
+    out.push(remediation("npm run build && squadrant heal daemon"));
   }
 
   out.push(tabNav());
@@ -707,7 +707,7 @@ const CLIENT_JS = `
 (function(){
   var activeTab='overview';var hist={};var prev={};
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
-  function ingest(){var el=document.getElementById('cockpit-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);}
+  function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
   function drawSparks(){var ns=document.querySelectorAll('[data-spark]');for(var i=0;i<ns.length;i++){ns[i].innerHTML=sparkSVG(hist[ns[i].getAttribute('data-spark')]||[]);}}
   function applyTab(){var ts=document.querySelectorAll('[data-tab]');for(var i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-tab')===activeTab;ts[i].setAttribute('aria-selected',on?'true':'false');ts[i].classList.toggle('on',on);}var ps=document.querySelectorAll('[data-panel]');for(var j=0;j<ps.length;j++){var on2=ps[j].getAttribute('data-panel')===activeTab;ps[j].hidden=!on2;}}
@@ -734,10 +734,10 @@ export function renderHtml(snap: FullSnapshot, opts: { port?: number } = {}): st
     "<!DOCTYPE html>",
     '<html lang="en"><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
-    "<title>cockpit · system health</title>",
+    "<title>squadrant · system health</title>",
     `<style>${STYLE}</style></head><body class="theme-light">`,
     `<header class="deck">`,
-    `<div class="brand"><span class="led" id="led"></span><span class="wordmark">Cockpit</span><span class="tagline">Mission Control</span></div>`,
+    `<div class="brand"><span class="led" id="led"></span><span class="wordmark">Squadrant</span><span class="tagline">Mission Control</span></div>`,
     `<span class="deck-spacer"></span>`,
     `<div class="readout"><span class="conn" id="conn">connecting</span><span class="updated" id="updated"></span><span class="port">${esc(port)}</span></div>`,
     `</header>`,

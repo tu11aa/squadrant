@@ -14,7 +14,7 @@ describe("writePerCrewSettings", () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-per-crew-"));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-per-crew-"));
   });
 
   afterEach(() => {
@@ -34,9 +34,9 @@ describe("writePerCrewSettings", () => {
     expect(Array.isArray(json.hooks.Stop)).toBe(true);
     expect(Array.isArray(json.hooks.SubagentStop)).toBe(true);
     expect(Array.isArray(json.hooks.SessionEnd)).toBe(true);
-    // Each event has an entry pointing at `cockpit crew _hook <event>`.
+    // Each event has an entry pointing at `squadrant crew _hook <event>`.
     const stopCmd = json.hooks.Stop[0].hooks[0].command;
-    expect(stopCmd).toContain("cockpit crew _hook");
+    expect(stopCmd).toContain("squadrant crew _hook");
     expect(stopCmd).toContain("Stop");
   });
 
@@ -45,7 +45,7 @@ describe("writePerCrewSettings", () => {
     const json = JSON.parse(fs.readFileSync(out, "utf-8"));
     expect(Array.isArray(json.hooks.PostToolUse)).toBe(true);
     const cmd = json.hooks.PostToolUse[0].hooks[0].command;
-    expect(cmd).toContain("cockpit crew _hook");
+    expect(cmd).toContain("squadrant crew _hook");
     expect(cmd).toContain("PostToolUse");
   });
 
@@ -82,7 +82,7 @@ describe("writePerCrewSettingsLocal — permission allowlist", () => {
   const settingsPath = () => path.join(tmp, ".claude", "settings.local.json");
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-local-"));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-local-"));
   });
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -254,7 +254,7 @@ describe("writePerCrewOpencodeConfig", () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-per-crew-opencode-"));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-per-crew-opencode-"));
   });
 
   afterEach(() => {

@@ -5,7 +5,7 @@ import { getDefaultConfig } from "../../config.js";
 function userConfig() {
   const c = getDefaultConfig();
   c.projects = { brove: { path: "/p", captainName: "x", spokeVault: "/v", host: "local" } };
-  c.hubVault = "/Users/me/cockpit-hub";
+  c.hubVault = "/Users/me/squadrant-hub";
   c.commandName = "\u{1F3DB}\u{FE0F} command";
   return c;
 }

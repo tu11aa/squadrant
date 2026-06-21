@@ -2,14 +2,14 @@
 
 Driver-agnostic daemon core. Contains all logic that does not depend on
 concrete agent drivers (CodexInteractiveDriver, DaemonCmux, headless-launcher,
-etc.). Those live in the host (`cockpitd.ts`).
+etc.). Those live in the host (`squadrantd.ts`).
 
 ## Owns
 
 | File | Responsibility |
 |------|----------------|
 | `start.ts` | `startDaemon(ctx, opts, pkgVersion)` — wires all factories, runs boot recovery, starts timers, returns `DaemonHandle` |
-| `context.ts` | `DaemonContext` shared state bag + `buildContext(opts)` + `CockpitdOpts` type |
+| `context.ts` | `DaemonContext` shared state bag + `buildContext(opts)` + `SquadrantdOpts` type |
 | `attach.ts` | `createAttach(ctx)` — broadcast fan-out + gate-promotion timers |
 | `probes.ts` | `createProbes(ctx)` — daemon-direct surface-liveness probes |
 | `delivery.ts` | `createDelivery(ctx, ...)` — mailbox append + daemon-direct captain delivery loop (#332) |
@@ -33,11 +33,11 @@ const handle = startDaemon(ctx, opts, pkgVersion);
 - `../mailbox.ts` — mailbox I/O
 - `../liveness.ts` — health assembly
 - `../snapshot.ts` — dashboard snapshot assembly
-- `@cockpit/shared` — types, config, constants
+- `@squadrant/shared` — types, config, constants
 
 ## Doesn't Belong Here
 
 Concrete driver classes (`CodexInteractiveDriver`, `OpencodeSseBridge`,
 `CmuxEventsBridge`, `DaemonCmux`), `headless-launcher`, and `runtimes/index`
-all live in the host (`cockpitd.ts`). Importing them here would break the
+all live in the host (`squadrantd.ts`). Importing them here would break the
 driver-agnostic boundary verified by the Task-9 grep gate.

@@ -22,7 +22,7 @@ export function createOpencodeDriver(): AgentDriver {
     buildCommand(opts: SpawnOptions): string {
       // Interactive crews: boot the TUI; the caller delivers opts.prompt as the
       // first turn via runtime.send once the session is ready, so the crew stays
-      // alive for follow-up turns through `cockpit crew send`. When a port is
+      // alive for follow-up turns through `squadrant crew send`. When a port is
       // given, bind the embedded HTTP server on it so the daemon's SSE bridge
       // can subscribe to /event for turn-end detection (the bare TUI uses an
       // ephemeral unix socket with no reachable /event endpoint).

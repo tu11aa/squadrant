@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, saveConfig, resolveEffort, DEFAULT_CONFIG_PATH } from "@cockpit/shared";
-import type { CockpitConfig, Effort } from "@cockpit/shared";
+import { loadConfig, saveConfig, resolveEffort, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
+import type { SquadrantConfig, Effort } from "@squadrant/shared";
 
 const VALID_EFFORTS: Effort[] = ["max", "balance", "low"];
 
@@ -54,13 +54,13 @@ function canonical(p: string): string {
 
 /**
  * Send the effort-change notice to every running captain EXCEPT the one in the
- * current working directory. The captain that ran `cockpit effort` already saw
+ * current working directory. The captain that ran `squadrant effort` already saw
  * the stdout '✔ effort → ...' confirmation, so injecting the notice into its own
  * pane is a duplicate self-notification. Other running captains still get it.
  */
 export async function notifyCaptainsOfEffort(
   effort: Effort,
-  config: CockpitConfig,
+  config: SquadrantConfig,
   driver: EffortNotifyDriver,
   cwd: string = process.cwd(),
 ): Promise<void> {
@@ -105,7 +105,7 @@ export const effortCommand = new Command("effort")
     // Best-effort active notify: send a one-line notice to any running captain.
     // Never hard-fails — config is already written above.
     try {
-      const { createCmuxDriver, RuntimeRegistry } = await import("@cockpit/workspaces");
+      const { createCmuxDriver, RuntimeRegistry } = await import("@squadrant/workspaces");
       const config = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       const driver = registry.global(config);

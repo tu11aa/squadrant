@@ -2,7 +2,7 @@
 // Core daemon assembly: wires all daemon/* factories, runs boot recovery,
 // starts timers, and returns the DaemonHandle.
 // Concrete driver construction (CodexInteractiveDriver, DaemonCmux, etc.)
-// lives in the host (cockpitd.ts) — this file stays free of those imports.
+// lives in the host (squadrantd.ts) — this file stays free of those imports.
 import { join, dirname } from "node:path";
 import { readdir } from "node:fs/promises";
 import { createDaemon } from "../daemon.js";
@@ -13,9 +13,9 @@ import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";
 import { projectHealth, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
-import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@cockpit/shared";
+import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./snapshot-gather.js";
-import type { CockpitdOpts, DaemonContext } from "./context.js";
+import type { SquadrantdOpts, DaemonContext } from "./context.js";
 
 const CURSOR_SUBSCRIBER = "captain";
 const SNAPSHOT_LOG_WINDOW_MS = 60 * 60 * 1000;
@@ -29,7 +29,7 @@ export interface DaemonHandle {
 /** Wire all daemon/* factories, run boot recovery, start timers.
  *  ctx must already have: attach handlers, codexDriver, opencodeBridge,
  *  cmuxEventsBridge, daemonCmux, daemonDirectCmux set on it by the host. */
-export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: string): DaemonHandle {
+export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion: string): DaemonHandle {
   const {
     stateRoot, store, log, isPidAlive, resultsDir,
     taskTimeoutMs, inFlightHeadlessIds, activeHeadlessKills,
@@ -42,7 +42,7 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   const notify = opts.notify ?? defaultNotify;
   const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
 
-  const ingest = (project: string) => (e: import("@cockpit/shared").ControlEvent) =>
+  const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });
 
   const d = createDaemon({
@@ -105,7 +105,7 @@ export function startDaemon(ctx: DaemonContext, opts: CockpitdOpts, pkgVersion: 
   }
 
   async function gatherSnapshotInputs(now: number): Promise<DaemonSnapshotInputs> {
-    const logPath = join(dirname(stateRoot), "cockpitd.log");
+    const logPath = join(dirname(stateRoot), "squadrantd.log");
     const tier2Projects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
     const projects = await Promise.all(
       tier2Projects.map(async (project) => {

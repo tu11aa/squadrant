@@ -1,4 +1,4 @@
-# Docs — claude-cockpit
+# Docs — Squadrant
 
 Master index of the `docs/` directory. Every active document is linked here. Shipped/superseded planning docs and historical research are **archived to the hub vault** (zipped, out of the repo — see [Archive](#archive)); they remain recoverable from git history too.
 
@@ -15,8 +15,8 @@ Current references that stay accurate as the project evolves.
 | [../AGENTS.md](../AGENTS.md) | Canonical multi-agent instructions (canonical per multi-agent direction) | Active |
 | [architecture.html](architecture.html) | Detailed architecture reference — roles, daemon, driver seams, projection | Active (refreshed 2026-06-18) |
 | [architecture.vi.html](architecture.vi.html) | Vietnamese companion to architecture.html | Active (refreshed 2026-06-18) |
-| [diagrams/2026-06-18-cockpit-monorepo-architecture.html](diagrams/2026-06-18-cockpit-monorepo-architecture.html) | **Current** — 6-package monorepo architecture diagram (EN) | Active |
-| [diagrams/2026-06-18-cockpit-monorepo-architecture.vi.html](diagrams/2026-06-18-cockpit-monorepo-architecture.vi.html) | Vietnamese companion to current architecture diagram | Active |
+| [diagrams/2026-06-18-squadrant-monorepo-architecture.html](diagrams/2026-06-18-squadrant-monorepo-architecture.html) | **Current** — 6-package monorepo architecture diagram (EN) | Active |
+| [diagrams/2026-06-18-squadrant-monorepo-architecture.vi.html](diagrams/2026-06-18-squadrant-monorepo-architecture.vi.html) | Vietnamese companion to current architecture diagram | Active |
 | [testing/crew-lifecycle-checklist.md](testing/crew-lifecycle-checklist.md) | Regression checklist — crew/daemon/delivery/template changes | Active (living) |
 
 ---
@@ -70,6 +70,6 @@ Debugging artifacts and compatibility audits still referenced.
 
 Shipped/superseded planning docs, pre-reorg diagrams/reports, and historical research are bundled into a single zip in the **hub vault**, out of the code repo (the working tree stays active-docs-only). Nothing is lost — the same files also remain in git history.
 
-- **Location:** `~/cockpit-hub/spokes/cockpit/archive/cockpit-docs-archive-2026-06-18.zip`
+- **Location:** `~/squadrant-hub/spokes/squadrant/archive/squadrant-docs-archive-2026-06-18.zip`
 - **Contains (~85 docs):** shipped `specs/` + `plans/` + `superpowers/{specs,plans}/` (incl. reorg steps 1–7, plugin system, multi-agent, control-plane, side-sessions, daemon-direct, …), the 6 pre-reorg architecture diagrams, 3 pre-reorg report HTMLs, and the full historical `research/` set (Orca studies, cmux lifecycle dossiers, notification-pattern research, …).
 - **Recover a single file from git instead:** `git log --all -- docs/<path>` then `git checkout <sha> -- docs/<path>`.

@@ -2,18 +2,18 @@
 // #225 root-fix Fix A: shutdown terminalization of non-terminal crew tasks.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const cockpitdCall = vi.hoisted(() => vi.fn());
-vi.mock("../crew-control.js", () => ({ cockpitdCall }));
+const squadrantdCall = vi.hoisted(() => vi.fn());
+vi.mock("../crew-control.js", () => ({ squadrantdCall }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/shared", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+vi.mock("@squadrant/shared", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return { ...actual, loadConfig, resolveHome: (p: string) => p };
 });
 
 const stopMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const listMock = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/workspaces", () => ({
+vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({}),
   RuntimeRegistry: class {
     forProject() { return { list: listMock, stop: stopMock }; }
@@ -25,7 +25,7 @@ import { shutdownCommand } from "../shutdown.js";
 
 describe("shutdown: crew task terminalization on captain close (#225 Fix A)", () => {
   beforeEach(() => {
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     listMock.mockReset();
     stopMock.mockReset();
     stopMock.mockResolvedValue(undefined);
@@ -41,7 +41,7 @@ describe("shutdown: crew task terminalization on captain close (#225 Fix A)", ()
     // Captain workspace exists
     listMock.mockResolvedValue([{ id: "ws1", name: "⚓ brove" }]);
     // Daemon returns one working + one already-cancelled task
-    cockpitdCall
+    squadrantdCall
       .mockResolvedValueOnce([
         { id: "t1", state: "working" },
         { id: "t2", state: "cancelled" },
@@ -50,13 +50,13 @@ describe("shutdown: crew task terminalization on captain close (#225 Fix A)", ()
 
     await shutdownCommand.parseAsync(["node", "shutdown", "brove"]);
 
-    expect(cockpitdCall).toHaveBeenCalledWith({ kind: "list", project: "brove" });
-    expect(cockpitdCall).toHaveBeenCalledWith({
+    expect(squadrantdCall).toHaveBeenCalledWith({ kind: "list", project: "brove" });
+    expect(squadrantdCall).toHaveBeenCalledWith({
       kind: "event", project: "brove",
       event: { type: "task.cancelled", id: "t1", reason: "captain shutdown" },
     });
     // t2 is already cancelled — must NOT send a second task.cancelled
-    const cancelEvents = cockpitdCall.mock.calls.filter(
+    const cancelEvents = squadrantdCall.mock.calls.filter(
       (args) => args[0]?.kind === "event" && args[0]?.event?.type === "task.cancelled",
     );
     expect(cancelEvents).toHaveLength(1);
@@ -71,7 +71,7 @@ describe("shutdown: crew task terminalization on captain close (#225 Fix A)", ()
     });
     listMock.mockResolvedValue([{ id: "ws1", name: "⚓ brove" }]);
     // Daemon is unreachable
-    cockpitdCall.mockRejectedValue(new Error("daemon down"));
+    squadrantdCall.mockRejectedValue(new Error("daemon down"));
 
     // Must not throw — cmux close still proceeds
     await expect(

@@ -1,6 +1,6 @@
 // src/control/codex/config.ts
 // Read the user's codex config (~/.codex/config.toml or $CODEX_HOME/config.toml)
-// and resolve the active model, applying [notice.model_migrations] so cockpit
+// and resolve the active model, applying [notice.model_migrations] so squadrant
 // uses the same model the TUI would use (e.g. gpt-5.3-codex → gpt-5.5).
 
 import { readFile } from "node:fs/promises";

@@ -5,9 +5,9 @@ const emitMock = vi.hoisted(() => vi.fn());
 const listMock = vi.hoisted(() => vi.fn());
 const getMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@cockpit/agents", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/agents")>(
-    "@cockpit/agents",
+vi.mock("@squadrant/agents", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/agents")>(
+    "@squadrant/agents",
   );
   return {
     ...actual,
@@ -36,8 +36,8 @@ vi.mock("@cockpit/agents", async () => {
 const readUserLevelSourceMock = vi.hoisted(() => vi.fn(async () => ({ instructions: "", skills: [] })));
 const readProjectLevelSourceMock = vi.hoisted(() => vi.fn(async () => null));
 
-vi.mock("@cockpit/shared", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+vi.mock("@squadrant/shared", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return {
     ...actual,
     readUserLevelSource: readUserLevelSourceMock,
@@ -61,9 +61,9 @@ vi.mock("@cockpit/shared", async () => {
 });
 
 // Avoid accidentally touching a real workspace: stub obsidian factory.
-vi.mock("@cockpit/workspaces", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/workspaces")>(
-    "@cockpit/workspaces",
+vi.mock("@squadrant/workspaces", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/workspaces")>(
+    "@squadrant/workspaces",
   );
   return {
     ...actual,

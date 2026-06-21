@@ -6,7 +6,7 @@ const execSyncMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
-vi.mock("@cockpit/workspaces", () => ({
+vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
     probe: vi.fn(), list: vi.fn(), status: vi.fn(), spawn: vi.fn(),
@@ -23,14 +23,14 @@ vi.mock("@cockpit/workspaces", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/shared", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+vi.mock("@squadrant/shared", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return { ...actual, loadConfig, resolveHome: (p: string) => p.replace(/^~/, process.env.HOME ?? "") };
 });
 
 const mockReadAllStatuses = vi.hoisted(() => vi.fn());
-vi.mock("@cockpit/web", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/web")>("@cockpit/web");
+vi.mock("@squadrant/web", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/web")>("@squadrant/web");
   return {
     ...actual,
     readAllStatuses: mockReadAllStatuses,
@@ -128,7 +128,7 @@ describe("runDashboardPane", () => {
   it("sends a refreshing loop command into the new pane", async () => {
     await runDashboardPane({});
     const sent = sendToPane.mock.calls[0][1] as string;
-    expect(sent).toContain("cockpit dashboard --once");
+    expect(sent).toContain("squadrant dashboard --once");
     expect(sent).toContain("sleep 10");
     expect(sent).toMatch(/while true/i);
   });

@@ -10,7 +10,7 @@ const listSurfaces = vi.hoisted(() => vi.fn());
 const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 
-vi.mock("@cockpit/workspaces", () => ({
+vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
     probe: vi.fn(),
@@ -35,15 +35,15 @@ vi.mock("@cockpit/workspaces", () => ({
     async probeAll() { return {}; }
   },
   // side.ts + crew.ts (dynamically imported by regression test) pull these from
-  // @cockpit/workspaces after the crew.ts thin-wrapper refactor (#367). Every
+  // @squadrant/workspaces after the crew.ts thin-wrapper refactor (#367). Every
   // symbol either file imports must be declared here or the import resolves to
   // undefined and calls throw at runtime.
   resolveCaptainWorkspace: async (project: string) => {
     const config = loadConfig();
     const proj = config.projects[project];
-    if (!proj) throw new Error(`Project '${project}' not found. Run 'cockpit projects list'.`);
+    if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
     const ws = await status(proj.captainName);
-    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${project}' first.`);
+    if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`);
     return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
   },
   listProjectCrews: async (_runtime: unknown, workspaceId: string, project: string) => {
@@ -66,8 +66,8 @@ const addWorktreeMock = vi.hoisted(() => vi.fn());
 const removeWorktreeMock = vi.hoisted(() => vi.fn());
 const worktreePathMock = vi.hoisted(() => vi.fn());
 const resolveWorktreeBaseMock = vi.hoisted(() => vi.fn().mockReturnValue("develop"));
-vi.mock("@cockpit/shared", async () => {
-  const actual = await vi.importActual<typeof import("@cockpit/shared")>("@cockpit/shared");
+vi.mock("@squadrant/shared", async () => {
+  const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree: addWorktreeMock, removeWorktree: removeWorktreeMock, worktreePath: worktreePathMock, resolveWorktreeBase: resolveWorktreeBaseMock };
 });
 
@@ -78,7 +78,7 @@ const claudeDriver = vi.hoisted(() => ({
   buildCommand,
 }));
 
-vi.mock("@cockpit/agents", () => ({
+vi.mock("@squadrant/agents", () => ({
   createClaudeDriver: () => claudeDriver,
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
@@ -98,12 +98,12 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
 }));
 
 
-// cockpitdCall and buildDispatchRequest are the daemon dispatch path.
+// squadrantdCall and buildDispatchRequest are the daemon dispatch path.
 // side.ts MUST NOT call these — the mocks let us assert that invariant.
-const cockpitdCall = vi.hoisted(() => vi.fn());
+const squadrantdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
 vi.mock("../crew-control.js", () => ({
-  cockpitdCall,
+  squadrantdCall,
   buildDispatchRequest,
   sendCodexFirstTurn: vi.fn().mockResolvedValue(undefined),
 }));
@@ -146,7 +146,7 @@ const baseConfig = {
   metrics: { enabled: false, path: "" },
 };
 
-describe("cockpit side spawn", () => {
+describe("squadrant side spawn", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     newPane.mockReset();
@@ -157,7 +157,7 @@ describe("cockpit side spawn", () => {
     status.mockReset();
     buildCommand.mockReset();
     loadConfig.mockReset();
-    cockpitdCall.mockReset();
+    squadrantdCall.mockReset();
     buildDispatchRequest.mockReset();
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(true);
@@ -181,7 +181,7 @@ describe("cockpit side spawn", () => {
     vi.useRealTimers();
   });
 
-  it("CRITICAL: does NOT call cockpitdCall or buildDispatchRequest (off daemon lifecycle)", async () => {
+  it("CRITICAL: does NOT call squadrantdCall or buildDispatchRequest (off daemon lifecycle)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -192,7 +192,7 @@ describe("cockpit side spawn", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
     expect(buildDispatchRequest).not.toHaveBeenCalled();
   });
 
@@ -302,7 +302,7 @@ describe("cockpit side spawn", () => {
     expect(addWorktreeMock).not.toHaveBeenCalled();
   });
 
-  it("debug spawn is off the daemon lifecycle (no cockpitdCall)", async () => {
+  it("debug spawn is off the daemon lifecycle (no squadrantdCall)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -313,7 +313,7 @@ describe("cockpit side spawn", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
     expect(buildDispatchRequest).not.toHaveBeenCalled();
   });
 
@@ -515,7 +515,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
       expect.objectContaining({ surfaceId: "s1" }),
       "follow-up message",
     );
-    expect(cockpitdCall).not.toHaveBeenCalled();
+    expect(squadrantdCall).not.toHaveBeenCalled();
   });
 
   it("runSideSend throws when session not found", async () => {
@@ -526,7 +526,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 });
 
 describe("crew spawn regression — daemon path unchanged", () => {
-  it("cockpit crew spawn still calls cockpitdCall (daemon path intact)", async () => {
+  it("squadrant crew spawn still calls squadrantdCall (daemon path intact)", async () => {
     const { runCrewSpawn } = await import("../crew.js");
 
     vi.useFakeTimers();
@@ -548,7 +548,7 @@ describe("crew spawn regression — daemon path unchanged", () => {
       kind: "dispatch",
       record: { ...(o as object), id: "task-cl1" },
     }));
-    cockpitdCall.mockResolvedValue({
+    squadrantdCall.mockResolvedValue({
       id: "task-cl1",
       project: "brove",
       provider: "claude",
@@ -560,7 +560,7 @@ describe("crew spawn regression — daemon path unchanged", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(cockpitdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 });

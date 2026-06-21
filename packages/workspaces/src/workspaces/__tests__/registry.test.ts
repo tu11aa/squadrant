@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { WorkspaceRegistry } from "../registry.js";
-import type { WorkspaceDriver, WorkspaceScope } from "@cockpit/shared";
-import type { CockpitConfig } from "@cockpit/shared";
+import type { WorkspaceDriver, WorkspaceScope } from "@squadrant/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
 function stubFactory(name: string): (scope: WorkspaceScope) => WorkspaceDriver {
   return (scope) => ({
@@ -15,7 +15,7 @@ function stubFactory(name: string): (scope: WorkspaceScope) => WorkspaceDriver {
   });
 }
 
-function baseConfig(overrides: Partial<CockpitConfig> = {}): CockpitConfig {
+function baseConfig(overrides: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "cmd",
     hubVault: "~/hub",
@@ -86,7 +86,7 @@ describe("WorkspaceRegistry", () => {
 
   it("hub passes resolved hubVault as scope.root", async () => {
     const registry = new WorkspaceRegistry({ obsidian: stubFactory("obsidian") });
-    const driver = registry.hub(baseConfig({ hubVault: "~/cockpit-hub" }));
+    const driver = registry.hub(baseConfig({ hubVault: "~/squadrant-hub" }));
     const out = await driver.read("x.md");
     expect(out).toMatch(/^read:obsidian:\//);
     expect(out).not.toContain("~");

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readDailyLog, parseSection } from "@cockpit/shared";
+import { readDailyLog, parseSection } from "@squadrant/shared";
 import { createMemoryDriver } from "../../../../workspaces/src/workspaces/__tests__/helpers/memory-driver.js";
 
 describe("readDailyLog", () => {

@@ -1,6 +1,6 @@
 // src/control/codex/driver.ts
 // Daemon-side interactive driver for codex. Owns ONE long-lived AppServerClient
-// child, maps TaskRecord ↔ threadId, emits cockpit ControlEvents via the
+// child, maps TaskRecord ↔ threadId, emits squadrant ControlEvents via the
 // injected emit() hook. Notification mapping delegates to
 // normalizeAppServerNotification (Task 2.3); the driver only routes server-
 // requests and lifecycle. Spec §4.1/§4.6/§4.7.
@@ -8,8 +8,8 @@
 import { AppServerClient } from "./app-server-client.js";
 import { resolveCodexModel } from "./config.js";
 import { normalizeAppServerNotification } from "./normalize.js";
-import type { ControlEvent, TaskRecord } from "@cockpit/shared";
-import { TERMINAL_STATES } from "@cockpit/shared";
+import type { ControlEvent, TaskRecord } from "@squadrant/shared";
+import { TERMINAL_STATES } from "@squadrant/shared";
 
 /**
  * Boot-time guard for the daemon's codex reattach loop. Reattaching a thread
@@ -60,7 +60,7 @@ export class CodexInteractiveDriver {
 
   private async ensureClient(): Promise<AppServerClient> {
     if (this.client) return this.client;
-    const c = (this.deps.makeClient ?? (() => new AppServerClient({ clientInfo: { name: "cockpit", version: "iv" } })))();
+    const c = (this.deps.makeClient ?? (() => new AppServerClient({ clientInfo: { name: "squadrant", version: "iv" } })))();
     this.client = c;
     c.start();
     c.on("notification", (n) => this.onNotification(n));
@@ -102,7 +102,7 @@ export class CodexInteractiveDriver {
         model,
         // Parity with claude/opencode crews, which run UNSANDBOXED (no Seatbelt).
         // Codex was the only agent under `workspace-write`, and that FS sandbox
-        // blocked `cockpit crew signal …` from reaching the daemon socket (which
+        // blocked `squadrant crew signal …` from reaching the daemon socket (which
         // lives outside the workspace) — breaking the done/blocked/failed
         // lifecycle. Codex's AF_UNIX-socket allowance has no stable config path
         // (it's gated behind the experimental_network feature), so the surgical
@@ -150,7 +150,7 @@ export class CodexInteractiveDriver {
   }
 
   /**
-   * Tear down a task's thread when its crew closes. Cockpit runs ONE shared
+   * Tear down a task's thread when its crew closes. Squadrant runs ONE shared
    * app-server with a thread per crew; closing the cmux pane only kills the
    * `crew attach` renderer, so without this the thread — and the gitnexus/pay
    * MCP servers it spawned — leak forever (verified: ~53MB per orphaned crew).
@@ -269,20 +269,20 @@ export class CodexInteractiveDriver {
 
 /**
  * Build the per-thread developerInstructions for a codex crew. Unlike
- * claude/opencode (which get COCKPIT_CREW_* env vars on their shell launch
+ * claude/opencode (which get SQUADRANT_CREW_* env vars on their shell launch
  * line), codex tasks share ONE long-lived app-server child, so a process-level
  * env var would be wrong for concurrent tasks. Instead we tell each thread its
  * concrete task id + project and the exact flag-based signal command, so the
- * codex crew can report terminal state via `cockpit crew signal`. Appended
+ * codex crew can report terminal state via `squadrant crew signal`. Appended
  * after the crew role body (when present) so the role still leads.
  */
 export function buildCodexDeveloperInstructions(
   rec: { id: string; project: string; roleInstructions?: string },
 ): string {
   const directive =
-    `You are cockpit crew task ${rec.id} in project ${rec.project}. ` +
-    `When you finish, run EXACTLY: cockpit crew signal done --task-id ${rec.id} --project ${rec.project} --message "<one-line summary>". ` +
-    `If you are blocked or fail, run cockpit crew signal blocked|failed with the same --task-id ${rec.id} --project ${rec.project} flags.`;
+    `You are squadrant crew task ${rec.id} in project ${rec.project}. ` +
+    `When you finish, run EXACTLY: squadrant crew signal done --task-id ${rec.id} --project ${rec.project} --message "<one-line summary>". ` +
+    `If you are blocked or fail, run squadrant crew signal blocked|failed with the same --task-id ${rec.id} --project ${rec.project} flags.`;
   return rec.roleInstructions ? `${rec.roleInstructions}\n\n${directive}` : directive;
 }
 

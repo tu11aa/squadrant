@@ -6,7 +6,7 @@ import type {
   ProjectionEmitResult,
   ProjectionEmitter,
   ProjectionSource,
-} from "@cockpit/shared";
+} from "@squadrant/shared";
 
 function renderMarkdown(source: ProjectionSource): string {
   const skillSections = source.skills

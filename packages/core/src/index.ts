@@ -1,4 +1,4 @@
-// @cockpit/core — driver-agnostic daemon / control-plane core.
+// @squadrant/core — driver-agnostic daemon / control-plane core.
 export * from "./daemon.js";
 export * from "./mailbox.js";
 export * from "./protocol.js";

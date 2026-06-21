@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getDefaultConfig, saveConfig } from "@cockpit/shared";
-import type { CockpitConfig, ProjectConfig } from "@cockpit/shared";
+import { getDefaultConfig, saveConfig } from "@squadrant/shared";
+import type { SquadrantConfig, ProjectConfig } from "@squadrant/shared";
 import { runEffortGet, runEffortSet, notifyCaptainsOfEffort } from "../effort.js";
 
 let dir: string;
 let cfgPath: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "cockpit-effort-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-effort-"));
   cfgPath = path.join(dir, "config.json");
   saveConfig(getDefaultConfig(), cfgPath);
 });
@@ -110,7 +110,7 @@ describe("effort notify (self-notification exclusion)", () => {
     };
   }
 
-  function configWithProjects(projects: Record<string, ProjectConfig>): CockpitConfig {
+  function configWithProjects(projects: Record<string, ProjectConfig>): SquadrantConfig {
     const config = getDefaultConfig();
     config.projects = projects;
     return config;

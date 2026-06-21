@@ -12,7 +12,7 @@ let tmpDir: string;
 const servers: Server[] = [];
 
 function tmpSock(): string {
-  tmpDir = mkdtempSync(join(tmpdir(), "cockpit-test-"));
+  tmpDir = mkdtempSync(join(tmpdir(), "squadrant-test-"));
   return join(tmpDir, "test.sock");
 }
 
@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe("isDaemonSocketLive", () => {
   it("returns false when the socket file does not exist", async () => {
-    const sock = join(tmpdir(), "no-such-path-cockpit-test.sock");
+    const sock = join(tmpdir(), "no-such-path-squadrant-test.sock");
     const result = await isDaemonSocketLive(sock, 200);
     expect(result).toBe(false);
   });

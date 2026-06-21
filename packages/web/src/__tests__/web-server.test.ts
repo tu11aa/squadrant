@@ -37,12 +37,12 @@ describe("startWebServer smoke", () => {
     handle = await startWebServer({
       port: 0,
       intervalMs: 60_000, // long — the test does one request then closes
-      sockPath: "/tmp/cockpit-nonexistent.sock",
+      sockPath: "/tmp/squadrant-nonexistent.sock",
       runners: fakeRunners(),
     });
     const html = await fetchText(handle.port, "/");
     expect(html).toMatch(/^<!DOCTYPE html>/i);
-    expect(html).toContain("COCKPIT SYSTEM HEALTH");
+    expect(html).toContain("SQUADRANT SYSTEM HEALTH");
     expect(html).toContain("DAEMON UNREACHABLE"); // no daemon socket → degraded, not blank
     expect(html).toContain("cmux"); // Tier 3 probes still rendered
   });
@@ -51,7 +51,7 @@ describe("startWebServer smoke", () => {
     handle = await startWebServer({
       port: 0,
       intervalMs: 60_000,
-      sockPath: "/tmp/cockpit-nonexistent.sock",
+      sockPath: "/tmp/squadrant-nonexistent.sock",
       runners: fakeRunners(),
     });
     const status = await new Promise<number>((resolve, reject) => {

@@ -7,7 +7,7 @@ import {
   saveConfig,
   resolveHome,
   ProjectConfig,
-} from "@cockpit/shared";
+} from "@squadrant/shared";
 
 function findPackageRoot(): string {
   let dir = path.dirname(new URL(import.meta.url).pathname);
@@ -38,7 +38,7 @@ const listCmd = new Command("list")
     const projects = Object.entries(config.projects);
 
     if (projects.length === 0) {
-      console.log(chalk.yellow("\nNo projects registered. Use: cockpit projects add <name> <path>\n"));
+      console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
     }
 
@@ -65,7 +65,7 @@ const addCmd = new Command("add")
   .argument("<name>", "Project name")
   .argument("<path>", "Path to project directory")
   .option("--captain <name>", "Captain workspace name (default: <project>-captain)")
-  .option("--spoke <path>", "Spoke vault path (default: ~/cockpit-hub/spokes/<name>)")
+  .option("--spoke <path>", "Spoke vault path (default: ~/squadrant-hub/spokes/<name>)")
   .option("--group <name>", "Project group name (siblings share context)")
   .option("--group-role <role>", "Role within the group (auto-set to 'primary' if first in group)")
   .action((name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string }) => {

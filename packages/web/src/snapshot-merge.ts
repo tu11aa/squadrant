@@ -5,7 +5,7 @@
 // Tier 3/4 `ExternalProbes`. The whole point of keeping this separate and pure
 // is the degrade-never-blank guarantee: when the daemon is unreachable the
 // external tiers still render, so a daemon outage never blanks the page.
-import type { DaemonSnapshot } from "@cockpit/core";
+import type { DaemonSnapshot } from "@squadrant/core";
 import type { ExternalProbes } from "./probes.js";
 
 export interface FullSnapshot {

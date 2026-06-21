@@ -1,4 +1,4 @@
-// @cockpit/shared — pure types + leaf utilities + config.
+// @squadrant/shared — pure types + leaf utilities + config.
 export * from "./config.js";
 export * from "./effort.js";
 export * from "./types/runtime.js";

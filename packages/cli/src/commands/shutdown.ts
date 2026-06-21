@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
-import type { RuntimeDriver } from "@cockpit/workspaces";
-import { cockpitdCall } from "./crew-control.js";
-import type { TaskRecord } from "@cockpit/shared";
-import { TERMINAL_STATES } from "@cockpit/shared";
+import { loadConfig } from "@squadrant/shared";
+import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
+import type { RuntimeDriver } from "@squadrant/workspaces";
+import { squadrantdCall } from "./crew-control.js";
+import type { TaskRecord } from "@squadrant/shared";
+import { TERMINAL_STATES } from "@squadrant/shared";
 
-// Captain workspaces gained the leading "⚓ " prefix partway through cockpit's
+// Captain workspaces gained the leading "⚓ " prefix partway through squadrant's
 // life. Workspaces created before that convention persist with the un-prefixed
 // name and shutdown needs to match both shapes.
 function nameVariants(name: string): string[] {
@@ -61,31 +61,31 @@ export const shutdownCommand = new Command("shutdown")
       const commandName = config.commandName || "command";
       const commandVariants = nameVariants(commandName);
       const allVariants = new Set([...captainVariants, ...commandVariants]);
-      const cockpitWorkspaces = workspaces.filter((w) => allVariants.has(w.name));
+      const squadrantWorkspaces = workspaces.filter((w) => allVariants.has(w.name));
 
-      if (cockpitWorkspaces.length === 0) {
-        console.log(chalk.yellow("\nNo cockpit workspaces found to close.\n"));
+      if (squadrantWorkspaces.length === 0) {
+        console.log(chalk.yellow("\nNo squadrant workspaces found to close.\n"));
         return;
       }
 
       console.log(
         chalk.bold(
-          `\nShutting down ${cockpitWorkspaces.length} workspace(s)...\n`,
+          `\nShutting down ${squadrantWorkspaces.length} workspace(s)...\n`,
         ),
       );
       // Terminalize all non-terminal crew tasks across every project before
       // closing workspaces — prevents ghost records from flooding on restart.
       for (const proj of Object.keys(config.projects)) {
         try {
-          const tasks = (await cockpitdCall({ kind: "list", project: proj })) as TaskRecord[];
+          const tasks = (await squadrantdCall({ kind: "list", project: proj })) as TaskRecord[];
           for (const task of tasks) {
             if (!TERMINAL_STATES.has(task.state)) {
-              await cockpitdCall({ kind: "event", project: proj, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+              await squadrantdCall({ kind: "event", project: proj, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
             }
           }
         } catch { /* best-effort — daemon miss must not block workspace close */ }
       }
-      for (const ws of cockpitWorkspaces) {
+      for (const ws of squadrantWorkspaces) {
         try {
           await globalRuntime.stop(ws.id);
           console.log(chalk.green(`  ✔ Closed: ${ws.name}`));
@@ -100,7 +100,7 @@ export const shutdownCommand = new Command("shutdown")
     if (!config.projects[project]) {
       console.error(
         chalk.red(
-          `\n  ✘ Project '${project}' not found. Run 'cockpit projects list' to see registered projects.\n`,
+          `\n  ✘ Project '${project}' not found. Run 'squadrant projects list' to see registered projects.\n`,
         ),
       );
       process.exit(1);
@@ -115,10 +115,10 @@ export const shutdownCommand = new Command("shutdown")
     // Terminalize non-terminal crew tasks for this project before closing the
     // captain workspace — prevents ghost records from flooding on restart (#225).
     try {
-      const tasks = (await cockpitdCall({ kind: "list", project })) as TaskRecord[];
+      const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
       for (const task of tasks) {
         if (!TERMINAL_STATES.has(task.state)) {
-          await cockpitdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
+          await squadrantdCall({ kind: "event", project, event: { type: "task.cancelled", id: task.id, reason: "captain shutdown" } });
         }
       }
     } catch { /* best-effort — daemon miss must not block workspace close */ }

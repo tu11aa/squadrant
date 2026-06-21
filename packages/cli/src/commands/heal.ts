@@ -1,20 +1,20 @@
 // src/commands/heal.ts
 //
-// cockpit heal <component> — targeted, idempotent, machine-readable remediation
+// squadrant heal <component> — targeted, idempotent, machine-readable remediation
 // surface for the detect → notify → remediate loop (#234).
 //
 // Subcommands:
 //   heal status  — dry-run: print unhealthy components + the exact heal command
-//   heal daemon  — restart cockpitd via the existing launchd kickstart path
+//   heal daemon  — restart squadrantd via the existing launchd kickstart path
 //
 // DEFERRED: heal crew <id> — re-attach a stuck crew task (overlaps #100, more
 // complex; explicitly out of MVP scope).
 import { Command } from "commander";
 import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
-import { healCmdFor } from "@cockpit/core";
-import { ensureDaemon as _ensureDaemon } from "@cockpit/core";
-import type { ComponentHealth, HealthState } from "@cockpit/core";
+import { healCmdFor } from "@squadrant/core";
+import { ensureDaemon as _ensureDaemon } from "@squadrant/core";
+import type { ComponentHealth, HealthState } from "@squadrant/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 
@@ -82,7 +82,7 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
     if (json) {
       stdout.write(JSON.stringify({ healthy: false, daemonUnreachable: true, components: [] }) + "\n");
     } else {
-      stderr.write("daemon unreachable — start the daemon first (cockpit heal daemon)\n");
+      stderr.write("daemon unreachable — start the daemon first (squadrant heal daemon)\n");
     }
     return 1;
   }
@@ -116,7 +116,7 @@ export interface HealDaemonOpts {
 /** Returns exit code: 0=success, 1=error */
 export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
   const { stdout, stderr } = opts;
-  stdout.write("restarting cockpitd via launchd kickstart...\n");
+  stdout.write("restarting squadrantd via launchd kickstart...\n");
   try {
     opts.ensureDaemon();
     stdout.write(chalk.green("✔ daemon kickstart complete\n"));
@@ -130,8 +130,8 @@ export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
 // ── Commander command tree ────────────────────────────────────────────────────
 
 export const healCommand = new Command("heal")
-  .description("Targeted, idempotent remediation for cockpit components (daemon, health)")
-  .addHelpText("after", "\nDeferred: 'cockpit heal crew <id>' (re-attach) — see issue #100.")
+  .description("Targeted, idempotent remediation for squadrant components (daemon, health)")
+  .addHelpText("after", "\nDeferred: 'squadrant heal crew <id>' (re-attach) — see issue #100.")
   .addCommand(
     new Command("status")
       .description("Dry-run: print unhealthy components and the exact heal command for each")
@@ -150,7 +150,7 @@ export const healCommand = new Command("heal")
   )
   .addCommand(
     new Command("daemon")
-      .description("Restart cockpitd via the idempotent launchd kickstart path")
+      .description("Restart squadrantd via the idempotent launchd kickstart path")
       .action(async () => {
         const code = await runHealDaemon({
           ensureDaemon: _ensureDaemon,

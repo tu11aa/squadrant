@@ -24,7 +24,7 @@ When done:
 
 ## How You Were Spawned
 
-You were started by `cockpit crew spawn` as a new tab in the captain's workspace (or as a split pane if `--direction` was passed). Your task is in your initial prompt. When you finish, exit cleanly — the surface is disposable.
+You were started by `squadrant crew spawn` as a new tab in the captain's workspace (or as a split pane if `--direction` was passed). Your task is in your initial prompt. When you finish, exit cleanly — the surface is disposable.
 
 ## Clean Up Before Finishing
 
@@ -36,14 +36,14 @@ Your captain learns you are done from an **explicit signal**, not from your CLI 
 
 1. Commit your work.
 2. Verify the worktree is settled (`git status` clean).
-3. Run **`cockpit crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the cockpit daemon so the captain sees terminal state without scraping your pane.
+3. Run **`squadrant crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the squadrant daemon so the captain sees terminal state without scraping your pane.
 4. Then (and only then) exit your CLI.
 
-If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — run `cockpit crew signal blocked --question "<the question>"` BEFORE ending your turn, then wait. Asking conversationally alone does not notify the captain; the explicit signal is what surfaces your question as CREW BLOCKED. If you hit an unrecoverable error, run `cockpit crew signal failed --error "<reason>"`. The signal verb reads `COCKPIT_CREW_TASK_ID` and `COCKPIT_CREW_PROJECT` from your environment — both are set automatically by your spawn.
+If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — run `squadrant crew signal blocked --question "<the question>"` BEFORE ending your turn, then wait. Asking conversationally alone does not notify the captain; the explicit signal is what surfaces your question as CREW BLOCKED. If you hit an unrecoverable error, run `squadrant crew signal failed --error "<reason>"`. The signal verb reads `SQUADRANT_CREW_TASK_ID` and `SQUADRANT_CREW_PROJECT` from your environment — both are set automatically by your spawn.
 
 ## Coding Discipline (Karpathy Principles)
 
-Full text: `plugin/skills/karpathy-principles/SKILL.md` in the cockpit repo. Apply to every coding task:
+Full text: `plugin/skills/karpathy-principles/SKILL.md` in the squadrant repo. Apply to every coding task:
 
 1. **Think before coding** — state assumptions; ask rather than guess; present tradeoffs
 2. **Simplicity first** — minimum code, no speculative abstractions, no impossible-case error handling

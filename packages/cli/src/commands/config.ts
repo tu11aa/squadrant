@@ -3,9 +3,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, type CockpitConfig } from "@cockpit/shared";
-import { detectDrift, applySafeFixes, type DriftItem } from "@cockpit/shared";
-import { withStamp } from "@cockpit/shared";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
+import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
+import { withStamp } from "@squadrant/shared";
 
 export interface ConfigCheckOptions {
   configPath: string;
@@ -22,7 +22,7 @@ export interface ConfigCheckResult {
 }
 
 export function runConfigCheck(opts: ConfigCheckOptions): ConfigCheckResult {
-  const raw = JSON.parse(fs.readFileSync(opts.configPath, "utf-8")) as CockpitConfig;
+  const raw = JSON.parse(fs.readFileSync(opts.configPath, "utf-8")) as SquadrantConfig;
   const def = getDefaultConfig();
   const items = detectDrift(raw, def);
 
@@ -70,7 +70,7 @@ function printItems(items: DriftItem[]): void {
   }
 }
 
-export const configCommand = new Command("config").description("Inspect and reconcile cockpit config");
+export const configCommand = new Command("config").description("Inspect and reconcile squadrant config");
 
 configCommand
   .command("check")
@@ -81,7 +81,7 @@ configCommand
   .action((opts: { fix: boolean; accept: boolean; json: boolean }) => {
     const pkgVersion = readPkgVersion();
     if (!fs.existsSync(DEFAULT_CONFIG_PATH)) {
-      console.log(chalk.yellow("No config found \u2014 run `cockpit init` first."));
+      console.log(chalk.yellow("No config found \u2014 run `squadrant init` first."));
       return;
     }
     const res = runConfigCheck({ configPath: DEFAULT_CONFIG_PATH, pkgVersion, fix: opts.fix, accept: opts.accept });
@@ -104,7 +104,7 @@ configCommand
     }
     const judgment = res.remaining.filter((i) => i.kind === "changed-default" || i.kind === "invalid");
     if (judgment.length) {
-      console.log(chalk.yellow(`\n${judgment.length} item(s) need review \u2014 run the config-doctor skill, or \`cockpit config check --accept\` to keep your values.`));
+      console.log(chalk.yellow(`\n${judgment.length} item(s) need review \u2014 run the config-doctor skill, or \`squadrant config check --accept\` to keep your values.`));
     } else if (res.stamped) {
       console.log(chalk.green("\n\u2714 Config reconciled and stamped."));
     }

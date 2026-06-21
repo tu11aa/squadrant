@@ -1,4 +1,4 @@
-// src/control/__tests__/cockpitd-list.test.ts
+// src/control/__tests__/squadrantd-list.test.ts
 // Integration test for kind:"list" round-trip (Bug #2 regression guard).
 // The "crew tasks" command was timing out because no existing test covered
 // the list path — this ensures the round-trip stays working.
@@ -6,8 +6,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCockpitd } from "../cockpitd.js";
-import { sendRequest } from "@cockpit/core";
+import { startSquadrantd } from "../squadrantd.js";
+import { sendRequest } from "@squadrant/core";
 
 describe("kind:list round-trip (#2 crew tasks)", () => {
   let stop: (() => Promise<void>) | undefined;
@@ -21,7 +21,7 @@ describe("kind:list round-trip (#2 crew tasks)", () => {
   it("returns [] for an empty project (no ENOENT, no timeout)", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-list-"));
     const sock = join(dir, "c.sock");
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
+    const handle = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
     stop = handle.stop;
 
     const result = await sendRequest(sock, { kind: "list", project: "myproject" });
@@ -32,7 +32,7 @@ describe("kind:list round-trip (#2 crew tasks)", () => {
   it("returns seeded tasks for a project", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-list-"));
     const sock = join(dir, "c.sock");
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
+    const handle = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
     stop = handle.stop;
 
     const record = {
@@ -54,7 +54,7 @@ describe("kind:list round-trip (#2 crew tasks)", () => {
   it("does not include tasks from other projects", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-list-"));
     const sock = join(dir, "c.sock");
-    const handle = startCockpitd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
+    const handle = startSquadrantd({ stateRoot: join(dir, "state"), sockPath: sock, sweepMs: 0, rotationIntervalMs: 0 });
     stop = handle.stop;
 
     await sendRequest(sock, {

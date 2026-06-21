@@ -7,12 +7,12 @@ let _cached: string | undefined;
 
 function resolveBin(): string {
   // 1. Env var override
-  const envBin = process.env.COCKPIT_CMUX_BIN;
+  const envBin = process.env.SQUADRANT_CMUX_BIN;
   if (envBin && existsSync(envBin)) return envBin;
 
   // 2. Optional cmuxBin field in config.json
   try {
-    const configPath = join(homedir(), ".config", "cockpit", "config.json");
+    const configPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(configPath)) {
       const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
       const cfgBin: unknown = cfg.cmuxBin;

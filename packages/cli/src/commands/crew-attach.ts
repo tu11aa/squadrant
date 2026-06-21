@@ -5,10 +5,10 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { decodeFrames, type AttachFrame, type AttachInbound } from "@cockpit/core";
+import { decodeFrames, type AttachFrame, type AttachInbound } from "@squadrant/core";
 
 function socketPath(): string {
-  return process.env.COCKPITD_SOCK ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
+  return process.env.SQUADRANTD_SOCK ?? join(homedir(), ".config", "squadrant", "squadrant.sock");
 }
 
 // --- Pure formatters (exported for tests) ---
@@ -88,7 +88,7 @@ export function formatConnectionLost(): string {
 }
 
 export function formatReattachFailed(taskId: string): string {
-  return chalk.red(`(reattach failed — re-run: cockpit crew attach ${taskId})`);
+  return chalk.red(`(reattach failed — re-run: squadrant crew attach ${taskId})`);
 }
 
 export function formatGatePromoted(gateId: string): string {

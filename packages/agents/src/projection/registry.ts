@@ -1,4 +1,4 @@
-import type { ProjectionEmitter, ProjectionEmitterFactory } from "@cockpit/shared";
+import type { ProjectionEmitter, ProjectionEmitterFactory } from "@squadrant/shared";
 
 export class ProjectionRegistry {
   constructor(private factories: Record<string, ProjectionEmitterFactory>) {}

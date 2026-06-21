@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const LABEL = "com.cockpit.daemon";
+export const LABEL = "com.squadrant.daemon";
 
 export function plistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
@@ -13,13 +13,13 @@ export function plistPath(): string {
 
 /**
  * Canonical path to the compiled daemon entrypoint, resolved relative to THIS
- * module (cockpitd.js is a sibling of the bundled entry in <dist>/). This is
+ * module (squadrantd.js is a sibling of the bundled entry in <dist>/). This is
  * the single source of truth — callers must NOT recompute it (a hardcoded
- * ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
+ * ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
  * because runtime-sync never mirrors compiled output there).
  */
 export function daemonEntryPath(): string {
-  const p = join(dirname(fileURLToPath(import.meta.url)), "cockpitd.js");
+  const p = join(dirname(fileURLToPath(import.meta.url)), "squadrantd.js");
   if (!existsSync(p)) {
     throw new Error(
       `daemonEntryPath: compiled entry not found at '${p}'; ` +
@@ -35,7 +35,7 @@ function xmlEscape(s: string): string {
 
 /**
  * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
- * dedupe so the plist content is stable across cockpit invocations from
+ * dedupe so the plist content is stable across squadrant invocations from
  * different shells. Without this, a captain shell (PATH includes
  * ~/.claude/plugins/cache/* bin dirs) vs a fresh login shell would each
  * rewrite the plist and kickstart -k the daemon, killing in-flight tasks
@@ -106,7 +106,7 @@ export function buildDaemonPath(shellPath: string): string {
  * daemon and its spawned crew children resolve the provider binaries.
  */
 export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""): string {
-  const logPath = join(homedir(), ".config", "cockpit", "cockpitd.log");
+  const logPath = join(homedir(), ".config", "squadrant", "squadrantd.log");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -139,7 +139,7 @@ export function programArgsBlock(nodeBin: string, daemonEntry: string): string {
  * Pure: which kickstart argv to use. `-k` (kill-then-restart) ONLY when the
  * plist changed. A plain `kickstart` starts a down daemon and is a no-op for a
  * healthy one — so a routine CLI call never bounces a running daemon (this was
- * a real bug: ensureDaemon ran on every `cockpit` invocation and `kickstart -k`
+ * a real bug: ensureDaemon ran on every `squadrant` invocation and `kickstart -k`
  * killed+restarted the daemon each time, orphaning in-flight headless crew).
  */
 export function kickstartArgv(target: string, plistChanged: boolean): string[] {
@@ -158,11 +158,11 @@ export function _resetRestartInFlightForTest(): void {
 }
 
 export function daemonLockPath(): string {
-  return join(homedir(), ".config", "cockpit", "daemon.lock");
+  return join(homedir(), ".config", "squadrant", "daemon.lock");
 }
 
 /**
- * Acquire a cross-process filesystem lock at ~/.config/cockpit/daemon.lock.
+ * Acquire a cross-process filesystem lock at ~/.config/squadrant/daemon.lock.
  * Uses O_EXCL for atomic, race-free creation. Cleans up stale locks (dead PID)
  * before the acquisition loop. Retries with a ~50 ms synchronous sleep up to
  * 20 times (~1 s total) before giving up.
@@ -219,7 +219,7 @@ export function releaseDaemonLock(): void {
  *
  * Concurrency guards:
  *   - restartInFlight flag: prevents sequential re-calls within this process.
- *   - tryAcquireDaemonLock: serialises concurrent SEPARATE cockpit processes
+ *   - tryAcquireDaemonLock: serialises concurrent SEPARATE squadrant processes
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
@@ -269,7 +269,7 @@ export function ensureDaemon(nodeBin: string = process.execPath): void {
     execFileSync("launchctl", ["kickstart", target], { stdio: "ignore" });
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
-    process.stderr.write(`[cockpit] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
+    process.stderr.write(`[squadrant] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
   } finally {
     releaseDaemonLock();
   }

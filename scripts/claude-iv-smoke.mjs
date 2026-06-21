@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Daemon-level smoke for the claude interactive control-plane wiring.
 //
-// Runs against a PRIVATE temp-socket cockpitd started from the freshly-built
+// Runs against a PRIVATE temp-socket squadrantd started from the freshly-built
 // dist code in this branch — does NOT touch the shared system daemon (which
 // has other captains' tasks in flight; cannot bounce). Does NOT spawn a real
-// Claude process either (the smoke runner is itself a cockpit crew — no
+// Claude process either (the smoke runner is itself a squadrant crew — no
 // nested crew spawns). Posts the same socket frames that runCrewSpawn would
 // post for a real Claude crew and verifies state transitions end-to-end.
 //
@@ -14,12 +14,12 @@ import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { startCockpitd } from "../dist/control/cockpitd.js";
+import { startSquadrantd } from "../dist/control/squadrantd.js";
 
 const PROJECT = "smoke";
 const tmp = mkdtempSync(join(tmpdir(), "claude-iv-smoke-"));
 const SOCK = join(tmp, "c.sock");
-const h = startCockpitd({ stateRoot: join(tmp, "state"), sockPath: SOCK, sweepMs: 0 });
+const h = startSquadrantd({ stateRoot: join(tmp, "state"), sockPath: SOCK, sweepMs: 0 });
 
 function rpc(req) {
   return new Promise((resolve, reject) => {
@@ -100,8 +100,8 @@ async function main() {
   if (afterProgress.lastEvent !== "task.progress")
     throw new Error(`expected lastEvent=task.progress, got ${afterProgress.lastEvent}`);
 
-  // 4. Simulate explicit `cockpit crew signal done` → task.done with resultRef.
-  const afterDone = await step("4. POST task.done (simulating 'cockpit crew signal done')", () =>
+  // 4. Simulate explicit `squadrant crew signal done` → task.done with resultRef.
+  const afterDone = await step("4. POST task.done (simulating 'squadrant crew signal done')", () =>
     rpc({
       kind: "event",
       project: PROJECT,

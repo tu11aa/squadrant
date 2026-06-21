@@ -2,10 +2,10 @@
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
 import { CaptainDelivery } from "../delivery/captain-delivery.js";
-import { loadConfig, TERMINAL_STATES } from "@cockpit/shared";
+import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
-import type { TaskRecord, ControlEvent } from "@cockpit/shared";
-import type { PaneRef } from "@cockpit/shared";
+import type { TaskRecord, ControlEvent } from "@squadrant/shared";
+import type { PaneRef } from "@squadrant/shared";
 import type { Store } from "../store.js";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import type { DaemonContext } from "./context.js";

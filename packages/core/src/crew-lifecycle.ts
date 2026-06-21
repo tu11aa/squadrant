@@ -10,7 +10,7 @@ type ExecFn = (
   cb: (err: Error | null, stdout: string) => void,
 ) => void;
 
-/** Kill every process that inherited COCKPIT_CREW_TASK_ID=<taskId> from the
+/** Kill every process that inherited SQUADRANT_CREW_TASK_ID=<taskId> from the
  *  crew's shell env prefix. Uses `ps auxE` which exposes env vars for node
  *  processes on macOS (vitest workers, the crew CLI, etc.). Best-effort:
  *  swallows all errors so a childless crew still closes cleanly.
@@ -24,7 +24,7 @@ export async function reapCrewChildren(
   graceMs = 2000,
   execFn: ExecFn = nodeExec,
 ): Promise<void> {
-  const marker = `COCKPIT_CREW_TASK_ID=${taskId}`;
+  const marker = `SQUADRANT_CREW_TASK_ID=${taskId}`;
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       // `ps auxE` dumps every process's full env, which on a busy machine far

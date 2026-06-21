@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
+import { loadConfig } from "@squadrant/shared";
 
-const REPO_URL = "https://github.com/tu11aa/claude-cockpit";
+const REPO_URL = "https://github.com/tu11aa/squadrant";
 
 interface Metrics {
   projects?: number;
@@ -27,7 +27,7 @@ function readMetrics(metricsPath: string): Metrics {
 function buildIssueUrl(metrics: Metrics): string {
   const nodeVersion = process.versions.node;
   const platform = process.platform;
-  const cockpitVersion = "0.1.0";
+  const squadrantVersion = "0.1.0";
 
   const body = [
     "## Feedback / Bug Report",
@@ -39,7 +39,7 @@ function buildIssueUrl(metrics: Metrics): string {
     "## Environment",
     "",
     "```",
-    `cockpit: ${cockpitVersion}`,
+    `squadrant: ${squadrantVersion}`,
     `node: ${nodeVersion}`,
     `platform: ${platform}`,
     "```",
@@ -64,7 +64,7 @@ export const feedbackCommand = new Command("feedback")
   .description("Open a pre-filled GitHub issue for feedback or bug reports")
   .action(() => {
     const config = loadConfig();
-    const metricsPath = config.metrics?.path || path.join(os.homedir(), ".config", "cockpit", "metrics.json");
+    const metricsPath = config.metrics?.path || path.join(os.homedir(), ".config", "squadrant", "metrics.json");
     const metrics = readMetrics(metricsPath);
 
     const issueUrl = buildIssueUrl(metrics);

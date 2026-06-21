@@ -1,6 +1,6 @@
 // Daemon interactive-block probe: moved from commands/notify-relay.ts so
 // daemon/probes.ts (core) can import it without a core→commands back-edge.
-import type { TaskRecord, ControlEvent } from "@cockpit/shared";
+import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 
 // Entries older than this at session-start time are silently acked without
 // delivery — stale events from a prior session or dead crews.

@@ -8,14 +8,14 @@ import {
   runExternalProbes,
   type ProbeRunners,
 } from "../probes.js";
-import type { CockpitConfig } from "@cockpit/shared";
+import type { SquadrantConfig } from "@squadrant/shared";
 
-function cfg(over: Partial<CockpitConfig> = {}): CockpitConfig {
+function cfg(over: Partial<SquadrantConfig> = {}): SquadrantConfig {
   return {
     commandName: "command",
     hubVault: "/vaults/hub",
     projects: {
-      cockpit: { path: "/repos/cockpit", captainName: "cockpit-captain", spokeVault: "/vaults/cockpit", host: "local" },
+      squadrant: { path: "/repos/squadrant", captainName: "squadrant-captain", spokeVault: "/vaults/squadrant", host: "local" },
     },
     defaults: {
       maxCrew: 4, worktreeDir: ".wt", teammateMode: "x",
@@ -77,7 +77,7 @@ describe("probeVaults", () => {
   it("is alive when the hub dir and its .obsidian/ both exist, and spoke dir exists", () => {
     const v = probeVaults(okRunners(), cfg());
     expect(v.hub.state).toBe("alive");
-    expect(v.spokes[0].project).toBe("cockpit");
+    expect(v.spokes[0].project).toBe("squadrant");
     expect(v.spokes[0].state).toBe("alive");
   });
   it("hub is gone when the vault directory is missing", () => {
@@ -105,8 +105,8 @@ describe("probeVaults", () => {
 
 describe("probeProjectPaths", () => {
   it("is alive when the project path resolves, gone otherwise", () => {
-    const paths = probeProjectPaths(okRunners({ pathExists: (p) => p === "/repos/cockpit" }), cfg());
-    expect(paths[0]).toMatchObject({ project: "cockpit", state: "alive" });
+    const paths = probeProjectPaths(okRunners({ pathExists: (p) => p === "/repos/squadrant" }), cfg());
+    expect(paths[0]).toMatchObject({ project: "squadrant", state: "alive" });
     const missing = probeProjectPaths(okRunners({ pathExists: () => false }), cfg());
     expect(missing[0].state).toBe("gone");
   });

@@ -3,21 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig } from "@cockpit/shared";
-import { createCmuxDriver, RuntimeRegistry } from "@cockpit/workspaces";
-import type { PaneRef, PanePlacement } from "@cockpit/workspaces";
+import { loadConfig } from "@squadrant/shared";
+import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
+import type { PaneRef, PanePlacement } from "@squadrant/workspaces";
 import {
   createClaudeDriver,
   createCodexDriver,
   createGeminiDriver,
   createOpencodeDriver,
   CapabilityRegistry,
-} from "@cockpit/agents";
-import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@cockpit/workspaces";
-import { resolveTextInput } from "@cockpit/shared";
-import { addWorktree, removeWorktree, worktreePath, resolveWorktreeBase } from "@cockpit/shared";
+} from "@squadrant/agents";
+import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/workspaces";
+import { resolveTextInput } from "@squadrant/shared";
+import { addWorktree, removeWorktree, worktreePath, resolveWorktreeBase } from "@squadrant/shared";
 
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
 // Base branch derived at spawn time from origin/HEAD (#359).
 
@@ -91,7 +91,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   const config = loadConfig();
   const proj = config.projects[input.project];
   if (!proj) {
-    throw new Error(`Project '${input.project}' not found. Run 'cockpit projects list'.`);
+    throw new Error(`Project '${input.project}' not found. Run 'squadrant projects list'.`);
   }
 
   if (!SIDE_ROLES.includes(input.role as SideRole)) {
@@ -107,7 +107,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   const captain = await runtime.status(proj.captainName);
   if (!captain) {
     throw new Error(
-      `Captain workspace '${proj.captainName}' is not running. Run 'cockpit launch ${input.project}' first.`,
+      `Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${input.project}' first.`,
     );
   }
 
@@ -198,7 +198,7 @@ export async function runSideSend(
   const pane = surfaces.find((s) => s.title === want) ?? null;
   if (!pane) {
     throw new Error(
-      `Side session '${name}' not found for ${project}. Run 'cockpit side list ${project}'.`,
+      `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
   await runtime.sendToPane(pane, message);
@@ -226,7 +226,7 @@ export async function runSideClose(project: string, name: string): Promise<void>
   const pane = surfaces.find((s) => s.title === want) ?? null;
   if (!pane) {
     throw new Error(
-      `Side session '${name}' not found for ${project}. Run 'cockpit side list ${project}'.`,
+      `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
   await runtime.closePane(pane);

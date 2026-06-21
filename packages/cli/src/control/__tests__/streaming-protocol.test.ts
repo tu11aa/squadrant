@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeFrame, decodeFrames, type AttachFrame } from "@cockpit/core";
+import { encodeFrame, decodeFrames, type AttachFrame } from "@squadrant/core";
 
 describe("streaming protocol frames", () => {
   it("encode/decode round-trips an attach-out frame", () => {

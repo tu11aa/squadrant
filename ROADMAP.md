@@ -1,11 +1,11 @@
-# Claude Cockpit — Roadmap
+# Squadrant — Roadmap
 
 > Last updated: 2026-04-06
 > Status: Active development. Priorities shift based on project deadlines.
 
 ## Current State
 
-Cockpit v0.1.x is a working multi-project agent orchestration system with:
+Squadrant v0.1.x is a working multi-project agent orchestration system with:
 - 3-tier hierarchy (Command → Captain → Crew) via cmux + Agent Teams
 - Obsidian hub/spoke vaults for offline status dashboards
 - Session freshness logic (daily + template hash)
@@ -16,7 +16,7 @@ Cockpit v0.1.x is a working multi-project agent orchestration system with:
 
 Landed since the entries below were written (as of v0.8.2):
 
-- **Global effort dial** — `cockpit effort max|balance|low` tokenomics dial (#317 / #381).
+- **Global effort dial** — `squadrant effort max|balance|low` tokenomics dial (#317 / #381).
 - **Monorepo reorg** — six internal packages (`shared`/`core`/`agents`/`workspaces`/`web`/`cli`) in a one-way DAG, single bundled bin.
 - **Daemon-direct delivery** — crew/handoff delivery moved onto the daemon→cmux path; `notify-relay` deleted (#332).
 - **Semantic crew heartbeat** — CREW IDLE / QUIET / STALLED lifecycle signal (#354).
@@ -28,19 +28,19 @@ Landed since the entries below were written (as of v0.8.2):
 ### P0 — Critical (Next 2 weeks) — ✅ ALL DONE
 
 #### 1. Task Master MCP Integration ✅
-**Why:** Rick gives PRDs, Alan needs structured task decomposition. No tool in cockpit breaks down PRDs into dependency-aware tasks today.
+**Why:** Rick gives PRDs, Alan needs structured task decomposition. No tool in squadrant breaks down PRDs into dependency-aware tasks today.
 **What:**
-- Register task-master-ai as MCP server in cockpit config
+- Register task-master-ai as MCP server in squadrant config
 - Captain uses Task Master tools (`parse_prd`, `get_tasks`, `next_task`, `expand_task`) to decompose PRDs
 - Task Master's `tasks.json` lives in project root, captain queries it for crew assignments
 - Add to captain-ops skill: "After receiving a PRD or large scope, use Task Master to decompose before spawning crew"
 **Depends on:** task-master-ai npm package (installed globally)
 **Status:** Installed globally, registered as MCP server, integrated into captain-ops skill. Works via Max subscription — no separate API key needed.
 
-#### 2. `cockpit standup` Command ✅
+#### 2. `squadrant standup` Command ✅
 **Why:** Rick expects daily async standups. Currently captain writes daily-log manually and there's no formatted output for sharing.
 **What:**
-- New CLI command: `cockpit standup [--project <name>] [--all] [--yesterday]`
+- New CLI command: `squadrant standup [--project <name>] [--all] [--yesterday]`
 - Pure bash/TS — zero LLM tokens (inspired by CCPM's pattern)
 - Reads: spoke vault status.md, daily-logs/, git log --since=yesterday per project
 - Output: formatted markdown block (what done, what next, blockers, time allocation)
@@ -61,7 +61,7 @@ Landed since the entries below were written (as of v0.8.2):
 ### P1 — High Priority (April)
 
 #### 4. Model Routing Config
-**Why:** oh-my-claudecode claims 30-50% token savings by routing exploration→Haiku, planning→Opus, execution→Sonnet. Cockpit currently runs everything on whatever model the session uses.
+**Why:** oh-my-claudecode claims 30-50% token savings by routing exploration→Haiku, planning→Opus, execution→Sonnet. Squadrant currently runs everything on whatever model the session uses.
 **What:**
 - Add to config.json: `"models": { "exploration": "haiku", "planning": "opus", "execution": "sonnet", "review": "opus" }`
 - Captain passes `model` param when spawning crew via Agent tool
@@ -69,7 +69,7 @@ Landed since the entries below were written (as of v0.8.2):
 **Effort:** ~1-2 hours (config + template changes)
 
 #### 5. CI Feedback Reactor Extension — **OBSOLETE** (reactor engine removed; would need a new auto-delegation mechanism)
-**Why:** Composio AO auto-routes CI failures back to agents. Cockpit reactor detects CI failure but only notifies — doesn't auto-fix.
+**Why:** Composio AO auto-routes CI failures back to agents. Squadrant reactor detects CI failure but only notifies — doesn't auto-fix.
 **What:**
 - New reaction action: `auto-fix-ci` — on CI failure, re-delegate to captain with failure logs
 - Captain spawns crew specifically for the fix (reads CI output, patches, pushes)
@@ -89,7 +89,7 @@ Landed since the entries below were written (as of v0.8.2):
 ### P2 — Medium Priority (May)
 
 #### 7. LLM Wiki / Knowledge Compilation System
-**Why:** Based on Karpathy's viral LLM wiki pattern (Apr 2026). Cockpit's spoke vaults are proto-wikis — captains learn things but don't compile them into cross-referenced, indexed knowledge. See `llm-wiki-research-report.pdf` in repo root for full analysis.
+**Why:** Based on Karpathy's viral LLM wiki pattern (Apr 2026). Squadrant's spoke vaults are proto-wikis — captains learn things but don't compile them into cross-referenced, indexed knowledge. See `llm-wiki-research-report.pdf` in repo root for full analysis.
 **What:**
 - **Ingest**: When captain/crew discovers something notable, it creates/updates wiki pages in spoke vault `wiki/` directory
 - **Index**: `wiki/index.md` — content-oriented catalog of all wiki pages, updated on each ingest
@@ -102,14 +102,14 @@ Landed since the entries below were written (as of v0.8.2):
 **Architecture mapping (from report):**
   - `raw/` layer → existing project source code + docs
   - `wiki/` layer → new directory in spoke vaults (LLM-maintained)
-  - Schema layer → existing CLAUDE.md + cockpit templates
+  - Schema layer → existing CLAUDE.md + squadrant templates
   - Obsidian = IDE, LLM = programmer, wiki = codebase
 **Effort:** ~1-2 weeks (phased: basic ingest first, lint later)
 
-#### 8. `cockpit retro` Command
+#### 8. `squadrant retro` Command
 **Why:** Rick wants end-of-week/sprint summaries. Currently requires manually reading 5-7 daily logs.
 **What:**
-- New CLI command: `cockpit retro [--week] [--sprint] [--project <name>] [--all]`
+- New CLI command: `squadrant retro [--week] [--sprint] [--project <name>] [--all]`
 - Aggregates daily logs for the period
 - Groups by: completed, in-progress, blocked, key decisions
 - Computes: tasks completed, PRs merged, crew sessions spawned
@@ -117,7 +117,7 @@ Landed since the entries below were written (as of v0.8.2):
 **Effort:** ~2-3 hours
 
 #### 9. Linear Integration — **OBSOLETE as specified** (depended on the now-removed reactor engine)
-**Why:** Composio AO supports Linear+GitHub+GitLab. Cockpit only has GitHub reactor. Some projects may use Linear for tracking.
+**Why:** Composio AO supports Linear+GitHub+GitLab. Squadrant only has GitHub reactor. Some projects may use Linear for tracking.
 **What:**
 - New reactor source: `linear-issues` (poll via Linear MCP tools already available)
 - Trigger rules for Linear issue state changes, label changes, assignments
@@ -136,7 +136,7 @@ Landed since the entries below were written (as of v0.8.2):
 - No auth needed (local only)
 
 #### 11. Plugin/Extension System
-**Why:** Composio AO has 7 plugin slots with 21 plugins. Cockpit's architecture is currently fixed.
+**Why:** Composio AO has 7 plugin slots with 21 plugins. Squadrant's architecture is currently fixed.
 **What:**
 - Define plugin interfaces: runtime, agent, workspace, tracker, notifier
 - Allow community to add new trackers (Jira, Asana), notifiers (Slack, Discord), runtimes
@@ -153,7 +153,7 @@ Landed since the entries below were written (as of v0.8.2):
 **Why:** Token costs across multiple projects add up. No visibility today.
 **What:**
 - Track token usage per role per project per day
-- Display in cockpit status or web dashboard
+- Display in squadrant status or web dashboard
 - Alert when daily spend exceeds threshold
 
 ## Competitor Reference
