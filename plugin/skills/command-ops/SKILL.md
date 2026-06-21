@@ -1,11 +1,11 @@
 ---
 name: command-ops
-description: Command playbook — invoked on-demand by `cockpit command [--task ...]`. Covers daily briefing, delegation workflow, project registration, status checking, and learnings review. Command is no longer always-on.
+description: Command playbook — invoked on-demand by `squadrant command [--task ...]`. Covers daily briefing, delegation workflow, project registration, status checking, and learnings review. Command is no longer always-on.
 ---
 
 # Command Operations
 
-> **On-demand only.** Command is no longer launched by `cockpit launch --all`. You were spawned by `cockpit command --task <briefing|learnings-review|wiki-aggregate>` to run a single task and exit. Do the task, then exit cleanly — no persistent loop.
+> **On-demand only.** Command is no longer launched by `squadrant launch --all`. You were spawned by `squadrant command --task <briefing|learnings-review|wiki-aggregate>` to run a single task and exit. Do the task, then exit cleanly — no persistent loop.
 
 ## Daily Briefing (Session Start)
 
@@ -13,9 +13,9 @@ Run when session starts, or user says "morning", "catch up", "summary":
 
 1. **Check handoffs from all projects** (context from yesterday's sessions):
 ```bash
-for vault in $(cat ~/.config/cockpit/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
+for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
   echo "=== $(basename $vault) ==="
-  ~/.config/cockpit/scripts/read-handoff.sh "$vault" --keep
+  ~/.config/squadrant/scripts/read-handoff.sh "$vault" --keep
 done
 ```
 Handoffs contain: currentState, openBranches, nextSteps, blockedItems, decisions. Use these to understand where each project left off.
@@ -24,13 +24,13 @@ Handoffs contain: currentState, openBranches, nextSteps, blockedItems, decisions
 3. Read yesterday's logs:
 ```bash
 YESTERDAY=$(date -v-1d +"%Y-%m-%d")
-for vault in $(cat ~/.config/cockpit/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
+for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
   echo "=== $vault ==="
   cat "$vault/daily-logs/${YESTERDAY}.md" 2>/dev/null || echo "(no log)"
 done
 ```
-4. Read current status: `~/.config/cockpit/scripts/read-status.sh`
-5. Run quick standup for context: `cockpit standup --yesterday --raw`
+4. Read current status: `~/.config/squadrant/scripts/read-status.sh`
+5. Run quick standup for context: `squadrant standup --yesterday --raw`
 6. Present briefing, then save to `{hubVault}/daily-logs/YYYY-MM-DD.md`
 
 ## Delegation Workflow
@@ -38,7 +38,7 @@ done
 When the user gives a task for a project:
 
 ### 1. Identify project
-Match to `~/.config/cockpit/config.json`.
+Match to `~/.config/squadrant/config.json`.
 
 ### 2. Check for captain workspace
 ```bash
@@ -50,7 +50,7 @@ Match to `~/.config/cockpit/config.json`.
 A name match is **not** sufficient — the workspace may be holding a session from a previous day. Check `sessions.json` against today before reusing:
 ```bash
 TODAY=$(date +%Y-%m-%d)
-LAST=$(python3 -c "import json; d=json.load(open('$HOME/.config/cockpit/sessions.json')); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" 2>/dev/null)
+LAST=$(python3 -c "import json; d=json.load(open('$HOME/.config/squadrant/sessions.json')); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" 2>/dev/null)
 [ "$LAST" = "$TODAY" ] && echo "fresh" || echo "stale"
 ```
 - `fresh` → reuse the existing workspace, proceed to step 5.
@@ -63,7 +63,7 @@ Never skip this gate when a workspace was found by name — that's how stale cap
 
 ### 4. Spawn captain (missing or stale)
 ```bash
-~/.config/cockpit/scripts/spawn-workspace.sh "{captainName}" "{projectPath}"
+~/.config/squadrant/scripts/spawn-workspace.sh "{captainName}" "{projectPath}"
 ```
 Wait a few seconds, then `list-workspaces` again to get its ref. Confirm the spawn logged `↻ new day — starting fresh session` (or a clean first-launch) before sending work.
 
@@ -79,7 +79,7 @@ Wait a few seconds, then `list-workspaces` again to get its ref. Confirm the spa
 ## Checking Status
 
 ```bash
-~/.config/cockpit/scripts/read-status.sh
+~/.config/squadrant/scripts/read-status.sh
 ```
 Or read a captain's screen:
 ```bash
@@ -93,8 +93,8 @@ Or read a captain's screen:
 3. Identify siblings (docs, sites, forks)
 4. Register with groups:
 ```bash
-cockpit projects add {name} {path/to/repo} --group {group}
-cockpit projects add {name}-docs {path/to/docs} --group {group} --group-role "documentation site"
+squadrant projects add {name} {path/to/repo} --group {group}
+squadrant projects add {name}-docs {path/to/docs} --group {group} --group-role "documentation site"
 ```
 5. Confirm with user. Always register the `.git` directory, not the parent.
 
@@ -110,7 +110,7 @@ Captains will send you reports via `cmux send` when tasks complete or blockers a
 You can also **proactively check** captain progress:
 ```bash
 # Read all captain statuses at once
-for vault in $(cat ~/.config/cockpit/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
+for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
   echo "=== $(basename $vault) ==="
   head -15 "$vault/status.md" 2>/dev/null || echo "(no status)"
 done
@@ -136,7 +136,7 @@ Periodically review spoke wikis across all projects to build a cross-project kno
 
 ### 1. Scan spoke wiki indexes
 ```bash
-for vault in $(cat ~/.config/cockpit/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
+for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
   echo "=== $(basename $vault) ==="
   cat "$vault/wiki/index.md" 2>/dev/null || echo "(no wiki)"
 done
@@ -147,7 +147,7 @@ If a pattern appears in 2+ spoke wikis, create a hub-level wiki page that synthe
 
 ### 3. Create hub wiki pages
 ```bash
-~/.config/cockpit/scripts/wiki-ingest.sh "{hubVaultPath}" "{slug}" "{title}" "{category}" "{body}" "{tags}" "aggregated from spoke wikis"
+~/.config/squadrant/scripts/wiki-ingest.sh "{hubVaultPath}" "{slug}" "{title}" "{category}" "{body}" "{tags}" "aggregated from spoke wikis"
 ```
 
 ### 4. Wiki health check

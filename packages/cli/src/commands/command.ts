@@ -15,7 +15,7 @@ import {
 } from "@squadrant/agents";
 import { resolveCmuxBin } from "@squadrant/shared";
 
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
 type CommandTask = "briefing" | "learnings-review" | "wiki-aggregate";
 

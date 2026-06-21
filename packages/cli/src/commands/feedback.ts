@@ -64,7 +64,7 @@ export const feedbackCommand = new Command("feedback")
   .description("Open a pre-filled GitHub issue for feedback or bug reports")
   .action(() => {
     const config = loadConfig();
-    const metricsPath = config.metrics?.path || path.join(os.homedir(), ".config", "cockpit", "metrics.json");
+    const metricsPath = config.metrics?.path || path.join(os.homedir(), ".config", "squadrant", "metrics.json");
     const metrics = readMetrics(metricsPath);
 
     const issueUrl = buildIssueUrl(metrics);

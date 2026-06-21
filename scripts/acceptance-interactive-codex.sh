@@ -33,7 +33,7 @@ echo "  cat $CWD/demo.txt                          # contains ACCEPT-OK"
 echo
 
 echo "=== 3. simulate daemon bounce in another shell ==="
-echo "    launchctl kickstart -kp gui/\$(id -u)/com.cockpit.daemon"
+echo "    launchctl kickstart -kp gui/\$(id -u)/com.squadrant.daemon"
 echo
 echo "Then check the cmux tab: expect a '(attached)' line within a few seconds"
 echo "and that the next 'say' continues on the SAME thread (codex remembers the"

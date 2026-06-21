@@ -19,7 +19,7 @@ import type { CapabilityRegistry } from "./registry.js";
  * @param fresh         - true → new session; false → continue last session
  * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions"
  * @param model         - optional model override
- * @param templatesDir  - resolved path to ~/.config/cockpit/templates
+ * @param templatesDir  - resolved path to ~/.config/squadrant/templates
  */
 export function buildAgentCmd(
   agentName: string,

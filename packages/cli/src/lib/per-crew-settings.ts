@@ -20,7 +20,7 @@ import { mergeClaudeHooks } from "@squadrant/agents";
  * <prefix>. Patterns match the raw command string — NOT the resolved binary.
  *
  * Known limitation: commands with a leading env-var assignment
- * (e.g. `COCKPIT_CREW_TASK_ID=x sleep 5`) still prompt because the line
+ * (e.g. `SQUADRANT_CREW_TASK_ID=x sleep 5`) still prompt because the line
  * starts with the variable name, not the command. This is rare and acceptable;
  * it's not a bug.
  */

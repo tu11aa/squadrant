@@ -114,7 +114,7 @@ describe("sendFirstTurnWhenReady", () => {
   // onto that line → shell parse error. The readiness gate must require the
   // screen to ADVANCE past the launch-line snapshot, not merely be static.
   it("does NOT send the first turn while the pane still shows the un-entered launch line", async () => {
-    const launchLine = "$ COCKPIT_CREW_TASK_ID=t1 opencode";
+    const launchLine = "$ SQUADRANT_CREW_TASK_ID=t1 opencode";
     readPaneScreen.mockResolvedValue(launchLine);
 
     const promise = sendFirstTurnWhenReady(

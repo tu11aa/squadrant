@@ -200,8 +200,8 @@ export const doctorCommand = new Command("doctor")
       check(
         "Cockpit config exists",
         fs.existsSync(
-          process.env.COCKPIT_CONFIG ||
-            `${process.env.HOME}/.config/cockpit/config.json`,
+          process.env.SQUADRANT_CONFIG ||
+            `${process.env.HOME}/.config/squadrant/config.json`,
         ),
       ),
     );

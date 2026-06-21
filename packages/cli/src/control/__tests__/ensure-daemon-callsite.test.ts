@@ -19,7 +19,7 @@ it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
 // Regression guard (PR #85, found in real-env testing — hermetic tests inject
 // their own paths so could not catch it): the daemon entry must be resolved
 // inside launchd.daemonEntryPath, NOT recomputed at call sites. A hardcoded
-// ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
+// ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
 // because runtime-sync never mirrors compiled output there.
 it("no call site recomputes the daemon entry path", () => {
   for (const f of ["index.ts", "commands/crew-control.ts"]) {

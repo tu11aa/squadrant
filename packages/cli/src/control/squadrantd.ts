@@ -135,7 +135,7 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     // startServer does unlink-then-bind; without this guard a second invocation
     // unlinks the live socket, orphaning the running daemon on its now-anonymous
     // inode so every new connect() to the path is refused.
-    const sock = join(homedir(), ".config", "cockpit", "cockpit.sock");
+    const sock = join(homedir(), ".config", "squadrant", "squadrant.sock");
     if (await isDaemonSocketLive(sock)) {
       process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${sock}\n`);
       process.exit(0);

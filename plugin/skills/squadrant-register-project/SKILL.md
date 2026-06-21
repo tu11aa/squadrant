@@ -1,11 +1,11 @@
 ---
-name: cockpit-register-project
-description: Register an existing local repo (or GitHub URL) into cockpit config. Use when a project already exists and just needs to be wired into cockpit.
+name: squadrant-register-project
+description: Register an existing local repo (or GitHub URL) into squadrant config. Use when a project already exists and just needs to be wired into squadrant.
 ---
 
 # Register an Existing Project
 
-Use when the repo already exists locally or on GitHub and you just need to register it in cockpit.
+Use when the repo already exists locally or on GitHub and you just need to register it in squadrant.
 
 ## Step 1 — Resolve the local path
 
@@ -29,7 +29,7 @@ Override if the directory name is ambiguous (e.g. `src`, `app`).
 
 List existing projects and their groups:
 ```bash
-cockpit projects list
+squadrant projects list
 ```
 
 Then decide:
@@ -43,7 +43,7 @@ Then decide:
 ## Step 4 — Register
 
 ```bash
-cockpit projects add <name> <path> \
+squadrant projects add <name> <path> \
   --captain "⚓ <name>-captain" \
   [--group <group-name>] \
   [--group-role "<role description>"]
@@ -54,7 +54,7 @@ Omit `--group` and `--group-role` entirely if this is a standalone project with 
 ## Step 5 — Verify
 
 ```bash
-cockpit projects list
+squadrant projects list
 ```
 
 Confirm the new entry appears with the correct path, group, and role.

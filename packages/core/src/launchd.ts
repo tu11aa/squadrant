@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const LABEL = "com.cockpit.daemon";
+export const LABEL = "com.squadrant.daemon";
 
 export function plistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
@@ -15,7 +15,7 @@ export function plistPath(): string {
  * Canonical path to the compiled daemon entrypoint, resolved relative to THIS
  * module (squadrantd.js is a sibling of the bundled entry in <dist>/). This is
  * the single source of truth — callers must NOT recompute it (a hardcoded
- * ~/.config/cockpit/dist path crash-loops the agent with MODULE_NOT_FOUND
+ * ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
  * because runtime-sync never mirrors compiled output there).
  */
 export function daemonEntryPath(): string {
@@ -106,7 +106,7 @@ export function buildDaemonPath(shellPath: string): string {
  * daemon and its spawned crew children resolve the provider binaries.
  */
 export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""): string {
-  const logPath = join(homedir(), ".config", "cockpit", "squadrantd.log");
+  const logPath = join(homedir(), ".config", "squadrant", "squadrantd.log");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -158,11 +158,11 @@ export function _resetRestartInFlightForTest(): void {
 }
 
 export function daemonLockPath(): string {
-  return join(homedir(), ".config", "cockpit", "daemon.lock");
+  return join(homedir(), ".config", "squadrant", "daemon.lock");
 }
 
 /**
- * Acquire a cross-process filesystem lock at ~/.config/cockpit/daemon.lock.
+ * Acquire a cross-process filesystem lock at ~/.config/squadrant/daemon.lock.
  * Uses O_EXCL for atomic, race-free creation. Cleans up stale locks (dead PID)
  * before the acquisition loop. Retries with a ~50 ms synchronous sleep up to
  * 20 times (~1 s total) before giving up.

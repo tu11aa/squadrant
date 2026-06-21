@@ -84,12 +84,12 @@ describe("syncHub", () => {
   it("expands ~ in hubVault", () => {
     const home = process.env.HOME ?? "/home";
     syncHub({
-      config: makeConfig({ hubVault: "~/cockpit-hub" }),
+      config: makeConfig({ hubVault: "~/squadrant-hub" }),
       statuses: [STATUSES[0]],
       writeFile: (p, c) => { writes.push({ path: p, content: c }); },
       mkdir: (p) => { mkdirs.push(p); },
     });
-    expect(writes[0].path).toBe(`${home}/cockpit-hub/projects/brove.md`);
+    expect(writes[0].path).toBe(`${home}/squadrant-hub/projects/brove.md`);
   });
 
   it("skips status rows with state='unknown' (no data, don't churn the mirror)", () => {

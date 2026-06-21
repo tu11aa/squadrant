@@ -70,9 +70,9 @@ Strong success criteria let the agent loop independently. Weak criteria ("make i
 
 These principles bias toward **caution over speed**. For trivial tasks (typo fixes, obvious one-liners) use judgment — not every change needs the full rigor. The goal is reducing costly mistakes on non-trivial work, not slowing down simple tasks.
 
-## Cockpit-specific notes
+## Squadrant-specific notes
 
-- Cockpit already uses TDD via the `superpowers:test-driven-development` skill — principle 4 complements it, does not replace it
+- Squadrant already uses TDD via the `superpowers:test-driven-development` skill — principle 4 complements it, does not replace it
 - Captains applying these principles during review: if a crew member violates principle 3 (drive-by refactors), request they split the commit
 - Crew should report blockers in status.md when principle 1 triggers ("unclear" / "multiple interpretations")
 

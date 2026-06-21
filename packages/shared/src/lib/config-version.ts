@@ -1,7 +1,7 @@
 import type { CockpitConfig } from "../config.js";
 
 export function readStamp(config: CockpitConfig): string | null {
-  return config._cockpitVersion ?? null;
+  return config._squadrantVersion ?? null;
 }
 
 export function needsCheck(config: CockpitConfig, pkgVersion: string): boolean {
@@ -9,5 +9,5 @@ export function needsCheck(config: CockpitConfig, pkgVersion: string): boolean {
 }
 
 export function withStamp(config: CockpitConfig, pkgVersion: string): CockpitConfig {
-  return { ...config, _cockpitVersion: pkgVersion };
+  return { ...config, _squadrantVersion: pkgVersion };
 }

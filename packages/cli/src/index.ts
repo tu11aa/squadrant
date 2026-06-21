@@ -40,10 +40,10 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-
 
 // Self-heal the runtime copy of source-managed dirs before any command runs,
 // so source changes (skills, role templates, scripts) can never silently
-// drift from ~/.config/cockpit. Never throws.
+// drift from ~/.config/squadrant. Never throws.
 ensureRuntimeSynced({
   sourceRoot: join(__dirname, ".."),
-  runtimeRoot: join(homedir(), ".config", "cockpit"),
+  runtimeRoot: join(homedir(), ".config", "squadrant"),
 });
 
 // Non-blocking config-drift banner. Suppressed during "cockpit config" —
@@ -51,7 +51,7 @@ ensureRuntimeSynced({
 // Detect + print only — never mutates config and never throws.
 if (process.argv[2] !== "config") {
   try {
-    const cfgPath = join(homedir(), ".config", "cockpit", "config.json");
+    const cfgPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(cfgPath)) {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       if (needsCheck(cfg, pkg.version)) {
@@ -59,7 +59,7 @@ if (process.argv[2] !== "config") {
         if (items.length === 0) {
           writeFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
         } else {
-          const from = cfg._cockpitVersion ?? "an earlier version";
+          const from = cfg._squadrantVersion ?? "an earlier version";
           process.stderr.write(
             `\n\u26A1 cockpit updated ${from} \u2192 ${pkg.version} \u2014 ${items.length} config change(s) detected.\n` +
             `   Run \`cockpit config check\` (or use the config-doctor skill) to reconcile.\n\n`,
@@ -76,9 +76,9 @@ if (process.argv[2] !== "config") {
 // best-effort, never throws; the CLI fails loud later if the socket is unreachable.
 // ensureDaemon resolves its own entrypoint (see launchd.daemonEntryPath) — no
 // path is passed here so no call site can get it wrong.
-// COCKPIT_DAEMON_SKIP short-circuits this for read-only / CI invocations that must
+// SQUADRANT_DAEMON_SKIP short-circuits this for read-only / CI invocations that must
 // not attempt to boot the daemon (e.g. config-check tests on Linux without launchctl).
-if (!process.env.COCKPIT_DAEMON_SKIP) {
+if (!process.env.SQUADRANT_DAEMON_SKIP) {
   ensureDaemon();
 }
 

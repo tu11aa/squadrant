@@ -42,14 +42,14 @@ describe("runConfigCheck", () => {
     expect(res.applied).toContain("defaults.worktreeDir");
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk.defaults.worktreeDir).toBe(getDefaultConfig().defaults.worktreeDir);
-    expect(onDisk._cockpitVersion).toBe("0.5.3");
+    expect(onDisk._squadrantVersion).toBe("0.5.3");
   });
 
   it("--fix does NOT stamp when advisory/invalid drift remains", () => {
     writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "sonnet" }; });
     const res = runConfigCheck({ configPath: cfgPath, pkgVersion: "0.5.3", fix: true, accept: false });
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
-    expect(onDisk._cockpitVersion).toBeUndefined();
+    expect(onDisk._squadrantVersion).toBeUndefined();
     expect(res.remaining.some((i) => i.kind === "changed-default")).toBe(true);
   });
 
@@ -57,7 +57,7 @@ describe("runConfigCheck", () => {
     writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "sonnet" }; });
     runConfigCheck({ configPath: cfgPath, pkgVersion: "0.5.3", fix: false, accept: true });
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
-    expect(onDisk._cockpitVersion).toBe("0.5.3");
+    expect(onDisk._squadrantVersion).toBe("0.5.3");
     expect(onDisk.defaults.roles.crew.model).toBe("sonnet");
   });
 });
@@ -72,7 +72,7 @@ describe("readPkgVersion (bundled path, #363)", () => {
       cwd: os.tmpdir(),
       encoding: "utf-8",
       timeout: 15_000,
-      env: { ...process.env, COCKPIT_DAEMON_SKIP: "1" },
+      env: { ...process.env, SQUADRANT_DAEMON_SKIP: "1" },
     });
     expect(result.stderr ?? "").not.toMatch(/ENOENT/);
     expect(result.error).toBeUndefined();

@@ -53,12 +53,12 @@ When the session is thin (e.g. right after a compact / brand-new session), lean 
 
 ## How to build it
 
-**1. Resolve the current project** (degrade gracefully if not a cockpit project):
+**1. Resolve the current project** (degrade gracefully if not a squadrant project):
 
 ```bash
 PROJECT_JSON=$(node -e '
   const fs=require("fs"),os=require("os"),path=require("path");
-  const cfg=JSON.parse(fs.readFileSync(os.homedir()+"/.config/cockpit/config.json","utf8"));
+  const cfg=JSON.parse(fs.readFileSync(os.homedir()+"/.config/squadrant/config.json","utf8"));
   const cwd=process.cwd();
   let best=null;
   for (const [name,p] of Object.entries(cfg.projects||{})) {
@@ -71,14 +71,14 @@ PROJECT_JSON=$(node -e '
 echo "$PROJECT_JSON"
 ```
 
-If empty `{}`: not inside a known cockpit project — build the report from **session context + git only**, and skip steps 2–3 below.
+If empty `{}`: not inside a known squadrant project — build the report from **session context + git only**, and skip steps 2–3 below.
 
 Otherwise note `name` and `spokeVault` for the next steps.
 
 **2. Read the handoff WITHOUT consuming it** (note the `--keep` — never drop the `--keep`, or you destroy the next session's startup context):
 
 ```bash
-~/.config/cockpit/scripts/read-handoff.sh "<spokeVault>" --keep
+~/.config/squadrant/scripts/read-handoff.sh "<spokeVault>" --keep
 ```
 
 `{"exists": false}` means none — fine, skip it.

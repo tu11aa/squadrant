@@ -38,8 +38,8 @@ afterEach(() => {
 });
 
 describe("daemonLockPath", () => {
-  it("ends with daemon.lock inside .config/cockpit", () => {
-    expect(LOCK_PATH).toMatch(/\.config[/\\]cockpit[/\\]daemon\.lock$/);
+  it("ends with daemon.lock inside .config/squadrant", () => {
+    expect(LOCK_PATH).toMatch(/\.config[/\\]squadrant[/\\]daemon\.lock$/);
   });
 });
 

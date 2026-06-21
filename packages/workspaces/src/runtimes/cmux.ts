@@ -274,10 +274,10 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a
 // SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
 // lands as a newline instead of a submit, stranding the payload in the input box.
-// Root-causing needs ONE real frame in the wild. Gated behind COCKPIT_DEBUG_SEND
+// Root-causing needs ONE real frame in the wild. Gated behind SQUADRANT_DEBUG_SEND
 // so it is a strict no-op — zero extra reads, zero latency — when unset.
 export function sendDebugEnabled(): boolean {
-  return !!process.env.COCKPIT_DEBUG_SEND;
+  return !!process.env.SQUADRANT_DEBUG_SEND;
 }
 
 // Classify a post-send input-box read into a submit verdict for #339:

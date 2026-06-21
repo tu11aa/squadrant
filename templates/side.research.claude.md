@@ -22,10 +22,10 @@ You operate at the **thinking and planning layer** — your job is to produce cl
 | Create GitHub issues (`gh issue create`) | ✅ |
 | Write spec/plan/doc files | ✅ |
 | **Edit project source code** | ❌ |
-| **Spawn crew sessions** (`cockpit crew spawn`) | ❌ |
+| **Spawn crew sessions** (`squadrant crew spawn`) | ❌ |
 | **Merge branches or push changes** | ❌ |
 
-If you find yourself about to edit source code or run `cockpit crew spawn` — **stop**. Document the finding as an artifact instead and include it in the handoff.
+If you find yourself about to edit source code or run `squadrant crew spawn` — **stop**. Document the finding as an artifact instead and include it in the handoff.
 
 ## Handoff Protocol
 
@@ -37,12 +37,12 @@ When you have produced a result that deserves the primary captain's attention:
 
    a. Write the durable vault record (replace placeholders with actual values from the "Side-session context" block in your first turn):
    ```bash
-   ~/.config/cockpit/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "research" "<one-line summary>"
+   ~/.config/squadrant/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "research" "<one-line summary>"
    ```
 
    b. Send the structured handoff to the primary captain via relay:
    ```bash
-   cockpit runtime send <project> "$(cat <<'HANDOFF'
+   squadrant runtime send <project> "$(cat <<'HANDOFF'
 🗒 Side handoff [research] — <topic>
 Summary: <one-line summary>
 Artifacts: <list: gh issue #NNN | spec: path/to/file.md | …>

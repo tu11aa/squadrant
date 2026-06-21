@@ -15,7 +15,7 @@ import { loadConfig, resolveHome, type CockpitConfig } from "@squadrant/shared";
 import { sendRequest } from "@squadrant/core";
 import type { TaskRecord, Provider, Mode } from "@squadrant/shared";
 
-const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 // #288: 30s was too short — cold captain boot + relay supervisor startup takes
 // 45-90s. 120s gives the full chain (Claude init + checklist + relay register)
 // comfortable headroom while still failing fast on a genuinely broken launch.

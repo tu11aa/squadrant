@@ -1,5 +1,5 @@
 {
-  "name": "cockpit",
-  "description": "Skills for claude-cockpit agent orchestration roles (captain, command, crew)",
+  "name": "squadrant",
+  "description": "Skills for Squadrant agent orchestration roles (captain, command, crew)",
   "skills": "./skills/"
 }

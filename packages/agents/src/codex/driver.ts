@@ -269,7 +269,7 @@ export class CodexInteractiveDriver {
 
 /**
  * Build the per-thread developerInstructions for a codex crew. Unlike
- * claude/opencode (which get COCKPIT_CREW_* env vars on their shell launch
+ * claude/opencode (which get SQUADRANT_CREW_* env vars on their shell launch
  * line), codex tasks share ONE long-lived app-server child, so a process-level
  * env var would be wrong for concurrent tasks. Instead we tell each thread its
  * concrete task id + project and the exact flag-based signal command, so the

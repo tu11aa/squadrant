@@ -37,11 +37,11 @@ function copyDirRecursive(src: string, dest: string): void {
 
 export const initCommand = new Command("init")
   .description("First-time setup: scaffold hub vault, scripts, and config")
-  .option("--hub <path>", "Hub vault path", "~/cockpit-hub")
+  .option("--hub <path>", "Hub vault path", "~/squadrant-hub")
   .action((opts: { hub: string }) => {
     const hubPath = resolveHome(opts.hub);
     const pkgRoot = findPackageRoot();
-    const configDir = path.join(os.homedir(), ".config", "cockpit");
+    const configDir = path.join(os.homedir(), ".config", "squadrant");
 
     console.log(chalk.bold("\nCockpit Init\n"));
 

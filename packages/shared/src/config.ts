@@ -61,7 +61,7 @@ export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "explor
 
 export interface CockpitConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
-  _cockpitVersion?: string;
+  _squadrantVersion?: string;
   commandName: string;
   hubVault: string;
   projects: Record<string, ProjectConfig>;
@@ -113,13 +113,13 @@ export interface CockpitConfig {
   };
 }
 
-const CONFIG_DIR = path.join(os.homedir(), ".config", "cockpit");
+const CONFIG_DIR = path.join(os.homedir(), ".config", "squadrant");
 export const DEFAULT_CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
 export function getDefaultConfig(): CockpitConfig {
   return {
     commandName: "\u{1F3DB}\u{FE0F} command",
-    hubVault: path.join(os.homedir(), "cockpit-hub"),
+    hubVault: path.join(os.homedir(), "squadrant-hub"),
     projects: {},
     agents: {
       claude: { cli: "claude", driver: "claude" },
@@ -196,7 +196,7 @@ export function loadConfig(configPath = DEFAULT_CONFIG_PATH): CockpitConfig {
       console.error(
         chalk.cyan(
           "⬆ cockpit upgrade: added default crew routing rules to your config (leveled routing now active). " +
-          "Edit defaults.crewRouting in ~/.config/cockpit/config.json or use the cockpit:add-pick-crew-rule skill.",
+          "Edit defaults.crewRouting in ~/.config/squadrant/config.json or use the cockpit:add-pick-crew-rule skill.",
         ),
       );
     }

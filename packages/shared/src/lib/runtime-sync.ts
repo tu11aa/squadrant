@@ -109,7 +109,7 @@ export const MANAGED_TARGETS: ManagedTarget[] = [
 export interface EnsureRuntimeSyncedOptions {
   /** Package root containing the source dirs (`plugin/`, `templates/`, …). */
   sourceRoot: string;
-  /** Runtime root, normally ~/.config/cockpit. */
+  /** Runtime root, normally ~/.config/squadrant. */
   runtimeRoot: string;
   /** Override the managed-target list (defaults to MANAGED_TARGETS). */
   targets?: ManagedTarget[];

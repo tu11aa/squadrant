@@ -5,8 +5,8 @@
 set -euo pipefail
 
 CMUX="/Applications/cmux.app/Contents/Resources/bin/cmux"
-TEMPLATES_DIR="${HOME}/.config/cockpit/templates"
-SESSIONS_FILE="${HOME}/.config/cockpit/sessions.json"
+TEMPLATES_DIR="${HOME}/.config/squadrant/templates"
+SESSIONS_FILE="${HOME}/.config/squadrant/sessions.json"
 NAME="${1:?Usage: spawn-workspace.sh <name> <cwd> [role] [--fresh]}"
 CWD="${2:?Usage: spawn-workspace.sh <name> <cwd> [role] [--fresh]}"
 ROLE="${3:-captain}"
@@ -39,7 +39,7 @@ except: print('')
   if [ "$FRESH" = "false" ]; then
     ROLE_FILE="${TEMPLATES_DIR}/${ROLE}.claude.md"
     [ ! -f "$ROLE_FILE" ] && ROLE_FILE="${TEMPLATES_DIR}/${ROLE}.CLAUDE.md"
-    CURRENT_HASH=$(cat "$ROLE_FILE" "${HOME}/.config/cockpit/plugin/skills"/*/SKILL.md 2>/dev/null | shasum -a 256 | cut -c1-16)
+    CURRENT_HASH=$(cat "$ROLE_FILE" "${HOME}/.config/squadrant/plugin/skills"/*/SKILL.md 2>/dev/null | shasum -a 256 | cut -c1-16)
     STORED_HASH=$(python3 -c "
 import json
 try:
@@ -59,7 +59,7 @@ fi
 # --- Record session ---
 ROLE_FILE="${TEMPLATES_DIR}/${ROLE}.claude.md"
 [ ! -f "$ROLE_FILE" ] && ROLE_FILE="${TEMPLATES_DIR}/${ROLE}.CLAUDE.md"
-CURRENT_HASH=$(cat "$ROLE_FILE" "${HOME}/.config/cockpit/plugin/skills"/*/SKILL.md 2>/dev/null | shasum -a 256 | cut -c1-16)
+CURRENT_HASH=$(cat "$ROLE_FILE" "${HOME}/.config/squadrant/plugin/skills"/*/SKILL.md 2>/dev/null | shasum -a 256 | cut -c1-16)
 python3 -c "
 import json, os
 path = '$SESSIONS_FILE'
@@ -75,7 +75,7 @@ json.dump(data, open(path, 'w'), indent=2)
 PERM_MODE=$(python3 -c "
 import json
 try:
-    cfg = json.load(open('${HOME}/.config/cockpit/config.json'))
+    cfg = json.load(open('${HOME}/.config/squadrant/config.json'))
     role_key = '$ROLE' if '$ROLE' in ('captain', 'command') else 'captain'
     print(cfg.get('defaults', {}).get('permissions', {}).get(role_key, 'default'))
 except: print('default')
@@ -85,7 +85,7 @@ except: print('default')
 AGENT=$(python3 -c "
 import json
 try:
-    cfg = json.load(open('${HOME}/.config/cockpit/config.json'))
+    cfg = json.load(open('${HOME}/.config/squadrant/config.json'))
     roles = cfg.get('defaults', {}).get('roles', {})
     role_cfg = roles.get('$ROLE', {})
     print(role_cfg.get('agent', 'claude'))
@@ -95,7 +95,7 @@ except: print('claude')
 MODEL=$(python3 -c "
 import json
 try:
-    cfg = json.load(open('${HOME}/.config/cockpit/config.json'))
+    cfg = json.load(open('${HOME}/.config/squadrant/config.json'))
     roles = cfg.get('defaults', {}).get('roles', {})
     role_cfg = roles.get('$ROLE', {})
     model = role_cfg.get('model', '')
@@ -132,7 +132,7 @@ case "$AGENT" in
       AGENT_CMD="${AGENT_CMD} --append-system-prompt-file ${ROLE_FILE}"
     fi
 
-    PLUGIN_DIR="${HOME}/.config/cockpit/plugin"
+    PLUGIN_DIR="${HOME}/.config/squadrant/plugin"
     if [ -d "$PLUGIN_DIR" ]; then
       AGENT_CMD="${AGENT_CMD} --plugin-dir ${PLUGIN_DIR}"
     fi

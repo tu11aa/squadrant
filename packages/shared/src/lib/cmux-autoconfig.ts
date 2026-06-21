@@ -18,7 +18,7 @@ import { probeCmuxDaemonDirect, type ProbeVerdict } from "./cmux-probe.js";
 
 /** One-time prompt marker, alongside the daemon state. */
 export function defaultStatePath(): string {
-  return join(homedir(), ".config", "cockpit", "state", "cmux-autoconfig.json");
+  return join(homedir(), ".config", "squadrant", "state", "cmux-autoconfig.json");
 }
 
 export interface AutoConfigResult {

@@ -86,7 +86,7 @@ describe("WorkspaceRegistry", () => {
 
   it("hub passes resolved hubVault as scope.root", async () => {
     const registry = new WorkspaceRegistry({ obsidian: stubFactory("obsidian") });
-    const driver = registry.hub(baseConfig({ hubVault: "~/cockpit-hub" }));
+    const driver = registry.hub(baseConfig({ hubVault: "~/squadrant-hub" }));
     const out = await driver.read("x.md");
     expect(out).toMatch(/^read:obsidian:\//);
     expect(out).not.toContain("~");

@@ -10,7 +10,7 @@ import { sendRequest, ageText } from "@squadrant/core";
 export { ageText } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
 
-const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
 /**
  * Query the daemon for component liveness. Returns null when the daemon is

@@ -126,8 +126,8 @@ export interface DaemonContext {
  *  Late-bound fields are zero-initialized and MUST be set by start.ts
  *  (or squadrantd.ts for drivers) before any event, timer, or socket fires. */
 export function buildContext(opts: SquadrantdOpts): DaemonContext {
-  const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "cockpit", "state");
-  const sockPath = opts.sockPath ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
+  const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "squadrant", "state");
+  const sockPath = opts.sockPath ?? join(homedir(), ".config", "squadrant", "squadrant.sock");
   const store = createStore(stateRoot);
   const bootedAt = Date.now();
   const taskTimeoutMs = loadConfig().defaults.taskTimeoutMs;

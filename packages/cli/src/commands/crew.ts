@@ -23,7 +23,7 @@ import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/pe
 import { buildCompletionProtocol, shellQuote, titleFor, nameFromTitle, nextAutoName, reapCrewChildren } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
 // Base branch for `--worktree` crew branches is derived at spawn time from
 // origin/HEAD so repos using main, trunk, etc. work out of the box (#359).
@@ -198,7 +198,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
     // Prefix the CLI command with env so the hook bridge + signal verb
     // running inside the crew's cmux tab can identify their task.
-    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
     await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
@@ -229,7 +229,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     });
     const rec = (await squadrantdCall(req)) as TaskRecord;
     const opencodeConfigPath = writePerCrewOpencodeConfig({
-      stateRoot: path.join(os.homedir(), ".config", "cockpit", "state"),
+      stateRoot: path.join(os.homedir(), ".config", "squadrant", "state"),
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.
@@ -248,7 +248,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<PaneRef> {
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
-    const envPrefix = `COCKPIT_CREW_TASK_ID=${rec.id} COCKPIT_CREW_PROJECT=${input.project}`;
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
     await sendFirstTurnWhenReady(runtime, pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {

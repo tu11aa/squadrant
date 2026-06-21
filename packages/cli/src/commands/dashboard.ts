@@ -17,7 +17,7 @@ import type { SyncHubResult } from "@squadrant/web";
 import { squadrantdCall } from "./crew-control.js";
 import { resolveCmuxBin } from "@squadrant/shared";
 
-const SOCK = join(homedir(), ".config", "cockpit", "cockpit.sock");
+const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
 function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();

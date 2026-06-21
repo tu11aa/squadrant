@@ -17,7 +17,7 @@ import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/work
 import { resolveTextInput } from "@squadrant/shared";
 import { addWorktree, removeWorktree, worktreePath, resolveWorktreeBase } from "@squadrant/shared";
 
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
 // Base branch derived at spawn time from origin/HEAD (#359).
 

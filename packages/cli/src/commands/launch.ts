@@ -15,8 +15,8 @@ import { classifyStartupSurface } from "@squadrant/workspaces";
 import { shouldStartFresh, recordSession } from "@squadrant/core";
 
 const CMUX_APP = "/Applications/cmux.app";
-const TEMPLATES_DIR = path.join(os.homedir(), ".config", "cockpit", "templates");
-const SESSIONS_PATH = path.join(os.homedir(), ".config", "cockpit", "sessions.json");
+const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
+const SESSIONS_PATH = path.join(os.homedir(), ".config", "squadrant", "sessions.json");
 
 function ensureCmuxReady(): void {
   if (isInsideCmux()) return;

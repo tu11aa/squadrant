@@ -765,11 +765,11 @@ describe("sendToSurface draft-preservation", () => {
 
 // #339: debug-gated send instrumentation. The DONE→captain submit is a text
 // burst then a SEPARATE send-key Enter; intermittently the Enter mis-lands as a
-// newline, stranding the payload in the input box. COCKPIT_DEBUG_SEND turns on a
+// newline, stranding the payload in the input box. SQUADRANT_DEBUG_SEND turns on a
 // pre-send + post-send read-back that logs one real frame so the fault can be
 // caught in the wild. It must be a strict no-op (no extra reads, no log) when off
 // and must NEVER re-send (no double-submit).
-describe("sendToSurface #339 send instrumentation (COCKPIT_DEBUG_SEND)", () => {
+describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () => {
   const driver = createCmuxDriver();
   let stderrWrites: string[];
   let restoreStderr: () => void;
@@ -782,12 +782,12 @@ describe("sendToSurface #339 send instrumentation (COCKPIT_DEBUG_SEND)", () => {
       return true;
     });
     restoreStderr = () => spy.mockRestore();
-    delete process.env.COCKPIT_DEBUG_SEND;
+    delete process.env.SQUADRANT_DEBUG_SEND;
   });
 
   afterEach(() => {
     restoreStderr();
-    delete process.env.COCKPIT_DEBUG_SEND;
+    delete process.env.SQUADRANT_DEBUG_SEND;
   });
 
   it("is silent and adds no extra read-screen when the flag is unset", async () => {
@@ -804,7 +804,7 @@ describe("sendToSurface #339 send instrumentation (COCKPIT_DEBUG_SEND)", () => {
   });
 
   it("logs a 'submitted' frame and never re-sends when the box is empty after Enter", async () => {
-    process.env.COCKPIT_DEBUG_SEND = "1";
+    process.env.SQUADRANT_DEBUG_SEND = "1";
     // Box empty before AND after — a clean submit.
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) return makeTestScreen("❯ ▌");
@@ -830,7 +830,7 @@ describe("sendToSurface #339 send instrumentation (COCKPIT_DEBUG_SEND)", () => {
   });
 
   it("logs a 'stuck' frame when the input box still holds the payload after Enter", async () => {
-    process.env.COCKPIT_DEBUG_SEND = "1";
+    process.env.SQUADRANT_DEBUG_SEND = "1";
     // Empty at the gate read (so we deliver), then the payload is stranded in the
     // box on the post-send read-back — the #339 fault signature.
     let reads = 0;

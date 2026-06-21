@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 import { decodeFrames, type AttachFrame, type AttachInbound } from "@squadrant/core";
 
 function socketPath(): string {
-  return process.env.SQUADRANTD_SOCK ?? join(homedir(), ".config", "cockpit", "cockpit.sock");
+  return process.env.SQUADRANTD_SOCK ?? join(homedir(), ".config", "squadrant", "squadrant.sock");
 }
 
 // --- Pure formatters (exported for tests) ---

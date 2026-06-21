@@ -40,7 +40,7 @@ Work through: reproduce → isolate → form hypothesis → instrument → verif
 | Merge branches or push changes | ❌ |
 | Ship a fix | ❌ |
 
-Your scratch edits exist only to *pinpoint* the bug. The fix belongs in a crew task. Never run `cockpit crew spawn`. Never run `git push` or `git merge`.
+Your scratch edits exist only to *pinpoint* the bug. The fix belongs in a crew task. Never run `squadrant crew spawn`. Never run `git push` or `git merge`.
 
 ## Handoff Protocol
 
@@ -52,12 +52,12 @@ When you have a root cause (with or without a draft patch):
 
    a. Write the durable vault record (replace placeholders with actual values from the "Side-session context" block in your first turn):
    ```bash
-   ~/.config/cockpit/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "debug" "<one-line root cause>"
+   ~/.config/squadrant/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "debug" "<one-line root cause>"
    ```
 
    b. Send the structured handoff to the primary captain via relay:
    ```bash
-   cockpit runtime send <project> "$(cat <<'HANDOFF'
+   squadrant runtime send <project> "$(cat <<'HANDOFF'
 🗒 Side handoff [debug] — <topic>
 Root cause: <one-line root cause>
 Artifacts: <list: failing test path | instrumentation: <file> | draft patch: scratch branch crew/<name> | issue #NNN>

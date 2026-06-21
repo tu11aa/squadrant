@@ -217,8 +217,8 @@ describe("cockpit crew spawn", () => {
       title: "🔧 brove:crew-1",
     }));
     // First sendToPane carries the env-prefix + CLI command in one line.
-    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_TASK_ID=task-cl1");
-    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_PROJECT=brove");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_TASK_ID=task-cl1");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("claude --append-system-prompt-file /tmp/crew.md");
     // Second sendToPane delivers the task + completion-protocol suffix as the first prompt.
     expect(sendToPane.mock.calls[1]?.[0]).toEqual({ workspaceId: "workspace:5", surfaceId: "surface:9" });
@@ -420,8 +420,8 @@ describe("cockpit crew spawn", () => {
       title: "🔧 brove:crew-1",
     }));
     // First sendToPane carries env-prefix + CLI command.
-    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_TASK_ID=task-oc1");
-    expect(sendToPane.mock.calls[0]?.[1]).toContain("COCKPIT_CREW_PROJECT=brove");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_TASK_ID=task-oc1");
+    expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("OPENCODE_CONFIG=/tmp/per-crew/opencode.json");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("opencode");
     // Second sendToPane delivers the task + completion-protocol suffix as the first prompt.
@@ -1108,15 +1108,15 @@ describe("reapCrewChildren", () => {
     const taskId = `reap-crew-test-${process.pid}-${Date.now()}`;
     const siblingId = `reap-sibling-test-${process.pid}-${Date.now()}`;
 
-    // Spawn a long-running node process as the "crew child" (inherits COCKPIT_CREW_TASK_ID=taskId)
+    // Spawn a long-running node process as the "crew child" (inherits SQUADRANT_CREW_TASK_ID=taskId)
     const crewChild = spawn("node", ["-e", "setInterval(() => {}, 999999)"], {
-      env: { ...process.env, COCKPIT_CREW_TASK_ID: taskId },
+      env: { ...process.env, SQUADRANT_CREW_TASK_ID: taskId },
       stdio: "ignore",
     });
 
     // Spawn a sibling with a DIFFERENT task ID — must NOT be killed
     const sibling = spawn("node", ["-e", "setInterval(() => {}, 999999)"], {
-      env: { ...process.env, COCKPIT_CREW_TASK_ID: siblingId },
+      env: { ...process.env, SQUADRANT_CREW_TASK_ID: siblingId },
       stdio: "ignore",
     });
 

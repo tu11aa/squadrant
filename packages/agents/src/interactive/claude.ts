@@ -140,7 +140,7 @@ function readLastAssistantText(transcriptPath: string): string | null {
  *   1. else payload.transcript_path (documented field, when present + readable);
  *   2. else the path derived from payload.session_id + cwd (defensive fallback for
  *      older clients that omit both of the above).
- * cwd preference: payload.cwd (Claude hook contract) → COCKPIT_CREW_CWD → cwd().
+ * cwd preference: payload.cwd (Claude hook contract) → SQUADRANT_CREW_CWD → cwd().
  * Best-effort: a null/miss from one source falls through to the next; never throws.
  */
 function resolveLastAssistantText(payload: unknown): string | null {
@@ -150,7 +150,7 @@ function resolveLastAssistantText(payload: unknown): string | null {
   const candidates: string[] = [];
   const tp = p?.transcript_path;
   if (typeof tp === "string" && tp) candidates.push(tp);
-  const cwd = (typeof p?.cwd === "string" && p.cwd) ? p.cwd : (process.env.COCKPIT_CREW_CWD || process.cwd());
+  const cwd = (typeof p?.cwd === "string" && p.cwd) ? p.cwd : (process.env.SQUADRANT_CREW_CWD || process.cwd());
   const derived = deriveTranscriptPath(p?.session_id, cwd);
   if (derived) candidates.push(derived);
   for (const path of candidates) {

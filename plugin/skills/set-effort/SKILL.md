@@ -3,9 +3,9 @@ name: set-effort
 description: Read or set the global crew tokenomics dial (max | balance | low). Use when the user wants to change how aggressively crews consume tokens, or to check the current setting.
 ---
 
-# cockpit:set-effort — Global Crew Effort Dial
+# squadrant:set-effort — Global Crew Effort Dial
 
-The effort dial is a one-field toggle in `~/.config/cockpit/config.json` that biases the captain's crew spawning decisions. It does **not** rewrite routing rules — it is a hint the captain honors when choosing agent/model for new crews.
+The effort dial is a one-field toggle in `~/.config/squadrant/config.json` that biases the captain's crew spawning decisions. It does **not** rewrite routing rules — it is a hint the captain honors when choosing agent/model for new crews.
 
 ## Modes
 
@@ -18,7 +18,7 @@ The effort dial is a one-field toggle in `~/.config/cockpit/config.json` that bi
 ## Get current effort
 
 ```bash
-cockpit effort
+squadrant effort
 ```
 
 Prints the current mode and its one-line meaning. Does not write anything.
@@ -26,9 +26,9 @@ Prints the current mode and its one-line meaning. Does not write anything.
 ## Set effort
 
 ```bash
-cockpit effort max
-cockpit effort balance
-cockpit effort low
+squadrant effort max
+squadrant effort balance
+squadrant effort low
 ```
 
 - Validates the value (errors with the 3 valid options if invalid).
@@ -38,7 +38,7 @@ cockpit effort low
 
 ## Manual edit (fallback)
 
-If the CLI is unavailable, edit `~/.config/cockpit/config.json` directly:
+If the CLI is unavailable, edit `~/.config/squadrant/config.json` directly:
 
 ```json
 {
@@ -56,4 +56,4 @@ Effort is **crew-only**. It does not affect captain, command, or side roles — 
 
 ## Precedence
 
-Effort is the weakest signal. Explicit `--agent` / `--model` flags on `cockpit crew spawn` always win. Effort only biases the captain's default choice when nothing more specific applies.
+Effort is the weakest signal. Explicit `--agent` / `--model` flags on `squadrant crew spawn` always win. Effort only biases the captain's default choice when nothing more specific applies.

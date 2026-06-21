@@ -199,7 +199,7 @@ export async function runExternalProbes(
 
 // ── Default real-I/O runners (dashboard process; not unit-tested) ──────────────
 
-const SESSIONS_PATH = join(homedir(), ".config", "cockpit", "sessions.json");
+const SESSIONS_PATH = join(homedir(), ".config", "squadrant", "sessions.json");
 
 /** Resolve a bare binary name against the PATH dirs (dependency-free `which`). */
 function onPath(cli: string): boolean {
