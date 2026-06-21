@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-06-21
+
+### Fixed
+
+- `cockpit effort` no longer self-notifies the captain that ran the command — the active-notify loop now skips the project whose path matches the current working directory (realpath-canonical, with a stale-path fallback). (#383)
+- **Zombie task resurrection** — the daemon sweep's timeout branch no longer falls through to clobber a terminal (cancelled) task back to `working`; terminal states are now sticky, ending the repeated CREW TIMEOUT + name-collision mis-tag. (#380, #378)
+
+### Added
+
+- Explicit **`stopped` project status** — closing a captain workspace now reaps its orphaned interactive crews exactly once (on a confirmed captain-gone K-streak) and the dashboard renders a calm `stopped` state (magenta/⏻) instead of a red CRITICAL fault. A genuine fault (corrupt store, unexpected surface-gone) still rolls up to `gone`. (#388, #324, #323)
+- **Debug-gated send instrumentation** (`COCKPIT_DEBUG_SEND`) — captures a pre/post input-box read-back frame around each captain delivery to catch the intermittent #339 Enter-inserts-newline glitch in the wild. Read-only (never re-sends), strict no-op when the flag is unset. (#386, #339)
+- **Global effort dial** (`cockpit effort <max|balance|low>`) — one tokenomics lever the captain honors when spawning crews: `max` biases toward the strongest model, `low` toward cheaper agents/models, `balance` keeps default routing. Captain-discretion, not a mechanical routing rewrite. (#381, #317)
+
+### Changed
+
+- **Control-plane store hygiene** — automatic garbage-collection of stale terminal task records on sweep, a `crewTag` helper to disambiguate crew notifications, and a manual purge command with force override. (#382, #378)
+
+### CI
+
+- **Runtime smoke step** — CI now executes the bundled bins (`node dist/index.js --help`, `crew --help`, `cockpitd --help`) after build, catching NodeNext ESM `.js`-extension crashes that tsc + vitest miss. (#384, #344)
+
 ## [0.8.1] - 2026-06-19
 
 A **post-reorg cleanup** patch. The public CLI surface is unchanged.
