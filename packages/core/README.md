@@ -1,6 +1,6 @@
-# @cockpit/core
+# @squadrant/core
 
-**Purpose:** Driver-agnostic daemon / control-plane core for claude-cockpit.
+**Purpose:** Driver-agnostic daemon / control-plane core for Squadrant.
 
 **Owns:**
 - Daemon state machine, mailbox, protocol, liveness, watchdog, store, snapshot
@@ -11,10 +11,10 @@
 
 **Public interface:** Everything exported from `packages/core/src/index.ts`.
 
-**Depends on:** `@cockpit/shared` only.
+**Depends on:** `@squadrant/shared` only.
 
 **Doesn't belong here:**
 - Concrete agent/workspace drivers (`codex/`, `opencode/`, `cmux/`, `headless`, `runtimes/`) — those live in root and move to `agents`/`workspaces` in Step 5.
 - CLI commands (`commands/`) — Step 7.
 - Dashboard / web (`dashboard/`) — Step 6.
-- `cockpitd.ts` host — stays in root as the bin/launchd entry.
+- `squadrantd.ts` host — stays in root as the bin/launchd entry.

@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 relationships, 144 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Squadrant** (3890 symbols, 6862 relationships, 144 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -24,10 +24,10 @@ This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 re
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/claude-cockpit/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claude-cockpit/clusters` | All functional areas |
-| `gitnexus://repo/claude-cockpit/processes` | All execution flows |
-| `gitnexus://repo/claude-cockpit/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/squadrant/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/squadrant/clusters` | All functional areas |
+| `gitnexus://repo/squadrant/processes` | All execution flows |
+| `gitnexus://repo/squadrant/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
@@ -44,9 +44,9 @@ This project is indexed by GitNexus as **claude-cockpit** (3890 symbols, 6862 re
 
 ## Project Direction: Multi-Agent
 
-Cockpit is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
+Squadrant is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
 
-When working on cockpit:
+When working on squadrant:
 - Prefer **`AGENTS.md`** as the canonical instruction format. `CLAUDE.md` is becoming a thin wrapper.
 - When adding agent-facing features, ask: *"does this work for non-Claude agents too?"* If not, file a follow-up issue to generalize it.
 - Don't add Claude-only surface area without a migration path. The three plugin slots (runtime / workspace / notifier) exist specifically to avoid this.
@@ -60,14 +60,14 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 
 | Package | Owns |
 |---|---|
-| `@cockpit/shared` | Config schema, types, constants — leaf, zero internal deps |
-| `@cockpit/core` | Daemon, state-machine, protocol, `AgentDriver` interface |
-| `@cockpit/agents` | AI driver seam: claude / codex / opencode / gemini |
-| `@cockpit/workspaces` | Runtime (cmux), workspace (obsidian), notifier drivers |
-| `@cockpit/web` | Observability dashboard (bundled HTML/JS) |
-| `@cockpit/cli` | Commands, bin entry, daemon host — root package |
+| `@squadrant/shared` | Config schema, types, constants — leaf, zero internal deps |
+| `@squadrant/core` | Daemon, state-machine, protocol, `AgentDriver` interface |
+| `@squadrant/agents` | AI driver seam: claude / codex / opencode / gemini |
+| `@squadrant/workspaces` | Runtime (cmux), workspace (obsidian), notifier drivers |
+| `@squadrant/web` | Observability dashboard (bundled HTML/JS) |
+| `@squadrant/cli` | Commands, bin entry, daemon host — root package |
 
-Build outputs: `dist/index.js` (CLI bin) · `dist/cockpitd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
+Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
 
 ## Coding Discipline: Karpathy Principles
 
