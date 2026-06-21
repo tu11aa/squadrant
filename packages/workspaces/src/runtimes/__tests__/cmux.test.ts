@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, DeferDelivery } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome, DeferDelivery } from "../cmux.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
@@ -760,6 +760,110 @@ describe("sendToSurface draft-preservation", () => {
     const cmds = execFileMock.mock.calls.map(cmdOf);
     // Must not have sent anything — deferred
     expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
+  });
+});
+
+// #339: debug-gated send instrumentation. The DONE→captain submit is a text
+// burst then a SEPARATE send-key Enter; intermittently the Enter mis-lands as a
+// newline, stranding the payload in the input box. COCKPIT_DEBUG_SEND turns on a
+// pre-send + post-send read-back that logs one real frame so the fault can be
+// caught in the wild. It must be a strict no-op (no extra reads, no log) when off
+// and must NEVER re-send (no double-submit).
+describe("sendToSurface #339 send instrumentation (COCKPIT_DEBUG_SEND)", () => {
+  const driver = createCmuxDriver();
+  let stderrWrites: string[];
+  let restoreStderr: () => void;
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    stderrWrites = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+    restoreStderr = () => spy.mockRestore();
+    delete process.env.COCKPIT_DEBUG_SEND;
+  });
+
+  afterEach(() => {
+    restoreStderr();
+    delete process.env.COCKPIT_DEBUG_SEND;
+  });
+
+  it("is silent and adds no extra read-screen when the flag is unset", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("❯ ▌");
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    // No send-debug line emitted
+    expect(stderrWrites.some((w) => w.includes("send-debug"))).toBe(false);
+    // Exactly the gate's single read-screen — no pre/post read-back added
+    const reads = execFileMock.mock.calls.map(argvOf).filter((a) => a.includes("read-screen"));
+    expect(reads).toHaveLength(1);
+  });
+
+  it("logs a 'submitted' frame and never re-sends when the box is empty after Enter", async () => {
+    process.env.COCKPIT_DEBUG_SEND = "1";
+    // Box empty before AND after — a clean submit.
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen("❯ ▌");
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+
+    // The instrumentation added a pre-send and a post-send read-back (3 reads total).
+    const reads = execFileMock.mock.calls.map(argvOf).filter((a) => a.includes("read-screen"));
+    expect(reads).toHaveLength(3);
+
+    // Exactly ONE payload send + ONE Enter — the read-back never re-submits.
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.filter((a) => a[0] === "send" && a.includes("crew done"))).toHaveLength(1);
+    expect(calls.filter((a) => a.includes("send-key") && a.includes("Enter"))).toHaveLength(1);
+
+    const debugLine = stderrWrites.find((w) => w.includes("send-debug"));
+    expect(debugLine).toBeDefined();
+    const frame = JSON.parse(debugLine!.replace(/^\[cockpit\] send-debug /, "").trim());
+    expect(frame.surface).toBe("surface:8");
+    expect(frame.payload).toBe("crew done");
+    expect(frame.verdict).toBe("submitted");
+  });
+
+  it("logs a 'stuck' frame when the input box still holds the payload after Enter", async () => {
+    process.env.COCKPIT_DEBUG_SEND = "1";
+    // Empty at the gate read (so we deliver), then the payload is stranded in the
+    // box on the post-send read-back — the #339 fault signature.
+    let reads = 0;
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) {
+        reads++;
+        // gate (1) + pre-send (2) see an empty box; post-send (3) shows it stuck.
+        return reads >= 3 ? makeTestScreen("❯ crew done") : makeTestScreen("❯ ▌");
+      }
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+
+    const debugLine = stderrWrites.find((w) => w.includes("send-debug"));
+    expect(debugLine).toBeDefined();
+    const frame = JSON.parse(debugLine!.replace(/^\[cockpit\] send-debug /, "").trim());
+    expect(frame.verdict).toBe("stuck");
+    expect(frame.postBox).toContain("crew done");
+  });
+});
+
+describe("classifySendOutcome (#339 verdict)", () => {
+  it("returns 'submitted' for an empty post-send box", () => {
+    expect(classifySendOutcome("crew done", "")).toBe("submitted");
+  });
+  it("returns 'stuck' when the box still holds the payload", () => {
+    expect(classifySendOutcome("crew done", "crew done")).toBe("stuck");
+  });
+  it("returns 'box-gone' when the box is not visible (null)", () => {
+    expect(classifySendOutcome("crew done", null)).toBe("box-gone");
+  });
+  it("returns 'unknown' for unrelated box content", () => {
+    expect(classifySendOutcome("crew done", "a fresh draft")).toBe("unknown");
   });
 });
 
