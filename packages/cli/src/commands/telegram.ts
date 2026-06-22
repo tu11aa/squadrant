@@ -49,7 +49,7 @@ export async function runTelegramLink(opts: {
 
 // Reads a secret from stdin, printing "*" per character. The caller must print
 // the visible label before calling this — raw mode is active only during input.
-async function questionMasked(): Promise<string> {
+export async function questionMasked(): Promise<string> {
   return new Promise<string>((resolve) => {
     emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
@@ -59,12 +59,15 @@ async function questionMasked(): Promise<string> {
 
     const onKeypress = (_str: string | undefined, key: { name: string; ctrl: boolean; meta: boolean; sequence: string }) => {
       if (key.ctrl && key.name === "c") {
+        process.stdin.removeListener("keypress", onKeypress as any);
         process.stdin.setRawMode(false);
+        process.stdin.pause();
         process.stdout.write("\n");
         process.exit(130);
       } else if (key.name === "return" || key.name === "enter") {
         process.stdin.removeListener("keypress", onKeypress as any);
         process.stdin.setRawMode(false);
+        process.stdin.pause();
         process.stdout.write("\n");
         resolve(answer);
       } else if (key.name === "backspace") {

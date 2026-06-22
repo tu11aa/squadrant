@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
 import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink } from "../telegram.js";
+import { telegramCommand, runTelegramStatus, runTelegramLink, questionMasked } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -73,5 +73,39 @@ describe("runTelegramLink", () => {
     expect(second.created).toBe(false);
     expect(second.topicId).toBe(first.topicId);
     expect(creates).toBe(1);
+  });
+});
+
+describe("questionMasked stdin teardown", () => {
+  it("pauses stdin and removes keypress listener on enter so the event loop can drain", async () => {
+    // Stub the stdin methods that require a real TTY
+    const setRawMode = vi.fn().mockReturnValue(process.stdin);
+    const resume = vi.fn().mockReturnValue(process.stdin);
+    const pause = vi.fn().mockReturnValue(process.stdin);
+    const origSetRawMode = (process.stdin as any).setRawMode;
+    const origResume = process.stdin.resume.bind(process.stdin);
+    const origPause = process.stdin.pause.bind(process.stdin);
+    (process.stdin as any).setRawMode = setRawMode;
+    process.stdin.resume = resume;
+    process.stdin.pause = pause;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    try {
+      const p = questionMasked();
+      // Directly emit the enter keypress that questionMasked listens for
+      process.stdin.emit("keypress", undefined, { name: "return", ctrl: false, meta: false, sequence: "" });
+      const result = await p;
+
+      expect(result).toBe("");
+      expect(pause).toHaveBeenCalled();
+      expect(setRawMode).toHaveBeenCalledWith(false);
+      // Our listener must be gone — listener count must be 0 for 'keypress'
+      expect(process.stdin.listenerCount("keypress")).toBe(0);
+    } finally {
+      (process.stdin as any).setRawMode = origSetRawMode;
+      process.stdin.resume = origResume;
+      process.stdin.pause = origPause;
+      stdoutSpy.mockRestore();
+    }
   });
 });
