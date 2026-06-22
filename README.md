@@ -179,22 +179,34 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 Drive squadrant from your phone ([#65](https://github.com/tu11aa/squadrant/issues/65)). When a `telegram` block is present in config, a daemon-internal bridge:
 
 - **Outbound** — pushes each project's crew lifecycle events (CREW DONE / BLOCKED / IDLE) and other captain notifications to that project's Telegram forum topic. Best-effort: a Telegram failure never delays or breaks delivery to the captain pane.
-- **Inbound (captain-only)** — a message you send in a project's topic is delivered into that project's **captain pane** as a labeled `📩 [from Telegram]` message; the captain decides what to do with it.
+- **Inbound (project topic)** — a message you send in a project's topic is delivered into that project's **captain pane** as a labeled `📩 [from Telegram]` message; the captain decides what to do with it. With remote control enabled (see below), if no captain is alive the daemon **auto-launches** one, then delivers ([#403](https://github.com/tu11aa/squadrant/issues/403)).
+- **General command channel** — slash commands in the supergroup's **General topic** run a curated set of squadrant operations from your phone ([#402](https://github.com/tu11aa/squadrant/issues/402)). Available: `/help`, `/status`, `/projects`, `/crews <project>`, `/launch <project>`, `/effort [max|balance|low]`, `/config get <key>`, `/config set <key> <value>`, `/spawn <project> <task…>`. Each maps to a validated CLI argv run via async `execFile` — never a shell passthrough. Unknown commands and freeform text get a `/help` hint.
 
 Absent the config block, the bridge is never constructed — zero behavior change. No runtime SDK is added (plain `fetch`; `@grammyjs/types` is a dev-only type dependency).
 
 **Setup (recommended):**
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Run `squadrant telegram setup` — it prompts for the bot token (input hidden), validates it via the Bot API, and auto-detects your supergroup id.
+2. Run `squadrant telegram setup` — it prompts for the bot token (input hidden), validates it via the Bot API, auto-detects your supergroup id, captures your Telegram user-id, and offers to enable remote control.
 3. Bind a project to a topic: `squadrant telegram link <project>` (creates the forum topic and records the binding).
 4. Check wiring with `squadrant telegram status`.
 
 **Setup (manual):**
 Put the token + ids in config (or export `TELEGRAM_BOT_TOKEN`) — see the `telegram` block under [Config](#config). Then run `squadrant telegram link <project>`.
 
-> **⚠️ Security gap (v1):** anyone who can post in the linked supergroup can steer the captain — **chat membership implies captain control**. Inbound is only filtered by a `chat_id` allowlist; a per-user-id allowlist that closes this is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always treated as data (a captain message), never executed as a shell command.
+#### Security model (#321) — fail-closed remote control
 
-> **Interim note (link ↔ daemon 409):** the Telegram Bot API allows only one `getUpdates` consumer at a time. If a future link flow needs `getUpdates` and the daemon's inbound poll is running, you may hit a 409 conflict — run `squadrant telegram link` with the daemon stopped (#321 MAJOR-4). v1's `link` uses only `createForumTopic`, so this does not apply today, but keep it in mind for hardening.
+The control surfaces (auto-launch + General command channel) are **off by default** and gated by two independent checks. A control action runs **only when both** hold:
+
+1. `remoteControl: true` — an explicit opt-in master switch (default `false`).
+2. `message.from.id ∈ users[]` — the sender's Telegram **user-id** is on the allowlist. An empty/absent `users` list ⇒ control is disabled (fail-closed). Chat membership alone is **never** enough for control.
+
+When remote control is off (the default after upgrade), behavior is **exactly v1**: project-topic messages queue to the captain pane (no auto-launch), and General-topic slash commands are rejected with `⛔ not authorized`. Inbound text is always treated as data; only the curated registry maps to actions, and `/config set` is restricted to a default-deny writable-key allowlist (currently just `defaults.effort`) — **secrets (`botToken`, `users`, `chats`, `supergroupId`) can never be written over Telegram.**
+
+#### Remote wake (#403) — operator-side
+
+Auto-launch boots a captain when the **daemon is already running**. Waking a *sleeping Mac* from your phone (Wake-on-LAN / a relay that nudges the machine) is operator-side infrastructure, out of scope for this repo — see [#403](https://github.com/tu11aa/squadrant/issues/403) for the end-to-end flow.
+
+> **Interim note (link ↔ daemon 409):** the Telegram Bot API allows only one `getUpdates` consumer at a time. The `setup` wizard polls `getUpdates` to detect your group/user-id, so run it with the daemon stopped. `link` uses only `createForumTopic`, so it's unaffected.
 
 ### Projection (Cross-Agent Config Sync)
 
@@ -239,6 +251,8 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
     "botToken": "123456:ABC...",
     "supergroupId": -1001234567890,
     "chats": [-1001234567890],
+    "users": [987654321],
+    "remoteControl": true,
     "pollMs": 1000
   },
   "projects": {
@@ -270,7 +284,7 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
 }
 ```
 
-The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
+The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `users` is the per-user-id allowlist for **control** actions and `remoteControl` (default `false`) is the master opt-in for auto-launch + the General command channel — both must be set for any remote control to act (fail-closed, [#321](https://github.com/tu11aa/squadrant/issues/321)). `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
 
 ## Supported Agents
 

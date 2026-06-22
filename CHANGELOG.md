@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-23
+
+The Telegram stability slice — closes two usability gaps so the integration is solid enough to release, both gated behind a fail-closed user-id allowlist + an opt-in master switch. Default behavior is unchanged on upgrade (`remoteControl` defaults to `false`).
+
+### Added
+
+- **Project-topic auto-launch ([#403](https://github.com/tu11aa/squadrant/issues/403)).** When a project-topic message arrives and no captain is alive, the daemon boots one (async `execFile`, bounded warmup poll, per-project debounce) then delivers the message — instead of silently queuing. Acts only with remote control enabled.
+- **General command channel ([#402](https://github.com/tu11aa/squadrant/issues/402)).** Slash commands in the supergroup's General topic run a curated registry of squadrant operations from the phone: `/help`, `/status`, `/projects`, `/crews`, `/launch`, `/effort`, `/config get|set`, `/spawn`. Each maps to a validated CLI argv run via async `execFile` (no shell passthrough); unknown/freeform input gets a `/help` hint.
+- **User-id allowlist + `remoteControl` opt-in ([#321](https://github.com/tu11aa/squadrant/issues/321)).** `TelegramConfig` gains `users?: number[]` and `remoteControl?: boolean`. Control surfaces act **only** when `remoteControl === true` **and** `message.from.id ∈ users[]` — fail-closed; chat membership alone is never enough.
+- **`squadrant config get` / `config set`** — read/write a config value by dotted key. `config set` over Telegram is restricted to a default-deny writable-key allowlist (currently `defaults.effort`); secrets can never be written remotely.
+- **`telegram setup` enhancement** — the wizard now captures your Telegram user-id and offers to enable remote control, writing `users` + `remoteControl` idempotently.
+
+### Security
+
+- `/config set` over Telegram rejects `telegram.botToken`, `telegram.users`, `telegram.chats`, and `telegram.supergroupId` (default-deny allowlist). Inbound handlers never let an error escape the poll loop, preserving at-least-once offset semantics.
+
 ## [0.9.2] - 2026-06-22
 
 A patch release adding the agent self-reporting feedback loop and fixing a stale version in the feedback command.
