@@ -24,3 +24,9 @@ export function formatLifecycle(project: string, ev: ControlEvent): string {
 export function formatInbound(text: string): string {
   return `📩 [from Telegram] ${text}`;
 }
+
+/** Mask all but the last 4 characters of a bot token for safe display. */
+export function maskToken(token: string): string {
+  if (token.length <= 4) return token;
+  return "*".repeat(token.length - 4) + token.slice(-4);
+}
