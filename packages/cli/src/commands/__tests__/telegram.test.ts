@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
-import type { TelegramClient } from "@squadrant/core";
 import { loadState } from "@squadrant/core";
 import { telegramCommand, runTelegramStatus, runTelegramLink } from "../telegram.js";
 
@@ -13,19 +12,20 @@ afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
 const cfg: TelegramConfig = { botToken: "TKN", supergroupId: -100500, chats: [-100111] };
 
-function fakeClient(onCreate?: () => void): TelegramClient {
+function fakeClient(onCreate?: () => void) {
   let next = 70;
   return {
     getUpdates: async () => [],
     sendMessage: async () => {},
     createForumTopic: async () => { onCreate?.(); return next++; },
+    getMe: async () => ({ id: 0, username: "" }),
   };
 }
 
 describe("telegramCommand registration", () => {
-  it("exposes the link and status subcommands", () => {
+  it("exposes the link, setup, and status subcommands", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["link", "status"]);
+    expect(names).toEqual(["link", "setup", "status"]);
   });
 });
 

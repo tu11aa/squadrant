@@ -8,6 +8,8 @@ export interface TelegramClient {
   sendMessage(chatId: number, threadId: number | undefined, text: string): Promise<void>;
   /** Returns the new topic's message_thread_id. */
   createForumTopic(chatId: number, name: string): Promise<number>;
+  /** Verify the bot token and return the bot identity. */
+  getMe(): Promise<{ id: number; username: string }>;
 }
 
 interface TgResponse<T> {
@@ -33,6 +35,10 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
   }
 
   return {
+    async getMe() {
+      const r = await call<{ id: number; username: string }>("getMe", {});
+      return { id: r.id, username: r.username };
+    },
     getUpdates(offset, timeoutSec = 50) {
       return call<Update[]>("getUpdates", { offset, timeout: timeoutSec });
     },

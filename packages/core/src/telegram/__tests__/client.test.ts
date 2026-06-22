@@ -24,6 +24,21 @@ function bodyOf(call: Call): Record<string, unknown> {
   return JSON.parse(String(call.init?.body));
 }
 
+describe("createTelegramClient.getMe", () => {
+  it("POSTs to /getMe and returns the bot user", async () => {
+    const botUser = { id: 12345, is_bot: true, first_name: "MyBot", username: "my_bot" };
+    const { fn, calls } = fakeFetch({ ok: true, result: botUser });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const got = await client.getMe();
+
+    expect(got).toEqual({ id: 12345, username: "my_bot" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/getMe");
+    expect(calls[0].init?.method).toBe("POST");
+  });
+});
+
 describe("createTelegramClient.getUpdates", () => {
   it("POSTs to /getUpdates with offset and timeout, returning the result array", async () => {
     const updates = [{ update_id: 1 }, { update_id: 2 }];
