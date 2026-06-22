@@ -15,6 +15,7 @@ export interface TelegramClient {
 interface TgResponse<T> {
   ok: boolean;
   result?: T;
+  error_code?: number;
   description?: string;
 }
 
@@ -28,9 +29,12 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`telegram ${method} HTTP ${res.status}`);
     const json = (await res.json()) as TgResponse<T>;
-    if (!json.ok) throw new Error(json.description ?? `telegram ${method} failed`);
+    if (!res.ok || !json.ok) {
+      const code = json.error_code ?? res.status;
+      const desc = json.description ?? "unknown error";
+      throw new Error(`telegram ${method} failed (${code}): ${desc}`);
+    }
     return json.result as T;
   }
 

@@ -90,17 +90,18 @@ describe("createTelegramClient.createForumTopic", () => {
 });
 
 describe("error surfacing", () => {
-  it("rejects on a non-2xx HTTP response", async () => {
-    const { fn } = fakeFetch({}, { ok: false, status: 502 });
+  it("rejects on a non-2xx HTTP response, including error_code and description", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 502, description: "Bad Gateway" }, { ok: false, status: 502 });
     const client = createTelegramClient({ token: "TKN", fetch: fn });
 
-    await expect(client.getUpdates(0)).rejects.toThrow();
+    await expect(client.getUpdates(0)).rejects.toThrow("telegram getUpdates failed (502): Bad Gateway");
   });
 
-  it("rejects when the Bot API returns ok:false", async () => {
-    const { fn } = fakeFetch({ ok: false, description: "Unauthorized" });
+  it("rejects when the Bot API returns ok:false with error_code and description in the message", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 400, description: "not enough rights to create a topic" });
     const client = createTelegramClient({ token: "TKN", fetch: fn });
 
-    await expect(client.sendMessage(-100, undefined, "x")).rejects.toThrow("Unauthorized");
+    await expect(client.createForumTopic(-100, "test"))
+      .rejects.toThrow("telegram createForumTopic failed (400): not enough rights to create a topic");
   });
 });
