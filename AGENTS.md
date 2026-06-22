@@ -69,6 +69,12 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 
 Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
 
+## Telegram (opt-in, #65)
+
+Two-way Telegram lives in `@squadrant/core` (`src/telegram/*`: `client`/`format`/`state`/`bridge`/`setup`) and is wired into the daemon by the CLI host (`squadrantd.ts`) — a daemon-internal `TelegramBridge`, **not** a separate process. Outbound crew lifecycle events push to a per-project forum topic; inbound replies become a `captain.message` mailbox entry delivered to the captain pane. It is constructed only when `config.telegram` is present (zero behavior change otherwise) and uses plain `fetch` — no runtime SDK (`@grammyjs/types` is a dev-only type dep). Set up via `squadrant telegram setup` (interactive wizard) then `squadrant telegram link <project>` / `squadrant telegram status`; full guide + config block in the [README](README.md#telegram-two-way-opt-in).
+
+**⚠️ Security gap (v1):** chat membership implies captain control — anyone who can post in the linked supergroup can steer the captain. Inbound is filtered only by a `chat_id` allowlist; a per-user-id allowlist is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always data (a captain message), never an executed command.
+
 ## Coding Discipline: Karpathy Principles
 
 Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL.md`](plugin/skills/karpathy-principles/SKILL.md):
