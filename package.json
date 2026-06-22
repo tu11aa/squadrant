@@ -1,7 +1,7 @@
 {
   "name": "squadrant",
   "packageManager": "pnpm@10.30.3",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)",
   "type": "module",
   "bin": {

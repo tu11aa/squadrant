@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-06-22
+
+A patch release adding the agent self-reporting feedback loop and fixing a stale version in the feedback command.
+
+### Added
+
+- **Agent self-reporting prompt block** — `AGENTS.md` gains a "Reporting squadrant bugs" section that instructs crew agents to route detected squadrant defects up to the captain, who can then file a GitHub issue. Enables a semi-automatic defect feedback loop without requiring CLI tooling.
+- **`CONTRIBUTING.md`** — new root-level contributor guide covering the development setup, the agent self-reporting convention, and how to file issues.
+
+### Fixed
+
+- **`squadrant feedback` now reports the real version.** `packages/cli/src/commands/feedback.ts` was hardcoding `"0.1.0"` as the squadrant version in submitted feedback; it now reads the actual version from the package at runtime.
+
 ## [0.9.1] - 2026-06-22
 
 A patch release fixing four issues that surfaced during the v0.9.0 claude-cockpit → squadrant live cutover.
