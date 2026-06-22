@@ -40,10 +40,23 @@ export function writeTelegramConfig(
   opts: { token: string; supergroupId: number },
 ): void {
   let config: Record<string, unknown>;
+  let raw: string | null = null;
+
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    config = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
+    raw = fs.readFileSync(configPath, "utf-8");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`refusing to overwrite unreadable config at ${configPath}: ${String(err)}`);
+    }
+  }
+
+  if (raw !== null) {
+    try {
+      config = JSON.parse(raw) as Record<string, unknown>;
+    } catch (err: unknown) {
+      throw new Error(`refusing to overwrite corrupt config at ${configPath}: ${String(err)}`);
+    }
+  } else {
     config = {};
   }
 

@@ -62,6 +62,27 @@ describe("detectGroupId", () => {
 });
 
 describe("writeTelegramConfig", () => {
+  it("creates a fresh config when the file does not exist", () => {
+    const configPath = path.join(tmpdir, "nonexistent.json");
+
+    writeTelegramConfig(configPath, { token: "TOK", supergroupId: -100500 });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(raw.telegram).toEqual({ botToken: "TOK", supergroupId: -100500, chats: [-100500] });
+  });
+
+  it("throws and does not modify the file when the existing config has invalid JSON", () => {
+    const configPath = path.join(tmpdir, "config.json");
+    const corrupt = "{ this is not valid json }";
+    fs.writeFileSync(configPath, corrupt);
+
+    expect(() => writeTelegramConfig(configPath, { token: "TOK", supergroupId: -100 })).toThrow(
+      /refusing to overwrite corrupt config/,
+    );
+
+    expect(fs.readFileSync(configPath, "utf-8")).toBe(corrupt);
+  });
+
   it("writes the telegram block into an existing config, preserving other keys", () => {
     const configPath = path.join(tmpdir, "config.json");
     fs.writeFileSync(configPath, JSON.stringify({
