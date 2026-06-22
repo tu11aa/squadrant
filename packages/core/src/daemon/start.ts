@@ -39,7 +39,18 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
 
   const probes = createProbes(ctx);
   const { defaultNotify, deliveryTick: initialDeliveryTick } = createDelivery(ctx, daemonCmux);
-  const notify = opts.notify ?? defaultNotify;
+  // Compose the Telegram outbound push onto the notify fan-out: a captain
+  // notification also pushes to the project's Telegram topic. When no bridge is
+  // configured, notify is the base function unchanged (zero behavior change).
+  // pushLifecycle is best-effort and never throws (the bridge swallows errors),
+  // so it can't delay or break captain delivery.
+  const baseNotify = opts.notify ?? defaultNotify;
+  const notify: DaemonContext["notify"] = ctx.telegramBridge
+    ? async (args) => {
+        await baseNotify(args);
+        ctx.telegramBridge!.pushLifecycle(args.project, args.event);
+      }
+    : baseNotify;
   const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
 
   const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
@@ -174,6 +185,14 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       catch (e) { log(`cmux events bridge start failed: ${(e as Error).message}`); }
     }
 
+    // Telegram inbound long-poll (opt-in). The real bridge is only constructed
+    // by the host when config.telegram is present and not under vitest, so
+    // ctx.telegramBridge here is either that real bridge or an injected fake.
+    if (ctx.telegramBridge) {
+      try { ctx.telegramBridge.start(); }
+      catch (e) { log(`telegram bridge start failed: ${(e as Error).message}`); }
+    }
+
     // #348: cmux socket auto-config on boot.
     const autoConfigSafe = !!opts.runCmuxAutoConfig || !process.env.VITEST;
     if (autoConfigSafe) {
@@ -262,6 +281,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
       try { ctx.cmuxEventsBridge.stop(); } catch { /* best-effort */ }
+      try { ctx.telegramBridge?.stop(); } catch { /* best-effort */ }
       try { ctx.codexDriver.stop?.(); } catch { /* best-effort */ }
       for (const kill of ctx.activeHeadlessKills) kill();
       return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
