@@ -291,6 +291,25 @@ Right now → <one sentence: what just happened and what it unblocks>
 - **One punchline.** The `Right now →` line is one sentence capturing the net state change.
 - **Portable.** Uses `gh` and `squadrant` CLI — works for claude, codex, opencode, and gemini crews alike.
 
+### Replying to Telegram-originated tasks
+
+When a task arrived from Telegram (captain pane received a message prefixed `[from Telegram]` / a `captain.message` inbound), push your answer back to that project's topic after acting:
+
+```bash
+squadrant telegram send <project> "<answer + brief board>"
+```
+
+**When to push:** At meaningful moments — your answer, a key decision, done/blocked. Not every line; keep it concise to avoid flooding the phone.
+
+**What to include:** One sentence of answer or status, then a condensed board (3–5 lines: what happened, what's next, any blocker). Example:
+
+```
+Shipped fix for #42 — merged to develop.
+✅ crew/fix-42 done  ▶️ next: bump version
+```
+
+**Portable:** uses the CLI only — works from any agent session (claude, codex, opencode, gemini).
+
 ## Session Shutdown (Opt-In Writes)
 
 End-of-session writes are **opt-in**, not on a schedule. Only write what is meaningful:
