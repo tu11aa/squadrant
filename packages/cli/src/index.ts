@@ -31,6 +31,7 @@ import { healCommand } from "./commands/heal.js";
 import { groupCommand } from "./commands/group.js";
 import { cmuxCommand } from "./commands/cmux.js";
 import { effortCommand } from "./commands/effort.js";
+import { telegramCommand } from "./commands/telegram.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -116,6 +117,7 @@ program.addCommand(healCommand);
 program.addCommand(groupCommand);
 program.addCommand(cmuxCommand);
 program.addCommand(effortCommand);
+program.addCommand(telegramCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

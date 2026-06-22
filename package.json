@@ -41,12 +41,13 @@
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
+    "@grammyjs/types": "3.28.0",
+    "@squadrant/agents": "workspace:*",
     "@squadrant/cli": "workspace:*",
     "@squadrant/core": "workspace:*",
-    "@squadrant/agents": "workspace:*",
     "@squadrant/shared": "workspace:*",
-    "@squadrant/workspaces": "workspace:*",
     "@squadrant/web": "workspace:*",
+    "@squadrant/workspaces": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
