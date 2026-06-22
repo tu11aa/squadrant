@@ -1,0 +1,91 @@
+import { describe, it, expect } from "vitest";
+import { createTelegramClient } from "../client.js";
+
+interface Call {
+  url: string;
+  init: RequestInit | undefined;
+}
+
+/** A fake fetch that records calls and returns a configured Bot API response. */
+function fakeFetch(body: unknown, opts: { ok?: boolean; status?: number } = {}) {
+  const calls: Call[] = [];
+  const fn = (async (url: unknown, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return {
+      ok: opts.ok ?? true,
+      status: opts.status ?? 200,
+      json: async () => body,
+    } as Response;
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+function bodyOf(call: Call): Record<string, unknown> {
+  return JSON.parse(String(call.init?.body));
+}
+
+describe("createTelegramClient.getUpdates", () => {
+  it("POSTs to /getUpdates with offset and timeout, returning the result array", async () => {
+    const updates = [{ update_id: 1 }, { update_id: 2 }];
+    const { fn, calls } = fakeFetch({ ok: true, result: updates });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const got = await client.getUpdates(5, 30);
+
+    expect(got).toEqual(updates);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/getUpdates");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(bodyOf(calls[0])).toMatchObject({ offset: 5, timeout: 30 });
+  });
+});
+
+describe("createTelegramClient.sendMessage", () => {
+  it("POSTs chat_id, message_thread_id and text when a thread is given", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: {} });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.sendMessage(-100, 7, "hello");
+
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/sendMessage");
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, message_thread_id: 7, text: "hello" });
+  });
+
+  it("omits message_thread_id when no thread is given", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: {} });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.sendMessage(-100, undefined, "hello");
+
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, text: "hello" });
+  });
+});
+
+describe("createTelegramClient.createForumTopic", () => {
+  it("POSTs chat_id and name and returns the new message_thread_id", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: { message_thread_id: 42 } });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const threadId = await client.createForumTopic(-100, "squadrant");
+
+    expect(threadId).toBe(42);
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/createForumTopic");
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, name: "squadrant" });
+  });
+});
+
+describe("error surfacing", () => {
+  it("rejects on a non-2xx HTTP response", async () => {
+    const { fn } = fakeFetch({}, { ok: false, status: 502 });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await expect(client.getUpdates(0)).rejects.toThrow();
+  });
+
+  it("rejects when the Bot API returns ok:false", async () => {
+    const { fn } = fakeFetch({ ok: false, description: "Unauthorized" });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await expect(client.sendMessage(-100, undefined, "x")).rejects.toThrow("Unauthorized");
+  });
+});
