@@ -223,10 +223,40 @@ else
   note "no $CLAUDE_PROJECTS dir — skipping session/memory preservation"
 fi
 
+step "4.6 Rewrite stale 'cockpit crew _hook' commands in Claude Code settings files"
+# The hook-generation source already emits `squadrant crew _hook`, but settings
+# files written on disk BEFORE the rebrand still invoke the removed `cockpit`
+# binary, so every Stop/PostToolUse hook in the captain (and any pre-rebrand crew)
+# fails with "cockpit: command not found". Rewrite the command token in place.
+# Scoped to the leading "cockpit crew _hook" so permission patterns like
+# Bash(cockpit:*) are left untouched. Idempotent (a second run matches nothing).
+HOOK_SETTINGS=(
+  "$NEW_REPO/.claude/settings.json"
+  "$NEW_REPO/.claude/settings.local.json"
+  "$HOME/.claude/settings.json"
+  "$HOME/.claude/settings.local.json"
+)
+hooks_fixed=0
+for sf in "${HOOK_SETTINGS[@]}"; do
+  [ -f "$sf" ] || continue
+  if grep -q 'cockpit crew _hook' "$sf" 2>/dev/null; then
+    run "sed -i '' 's/cockpit crew _hook/squadrant crew _hook/g' '$sf'"
+    hooks_fixed=$((hooks_fixed + 1))
+  else
+    note "ok (no stale hook): $sf"
+  fi
+done
+note "$([ "$DRY_RUN" -eq 1 ] && echo 'would rewrite' || echo 'rewrote') hook command in $hooks_fixed settings file(s)"
+
 step "5. Remove old launchd plist (the rebuilt daemon installs com.squadrant.daemon.plist on first run)"
 [ -f "$OLD_PLIST" ] && run "rm -f '$OLD_PLIST'" || note "old plist absent"
 
 step "6. Build the rebranded binary + relink the global 'squadrant'/'squad' bin"
+# Reinstall FIRST: the repo-folder rename (Step 0) leaves pnpm's workspace symlinks
+# pointing at the old @cockpit/* package dirs, so a build before `install` aborts
+# with hundreds of unresolved-import errors. `install` regenerates the links for
+# the @squadrant/* packages at their new path; only then can the build resolve them.
+run "pnpm -C '$REPO_ROOT' install"
 run "pnpm -C '$REPO_ROOT' build"
 run "pnpm -C '$REPO_ROOT' link --global"
 note "removes the old global 'cockpit' bin; 'squadrant' and 'squad' now resolve to $REPO_ROOT/dist/index.js"

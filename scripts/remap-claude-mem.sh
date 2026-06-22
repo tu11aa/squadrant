@@ -191,8 +191,11 @@ note "observations total: $OBS_TOTAL_BEFORE -> $OBS_TOTAL_AFTER"
 note "observations resolvable under '$NEW_SLUG': $RESOLVE_BEFORE -> $RESOLVE_AFTER"
 note "sdk_sessions still on old slug: $OLD_LEFT (expect 0)"
 
-if [ "$OBS_TOTAL_AFTER" -ne "$OBS_TOTAL_BEFORE" ]; then
-  echo "FATAL: observation count changed ($OBS_TOTAL_BEFORE -> $OBS_TOTAL_AFTER) — DATA LOSS. Restore: cp '$BACKUP' '$DB'" >&2
+# Data loss = the total DECREASED. A live observer can legitimately INSERT new
+# rows mid-remap (we never DELETE), so AFTER > BEFORE is expected and fine; only
+# AFTER < BEFORE means rows were lost. (Strict `-ne` here false-alarmed on that.)
+if [ "$OBS_TOTAL_AFTER" -lt "$OBS_TOTAL_BEFORE" ]; then
+  echo "FATAL: observation count dropped ($OBS_TOTAL_BEFORE -> $OBS_TOTAL_AFTER) — DATA LOSS. Restore: cp '$BACKUP' '$DB'" >&2
   exit 1
 fi
 if [ "$OLD_LEFT" -ne 0 ]; then
