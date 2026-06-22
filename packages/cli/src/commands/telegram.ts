@@ -1,5 +1,5 @@
 import { join, dirname } from "node:path";
-import { createInterface } from "node:readline";
+import { emitKeypressEvents } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
@@ -47,24 +47,38 @@ export async function runTelegramLink(opts: {
   return { topicId, created: true };
 }
 
-async function questionMasked(prompt: string): Promise<string> {
+// Reads a secret from stdin, printing "*" per character. The caller must print
+// the visible label before calling this — raw mode is active only during input.
+async function questionMasked(): Promise<string> {
   return new Promise<string>((resolve) => {
-    process.stdout.write(prompt);
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    const origWrite = (rl as any)._writeToOutput.bind(rl);
-    (rl as any)._writeToOutput = (s: string) => {
-      if (s.length === 1 && s.charCodeAt(0) < 32) {
-        origWrite(s);
-      } else {
-        origWrite("*".repeat(Math.max(s.length, 0)));
+    emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+
+    let answer = "";
+
+    const onKeypress = (_str: string | undefined, key: { name: string; ctrl: boolean; meta: boolean; sequence: string }) => {
+      if (key.ctrl && key.name === "c") {
+        process.stdin.setRawMode(false);
+        process.stdout.write("\n");
+        process.exit(130);
+      } else if (key.name === "return" || key.name === "enter") {
+        process.stdin.removeListener("keypress", onKeypress as any);
+        process.stdin.setRawMode(false);
+        process.stdout.write("\n");
+        resolve(answer);
+      } else if (key.name === "backspace") {
+        if (answer.length > 0) {
+          answer = answer.slice(0, -1);
+          process.stdout.write("\b \b");
+        }
+      } else if (!key.ctrl && !key.meta && key.sequence) {
+        answer += key.sequence;
+        process.stdout.write("*");
       }
     };
-    rl.question("", (answer) => {
-      (rl as any)._writeToOutput = origWrite;
-      rl.close();
-      process.stdout.write("\n");
-      resolve(answer);
-    });
+
+    process.stdin.on("keypress", onKeypress as any);
   });
 }
 
@@ -114,14 +128,25 @@ telegramCommand
       process.exit(1);
     }
 
-    // Step 1: masked token prompt
-    const token = await questionMasked("Enter bot token from @BotFather (input hidden): ");
+    // Banner
+    console.log();
+    console.log(chalk.bold("Telegram setup") + " — connect squadrant to a Telegram bot for notifications + remote control");
+    console.log();
+    console.log("Before you start you need:");
+    console.log("  1. A bot token from @BotFather (send /newbot)");
+    console.log("  2. A forum supergroup with the bot added as an admin (Topics enabled)");
+    console.log("  3. Bot privacy mode set to OFF (@BotFather → /setprivacy → Disable)");
+    console.log();
+
+    // Step 1/3 — Bot token
+    console.log(chalk.bold("Step 1/3 — Bot token"));
+    console.log("Paste your bot token then press Enter (input is hidden):");
+    const token = await questionMasked();
     if (!token) {
       console.error(chalk.red("token required"));
       process.exit(1);
     }
 
-    // Step 2: validate via getMe()
     const client = createTelegramClient({ token });
     let botUser: { id: number; username: string };
     try {
@@ -130,28 +155,28 @@ telegramCommand
       console.error(chalk.red(`token rejected: ${(e as Error).message}`));
       process.exit(1);
     }
-    console.log(chalk.green(`Connected: @${botUser.username}`));
+    console.log(chalk.green(`Connected as @${botUser.username}`));
+    console.log();
 
-    // Step 3: auto-detect supergroup id
-    console.log(chalk.cyan("Add the bot to your forum supergroup as admin (with Manage Topics)"));
-    console.log(chalk.cyan("then send any message in that group. Waiting up to 60s…"));
+    // Step 2/3 — Find group
+    console.log(chalk.bold("Step 2/3 — Find your group"));
+    console.log("Add the bot to your forum supergroup, then send any message in it.");
+    console.log(chalk.dim("Waiting for a message (up to 60s)…"));
     let supergroupId: number;
     try {
       supergroupId = await detectGroupId(client, { timeoutMs: 60_000 });
     } catch {
-      console.error(chalk.red("timed out waiting for a supergroup message — make sure the bot is an admin"));
+      console.error(chalk.red("Timed out — no supergroup message received within 60s."));
+      console.error(chalk.yellow("Check: bot is an admin in the group · privacy mode is OFF · Topics enabled"));
       process.exit(1);
     }
-    console.log(chalk.green(`Detected supergroup id: ${supergroupId}`));
+    console.log(chalk.green(`Found group: ${supergroupId}`));
+    console.log();
 
-    // Step 4: write config
+    // Step 3/3 — Save
+    console.log(chalk.bold("Step 3/3 — Save"));
     writeTelegramConfig(DEFAULT_CONFIG_PATH, { token, supergroupId });
-    console.log(chalk.green(`Config written to ${DEFAULT_CONFIG_PATH}`));
-
-    // Step 5: masked display + next step
+    console.log(chalk.green(`Wrote telegram config — token: ${maskToken(token)}  group: ${supergroupId}`));
     console.log();
-    console.log(`  token:      ${chalk.green(maskToken(token))}`);
-    console.log(`  supergroup: ${chalk.green(String(supergroupId))}`);
-    console.log();
-    console.log(chalk.cyan("Next: run `squadrant telegram link <project>` for each project"));
+    console.log(`Next: ${chalk.cyan("squadrant telegram link <project>")}`);
   });
