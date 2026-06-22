@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
 import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink, questionMasked } from "../telegram.js";
+import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, questionMasked } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -23,9 +23,9 @@ function fakeClient(onCreate?: () => void) {
 }
 
 describe("telegramCommand registration", () => {
-  it("exposes the link, setup, and status subcommands", () => {
+  it("exposes the link, send, setup, and status subcommands", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["link", "setup", "status"]);
+    expect(names).toEqual(["link", "send", "setup", "status"]);
   });
 });
 
@@ -73,6 +73,29 @@ describe("runTelegramLink", () => {
     expect(second.created).toBe(false);
     expect(second.topicId).toBe(first.topicId);
     expect(creates).toBe(1);
+  });
+});
+
+describe("runTelegramSend", () => {
+  it("sends to the correct supergroup and topic, and returns their ids", async () => {
+    const sent: Array<{ chatId: number; threadId: number | undefined; text: string }> = [];
+    const client = {
+      ...fakeClient(),
+      sendMessage: async (chatId: number, threadId: number | undefined, text: string) => {
+        sent.push({ chatId, threadId, text });
+      },
+    };
+    fs.writeFileSync(path.join(root, "telegram-state.json"), JSON.stringify({ offset: 0, topics: { "demo::project": 42 } }));
+    const r = await runTelegramSend({ project: "demo", message: "hello", cfg, client, stateRoot: root });
+    expect(r.chatId).toBe(cfg.supergroupId);
+    expect(r.topicId).toBe(42);
+    expect(sent).toEqual([{ chatId: cfg.supergroupId, threadId: 42, text: "hello" }]);
+  });
+
+  it("throws a descriptive error when the project is not linked", async () => {
+    const client = fakeClient();
+    await expect(runTelegramSend({ project: "nope", message: "hi", cfg, client, stateRoot: root }))
+      .rejects.toThrow('project "nope" is not linked — run: squadrant telegram link nope');
   });
 });
 

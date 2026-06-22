@@ -33,6 +33,22 @@ export function runTelegramStatus(opts: {
   return { tokenSet, supergroupId: tg?.supergroupId ?? null, links };
 }
 
+/** Send a message to a project's linked Telegram topic. */
+export async function runTelegramSend(opts: {
+  project: string;
+  message: string;
+  cfg: TelegramConfig;
+  client: TelegramClient;
+  stateRoot: string;
+}): Promise<{ chatId: number; topicId: number }> {
+  const topicId = loadState(opts.stateRoot).topics[topicKey(opts.project)];
+  if (topicId === undefined) {
+    throw new Error(`project "${opts.project}" is not linked — run: squadrant telegram link ${opts.project}`);
+  }
+  await opts.client.sendMessage(opts.cfg.supergroupId, topicId, opts.message);
+  return { chatId: opts.cfg.supergroupId, topicId };
+}
+
 /** Bind a project to a forum topic, creating it on first link. Idempotent. */
 export async function runTelegramLink(opts: {
   project: string;
@@ -182,4 +198,49 @@ telegramCommand
     console.log(chalk.green(`Wrote telegram config — token: ${maskToken(token)}  group: ${supergroupId}`));
     console.log();
     console.log(`Next: ${chalk.cyan("squadrant telegram link <project>")}`);
+  });
+
+telegramCommand
+  .command("send")
+  .argument("<project>", "project whose topic receives the message")
+  .argument("[message...]", "message text (omit to read from stdin)")
+  .description("Send a message to a project's linked Telegram topic")
+  .action(async (project: string, messageParts: string[]) => {
+    const cfg = loadConfig().telegram;
+    if (!cfg) {
+      console.error(chalk.red("telegram config absent — add a `telegram` block to ~/.config/squadrant/config.json"));
+      process.exit(1);
+    }
+    const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) {
+      console.error(chalk.red("no botToken in config and TELEGRAM_BOT_TOKEN is unset"));
+      process.exit(1);
+    }
+
+    let message: string;
+    if (messageParts.length > 0) {
+      message = messageParts.join(" ");
+    } else if (!process.stdin.isTTY) {
+      const { createInterface } = await import("node:readline");
+      const lines: string[] = [];
+      const rl = createInterface({ input: process.stdin });
+      for await (const line of rl) lines.push(line);
+      message = lines.join("\n").trimEnd();
+      if (!message) {
+        console.error(chalk.red("no message provided (stdin was empty)"));
+        process.exit(1);
+      }
+    } else {
+      console.error(chalk.red("message required — pass as argument or pipe via stdin"));
+      process.exit(1);
+    }
+
+    const client = createTelegramClient({ token });
+    try {
+      const { chatId, topicId } = await runTelegramSend({ project, message, cfg, client, stateRoot: defaultStateRoot() });
+      console.log(chalk.green(`sent to group ${chatId} topic ${topicId}`));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
   });
