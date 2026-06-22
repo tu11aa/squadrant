@@ -4,7 +4,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig } from "@squadrant/shared";
-import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupId, writeTelegramConfig, maskToken } from "@squadrant/core";
+import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
 
 /** Daemon state root (mirrors buildContext): ~/.config/squadrant/state. */
@@ -101,6 +101,20 @@ export async function questionMasked(): Promise<string> {
   });
 }
 
+// Visible yes/no prompt (default No). Used for opt-ins where masking is wrong.
+// Pauses stdin afterward so the process can exit cleanly (prior wizard-hang fix).
+async function questionYesNo(prompt: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<boolean>((resolve) => {
+    rl.question(prompt, (ans) => {
+      rl.close();
+      process.stdin.pause();
+      resolve(/^y(es)?$/i.test(ans.trim()));
+    });
+  });
+}
+
 export const telegramCommand = new Command("telegram")
   .description("Two-way Telegram integration: push crew events to a topic and reply into the captain pane");
 
@@ -182,8 +196,9 @@ telegramCommand
     console.log("Add the bot to your forum supergroup, then send any message in it.");
     console.log(chalk.dim("Waiting for a message (up to 60s)…"));
     let supergroupId: number;
+    let userId: number | undefined;
     try {
-      supergroupId = await detectGroupId(client, { timeoutMs: 60_000 });
+      ({ supergroupId, userId } = await detectGroupAndUser(client, { timeoutMs: 60_000 }));
     } catch {
       console.error(chalk.red("Timed out — no supergroup message received within 60s."));
       console.error(chalk.yellow("Check: bot is an admin in the group · privacy mode is OFF · Topics enabled"));
@@ -192,10 +207,32 @@ telegramCommand
     console.log(chalk.green(`Found group: ${supergroupId}`));
     console.log();
 
-    // Step 3/3 — Save
-    console.log(chalk.bold("Step 3/3 — Save"));
-    writeTelegramConfig(DEFAULT_CONFIG_PATH, { token, supergroupId });
+    // Step 3/3 — Remote control (opt-in, #321) + Save
+    console.log(chalk.bold("Step 3/3 — Remote control + Save"));
+    console.log(chalk.dim("Remote control enables auto-launching captains and the General command channel"));
+    console.log(chalk.dim("from your phone — gated to your Telegram user-id only (fail-closed)."));
+    let users: number[] | undefined;
+    let remoteControl: boolean | undefined;
+    if (userId === undefined) {
+      console.log(chalk.yellow("Could not read your user-id from that message — skipping remote control."));
+      console.log(chalk.yellow("Re-run setup once it's available, or edit telegram.users in config manually."));
+    } else {
+      const enable = await questionYesNo(
+        `Enable remote control for your user-id ${userId}? [y/N] `,
+      );
+      if (enable) {
+        users = [userId];
+        remoteControl = true;
+      }
+    }
+
+    writeTelegramConfig(DEFAULT_CONFIG_PATH, { token, supergroupId, users, remoteControl });
     console.log(chalk.green(`Wrote telegram config — token: ${maskToken(token)}  group: ${supergroupId}`));
+    if (remoteControl) {
+      console.log(chalk.green(`Remote control: ON (allowlisted user-id ${users?.[0]})`));
+    } else {
+      console.log(chalk.dim("Remote control: off (default). Re-run setup to enable later."));
+    }
     console.log();
     console.log(`Next: ${chalk.cyan("squadrant telegram link <project>")}`);
   });

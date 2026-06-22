@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { TelegramClient } from "../client.js";
-import { detectGroupId, writeTelegramConfig } from "../setup.js";
+import { detectGroupId, detectGroupAndUser, writeTelegramConfig } from "../setup.js";
 
 let tmpdir: string;
 beforeEach(() => { tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-setup-")); });
@@ -61,7 +61,48 @@ describe("detectGroupId", () => {
   });
 });
 
+describe("detectGroupAndUser", () => {
+  it("returns the supergroup id and the sender's user id from one message", async () => {
+    const client = {
+      getUpdates: async () => [
+        { update_id: 1, message: { chat: { id: -100500, type: "supergroup", title: "G" }, from: { id: 777 }, message_id: 10, date: 0 } },
+      ],
+      sendMessage: async () => {},
+      createForumTopic: async () => 0,
+      getMe: async () => ({ id: 0, username: "" }),
+    } as unknown as TelegramClient;
+
+    const r = await detectGroupAndUser(client, { timeoutMs: 5000, sleep: async () => {} });
+
+    expect(r).toEqual({ supergroupId: -100500, userId: 777 });
+  });
+});
+
 describe("writeTelegramConfig", () => {
+  it("writes users + remoteControl when provided", () => {
+    const configPath = path.join(tmpdir, "config.json");
+    writeTelegramConfig(configPath, { token: "T", supergroupId: -100, users: [777], remoteControl: true });
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(raw.telegram).toEqual({ botToken: "T", supergroupId: -100, chats: [-100], users: [777], remoteControl: true });
+  });
+
+  it("preserves existing users/remoteControl when re-run without them", () => {
+    const configPath = path.join(tmpdir, "config.json");
+    fs.writeFileSync(configPath, JSON.stringify({
+      commandName: "cmd", hubVault: "/tmp/hub", projects: {},
+      defaults: { maxCrew: 5, worktreeDir: ".wt", teammateMode: "in-process", permissions: { command: "auto", captain: "auto", crew: "auto" } },
+      metrics: { enabled: true, path: "/tmp/metrics" },
+      telegram: { botToken: "OLD", supergroupId: -1, chats: [-1], users: [5], remoteControl: true },
+    }));
+
+    writeTelegramConfig(configPath, { token: "NEW", supergroupId: -100 });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(raw.telegram.botToken).toBe("NEW");
+    expect(raw.telegram.users).toEqual([5]);
+    expect(raw.telegram.remoteControl).toBe(true);
+  });
+
   it("creates a fresh config when the file does not exist", () => {
     const configPath = path.join(tmpdir, "nonexistent.json");
 
