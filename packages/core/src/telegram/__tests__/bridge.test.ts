@@ -45,6 +45,7 @@ describe("pushLifecycle (outbound)", () => {
       getUpdates: async () => [],
       createForumTopic: async () => 1,
       sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -64,6 +65,7 @@ describe("pushLifecycle (outbound)", () => {
       getUpdates: async () => [],
       createForumTopic: async (c, n) => { createCalls.push([c, n]); return 77; },
       sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -85,6 +87,7 @@ describe("pushLifecycle (outbound)", () => {
       getUpdates: async () => [],
       createForumTopic: async () => 1,
       sendMessage: async () => { throw new Error("network down"); },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -114,6 +117,7 @@ describe("inbound poll", () => {
         if (n === 1) return [{ update_id: 10, message: { chat: { id: -100111 }, message_thread_id: 100, text: "hello" } } as never];
         return [];
       },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -142,6 +146,7 @@ describe("inbound poll", () => {
         if (n === 1) return [{ update_id: 10, message: { chat: { id: -999999 }, message_thread_id: 100, text: "hi" } } as never];
         return [];
       },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -170,6 +175,7 @@ describe("inbound poll", () => {
         if (n === 2) second.resolve();
         return [];
       },
+      getMe: async () => ({ id: 0, username: "" }),
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
