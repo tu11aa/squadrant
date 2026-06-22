@@ -174,6 +174,25 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
 
+### Telegram (Two-Way, opt-in)
+
+Drive squadrant from your phone ([#65](https://github.com/tu11aa/squadrant/issues/65)). When a `telegram` block is present in config, a daemon-internal bridge:
+
+- **Outbound** — pushes each project's crew lifecycle events (CREW DONE / BLOCKED / IDLE) and other captain notifications to that project's Telegram forum topic. Best-effort: a Telegram failure never delays or breaks delivery to the captain pane.
+- **Inbound (captain-only)** — a message you send in a project's topic is delivered into that project's **captain pane** as a labeled `📩 [from Telegram]` message; the captain decides what to do with it.
+
+Absent the config block, the bridge is never constructed — zero behavior change. No runtime SDK is added (plain `fetch`; `@grammyjs/types` is a dev-only type dependency).
+
+**Setup:**
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+2. Create a Telegram **forum supergroup** (a group with Topics enabled) and add the bot as an admin (it needs *Manage Topics*). Note the supergroup's chat id (a negative number like `-1001234567890`).
+3. Put the token + ids in config (or export `TELEGRAM_BOT_TOKEN`) — see the `telegram` block under [Config](#config).
+4. Bind a project to a topic: `squadrant telegram link <project>` (creates the forum topic and records the binding). Check wiring with `squadrant telegram status`.
+
+> **⚠️ Security gap (v1):** anyone who can post in the linked supergroup can steer the captain — **chat membership implies captain control**. Inbound is only filtered by a `chat_id` allowlist; a per-user-id allowlist that closes this is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always treated as data (a captain message), never executed as a shell command.
+
+> **Interim note (link ↔ daemon 409):** the Telegram Bot API allows only one `getUpdates` consumer at a time. If a future link flow needs `getUpdates` and the daemon's inbound poll is running, you may hit a 409 conflict — run `squadrant telegram link` with the daemon stopped (#321 MAJOR-4). v1's `link` uses only `createForumTopic`, so this does not apply today, but keep it in mind for hardening.
+
 ### Projection (Cross-Agent Config Sync)
 
 Squadrant rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `squadrant projection emit`. User-level projection pushes squadrant's skills to `~/.cursor/rules/squadrant-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/squadrant.mdc`, `{project}/GEMINI.md` — zero squadrant-global content leaks into the project repo. Shared files use `<!-- squadrant:start --> ... <!-- squadrant:end -->` markers; dedicated files overwrite. See `docs/specs/archive/2026-04-24-plugin-system-projection-design.md`.
@@ -213,6 +232,12 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
   "runtime": "cmux",
   "workspace": "obsidian",
   "notifier": "cmux",
+  "telegram": {
+    "botToken": "123456:ABC...",
+    "supergroupId": -1001234567890,
+    "chats": [-1001234567890],
+    "pollMs": 1000
+  },
   "projects": {
     "brove": {
       "path": "~/projects/brove",
@@ -241,6 +266,8 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
   }
 }
 ```
+
+The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
 
 ## Supported Agents
 

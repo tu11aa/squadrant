@@ -21,6 +21,9 @@ importers:
         specifier: ^3.3.1
         version: 3.3.1
     devDependencies:
+      '@grammyjs/types':
+        specifier: 3.28.0
+        version: 3.28.0
       '@squadrant/agents':
         specifier: workspace:*
         version: link:packages/agents
@@ -274,6 +277,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@grammyjs/types@3.28.0':
+    resolution: {integrity: sha512-4JvXCdxRZHCje0M4gHzLwtB4bLno3WD28xd8CNfk4POWIu73BFnSvGeW6OQ5gPem4eYTEwkD9yDaXssixl6tMQ==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -953,6 +959,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.27.7':
     optional: true
+
+  '@grammyjs/types@3.28.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

@@ -6,13 +6,18 @@ import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 export interface MailboxEntry {
   seq: number;
   ts: string;
-  taskId: string;
+  /** Absent on external (captain.message) entries — they have no task. */
+  taskId?: string;
   /** Optional human-readable name carried from TaskRecord. Absent on legacy
    *  records — readers must fall back to shortId(taskId). */
   name?: string;
-  kind: ControlEvent["type"];
-  provider: TaskRecord["provider"];
-  payload: Record<string, unknown>;
+  /** "captain.message" is an external (non-ControlEvent) message injected for the
+   *  captain — e.g. an inbound Telegram reply. */
+  kind: ControlEvent["type"] | "captain.message";
+  /** Absent on external entries — no originating agent provider. */
+  provider?: TaskRecord["provider"];
+  /** Absent/free-form on external entries. */
+  payload?: Record<string, unknown>;
   /** Daemon-rendered captain-facing message (unified-formatter, #214/#210).
    *  The daemon's formatMessage is the single source of truth; the relay
    *  delivers this verbatim and skips entries where it is null/empty.
@@ -105,26 +110,56 @@ function withProjectLock<T>(project: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export async function appendToMailbox(opts: AppendOpts): Promise<number> {
-  return withProjectLock(opts.project, async () => {
-    const dir = inboxDir(opts.stateRoot);
+/** Assign a monotonic seq under the per-project lock and append the built entry. */
+function appendEntry(
+  stateRoot: string,
+  project: string,
+  build: (seq: number) => MailboxEntry,
+): Promise<number> {
+  return withProjectLock(project, async () => {
+    const dir = inboxDir(stateRoot);
     await fs.mkdir(dir, { recursive: true });
-    const file = logPath(opts.stateRoot, opts.project);
-    const lastSeq = await readMaxSeq(opts.stateRoot, opts.project);
+    const file = logPath(stateRoot, project);
+    const lastSeq = await readMaxSeq(stateRoot, project);
     const seq = lastSeq + 1;
-    const entry: MailboxEntry = {
-      seq,
-      ts: new Date().toISOString(),
-      taskId: opts.taskRecord.id,
-      ...(opts.taskRecord.name !== undefined ? { name: opts.taskRecord.name } : {}),
-      kind: opts.event.type,
-      provider: opts.taskRecord.provider,
-      payload: extractPayload(opts.event),
-      message: opts.message ?? null,
-    };
+    const entry = build(seq);
     await fs.appendFile(file, JSON.stringify(entry) + "\n", { encoding: "utf-8" });
     return seq;
   });
+}
+
+export async function appendToMailbox(opts: AppendOpts): Promise<number> {
+  return appendEntry(opts.stateRoot, opts.project, (seq) => ({
+    seq,
+    ts: new Date().toISOString(),
+    taskId: opts.taskRecord.id,
+    ...(opts.taskRecord.name !== undefined ? { name: opts.taskRecord.name } : {}),
+    kind: opts.event.type,
+    provider: opts.taskRecord.provider,
+    payload: extractPayload(opts.event),
+    message: opts.message ?? null,
+  }));
+}
+
+/**
+ * Append an external message destined for the captain pane (#65 Telegram inbound).
+ * `text` is the already-rendered captain-facing message; it is delivered verbatim
+ * by the #332 delivery loop (deliverable() returns it, defer-protected). The entry
+ * carries no taskId/provider — it is not tied to a crew task.
+ */
+export async function appendCaptainMessage(opts: {
+  stateRoot: string;
+  project: string;
+  text: string;
+  source: "telegram";
+}): Promise<void> {
+  await appendEntry(opts.stateRoot, opts.project, (seq) => ({
+    seq,
+    ts: new Date().toISOString(),
+    kind: "captain.message",
+    payload: { source: opts.source },
+    message: opts.text,
+  }));
 }
 
 function cursorPath(stateRoot: string, project: string, subscriber: string): string {

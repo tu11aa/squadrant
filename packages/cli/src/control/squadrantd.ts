@@ -9,6 +9,9 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge } from "@squadrant/core";
+import type { TelegramBridge } from "@squadrant/core";
+import type { TelegramConfig } from "@squadrant/shared";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
@@ -29,6 +32,22 @@ function readPkgVersion(): string {
 const PKG_VERSION = readPkgVersion();
 
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
+
+/** Construct the real Telegram bridge over a fetch-based client. Token comes from
+ *  config or the TELEGRAM_BOT_TOKEN env var; with neither, the bridge is disabled. */
+function buildTelegramBridge(
+  cfg: TelegramConfig,
+  stateRoot: string,
+  log: (m: string) => void,
+): TelegramBridge | undefined {
+  const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    log("telegram: config present but no botToken / TELEGRAM_BOT_TOKEN set — bridge disabled");
+    return undefined;
+  }
+  const client = createTelegramClient({ token });
+  return createTelegramBridge({ cfg, stateRoot, client, appendCaptainMessage, log });
+}
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
   const ctx = buildContext(opts);
@@ -95,6 +114,14 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
+
+  // ── Telegram bridge (opt-in #65) ──────────────────────────────────────────
+  // Built only when config.telegram is present. Skipped under vitest because the
+  // bridge's pushLifecycle is composed onto notify and would hit the network;
+  // tests inject opts.telegramBridge instead.
+  const tgCfg = loadConfig().telegram;
+  ctx.telegramBridge = opts.telegramBridge
+    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log) : undefined);
 
   // ── daemonCmux resolution ─────────────────────────────────────────────────
   ctx.daemonCmux = opts.daemonCmux
