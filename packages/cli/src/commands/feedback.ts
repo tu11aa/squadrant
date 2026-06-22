@@ -2,11 +2,24 @@ import { Command } from "commander";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, readStamp } from "@squadrant/shared";
 
 const REPO_URL = "https://github.com/tu11aa/squadrant";
+
+// Real running version. Path math is dist-relative and invariant to source
+// moves: the bundle lives at dist/index.js, so "../package.json" is the root
+// package.json (mirrors readPkgVersion in config.ts and index.ts).
+function readPkgVersion(): string {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    return (JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version as string) ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 interface Metrics {
   projects?: number;
@@ -24,10 +37,9 @@ function readMetrics(metricsPath: string): Metrics {
   }
 }
 
-function buildIssueUrl(metrics: Metrics): string {
+export function buildIssueUrl(metrics: Metrics, squadrantVersion: string): string {
   const nodeVersion = process.versions.node;
   const platform = process.platform;
-  const squadrantVersion = "0.1.0";
 
   const body = [
     "## Feedback / Bug Report",
@@ -67,7 +79,8 @@ export const feedbackCommand = new Command("feedback")
     const metricsPath = config.metrics?.path || path.join(os.homedir(), ".config", "squadrant", "metrics.json");
     const metrics = readMetrics(metricsPath);
 
-    const issueUrl = buildIssueUrl(metrics);
+    const version = readStamp(config) ?? readPkgVersion();
+    const issueUrl = buildIssueUrl(metrics, version);
 
     console.log(chalk.bold("\nOpening feedback issue in browser...\n"));
     console.log(chalk.dim(`  URL: ${issueUrl.substring(0, 80)}...\n`));

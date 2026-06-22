@@ -46,6 +46,7 @@ export function buildCompletionProtocol(taskId: string, project: string): string
     `  squadrant crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
     "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
     `  squadrant crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
+    "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew.",
   ].join("\n");
 }
 

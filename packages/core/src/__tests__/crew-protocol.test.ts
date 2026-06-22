@@ -85,8 +85,15 @@ describe("buildCompletionProtocol (#278)", () => {
       "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:\n" +
       "  squadrant crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
       "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:\n" +
-      "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\""
+      "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\"\n" +
+      "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew."
     );
+  });
+
+  it("includes the crew route-up line for squadrant defects", () => {
+    const result = buildCompletionProtocol("task-abc123", "my-project");
+    expect(result).toContain("a defect in squadrant itself");
+    expect(result).toContain("Don't file issues from the crew");
   });
 });
 

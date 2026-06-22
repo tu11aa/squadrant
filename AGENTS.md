@@ -77,6 +77,31 @@ Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL
 2. **Simplicity first** — no speculative abstractions, no impossible-case error handling
 3. **Surgical changes** — every changed line traces to the request; no drive-by refactors
 4. **Goal-driven execution** — define verifiable success criteria before implementing
+
+## Reporting squadrant bugs
+
+**Captain** (interactive — can search, decide, and file): If you or a crew hit an error or behavior that looks like a defect in *squadrant itself* — a `squadrant`/`squadrantd` command throwing a stack trace through `dist/`/`packages/`, a daemon/socket crash (`ECONNREFUSED`/`EADDRINUSE`), an `ENOENT` or wrong path in a path squadrant computed, a state-machine invariant throw, or a lifecycle signal that should have fired and didn't — and it is **not** one of the noise cases below, then search `tu11aa/squadrant`:
+
+```
+gh issue search --repo tu11aa/squadrant --state all "<short signature>"
+```
+
+- **Already fixed** in a release newer than the running version? → tell the user to update (`npm i -g squadrant@latest`); don't file.
+- **Open duplicate?** → don't file; optionally mention "+1, already tracked as #NNN."
+- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`).
+- If the fix looks small, offer to draft a **PR** instead of / in addition to the issue (see `CONTRIBUTING.md`).
+
+**Never file** (noise — the failures you hit most are not squadrant defects):
+- transient model-infra: `API Error: 529`, `Overloaded`, `429`, `retrying 7/10`, `retries exhausted`
+- network: DNS/timeout/TLS to the model API
+- user/config error: bad project name, a token the user must set, not-a-git-repo
+- expected failure: a red TDD test, a lint/type error in the crew's *target* repo
+- known flakiness: the relay-proxy tests (baseline = 3 fails)
+
+When any signal is ambiguous, **don't file** — silence beats spam. Cap: at most one new issue per session by judgment; recurring known bugs get a mention, not a re-file.
+
+**Crew** (headless — can't prompt the user, so it routes up): If a task failed because of a defect in *squadrant itself* (not infra/config/an expected failure), say so in your `signal blocked`/`done` message so the captain can check the repo and file it. **Don't file from the crew.**
+
 # Memory Context
 
 # [Squadrant] recent context, 2026-06-01 10:23pm GMT+7
