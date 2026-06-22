@@ -183,11 +183,14 @@ Drive squadrant from your phone ([#65](https://github.com/tu11aa/squadrant/issue
 
 Absent the config block, the bridge is never constructed — zero behavior change. No runtime SDK is added (plain `fetch`; `@grammyjs/types` is a dev-only type dependency).
 
-**Setup:**
+**Setup (recommended):**
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Create a Telegram **forum supergroup** (a group with Topics enabled) and add the bot as an admin (it needs *Manage Topics*). Note the supergroup's chat id (a negative number like `-1001234567890`).
-3. Put the token + ids in config (or export `TELEGRAM_BOT_TOKEN`) — see the `telegram` block under [Config](#config).
-4. Bind a project to a topic: `squadrant telegram link <project>` (creates the forum topic and records the binding). Check wiring with `squadrant telegram status`.
+2. Run `squadrant telegram setup` — it prompts for the bot token (input hidden), validates it via the Bot API, and auto-detects your supergroup id.
+3. Bind a project to a topic: `squadrant telegram link <project>` (creates the forum topic and records the binding).
+4. Check wiring with `squadrant telegram status`.
+
+**Setup (manual):**
+Put the token + ids in config (or export `TELEGRAM_BOT_TOKEN`) — see the `telegram` block under [Config](#config). Then run `squadrant telegram link <project>`.
 
 > **⚠️ Security gap (v1):** anyone who can post in the linked supergroup can steer the captain — **chat membership implies captain control**. Inbound is only filtered by a `chat_id` allowlist; a per-user-id allowlist that closes this is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always treated as data (a captain message), never executed as a shell command.
 
