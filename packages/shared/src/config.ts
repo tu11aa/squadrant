@@ -39,6 +39,15 @@ export interface CrewRoutingConfig {
   rules: CrewRoutingRule[];
 }
 
+export interface TelegramConfig {
+  botToken?: string;       // falls back to env TELEGRAM_BOT_TOKEN at read time
+  supergroupId: number;    // forum supergroup hosting per-project topics
+  chats: number[];         // chat_id allowlist (inbound honored only from these)
+  users?: number[];        // user-id allowlist for CONTROL actions (#321); empty ⇒ control disabled
+  remoteControl?: boolean; // opt-in master switch for auto-launch + general commands (default false)
+  pollMs?: number;         // getUpdates long-poll cadence (default 1000)
+}
+
 export interface ModelRoutingConfig {
   command: ModelAlias;
   captain: ModelAlias;
@@ -69,6 +78,9 @@ export interface SquadrantConfig {
   runtime?: string;
   workspace?: string;
   notifier?: string;
+  /** Optional Telegram bridge config. Absent ⇒ the bridge is never constructed
+   *  (zero behavior change). See docs/superpowers/specs/2026-06-22-telegram-integration-v1-design.md. */
+  telegram?: TelegramConfig;
   projection?: {
     targets?: string[];
   };

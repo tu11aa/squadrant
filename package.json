@@ -1,7 +1,7 @@
 {
   "name": "squadrant",
   "packageManager": "pnpm@10.30.3",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "description": "Multi-project orchestration for your coding agents (Claude, Codex, opencode, Gemini)",
   "type": "module",
   "bin": {
@@ -41,12 +41,13 @@
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
+    "@grammyjs/types": "3.28.0",
+    "@squadrant/agents": "workspace:*",
     "@squadrant/cli": "workspace:*",
     "@squadrant/core": "workspace:*",
-    "@squadrant/agents": "workspace:*",
     "@squadrant/shared": "workspace:*",
-    "@squadrant/workspaces": "workspace:*",
     "@squadrant/web": "workspace:*",
+    "@squadrant/workspaces": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",

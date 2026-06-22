@@ -9,6 +9,10 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive } from "@squadrant/core";
+import type { TelegramBridge } from "@squadrant/core";
+import type { TelegramConfig } from "@squadrant/shared";
+import { createRunCommand, createIsCaptainAlive, createLaunch } from "./telegram-control.js";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
@@ -20,6 +24,11 @@ import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
+// Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
+// Dist-relative + invariant to source moves (see learning #363). Run via
+// `process.execPath <CLI_BIN> ...argv` so we don't depend on PATH (launchd's is minimal).
+const CLI_BIN = join(dirname(SELF_PATH), "index.js");
+const DAEMON_SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 function readPkgVersion(): string {
   try {
     const pkgPath = join(dirname(SELF_PATH), "..", "package.json");
@@ -29,6 +38,34 @@ function readPkgVersion(): string {
 const PKG_VERSION = readPkgVersion();
 
 export type ListSurfacesFn = (wsId: string) => Promise<PaneRef[]>;
+
+/** Construct the real Telegram bridge over a fetch-based client. Token comes from
+ *  config or the TELEGRAM_BOT_TOKEN env var; with neither, the bridge is disabled. */
+function buildTelegramBridge(
+  cfg: TelegramConfig,
+  stateRoot: string,
+  log: (m: string) => void,
+): TelegramBridge | undefined {
+  const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    log("telegram: config present but no botToken / TELEGRAM_BOT_TOKEN set — bridge disabled");
+    return undefined;
+  }
+  const client = createTelegramClient({ token });
+  // Control surfaces (#402/#403). These act only when remoteControl is on AND the
+  // sender is allowlisted (gated inside the bridge); passing them is always safe.
+  const ensureCaptainAlive = createEnsureCaptainAlive({
+    isAlive: createIsCaptainAlive(DAEMON_SOCK),
+    launch: createLaunch(CLI_BIN),
+  });
+  const runCommand = createRunCommand(CLI_BIN);
+  const sendReply = (threadId: number | undefined, text: string) =>
+    client.sendMessage(cfg.supergroupId, threadId, text);
+  return createTelegramBridge({
+    cfg, stateRoot, client, appendCaptainMessage, log,
+    ensureCaptainAlive, runCommand, sendReply,
+  });
+}
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
   const ctx = buildContext(opts);
@@ -95,6 +132,14 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
+
+  // ── Telegram bridge (opt-in #65) ──────────────────────────────────────────
+  // Built only when config.telegram is present. Skipped under vitest because the
+  // bridge's pushLifecycle is composed onto notify and would hit the network;
+  // tests inject opts.telegramBridge instead.
+  const tgCfg = loadConfig().telegram;
+  ctx.telegramBridge = opts.telegramBridge
+    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log) : undefined);
 
   // ── daemonCmux resolution ─────────────────────────────────────────────────
   ctx.daemonCmux = opts.daemonCmux

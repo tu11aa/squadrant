@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig } from "@squadrant/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
 import { withStamp } from "@squadrant/shared";
 
@@ -48,6 +48,41 @@ export function runConfigCheck(opts: ConfigCheckOptions): ConfigCheckResult {
   }
 
   return { items, applied, remaining, stamped };
+}
+
+/** Read a value at a dotted path (e.g. "defaults.effort"). Throws if the path
+ *  does not resolve. Returns the raw value (stringified by the caller for display). */
+export function runConfigGet(key: string, configPath = DEFAULT_CONFIG_PATH): unknown {
+  const config = loadConfig(configPath);
+  const parts = key.split(".");
+  let node: unknown = config;
+  for (const p of parts) {
+    if (node === null || typeof node !== "object" || !(p in (node as Record<string, unknown>))) {
+      throw new Error(`config key not found: ${key}`);
+    }
+    node = (node as Record<string, unknown>)[p];
+  }
+  return node;
+}
+
+/** Write a value at a dotted path, creating intermediate objects as needed.
+ *  The value is JSON-parsed when it parses (numbers/bools/arrays); otherwise the
+ *  raw string is kept (so `low` stays "low", not a parse error). Persists to disk.
+ *  NOTE: this is a generic local CLI surface; the Telegram channel restricts which
+ *  keys may be set via WRITABLE_CONFIG_KEYS, so secrets can't be written remotely. */
+export function runConfigSet(key: string, value: string, configPath = DEFAULT_CONFIG_PATH): void {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { parsed = value; }
+  const config = loadConfig(configPath) as unknown as Record<string, unknown>;
+  const parts = key.split(".");
+  let node = config;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (node[p] === null || typeof node[p] !== "object") node[p] = {};
+    node = node[p] as Record<string, unknown>;
+  }
+  node[parts[parts.length - 1]] = parsed;
+  saveConfig(config as unknown as SquadrantConfig, configPath);
 }
 
 const SEV_COLOR: Record<string, (s: string) => string> = {
@@ -107,6 +142,35 @@ configCommand
       console.log(chalk.yellow(`\n${judgment.length} item(s) need review \u2014 run the config-doctor skill, or \`squadrant config check --accept\` to keep your values.`));
     } else if (res.stamped) {
       console.log(chalk.green("\n\u2714 Config reconciled and stamped."));
+    }
+  });
+
+configCommand
+  .command("get")
+  .description("Read a config value by dotted key (e.g. defaults.effort)")
+  .argument("<key>", "dotted config key")
+  .action((key: string) => {
+    try {
+      const value = runConfigGet(key);
+      console.log(typeof value === "string" ? value : JSON.stringify(value));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
+  });
+
+configCommand
+  .command("set")
+  .description("Write a config value by dotted key (e.g. defaults.effort low)")
+  .argument("<key>", "dotted config key")
+  .argument("<value>", "value (JSON-parsed when possible, else a bare string)")
+  .action((key: string, value: string) => {
+    try {
+      runConfigSet(key, value);
+      console.log(chalk.green(`✔ set ${key} = ${value}`));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exit(1);
     }
   });
 

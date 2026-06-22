@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { runConfigCheck } from "../config.js";
+import { runConfigCheck, runConfigGet, runConfigSet } from "../config.js";
 import { getDefaultConfig } from "@squadrant/shared";
 
 const __thisDir = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,34 @@ describe("runConfigCheck", () => {
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk._squadrantVersion).toBe("0.5.3");
     expect(onDisk.defaults.roles.crew.model).toBe("sonnet");
+  });
+});
+
+describe("runConfigGet / runConfigSet (dotted path)", () => {
+  it("reads a nested value by dotted key", () => {
+    writeUser((c) => { c.defaults.effort = "low"; });
+    expect(runConfigGet("defaults.effort", cfgPath)).toBe("low");
+  });
+
+  it("throws on an unknown key", () => {
+    writeUser(() => {});
+    expect(() => runConfigGet("defaults.nope.deep", cfgPath)).toThrow();
+  });
+
+  it("sets a nested string value and persists it", () => {
+    writeUser(() => {});
+    runConfigSet("defaults.effort", "max", cfgPath);
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    expect(onDisk.defaults.effort).toBe("max");
+  });
+
+  it("parses JSON-looking values (numbers/bools) but keeps bare strings", () => {
+    writeUser(() => {});
+    runConfigSet("defaults.maxCrew", "9", cfgPath);
+    runConfigSet("defaults.effort", "balance", cfgPath);
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    expect(onDisk.defaults.maxCrew).toBe(9);
+    expect(onDisk.defaults.effort).toBe("balance");
   });
 });
 
