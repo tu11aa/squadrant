@@ -2,10 +2,16 @@
 #
 # migrate-to-squadrant.sh — one-time live cutover from claude-cockpit → squadrant.
 #
-# Renames the runtime config dir, hub vault, daemon launchd label, and rewrites
-# config.json to the new brand. Idempotent (safe to re-run) and supports
-# --dry-run (prints every action and a concrete config-rewrite preview WITHOUT
-# mutating anything).
+# Renames the runtime config dir, hub vault, this project's spoke vault, the
+# repo folder, the local project key (projects.cockpit -> projects.squadrant),
+# the daemon launchd label, Claude Code's per-project session/memory dirs, and
+# rewrites config.json to the new brand.
+# Idempotent (safe to re-run) and supports --dry-run (prints every action and a
+# concrete config-rewrite preview WITHOUT mutating anything).
+#
+# The repo folder cannot mv itself while it is the running checkout, so Step 0
+# guards that: if invoked from the old repo it prints the exact `mv` to run and
+# exits. Re-run from the new path ($HOME/me/squadrant) to do the full cutover.
 #
 # This is run MANUALLY by the user at cutover — it terminates the live captain
 # session and bounces the daemon. The old daemon keeps running old `dist` until
@@ -24,14 +30,32 @@ case "${1:-}" in
   * ) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
 esac
 
+# Claude Code munges a project's absolute path into its state-dir name by
+# replacing every '/' and '.' with '-' (e.g. /Users/me/claude-cockpit ->
+# -Users-me-claude-cockpit, and the inner /.worktrees/ -> --worktrees-).
+munge_path() { local p="${1//\//-}"; printf '%s' "${p//./-}"; }
+
 OLD_CONFIG="$HOME/.config/cockpit"
 NEW_CONFIG="$HOME/.config/squadrant"
 OLD_HUB="$HOME/cockpit-hub"
 NEW_HUB="$HOME/squadrant-hub"
+OLD_REPO="$HOME/me/claude-cockpit"
+NEW_REPO="$HOME/me/squadrant"
+# Spoke vault for THIS project, addressed after the hub move (step 3).
+OLD_SPOKE="$NEW_HUB/spokes/cockpit"
+NEW_SPOKE="$NEW_HUB/spokes/squadrant"
 OLD_LABEL="com.cockpit.daemon"
 NEW_LABEL="com.squadrant.daemon"
 OLD_PLIST="$HOME/Library/LaunchAgents/${OLD_LABEL}.plist"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Claude Code's per-project state (session .jsonl transcripts + memory/ auto-memory)
+# is keyed by the munged repo path, so the folder rename orphans it (the new path
+# starts empty). Renaming the state dir prefix re-links it to the renamed repo.
+CLAUDE_PROJECTS="$HOME/.claude/projects"
+OLD_MUNGED="$(munge_path "$OLD_REPO")"
+NEW_MUNGED="$(munge_path "$NEW_REPO")"
+# MIGRATE_REPO_ROOT lets --dry-run simulate running from the renamed repo
+# (to preview the full plan past the Step-0 guard); unset in real runs.
+REPO_ROOT="${MIGRATE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 UID_NUM="$(id -u)"
 TS="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$HOME/squadrant-migration-backup-${TS}.tgz"
@@ -40,8 +64,9 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 run() { printf '  $ %s\n' "$*"; [ "$DRY_RUN" -eq 1 ] || eval "$@"; }
 note() { printf '  · %s\n' "$*"; }
 
-# ---- config.json rewrite (pure, no claude-cockpit collisions: none of the
-#      rules match inside "claude-cockpit", so the real repo path is untouched).
+# ---- config.json rewrite (pure). Rules are scoped so only THIS project's
+#      brand strings change: "me/claude-cockpit" + "spokes/cockpit" are unique
+#      to the cockpit project, so the other 20+ projects' paths are untouched.
 rewrite_config() {  # $1=src json  $2=mode (apply <dest> | preview)
   local src="$1" mode="$2" dest="${3:-}"
   SRC="$src" MODE="$mode" DEST="$dest" python3 - <<'PY'
@@ -51,6 +76,8 @@ with open(src) as f:
     d = json.load(f)
 RULES = [("cockpit-hub", "squadrant-hub"),
          (".config/cockpit", ".config/squadrant"),
+         ("me/claude-cockpit", "me/squadrant"),
+         ("spokes/cockpit", "spokes/squadrant"),
          ("⚓ cockpit-captain", "⚓ squadrant-captain")]
 changes = []
 def fix(s):
@@ -69,6 +96,11 @@ def walk(o):
         return fix(o)
     return o
 d = walk(d)
+# Rename the project key projects.cockpit -> projects.squadrant (preserve order).
+if isinstance(d.get("projects"), dict) and "cockpit" in d["projects"]:
+    d["projects"] = {("squadrant" if k == "cockpit" else k): v
+                     for k, v in d["projects"].items()}
+    changes.append(("key:projects.cockpit", "key:projects.squadrant"))
 if "_cockpitVersion" in d:
     d["_squadrantVersion"] = d.pop("_cockpitVersion")
     changes.append(("key:_cockpitVersion", "key:_squadrantVersion"))
@@ -85,16 +117,45 @@ PY
 }
 
 printf '\033[1mSquadrant migration%s\033[0m\n' "$([ "$DRY_RUN" -eq 1 ] && echo ' (DRY RUN — nothing will change)')"
-note "repo:        $REPO_ROOT"
+note "repo:        $OLD_REPO  ->  $NEW_REPO"
 note "config:      $OLD_CONFIG  ->  $NEW_CONFIG"
 note "hub:         $OLD_HUB  ->  $NEW_HUB"
+note "spoke:       $OLD_SPOKE  ->  $NEW_SPOKE"
+note "project key: projects.cockpit  ->  projects.squadrant"
+note "sessions:    $CLAUDE_PROJECTS/$OLD_MUNGED*  ->  $NEW_MUNGED*"
 note "daemon:      $OLD_LABEL  ->  $NEW_LABEL"
+note "running from: $REPO_ROOT"
 
 # Already migrated? (new dir present, old gone) — nothing to do.
 if [ -d "$NEW_CONFIG" ] && [ ! -d "$OLD_CONFIG" ]; then
   step "Already migrated — $NEW_CONFIG exists and $OLD_CONFIG is gone. Nothing to do."
   exit 0
 fi
+
+# ---- Step 0: the repo folder must already live at its new name. The script
+#      cannot mv its own running checkout, so if we are not in $NEW_REPO we
+#      print the exact move + re-run command and stop here.
+step "0. Repo folder rename (must run from the NEW path)"
+if [ "$REPO_ROOT" != "$NEW_REPO" ]; then
+  note "running from: $REPO_ROOT"
+  note "expected:     $NEW_REPO"
+  cat <<EOF
+
+  The repo folder still needs to be renamed, and this script cannot move its own
+  running checkout. Do it manually, then re-run from the new location:
+
+    # 1. close captains (cmux) so nothing holds the old path open
+    # 2. move the repo folder:
+    mv '$OLD_REPO' '$NEW_REPO'
+    # 3. re-run this script from the renamed repo:
+    bash '$NEW_REPO/scripts/migrate-to-squadrant.sh'$([ "$DRY_RUN" -eq 1 ] && echo ' --dry-run')
+
+  (The daemon plist and the global npm link both point at the repo dir; moving it
+   first lets steps 6-7 relink and bootstrap from the new location.)
+EOF
+  exit 0
+fi
+note "running from $NEW_REPO ✓"
 
 step "1. Backup ~/.config/cockpit and ~/cockpit-hub"
 # Archive with paths RELATIVE to $HOME so rollback is `tar xzf <backup> -C $HOME`.
@@ -112,11 +173,13 @@ step "2. Stop captains + bootout the old daemon"
 note "Captains are cmux workspaces — close them in cmux, or let the relaunch below recreate them."
 run "launchctl bootout gui/${UID_NUM}/${OLD_LABEL} 2>/dev/null || true"
 
-step "3. Move config dir and hub vault"
+step "3. Move config dir, hub vault, and this project's spoke vault"
 if [ -d "$OLD_CONFIG" ] && [ ! -d "$NEW_CONFIG" ]; then run "mv '$OLD_CONFIG' '$NEW_CONFIG'"; else note "config move skipped (old absent or new exists)"; fi
 if [ -d "$OLD_HUB" ] && [ ! -d "$NEW_HUB" ]; then run "mv '$OLD_HUB' '$NEW_HUB'"; else note "hub move skipped (old absent or new exists)"; fi
+# Spoke lives under the hub; source check covers both pre- and post-hub-move location.
+if { [ -d "$OLD_SPOKE" ] || [ -d "$OLD_HUB/spokes/cockpit" ]; } && [ ! -d "$NEW_SPOKE" ]; then run "mv '$OLD_SPOKE' '$NEW_SPOKE'"; else note "spoke move skipped (source absent or target exists)"; fi
 
-step "4. Rewrite config.json (cockpit-hub→squadrant-hub, .config/cockpit→.config/squadrant, ⚓ cockpit-captain→⚓ squadrant-captain, _cockpitVersion key)"
+step "4. Rewrite config.json (cockpit-hub→squadrant-hub, .config/cockpit→.config/squadrant, me/claude-cockpit→me/squadrant, spokes/cockpit→spokes/squadrant, ⚓ cockpit-captain→⚓ squadrant-captain, projects.cockpit→projects.squadrant key, _cockpitVersion key)"
 if [ "$DRY_RUN" -eq 1 ]; then
   CFG_SRC="$OLD_CONFIG/config.json"; [ -f "$CFG_SRC" ] || CFG_SRC="$NEW_CONFIG/config.json"
   if [ -f "$CFG_SRC" ]; then rewrite_config "$CFG_SRC" preview; else note "no config.json found to preview"; fi
@@ -131,10 +194,69 @@ else
   fi
 fi
 
+step "4.5 Preserve Claude Code session history + auto-memory (rename per-project state dirs)"
+# The main project dir ($OLD_MUNGED) holds the session .jsonl transcripts and the
+# memory/ subdir; its worktree dirs ($OLD_MUNGED--worktrees-*) share the prefix and
+# are orphaned by the SAME folder rename. Swap the prefix on each so the renamed
+# repo finds them. Pure rename — no data is copied or deleted (idempotent: skips
+# any dir whose new-name target already exists).
+if [ -d "$CLAUDE_PROJECTS" ] && [ -n "$OLD_MUNGED" ]; then
+  main_dir="$CLAUDE_PROJECTS/$OLD_MUNGED"
+  if [ -d "$main_dir" ]; then
+    sessions="$(find "$main_dir" -maxdepth 1 -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+    mem="$([ -d "$main_dir/memory" ] && find "$main_dir/memory" -type f 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+    note "main project dir: $sessions session transcript(s), $mem auto-memory file(s) to preserve"
+  fi
+  migrated=0; skipped=0
+  shopt -s nullglob
+  for src in "$CLAUDE_PROJECTS/$OLD_MUNGED" "$CLAUDE_PROJECTS/$OLD_MUNGED-"*; do
+    [ -d "$src" ] || continue
+    base="$(basename "$src")"
+    dest="$CLAUDE_PROJECTS/${NEW_MUNGED}${base#"$OLD_MUNGED"}"
+    if [ -e "$dest" ]; then note "skip (target exists): $base"; skipped=$((skipped + 1)); continue; fi
+    run "mv '$src' '$dest'"
+    migrated=$((migrated + 1))
+  done
+  shopt -u nullglob
+  note "$([ "$DRY_RUN" -eq 1 ] && echo 'would migrate' || echo 'migrated') $migrated state dir(s) (main + worktrees); skipped $skipped"
+else
+  note "no $CLAUDE_PROJECTS dir — skipping session/memory preservation"
+fi
+
+step "4.6 Rewrite stale 'cockpit crew _hook' commands in Claude Code settings files"
+# The hook-generation source already emits `squadrant crew _hook`, but settings
+# files written on disk BEFORE the rebrand still invoke the removed `cockpit`
+# binary, so every Stop/PostToolUse hook in the captain (and any pre-rebrand crew)
+# fails with "cockpit: command not found". Rewrite the command token in place.
+# Scoped to the leading "cockpit crew _hook" so permission patterns like
+# Bash(cockpit:*) are left untouched. Idempotent (a second run matches nothing).
+HOOK_SETTINGS=(
+  "$NEW_REPO/.claude/settings.json"
+  "$NEW_REPO/.claude/settings.local.json"
+  "$HOME/.claude/settings.json"
+  "$HOME/.claude/settings.local.json"
+)
+hooks_fixed=0
+for sf in "${HOOK_SETTINGS[@]}"; do
+  [ -f "$sf" ] || continue
+  if grep -q 'cockpit crew _hook' "$sf" 2>/dev/null; then
+    run "sed -i '' 's/cockpit crew _hook/squadrant crew _hook/g' '$sf'"
+    hooks_fixed=$((hooks_fixed + 1))
+  else
+    note "ok (no stale hook): $sf"
+  fi
+done
+note "$([ "$DRY_RUN" -eq 1 ] && echo 'would rewrite' || echo 'rewrote') hook command in $hooks_fixed settings file(s)"
+
 step "5. Remove old launchd plist (the rebuilt daemon installs com.squadrant.daemon.plist on first run)"
 [ -f "$OLD_PLIST" ] && run "rm -f '$OLD_PLIST'" || note "old plist absent"
 
 step "6. Build the rebranded binary + relink the global 'squadrant'/'squad' bin"
+# Reinstall FIRST: the repo-folder rename (Step 0) leaves pnpm's workspace symlinks
+# pointing at the old @cockpit/* package dirs, so a build before `install` aborts
+# with hundreds of unresolved-import errors. `install` regenerates the links for
+# the @squadrant/* packages at their new path; only then can the build resolve them.
+run "pnpm -C '$REPO_ROOT' install"
 run "pnpm -C '$REPO_ROOT' build"
 run "pnpm -C '$REPO_ROOT' link --global"
 note "removes the old global 'cockpit' bin; 'squadrant' and 'squad' now resolve to $REPO_ROOT/dist/index.js"
@@ -150,9 +272,15 @@ cat <<EOF
     2. Verify CLI:      squadrant --version   (expect 0.9.0)   and   squad --help
     3. Relaunch captains:  squadrant launch <project>   (recreates the ⚓ squadrant-captain workspaces)
     4. Tail the log:    tail -f ${NEW_CONFIG}/squadrantd.log
+    5. Verify sessions: ls ${CLAUDE_PROJECTS}/${NEW_MUNGED}/   (your history + memory/ should be here)
   Rollback (if needed):
     launchctl bootout gui/${UID_NUM}/${NEW_LABEL} 2>/dev/null || true
     rm -rf ${NEW_CONFIG} ${NEW_HUB}
     tar xzf ${BACKUP} -C ${HOME}
+    mv ${NEW_REPO} ${OLD_REPO}    # move the repo folder back
+    # session/memory dirs are pure renames — move them back by prefix:
+    for d in ${CLAUDE_PROJECTS}/${NEW_MUNGED} ${CLAUDE_PROJECTS}/${NEW_MUNGED}-*; do
+      [ -d "\$d" ] && mv "\$d" "${CLAUDE_PROJECTS}/${OLD_MUNGED}\${d#${CLAUDE_PROJECTS}/${NEW_MUNGED}}"
+    done
     # then reinstall the old plist + relink the old 'cockpit' bin
 EOF

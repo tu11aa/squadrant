@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-22
+
+A patch release fixing four issues that surfaced during the v0.9.0 claude-cockpit → squadrant live cutover.
+
+### Fixed
+
+- **Migration build no longer aborts on stale workspace links.** `scripts/migrate-to-squadrant.sh` step 6 now runs `pnpm install` **before** `pnpm build`. After the repo folder is renamed, pnpm's workspace symlinks still point at the old `@cockpit/*` package dirs, so building first failed with hundreds of unresolved-import errors mid-cutover; reinstalling regenerates the `@squadrant/*` links first.
+- **Memory remap no longer false-alarms "DATA LOSS".** `scripts/remap-claude-mem.sh` now flags data loss only when the observation count **decreases** (`-lt`), not on any change (`-ne`). A live claude-mem observer can legitimately insert new rows mid-remap (the script never deletes), which previously tripped a spurious `FATAL ... DATA LOSS` and aborted.
+- **Captain/crew Stop hooks no longer invoke the removed `cockpit` binary.** `scripts/migrate-to-squadrant.sh` gained a step that rewrites stale `cockpit crew _hook` commands to `squadrant crew _hook` in existing Claude Code settings files (repo-level and global). The hook-generation source already emitted the new command, but settings files written before the rebrand kept failing with `cockpit: command not found` on every Stop/PostToolUse hook.
+- **Stray smoke-test file no longer ships in the npm tarball.** Deleted `scripts/notify-relay-placement-smoke.mjs`, which leaked into the v0.9.0 package because `package.json` `files` includes the whole `scripts/` directory.
+
 ## [0.9.0] - 2026-06-22
 
 ### Changed
