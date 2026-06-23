@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Daemon auto-restarts when you change daemon-cached config.** `squadrant telegram setup`, `squadrant config set <telegram.*|defaults.taskTimeoutMs|defaults.cmuxEventsBridge|projects.*>`, and project registration now restart the daemon so the change takes effect immediately (was: silently stale until a manual `squadrant heal daemon`). Use `--no-restart` to opt out. Interactive crews + tasks + Telegram state recover automatically via the disk store + boot reconcile.
 - **Telegram `/command` menu registration.** `squadrant telegram setup` now registers the bot's command menu automatically, and `squadrant telegram register-commands` (re)registers it on demand — so `/status`, `/notify`, `/mute`, etc. appear in Telegram's `/` autocomplete. Setup also reuses an existing bot token on re-run (use `--reset-token` to rotate it), reports existing project topics so you can see what's already linked, and never recreates topics that already exist in state.
 - **`squadrant:telegram` skill** documenting setup, remote control, command registration, and notification tuning.
 - **Telegram mute confirmations.** Turning a project quieter via `squadrant telegram notify <p> off|cap off|crew <lower>` now posts a one-time confirmation into that project's topic (bypassing the mute), so you can tell on Telegram that it went silent rather than guessing.
@@ -15,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram notification tiers (per-project).** Outbound lifecycle pushes are filtered by a per-project **crew tier** — `none` ⊂ `done_only` (`task.done`/`task.failed`) ⊂ `alert_only` (+ blocked/approval/input/timeout, the default) ⊂ `all`. New CLI `squadrant telegram notify <project> crew <tier>` / `cap <on|off>` and Telegram `/notify crew <tier>` / `/notify cap <on|off>` (fail-closed behind remote control) write the per-project config file. The live `active` mute axis (`/mute` / `/unmute` / `notify <project> on|off`) is unchanged and stays in `telegram-state.json`; the live value overrides the config-default `active`.
 - **Distinct Telegram formatting** for `task.failed` (CREW FAILED + error), `task.approval.requested` (APPROVAL NEEDED + question), `task.input.requested` (INPUT NEEDED + question), and `task.timeout` (CREW TIMEOUT) — previously these fell to the generic line.
 - **`cap` gate on `squadrant telegram send`** — with a project's resolved `cap=off`, explicit captain messages are suppressed (not sent), independent of idle-mute.
+
+### Known issues
+- A config-write restart can orphan in-flight **headless** crews (interactive crews recover fine) — see [#410](https://github.com/tu11aa/squadrant/issues/410).
 
 ### Changed
 - **Telegram notifications are now per-project and muted by default.** Lifecycle events (crew done/blocked/idle) are delivered to a project's topic only after you engage that project — by sending any message into its topic, by `/unmute` (Telegram, requires remoteControl), or by `squadrant telegram notify <project> on`. This changes prior behavior where every project pushed all lifecycle events. Mute again with `/mute <project>` or `squadrant telegram notify <project> off`. Command replies and the General command channel are unaffected.
