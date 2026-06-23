@@ -4,13 +4,13 @@
 import os from "node:os";
 import path from "node:path";
 import type { ControlEvent, CrewTier, NotifyConfig, TelegramConfig } from "@squadrant/shared";
-import { resolveNotify, loadProjectOverride, saveProjectOverride } from "@squadrant/shared";
+import { resolveNotify, loadProjectOverride, saveProjectOverride, loadConfig } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { effortPanel, notifyPanel, parseCallback } from "./panels.js";
+import { effortPanel, notifyPanel, parseCallback, projectPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
 import { tierIncludes } from "./tiers.js";
 
@@ -43,8 +43,9 @@ export interface TelegramBridgeOptions {
   ensureCaptainAlive?: (project: string) => Promise<EnsureResult>;
   /** Execute a curated squadrant CLI argv and return capped output. */
   runCommand?: (argv: string[]) => Promise<string>;
-  /** Post a reply to the General topic (threadId undefined) or a project topic. */
-  sendReply?: (threadId: number | undefined, text: string) => Promise<void>;
+  /** Post a reply to the General topic (threadId undefined) or a project topic.
+   *  The optional replyMarkup attaches an inline-button panel (tap-first commands). */
+  sendReply?: (threadId: number | undefined, text: string, replyMarkup?: unknown) => Promise<void>;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
@@ -195,12 +196,30 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   }
 
   // Reply best-effort: a send failure must never escape into the poll loop.
-  async function reply(threadId: number | undefined, text: string): Promise<void> {
+  async function reply(threadId: number | undefined, text: string, replyMarkup?: unknown): Promise<void> {
     if (!sendReply) return;
     try {
-      await sendReply(threadId, text);
+      await sendReply(threadId, text, replyMarkup);
     } catch (e) {
       log(`telegram reply failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Current global effort dial (falls back to today's "balance"). */
+  function currentEffort(): "max" | "balance" | "low" {
+    try {
+      return loadConfig(path.join(configRoot, "config.json")).defaults.effort ?? "balance";
+    } catch {
+      return "balance";
+    }
+  }
+
+  /** Registered project names for the General-topic pickers. */
+  function projectNames(): string[] {
+    try {
+      return Object.keys(loadConfig(path.join(configRoot, "config.json")).projects);
+    } catch {
+      return [];
     }
   }
 
@@ -215,6 +234,25 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     }
     if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
       await reply(undefined, "⛔ not authorized");
+      return;
+    }
+    // Tap-first: a parameterized command with NO argument replies a button panel
+    // instead of a usage error. Typed forms (with an arg) fall through to run.
+    const tokens = text.trim().slice(1).split(/\s+/).filter((t) => t.length > 0);
+    const name = stripBotMention(tokens[0] ?? "").toLowerCase();
+    const noArg = tokens.length === 1;
+    if (noArg && name === "effort") {
+      await reply(undefined, "Effort mode:", effortPanel(currentEffort()));
+      return;
+    }
+    const PICKERS: Record<string, PickAction> = { crews: "cr", launch: "lc", mute: "mu", unmute: "um" };
+    if (noArg && name in PICKERS) {
+      const projects = projectNames();
+      if (projects.length === 0) {
+        await reply(undefined, "no projects registered");
+        return;
+      }
+      await reply(undefined, `Pick a project:`, projectPicker(PICKERS[name], projects));
       return;
     }
     const parsed = parseCommand(text);
@@ -263,8 +301,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       }
       const pref = parseNotifyPref(text);
       if (pref === null) {
-        // Incomplete (bare `/notify`, or a dimension with no value) → usage hint.
-        await reply(threadId, "usage: /notify crew <all|alert_only|done_only|none> | cap <on|off>");
+        // Incomplete (bare `/notify`, or a dimension with no value) → tap-first panel.
+        // Typed forms (`/notify cap on`) still parse below for power users.
+        await reply(threadId, `🔔 ${resolved.project} notifications`, notifyPanel(resolveLiveNotify(resolved.project)));
         return;
       }
       // Deliberate preference change — writes the per-project config file (not live state).

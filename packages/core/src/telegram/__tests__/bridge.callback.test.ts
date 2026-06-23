@@ -129,6 +129,85 @@ describe("handleCallback — effort", () => {
   });
 });
 
+interface InboundHarness {
+  bridge: TelegramBridge;
+  sendMessage: ReturnType<typeof vi.fn>;
+  appendCaptainMessage: ReturnType<typeof vi.fn>;
+  stateRoot: string;
+  configRoot: string;
+}
+
+function writeConfig(configRoot: string, projects: string[]): void {
+  const cfgJson = {
+    projects: Object.fromEntries(projects.map((p) => [p, {}])),
+    defaults: { effort: "balance", crewRouting: {} },
+  };
+  fs.writeFileSync(path.join(configRoot, "config.json"), JSON.stringify(cfgJson));
+}
+
+function makeInbound(message: unknown): InboundHarness {
+  const stateRoot = freshRoot();
+  const configRoot = freshRoot();
+  let n = 0;
+  const sendMessage = vi.fn(async () => {});
+  const appendCaptainMessage = vi.fn(async () => {});
+  const client = {
+    sendMessage,
+    answerCallbackQuery: async () => {},
+    editMessageReplyMarkup: async () => {},
+    createForumTopic: async () => 1,
+    getMe: async () => ({ id: 0, username: "" }),
+    setMyCommands: async () => {},
+    getUpdates: async () => {
+      n++;
+      if (n === 1) return [{ update_id: 10, message } as never];
+      return [];
+    },
+  } as unknown as TelegramClient;
+  const bridge = createTelegramBridge({
+    cfg, stateRoot, configRoot, client,
+    appendCaptainMessage,
+    log: () => {},
+    runCommand: async () => "ok",
+    // Mirror the daemon host: a panel reply forwards reply_markup to sendMessage.
+    sendReply: async (threadId, text, markup) => { await client.sendMessage(cfg.supergroupId, threadId, text, markup); },
+  });
+  active = bridge;
+  return { bridge, sendMessage, appendCaptainMessage, stateRoot, configRoot };
+}
+
+describe("command panels (inbound)", () => {
+  it("/notify in a project topic replies the panel, not a usage hint, and never appends", async () => {
+    const h = makeInbound({ chat: { id: CHAT }, message_thread_id: 9, text: "/notify", from: { id: USER } });
+    setTopic(h.stateRoot, "squadrant", 9);
+    h.bridge.start();
+    await waitFor(() => h.sendMessage.mock.calls.length > 0);
+    const call = h.sendMessage.mock.calls.at(-1)!;
+    expect(call[3]?.inline_keyboard).toBeTruthy(); // 4th arg = replyMarkup
+    expect(h.appendCaptainMessage).not.toHaveBeenCalled();
+  });
+
+  it("/crews with no project replies a project picker", async () => {
+    const h = makeInbound({ chat: { id: CHAT }, text: "/crews", from: { id: USER } });
+    writeConfig(h.configRoot, ["brove", "solder"]);
+    h.bridge.start();
+    await waitFor(() => h.sendMessage.mock.calls.length > 0);
+    const call = h.sendMessage.mock.calls.at(-1)!;
+    const buttons = call[3].inline_keyboard.flat();
+    expect(buttons.some((b: any) => b.callback_data === "cr:brove")).toBe(true);
+    expect(buttons.some((b: any) => b.callback_data === "cr:solder")).toBe(true);
+  });
+
+  it("/effort with no mode replies the effort panel", async () => {
+    const h = makeInbound({ chat: { id: CHAT }, text: "/effort", from: { id: USER } });
+    writeConfig(h.configRoot, ["brove"]);
+    h.bridge.start();
+    await waitFor(() => h.sendMessage.mock.calls.length > 0);
+    const call = h.sendMessage.mock.calls.at(-1)!;
+    expect(call[3].inline_keyboard.flat().some((b: any) => b.callback_data === "e:balance")).toBe(true);
+  });
+});
+
 describe("handleCallback — pickers", () => {
   it("mute pick mutes the project via live state", async () => {
     const h = makeHarness({

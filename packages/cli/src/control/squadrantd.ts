@@ -59,8 +59,8 @@ function buildTelegramBridge(
     launch: createLaunch(CLI_BIN),
   });
   const runCommand = createRunCommand(CLI_BIN);
-  const sendReply = (threadId: number | undefined, text: string) =>
-    client.sendMessage(cfg.supergroupId, threadId, text);
+  const sendReply = (threadId: number | undefined, text: string, replyMarkup?: unknown) =>
+    client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
     ensureCaptainAlive, runCommand, sendReply,
