@@ -56,6 +56,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
 
+// Channel commands that may run in ANY topic (#cmds-anytopic). mute/unmute/notify
+// are intentionally absent: in a project topic they carry topic-scoped semantics
+// (handled before delegating). Matched against the slash-stripped first token.
+const RECOGNIZED_CHANNEL_COMMANDS = new Set(["status", "projects", "crews", "launch", "effort", "spawn"]);
+
 /** Parse a `/notify crew <tier>` or `/notify cap <on|off>` preference command.
  *  Returns null for anything else (ordinary message or malformed). */
 export function parseNotifyPref(text: string): { dimension: "crew" | "cap"; value: string } | null {
@@ -252,54 +257,60 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     await reply(threadId, "Pick a project to spawn a crew on:", spawnPicker(projects));
   }
 
-  // General topic (no thread id): curated command channel (#402). Fail-closed —
-  // a slash command runs ONLY when remoteControl is on AND the sender is
-  // allowlisted. Freeform text gets a /help hint (never silently dropped).
-  // Command/reply failures are caught here so they can't escape the poll loop.
-  async function handleGeneral(text: string, fromId: number | undefined): Promise<void> {
-    if (!text.startsWith("/")) {
-      await reply(undefined, "Send /help for commands.");
-      return;
-    }
+  // Curated command channel (#402), shared by the General topic (threadId
+  // undefined) and project topics (#cmds-anytopic). Fail-closed — a command runs
+  // ONLY when remoteControl is on AND the sender is allowlisted. Tap-first: a
+  // parameterized command with NO argument replies a button panel instead of a
+  // usage error; typed forms (with an arg) fall through to run. Replies land in
+  // the given thread; failures are caught here so they can't escape the poll loop.
+  async function runChannelCommand(text: string, fromId: number | undefined, threadId: number | undefined): Promise<void> {
     if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
-      await reply(undefined, "⛔ not authorized");
+      await reply(threadId, "⛔ not authorized");
       return;
     }
-    // Tap-first: a parameterized command with NO argument replies a button panel
-    // instead of a usage error. Typed forms (with an arg) fall through to run.
     const tokens = text.trim().slice(1).split(/\s+/).filter((t) => t.length > 0);
     const name = stripBotMention(tokens[0] ?? "").toLowerCase();
     const noArg = tokens.length === 1;
     if (noArg && name === "effort") {
-      await reply(undefined, "Effort mode:", effortPanel(currentEffort()));
+      await reply(threadId, "Effort mode:", effortPanel(currentEffort()));
       return;
     }
     if (noArg && name === "spawn") {
-      await replySpawnPicker(undefined);
+      await replySpawnPicker(threadId);
       return;
     }
     const PICKERS: Record<string, PickAction> = { crews: "cr", launch: "lc", mute: "mu", unmute: "um" };
     if (noArg && name in PICKERS) {
       const projects = projectNames();
       if (projects.length === 0) {
-        await reply(undefined, "no projects registered");
+        await reply(threadId, "no projects registered");
         return;
       }
-      await reply(undefined, `Pick a project:`, projectPicker(PICKERS[name], projects));
+      await reply(threadId, `Pick a project:`, projectPicker(PICKERS[name], projects));
       return;
     }
     const parsed = parseCommand(text);
     if (parsed.kind !== "ok") {
-      await reply(undefined, parsed.message);
+      await reply(threadId, parsed.message);
       return;
     }
     try {
       const out = runCommand ? await runCommand(parsed.argv) : "(command runner unavailable)";
-      await reply(undefined, out);
+      await reply(threadId, out);
     } catch (e) {
-      await reply(undefined, `⚠️ command failed: ${(e as Error).message}`);
+      await reply(threadId, `⚠️ command failed: ${(e as Error).message}`);
       log(`telegram command failed argv=${JSON.stringify(parsed.argv)}: ${(e as Error).message}`);
     }
+  }
+
+  // General topic (no thread id): freeform text gets a /help hint (never silently
+  // dropped); slash commands run through the shared channel-command dispatcher.
+  async function handleGeneral(text: string, fromId: number | undefined): Promise<void> {
+    if (!text.startsWith("/")) {
+      await reply(undefined, "Send /help for commands.");
+      return;
+    }
+    await runChannelCommand(text, fromId, undefined);
   }
 
   // Project topic: the v1 captain.message flow + Gap-1 auto-launch (#403). When
