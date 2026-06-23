@@ -57,6 +57,21 @@ export function saveProjectOverride(name: string, patch: ProjectOverrideConfig, 
 
 export const DEFAULT_NOTIFY: NotifyConfig = { active: false, cap: true, crew: "alert_only" };
 
+const CREW_RANK: Record<CrewTier, number> = { none: 0, done_only: 1, alert_only: 2, all: 3 };
+export function crewRank(tier: CrewTier): number {
+  return CREW_RANK[tier];
+}
+
+export function isQuieter(
+  before: NotifyConfig,
+  after: NotifyConfig,
+): { quieter: boolean; dim: "active" | "cap" | "crew" | null } {
+  if (before.active && !after.active) return { quieter: true, dim: "active" };
+  if (before.cap && !after.cap) return { quieter: true, dim: "cap" };
+  if (crewRank(after.crew) < crewRank(before.crew)) return { quieter: true, dim: "crew" };
+  return { quieter: false, dim: null };
+}
+
 /** Built-in → global → project, per-key. Does NOT apply live state (bridge's job). */
 export function resolveNotify(
   globalNotify: Partial<NotifyConfig> | undefined,

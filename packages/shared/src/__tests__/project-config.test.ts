@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadProjectOverride, saveProjectOverride, projectConfigPath, resolveNotify, DEFAULT_NOTIFY } from "../project-config.js";
+import { loadProjectOverride, saveProjectOverride, projectConfigPath, resolveNotify, DEFAULT_NOTIFY, crewRank, isQuieter } from "../project-config.js";
 
 let root: string;
 beforeEach(() => {
@@ -40,5 +40,29 @@ describe("resolveNotify", () => {
   it("project overrides global per-key, keeping siblings", () => {
     const r = resolveNotify({ cap: false, crew: "done_only" }, { telegram: { notify: { crew: "all" } } });
     expect(r).toEqual({ active: false, cap: false, crew: "all" });
+  });
+});
+
+describe("notify transition helpers", () => {
+  const base = { active: true, cap: true, crew: "all" } as const;
+  it("crewRank orders tiers", () => {
+    expect(crewRank("none")).toBe(0);
+    expect(crewRank("done_only")).toBe(1);
+    expect(crewRank("alert_only")).toBe(2);
+    expect(crewRank("all")).toBe(3);
+  });
+  it("cap on→off is quieter", () => {
+    expect(isQuieter({ ...base }, { ...base, cap: false })).toEqual({ quieter: true, dim: "cap" });
+  });
+  it("active on→off is quieter", () => {
+    expect(isQuieter({ ...base }, { ...base, active: false })).toEqual({ quieter: true, dim: "active" });
+  });
+  it("crew all→none is quieter", () => {
+    expect(isQuieter({ ...base }, { ...base, crew: "none" })).toEqual({ quieter: true, dim: "crew" });
+  });
+  it("louder / unchanged is not quieter", () => {
+    expect(isQuieter({ ...base, cap: false }, { ...base }).quieter).toBe(false);
+    expect(isQuieter({ ...base }, { ...base }).quieter).toBe(false);
+    expect(isQuieter({ ...base, crew: "none" }, { ...base, crew: "all" }).quieter).toBe(false);
   });
 });

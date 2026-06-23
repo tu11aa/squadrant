@@ -2,8 +2,8 @@ import { join, dirname } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, loadProjectOverride } from "@squadrant/shared";
-import type { SquadrantConfig, TelegramConfig } from "@squadrant/shared";
+import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, loadProjectOverride, isQuieter } from "@squadrant/shared";
+import type { SquadrantConfig, TelegramConfig, NotifyConfig, CrewTier } from "@squadrant/shared";
 import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
 
@@ -157,6 +157,36 @@ async function questionYesNo(prompt: string): Promise<boolean> {
   });
 }
 
+function confirmationText(project: string, before: NotifyConfig, after: NotifyConfig, dim: "active" | "cap" | "crew"): string {
+  if (dim === "active") return `🔕 ${project} — all notifications muted here. Unmute: squadrant telegram notify ${project} on`;
+  if (dim === "cap")    return `🔕 ${project} — captain messages muted here. Re-enable: squadrant telegram notify ${project} cap on`;
+  return `🔕 ${project} — crew notifications now '${after.crew}' (was '${before.crew}'). Re-enable: squadrant telegram notify ${project} crew ${before.crew}`;
+}
+
+/** Send a one-time mute confirmation directly to the project topic, bypassing all delivery gates.
+ *  Returns true if the message was sent, false if skipped (not quieter / no topic) or failed. */
+export async function runNotifyConfirmation(opts: {
+  project: string;
+  before: NotifyConfig;
+  after: NotifyConfig;
+  cfg: TelegramConfig;
+  client: TelegramClient;
+  stateRoot: string;
+}): Promise<boolean> {
+  const { quieter, dim } = isQuieter(opts.before, opts.after);
+  if (!quieter || dim === null) return false;
+  const topicId = loadState(opts.stateRoot).topics[topicKey(opts.project)];
+  if (topicId === undefined) return false;
+  const text = confirmationText(opts.project, opts.before, opts.after, dim);
+  try {
+    await opts.client.sendMessage(opts.cfg.supergroupId, topicId, text);
+    return true;
+  } catch {
+    console.warn(`[squadrant] mute-confirmation send failed for ${opts.project} — notification preference was still saved`);
+    return false;
+  }
+}
+
 export const telegramCommand = new Command("telegram")
   .description("Two-way Telegram integration: push crew events to a topic and reply into the captain pane");
 
@@ -286,7 +316,7 @@ telegramCommand
   .argument("[value]", "tier for crew (all|alert_only|done_only|none) or on|off for cap")
   .option("--status", "list notification state for all projects")
   .description("Live on|off (state), or crew <tier> / cap <on|off> preference (per-project config)")
-  .action((project: string | undefined, state: string | undefined, value: string | undefined, opts: { status?: boolean }) => {
+  .action(async (project: string | undefined, state: string | undefined, value: string | undefined, opts: { status?: boolean }) => {
     const stateRoot = defaultStateRoot();
     if (opts.status || !project) {
       const rows = runTelegramNotifyStatus({ stateRoot });
@@ -299,27 +329,51 @@ telegramCommand
       }
       return;
     }
+
+    const tgCfg = loadConfig().telegram;
+    const globalNotify = tgCfg?.notify;
+    const token = tgCfg?.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+
     // Deliberate preference (per-project config file): crew tier / cap.
     if (state === "crew" || state === "cap") {
       if (value === undefined) {
         console.error(chalk.red(`usage: squadrant telegram notify <project> ${state} <value>`));
         process.exit(1);
       }
+      const resolved = resolveNotify(globalNotify, loadProjectOverride(project));
+      const before: NotifyConfig = { ...resolved, active: isNotifyActive(stateRoot, project) };
       const res = runTelegramNotifyPref({ project, dimension: state, value });
       if (!res.ok) {
         console.error(chalk.red(res.message));
         process.exit(1);
       }
       console.log(chalk.green(`${project} ${state} = ${value}`));
+      const after: NotifyConfig = state === "crew"
+        ? { ...before, crew: value as CrewTier }
+        : { ...before, cap: value === "on" };
+      if (tgCfg && token) {
+        const client = createTelegramClient({ token });
+        const sent = await runNotifyConfirmation({ project, before, after, cfg: tgCfg, client, stateRoot });
+        if (sent) console.log(chalk.dim(`→ notified ${project} topic`));
+      }
       return;
     }
+
     // Live session toggle (telegram-state.json), unchanged.
     if (state !== "on" && state !== "off") {
       console.error(chalk.red("usage: squadrant telegram notify <project> <on|off|crew <tier>|cap <on|off>>"));
       process.exit(1);
     }
+    const resolved = resolveNotify(globalNotify, loadProjectOverride(project));
+    const before: NotifyConfig = { ...resolved, active: isNotifyActive(stateRoot, project) };
+    const after: NotifyConfig = { ...before, active: state === "on" };
     runTelegramNotifySet({ project, active: state === "on", stateRoot });
     console.log(chalk.green(`${project} notifications ${state === "on" ? "ON" : "OFF"}`));
+    if (tgCfg && token) {
+      const client = createTelegramClient({ token });
+      const sent = await runNotifyConfirmation({ project, before, after, cfg: tgCfg, client, stateRoot });
+      if (sent) console.log(chalk.dim(`→ notified ${project} topic`));
+    }
   });
 
 telegramCommand

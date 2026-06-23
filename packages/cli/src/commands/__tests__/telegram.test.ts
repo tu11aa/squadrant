@@ -99,7 +99,7 @@ describe("runTelegramSend", () => {
   });
 });
 
-import { runTelegramNotifySet, runTelegramNotifyStatus } from "../telegram.js";
+import { runTelegramNotifySet, runTelegramNotifyStatus, runNotifyConfirmation } from "../telegram.js";
 import { isNotifyActive, setTopic as setTopicDirect } from "@squadrant/core";
 
 describe("telegram notify CLI", () => {
@@ -154,5 +154,52 @@ describe("questionMasked stdin teardown", () => {
       process.stdin.pause = origPause;
       stdoutSpy.mockRestore();
     }
+  });
+});
+
+describe("runNotifyConfirmation", () => {
+  const ON = { active: true, cap: true, crew: "all" } as const;
+  function fakeTrackingClient() {
+    const calls: any[] = [];
+    return {
+      calls,
+      sendMessage: async (...a: any[]) => { calls.push(a); },
+      createForumTopic: async () => 1,
+      getUpdates: async () => [],
+      getMe: async () => ({ id: 1, username: "b" }),
+    };
+  }
+  const tgCfg = { supergroupId: 5, chats: [1] } as any;
+
+  it("sends one confirmation on cap off when a topic exists", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cf-"));
+    setTopicDirect(dir, "squadrant", 9);
+    const c = fakeTrackingClient();
+    const sent = await runNotifyConfirmation({ project: "squadrant", before: { ...ON }, after: { ...ON, cap: false }, cfg: tgCfg, client: c as any, stateRoot: dir });
+    expect(sent).toBe(true);
+    expect(c.calls).toHaveLength(1);
+    expect(c.calls[0][1]).toBe(9); // threadId
+  });
+
+  it("sends nothing for a louder/unchanged change", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cf-"));
+    setTopicDirect(dir, "squadrant", 9);
+    const c = fakeTrackingClient();
+    expect(await runNotifyConfirmation({ project: "squadrant", before: { ...ON }, after: { ...ON }, cfg: tgCfg, client: c as any, stateRoot: dir })).toBe(false);
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it("sends nothing when the project has no topic", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cf-"));
+    const c = fakeTrackingClient();
+    expect(await runNotifyConfirmation({ project: "x", before: { ...ON }, after: { ...ON, cap: false }, cfg: tgCfg, client: c as any, stateRoot: dir })).toBe(false);
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it("swallows send failure and reports false", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cf-"));
+    setTopicDirect(dir, "squadrant", 9);
+    const c: any = { sendMessage: async () => { throw new Error("boom"); } };
+    expect(await runNotifyConfirmation({ project: "squadrant", before: { ...ON }, after: { ...ON, cap: false }, cfg: tgCfg, client: c, stateRoot: dir })).toBe(false);
   });
 });
