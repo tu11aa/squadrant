@@ -378,6 +378,15 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return;
     }
 
+    // Recognized channel commands run in this topic too (#cmds-anytopic), with the
+    // reply landing here instead of falling through to a captain message. mute/
+    // unmute/notify are handled above (topic-scoped) and excluded from the set.
+    const firstTok = stripBotMention(text.trim().split(/\s+/)[0] ?? "").toLowerCase();
+    if (firstTok.startsWith("/") && RECOGNIZED_CHANNEL_COMMANDS.has(firstTok.slice(1))) {
+      await runChannelCommand(text, fromId, threadId);
+      return;
+    }
+
     setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
       try {

@@ -202,3 +202,39 @@ describe("/notify in a project topic", () => {
     bridge.stop();
   });
 });
+
+describe("channel commands in a project topic (#cmds-anytopic)", () => {
+  const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+
+  it("/status runs and replies into the same topic, never appended", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/status", 7)]);
+    await drained;
+    expect(d.runCommand).toHaveBeenCalledWith(["status"]);
+    expect(d.sendReply).toHaveBeenCalledWith(7, "output");
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("/effort (no arg) replies the effort panel into the topic, never appended", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/effort", 7)]);
+    await drained;
+    expect(d.sendReply).toHaveBeenCalledWith(7, "Effort mode:", expect.objectContaining({ inline_keyboard: expect.anything() }));
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("a recognized channel command from an unauthorized sender is rejected, never appended", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, [topicMsg("/status", 7)]);
+    await drained;
+    expect(d.runCommand).not.toHaveBeenCalled();
+    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("not authorized"));
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
