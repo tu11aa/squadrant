@@ -1,11 +1,11 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { TelegramConfig, ControlEvent } from "@squadrant/shared";
 import { createTelegramBridge, type TelegramBridge } from "../bridge.js";
 import type { TelegramClient } from "../client.js";
-import { loadState, setTopic } from "../state.js";
+import { loadState, setTopic, setNotify, isNotifyActive } from "../state.js";
 
 const cfg: TelegramConfig = { botToken: "T", supergroupId: -100500, chats: [-100111], pollMs: 1 };
 
@@ -39,6 +39,7 @@ describe("pushLifecycle (outbound)", () => {
   it("sends the formatted lifecycle text to the project's existing topic", async () => {
     const root = freshRoot();
     setTopic(root, "demo", 55);
+    setNotify(root, "demo", true);
     const sent = deferred();
     const sendCalls: Array<[number, number | undefined, string]> = [];
     const client: TelegramClient = {
@@ -58,6 +59,7 @@ describe("pushLifecycle (outbound)", () => {
 
   it("creates and persists the topic on first use, then sends to it", async () => {
     const root = freshRoot();
+    setNotify(root, "demo", true);
     const sent = deferred();
     const createCalls: Array<[number, string]> = [];
     const sendCalls: Array<[number, number | undefined, string]> = [];
@@ -81,6 +83,7 @@ describe("pushLifecycle (outbound)", () => {
   it("swallows a rejecting sendMessage (crash-contained, logged, never throws)", async () => {
     const root = freshRoot();
     setTopic(root, "demo", 55);
+    setNotify(root, "demo", true);
     const logged = deferred();
     const logs: string[] = [];
     const client: TelegramClient = {
@@ -99,6 +102,45 @@ describe("pushLifecycle (outbound)", () => {
     expect(() => bridge.pushLifecycle("demo", doneEv)).not.toThrow();
     await logged.promise;
     expect(logs.some((m) => m.includes("network down"))).toBe(true);
+  });
+});
+
+describe("pushLifecycle notify gate", () => {
+  it("drops the event when the project is MUTED (no client calls)", async () => {
+    const root = freshRoot();
+    const sendMessage = vi.fn();
+    const createForumTopic = vi.fn();
+    const client: TelegramClient = {
+      getUpdates: async () => [],
+      createForumTopic,
+      sendMessage,
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+
+    bridge.pushLifecycle("squadrant", doneEv);
+    await new Promise<void>((r) => setTimeout(r, 20));
+
+    expect(createForumTopic).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("delivers when the project is ACTIVE", async () => {
+    const root = freshRoot();
+    setNotify(root, "squadrant", true);
+    const sent = deferred();
+    const client: TelegramClient = {
+      getUpdates: async () => [],
+      createForumTopic: async () => 7,
+      sendMessage: async () => { sent.resolve(); },
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+
+    bridge.pushLifecycle("squadrant", doneEv);
+    await sent.promise;
   });
 });
 

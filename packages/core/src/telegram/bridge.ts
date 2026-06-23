@@ -7,7 +7,7 @@ import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { findProjectByThread, loadState, saveState, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, isNotifyActive, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
 
 export interface TelegramBridge {
   start(): void;
@@ -51,6 +51,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Outbound: resolve (or lazily create) the project's topic, then send.
   async function deliverOutbound(project: string, ev: ControlEvent): Promise<void> {
+    if (!isNotifyActive(stateRoot, project)) return; // muted (default) → no topic create, no send
     let threadId = loadState(stateRoot).topics[topicKey(project)];
     if (threadId === undefined) {
       threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
