@@ -8,6 +8,8 @@ import {
   saveState,
   setTopic,
   findProjectByThread,
+  isNotifyActive,
+  setNotify,
   type TelegramState,
 } from "../state.js";
 
@@ -29,19 +31,19 @@ describe("topicKey", () => {
 });
 
 describe("loadState / saveState", () => {
-  it("returns {offset:0, topics:{}} when the file is missing", () => {
-    expect(loadState(root)).toEqual({ offset: 0, topics: {} });
+  it("returns {offset:0, topics:{}, notify:{}} when the file is missing", () => {
+    expect(loadState(root)).toEqual({ offset: 0, topics: {}, notify: {} });
   });
 
   it("round-trips offset and topics through save → load", () => {
-    const s: TelegramState = { offset: 42, topics: { "squadrant::project": 7 } };
+    const s: TelegramState = { offset: 42, topics: { "squadrant::project": 7 }, notify: {} };
     saveState(root, s);
     expect(loadState(root)).toEqual(s);
   });
 
   it("returns the default state when the file is corrupt", () => {
     fs.writeFileSync(path.join(root, "telegram-state.json"), "{not json");
-    expect(loadState(root)).toEqual({ offset: 0, topics: {} });
+    expect(loadState(root)).toEqual({ offset: 0, topics: {}, notify: {} });
   });
 });
 
@@ -66,5 +68,35 @@ describe("setTopic / findProjectByThread", () => {
     saveState(root, { offset: 5, topics: {} });
     setTopic(root, "squadrant", 100);
     expect(loadState(root).offset).toBe(5);
+  });
+});
+
+describe("notify state", () => {
+  it("defaults to muted (absent key → false)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-state-"));
+    expect(isNotifyActive(dir, "squadrant")).toBe(false);
+  });
+
+  it("loadState defaults notify to {} when file lacks it", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-state-"));
+    fs.writeFileSync(path.join(dir, "telegram-state.json"), JSON.stringify({ offset: 3, topics: {} }));
+    expect(loadState(dir).notify).toEqual({});
+  });
+
+  it("setNotify round-trips through save/load", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-state-"));
+    setNotify(dir, "squadrant", true);
+    expect(isNotifyActive(dir, "squadrant")).toBe(true);
+    setNotify(dir, "squadrant", false);
+    expect(isNotifyActive(dir, "squadrant")).toBe(false);
+  });
+
+  it("setNotify preserves offset and topics", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-state-"));
+    setTopic(dir, "squadrant", 7);
+    setNotify(dir, "squadrant", true);
+    const s = loadState(dir);
+    expect(s.topics).toEqual({ "squadrant::project": 7 });
+    expect(s.notify).toEqual({ squadrant: true });
   });
 });
