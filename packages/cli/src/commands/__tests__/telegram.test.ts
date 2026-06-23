@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
-import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, questionMasked, runTelegramPostSetup } from "../telegram.js";
+import { loadState, setLastUserId } from "@squadrant/core";
+import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, resolveSetupUserId, questionMasked, runTelegramPostSetup } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -46,6 +46,26 @@ describe("resolveSetupToken", () => {
   });
   it("returns 'prompt' when --reset-token is set even with an existing token", () => {
     expect(resolveSetupToken("tok123", { resetToken: true })).toBe("prompt");
+  });
+});
+
+describe("resolveSetupUserId", () => {
+  it("prefers --user-id flag over detectedUserId and lastUserId from state", () => {
+    setLastUserId(root, 99);
+    expect(resolveSetupUserId(5, 10, root)).toBe(5);
+  });
+
+  it("uses detectedUserId when no flag", () => {
+    expect(resolveSetupUserId(undefined, 42, root)).toBe(42);
+  });
+
+  it("falls back to lastUserId persisted in state when no flag and no detected", () => {
+    setLastUserId(root, 77);
+    expect(resolveSetupUserId(undefined, undefined, root)).toBe(77);
+  });
+
+  it("returns undefined when all sources are absent", () => {
+    expect(resolveSetupUserId(undefined, undefined, root)).toBeUndefined();
   });
 });
 

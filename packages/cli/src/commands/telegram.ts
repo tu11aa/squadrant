@@ -196,6 +196,18 @@ export function resolveSetupToken(
   return "try-reuse";
 }
 
+/**
+ * Precedence: explicit --user-id flag > detected userId (first-run getUpdates) >
+ * lastUserId persisted in telegram-state.json by the bridge poll (passive capture).
+ */
+export function resolveSetupUserId(
+  flagUserId: number | undefined,
+  detectedUserId: number | undefined,
+  stateRoot: string,
+): number | undefined {
+  return flagUserId ?? detectedUserId ?? loadState(stateRoot).lastUserId;
+}
+
 export async function runRegisterCommands(opts: { client: TelegramClient }): Promise<void> {
   await opts.client.setMyCommands(BOT_COMMANDS);
 }
@@ -343,12 +355,12 @@ telegramCommand
     }
 
     // Step 3/3 — Remote control (opt-in, #321) + Save
-    // Precedence for userId: --user-id flag > detected (detect mode only) > preserve existing
+    // Precedence for userId: --user-id flag > detected (detect mode only) > lastUserId from state
     console.log(chalk.bold("Step 3/3 — Remote control + Save"));
     console.log(chalk.dim("Remote control enables auto-launching captains and the General command channel"));
     console.log(chalk.dim("from your phone — gated to your Telegram user-id only (fail-closed)."));
 
-    const finalUserId = opts.userId !== undefined ? opts.userId : detectedUserId;
+    const finalUserId = resolveSetupUserId(opts.userId, detectedUserId, defaultStateRoot());
     let users: number[] | undefined;
     let remoteControl: boolean | undefined;
     let printedRemoteControlState = false;
