@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Telegram notifications are now per-project and muted by default.** Lifecycle events (crew done/blocked/idle) are delivered to a project's topic only after you engage that project — by sending any message into its topic, by `/unmute` (Telegram, requires remoteControl), or by `squadrant telegram notify <project> on`. This changes prior behavior where every project pushed all lifecycle events. Mute again with `/mute <project>` or `squadrant telegram notify <project> off`. Command replies and the General command channel are unaffected.
+
 ## [0.10.0] - 2026-06-23
 
 The Telegram stability slice — closes two usability gaps so the integration is solid enough to release, both gated behind a fail-closed user-id allowlist + an opt-in master switch. Default behavior is unchanged on upgrade (`remoteControl` defaults to `false`).
