@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-23
+
 ### Added
 - **Tap-first Telegram commands (inline buttons).** `/notify`, `/effort`, and `/crews`/`/launch`/`/mute`/`/unmute` now reply with tappable button panels instead of needing typed arguments — pick from buttons, no syntax to remember. Button taps are gated on your user-id (remoteControl) like commands, applied via the existing state writers / curated command runner, and the panel re-renders to mark the new state. Typed forms (`/notify cap on`, `/crews <project>`, `/effort <mode>`) still work for power users.
 - **Guided `/spawn` over Telegram.** `/spawn` now replies with a project picker; tap a project and the bot asks (ForceReply) for the task — your reply spawns the crew. No typed arguments needed. (Completes the tap-first command UX.)
