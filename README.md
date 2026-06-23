@@ -178,7 +178,7 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 
 Drive squadrant from your phone ([#65](https://github.com/tu11aa/squadrant/issues/65)). When a `telegram` block is present in config, a daemon-internal bridge:
 
-- **Outbound** — pushes each project's crew lifecycle events (CREW DONE / BLOCKED / IDLE) and other captain notifications to that project's Telegram forum topic. Best-effort: a Telegram failure never delays or breaks delivery to the captain pane.
+- **Outbound** — pushes each project's crew lifecycle events (CREW DONE / FAILED / BLOCKED / APPROVAL / INPUT / TIMEOUT / IDLE) and other captain notifications to that project's Telegram forum topic, filtered by a per-project **crew tier** (see [Notification tuning](#notification-tuning-per-project) below). Best-effort: a Telegram failure never delays or breaks delivery to the captain pane.
 - **Inbound (project topic)** — a message you send in a project's topic is delivered into that project's **captain pane** as a labeled `📩 [from Telegram]` message; the captain decides what to do with it. With remote control enabled (see below), if no captain is alive the daemon **auto-launches** one, then delivers ([#403](https://github.com/tu11aa/squadrant/issues/403)).
 - **General command channel** — slash commands in the supergroup's **General topic** run a curated set of squadrant operations from your phone ([#402](https://github.com/tu11aa/squadrant/issues/402)). Available: `/help`, `/status`, `/projects`, `/crews <project>`, `/launch <project>`, `/effort [max|balance|low]`, `/config get <key>`, `/config set <key> <value>`, `/spawn <project> <task…>`. Each maps to a validated CLI argv run via async `execFile` — never a shell passthrough. Unknown commands and freeform text get a `/help` hint.
 
@@ -201,6 +201,26 @@ The control surfaces (auto-launch + General command channel) are **off by defaul
 2. `message.from.id ∈ users[]` — the sender's Telegram **user-id** is on the allowlist. An empty/absent `users` list ⇒ control is disabled (fail-closed). Chat membership alone is **never** enough for control.
 
 When remote control is off (the default after upgrade), behavior is **exactly v1**: project-topic messages queue to the captain pane (no auto-launch), and General-topic slash commands are rejected with `⛔ not authorized`. Inbound text is always treated as data; only the curated registry maps to actions, and `/config set` is restricted to a default-deny writable-key allowlist (currently just `defaults.effort`) — **secrets (`botToken`, `users`, `chats`, `supergroupId`) can never be written over Telegram.**
+
+#### Notification tuning (per-project)
+
+Notifications resolve through a **layered config**: built-in defaults → global `config.json` (`telegram.notify`) → per-project `~/.config/squadrant/projects/<name>.json`, merged per key (overriding one key never resets its siblings). Two axes are independent:
+
+- **Live mute (`active`)** — system-tracked *session* state in `telegram-state.json`. Flipped by engagement (any message into a topic auto-unmutes), `/mute` / `/unmute` (Telegram), or `squadrant telegram notify <project> on|off`. The live value wins over the config default when present.
+- **Deliberate preferences (`crew`, `cap`)** — persistent settings in the per-project config file. Written by `squadrant telegram notify <project> crew <tier>` / `cap <on|off>` (CLI) or `/notify crew <tier>` / `/notify cap <on|off>` (Telegram, fail-closed behind remote control).
+
+**Crew tiers** (cumulative) select which lifecycle events reach a topic when active:
+
+| Tier | Events delivered |
+|---|---|
+| `none` | nothing |
+| `done_only` | `task.done`, `task.failed` |
+| `alert_only` *(default)* | `done_only` + `task.blocked`, `task.approval.requested`, `task.input.requested`, `task.timeout` |
+| `all` | every lifecycle event (incl. progress/heartbeat noise) |
+
+**`cap`** (default `on`) gates explicit captain pushes via `squadrant telegram send` — set `cap off` for a project to stop the captain DM-ing you there (independent of idle-mute; an explicit push is not dropped just because the topic is idle-muted).
+
+Config (deliberate prefs) and state (live toggles) are kept separate by design: `/unmute` flips your session, it does **not** rewrite your config file. An absent `projects/<name>.json` behaves exactly as the global defaults — the layer is fully additive, no migration. See `docs/superpowers/specs/2026-06-23-per-project-layered-config-design.md`.
 
 #### Remote wake (#403) — operator-side
 

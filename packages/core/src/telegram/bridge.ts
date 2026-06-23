@@ -1,13 +1,17 @@
 // Daemon-internal Telegram subsystem (modeled on CmuxEventsBridge). Owns one
 // outbound hook (pushLifecycle) and one inbound getUpdates long-poll. Opt-in and
 // crash-contained: no send/poll error may escape into the daemon.
+import os from "node:os";
+import path from "node:path";
 import type { ControlEvent, TelegramConfig } from "@squadrant/shared";
+import { resolveNotify, loadProjectOverride, saveProjectOverride } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { findProjectByThread, isNotifyActive, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
+import { tierIncludes } from "./tiers.js";
 
 export interface TelegramBridge {
   start(): void;
@@ -19,6 +23,8 @@ export interface TelegramBridge {
 export interface TelegramBridgeOptions {
   cfg: TelegramConfig;
   stateRoot: string;
+  /** Root for per-project override files. Defaults to ~/.config/squadrant. */
+  configRoot?: string;
   client: TelegramClient;
   appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" }) => Promise<void>;
   log: (msg: string) => void;
@@ -38,8 +44,21 @@ const LONG_POLL_SEC = 50;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
+
+/** Parse a `/notify crew <tier>` or `/notify cap <on|off>` preference command.
+ *  Returns null for anything else (ordinary message or malformed). */
+export function parseNotifyPref(text: string): { dimension: "crew" | "cap"; value: string } | null {
+  const parts = text.trim().split(/\s+/);
+  if (parts[0]?.toLowerCase() !== "/notify") return null;
+  const dimension = parts[1]?.toLowerCase();
+  if ((dimension === "crew" || dimension === "cap") && parts[2]) return { dimension, value: parts[2].toLowerCase() };
+  return null;
+}
+
 export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridge {
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
+  const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
   let running = false;
 
@@ -49,9 +68,14 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     saveState(stateRoot, s);
   }
 
-  // Outbound: resolve (or lazily create) the project's topic, then send.
+  // Outbound: resolve active (live state wins over config default) + crew-tier
+  // filter, then resolve (or lazily create) the project's topic and send.
   async function deliverOutbound(project: string, ev: ControlEvent): Promise<void> {
-    if (!isNotifyActive(stateRoot, project)) return; // muted (default) → no topic create, no send
+    const resolved = resolveNotify(cfg.notify, loadProjectOverride(project, configRoot));
+    const live = loadState(stateRoot).notify[project]; // boolean | undefined
+    const active = live ?? resolved.active;
+    if (!active) return;                                // muted → no topic create, no send
+    if (!tierIncludes(resolved.crew, ev.type)) return; // tier filter
     let threadId = loadState(stateRoot).topics[topicKey(project)];
     if (threadId === undefined) {
       threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
@@ -124,6 +148,31 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       }
       setNotify(stateRoot, resolved.project, toggle);
       await reply(threadId, toggle ? `🔔 ${resolved.project} notifications ON` : `🔕 ${resolved.project} notifications OFF`);
+      return;
+    }
+
+    const pref = parseNotifyPref(text);
+    if (pref !== null) {
+      // Deliberate preference change — fail-closed, writes the per-project config
+      // file (not live state), never appended as a captain message.
+      if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
+        await reply(threadId, "⛔ not authorized");
+        return;
+      }
+      if (pref.dimension === "crew") {
+        if (!CREW_TIERS.includes(pref.value)) {
+          await reply(threadId, "crew must be all|alert_only|done_only|none");
+          return;
+        }
+        saveProjectOverride(resolved.project, { telegram: { notify: { crew: pref.value as never } } }, configRoot);
+      } else {
+        if (pref.value !== "on" && pref.value !== "off") {
+          await reply(threadId, "cap must be on|off");
+          return;
+        }
+        saveProjectOverride(resolved.project, { telegram: { notify: { cap: pref.value === "on" } } }, configRoot);
+      }
+      await reply(threadId, `✅ ${pref.dimension} = ${pref.value}`);
       return;
     }
 

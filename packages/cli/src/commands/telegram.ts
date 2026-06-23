@@ -2,7 +2,7 @@ import { join, dirname } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
+import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, loadProjectOverride } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig } from "@squadrant/shared";
 import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
@@ -52,6 +52,31 @@ export async function runTelegramSend(opts: {
 /** Set a project's notification flag in telegram-state.json. */
 export function runTelegramNotifySet(opts: { project: string; active: boolean; stateRoot: string }): void {
   setNotify(opts.stateRoot, opts.project, opts.active);
+}
+
+/** Write a deliberate per-project notification preference (crew tier / cap) to
+ *  projects/<name>.json. Distinct from live on|off state (telegram-state.json). */
+export function runTelegramNotifyPref(
+  args: { project: string; dimension: "crew" | "cap"; value: string; root?: string },
+): { ok: true } | { ok: false; message: string } {
+  const { project, dimension, value, root } = args;
+  if (dimension === "crew") {
+    if (!["all", "alert_only", "done_only", "none"].includes(value))
+      return { ok: false, message: "crew must be all|alert_only|done_only|none" };
+    saveProjectOverride(project, { telegram: { notify: { crew: value as any } } }, root);
+    return { ok: true };
+  }
+  if (value !== "on" && value !== "off") return { ok: false, message: "cap must be on|off" };
+  saveProjectOverride(project, { telegram: { notify: { cap: value === "on" } } }, root);
+  return { ok: true };
+}
+
+/** Resolved `cap` for a project — whether explicit captain messages may be sent.
+ *  `cap=false` is the deliberate "don't let the captain DM me" switch; live
+ *  idle-mute (active) is intentionally NOT consulted here (an explicit push
+ *  shouldn't be dropped just because the topic is idle-muted). */
+export function capAllowed(project: string, globalNotify: TelegramConfig["notify"], root?: string): boolean {
+  return resolveNotify(globalNotify, loadProjectOverride(project, root)).cap;
 }
 
 /** List every known project (union of linked topics and notify keys) with its state. */
@@ -257,10 +282,11 @@ telegramCommand
 telegramCommand
   .command("notify")
   .argument("[project]", "project to toggle")
-  .argument("[state]", "on | off")
+  .argument("[state]", "on | off | crew | cap")
+  .argument("[value]", "tier for crew (all|alert_only|done_only|none) or on|off for cap")
   .option("--status", "list notification state for all projects")
-  .description("Per-project lifecycle notifications: on|off, or --status to list")
-  .action((project: string | undefined, state: string | undefined, opts: { status?: boolean }) => {
+  .description("Live on|off (state), or crew <tier> / cap <on|off> preference (per-project config)")
+  .action((project: string | undefined, state: string | undefined, value: string | undefined, opts: { status?: boolean }) => {
     const stateRoot = defaultStateRoot();
     if (opts.status || !project) {
       const rows = runTelegramNotifyStatus({ stateRoot });
@@ -273,8 +299,23 @@ telegramCommand
       }
       return;
     }
+    // Deliberate preference (per-project config file): crew tier / cap.
+    if (state === "crew" || state === "cap") {
+      if (value === undefined) {
+        console.error(chalk.red(`usage: squadrant telegram notify <project> ${state} <value>`));
+        process.exit(1);
+      }
+      const res = runTelegramNotifyPref({ project, dimension: state, value });
+      if (!res.ok) {
+        console.error(chalk.red(res.message));
+        process.exit(1);
+      }
+      console.log(chalk.green(`${project} ${state} = ${value}`));
+      return;
+    }
+    // Live session toggle (telegram-state.json), unchanged.
     if (state !== "on" && state !== "off") {
-      console.error(chalk.red("usage: squadrant telegram notify <project> <on|off>"));
+      console.error(chalk.red("usage: squadrant telegram notify <project> <on|off|crew <tier>|cap <on|off>>"));
       process.exit(1);
     }
     runTelegramNotifySet({ project, active: state === "on", stateRoot });
@@ -296,6 +337,11 @@ telegramCommand
     if (!token) {
       console.error(chalk.red("no botToken in config and TELEGRAM_BOT_TOKEN is unset"));
       process.exit(1);
+    }
+
+    if (!capAllowed(project, cfg.notify)) {
+      console.log(chalk.dim(`${project}: captain messages muted (cap=off) — not sent`));
+      return;
     }
 
     let message: string;

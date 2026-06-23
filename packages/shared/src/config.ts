@@ -46,6 +46,8 @@ export interface TelegramConfig {
   users?: number[];        // user-id allowlist for CONTROL actions (#321); empty ⇒ control disabled
   remoteControl?: boolean; // opt-in master switch for auto-launch + general commands (default false)
   pollMs?: number;         // getUpdates long-poll cadence (default 1000)
+  /** Global notification defaults (per-project override lives in projects/<name>.json). */
+  notify?: { active?: boolean; cap?: boolean; crew?: "all" | "alert_only" | "done_only" | "none" };
 }
 
 export interface ModelRoutingConfig {
