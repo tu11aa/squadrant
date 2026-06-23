@@ -2,7 +2,7 @@ import { join, dirname } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride } from "@squadrant/shared";
+import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, loadProjectOverride } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig } from "@squadrant/shared";
 import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
@@ -69,6 +69,14 @@ export function runTelegramNotifyPref(
   if (value !== "on" && value !== "off") return { ok: false, message: "cap must be on|off" };
   saveProjectOverride(project, { telegram: { notify: { cap: value === "on" } } }, root);
   return { ok: true };
+}
+
+/** Resolved `cap` for a project — whether explicit captain messages may be sent.
+ *  `cap=false` is the deliberate "don't let the captain DM me" switch; live
+ *  idle-mute (active) is intentionally NOT consulted here (an explicit push
+ *  shouldn't be dropped just because the topic is idle-muted). */
+export function capAllowed(project: string, globalNotify: TelegramConfig["notify"], root?: string): boolean {
+  return resolveNotify(globalNotify, loadProjectOverride(project, root)).cap;
 }
 
 /** List every known project (union of linked topics and notify keys) with its state. */
@@ -329,6 +337,11 @@ telegramCommand
     if (!token) {
       console.error(chalk.red("no botToken in config and TELEGRAM_BOT_TOKEN is unset"));
       process.exit(1);
+    }
+
+    if (!capAllowed(project, cfg.notify)) {
+      console.log(chalk.dim(`${project}: captain messages muted (cap=off) — not sent`));
+      return;
     }
 
     let message: string;

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-project layered config.** A new override layer at `~/.config/squadrant/projects/<name>.json` resolves as built-in → global `config.json` → per-project, merged per key (`resolveNotify` / `loadProjectOverride` / `saveProjectOverride` in `@squadrant/shared`). Fully additive: an absent project file behaves exactly as the global defaults — no migration. The resolver is generic; Telegram notification is its first tenant (per-project `effort`/`models` keys are reserved, not yet wired).
+- **Telegram notification tiers (per-project).** Outbound lifecycle pushes are filtered by a per-project **crew tier** — `none` ⊂ `done_only` (`task.done`/`task.failed`) ⊂ `alert_only` (+ blocked/approval/input/timeout, the default) ⊂ `all`. New CLI `squadrant telegram notify <project> crew <tier>` / `cap <on|off>` and Telegram `/notify crew <tier>` / `/notify cap <on|off>` (fail-closed behind remote control) write the per-project config file. The live `active` mute axis (`/mute` / `/unmute` / `notify <project> on|off`) is unchanged and stays in `telegram-state.json`; the live value overrides the config-default `active`.
+- **Distinct Telegram formatting** for `task.failed` (CREW FAILED + error), `task.approval.requested` (APPROVAL NEEDED + question), `task.input.requested` (INPUT NEEDED + question), and `task.timeout` (CREW TIMEOUT) — previously these fell to the generic line.
+- **`cap` gate on `squadrant telegram send`** — with a project's resolved `cap=off`, explicit captain messages are suppressed (not sent), independent of idle-mute.
+
 ### Changed
 - **Telegram notifications are now per-project and muted by default.** Lifecycle events (crew done/blocked/idle) are delivered to a project's topic only after you engage that project — by sending any message into its topic, by `/unmute` (Telegram, requires remoteControl), or by `squadrant telegram notify <project> on`. This changes prior behavior where every project pushed all lifecycle events. Mute again with `/mute <project>` or `squadrant telegram notify <project> off`. Command replies and the General command channel are unaffected.
 
