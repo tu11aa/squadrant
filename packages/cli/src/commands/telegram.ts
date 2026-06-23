@@ -187,6 +187,14 @@ export async function runNotifyConfirmation(opts: {
   }
 }
 
+export function resolveSetupToken(
+  existingToken: string | undefined,
+  opts: { resetToken: boolean },
+): "prompt" | "try-reuse" {
+  if (opts.resetToken || !existingToken) return "prompt";
+  return "try-reuse";
+}
+
 export async function runRegisterCommands(opts: { client: TelegramClient }): Promise<void> {
   await opts.client.setMyCommands(BOT_COMMANDS);
 }
@@ -231,7 +239,8 @@ telegramCommand
 telegramCommand
   .command("setup")
   .description("Interactive wizard — bot token, validate, auto-detect supergroup, write config")
-  .action(async () => {
+  .option("--reset-token", "force re-entry of the bot token even if one already exists")
+  .action(async (opts: { resetToken?: boolean }) => {
     if (!process.stdin.isTTY) {
       console.error(chalk.red("setup requires a TTY — pipe input is not supported"));
       process.exit(1);
@@ -247,25 +256,52 @@ telegramCommand
     console.log("  3. Bot privacy mode set to OFF (@BotFather → /setprivacy → Disable)");
     console.log();
 
-    // Step 1/3 — Bot token
+    // Step 1/3 — Bot token (reuse if present unless --reset-token)
     console.log(chalk.bold("Step 1/3 — Bot token"));
-    console.log("Paste your bot token then press Enter (input is hidden):");
-    const token = await questionMasked();
-    if (!token) {
-      console.error(chalk.red("token required"));
-      process.exit(1);
-    }
+    const existingCfg = loadConfig().telegram;
+    const existingToken = existingCfg?.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+    const decision = resolveSetupToken(existingToken, { resetToken: opts.resetToken ?? false });
 
-    const client = createTelegramClient({ token });
+    let token: string;
+    let client: TelegramClient;
     let botUser: { id: number; username: string };
-    try {
-      botUser = await client.getMe();
-    } catch (e) {
-      console.error(chalk.red(`token rejected: ${(e as Error).message}`));
-      process.exit(1);
+
+    if (decision === "try-reuse") {
+      client = createTelegramClient({ token: existingToken! });
+      try {
+        botUser = await client.getMe();
+        token = existingToken!;
+        console.log(chalk.green(`Using existing bot token (@${botUser.username})`));
+        console.log();
+      } catch {
+        console.log(chalk.yellow("Existing token is invalid — please enter a new one."));
+        console.log("Paste your bot token then press Enter (input is hidden):");
+        token = await questionMasked();
+        if (!token) { console.error(chalk.red("token required")); process.exit(1); }
+        client = createTelegramClient({ token });
+        try {
+          botUser = await client.getMe();
+        } catch (e) {
+          console.error(chalk.red(`token rejected: ${(e as Error).message}`));
+          process.exit(1);
+        }
+        console.log(chalk.green(`Connected as @${botUser.username}`));
+        console.log();
+      }
+    } else {
+      console.log("Paste your bot token then press Enter (input is hidden):");
+      token = await questionMasked();
+      if (!token) { console.error(chalk.red("token required")); process.exit(1); }
+      client = createTelegramClient({ token });
+      try {
+        botUser = await client.getMe();
+      } catch (e) {
+        console.error(chalk.red(`token rejected: ${(e as Error).message}`));
+        process.exit(1);
+      }
+      console.log(chalk.green(`Connected as @${botUser.username}`));
+      console.log();
     }
-    console.log(chalk.green(`Connected as @${botUser.username}`));
-    console.log();
 
     // Step 2/3 — Find group
     console.log(chalk.bold("Step 2/3 — Find your group"));
@@ -315,6 +351,21 @@ telegramCommand
       console.log(chalk.dim("Registered the /command menu."));
     } catch (e) {
       console.log(chalk.yellow(`command-menu registration skipped: ${(e as Error).message}`));
+    }
+
+    // Topic summary — show existing links so re-running setup is informative
+    const topics = loadState(defaultStateRoot()).topics;
+    const topicEntries = Object.entries(topics);
+    if (topicEntries.length > 0) {
+      const summary = topicEntries
+        .map(([key, id]) => {
+          const project = key.slice(0, key.indexOf("::"));
+          return `${project}→${id}`;
+        })
+        .join(", ");
+      console.log(chalk.dim(`Existing topics: ${summary} (already created — not recreated)`));
+    } else {
+      console.log(chalk.dim("No project topics yet — they're created on first delivery or via: squadrant telegram link <project>"));
     }
 
     console.log();

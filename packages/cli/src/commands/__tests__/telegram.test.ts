@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
 import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, questionMasked } from "../telegram.js";
+import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, questionMasked } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -27,6 +27,18 @@ describe("telegramCommand registration", () => {
   it("exposes the link, notify, register-commands, send, setup, and status subcommands", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
     expect(names).toEqual(["link", "notify", "register-commands", "send", "setup", "status"]);
+  });
+});
+
+describe("resolveSetupToken", () => {
+  it("returns 'prompt' when no existing token", () => {
+    expect(resolveSetupToken(undefined, { resetToken: false })).toBe("prompt");
+  });
+  it("returns 'try-reuse' when an existing token is present", () => {
+    expect(resolveSetupToken("tok123", { resetToken: false })).toBe("try-reuse");
+  });
+  it("returns 'prompt' when --reset-token is set even with an existing token", () => {
+    expect(resolveSetupToken("tok123", { resetToken: true })).toBe("prompt");
   });
 });
 
