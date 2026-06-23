@@ -10,7 +10,7 @@ import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { effortPanel, notifyPanel, parseCallback, projectPicker, type PickAction } from "./panels.js";
+import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
 import { tierIncludes } from "./tiers.js";
 
@@ -64,6 +64,15 @@ export function parseNotifyPref(text: string): { dimension: "crew" | "cap"; valu
   const dimension = parts[1]?.toLowerCase();
   if ((dimension === "crew" || dimension === "cap") && parts[2]) return { dimension, value: parts[2].toLowerCase() };
   return null;
+}
+
+/** True for a bare `/spawn` (no project/task args) — the guided-picker trigger.
+ *  Strips the `@botname` suffix Telegram appends to menu-tapped commands. */
+export function isBareSpawn(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return false;
+  const tokens = trimmed.slice(1).split(/\s+/).filter((t) => t.length > 0);
+  return stripBotMention(tokens[0] ?? "").toLowerCase() === "spawn" && tokens.length === 1;
 }
 
 /** Recognize the two in-topic notification toggles. Returns the desired active
@@ -169,6 +178,14 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         return;
       }
 
+      if (action.t === "spawn") {
+        // Send a ForceReply prompt carrying the project; the reply is routed to
+        // `crew spawn` statelessly via parseSpawnPrompt (no pending-state map).
+        await reply(cq.message.message_thread_id, buildSpawnPrompt(action.project), { force_reply: true, selective: true });
+        await client.answerCallbackQuery(cq.id);
+        return;
+      }
+
       // action.t === "pick" — General-topic project actions.
       const { action: act, project } = action;
       if (act === "cr") {
@@ -225,6 +242,16 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     }
   }
 
+  /** Guided /spawn: reply the project picker (works in General or a project topic). */
+  async function replySpawnPicker(threadId: number | undefined): Promise<void> {
+    const projects = projectNames();
+    if (projects.length === 0) {
+      await reply(threadId, "no projects registered");
+      return;
+    }
+    await reply(threadId, "Pick a project to spawn a crew on:", spawnPicker(projects));
+  }
+
   // General topic (no thread id): curated command channel (#402). Fail-closed —
   // a slash command runs ONLY when remoteControl is on AND the sender is
   // allowlisted. Freeform text gets a /help hint (never silently dropped).
@@ -245,6 +272,10 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     const noArg = tokens.length === 1;
     if (noArg && name === "effort") {
       await reply(undefined, "Effort mode:", effortPanel(currentEffort()));
+      return;
+    }
+    if (noArg && name === "spawn") {
+      await replySpawnPicker(undefined);
       return;
     }
     const PICKERS: Record<string, PickAction> = { crews: "cr", launch: "lc", mute: "mu", unmute: "um" };
@@ -279,6 +310,16 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
     if (!resolved) return; // no project bound to this topic
+
+    if (isBareSpawn(text)) {
+      // Guided /spawn — picker, never appended. Fail-closed like the toggles.
+      if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
+        await reply(threadId, "⛔ not authorized");
+        return;
+      }
+      await replySpawnPicker(threadId);
+      return;
+    }
 
     const toggle = notifyToggle(text);
     if (toggle !== null) {
@@ -340,7 +381,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
@@ -351,6 +392,25 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     // Passively capture the sender's user-id for setup auto-population (#user-id).
     if (m.from?.id !== undefined && loadState(stateRoot).lastUserId !== m.from.id) {
       setLastUserId(stateRoot, m.from.id);
+    }
+    // A reply to a guided-/spawn ForceReply prompt → `crew spawn`, gated, never
+    // appended. Runs before the thread-id branch because a reply can land in
+    // General (no thread id) OR a project topic.
+    const spawnProject = parseSpawnPrompt(m.reply_to_message?.text);
+    if (spawnProject) {
+      const threadId = m.message_thread_id;
+      if (!isControlEnabled(cfg) || !isAuthorized(m.from?.id, cfg)) {
+        await reply(threadId, "⛔ not authorized");
+        return;
+      }
+      const task = m.text.trim();
+      if (!task) {
+        await reply(threadId, "spawn cancelled — empty task");
+        return;
+      }
+      if (runCommand) await runCommand(["crew", "spawn", spawnProject, task]);
+      await reply(threadId, `🆕 spawning a crew on ${spawnProject}…`);
+      return; // NOT appended as a captain message
     }
     if (m.message_thread_id === undefined) {
       await handleGeneral(m.text, m.from?.id);

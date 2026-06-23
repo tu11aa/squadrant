@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { notifyPanel, effortPanel, projectPicker, parseCallback } from "../panels.js";
+import {
+  notifyPanel,
+  effortPanel,
+  projectPicker,
+  parseCallback,
+  spawnPicker,
+  buildSpawnPrompt,
+  parseSpawnPrompt,
+  SPAWN_PROMPT_PREFIX,
+} from "../panels.js";
 
 describe("notifyPanel", () => {
   it("offers the opposite cap state and marks the current crew tier", () => {
@@ -47,5 +56,26 @@ describe("parseCallback", () => {
     expect(parseCallback("lc:solder")).toEqual({ t: "pick", action: "lc", project: "solder" });
     expect(parseCallback("garbage")).toBeNull();
     expect(parseCallback("n:bogus:x")).toBeNull();
+  });
+});
+
+describe("spawn picker + prompt codec", () => {
+  it("spawnPicker emits sp:<project> buttons", () => {
+    expect(spawnPicker(["brove", "solder"]).inline_keyboard.flat().map((b) => b.callback_data)).toEqual([
+      "sp:brove",
+      "sp:solder",
+    ]);
+  });
+
+  it("parseCallback handles sp:", () => {
+    expect(parseCallback("sp:brove")).toEqual({ t: "spawn", project: "brove" });
+  });
+
+  it("spawn prompt round-trips the project", () => {
+    const p = buildSpawnPrompt("brove");
+    expect(p.startsWith(SPAWN_PROMPT_PREFIX)).toBe(true);
+    expect(parseSpawnPrompt(p)).toBe("brove");
+    expect(parseSpawnPrompt("just a normal message")).toBeNull();
+    expect(parseSpawnPrompt(undefined)).toBeNull();
   });
 });

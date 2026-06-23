@@ -11,7 +11,8 @@ export type PickAction = "cr" | "lc" | "mu" | "um";
 export type ParsedCallback =
   | { t: "notify"; dim: "cap" | "crew" | "active"; val: string }
   | { t: "effort"; mode: string }
-  | { t: "pick"; action: PickAction; project: string };
+  | { t: "pick"; action: PickAction; project: string }
+  | { t: "spawn"; project: string };
 
 /** Prefix the label with a bullet when it represents the current state. */
 const mark = (on: boolean, label: string): string => (on ? `• ${label}` : label);
@@ -41,6 +42,25 @@ export function projectPicker(action: PickAction, projects: string[]): InlineKey
   return { inline_keyboard: projects.map((p) => [{ text: p, callback_data: `${action}:${p}` }]) };
 }
 
+// Guided /spawn (slice 2). The picker emits `sp:<project>`; tapping one sends a
+// ForceReply prompt whose text encodes the project behind SPAWN_PROMPT_PREFIX, so
+// the reply can be routed to `crew spawn` statelessly (no pending-spawn map).
+export const SPAWN_PROMPT_PREFIX = "🆕 Reply with the task for a crew on: ";
+
+export function buildSpawnPrompt(project: string): string {
+  return `${SPAWN_PROMPT_PREFIX}${project}`;
+}
+
+export function parseSpawnPrompt(text: string | undefined): string | null {
+  if (!text || !text.startsWith(SPAWN_PROMPT_PREFIX)) return null;
+  const project = text.slice(SPAWN_PROMPT_PREFIX.length).trim();
+  return project.length > 0 ? project : null;
+}
+
+export function spawnPicker(projects: string[]): InlineKeyboard {
+  return { inline_keyboard: projects.map((p) => [{ text: p, callback_data: `sp:${p}` }]) };
+}
+
 const PICK_ACTIONS: PickAction[] = ["cr", "lc", "mu", "um"];
 
 export function parseCallback(data: string): ParsedCallback | null {
@@ -52,5 +72,6 @@ export function parseCallback(data: string): ParsedCallback | null {
   if (PICK_ACTIONS.includes(parts[0] as PickAction) && parts[1]) {
     return { t: "pick", action: parts[0] as PickAction, project: parts.slice(1).join(":") };
   }
+  if (parts[0] === "sp" && parts[1]) return { t: "spawn", project: parts.slice(1).join(":") };
   return null;
 }
