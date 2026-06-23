@@ -1,13 +1,17 @@
 // Daemon-internal Telegram subsystem (modeled on CmuxEventsBridge). Owns one
 // outbound hook (pushLifecycle) and one inbound getUpdates long-poll. Opt-in and
 // crash-contained: no send/poll error may escape into the daemon.
+import os from "node:os";
+import path from "node:path";
 import type { ControlEvent, TelegramConfig } from "@squadrant/shared";
+import { resolveNotify, loadProjectOverride } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { findProjectByThread, isNotifyActive, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
+import { tierIncludes } from "./tiers.js";
 
 export interface TelegramBridge {
   start(): void;
@@ -19,6 +23,8 @@ export interface TelegramBridge {
 export interface TelegramBridgeOptions {
   cfg: TelegramConfig;
   stateRoot: string;
+  /** Root for per-project override files. Defaults to ~/.config/squadrant. */
+  configRoot?: string;
   client: TelegramClient;
   appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" }) => Promise<void>;
   log: (msg: string) => void;
@@ -40,6 +46,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridge {
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
+  const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
   let running = false;
 
@@ -49,9 +56,14 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     saveState(stateRoot, s);
   }
 
-  // Outbound: resolve (or lazily create) the project's topic, then send.
+  // Outbound: resolve active (live state wins over config default) + crew-tier
+  // filter, then resolve (or lazily create) the project's topic and send.
   async function deliverOutbound(project: string, ev: ControlEvent): Promise<void> {
-    if (!isNotifyActive(stateRoot, project)) return; // muted (default) → no topic create, no send
+    const resolved = resolveNotify(cfg.notify, loadProjectOverride(project, configRoot));
+    const live = loadState(stateRoot).notify[project]; // boolean | undefined
+    const active = live ?? resolved.active;
+    if (!active) return;                                // muted → no topic create, no send
+    if (!tierIncludes(resolved.crew, ev.type)) return; // tier filter
     let threadId = loadState(stateRoot).topics[topicKey(project)];
     if (threadId === undefined) {
       threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));

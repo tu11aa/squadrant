@@ -62,7 +62,7 @@ function buildTelegramBridge(
   const sendReply = (threadId: number | undefined, text: string) =>
     client.sendMessage(cfg.supergroupId, threadId, text);
   return createTelegramBridge({
-    cfg, stateRoot, client, appendCaptainMessage, log,
+    cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
     ensureCaptainAlive, runCommand, sendReply,
   });
 }
