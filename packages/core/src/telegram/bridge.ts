@@ -7,7 +7,7 @@ import type { ControlEvent, TelegramConfig } from "@squadrant/shared";
 import { resolveNotify, loadProjectOverride, saveProjectOverride } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
-import { parseCommand } from "./commands.js";
+import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
 import { findProjectByThread, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
@@ -50,9 +50,18 @@ const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
  *  Returns null for anything else (ordinary message or malformed). */
 export function parseNotifyPref(text: string): { dimension: "crew" | "cap"; value: string } | null {
   const parts = text.trim().split(/\s+/);
-  if (parts[0]?.toLowerCase() !== "/notify") return null;
+  if (stripBotMention(parts[0] ?? "").toLowerCase() !== "/notify") return null;
   const dimension = parts[1]?.toLowerCase();
   if ((dimension === "crew" || dimension === "cap") && parts[2]) return { dimension, value: parts[2].toLowerCase() };
+  return null;
+}
+
+/** Recognize the two in-topic notification toggles. Returns the desired active
+ *  state, or null if the text is an ordinary message. */
+export function notifyToggle(text: string): boolean | null {
+  const first = stripBotMention(text.trim().split(/\s+/)[0] ?? "").toLowerCase();
+  if (first === "/unmute") return true;
+  if (first === "/mute") return false;
   return null;
 }
 
@@ -119,15 +128,6 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       await reply(undefined, `⚠️ command failed: ${(e as Error).message}`);
       log(`telegram command failed argv=${JSON.stringify(parsed.argv)}: ${(e as Error).message}`);
     }
-  }
-
-  // Recognize the two in-topic notification toggles. Returns the desired active
-  // state, or null if the text is an ordinary message.
-  function notifyToggle(text: string): boolean | null {
-    const first = text.trim().split(/\s+/)[0]?.toLowerCase();
-    if (first === "/unmute") return true;
-    if (first === "/mute") return false;
-    return null;
   }
 
   // Project topic: the v1 captain.message flow + Gap-1 auto-launch (#403). When

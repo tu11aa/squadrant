@@ -90,4 +90,25 @@ describe("parseCommand", () => {
   it("/mute with no project → usage", () => {
     expect(parseCommand("/mute")).toEqual({ kind: "usage", name: "mute", message: "usage: /mute <project>" });
   });
+
+  // @botname suffix — Telegram appends this when a command is tapped from the / menu in groups
+  it("strips @botname suffix from /status@squadrant_bot", () => {
+    expect(parseCommand("/status@squadrant_bot")).toEqual({ kind: "ok", name: "status", argv: ["status"] });
+  });
+
+  it("strips @botname suffix from /mute@squadrant_bot squadrant", () => {
+    expect(parseCommand("/mute@squadrant_bot squadrant")).toEqual({
+      kind: "ok", name: "mute", argv: ["telegram", "notify", "squadrant", "off"],
+    });
+  });
+
+  it("strips @botname suffix from /unmute@squadrant_bot squadrant", () => {
+    expect(parseCommand("/unmute@squadrant_bot squadrant")).toEqual({
+      kind: "ok", name: "unmute", argv: ["telegram", "notify", "squadrant", "on"],
+    });
+  });
+
+  it("bare command (no @botname) still works identically", () => {
+    expect(parseCommand("/status")).toEqual({ kind: "ok", name: "status", argv: ["status"] });
+  });
 });

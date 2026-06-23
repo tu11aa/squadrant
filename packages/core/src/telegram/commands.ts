@@ -101,6 +101,11 @@ function helpText(): string {
   return ["Available commands:", ...lines, "  /help"].join("\n");
 }
 
+/** Strip the `@botname` suffix Telegram appends to menu-tapped commands in groups. */
+export function stripBotMention(token: string): string {
+  return token.split("@")[0];
+}
+
 /** Parse a raw Telegram message into a curated command. Non-slash text and
  *  unregistered commands return `unknown`. */
 export function parseCommand(text: string): ParsedCommand {
@@ -109,7 +114,7 @@ export function parseCommand(text: string): ParsedCommand {
     return { kind: "unknown", message: "unknown command — send /help" };
   }
   const tokens = trimmed.slice(1).split(/\s+/).filter((t) => t.length > 0);
-  const name = (tokens[0] ?? "").toLowerCase();
+  const name = stripBotMention(tokens[0] ?? "").toLowerCase();
   const args = tokens.slice(1);
 
   if (name === "help") {

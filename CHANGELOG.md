@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Telegram commands tapped from the `/` menu in groups now work correctly.** Telegram appends `@<botname>` to menu-tapped commands (e.g. `/status@squadrant_bot`). The three command parsers (`parseCommand`, `parseNotifyPref`, `notifyToggle`) now strip this suffix from the first token before matching, so menu-tapped commands are recognized identically to manually typed bare commands.
+
 ### Added
 - **`squadrant telegram setup` is now re-run-safe.** Re-running setup with an existing supergroup configured skips `getUpdates` entirely — avoids the 60 s timeout caused by the daemon's poll consuming the single-consumer long-poll channel. New `--redetect` flag forces fresh group detection; new `--user-id <id>` flag lets you enable remote control on a re-run without touching `getUpdates`. Allowlist precedence: `--user-id` > detected userId (first-run only) > existing `cfg.users` (preserved).
 - **Daemon auto-restarts when you change daemon-cached config.** `squadrant telegram setup`, `squadrant config set <telegram.*|defaults.taskTimeoutMs|defaults.cmuxEventsBridge|projects.*>`, and project registration now restart the daemon so the change takes effect immediately (was: silently stale until a manual `squadrant heal daemon`). Use `--no-restart` to opt out. Interactive crews + tasks + Telegram state recover automatically via the disk store + boot reconcile.
