@@ -30,8 +30,30 @@ describe("formatLifecycle", () => {
   });
 
   it("falls back to a generic line for other event types (never throws)", () => {
-    const ev: ControlEvent = { type: "task.failed", id: "xyz000", error: "boom" };
-    expect(formatLifecycle("squadrant", ev)).toBe("ℹ️ [squadrant] task.failed · xyz000");
+    const ev: ControlEvent = { type: "task.progress", id: "xyz000", note: "still going" };
+    expect(formatLifecycle("squadrant", ev)).toBe("ℹ️ [squadrant] task.progress · xyz000");
+  });
+});
+
+describe("formatLifecycle new cases", () => {
+  it("failed shows the error", () => {
+    const s = formatLifecycle("p", { type: "task.failed", id: "t1", error: "boom" } as any);
+    expect(s).toContain("CREW FAILED");
+    expect(s).toContain("boom");
+  });
+  it("approval shows the question", () => {
+    const s = formatLifecycle("p", { type: "task.approval.requested", id: "t1", requestId: 1, question: "run rm?", kind: "shell" } as any);
+    expect(s).toContain("APPROVAL");
+    expect(s).toContain("run rm?");
+  });
+  it("input shows the question", () => {
+    const s = formatLifecycle("p", { type: "task.input.requested", id: "t1", requestId: 1, question: "which env?" } as any);
+    expect(s).toContain("INPUT");
+    expect(s).toContain("which env?");
+  });
+  it("timeout shows a timeout line", () => {
+    const s = formatLifecycle("p", { type: "task.timeout", id: "t1", taskTimeoutMs: 1000 } as any);
+    expect(s).toContain("CREW TIMEOUT");
   });
 });
 

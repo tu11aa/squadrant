@@ -15,6 +15,14 @@ export function formatLifecycle(project: string, ev: ControlEvent): string {
       return `🚧 [${project}] CREW BLOCKED · ${ev.id}\n${ev.question}`;
     case "task.idle":
       return `💤 [${project}] CREW IDLE · ${ev.id}`;
+    case "task.failed":
+      return `❌ [${project}] CREW FAILED · ${ev.id}\n${ev.error}`;
+    case "task.approval.requested":
+      return `🔐 [${project}] APPROVAL NEEDED · ${ev.id}\n${ev.question}`;
+    case "task.input.requested":
+      return `❓ [${project}] INPUT NEEDED · ${ev.id}\n${ev.question}`;
+    case "task.timeout":
+      return `⏱️ [${project}] CREW TIMEOUT · ${ev.id}`;
     default:
       return `ℹ️ [${project}] ${ev.type} · ${ev.id}`;
   }
