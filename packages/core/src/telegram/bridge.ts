@@ -3,15 +3,24 @@
 // crash-contained: no send/poll error may escape into the daemon.
 import os from "node:os";
 import path from "node:path";
-import type { ControlEvent, TelegramConfig } from "@squadrant/shared";
-import { resolveNotify, loadProjectOverride, saveProjectOverride } from "@squadrant/shared";
+import type { ControlEvent, CrewTier, NotifyConfig, TelegramConfig } from "@squadrant/shared";
+import { resolveNotify, loadProjectOverride, saveProjectOverride, loadConfig } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
+import { effortPanel, notifyPanel, parseCallback, projectPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
 import { tierIncludes } from "./tiers.js";
+
+/** A Telegram callback_query (button tap). Narrowed to the fields the bridge uses. */
+interface CallbackQuery {
+  id: string;
+  from?: { id: number };
+  message?: { chat: { id: number }; message_id: number; message_thread_id?: number };
+  data?: string;
+}
 
 export interface TelegramBridge {
   start(): void;
@@ -34,8 +43,9 @@ export interface TelegramBridgeOptions {
   ensureCaptainAlive?: (project: string) => Promise<EnsureResult>;
   /** Execute a curated squadrant CLI argv and return capped output. */
   runCommand?: (argv: string[]) => Promise<string>;
-  /** Post a reply to the General topic (threadId undefined) or a project topic. */
-  sendReply?: (threadId: number | undefined, text: string) => Promise<void>;
+  /** Post a reply to the General topic (threadId undefined) or a project topic.
+   *  The optional replyMarkup attaches an inline-button panel (tap-first commands). */
+  sendReply?: (threadId: number | undefined, text: string, replyMarkup?: unknown) => Promise<void>;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
@@ -93,13 +103,125 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     await client.sendMessage(cfg.supergroupId, threadId, formatLifecycle(project, ev));
   }
 
+  // Live notify state for a project: resolved config (built-in→global→override)
+  // with the live `active` overlay (state wins over config default).
+  function resolveLiveNotify(project: string): NotifyConfig {
+    const resolved = resolveNotify(cfg.notify, loadProjectOverride(project, configRoot));
+    const live = loadState(stateRoot).notify[project]; // boolean | undefined
+    return { ...resolved, active: live ?? resolved.active };
+  }
+
+  // Re-render a panel's keyboard, swallowing the Bot API "message is not
+  // modified" error that fires when the new keyboard equals the old one.
+  async function editMarkup(chatId: number, messageId: number, markup: unknown): Promise<void> {
+    try {
+      await client.editMessageReplyMarkup(chatId, messageId, markup);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!/not modified/i.test(msg)) throw e;
+    }
+  }
+
+  // callback_query (inline-button tap). ALWAYS answerCallbackQuery on every path
+  // (else the spinner hangs ~15s). Gate on the TAPPER's user-id, never the panel.
+  // Render state fresh. Never throw into the poll loop.
+  async function handleCallback(cq: CallbackQuery): Promise<void> {
+    try {
+      if (!cq.data || !cq.message) {
+        await client.answerCallbackQuery(cq.id);
+        return;
+      }
+      if (!isControlEnabled(cfg) || !isAuthorized(cq.from?.id, cfg)) {
+        await client.answerCallbackQuery(cq.id, "⛔ not authorized");
+        return;
+      }
+      const action = parseCallback(cq.data);
+      if (!action) {
+        await client.answerCallbackQuery(cq.id);
+        return;
+      }
+      const chatId = cq.message.chat.id;
+      const messageId = cq.message.message_id;
+
+      if (action.t === "notify") {
+        const resolved = findProjectByThread(stateRoot, cq.message.message_thread_id ?? -1);
+        if (!resolved) {
+          await client.answerCallbackQuery(cq.id, "no project for this topic");
+          return;
+        }
+        const project = resolved.project;
+        if (action.dim === "active") {
+          setNotify(stateRoot, project, action.val === "on");
+        } else if (action.dim === "cap") {
+          saveProjectOverride(project, { telegram: { notify: { cap: action.val === "on" } } }, configRoot);
+        } else {
+          saveProjectOverride(project, { telegram: { notify: { crew: action.val as CrewTier } } }, configRoot);
+        }
+        await client.answerCallbackQuery(cq.id, `✅ ${action.dim} = ${action.val}`);
+        await editMarkup(chatId, messageId, notifyPanel(resolveLiveNotify(project)));
+        return;
+      }
+
+      if (action.t === "effort") {
+        if (runCommand) await runCommand(["effort", action.mode]);
+        await client.answerCallbackQuery(cq.id, `✅ effort = ${action.mode}`);
+        await editMarkup(chatId, messageId, effortPanel(action.mode as "max" | "balance" | "low"));
+        return;
+      }
+
+      // action.t === "pick" — General-topic project actions.
+      const { action: act, project } = action;
+      if (act === "cr") {
+        const out = runCommand ? await runCommand(["crew", "list", project]) : "(command runner unavailable)";
+        await client.answerCallbackQuery(cq.id);
+        await reply(undefined, out);
+      } else if (act === "lc") {
+        if (runCommand) await runCommand(["launch", project]);
+        await client.answerCallbackQuery(cq.id, `launching ${project}`);
+      } else if (act === "mu") {
+        setNotify(stateRoot, project, false);
+        await client.answerCallbackQuery(cq.id, `🔕 muted ${project}`);
+      } else {
+        setNotify(stateRoot, project, true);
+        await client.answerCallbackQuery(cq.id, `🔔 unmuted ${project}`);
+      }
+    } catch (e) {
+      log(`telegram callback failed data=${cq.data}: ${(e as Error).message}`);
+      try {
+        await client.answerCallbackQuery(cq.id, "⚠️ failed");
+      } catch {
+        /* answer failed too — already logged; never throw into the poll loop */
+      }
+    }
+  }
+
   // Reply best-effort: a send failure must never escape into the poll loop.
-  async function reply(threadId: number | undefined, text: string): Promise<void> {
+  async function reply(threadId: number | undefined, text: string, replyMarkup?: unknown): Promise<void> {
     if (!sendReply) return;
     try {
-      await sendReply(threadId, text);
+      // Keep the 2-arg call shape when there's no panel (markup undefined).
+      if (replyMarkup !== undefined) await sendReply(threadId, text, replyMarkup);
+      else await sendReply(threadId, text);
     } catch (e) {
       log(`telegram reply failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Current global effort dial (falls back to today's "balance"). */
+  function currentEffort(): "max" | "balance" | "low" {
+    try {
+      return loadConfig(path.join(configRoot, "config.json")).defaults.effort ?? "balance";
+    } catch {
+      return "balance";
+    }
+  }
+
+  /** Registered project names for the General-topic pickers. */
+  function projectNames(): string[] {
+    try {
+      return Object.keys(loadConfig(path.join(configRoot, "config.json")).projects);
+    } catch {
+      return [];
     }
   }
 
@@ -114,6 +236,25 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     }
     if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
       await reply(undefined, "⛔ not authorized");
+      return;
+    }
+    // Tap-first: a parameterized command with NO argument replies a button panel
+    // instead of a usage error. Typed forms (with an arg) fall through to run.
+    const tokens = text.trim().slice(1).split(/\s+/).filter((t) => t.length > 0);
+    const name = stripBotMention(tokens[0] ?? "").toLowerCase();
+    const noArg = tokens.length === 1;
+    if (noArg && name === "effort") {
+      await reply(undefined, "Effort mode:", effortPanel(currentEffort()));
+      return;
+    }
+    const PICKERS: Record<string, PickAction> = { crews: "cr", launch: "lc", mute: "mu", unmute: "um" };
+    if (noArg && name in PICKERS) {
+      const projects = projectNames();
+      if (projects.length === 0) {
+        await reply(undefined, "no projects registered");
+        return;
+      }
+      await reply(undefined, `Pick a project:`, projectPicker(PICKERS[name], projects));
       return;
     }
     const parsed = parseCommand(text);
@@ -162,8 +303,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       }
       const pref = parseNotifyPref(text);
       if (pref === null) {
-        // Incomplete (bare `/notify`, or a dimension with no value) → usage hint.
-        await reply(threadId, "usage: /notify crew <all|alert_only|done_only|none> | cap <on|off>");
+        // Incomplete (bare `/notify`, or a dimension with no value) → tap-first panel.
+        // Typed forms (`/notify cap on`) still parse below for power users.
+        await reply(threadId, `🔔 ${resolved.project} notifications`, notifyPanel(resolveLiveNotify(resolved.project)));
         return;
       }
       // Deliberate preference change — writes the per-project config file (not live state).
@@ -198,7 +340,11 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number } } }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number } }; callback_query?: CallbackQuery }): Promise<void> {
+    if (u.callback_query) {
+      await handleCallback(u.callback_query);
+      return;
+    }
     const m = u.message;
     if (!m || m.text === undefined) return;
     if (!cfg.chats.includes(m.chat.id)) return; // not an allowlisted chat (coarse filter)
