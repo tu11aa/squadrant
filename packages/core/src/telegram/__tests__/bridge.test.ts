@@ -144,6 +144,130 @@ describe("pushLifecycle notify gate", () => {
   });
 });
 
+describe("auto-unmute + in-topic /mute /unmute", () => {
+  const USER_ID = 42;
+  const cfgWithControl: TelegramConfig = {
+    botToken: "T", supergroupId: -100500, chats: [-100111], pollMs: 1,
+    remoteControl: true, users: [USER_ID],
+  } as any; // TelegramConfig already has these fields; `as any` bypasses stale dist types
+
+  it("auto-unmutes a project when a normal message lands in its topic", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 100);
+    const appendCalls: unknown[] = [];
+    let n = 0;
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => {
+        n++;
+        if (n === 1) return [{ update_id: 10, message: { chat: { id: -100111 }, message_thread_id: 100, text: "hello", from: { id: USER_ID } } } as never];
+        return [];
+      },
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({
+      cfg, stateRoot: root, client,
+      appendCaptainMessage: async (a) => { appendCalls.push(a); },
+      log: () => {},
+    });
+    active = bridge;
+    bridge.start();
+    await waitFor(() => loadState(root).offset === 11);
+    expect(isNotifyActive(root, "demo")).toBe(true);
+    expect(appendCalls).toHaveLength(1);
+  });
+
+  it("auto-unmute works even when remoteControl is OFF", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 100);
+    const appendCalls: unknown[] = [];
+    let n = 0;
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => {
+        n++;
+        if (n === 1) return [{ update_id: 10, message: { chat: { id: -100111 }, message_thread_id: 100, text: "hi", from: { id: USER_ID } } } as never];
+        return [];
+      },
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({
+      cfg, stateRoot: root, client, // remoteControl=false (default cfg)
+      appendCaptainMessage: async (a) => { appendCalls.push(a); },
+      log: () => {},
+    });
+    active = bridge;
+    bridge.start();
+    await waitFor(() => loadState(root).offset === 11);
+    expect(isNotifyActive(root, "demo")).toBe(true);
+    expect(appendCalls).toHaveLength(1);
+  });
+
+  it("/unmute in topic toggles ON and does NOT append a captain message (authorized)", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 100);
+    setNotify(root, "demo", false);
+    const appendCalls: unknown[] = [];
+    const replyCalls: Array<[number | undefined, string]> = [];
+    let n = 0;
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => {
+        n++;
+        if (n === 1) return [{ update_id: 10, message: { chat: { id: -100111 }, message_thread_id: 100, text: "/unmute", from: { id: USER_ID } } } as never];
+        return [];
+      },
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({
+      cfg: cfgWithControl, stateRoot: root, client,
+      appendCaptainMessage: async (a) => { appendCalls.push(a); },
+      log: () => {},
+      sendReply: async (threadId, text) => { replyCalls.push([threadId, text]); },
+    });
+    active = bridge;
+    bridge.start();
+    await waitFor(() => loadState(root).offset === 11);
+    expect(isNotifyActive(root, "demo")).toBe(true);
+    expect(appendCalls).toHaveLength(0);
+    expect(replyCalls.some(([, t]) => t.includes("ON"))).toBe(true);
+  });
+
+  it("/mute in topic is rejected when remoteControl is OFF (notify unchanged)", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 100);
+    setNotify(root, "demo", true);
+    const appendCalls: unknown[] = [];
+    const replyCalls: Array<[number | undefined, string]> = [];
+    let n = 0;
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => {
+        n++;
+        if (n === 1) return [{ update_id: 10, message: { chat: { id: -100111 }, message_thread_id: 100, text: "/mute", from: { id: USER_ID } } } as never];
+        return [];
+      },
+      getMe: async () => ({ id: 0, username: "" }),
+    };
+    const bridge = createTelegramBridge({
+      cfg, stateRoot: root, client, // remoteControl=false
+      appendCaptainMessage: async (a) => { appendCalls.push(a); },
+      log: () => {},
+      sendReply: async (threadId, text) => { replyCalls.push([threadId, text]); },
+    });
+    active = bridge;
+    bridge.start();
+    await waitFor(() => loadState(root).offset === 11);
+    expect(isNotifyActive(root, "demo")).toBe(true); // unchanged
+    expect(appendCalls).toHaveLength(0);
+    expect(replyCalls.some(([, t]) => t.includes("not authorized"))).toBe(true);
+  });
+});
+
 describe("inbound poll", () => {
   it("appends a captain.message for an allowlisted chat on a known thread", async () => {
     const root = freshRoot();
