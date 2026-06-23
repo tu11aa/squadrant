@@ -4,7 +4,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig } from "@squadrant/shared";
-import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken } from "@squadrant/core";
+import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
 
 /** Daemon state root (mirrors buildContext): ~/.config/squadrant/state. */
@@ -47,6 +47,23 @@ export async function runTelegramSend(opts: {
   }
   await opts.client.sendMessage(opts.cfg.supergroupId, topicId, opts.message);
   return { chatId: opts.cfg.supergroupId, topicId };
+}
+
+/** Set a project's notification flag in telegram-state.json. */
+export function runTelegramNotifySet(opts: { project: string; active: boolean; stateRoot: string }): void {
+  setNotify(opts.stateRoot, opts.project, opts.active);
+}
+
+/** List every known project (union of linked topics and notify keys) with its state. */
+export function runTelegramNotifyStatus(opts: { stateRoot: string }): Array<{ project: string; active: boolean }> {
+  const s = loadState(opts.stateRoot);
+  const projects = new Set<string>();
+  for (const key of Object.keys(s.topics)) {
+    const sep = key.indexOf("::");
+    projects.add(sep === -1 ? key : key.slice(0, sep));
+  }
+  for (const p of Object.keys(s.notify)) projects.add(p);
+  return [...projects].map((project) => ({ project, active: s.notify[project] === true }));
 }
 
 /** Bind a project to a forum topic, creating it on first link. Idempotent. */
@@ -235,6 +252,33 @@ telegramCommand
     }
     console.log();
     console.log(`Next: ${chalk.cyan("squadrant telegram link <project>")}`);
+  });
+
+telegramCommand
+  .command("notify")
+  .argument("[project]", "project to toggle")
+  .argument("[state]", "on | off")
+  .option("--status", "list notification state for all projects")
+  .description("Per-project lifecycle notifications: on|off, or --status to list")
+  .action((project: string | undefined, state: string | undefined, opts: { status?: boolean }) => {
+    const stateRoot = defaultStateRoot();
+    if (opts.status || !project) {
+      const rows = runTelegramNotifyStatus({ stateRoot });
+      if (rows.length === 0) {
+        console.log("no projects linked");
+        return;
+      }
+      for (const r of rows) {
+        console.log(`  ${r.project}: ${r.active ? chalk.green("on") : chalk.dim("off (muted)")}`);
+      }
+      return;
+    }
+    if (state !== "on" && state !== "off") {
+      console.error(chalk.red("usage: squadrant telegram notify <project> <on|off>"));
+      process.exit(1);
+    }
+    runTelegramNotifySet({ project, active: state === "on", stateRoot });
+    console.log(chalk.green(`${project} notifications ${state === "on" ? "ON" : "OFF"}`));
   });
 
 telegramCommand

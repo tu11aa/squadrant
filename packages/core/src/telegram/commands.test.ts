@@ -78,4 +78,16 @@ describe("parseCommand", () => {
     expect(parseCommand("/spawn").kind).toBe("usage");
     expect(parseCommand("/spawn brove").kind).toBe("usage");
   });
+
+  it("/unmute <project> → telegram notify <project> on", () => {
+    expect(parseCommand("/unmute squadrant")).toEqual({ kind: "ok", name: "unmute", argv: ["telegram", "notify", "squadrant", "on"] });
+  });
+
+  it("/mute <project> → telegram notify <project> off", () => {
+    expect(parseCommand("/mute squadrant")).toEqual({ kind: "ok", name: "mute", argv: ["telegram", "notify", "squadrant", "off"] });
+  });
+
+  it("/mute with no project → usage", () => {
+    expect(parseCommand("/mute")).toEqual({ kind: "usage", name: "mute", message: "usage: /mute <project>" });
+  });
 });

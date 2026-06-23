@@ -23,9 +23,9 @@ function fakeClient(onCreate?: () => void) {
 }
 
 describe("telegramCommand registration", () => {
-  it("exposes the link, send, setup, and status subcommands", () => {
+  it("exposes the link, notify, send, setup, and status subcommands", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["link", "send", "setup", "status"]);
+    expect(names).toEqual(["link", "notify", "send", "setup", "status"]);
   });
 });
 
@@ -96,6 +96,30 @@ describe("runTelegramSend", () => {
     const client = fakeClient();
     await expect(runTelegramSend({ project: "nope", message: "hi", cfg, client, stateRoot: root }))
       .rejects.toThrow('project "nope" is not linked — run: squadrant telegram link nope');
+  });
+});
+
+import { runTelegramNotifySet, runTelegramNotifyStatus } from "../telegram.js";
+import { isNotifyActive, setTopic as setTopicDirect } from "@squadrant/core";
+
+describe("telegram notify CLI", () => {
+  it("runTelegramNotifySet writes the flag", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cli-"));
+    runTelegramNotifySet({ project: "squadrant", active: true, stateRoot: dir });
+    expect(isNotifyActive(dir, "squadrant")).toBe(true);
+    runTelegramNotifySet({ project: "squadrant", active: false, stateRoot: dir });
+    expect(isNotifyActive(dir, "squadrant")).toBe(false);
+  });
+
+  it("runTelegramNotifyStatus lists known projects (from topics ∪ notify)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tg-cli-"));
+    setTopicDirect(dir, "alpha", 1);
+    runTelegramNotifySet({ project: "beta", active: true, stateRoot: dir });
+    const rows = runTelegramNotifyStatus({ stateRoot: dir }).sort((a, b) => a.project.localeCompare(b.project));
+    expect(rows).toEqual([
+      { project: "alpha", active: false },
+      { project: "beta", active: true },
+    ]);
   });
 });
 

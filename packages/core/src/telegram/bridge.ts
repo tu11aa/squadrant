@@ -7,7 +7,7 @@ import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
-import { findProjectByThread, loadState, saveState, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, isNotifyActive, loadState, saveState, setNotify, setTopic, topicKey } from "./state.js";
 
 export interface TelegramBridge {
   start(): void;
@@ -51,6 +51,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Outbound: resolve (or lazily create) the project's topic, then send.
   async function deliverOutbound(project: string, ev: ControlEvent): Promise<void> {
+    if (!isNotifyActive(stateRoot, project)) return; // muted (default) → no topic create, no send
     let threadId = loadState(stateRoot).topics[topicKey(project)];
     if (threadId === undefined) {
       threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
@@ -96,6 +97,15 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     }
   }
 
+  // Recognize the two in-topic notification toggles. Returns the desired active
+  // state, or null if the text is an ordinary message.
+  function notifyToggle(text: string): boolean | null {
+    const first = text.trim().split(/\s+/)[0]?.toLowerCase();
+    if (first === "/unmute") return true;
+    if (first === "/mute") return false;
+    return null;
+  }
+
   // Project topic: the v1 captain.message flow + Gap-1 auto-launch (#403). When
   // control is off OR the sender isn't allowlisted, behaves exactly as v1
   // (append only). The append throws on delivery-infra failure so the caller can
@@ -104,6 +114,20 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
     if (!resolved) return; // no project bound to this topic
+
+    const toggle = notifyToggle(text);
+    if (toggle !== null) {
+      // Explicit toggle command — fail-closed, never appended as a captain message.
+      if (!isControlEnabled(cfg) || !isAuthorized(fromId, cfg)) {
+        await reply(threadId, "⛔ not authorized");
+        return;
+      }
+      setNotify(stateRoot, resolved.project, toggle);
+      await reply(threadId, toggle ? `🔔 ${resolved.project} notifications ON` : `🔕 ${resolved.project} notifications OFF`);
+      return;
+    }
+
+    setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
       try {
         const r = await ensureCaptainAlive(resolved.project);
