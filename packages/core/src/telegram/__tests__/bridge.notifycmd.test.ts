@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseNotifyPref } from "../bridge.js";
+import { parseNotifyPref, notifyToggle } from "../bridge.js";
 
 describe("parseNotifyPref", () => {
   it("parses /notify crew all", () => {
@@ -23,4 +23,14 @@ describe("parseNotifyPref", () => {
   it("strips @botname from /notify@squadrant_bot crew all", () => {
     expect(parseNotifyPref("/notify@squadrant_bot crew all")).toEqual({ dimension: "crew", value: "all" });
   });
+});
+
+describe("notifyToggle", () => {
+  it("/unmute returns true", () => { expect(notifyToggle("/unmute")).toBe(true); });
+  it("/mute returns false", () => { expect(notifyToggle("/mute")).toBe(false); });
+  it("ordinary text returns null", () => { expect(notifyToggle("hello")).toBeNull(); });
+
+  // @botname suffix — tapped from / menu in groups
+  it("/unmute@squadrant_bot returns true", () => { expect(notifyToggle("/unmute@squadrant_bot")).toBe(true); });
+  it("/mute@squadrant_bot returns false", () => { expect(notifyToggle("/mute@squadrant_bot")).toBe(false); });
 });

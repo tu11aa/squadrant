@@ -56,6 +56,15 @@ export function parseNotifyPref(text: string): { dimension: "crew" | "cap"; valu
   return null;
 }
 
+/** Recognize the two in-topic notification toggles. Returns the desired active
+ *  state, or null if the text is an ordinary message. */
+export function notifyToggle(text: string): boolean | null {
+  const first = stripBotMention(text.trim().split(/\s+/)[0] ?? "").toLowerCase();
+  if (first === "/unmute") return true;
+  if (first === "/mute") return false;
+  return null;
+}
+
 export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridge {
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
@@ -119,15 +128,6 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       await reply(undefined, `⚠️ command failed: ${(e as Error).message}`);
       log(`telegram command failed argv=${JSON.stringify(parsed.argv)}: ${(e as Error).message}`);
     }
-  }
-
-  // Recognize the two in-topic notification toggles. Returns the desired active
-  // state, or null if the text is an ordinary message.
-  function notifyToggle(text: string): boolean | null {
-    const first = text.trim().split(/\s+/)[0]?.toLowerCase();
-    if (first === "/unmute") return true;
-    if (first === "/mute") return false;
-    return null;
   }
 
   // Project topic: the v1 captain.message flow + Gap-1 auto-launch (#403). When
