@@ -6,6 +6,7 @@ import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, lo
 import type { SquadrantConfig, TelegramConfig, NotifyConfig, CrewTier } from "@squadrant/shared";
 import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify, BOT_COMMANDS } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
+import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
 
 /** Daemon state root (mirrors buildContext): ~/.config/squadrant/state. */
 function defaultStateRoot(): string {
@@ -199,6 +200,18 @@ export async function runRegisterCommands(opts: { client: TelegramClient }): Pro
   await opts.client.setMyCommands(BOT_COMMANDS);
 }
 
+export function runTelegramPostSetup(opts: {
+  doRestart?: (o: { reason: string }) => RestartOutcome;
+}): void {
+  const doRestart = opts.doRestart ?? restartDaemonIfRunning;
+  const outcome = doRestart({ reason: "telegram config" });
+  if (outcome === "skipped-not-running") {
+    console.log(chalk.dim("(daemon not running — change applies on next start)"));
+  } else if (outcome === "skipped-opt-out") {
+    console.log(chalk.dim("(run 'squadrant heal daemon' to apply)"));
+  }
+}
+
 export const telegramCommand = new Command("telegram")
   .description("Two-way Telegram integration: push crew events to a topic and reply into the captain pane");
 
@@ -368,6 +381,7 @@ telegramCommand
       console.log(chalk.dim("No project topics yet — they're created on first delivery or via: squadrant telegram link <project>"));
     }
 
+    runTelegramPostSetup({});
     console.log();
     console.log(`Next: ${chalk.cyan("squadrant telegram link <project>")}`);
   });

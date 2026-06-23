@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
 import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, questionMasked } from "../telegram.js";
+import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, questionMasked, runTelegramPostSetup } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -225,5 +225,16 @@ describe("runNotifyConfirmation", () => {
     setTopicDirect(dir, "squadrant", 9);
     const c: any = { sendMessage: async () => { throw new Error("boom"); } };
     expect(await runNotifyConfirmation({ project: "squadrant", before: { ...ON }, after: { ...ON, cap: false }, cfg: tgCfg, client: c, stateRoot: dir })).toBe(false);
+  });
+});
+
+// ── daemon auto-restart after telegram setup ──────────────────────────────────
+
+describe("runTelegramPostSetup — restart gating", () => {
+  it("calls restart helper with a reason mentioning telegram", () => {
+    const spy = vi.fn().mockReturnValue("restarted");
+    runTelegramPostSetup({ doRestart: spy });
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0][0]).toMatchObject({ reason: expect.stringContaining("telegram") });
   });
 });

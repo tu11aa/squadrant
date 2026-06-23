@@ -8,6 +8,20 @@ import {
   resolveHome,
   ProjectConfig,
 } from "@squadrant/shared";
+import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
+
+export function restartAfterProjectsAdd(opts: {
+  noRestart?: boolean;
+  doRestart?: (o: { reason: string; noRestart?: boolean }) => RestartOutcome;
+}): void {
+  const doRestart = opts.doRestart ?? restartDaemonIfRunning;
+  const outcome = doRestart({ reason: "project registration", noRestart: opts.noRestart });
+  if (outcome === "skipped-not-running") {
+    console.log(chalk.dim("  (daemon not running — change applies on next start)"));
+  } else if (outcome === "skipped-opt-out") {
+    console.log(chalk.dim("  (run 'squadrant heal daemon' to apply)"));
+  }
+}
 
 function findPackageRoot(): string {
   let dir = path.dirname(new URL(import.meta.url).pathname);
@@ -68,7 +82,8 @@ const addCmd = new Command("add")
   .option("--spoke <path>", "Spoke vault path (default: ~/squadrant-hub/spokes/<name>)")
   .option("--group <name>", "Project group name (siblings share context)")
   .option("--group-role <role>", "Role within the group (auto-set to 'primary' if first in group)")
-  .action((name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string }) => {
+  .option("--no-restart", "skip daemon restart after registration")
+  .action((name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string; restart?: boolean }) => {
     const config = loadConfig();
 
     if (config.projects[name]) {
@@ -150,6 +165,7 @@ const addCmd = new Command("add")
     config.projects[name] = project;
     saveConfig(config);
     console.log(chalk.green(`\n  ✔ Project '${name}' registered`));
+    restartAfterProjectsAdd({ noRestart: opts.restart === false });
 
     // Scaffold spoke vault from template
     const pkgRoot = findPackageRoot();

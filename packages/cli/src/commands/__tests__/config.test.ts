@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { runConfigCheck, runConfigGet, runConfigSet } from "../config.js";
+import { runConfigCheck, runConfigGet, runConfigSet, runConfigSetAction } from "../config.js";
 import { getDefaultConfig } from "@squadrant/shared";
 
 const __thisDir = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +87,33 @@ describe("runConfigGet / runConfigSet (dotted path)", () => {
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk.defaults.maxCrew).toBe(9);
     expect(onDisk.defaults.effort).toBe("balance");
+  });
+});
+
+// ── daemon auto-restart on config set ────────────────────────────────────────
+
+describe("runConfigSetAction — daemon restart gating", () => {
+  it("does NOT call restart for a non-daemon-cached key (defaults.effort)", () => {
+    writeUser(() => {});
+    const spy = vi.fn().mockReturnValue("skipped-opt-out");
+    runConfigSetAction({ key: "defaults.effort", value: "low", doRestart: spy, configPath: cfgPath });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("DOES call restart for a daemon-cached key (telegram.notify.crew)", () => {
+    writeUser((c) => { (c as any).telegram = { botToken: "t", supergroupId: -1, notify: { crew: "all" } }; });
+    const spy = vi.fn().mockReturnValue("restarted");
+    runConfigSetAction({ key: "telegram.notify.crew", value: "none", doRestart: spy, configPath: cfgPath });
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0][0]).toMatchObject({ reason: expect.stringContaining("telegram.notify.crew") });
+  });
+
+  it("noRestart suppresses the restart call via noRestart flag passed through", () => {
+    writeUser((c) => { (c as any).telegram = { botToken: "t", supergroupId: -1, notify: { crew: "all" } }; });
+    const spy = vi.fn().mockReturnValue("skipped-opt-out");
+    runConfigSetAction({ key: "telegram.notify.crew", value: "none", noRestart: true, doRestart: spy, configPath: cfgPath });
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0][0]).toMatchObject({ noRestart: true });
   });
 });
 

@@ -13,8 +13,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
-import { ensureDaemon as _ensureDaemon } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
+import { restartDaemonIfRunning } from "../control/restart-daemon.js";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 
@@ -153,7 +153,7 @@ export const healCommand = new Command("heal")
       .description("Restart squadrantd via the idempotent launchd kickstart path")
       .action(async () => {
         const code = await runHealDaemon({
-          ensureDaemon: _ensureDaemon,
+          ensureDaemon: () => restartDaemonIfRunning({ reason: "heal", isRunning: () => true }),
           stdout: process.stdout,
           stderr: process.stderr,
         });

@@ -3,9 +3,10 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig } from "@squadrant/shared";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey } from "@squadrant/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
 import { withStamp } from "@squadrant/shared";
+import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
 
 export interface ConfigCheckOptions {
   configPath: string;
@@ -83,6 +84,30 @@ export function runConfigSet(key: string, value: string, configPath = DEFAULT_CO
   }
   node[parts[parts.length - 1]] = parsed;
   saveConfig(config as unknown as SquadrantConfig, configPath);
+}
+
+function printRestartOutcome(outcome: RestartOutcome): void {
+  if (outcome === "skipped-not-running") {
+    console.log(chalk.dim("(daemon not running — change applies on next start)"));
+  } else if (outcome === "skipped-opt-out") {
+    console.log(chalk.dim("(run 'squadrant heal daemon' to apply)"));
+  }
+}
+
+export function runConfigSetAction(opts: {
+  key: string;
+  value: string;
+  noRestart?: boolean;
+  doRestart?: (o: { reason: string; noRestart?: boolean }) => RestartOutcome;
+  configPath?: string;
+}): void {
+  runConfigSet(opts.key, opts.value, opts.configPath);
+  console.log(chalk.green(`✔ set ${opts.key} = ${opts.value}`));
+  if (isDaemonCachedKey(opts.key)) {
+    const doRestart = opts.doRestart ?? restartDaemonIfRunning;
+    const outcome = doRestart({ reason: `config ${opts.key}`, noRestart: opts.noRestart });
+    printRestartOutcome(outcome);
+  }
 }
 
 const SEV_COLOR: Record<string, (s: string) => string> = {
@@ -164,10 +189,10 @@ configCommand
   .description("Write a config value by dotted key (e.g. defaults.effort low)")
   .argument("<key>", "dotted config key")
   .argument("<value>", "value (JSON-parsed when possible, else a bare string)")
-  .action((key: string, value: string) => {
+  .option("--no-restart", "skip daemon restart even if the key is daemon-cached")
+  .action((key: string, value: string, opts: { restart?: boolean }) => {
     try {
-      runConfigSet(key, value);
-      console.log(chalk.green(`✔ set ${key} = ${value}`));
+      runConfigSetAction({ key, value, noRestart: opts.restart === false });
     } catch (e) {
       console.error(chalk.red((e as Error).message));
       process.exit(1);
