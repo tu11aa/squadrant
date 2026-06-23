@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squadrant ⇄ Telegram — Architecture</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --line:#30363d;
+    --txt:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950;
+    --amber:#d29922; --red:#f85149; --purple:#bc8cff; --teal:#39c5cf;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:19px;margin:38px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:15px;margin:20px 0 8px;color:var(--accent)}
+  .sub{color:var(--dim);margin:0 0 8px}
+  code{background:#222b38;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
+    font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d4e3}
+  .grid{display:grid;gap:14px}
+  .cols-2{grid-template-columns:1fr 1fr}
+  .cols-3{grid-template-columns:1fr 1fr 1fr}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h3{margin-top:0}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
+    border:1px solid var(--line);color:var(--dim);margin-right:4px}
+  .pill.g{color:var(--green);border-color:#23502f}
+  .pill.a{color:var(--amber);border-color:#5a4413}
+  .pill.r{color:var(--red);border-color:#5e2326}
+  .pill.p{color:var(--purple);border-color:#43306b}
+  .flow{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:18px;overflow-x:auto}
+  pre{margin:0;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd9e5;white-space:pre}
+  .legend span{margin-right:14px;font-size:12px;color:var(--dim)}
+  .k{color:var(--teal)}.fn{color:var(--purple)}.gate{color:var(--amber)}.stop{color:var(--red)}.ok{color:var(--green)}
+  table{border-collapse:collapse;width:100%;margin-top:8px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;font-size:13px}
+  th{background:#1b2330;color:var(--accent)}
+  .note{background:#13242b;border:1px solid #1f4a52;border-radius:8px;padding:10px 14px;color:#bfe9ee}
+  .warn{background:#2a2210;border:1px solid #5a4413;border-radius:8px;padding:10px 14px;color:#f0d9a6}
+  .small{font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Squadrant ⇄ Telegram</h1>
+<p class="sub">How the daemon talks to Telegram — components, the two-gate security model, and the inbound/outbound flows. <span class="small">Generated 2026-06-23 · reflects develop @ 44c0965.</span></p>
+
+<!-- ===================== BIG PICTURE ===================== -->
+<h2>1 · The big picture</h2>
+<div class="flow">
+<pre>
+   YOUR PHONE (Telegram app)                          YOUR MAC
+ ┌───────────────────────────┐            ┌──────────────────────────────────────────┐
+ │  Forum supergroup          │            │  squadrantd (launchd daemon, 1 process)   │
+ │  ┌─────────────────────┐  │  outbound  │   ┌────────────────────────────────────┐ │
+ │  │ # General  (no tid) │◄─┼────────────┼───│  TelegramBridge                     │ │
+ │  │ # squadrant (tid=9) │◄─┼──pushLife──┼───│   • pushLifecycle() → deliverOutbound│ │
+ │  │ # brove-mobile (40) │  │            │   │   • getUpdates() long-poll loop     │ │
+ │  └─────────────────────┘  │  inbound   │   └───────────┬───────────────┬─────────┘ │
+ │        ▲   │              ─┼──getUpdates┼──────────────┘               │           │
+ │        │   ▼               │            │                     captain.message       │
+ └────────┼───┼───────────────┘            │                              ▼           │
+          │   │                            │   ┌────────────────────────────────────┐ │
+   you type│   │bot sends                  │   │  Captain session (cmux tab)         │ │
+          │   │                            │   │   ← gets your msg as a turn         │ │
+          │   │                            │   └────────────────────────────────────┘ │
+          │   │                            │   CLI: `squadrant telegram send|notify…`  │
+          │   │                            └──────────────────────────────────────────┘
+   The bot is the ONLY bridge. The daemon never opens a socket to Telegram's UI —
+   it (a) PUSHES via the Bot HTTP API and (b) PULLS new messages via getUpdates polling.
+</pre>
+</div>
+
+<!-- ===================== TWO GATES ===================== -->
+<h2>2 · The two-gate security model <span class="small">(answers “why does messaging work if remoteControl is off?”)</span></h2>
+<p class="sub">Every inbound message passes <b>Gate 1</b>. Only <b>privileged</b> actions also require <b>Gate 2</b>. They are independent.</p>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Gate 1 — Chats allowlist <span class="pill g">basic relay</span></h3>
+    <p class="small"><code>cfg.chats</code> — list of chat IDs. An inbound update is honored only if <code>chats.includes(chat.id)</code>.</p>
+    <p>Unlocks the <b>two-way pipe</b>:</p>
+    <ul>
+      <li>Daemon → your topic (lifecycle notifications)</li>
+      <li>Your message → the captain’s session (<code>captain.message</code>)</li>
+      <li>Captain → you (<code>squadrant telegram send</code>)</li>
+    </ul>
+    <p class="ok small">✔ This is why you can chat with the captain today — <code>remoteControl</code> plays no part here.</p>
+  </div>
+  <div class="card">
+    <h3>Gate 2 — remoteControl + user-id <span class="pill a">privileged</span></h3>
+    <p class="small"><code>isControlEnabled(cfg)</code> = <code>remoteControl===true</code> &nbsp;<b>AND</b>&nbsp; <code>isAuthorized(fromId)</code> = <code>users.includes(your-id)</code>. <b>Fail-closed</b> — both required.</p>
+    <p>Gates only the <b>powerful</b> actions:</p>
+    <ul>
+      <li>Auto-launch a down captain on inbound</li>
+      <li>General-topic command channel (<code>/status</code>, <code>/spawn</code>, <code>/crews</code>…)</li>
+      <li><code>/notify</code>, <code>/mute</code>, <code>/unmute</code> toggles</li>
+    </ul>
+    <p class="stop small">✘ Currently OFF → slash-commands reply “⛔ not authorized”. Turn on with <code>squadrant telegram setup</code>.</p>
+  </div>
+</div>
+<div class="warn" style="margin-top:14px">
+  <b>Mental model:</b> Gate 1 = “can this chat <i>talk</i> to me.” Gate 2 = “can this person <i>command</i> me.” You’ve only ever passed Gate 1, which is enough to converse — but not to run commands.
+</div>
+
+<!-- ===================== OUTBOUND ===================== -->
+<h2>3 · Outbound flow — daemon → Telegram</h2>
+<p class="sub">A crew lifecycle event (or a captain message) leaves the daemon and lands in a topic — <i>after</i> passing the notification filters.</p>
+<div class="flow">
+<pre>
+ crew event (task.started / task.done / task.blocked …)
+        │
+        ▼
+ <span class="fn">pushLifecycle</span>(project, ev)          fire-and-forget; a Telegram error never crashes the daemon
+        │
+        ▼
+ <span class="fn">deliverOutbound</span>(project, ev)
+        │
+        ├─ <span class="gate">resolveNotify</span>(global, projects/&lt;name&gt;.json)   built-in → global → per-project (deep merge)
+        │       → { active, cap, crew }
+        │
+        ├─ <span class="gate">active</span>?  live state (telegram-state.json) wins over config default
+        │       └─ false → <span class="stop">DROP</span>  (muted — no topic create, no send)
+        │
+        ├─ <span class="gate">crew tier</span>?  tierIncludes(crew, ev.type)
+        │       └─ false → <span class="stop">DROP</span>  (e.g. crew=none drops everything; done_only drops task.progress)
+        │
+        ▼
+ lazily <span class="fn">createForumTopic</span> if first time → <span class="fn">sendMessage</span>(supergroup, threadId, text)   <span class="ok">→ appears on your phone</span>
+
+ (captain messages — `squadrant telegram send` — take a parallel path gated by <span class="gate">cap</span> instead of crew-tier)
+</pre>
+</div>
+
+<!-- ===================== INBOUND ===================== -->
+<h2>4 · Inbound flow — Telegram → daemon</h2>
+<p class="sub">The daemon long-polls <code>getUpdates</code>. Each message is classified by which topic it came from.</p>
+<div class="flow">
+<pre>
+ <span class="fn">getUpdates</span>(offset, 50s)  ── long-poll loop, sleeps pollMs between rounds, advances offset (at-least-once)
+        │
+        ▼
+ message arrives  ──►  <span class="gate">chats.includes(chat.id)</span>?  no → <span class="stop">ignore</span>   (Gate 1)
+        │ yes
+        ▼
+ has message_thread_id?
+        │
+        ├── NO  → <b># General topic = command channel</b>
+        │           └─ <span class="gate">remoteControl + user-id</span>? (Gate 2)  no → “⛔ not authorized”
+        │                 └─ parseCommand → run curated <code>squadrant …</code> argv → reply output
+        │
+        └── YES → <b># project topic</b>
+                    ├─ text is <code>/mute</code>/<code>/unmute</code>/<code>/notify…</code>?
+                    │     └─ <span class="gate">Gate 2</span> → toggle state/config, reply ✅   (NOT appended as a message)
+                    ├─ else: <span class="ok">auto-unmute</span> this project (engagement, independent of Gate 2)
+                    └─ append as <b>captain.message</b> → delivered into the captain’s cmux session as a turn
+</pre>
+</div>
+
+<!-- ===================== NOTIFY DIMENSIONS ===================== -->
+<h2>5 · The three notification dimensions</h2>
+<p class="sub">Independent switches, each resolvable globally or per-project. <code>active</code> is the master per-project gate; <code>crew</code> &amp; <code>cap</code> route the two content streams.</p>
+<table>
+  <tr><th>Dimension</th><th>Controls</th><th>Values</th><th>Set via</th><th>Stored in</th></tr>
+  <tr><td><code>active</code></td><td>the whole topic on/off (the #406 mute gate)</td><td>on / off</td><td><code>notify &lt;p&gt; on|off</code>, <code>/mute</code> <code>/unmute</code>, auto-unmute on inbound</td><td><b>state</b> (telegram-state.json) — live/auto</td></tr>
+  <tr><td><code>crew</code></td><td>crew lifecycle events</td><td>all · alert_only · done_only · none</td><td><code>notify &lt;p&gt; crew &lt;tier&gt;</code>, <code>/notify crew …</code></td><td><b>config</b> (projects/&lt;name&gt;.json) — deliberate</td></tr>
+  <tr><td><code>cap</code></td><td>captain’s own messages</td><td>on / off</td><td><code>notify &lt;p&gt; cap on|off</code>, <code>/notify cap …</code></td><td><b>config</b> (projects/&lt;name&gt;.json) — deliberate</td></tr>
+</table>
+<p class="small"><b>Tiers are cumulative:</b> none ⊂ done_only {done, failed} ⊂ alert_only {+blocked, approval, input, timeout} ⊂ all {+started, progress, idle, …}.</p>
+<div class="note" style="margin-top:12px"><b>Config vs. state rule:</b> what <i>you deliberately set</i> → config file (global or per-project); what the <i>system tracks at runtime</i> (live mute, auto-unmute) → <code>telegram-state.json</code>. <code>/mute</code> writes <b>state</b>; <code>/notify</code> writes <b>config</b>.</p>
+
+<!-- ===================== CONFIG/STATE FILES ===================== -->
+<h2>6 · Where everything lives</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>~/.config/squadrant/config.json → <code>telegram</code></h3>
+<pre style="white-space:pre-wrap">botToken      bot identity (BotFather)
+supergroupId  the forum group
+chats[]       Gate 1 allowlist (chat IDs)
+users[]       Gate 2 allowlist (user IDs)
+remoteControl Gate 2 master switch
+pollMs        getUpdates cadence
+notify{active,cap,crew}  GLOBAL defaults</pre>
+    <p class="small">Read at daemon <b>boot</b> (cached). Global changes need a restart to affect the live daemon.</p>
+  </div>
+  <div class="card">
+    <h3>~/.config/squadrant/state/telegram-state.json</h3>
+<pre style="white-space:pre-wrap">offset    getUpdates cursor (at-least-once)
+topics{}  project → message_thread_id
+notify{}  project → live active bool</pre>
+    <h3 style="margin-top:14px">~/.config/squadrant/projects/&lt;name&gt;.json</h3>
+<pre style="white-space:pre-wrap">telegram.notify{cap,crew}  per-project override</pre>
+    <p class="small">Read <b>fresh per event</b> — per-project changes take effect on the live daemon immediately.</p>
+  </div>
+</div>
+
+<!-- ===================== GLOSSARY ===================== -->
+<h2>7 · Concept glossary</h2>
+<table>
+  <tr><th>Concept</th><th>What it is in squadrant</th></tr>
+  <tr><td><b>Bot</b></td><td>The BotFather token identity. The sole channel between daemon and Telegram — pushes via HTTP API, pulls via getUpdates.</td></tr>
+  <tr><td><b>Forum supergroup</b></td><td>A Telegram group with <i>Topics</i> enabled (<code>supergroupId</code>). Hosts one topic per project.</td></tr>
+  <tr><td><b>Topic (thread)</b></td><td>A forum sub-channel (<code>message_thread_id</code>). Each project gets one, created lazily on first delivery. The <b>General</b> topic (no thread id) is the command channel.</td></tr>
+  <tr><td><b>pushLifecycle / deliverOutbound</b></td><td>The outbound hook: crew lifecycle → topic, after the active/crew/cap filters. Fire-and-forget, crash-contained.</td></tr>
+  <tr><td><b>getUpdates loop</b></td><td>The inbound long-poll. Classifies each message by topic, advances the <code>offset</code> for at-least-once delivery.</td></tr>
+  <tr><td><b>captain.message</b></td><td>An inbound message in a project topic, injected into that captain’s cmux session as a conversation turn.</td></tr>
+  <tr><td><b>Command channel (#402)</b></td><td>The General topic. Curated <code>/status /crews /spawn …</code> mapped to safe CLI argv. Gate 2 required.</td></tr>
+  <tr><td><b>Auto-launch (#403)</b></td><td>On an inbound to a project topic whose captain is down, boot it first (Gate 2 required).</td></tr>
+  <tr><td><b>remoteControl (#321)</b></td><td>Gate 2 master switch. Off by default → privileged actions denied. Enabled via <code>squadrant telegram setup</code>.</td></tr>
+  <tr><td><b>notify gate (#406) + tiers (#407)</b></td><td>Per-project active mute + crew/cap dimensions resolved built-in→global→project.</td></tr>
+</table>
+
+<p class="small" style="margin-top:30px">Source: <code>packages/core/src/telegram/</code> (bridge · auth · commands · state · format · tiers) · <code>packages/cli/src/commands/telegram.ts</code> · <code>packages/shared/src/project-config.ts</code>.</p>
+
+</div>
+</body>
+</html>
