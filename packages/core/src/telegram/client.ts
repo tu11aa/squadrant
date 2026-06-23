@@ -10,6 +10,8 @@ export interface TelegramClient {
   createForumTopic(chatId: number, name: string): Promise<number>;
   /** Verify the bot token and return the bot identity. */
   getMe(): Promise<{ id: number; username: string }>;
+  /** Register the bot's command menu with Telegram. */
+  setMyCommands(commands: Array<{ command: string; description: string }>): Promise<void>;
 }
 
 interface TgResponse<T> {
@@ -54,6 +56,9 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
     async createForumTopic(chatId, name) {
       const r = await call<{ message_thread_id: number }>("createForumTopic", { chat_id: chatId, name });
       return r.message_thread_id;
+    },
+    async setMyCommands(commands) {
+      await call<boolean>("setMyCommands", { commands });
     },
   };
 }

@@ -1,4 +1,5 @@
 // @squadrant/core Telegram subsystem barrel.
+export * from "./bot-commands.js";
 export * from "./auth.js";
 export * from "./commands.js";
 export * from "./ensure-captain.js";

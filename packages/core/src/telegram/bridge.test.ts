@@ -23,6 +23,7 @@ function drive(opts: Omit<TelegramBridgeOptions, "client">, updates: Array<Parti
     sendMessage: vi.fn(async () => {}),
     createForumTopic: vi.fn(async () => 999),
     getMe: vi.fn(async () => ({ id: 1, username: "bot" })),
+    setMyCommands: vi.fn(async () => {}),
   };
   const bridge = createTelegramBridge({ ...opts, client });
   bridge.start();

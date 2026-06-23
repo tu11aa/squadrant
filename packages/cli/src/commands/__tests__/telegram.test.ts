@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
 import { loadState } from "@squadrant/core";
-import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, questionMasked } from "../telegram.js";
+import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, questionMasked } from "../telegram.js";
 
 let root: string;
 beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-cmd-")); });
@@ -19,13 +19,36 @@ function fakeClient(onCreate?: () => void) {
     sendMessage: async () => {},
     createForumTopic: async () => { onCreate?.(); return next++; },
     getMe: async () => ({ id: 0, username: "" }),
+    setMyCommands: async () => {},
   };
 }
 
 describe("telegramCommand registration", () => {
-  it("exposes the link, notify, send, setup, and status subcommands", () => {
+  it("exposes the link, notify, register-commands, send, setup, and status subcommands", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
-    expect(names).toEqual(["link", "notify", "send", "setup", "status"]);
+    expect(names).toEqual(["link", "notify", "register-commands", "send", "setup", "status"]);
+  });
+});
+
+describe("resolveSetupToken", () => {
+  it("returns 'prompt' when no existing token", () => {
+    expect(resolveSetupToken(undefined, { resetToken: false })).toBe("prompt");
+  });
+  it("returns 'try-reuse' when an existing token is present", () => {
+    expect(resolveSetupToken("tok123", { resetToken: false })).toBe("try-reuse");
+  });
+  it("returns 'prompt' when --reset-token is set even with an existing token", () => {
+    expect(resolveSetupToken("tok123", { resetToken: true })).toBe("prompt");
+  });
+});
+
+describe("runRegisterCommands", () => {
+  it("registers the curated menu via client.setMyCommands", async () => {
+    const calls: any[] = [];
+    const client: any = { setMyCommands: async (c: any) => { calls.push(c); } };
+    await runRegisterCommands({ client });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].map((c: any) => c.command)).toContain("notify");
   });
 });
 
@@ -167,6 +190,7 @@ describe("runNotifyConfirmation", () => {
       createForumTopic: async () => 1,
       getUpdates: async () => [],
       getMe: async () => ({ id: 1, username: "b" }),
+      setMyCommands: async () => {},
     };
   }
   const tgCfg = { supergroupId: 5, chats: [1] } as any;

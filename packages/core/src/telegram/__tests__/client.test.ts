@@ -89,6 +89,28 @@ describe("createTelegramClient.createForumTopic", () => {
   });
 });
 
+describe("createTelegramClient.setMyCommands", () => {
+  it("POSTs commands array under the setMyCommands method and resolves", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+    const cmds = [{ command: "status", description: "squadrant status" }];
+
+    await client.setMyCommands(cmds);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/setMyCommands");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(bodyOf(calls[0])).toEqual({ commands: cmds });
+  });
+
+  it("rejects when the Bot API returns ok:false", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 401, description: "Unauthorized" });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await expect(client.setMyCommands([])).rejects.toThrow("telegram setMyCommands failed (401): Unauthorized");
+  });
+});
+
 describe("error surfacing", () => {
   it("rejects on a non-2xx HTTP response, including error_code and description", async () => {
     const { fn } = fakeFetch({ ok: false, error_code: 502, description: "Bad Gateway" }, { ok: false, status: 502 });
