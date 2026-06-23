@@ -199,7 +199,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   async function reply(threadId: number | undefined, text: string, replyMarkup?: unknown): Promise<void> {
     if (!sendReply) return;
     try {
-      await sendReply(threadId, text, replyMarkup);
+      // Keep the 2-arg call shape when there's no panel (markup undefined).
+      if (replyMarkup !== undefined) await sendReply(threadId, text, replyMarkup);
+      else await sendReply(threadId, text);
     } catch (e) {
       log(`telegram reply failed: ${(e as Error).message}`);
     }

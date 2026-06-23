@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Tap-first Telegram commands (inline buttons).** `/notify`, `/effort`, and `/crews`/`/launch`/`/mute`/`/unmute` now reply with tappable button panels instead of needing typed arguments — pick from buttons, no syntax to remember. Button taps are gated on your user-id (remoteControl) like commands, applied via the existing state writers / curated command runner, and the panel re-renders to mark the new state. Typed forms (`/notify cap on`, `/crews <project>`, `/effort <mode>`) still work for power users. (Guided `/spawn` lands next.)
+
 ### Fixed
-- **An incomplete `/notify` in a Telegram project topic now replies with a usage hint instead of being sent to the captain.** A bare `/notify` (or `/notify@<botname>`, or a dimension with no value like `/notify cap`) previously fell through and was appended as a captain message. It is now recognized as a `/notify` attempt: fail-closed behind remote control, then either applied (when complete) or answered with `usage: /notify crew <all|alert_only|done_only|none> | cap <on|off>`. Ordinary messages and `/mute`/`/unmute` are unchanged.
+- **An incomplete `/notify` in a Telegram project topic now replies with a tap-first button panel instead of being sent to the captain.** A bare `/notify` (or `/notify@<botname>`, or a dimension with no value like `/notify cap`) previously fell through and was appended as a captain message. It is now recognized as a `/notify` attempt: fail-closed behind remote control, then either applied (when typed in full, e.g. `/notify cap on`) or answered with the notification panel (Captain on/off · crew tier · mute/unmute). Ordinary messages and `/mute`/`/unmute` are unchanged.
 - **Telegram commands tapped from the `/` menu in groups now work correctly.** Telegram appends `@<botname>` to menu-tapped commands (e.g. `/status@squadrant_bot`). The three command parsers (`parseCommand`, `parseNotifyPref`, `notifyToggle`) now strip this suffix from the first token before matching, so menu-tapped commands are recognized identically to manually typed bare commands.
 
 ### Added

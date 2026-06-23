@@ -48,6 +48,8 @@ describe("pushLifecycle (outbound)", () => {
       sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -70,6 +72,8 @@ describe("pushLifecycle (outbound)", () => {
       sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -94,6 +98,8 @@ describe("pushLifecycle (outbound)", () => {
       sendMessage: async () => { throw new Error("network down"); },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -119,6 +125,8 @@ describe("pushLifecycle notify gate", () => {
       sendMessage,
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -140,8 +148,13 @@ describe("pushLifecycle notify gate", () => {
       sendMessage: async () => { sent.resolve(); },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
-    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    // Isolate from the real ~/.config/squadrant override (else a live crew="none"
+    // tier filters out task.done and this never sends). The temp root has no
+    // override → DEFAULT_NOTIFY (crew=alert_only) includes task.done.
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, configRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
 
     bridge.pushLifecycle("squadrant", doneEv);
@@ -171,6 +184,8 @@ describe("auto-unmute + in-topic /mute /unmute", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -199,6 +214,8 @@ describe("auto-unmute + in-topic /mute /unmute", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client, // remoteControl=false (default cfg)
@@ -229,6 +246,8 @@ describe("auto-unmute + in-topic /mute /unmute", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg: cfgWithControl, stateRoot: root, client,
@@ -261,6 +280,8 @@ describe("auto-unmute + in-topic /mute /unmute", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client, // remoteControl=false
@@ -294,6 +315,8 @@ describe("inbound poll", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -324,6 +347,8 @@ describe("inbound poll", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -354,6 +379,8 @@ describe("inbound poll", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({
       cfg, stateRoot: root, client,
@@ -384,6 +411,8 @@ describe("lastUserId passive capture", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;
@@ -405,6 +434,8 @@ describe("lastUserId passive capture", () => {
       },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
     const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
     active = bridge;

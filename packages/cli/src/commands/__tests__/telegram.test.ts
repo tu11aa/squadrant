@@ -20,6 +20,8 @@ function fakeClient(onCreate?: () => void) {
     createForumTopic: async () => { onCreate?.(); return next++; },
     getMe: async () => ({ id: 0, username: "" }),
     setMyCommands: async () => {},
+    answerCallbackQuery: async () => {},
+    editMessageReplyMarkup: async () => {},
   };
 }
 
@@ -218,6 +220,8 @@ describe("runNotifyConfirmation", () => {
       getUpdates: async () => [],
       getMe: async () => ({ id: 1, username: "b" }),
       setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
     };
   }
   const tgCfg = { supergroupId: 5, chats: [1] } as any;

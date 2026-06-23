@@ -24,6 +24,8 @@ function drive(opts: Omit<TelegramBridgeOptions, "client">, updates: Array<Parti
     createForumTopic: vi.fn(async () => 999),
     getMe: vi.fn(async () => ({ id: 1, username: "bot" })),
     setMyCommands: vi.fn(async () => {}),
+    answerCallbackQuery: vi.fn(async () => {}),
+    editMessageReplyMarkup: vi.fn(async () => {}),
   };
   const bridge = createTelegramBridge({ ...opts, client });
   bridge.start();
@@ -148,22 +150,23 @@ describe("handleUpdate routing", () => {
 describe("/notify in a project topic", () => {
   const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
 
-  it("bare /notify (authorized) replies with usage and never appends a captain message", async () => {
+  it("bare /notify (authorized) replies with the panel and never appends a captain message", async () => {
     setTopic(stateRoot, "brove", 7);
     const d = deps();
     const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/notify", 7)]);
     await drained;
-    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("usage: /notify"));
+    // tap-first: the panel ships as the 3rd (replyMarkup) arg with an inline keyboard.
+    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("brove"), expect.objectContaining({ inline_keyboard: expect.anything() }));
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     bridge.stop();
   });
 
-  it("bare /notify@botname (authorized) replies with usage (proves @botname strip)", async () => {
+  it("bare /notify@botname (authorized) replies with the panel (proves @botname strip)", async () => {
     setTopic(stateRoot, "brove", 7);
     const d = deps();
     const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/notify@squadrant_bot", 7)]);
     await drained;
-    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("usage: /notify"));
+    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("brove"), expect.objectContaining({ inline_keyboard: expect.anything() }));
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     bridge.stop();
   });
