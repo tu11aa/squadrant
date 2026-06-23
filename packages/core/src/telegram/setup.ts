@@ -5,6 +5,19 @@ import fs from "node:fs";
 import type { TelegramClient } from "./client.js";
 
 /**
+ * Decide whether to reuse an existing supergroup or re-detect via getUpdates.
+ * Returns 'reuse' when supergroupId is already configured and --redetect was not passed.
+ * Prevents getUpdates conflicts with the running daemon poll (#22205).
+ */
+export function resolveSetupGroup(
+  existingSupergroupId: number | undefined,
+  opts: { redetect: boolean },
+): "reuse" | "detect" {
+  if (existingSupergroupId !== undefined && !opts.redetect) return "reuse";
+  return "detect";
+}
+
+/**
  * Poll getUpdates until a supergroup message arrives, returning both the chat id
  * and the sender's user id (the latter seeds the control allowlist, #321).
  * Injects `sleep` for testability; never used with real delays in tests.

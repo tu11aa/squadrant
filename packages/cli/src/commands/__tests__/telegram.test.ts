@@ -28,6 +28,13 @@ describe("telegramCommand registration", () => {
     const names = telegramCommand.commands.map((c) => c.name()).sort();
     expect(names).toEqual(["link", "notify", "register-commands", "send", "setup", "status"]);
   });
+
+  it("setup command exposes --redetect and --user-id options", () => {
+    const setupCmd = telegramCommand.commands.find((c) => c.name() === "setup")!;
+    const longNames = setupCmd.options.map((o) => o.long);
+    expect(longNames).toContain("--redetect");
+    expect(longNames).toContain("--user-id");
+  });
 });
 
 describe("resolveSetupToken", () => {

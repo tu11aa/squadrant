@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { TelegramClient } from "../client.js";
-import { detectGroupId, detectGroupAndUser, writeTelegramConfig } from "../setup.js";
+import { detectGroupId, detectGroupAndUser, writeTelegramConfig, resolveSetupGroup } from "../setup.js";
 
 let tmpdir: string;
 beforeEach(() => { tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-setup-")); });
@@ -158,5 +158,23 @@ describe("writeTelegramConfig", () => {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(raw.telegram.botToken).toBe("NEW");
     expect(raw.telegram.supergroupId).toBe(-100);
+  });
+});
+
+describe("resolveSetupGroup", () => {
+  it("returns 'detect' when no existing supergroupId", () => {
+    expect(resolveSetupGroup(undefined, { redetect: false })).toBe("detect");
+  });
+
+  it("returns 'reuse' when supergroupId exists and redetect is false", () => {
+    expect(resolveSetupGroup(-100500, { redetect: false })).toBe("reuse");
+  });
+
+  it("returns 'detect' when supergroupId exists but redetect is true", () => {
+    expect(resolveSetupGroup(-100500, { redetect: true })).toBe("detect");
+  });
+
+  it("returns 'detect' when supergroupId is undefined even with redetect true", () => {
+    expect(resolveSetupGroup(undefined, { redetect: true })).toBe("detect");
   });
 });

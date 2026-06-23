@@ -4,7 +4,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, loadProjectOverride, isQuieter } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig, NotifyConfig, CrewTier } from "@squadrant/shared";
-import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify, BOT_COMMANDS } from "@squadrant/core";
+import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify, BOT_COMMANDS, resolveSetupGroup } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
 import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
 
@@ -253,7 +253,9 @@ telegramCommand
   .command("setup")
   .description("Interactive wizard — bot token, validate, auto-detect supergroup, write config")
   .option("--reset-token", "force re-entry of the bot token even if one already exists")
-  .action(async (opts: { resetToken?: boolean }) => {
+  .option("--redetect", "force group re-detection even when a supergroup is already configured")
+  .option("--user-id <id>", "allowlist user-id — enables remote control on a re-run without getUpdates detection", (v: string) => parseInt(v, 10))
+  .action(async (opts: { resetToken?: boolean; redetect?: boolean; userId?: number }) => {
     if (!process.stdin.isTTY) {
       console.error(chalk.red("setup requires a TTY — pipe input is not supported"));
       process.exit(1);
@@ -316,47 +318,74 @@ telegramCommand
       console.log();
     }
 
-    // Step 2/3 — Find group
-    console.log(chalk.bold("Step 2/3 — Find your group"));
-    console.log("Add the bot to your forum supergroup, then send any message in it.");
-    console.log(chalk.dim("Waiting for a message (up to 60s)…"));
+    // Step 2/3 — Supergroup (reuse if already configured and --redetect not passed)
+    console.log(chalk.bold("Step 2/3 — Supergroup"));
+    const groupDecision = resolveSetupGroup(existingCfg?.supergroupId, { redetect: opts.redetect ?? false });
     let supergroupId: number;
-    let userId: number | undefined;
-    try {
-      ({ supergroupId, userId } = await detectGroupAndUser(client, { timeoutMs: 60_000 }));
-    } catch {
-      console.error(chalk.red("Timed out — no supergroup message received within 60s."));
-      console.error(chalk.yellow("Check: bot is an admin in the group · privacy mode is OFF · Topics enabled"));
-      process.exit(1);
+    let detectedUserId: number | undefined;
+
+    if (groupDecision === "reuse") {
+      supergroupId = existingCfg!.supergroupId;
+      console.log(chalk.green(`Using existing group: ${supergroupId}`));
+      console.log();
+    } else {
+      console.log("Add the bot to your forum supergroup, then send any message in it.");
+      console.log(chalk.dim("Waiting for a message (up to 60s)…"));
+      try {
+        ({ supergroupId, userId: detectedUserId } = await detectGroupAndUser(client, { timeoutMs: 60_000 }));
+      } catch {
+        console.error(chalk.red("Timed out — no supergroup message received within 60s."));
+        console.error(chalk.yellow("Check: bot is an admin in the group · privacy mode is OFF · Topics enabled"));
+        process.exit(1);
+      }
+      console.log(chalk.green(`Found group: ${supergroupId}`));
+      console.log();
     }
-    console.log(chalk.green(`Found group: ${supergroupId}`));
-    console.log();
 
     // Step 3/3 — Remote control (opt-in, #321) + Save
+    // Precedence for userId: --user-id flag > detected (detect mode only) > preserve existing
     console.log(chalk.bold("Step 3/3 — Remote control + Save"));
     console.log(chalk.dim("Remote control enables auto-launching captains and the General command channel"));
     console.log(chalk.dim("from your phone — gated to your Telegram user-id only (fail-closed)."));
+
+    const finalUserId = opts.userId !== undefined ? opts.userId : detectedUserId;
     let users: number[] | undefined;
     let remoteControl: boolean | undefined;
-    if (userId === undefined) {
-      console.log(chalk.yellow("Could not read your user-id from that message — skipping remote control."));
-      console.log(chalk.yellow("Re-run setup once it's available, or edit telegram.users in config manually."));
-    } else {
+    let printedRemoteControlState = false;
+
+    if (finalUserId !== undefined) {
       const enable = await questionYesNo(
-        `Enable remote control for your user-id ${userId}? [y/N] `,
+        `Enable remote control for your user-id ${finalUserId}? [y/N] `,
       );
       if (enable) {
-        users = [userId];
+        users = [finalUserId];
         remoteControl = true;
       }
+    } else if (groupDecision === "detect") {
+      // Detection ran but no userId came back from the message
+      console.log(chalk.yellow("Could not read your user-id from that message — skipping remote control."));
+      console.log(chalk.yellow("Re-run with --user-id <id> to enable, or edit telegram.users in config manually."));
+      printedRemoteControlState = true;
+    } else {
+      // Reuse mode, no --user-id: existing users/remoteControl preserved by writeTelegramConfig
+      const existingUsers = existingCfg?.users;
+      if (existingUsers && existingUsers.length > 0) {
+        console.log(chalk.dim(`Remote control: already configured (user-id ${existingUsers[0]}). Use --user-id to update.`));
+      } else {
+        console.log(chalk.dim("Remote control: off. Re-run with --user-id <id> to enable."));
+      }
+      printedRemoteControlState = true;
     }
 
     writeTelegramConfig(DEFAULT_CONFIG_PATH, { token, supergroupId, users, remoteControl });
     console.log(chalk.green(`Wrote telegram config — token: ${maskToken(token)}  group: ${supergroupId}`));
-    if (remoteControl) {
-      console.log(chalk.green(`Remote control: ON (allowlisted user-id ${users?.[0]})`));
-    } else {
-      console.log(chalk.dim("Remote control: off (default). Re-run setup to enable later."));
+
+    if (!printedRemoteControlState) {
+      if (remoteControl) {
+        console.log(chalk.green(`Remote control: ON (allowlisted user-id ${users![0]})`));
+      } else {
+        console.log(chalk.dim("Remote control: off (default). Re-run with --user-id <id> to enable."));
+      }
     }
 
     try {
