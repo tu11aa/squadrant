@@ -86,6 +86,14 @@ const REGISTRY: Record<string, Entry> = {
       return ok("spawn", ["crew", "spawn", project, task]);
     },
   },
+  mute: {
+    usage: "/mute <project>",
+    build: (a) => (a[0] ? ok("mute", ["telegram", "notify", a[0], "off"]) : usage("mute", "usage: /mute <project>")),
+  },
+  unmute: {
+    usage: "/unmute <project>",
+    build: (a) => (a[0] ? ok("unmute", ["telegram", "notify", a[0], "on"]) : usage("unmute", "usage: /unmute <project>")),
+  },
 };
 
 function helpText(): string {
