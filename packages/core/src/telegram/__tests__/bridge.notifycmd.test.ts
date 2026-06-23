@@ -14,4 +14,13 @@ describe("parseNotifyPref", () => {
   it("returns null for /notify with no dimension", () => {
     expect(parseNotifyPref("/notify")).toBeNull();
   });
+
+  // @botname suffix — Telegram appends this when tapped from / menu in groups
+  it("strips @botname from /notify@squadrant_bot cap on", () => {
+    expect(parseNotifyPref("/notify@squadrant_bot cap on")).toEqual({ dimension: "cap", value: "on" });
+  });
+
+  it("strips @botname from /notify@squadrant_bot crew all", () => {
+    expect(parseNotifyPref("/notify@squadrant_bot crew all")).toEqual({ dimension: "crew", value: "all" });
+  });
 });
