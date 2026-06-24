@@ -84,9 +84,13 @@ function tryGetVersion(cmd: string): string {
   }
 }
 
-function check(label: string, pass: boolean): boolean {
+/** Exported for unit testing. */
+export function check(label: string, pass: boolean, hint?: string): boolean {
   const icon = pass ? chalk.green("✔ PASS") : chalk.red("✘ FAIL");
   console.log(`  ${icon}  ${label}`);
+  if (!pass && hint) {
+    console.log(`         ${chalk.cyan("→")} ${chalk.dim(hint)}`);
+  }
   return pass;
 }
 
@@ -97,21 +101,29 @@ export const doctorCommand = new Command("doctor")
 
     const results: boolean[] = [];
 
-    results.push(check("Claude Code installed", commandExists("claude")));
-    results.push(check(`Claude Code version >= ${compatManifest.tools.claude.min}`, claudeVersionOk()));
-    results.push(check("Obsidian installed", commandExists("obsidian") || fs.existsSync("/Applications/Obsidian.app")));
-    results.push(check("Node.js >= 18", nodeVersionOk()));
+    results.push(check("Claude Code installed", commandExists("claude"),
+      "Install from: https://claude.ai/code"));
+    results.push(check(`Claude Code version >= ${compatManifest.tools.claude.min}`, claudeVersionOk(),
+      `Update Claude Code to >= ${compatManifest.tools.claude.min}`));
+    results.push(check("Obsidian installed", commandExists("obsidian") || fs.existsSync("/Applications/Obsidian.app"),
+      "Install from: https://obsidian.md"));
+    results.push(check("Node.js >= 18", nodeVersionOk(),
+      "Install from: https://nodejs.org"));
     results.push(
       check(
         "Agent Teams enabled (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)",
         settingsHaveAgentTeams(),
+        "Run: squadrant init  (enables automatically), or add to shell profile: export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
       ),
     );
-    results.push(check("Plugin: superpowers", pluginInstalled("superpowers@claude-plugins-official")));
+    results.push(check("Plugin: superpowers", pluginInstalled("superpowers@claude-plugins-official"),
+      "In Claude Code, run: /plugin marketplace add superpowers"));
     results.push(
-      check("Plugin: claude-mem", pluginInstalled("claude-mem@thedotmack")),
+      check("Plugin: claude-mem", pluginInstalled("claude-mem@thedotmack"),
+        "In Claude Code, run: /plugin marketplace add thedotmack/claude-mem"),
     );
-    results.push(check("Plugin: context7", pluginInstalled("context7@claude-plugins-official")));
+    results.push(check("Plugin: context7", pluginInstalled("context7@claude-plugins-official"),
+      "In Claude Code, run: /plugin marketplace add context7"));
 
     const config = loadConfig();
 
@@ -124,6 +136,9 @@ export const doctorCommand = new Command("doctor")
     results.push(check(
       `Runtime '${globalRuntimeName}' installed`,
       !!globalProbe?.installed,
+      globalRuntimeName === "cmux"
+        ? "Install: npm install -g cmux  or download from https://cmux.dev"
+        : undefined,
     ));
 
     // Any project-level override must also be installed
@@ -146,6 +161,7 @@ export const doctorCommand = new Command("doctor")
     results.push(check(
       `Workspace '${config.workspace ?? "obsidian"}' — hub reachable`,
       hubProbe.installed && hubProbe.rootExists,
+      "Run: squadrant init  to scaffold the hub vault",
     ));
 
     for (const [name] of Object.entries(config.projects)) {
@@ -203,6 +219,7 @@ export const doctorCommand = new Command("doctor")
           process.env.SQUADRANT_CONFIG ||
             `${process.env.HOME}/.config/squadrant/config.json`,
         ),
+        "Run: squadrant init",
       ),
     );
 

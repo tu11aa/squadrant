@@ -79,7 +79,7 @@ describe("checkToolCompat", () => {
   });
 
   it("returns null when only lastVerified is set and version matches it exactly", () => {
-    expect(checkToolCompat("opencode", "1.17.4", { lastVerified: "1.17.4" })).toBeNull();
+    expect(checkToolCompat("opencode", "1.17.9", { lastVerified: "1.17.9" })).toBeNull();
   });
 
   // Manifest shape: all six tools should produce a null when version is in-range
