@@ -67,7 +67,7 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 | `@squadrant/web` | Observability dashboard (bundled HTML/JS) |
 | `@squadrant/cli` | Commands, bin entry, daemon host — root package |
 
-Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html).
+Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-squadrant-monorepo-architecture.html).
 
 ## Coding Discipline: Karpathy Principles
 

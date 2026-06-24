@@ -8,6 +8,6 @@ export const compatManifest = {
     // presence-checked; no floor enforced yet
     codex:    { lastVerified: "0.139.0" }                 satisfies ToolEntry,
     gemini:   { lastVerified: "0.38.2"  }                 satisfies ToolEntry,
-    opencode: { lastVerified: "1.17.4"  }                 satisfies ToolEntry,
+    opencode: { lastVerified: "1.17.9"  }                 satisfies ToolEntry,
   },
 } as const;

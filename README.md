@@ -129,7 +129,7 @@ Six internal packages in a one-way dependency DAG. All are private (not publishe
 - `dist/index.js` — CLI bin (`squadrant` command), entry: `packages/cli/src/index.ts`
 - `dist/squadrantd.js` — daemon process, entry: `packages/cli/src/daemon-host.ts`
 
-See the [architecture diagram](docs/diagrams/2026-06-18-cockpit-monorepo-architecture.html) for a visual overview.
+See the [architecture diagram](docs/diagrams/2026-06-18-squadrant-monorepo-architecture.html) for a visual overview.
 
 ## Architecture
 

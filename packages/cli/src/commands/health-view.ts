@@ -61,7 +61,8 @@ export function healthRow(c: ComponentHealth, now: number): string {
 export function printServiceHealth(rows: ComponentHealth[] | null, now: number = Date.now()): void {
   console.log(chalk.bold("\nService Health\n"));
   if (rows == null) {
-    console.log(`  ${chalk.red("✘")} daemon unreachable — squadrant liveness is unknown (start the daemon)`);
+    console.log(`  ${chalk.red("✘")} daemon unreachable — squadrant liveness is unknown`);
+    console.log(`         ${chalk.cyan("→")} ${chalk.dim("Run: squadrant heal daemon")}`);
     return;
   }
   if (rows.length === 0) {

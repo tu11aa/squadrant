@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cockpit — Architecture Overview</title>
+<title>Squadrant — Architecture Overview</title>
 <style>
 :root {
   --bg: #0f1117;
@@ -198,13 +198,13 @@ li { margin-bottom: 4px; }
 <div style="background:#0d2137;border-left:4px solid #58a6ff;padding:10px 16px;margin:12px;font-family:sans-serif;font-size:13px;border-radius:0 4px 4px 0;">
   <strong style="color:#58a6ff;">ℹ️ Updated for monorepo layout (2026-06-18)</strong> — paths now reflect the 6-package structure
   (<code style="background:#0a1a2a;padding:1px 4px;border-radius:3px;">packages/{shared,core,agents,workspaces,web,cli}/</code>).
-  For a visual overview see <a href="diagrams/2026-06-18-cockpit-monorepo-architecture.html" style="color:#58a6ff;">diagrams/2026-06-18-cockpit-monorepo-architecture.html</a>.
+  For a visual overview see <a href="diagrams/2026-06-18-squadrant-monorepo-architecture.html" style="color:#58a6ff;">diagrams/2026-06-18-squadrant-monorepo-architecture.html</a>.
 </div>
 
 
 <nav class="toc">
   <h2>Contents</h2>
-  <a href="#overview">1. What Cockpit Is</a>
+  <a href="#overview">1. What Squadrant Is</a>
   <a href="#role-hierarchy" class="toc-h2">2. Role Hierarchy</a>
   <a href="#command" class="toc-h3">Command</a>
   <a href="#captain" class="toc-h3">Captain</a>
@@ -231,7 +231,7 @@ li { margin-bottom: 4px; }
 <main>
 
 <h1>
-  Cockpit Architecture
+  Squadrant Architecture
   <span class="subtitle">Multi-agent orchestration layer &mdash; system and module reference</span>
 </h1>
 
@@ -245,17 +245,17 @@ li { margin-bottom: 4px; }
 <!-- ============================================================ -->
 <!-- 1. OVERVIEW -->
 <!-- ============================================================ -->
-<h2 id="overview">1. What Cockpit Is</h2>
+<h2 id="overview">1. What Squadrant Is</h2>
 
 <p>
-Cockpit is a <strong>multi-agent orchestration layer</strong> for managing AI coding agents across
+Squadrant is a <strong>multi-agent orchestration layer</strong> for managing AI coding agents across
 multiple software projects. It is not a Claude Code tool &mdash; Claude Code is the <em>reference
 implementation</em>; the system supports Codex, OpenCode, and Gemini CLI through a pluggable
 driver abstraction.
 </p>
 
 <p>
-Conceptually, Cockpit wraps a terminal multiplexer (<a href="#runtime">cmux</a>) with a role-based
+Conceptually, Squadrant wraps a terminal multiplexer (<a href="#runtime">cmux</a>) with a role-based
 delegation system: a <strong>Command</strong> session dispatches work to <strong>Captain</strong>
 sessions (one per project), which delegate coding tasks to ephemeral <strong>Crew</strong> sessions
 running in isolated git worktrees.
@@ -295,7 +295,7 @@ running in isolated git worktrees.
   <rect x="0" y="0" width="800" height="560" rx="8" fill="#1a1b26"/>
 
   <!-- Title -->
-  <text x="400" y="28" text-anchor="middle" fill="#c0caf5" font-size="14" font-weight="600">Cockpit Architecture &mdash; Role Hierarchy + Plugin Slots</text>
+  <text x="400" y="28" text-anchor="middle" fill="#c0caf5" font-size="14" font-weight="600">Squadrant Architecture &mdash; Role Hierarchy + Plugin Slots</text>
 
   <!-- Layer labels -->
   <text x="20" y="62" fill="#565f89" font-size="10" font-weight="600" text-transform="uppercase">User Layer</text>
@@ -360,7 +360,7 @@ running in isolated git worktrees.
 
   <!-- Control Plane (spanning across) -->
   <rect x="50" y="315" width="700" height="110" rx="8" fill="url(#grad-cp)" stroke="#f7768e" stroke-width="1.2" stroke-dasharray="6,4"/>
-  <text x="400" y="334" text-anchor="middle" fill="#f7768e" font-size="12" font-weight="600">Control Plane (cockpitd daemon)</text>
+  <text x="400" y="334" text-anchor="middle" fill="#f7768e" font-size="12" font-weight="600">Control Plane (squadrantd daemon)</text>
 
   <!-- State Machine -->
   <rect x="80" y="346" width="200" height="32" rx="5" fill="#3a1a1a" stroke="#f7768e" stroke-width="1"/>
@@ -419,29 +419,29 @@ running in isolated git worktrees.
 <h2 id="role-hierarchy">2. Role Hierarchy</h2>
 
 <p>
-Cockpit defines three roles that form a strict hierarchy. Each role maps to a distinct agent session
+Squadrant defines three roles that form a strict hierarchy. Each role maps to a distinct agent session
 type, with its own template file in <code>plugin/templates/</code> and its own configuration in
-<code>~/.config/cockpit/</code>.
+<code>~/.config/squadrant/</code>.
 </p>
 
 <h3 id="command">Command — Orchestration Overseer</h3>
 <p>
 <strong>Template:</strong> <code>plugin/templates/command.claude.md</code><br>
-<strong>Spawned by:</strong> <code>cockpit command --task &lt;briefing|learnings-review|wiki-aggregate&gt;</code><br>
+<strong>Spawned by:</strong> <code>squadrant command --task &lt;briefing|learnings-review|wiki-aggregate&gt;</code><br>
 <strong>Skill:</strong> <code>cockpit:command-ops</code>
 </p>
 <p>
 The Command is the top-level dispatcher. It is spawned <strong>on-demand</strong> for a single task
 (no persistent Command session). Its sole job is to delegate work to project Captains and report
 status to the user. It may never read, write, or search project source code. It has access to
-<code>~/.config/cockpit/config.json</code>, the hub vault, and cockpit CLI/ cmux commands.
+<code>~/.config/squadrant/config.json</code>, the hub vault, and squadrant CLI/ cmux commands.
 </p>
 
 <h3 id="captain">Captain — Project Leader</h3>
 <p>
 <strong>Templates:</strong> <code>plugin/templates/captain.claude.md</code> (Claude),
 <code>plugin/templates/captain.generic.md</code> (non-Claude agents)<br>
-<strong>Spawned by:</strong> <code>cockpit launch &lt;project&gt;</code><br>
+<strong>Spawned by:</strong> <code>squadrant launch &lt;project&gt;</code><br>
 <strong>Skill:</strong> <code>cockpit:captain-ops</code>
 </p>
 <p>
@@ -449,9 +449,9 @@ One Captain per registered project. The Captain is a <strong>coordinator, never 
 Its responsibilities:
 </p>
 <ul>
-  <li>Spawn Crew sessions via <code>cockpit crew spawn</code> for every coding task</li>
-  <li>Send follow-up turns to existing Crews via <code>cockpit crew send</code></li>
-  <li>Inspect Crew screens via <code>cockpit crew read</code></li>
+  <li>Spawn Crew sessions via <code>squadrant crew spawn</code> for every coding task</li>
+  <li>Send follow-up turns to existing Crews via <code>squadrant crew send</code></li>
+  <li>Inspect Crew screens via <code>squadrant crew read</code></li>
   <li>Review and merge completed Crew work</li>
   <li>Record learnings; write handoff files at session end</li>
   <li>Apply Karpathy principles during code review</li>
@@ -462,13 +462,13 @@ Its responsibilities:
 <strong>Templates:</strong> <code>plugin/templates/crew.claude.md</code> (Claude),
 <code>plugin/templates/crew.generic.md</code> (generic), <code>plugin/templates/crew.opencode.md</code>
 (OpenCode)<br>
-<strong>Spawned by:</strong> <code>cockpit crew spawn &lt;project&gt; "&lt;task&gt;" [--agent &lt;agent&gt;]</code><br>
+<strong>Spawned by:</strong> <code>squadrant crew spawn &lt;project&gt; "&lt;task&gt;" [--agent &lt;agent&gt;]</code><br>
 <strong>Lifecycle:</strong> spawned as a cmux tab, given a task prompt, operates in a git worktree,
-signals completion via <code>cockpit crew signal done</code>.
+signals completion via <code>squadrant crew signal done</code>.
 </p>
 <p>
 Crews are ephemeral, single-session agents. Each Crew runs in a git worktree (branch isolated from
-main). A Crew must commit its work and send an explicit <code>cockpit crew signal done</code> before
+main). A Crew must commit its work and send an explicit <code>squadrant crew signal done</code> before
 exiting. If blocked, it signals <code>crew signal blocked</code>; if unrecoverable, <code>crew signal failed</code>.
 All signals are routed through the daemon state machine (see <a href="#control-plane">Control Plane</a>).
 </p>
@@ -506,7 +506,7 @@ The three plugin slots (runtime, workspace, notifier) follow an identical
 </ul>
 
 <p>
-The configuration in <code>~/.config/cockpit/config.json</code> selects which driver to use globally
+The configuration in <code>~/.config/squadrant/config.json</code> selects which driver to use globally
 (<code>config.runtime</code>, <code>config.workspace</code>, <code>config.notifier</code>) or per-project
 (<code>config.projects[].runtime</code>, etc.).
 </p>
@@ -555,7 +555,7 @@ implements all 10 interface methods.
 
 <h3>Workspace Driver (<code>@cockpit/workspaces</code>)</h3>
 <p>
-The workspace abstracts persistent storage for cockpit's knowledge vaults (wiki, learnings, daily
+The workspace abstracts persistent storage for squadrant's knowledge vaults (wiki, learnings, daily
 logs, handoffs). Today only <strong>Obsidian</strong> is implemented, which is a local filesystem
 driver with path-escape protection. The <code>WorkspaceRegistry</code> resolves both <code>hub()</code>
 (from <code>config.hubVault</code>) and <code>forProject()</code> (from
@@ -567,7 +567,7 @@ driver with path-escape protection. The <code>WorkspaceRegistry</code> resolves 
 <p>
 The notifier is the simplest plugin slot: a single <code>notify(message)</code> call. Today only
 <strong>cmux</strong> is implemented, which routes notifications through the
-<code>cockpit runtime send --command</code> CLI back to the Command workspace.
+<code>squadrant runtime send --command</code> CLI back to the Command workspace.
 </p>
 
 <!-- ============================================================ -->
@@ -636,7 +636,7 @@ map in <code>packages/agents/drivers/types.ts:59</code> defines which capabiliti
 <!-- ============================================================ -->
 <!-- 5. CONTROL PLANE -->
 <!-- ============================================================ -->
-<h2 id="control-plane">5. Control Plane (cockpitd Daemon)</h2>
+<h2 id="control-plane">5. Control Plane (squadrantd Daemon)</h2>
 
 <p>
 The control plane daemon (<code>packages/core/</code>, 14 files) is a macOS launchd-managed background
@@ -646,13 +646,13 @@ push notification mailbox, interactive hook bridge, and Codex interactive driver
 
 <p>
 The daemon is defined in <code>packages/core/launchd.ts</code> as a launchd agent
-(<code>com.cockpit.daemon</code>) with <code>KeepAlive</code> + <code>ThrottleInterval</code> (10s)
+(<code>com.squadrant.daemon</code>) with <code>KeepAlive</code> + <code>ThrottleInterval</code> (10s)
 to prevent crash loops. <code>ensureDaemon()</code> writes the plist and bootstraps the service.
 On startup (<code>packages/cli/index.ts:47</code>), <code>ensureDaemon()</code> runs before any command.
 </p>
 
 <p>
-The daemon listens on a Unix domain socket at <code>~/.config/cockpit/cockpit.sock</code> using a
+The daemon listens on a Unix domain socket at <code>~/.config/squadrant/squadrant.sock</code> using a
 JSON-line protocol (<code>packages/core/protocol.ts</code>). Communication includes request/response
 RPC and long-lived attach streaming connections for interactive Codex sessions.
 </p>
@@ -788,7 +788,7 @@ The daemon's role is purely the <strong>state ledger</strong>:
   <code>awaiting-input</code></li>
   <li>On the next Turn, <code>PostToolUse</code> emits a <code>heartbeat</code> →
   back to <code>working</code></li>
-  <li>On actual task completion, <code>cockpit crew signal done</code> emits
+  <li>On actual task completion, <code>squadrant crew signal done</code> emits
   <code>task.done</code> → <code>done</code></li>
 </ul>
 <p>
@@ -828,7 +828,7 @@ The Codex architecture supports:
 
 <p>
 The projection layer (<code>packages/agents/projection/</code>, 9 files) implements <strong>issue #31</strong>:
-synchronizing cockpit's instruction templates into each agent's native configuration format.
+synchronizing squadrant's instruction templates into each agent's native configuration format.
 </p>
 
 <p>
@@ -849,7 +849,7 @@ files (user-level and project-level):
 </table>
 
 <p>
-Note: Claude is <strong>not</strong> a projection target. <code>CLAUDE.md</code> is cockpit's
+Note: Claude is <strong>not</strong> a projection target. <code>CLAUDE.md</code> is squadrant's
 canonical/source instruction format that Claude Code reads natively — other agents are projected
 <em>from</em> it, not to it.
 </p>
@@ -862,7 +862,7 @@ markers. This allows surgical updates without clobbering user content outside th
 
 <p>
 The <code>ProjectionRegistry</code> (<code>packages/agents/projection/registry.ts</code>) holds emitter factories
-and creates the correct emitter by name. The <code>cockpit projection</code> CLI command
+and creates the correct emitter by name. The <code>squadrant projection</code> CLI command
 (<code>packages/cli/commands/projection.ts</code>) drives this: it reads user-level source
 (<code>plugin/templates/</code> templates + <code>plugin/skills/</code>) and project-level source
 (project <code>AGENTS.md</code>), then emits to all configured targets via
@@ -890,32 +890,32 @@ markdown — Claude reads via Skill tool, others via AGENTS.md inclusion.
 <tr><th>Command</th><th>File</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>cockpit init</code></td><td><code>commands/init.ts</code></td><td>Initialize a new cockpit project</td></tr>
-<tr><td><code>cockpit launch &lt;project&gt;</code></td><td><code>commands/launch.ts</code></td><td>Spawn a captain workspace for a project</td></tr>
-<tr><td><code>cockpit crew spawn/send/read/close/list</code></td><td><code>commands/crew.ts</code></td><td>Manage crew sessions (largest command, 473 lines)</td></tr>
-<tr><td><code>cockpit crew dispatch/status/tasks/reply/signal</code></td><td><code>commands/crew-control.ts</code></td><td>Control-plane crew verbs (daemon protocol)</td></tr>
-<tr><td><code>cockpit command --task &lt;type&gt;</code></td><td><code>commands/command.ts</code></td><td>Spawn one-shot Command sessions</td></tr>
-<tr><td><code>cockpit dashboard</code></td><td><code>commands/dashboard.ts</code></td><td>View project dashboard</td></tr>
-<tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>System diagnostics</td></tr>
-<tr><td><code>cockpit projection</code></td><td><code>commands/projection.ts</code></td><td>Emit cross-agent projection files</td></tr>
-<tr><td><code>cockpit runtime send &lt;project&gt;</code></td><td><code>commands/runtime.ts</code></td><td>Send messages between workspaces</td></tr>
-<tr><td><code>cockpit notify</code></td><td><code>commands/notify.ts</code></td><td>Send notification</td></tr>
-<tr><td><code>cockpit standup</code></td><td><code>commands/standup.ts</code></td><td>Daily standup</td></tr>
-<tr><td><code>cockpit retro</code></td><td><code>commands/retro.ts</code></td><td>Session retro</td></tr>
-<tr><td><code>cockpit status</code></td><td><code>commands/status.ts</code></td><td>View status</td></tr>
-<tr><td><code>cockpit shutdown</code></td><td><code>commands/shutdown.ts</code></td><td>Shutdown</td></tr>
-<tr><td><code>cockpit doctor</code></td><td><code>commands/doctor.ts</code></td><td>System diagnostics</td></tr>
+<tr><td><code>squadrant init</code></td><td><code>commands/init.ts</code></td><td>Initialize a new squadrant project</td></tr>
+<tr><td><code>squadrant launch &lt;project&gt;</code></td><td><code>commands/launch.ts</code></td><td>Spawn a captain workspace for a project</td></tr>
+<tr><td><code>squadrant crew spawn/send/read/close/list</code></td><td><code>commands/crew.ts</code></td><td>Manage crew sessions (largest command, 473 lines)</td></tr>
+<tr><td><code>squadrant crew dispatch/status/tasks/reply/signal</code></td><td><code>commands/crew-control.ts</code></td><td>Control-plane crew verbs (daemon protocol)</td></tr>
+<tr><td><code>squadrant command --task &lt;type&gt;</code></td><td><code>commands/command.ts</code></td><td>Spawn one-shot Command sessions</td></tr>
+<tr><td><code>squadrant dashboard</code></td><td><code>commands/dashboard.ts</code></td><td>View project dashboard</td></tr>
+<tr><td><code>squadrant doctor</code></td><td><code>commands/doctor.ts</code></td><td>System diagnostics</td></tr>
+<tr><td><code>squadrant projection</code></td><td><code>commands/projection.ts</code></td><td>Emit cross-agent projection files</td></tr>
+<tr><td><code>squadrant runtime send &lt;project&gt;</code></td><td><code>commands/runtime.ts</code></td><td>Send messages between workspaces</td></tr>
+<tr><td><code>squadrant notify</code></td><td><code>commands/notify.ts</code></td><td>Send notification</td></tr>
+<tr><td><code>squadrant standup</code></td><td><code>commands/standup.ts</code></td><td>Daily standup</td></tr>
+<tr><td><code>squadrant retro</code></td><td><code>commands/retro.ts</code></td><td>Session retro</td></tr>
+<tr><td><code>squadrant status</code></td><td><code>commands/status.ts</code></td><td>View status</td></tr>
+<tr><td><code>squadrant shutdown</code></td><td><code>commands/shutdown.ts</code></td><td>Shutdown</td></tr>
+<tr><td><code>squadrant doctor</code></td><td><code>commands/doctor.ts</code></td><td>System diagnostics</td></tr>
 </tbody>
 </table>
 
 <h3 id="config">Configuration (packages/shared/config.ts)</h3>
 <p>
-The <code>CockpitConfig</code> interface (<code>packages/shared/config.ts:110-134</code>) defines the top-level
+The <code>SquadrantConfig</code> interface (<code>packages/shared/config.ts:110-134</code>) defines the top-level
 configuration shape:
 </p>
 <ul>
   <li><strong>commandName</strong> — workspace name for the command session</li>
-  <li><strong>hubVault</strong> — path to the cross-project hub vault (~/cockpit-hub by default)</li>
+  <li><strong>hubVault</strong> — path to the cross-project hub vault (~/squadrant-hub by default)</li>
   <li><strong>projects</strong> — <code>Record&lt;string, ProjectConfig&gt;</code> mapping project
   names to their path, captain name, spoke vault, host, group, runtime, workspace, and notifier
   overrides</li>
@@ -944,7 +944,7 @@ Three files implementing the terminal dashboard:
 <p>Seven utility files:</p>
 <ul>
   <li><code>runtime-sync.ts</code> — mirrors <code>plugin/</code>, <code>scripts/</code>,
-  <code>plugin/templates/</code> from source to <code>~/.config/cockpit/</code></li>
+  <code>plugin/templates/</code> from source to <code>~/.config/squadrant/</code></li>
   <li><code>cmux-bin.ts</code> — resolves cmux binary path (env → config → PATH → fallback)</li>
   <li><code>per-crew-settings.ts</code> — writes per-crew Claude settings and OpenCode config</li>
   <li><code>canonical-source.ts</code> — reads skills and AGENTS.md for projection</li>
@@ -958,7 +958,7 @@ The CLI entrypoint (<code>packages/cli/index.ts</code>) does two things before r
 </p>
 <ul>
   <li>Calls <code>ensureRuntimeSynced()</code> — idempotent mirror of source-managed dirs to
-  runtime (<code>~/.config/cockpit/</code>), so skills, role templates, and scripts can never
+  runtime (<code>~/.config/squadrant/</code>), so skills, role templates, and scripts can never
   silently drift.</li>
   <li>Calls <code>ensureDaemon()</code> — idempotent launchd plist management, ensuring the
   control-plane daemon is running.</li>
@@ -973,7 +973,7 @@ Both are best-effort and never throw — the CLI fails loud later if the socket 
 <h2 id="fs-layout">8. Filesystem Layout</h2>
 
 <p>
-Cockpit has three distinct storage areas:
+Squadrant has three distinct storage areas:
 </p>
 
 <h3>Source Tree (~/me/claude-cockpit)</h3>
@@ -1006,11 +1006,11 @@ plugin/skills/           # Portable markdown skills (Karpathy, etc.)
 scripts/                 # Shell scripts (read-handoff, write-status, etc.)
 </code></pre>
 
-<h3>Runtime / State (~/.config/cockpit)</h3>
+<h3>Runtime / State (~/.config/squadrant)</h3>
 <pre><code>config.json              # Project configuration
 state/                   # Control-plane task records (JSON files per project/id)
 inbox/                   # Mailbox push notification logs (*.log per project)
-cockpit.sock             # Unix domain socket for daemon RPC
+squadrant.sock           # Unix domain socket for daemon RPC
 plugin/                  # Mirrored from source (plugin/skills/)
 scripts/                 # Mirrored from source (.sh files)
 plugin/templates/            # Mirrored from source (role templates)
@@ -1018,8 +1018,8 @@ dist/                    # Compiled JS
 metrics.json             # Metrics data
 </code></pre>
 
-<h3>Hub + Spoke Vaults (~/cockpit-hub)</h3>
-<pre><code>cockpit-hub/             # Cross-project hub vault
+<h3>Hub + Spoke Vaults (~/squadrant-hub)</h3>
+<pre><code>squadrant-hub/           # Cross-project hub vault
   daily-logs/            # Command-level daily logs
   wiki/                  # Cross-project wiki
   projects/{project}.md  # Mirrored project status

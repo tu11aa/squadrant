@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-06-24
+
+### Added
+- Guided onboarding. `squadrant init` is now a re-run-safe, TTY-safe 5-step wizard (hub vault, agent + projection setup, plugin guidance, first-project registration, optional Telegram) that prints the exact next command at each step; non-interactive runs print the checklist and exit without blocking. ([#424](https://github.com/tu11aa/squadrant/pull/424))
+- `squadrant doctor` now prints an inline remediation hint under each FAILING check (e.g. missing config → run `squadrant init`; daemon unreachable → run `squadrant heal daemon`; missing plugin → the install command). ([#424](https://github.com/tu11aa/squadrant/pull/424))
+
+### Fixed
+- Self-heal stale pre-rebrand `cockpit` references in per-project Claude settings. The claude-cockpit → Squadrant rebrand left `cockpit crew _hook` commands in projects' `.claude/settings` files, firing `cockpit: command not found` on every captain/crew turn-end across 11 projects. `writePerCrewSettingsLocal` now rewrites these on every crew spawn, and `migrate-to-squadrant.sh` step 4.6 now sweeps every registered project, so the error stops and cannot recur. ([#422](https://github.com/tu11aa/squadrant/pull/422))
+
+### Changed
+- Bumped the opencode compatibility manifest last-verified to `1.17.9` (lifecycle-verified). ([#424](https://github.com/tu11aa/squadrant/pull/424))
+- Documentation de-cockpit: renamed the monorepo architecture diagram to `2026-06-18-squadrant-monorepo-architecture.html` (and the `.vi` version), and fixed stale `cockpit` naming / config paths across `architecture.html`, `CLAUDE.md`, `AGENTS.md`, and several specs/plans. ([#423](https://github.com/tu11aa/squadrant/pull/423), [#425](https://github.com/tu11aa/squadrant/pull/425))
+
 ## [0.11.2] - 2026-06-24
 
 ### Changed

@@ -6,6 +6,7 @@ import {
   writePerCrewSettings,
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
+  healStaleCockpitRefs,
   CREW_PERMISSION_ALLOWLIST,
   mergeCrewPermissions,
 } from "../per-crew-settings.js";
@@ -132,6 +133,61 @@ describe("writePerCrewSettingsLocal — permission allowlist", () => {
     const counts = new Map<string, number>();
     for (const e of json.permissions.allow) counts.set(e, (counts.get(e) ?? 0) + 1);
     for (const [, n] of counts) expect(n).toBe(1);
+  });
+});
+
+describe("healStaleCockpitRefs — self-heal pre-rebrand tokens", () => {
+  it("rewrites the hook command, config path, and hub vault tokens", () => {
+    const raw = [
+      "cockpit crew _hook Stop",
+      "~/.config/cockpit/scripts/write-status.sh",
+      "//Users/me/cockpit-hub/spokes/x/**",
+    ].join("\n");
+    expect(healStaleCockpitRefs(raw)).toBe(
+      [
+        "squadrant crew _hook Stop",
+        "~/.config/squadrant/scripts/write-status.sh",
+        "//Users/me/squadrant-hub/spokes/x/**",
+      ].join("\n"),
+    );
+  });
+
+  it("is idempotent — a second pass changes nothing", () => {
+    const once = healStaleCockpitRefs("cockpit crew _hook Stop");
+    expect(healStaleCockpitRefs(once)).toBe(once);
+  });
+
+  it("leaves unrelated text (e.g. Bash(cockpit:*)) untouched", () => {
+    const raw = 'Bash(cockpit:*)';
+    expect(healStaleCockpitRefs(raw)).toBe(raw);
+  });
+});
+
+describe("writePerCrewSettingsLocal — self-heals stale cockpit hooks in existing file", () => {
+  let tmp: string;
+  const settingsPath = () => path.join(tmp, ".claude", "settings.local.json");
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-heal-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("rewrites pre-rebrand 'cockpit crew _hook' commands left in the file", () => {
+    fs.mkdirSync(path.join(tmp, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsPath(),
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "cockpit crew _hook Stop" }] }] },
+        permissions: { allow: ["Bash(~/.config/cockpit/scripts/write-status.sh:*)"] },
+      }, null, 2),
+    );
+    writePerCrewSettingsLocal({ projectCwd: tmp });
+    const raw = fs.readFileSync(settingsPath(), "utf-8");
+    expect(raw).not.toContain("cockpit crew _hook");
+    expect(raw).not.toContain(".config/cockpit");
+    expect(raw).toContain("squadrant crew _hook");
   });
 });
 

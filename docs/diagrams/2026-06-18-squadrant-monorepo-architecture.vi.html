@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Cockpit — Kiến trúc Monorepo · Bố cục 6 gói sau tái cấu trúc</title>
+<title>Squadrant — Kiến trúc Monorepo · Bố cục 6 gói sau tái cấu trúc</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
@@ -47,7 +47,7 @@
 <body>
 <div id="deck">
   <header>
-    <h1>⚓ Cockpit — Monorepo Architecture</h1>
+    <h1>⚓ Squadrant — Monorepo Architecture</h1>
     <span class="tag">Bố cục 6 gói · sau tái cấu trúc 2026-06-18</span>
     <div class="spacer"></div>
     <span class="tag">space / → · A = autoplay</span>
@@ -56,7 +56,7 @@
   <!-- SLIDE 1: Package DAG -->
   <section class="slide active">
     <h2>1 · Đồ thị phụ thuộc gói</h2>
-    <p class="sub">Sáu gói nội bộ theo đồ thị phụ thuộc một chiều nghiêm ngặt. <code>@cockpit/shared</code> là lá — không có phụ thuộc nội bộ. <code>@cockpit/cli</code> là gốc — phụ thuộc tất cả. Không có luồng ngược.</p>
+    <p class="sub">Sáu gói nội bộ theo đồ thị phụ thuộc một chiều nghiêm ngặt. <code>@squadrant/shared</code> là lá — không có phụ thuộc nội bộ. <code>@squadrant/cli</code> là gốc — phụ thuộc tất cả. Không có luồng ngược.</p>
     <div class="stage">
       <svg viewBox="0 0 1180 480">
         <defs>
@@ -66,38 +66,38 @@
 
         <!-- shared (bottom / leaf) -->
         <rect x="465" y="380" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--shared)" stroke-width="2"/>
-        <text class="bt" x="590" y="406" text-anchor="middle" fill="var(--shared)">@cockpit/shared</text>
+        <text class="bt" x="590" y="406" text-anchor="middle" fill="var(--shared)">@squadrant/shared</text>
         <text class="bs" x="590" y="424" text-anchor="middle">config schema · types · constants</text>
         <text class="bs" x="590" y="440" text-anchor="middle">leaf lib — zero internal deps</text>
 
         <!-- core -->
         <rect x="465" y="265" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
-        <text class="bt" x="590" y="291" text-anchor="middle" fill="var(--core)">@cockpit/core</text>
+        <text class="bt" x="590" y="291" text-anchor="middle" fill="var(--core)">@squadrant/core</text>
         <text class="bs" x="590" y="309" text-anchor="middle">daemon · state-machine · protocol</text>
         <text class="bs" x="590" y="325" text-anchor="middle">AgentDriver interface · task/crew bus</text>
 
         <!-- agents -->
         <rect x="60" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--agents)" stroke-width="2"/>
-        <text class="bt" x="185" y="166" text-anchor="middle" fill="var(--agents)">@cockpit/agents</text>
+        <text class="bt" x="185" y="166" text-anchor="middle" fill="var(--agents)">@squadrant/agents</text>
         <text class="bs" x="185" y="184" text-anchor="middle">AgentDriver seam</text>
         <text class="bs" x="185" y="200" text-anchor="middle">claude · codex · opencode · gemini</text>
 
         <!-- workspaces -->
         <rect x="360" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="2"/>
-        <text class="bt" x="485" y="166" text-anchor="middle" fill="var(--workspaces)">@cockpit/workspaces</text>
+        <text class="bt" x="485" y="166" text-anchor="middle" fill="var(--workspaces)">@squadrant/workspaces</text>
         <text class="bs" x="485" y="184" text-anchor="middle">runtime · workspace · notifier seams</text>
         <text class="bs" x="485" y="200" text-anchor="middle">cmux · obsidian drivers</text>
 
         <!-- web -->
         <rect x="660" y="140" width="250" height="72" rx="10" fill="var(--panel)" stroke="var(--web)" stroke-width="2"/>
-        <text class="bt" x="785" y="166" text-anchor="middle" fill="var(--web)">@cockpit/web</text>
+        <text class="bt" x="785" y="166" text-anchor="middle" fill="var(--web)">@squadrant/web</text>
         <text class="bs" x="785" y="184" text-anchor="middle">dashboard (observability UI)</text>
         <text class="bs" x="785" y="200" text-anchor="middle">bundled HTML/JS served by CLI</text>
 
         <!-- cli (root) -->
         <rect x="365" y="20" width="450" height="72" rx="10" fill="var(--panel)" stroke="var(--cli)" stroke-width="2.5"/>
-        <text class="bt" x="590" y="46" text-anchor="middle" fill="var(--cli)">@cockpit/cli</text>
-        <text class="bs" x="590" y="64" text-anchor="middle">commands · bin entry (dist/index.js) · daemon host (dist/cockpitd.js)</text>
+        <text class="bt" x="590" y="46" text-anchor="middle" fill="var(--cli)">@squadrant/cli</text>
+        <text class="bs" x="590" y="64" text-anchor="middle">commands · bin entry (dist/index.js) · daemon host (dist/squadrantd.js)</text>
         <text class="bs" x="590" y="80" text-anchor="middle">root — depends on all other packages</text>
 
         <!-- edges: shared → core -->
@@ -120,7 +120,7 @@
 
         <!-- DAG label -->
         <text class="elabel" x="840" y="300">shared ◄ core ◄ {agents, workspaces, web} ◄ cli</text>
-        <text class="elabel" x="840" y="320">solid = primary · dashed = also @cockpit/shared</text>
+        <text class="elabel" x="840" y="320">solid = primary · dashed = also @squadrant/shared</text>
       </svg>
     </div>
     <div class="legend">
@@ -136,21 +136,21 @@
   <!-- SLIDE 2: Driver Seams -->
   <section class="slide">
     <h2>2 · Lớp trừu tượng Driver</h2>
-    <p class="sub">Hai khe plugin cô lập cockpitd khỏi các công cụ cụ thể. Khe <b style="color:var(--agents)">agent</b> trừu tượng hóa AI nào chạy; khe <b style="color:var(--workspaces)">workspace</b> trừu tượng hóa terminal, vault và notifier.</p>
+    <p class="sub">Hai khe plugin cô lập squadrantd khỏi các công cụ cụ thể. Khe <b style="color:var(--agents)">agent</b> trừu tượng hóa AI nào chạy; khe <b style="color:var(--workspaces)">workspace</b> trừu tượng hóa terminal, vault và notifier.</p>
     <div class="stage">
       <svg viewBox="0 0 1180 480">
         <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
 
         <!-- Core box -->
         <rect x="440" y="185" width="300" height="110" rx="10" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
-        <text class="bt" x="590" y="215" text-anchor="middle" fill="var(--core)">@cockpit/core</text>
-        <text class="bs" x="590" y="235" text-anchor="middle">cockpitd daemon logic</text>
+        <text class="bt" x="590" y="215" text-anchor="middle" fill="var(--core)">@squadrant/core</text>
+        <text class="bs" x="590" y="235" text-anchor="middle">squadrantd daemon logic</text>
         <text class="chip" x="590" y="262" text-anchor="middle">AgentDriver interface</text>
         <text class="bs" x="590" y="282" text-anchor="middle">+ DaemonSurfaceDriver</text>
 
         <!-- Agent seam label -->
         <rect x="30" y="20" width="320" height="36" rx="6" fill="none" stroke="var(--agents)" stroke-width="1.5" stroke-dasharray="5 3"/>
-        <text x="190" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--agents)" font-weight="600">@cockpit/agents — AI driver seam</text>
+        <text x="190" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--agents)" font-weight="600">@squadrant/agents — AI driver seam</text>
 
         <!-- agent drivers -->
         <rect x="40" y="80" width="140" height="50" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
@@ -175,7 +175,7 @@
 
         <!-- Workspace seam label -->
         <rect x="830" y="20" width="320" height="36" rx="6" fill="none" stroke="var(--workspaces)" stroke-width="1.5" stroke-dasharray="5 3"/>
-        <text x="990" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--workspaces)" font-weight="600">@cockpit/workspaces — env seam</text>
+        <text x="990" y="44" text-anchor="middle" font-family="sans-serif" font-size="13" fill="var(--workspaces)" font-weight="600">@squadrant/workspaces — env seam</text>
 
         <!-- workspace drivers -->
         <rect x="840" y="80" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
@@ -200,9 +200,9 @@
 
         <!-- core → CLI note -->
         <rect x="440" y="370" width="300" height="70" rx="8" fill="var(--panel)" stroke="var(--cli)" stroke-width="1.5"/>
-        <text class="bt" x="590" y="396" text-anchor="middle" fill="var(--cli)">@cockpit/cli</text>
+        <text class="bt" x="590" y="396" text-anchor="middle" fill="var(--cli)">@squadrant/cli</text>
         <text class="bs" x="590" y="414" text-anchor="middle">wires drivers + starts daemon</text>
-        <text class="bs" x="590" y="430" text-anchor="middle">dist/index.js · dist/cockpitd.js</text>
+        <text class="bs" x="590" y="430" text-anchor="middle">dist/index.js · dist/squadrantd.js</text>
         <line class="edge" x1="590" y1="370" x2="590" y2="297"/>
       </svg>
     </div>
@@ -211,7 +211,7 @@
   <!-- SLIDE 3: Build artifacts + Captain → Crew -->
   <section class="slide">
     <h2>3 · Tệp Build &amp; Mô hình Runtime</h2>
-    <p class="sub"><code>pnpm build</code> (tsup) produces two self-contained bundles — all internal packages are inlined. The <b style="color:var(--agents)">Captain → Crew</b> members via <code>cockpit crew spawn</code>.</p>
+    <p class="sub"><code>pnpm build</code> (tsup) produces two self-contained bundles — all internal packages are inlined. The <b style="color:var(--agents)">Captain → Crew</b> members via <code>squadrant crew spawn</code>.</p>
     <div class="stage">
       <svg viewBox="0 0 1180 440">
         <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
@@ -222,13 +222,13 @@
 
         <rect x="60" y="70" width="210" height="100" rx="8" fill="var(--panel)" stroke="var(--cli)" stroke-width="2"/>
         <text class="chip" x="165" y="98" text-anchor="middle" fill="var(--cli)">dist/index.js</text>
-        <text class="bs" x="165" y="116" text-anchor="middle">CLI bin · cockpit command</text>
+        <text class="bs" x="165" y="116" text-anchor="middle">CLI bin · squadrant command</text>
         <text class="bs" x="165" y="132" text-anchor="middle">entry: packages/cli/src/index.ts</text>
         <text class="bs" x="165" y="150" text-anchor="middle">inlines: all 5 lib pkgs</text>
 
         <rect x="310" y="70" width="210" height="100" rx="8" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
-        <text class="chip" x="415" y="98" text-anchor="middle" fill="var(--core)">dist/cockpitd.js</text>
-        <text class="bs" x="415" y="116" text-anchor="middle">daemon process · cockpitd</text>
+        <text class="chip" x="415" y="98" text-anchor="middle" fill="var(--core)">dist/squadrantd.js</text>
+        <text class="bs" x="415" y="116" text-anchor="middle">daemon process · squadrantd</text>
         <text class="bs" x="415" y="132" text-anchor="middle">entry: packages/cli/src/daemon-host.ts</text>
         <text class="bs" x="415" y="150" text-anchor="middle">inlines: core + shared</text>
 
@@ -245,7 +245,7 @@
         <text class="chip" x="770" y="132" text-anchor="middle" fill="var(--agents)">⚓ Captain</text>
         <text class="bs" x="770" y="150" text-anchor="middle">interactive agent session</text>
         <text class="bs" x="770" y="166" text-anchor="middle">reads task · spawns crew</text>
-        <text class="bs" x="770" y="182" text-anchor="middle">cockpit crew spawn …</text>
+        <text class="bs" x="770" y="182" text-anchor="middle">squadrant crew spawn …</text>
 
         <!-- Crew tabs -->
         <rect x="890" y="105" width="200" height="75" rx="6" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="1.5"/>
@@ -260,7 +260,7 @@
 
         <!-- Daemon -->
         <rect x="670" y="235" width="200" height="110" rx="6" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
-        <text class="chip" x="770" y="262" text-anchor="middle" fill="var(--core)">cockpitd daemon</text>
+        <text class="chip" x="770" y="262" text-anchor="middle" fill="var(--core)">squadrantd daemon</text>
         <text class="bs" x="770" y="280" text-anchor="middle">unix socket</text>
         <text class="bs" x="770" y="296" text-anchor="middle">task state-machine</text>
         <text class="bs" x="770" y="312" text-anchor="middle">crew signals → events</text>
@@ -284,17 +284,17 @@
   <!-- SLIDE 4: Package table -->
   <section class="slide">
     <h2>4 · Tham chiếu Gói</h2>
-    <p class="sub">Each package ships its own <code>tsconfig.json</code> + <code>src/</code>. All are private (not published to npm). <code>@cockpit/cli</code> is the only entry point for the outside world.</p>
+    <p class="sub">Each package ships its own <code>tsconfig.json</code> + <code>src/</code>. All are private (not published to npm). <code>@squadrant/cli</code> is the only entry point for the outside world.</p>
     <div class="stage" style="place-items:start;overflow:auto">
       <table>
         <thead><tr><th>Package</th><th>Contents</th><th>Depends on</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code style="color:var(--shared)">@cockpit/shared</code></td><td>Config schema, TypeScript types, leaf constants</td><td>—</td><td>Zero internal deps. Imported by everything.</td></tr>
-          <tr><td><code style="color:var(--core)">@cockpit/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
-          <tr><td><code style="color:var(--agents)">@cockpit/agents</code></td><td>AI driver seam: <code>claude.ts</code>, <code>codex.ts</code>, <code>opencode.ts</code>, <code>gemini.ts</code> + registry</td><td>core, shared</td><td>Implements <code>AgentDriver</code>. Swap here to add a new AI agent.</td></tr>
-          <tr><td><code style="color:var(--workspaces)">@cockpit/workspaces</code></td><td>Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
-          <tr><td><code style="color:var(--web)">@cockpit/web</code></td><td>Observability dashboard — bundled HTML/JS served by CLI</td><td>core, shared</td><td>Read-only UI; no agent-facing code. Bundled inline by CLI's tsup build.</td></tr>
-          <tr><td><code style="color:var(--cli)">@cockpit/cli</code></td><td>CLI commands, bin entry (<code>dist/index.js</code>), daemon host (<code>dist/cockpitd.js</code>), templates, plugin dir</td><td>all packages</td><td>Root. Wires drivers. Two tsup entry points produce the two dist bundles.</td></tr>
+          <tr><td><code style="color:var(--shared)">@squadrant/shared</code></td><td>Config schema, TypeScript types, leaf constants</td><td>—</td><td>Zero internal deps. Imported by everything.</td></tr>
+          <tr><td><code style="color:var(--core)">@squadrant/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
+          <tr><td><code style="color:var(--agents)">@squadrant/agents</code></td><td>AI driver seam: <code>claude.ts</code>, <code>codex.ts</code>, <code>opencode.ts</code>, <code>gemini.ts</code> + registry</td><td>core, shared</td><td>Implements <code>AgentDriver</code>. Swap here to add a new AI agent.</td></tr>
+          <tr><td><code style="color:var(--workspaces)">@squadrant/workspaces</code></td><td>Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
+          <tr><td><code style="color:var(--web)">@squadrant/web</code></td><td>Observability dashboard — bundled HTML/JS served by CLI</td><td>core, shared</td><td>Read-only UI; no agent-facing code. Bundled inline by CLI's tsup build.</td></tr>
+          <tr><td><code style="color:var(--cli)">@squadrant/cli</code></td><td>CLI commands, bin entry (<code>dist/index.js</code>), daemon host (<code>dist/squadrantd.js</code>), templates, plugin dir</td><td>all packages</td><td>Root. Wires drivers. Two tsup entry points produce the two dist bundles.</td></tr>
         </tbody>
       </table>
     </div>
