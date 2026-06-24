@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-24
+
+### Added
+- **Channel commands now run in any Telegram project topic ([#419](https://github.com/tu11aa/squadrant/pull/419)).** Slash commands like `/status`, `/crews`, and `/notify` previously only worked in the supergroup's General command channel; they now run from any project topic too, via a shared `runChannelCommand` helper that the General channel and project-topic handlers both delegate to.
+
 ## [0.11.0] - 2026-06-23
 
 ### Added
