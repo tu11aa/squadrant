@@ -239,7 +239,7 @@ describe("init — re-run-safe (TTY mode)", () => {
     expect(text).toContain("Agent Teams already enabled");
     // writeFileSync should not have been called for settings.json
     const settingsCalls = (fs.writeFileSync as ReturnType<typeof vi.fn>).mock?.calls ?? [];
-    const wrote = settingsCalls.some(([p]: [string]) => String(p).endsWith("settings.json"));
+    const wrote = settingsCalls.some((args: unknown[]) => String(args[0]).endsWith("settings.json"));
     expect(wrote).toBe(false);
   });
 });
