@@ -2,6 +2,7 @@ import { Command } from "commander";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import readline from "node:readline";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
 import {
@@ -9,9 +10,18 @@ import {
   saveConfig,
   DEFAULT_CONFIG_PATH,
   resolveHome,
+  readUserLevelSource,
+  loadConfig,
 } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { ensureRuntimeSynced } from "@squadrant/shared";
+import {
+  createCursorEmitter,
+  createCodexEmitter,
+  createGeminiEmitter,
+  createOpencodeEmitter,
+  ProjectionRegistry,
+} from "@squadrant/agents";
 
 function findPackageRoot(): string {
   let dir = path.dirname(new URL(import.meta.url).pathname);
@@ -35,69 +45,101 @@ function copyDirRecursive(src: string, dest: string): void {
   }
 }
 
+function stepHeader(n: number, total: number, label: string): void {
+  console.log(chalk.bold(`\n  ${n}/${total}  ${label}`));
+}
+
+function promptLine(question: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
 export const initCommand = new Command("init")
-  .description("First-time setup: scaffold hub vault, scripts, and config")
+  .description("Guided first-time setup: hub vault, agents, plugins, projects (re-run-safe)")
   .option("--hub <path>", "Hub vault path", "~/squadrant-hub")
-  .action((opts: { hub: string }) => {
+  .action(async (opts: { hub: string }) => {
     const hubPath = resolveHome(opts.hub);
     const pkgRoot = findPackageRoot();
     const configDir = path.join(os.homedir(), ".config", "squadrant");
+    const isTTY = process.stdin.isTTY === true;
 
     console.log(chalk.bold("\nSquadrant Init\n"));
 
-    // Verify the default workspace provider is registered (squadrant ships obsidian;
-    // if user already has a config pointing to an unknown provider, bail early)
-    const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
+    // Non-TTY: print step checklist + next-commands and exit without blocking
+    if (!isTTY) {
+      console.log("  Run these steps to get started:\n");
+      console.log(chalk.bold("  1/5  Hub vault"));
+      console.log(chalk.cyan(`       squadrant init --hub ${opts.hub}`));
+      console.log(chalk.bold("\n  2/5  Agent + projection setup"));
+      console.log("       (handled automatically by: " + chalk.cyan("squadrant init") + ")");
+      console.log(chalk.bold("\n  3/5  Plugins — open Claude Code and run:"));
+      console.log(chalk.cyan("       /plugin marketplace add superpowers"));
+      console.log(chalk.cyan("       /plugin marketplace add thedotmack/claude-mem"));
+      console.log(chalk.cyan("       /plugin marketplace add context7"));
+      console.log(chalk.bold("\n  4/5  Register first project"));
+      console.log(chalk.cyan("       squadrant projects add <name> <path>"));
+      console.log(chalk.bold("\n  5/5  Telegram (optional)"));
+      console.log(chalk.cyan("       squadrant telegram setup"));
+      console.log(chalk.bold("\n  Then:"));
+      console.log(chalk.cyan("       squadrant launch <projectname>\n"));
+      return;
+    }
+
+    // Verify the default workspace provider is registered
+    const wsRegistry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
     try {
       if (fs.existsSync(DEFAULT_CONFIG_PATH)) {
         const existing = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, "utf-8"));
-        const wsName = existing.workspace ?? "obsidian";
-        registry.get(wsName);
+        wsRegistry.get(existing.workspace ?? "obsidian");
       }
     } catch (err) {
       console.log(chalk.red(`  ✘ ${(err as Error).message}`));
       return;
     }
 
-    // 1. Create config
+    // ── 1/5  Hub vault ──────────────────────────────────────────────────────
+    stepHeader(1, 5, "Hub vault");
+
     if (fs.existsSync(DEFAULT_CONFIG_PATH)) {
-      console.log(chalk.yellow("  ⚠ Config already exists, skipping creation"));
+      console.log(chalk.yellow("    ⚠ Config already exists, skipping creation"));
     } else {
       const config = getDefaultConfig();
       config.hubVault = hubPath;
       saveConfig(config);
-      console.log(chalk.green(`  ✔ Config created at ${DEFAULT_CONFIG_PATH}`));
+      console.log(chalk.green(`    ✔ Config created at ${DEFAULT_CONFIG_PATH}`));
     }
 
-    // 2. Scaffold hub vault from template
     const hubTemplate = path.join(pkgRoot, "obsidian", "hub");
     if (fs.existsSync(hubPath)) {
-      console.log(chalk.yellow(`  ⚠ Hub vault already exists at ${hubPath}, skipping`));
+      console.log(chalk.yellow(`    ⚠ Hub vault already exists at ${hubPath}`));
     } else if (fs.existsSync(hubTemplate)) {
       copyDirRecursive(hubTemplate, hubPath);
-      console.log(chalk.green(`  ✔ Hub vault scaffolded at ${hubPath}`));
+      console.log(chalk.green(`    ✔ Hub vault scaffolded at ${hubPath}`));
     } else {
       fs.mkdirSync(hubPath, { recursive: true });
-      console.log(chalk.yellow(`  ⚠ Hub template not found; created empty dir at ${hubPath}`));
+      console.log(chalk.yellow(`    ⚠ Hub template not found; created empty directory at ${hubPath}`));
     }
 
-    // 2b. Always refresh dashboard.md and ensure projects/ exists (idempotent — see #44)
+    // Refresh dashboard.md and ensure projects/ dir exist (idempotent — #44)
     const hubDashboardSrc = path.join(pkgRoot, "obsidian", "hub", "dashboard.md");
     const hubDashboardDest = path.join(hubPath, "dashboard.md");
     if (fs.existsSync(hubDashboardSrc)) {
       fs.copyFileSync(hubDashboardSrc, hubDashboardDest);
-      console.log(chalk.green(`  ✔ Dashboard page refreshed at ${hubDashboardDest}`));
+      console.log(chalk.green(`    ✔ Dashboard refreshed`));
     }
-    const projectsDir = path.join(hubPath, "projects");
-    fs.mkdirSync(projectsDir, { recursive: true });
+    fs.mkdirSync(path.join(hubPath, "projects"), { recursive: true });
 
-    // 3. Sync source-managed runtime dirs (plugin, scripts, templates) via
-    // the same self-heal path the CLI runs on every invocation: copy +
-    // prune + chmod, so a re-init never leaves stale files behind.
     ensureRuntimeSynced({ sourceRoot: pkgRoot, runtimeRoot: configDir });
-    console.log(chalk.green(`  ✔ Runtime assets synced to ${configDir}`));
+    console.log(chalk.green(`    ✔ Runtime assets synced to ${configDir}`));
 
-    // 6. Enable Agent Teams in settings.json if not set
+    // ── 2/5  Agent + projection setup ───────────────────────────────────────
+    stepHeader(2, 5, "Agent + projection setup");
+
     const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
     try {
       let settings: Record<string, unknown> = {};
@@ -109,30 +151,77 @@ export const initCommand = new Command("init")
         settings.env = { ...env, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" };
         fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-        console.log(chalk.green("  ✔ Agent Teams enabled in ~/.claude/settings.json"));
+        console.log(chalk.green("    ✔ Agent Teams enabled in ~/.claude/settings.json"));
       } else {
-        console.log(chalk.green("  ✔ Agent Teams already enabled"));
+        console.log(chalk.green("    ✔ Agent Teams already enabled"));
       }
     } catch {
-      console.log(chalk.yellow("  ⚠ Could not update ~/.claude/settings.json"));
+      console.log(chalk.yellow("    ⚠ Could not update ~/.claude/settings.json"));
+      console.log(chalk.dim("      Add manually to shell profile: export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"));
     }
 
-    // 5. Print manual steps
-    console.log(chalk.bold("\nManual steps required:\n"));
-    console.log("  1. Install plugins in Claude Code:");
-    console.log(chalk.cyan("       /plugin marketplace add thedotmack/claude-mem"));
-    console.log(chalk.cyan("       /plugin install claude-mem"));
-    console.log("       Install context7 and superpowers from /plugin marketplace");
-    console.log("");
-    console.log("  2. Install cmux if not already installed:");
-    console.log(chalk.cyan("       npm install -g cmux"));
-    console.log("");
-    console.log("  3. Open Obsidian and add the hub vault:");
-    console.log(chalk.cyan(`       ${hubPath}`));
-    console.log("");
-    console.log("  4. Run " + chalk.cyan("squadrant doctor") + " to verify setup\n");
-
-    if (!fs.existsSync("/Applications/cmux.app")) {
-      console.log(chalk.yellow("  ⚠ cmux not found — download from https://cmux.dev\n"));
+    // Emit projection files so non-Claude agents (codex, gemini, opencode, cursor)
+    // each get their AGENTS.md / GEMINI.md with up-to-date instructions.
+    try {
+      const projRegistry = new ProjectionRegistry({
+        cursor: createCursorEmitter,
+        codex: createCodexEmitter,
+        gemini: createGeminiEmitter,
+        opencode: createOpencodeEmitter,
+      });
+      const workspace = createObsidianDriver({ root: process.cwd() });
+      const source = await readUserLevelSource(workspace, { pkgRoot });
+      for (const name of projRegistry.list()) {
+        const emitter = projRegistry.get(name);
+        for (const dest of emitter.destinations("user")) {
+          const result = await emitter.emit(source, dest);
+          if (result.written) {
+            console.log(chalk.green(`    ✔ ${name} → ${dest.path}`));
+          } else {
+            console.log(chalk.dim(`    - ${name} → ${dest.path} (unchanged)`));
+          }
+        }
+      }
+    } catch (err) {
+      console.log(chalk.yellow(`    ⚠ Projection emit skipped: ${(err as Error).message}`));
     }
+
+    // ── 3/5  Plugins ────────────────────────────────────────────────────────
+    stepHeader(3, 5, "Plugins");
+    console.log("    Install these plugins inside Claude Code:\n");
+    console.log(chalk.cyan("      /plugin marketplace add superpowers"));
+    console.log(chalk.cyan("      /plugin marketplace add thedotmack/claude-mem"));
+    console.log(chalk.cyan("      /plugin marketplace add context7\n"));
+    console.log(chalk.dim("    Squadrant never auto-installs plugins — open Claude Code and run the commands above."));
+
+    // ── 4/5  Register first project ─────────────────────────────────────────
+    stepHeader(4, 5, "Register first project");
+
+    const projectPath = await promptLine(
+      chalk.cyan("    Absolute path to your first project (Enter to skip): "),
+    );
+    if (projectPath) {
+      const projectName = path.basename(projectPath);
+      console.log(chalk.bold(`\n    Run this to register it:`));
+      console.log(chalk.cyan(`      squadrant projects add ${projectName} ${projectPath}\n`));
+    } else {
+      console.log(chalk.dim("    Skipped. Register later with:"));
+      console.log(chalk.cyan("      squadrant projects add <name> <path>"));
+    }
+
+    // ── 5/5  Telegram ───────────────────────────────────────────────────────
+    stepHeader(5, 5, "Telegram (optional)");
+    console.log("    Get notified on your phone when crews complete tasks:");
+    console.log(chalk.cyan("      squadrant telegram setup\n"));
+
+    // ── Final summary ────────────────────────────────────────────────────────
+    let launchTarget = "<projectname>";
+    try {
+      const cfg = loadConfig();
+      const first = Object.keys(cfg.projects)[0];
+      if (first) launchTarget = first;
+    } catch { /* config may not exist if init just created it */ }
+
+    console.log(chalk.bold.green("\n  ✔ You are ready!\n"));
+    console.log(`     Run: ${chalk.cyan(`squadrant launch ${launchTarget}`)}\n`);
   });
