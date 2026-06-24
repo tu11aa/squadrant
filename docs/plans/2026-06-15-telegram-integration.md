@@ -6,14 +6,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Drive cockpit from Telegram — push curated crew lifecycle events to per-session Telegram forum topics, and route replies back to the captain.
+**Goal:** Drive squadrant from Telegram — push curated crew lifecycle events to per-session Telegram forum topics, and route replies back to the captain.
 
 **Architecture:** A daemon-resident, opt-in, crash-contained Telegram subsystem. Outbound: the daemon's existing `notify` fan-out is composed so each lifecycle event is *also* pushed to the crew's Telegram forum topic (in parallel with the mailbox; the cmux relay is untouched). Inbound: a `getUpdates` long-poll loop maps `(chat_id, message_thread_id)` → `{project, task}` and delivers the reply to the captain via a new mailbox `captain.message` entry, which the existing relay delivers verbatim. One Telegram supergroup per project; topics map 1:1 to sessions.
 
 **Tech Stack:** TypeScript (ESM, `.js` import specifiers), Node ≥18 global `fetch` (no Telegram SDK), Vitest, commander CLI. Spec: `docs/specs/2026-06-15-telegram-integration-design.md`.
 
 **Design decisions resolved from spec open questions:**
-- **O1 (outbound parallelism):** Telegram runs *in parallel* with the cmux relay by composing the daemon's `notify` hook — NOT by replacing `config.notifier`. The `NotifierDriver` registry (used only by the `cockpit notify` CLI) is left alone. The daemon `notify` fan-out is the real lifecycle-event seam.
+- **O1 (outbound parallelism):** Telegram runs *in parallel* with the cmux relay by composing the daemon's `notify` hook — NOT by replacing `config.notifier`. The `NotifierDriver` registry (used only by the `squadrant notify` CLI) is left alone. The daemon `notify` fan-out is the real lifecycle-event seam.
 - **O2 (inbound queue):** Reuse the mailbox + relay. A new `captain.message` mailbox kind carries daemon-originated captain-directed messages; the relay's `deliverable()` already delivers any entry with a non-null `message`, so no relay change is required.
 
 **Security model:** The allowlist is *derived* from the linked chats — only a `chat_id` present in `config.telegram.chats` may command. No separate allowlist field. Inbound text is delivered as a captain *message*, never executed.
@@ -28,7 +28,7 @@
 - `src/control/telegram/format.ts` — topic-name + inbound-message formatters (pure).
 - `src/control/telegram/subsystem.ts` — outbound push + inbound long-poll loop; crash-contained orchestration.
 - `src/control/telegram/index.ts` — barrel re-exports.
-- `src/commands/telegram.ts` — `cockpit telegram link|status` CLI.
+- `src/commands/telegram.ts` — `squadrant telegram link|status` CLI.
 - `src/control/telegram/__tests__/client.test.ts`
 - `src/control/telegram/__tests__/state.test.ts`
 - `src/control/telegram/__tests__/format.test.ts`
@@ -36,10 +36,10 @@
 - `src/commands/__tests__/telegram.test.ts`
 
 **Modified files:**
-- `src/config.ts` — add `TelegramConfig` + `CockpitConfig.telegram`.
+- `src/config.ts` — add `TelegramConfig` + `SquadrantConfig.telegram`.
 - `src/control/mailbox.ts` — widen `MailboxEntry.kind`; add `appendCaptainMessage`.
-- `src/control/cockpitd.ts` — wire subsystem (compose `notify`, start inbound, stop); add `opts.telegram`.
-- `src/control/__tests__/cockpitd.*.test.ts` (new file `cockpitd.telegram.test.ts`) — daemon-isolation test.
+- `src/control/squadrantd.ts` — wire subsystem (compose `notify`, start inbound, stop); add `opts.telegram`.
+- `src/control/__tests__/squadrantd.*.test.ts` (new file `squadrantd.telegram.test.ts`) — daemon-isolation test.
 - `src/index.ts` (or wherever commands register) — register `telegramCommand`.
 - `README.md` / `AGENTS.md` — setup + feature note.
 
@@ -48,7 +48,7 @@
 ## Task 1: Telegram config types
 
 **Files:**
-- Modify: `src/config.ts` (after the `RoleConfig` type, ~line 60; add field to `CockpitConfig` ~line 71 near `notifier`)
+- Modify: `src/config.ts` (after the `RoleConfig` type, ~line 60; add field to `SquadrantConfig` ~line 71 near `notifier`)
 - Test: `src/__tests__/config.telegram.test.ts` (create)
 
 - [ ] **Step 1: Write the failing test**
@@ -73,12 +73,12 @@ describe("telegram config", () => {
         projects: {},
         defaults: { maxCrew: 5, worktreeDir: ".w", teammateMode: "in-process", permissions: { command: "auto", captain: "auto" } },
         metrics: { enabled: false, path: "/tmp/m.json" },
-        telegram: { botToken: "123:ABC", chats: { cockpit: -100123 } },
+        telegram: { botToken: "123:ABC", chats: { squadrant: -100123 } },
       }),
     );
     const cfg = loadConfig(p);
     expect(cfg.telegram?.botToken).toBe("123:ABC");
-    expect(cfg.telegram?.chats.cockpit).toBe(-100123);
+    expect(cfg.telegram?.chats.squadrant).toBe(-100123);
   });
 
   it("leaves telegram undefined when absent", () => {
@@ -102,15 +102,15 @@ describe("telegram config", () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run src/__tests__/config.telegram.test.ts`
-Expected: FAIL — `telegram` property does not exist on `CockpitConfig`.
+Expected: FAIL — `telegram` property does not exist on `SquadrantConfig`.
 
 - [ ] **Step 3: Add the types**
 
-In `src/config.ts`, add this interface above `CockpitConfig`:
+In `src/config.ts`, add this interface above `SquadrantConfig`:
 
 ```typescript
 export interface TelegramConfig {
-  /** Bot token from BotFather. Lives in ~/.config/cockpit (never in the repo). */
+  /** Bot token from BotFather. Lives in ~/.config/squadrant (never in the repo). */
   botToken: string;
   /** project name → Telegram supergroup chat_id (negative for supergroups).
    *  The set of values here is ALSO the inbound allowlist: only these chats may command. */
@@ -118,7 +118,7 @@ export interface TelegramConfig {
 }
 ```
 
-Then add to the `CockpitConfig` interface, right after `notifier?: string;` (line 71):
+Then add to the `SquadrantConfig` interface, right after `notifier?: string;` (line 71):
 
 ```typescript
   notifier?: string;
@@ -345,24 +345,24 @@ describe("telegram state", () => {
   it("starts empty and defaults offset to 0", async () => {
     const s = await loadTelegramState(freshRoot());
     expect(s.offset()).toBe(0);
-    expect(s.getTopic("cockpit", "t1")).toBeUndefined();
+    expect(s.getTopic("squadrant", "t1")).toBeUndefined();
   });
 
   it("persists offset and topics across reloads", async () => {
     const root = freshRoot();
     const s = await loadTelegramState(root);
     await s.setOffset(99);
-    await s.setTopic("cockpit", "t1", 42);
+    await s.setTopic("squadrant", "t1", 42);
     const s2 = await loadTelegramState(root);
     expect(s2.offset()).toBe(99);
-    expect(s2.getTopic("cockpit", "t1")).toBe(42);
+    expect(s2.getTopic("squadrant", "t1")).toBe(42);
   });
 
   it("findTask reverse-maps a thread id to {project, taskId}", async () => {
     const s = await loadTelegramState(freshRoot());
-    await s.setTopic("cockpit", "t1", 42);
+    await s.setTopic("squadrant", "t1", 42);
     await s.setTopic("brove", "t2", 7);
-    expect(s.findTask(42)).toEqual({ project: "cockpit", taskId: "t1" });
+    expect(s.findTask(42)).toEqual({ project: "squadrant", taskId: "t1" });
     expect(s.findTask(7)).toEqual({ project: "brove", taskId: "t2" });
     expect(s.findTask(999)).toBeUndefined();
   });
@@ -541,12 +541,12 @@ import { appendCaptainMessage, readFromCursor } from "../mailbox.js";
 describe("appendCaptainMessage", () => {
   it("appends a deliverable captain.message entry with a monotonic seq", async () => {
     const root = mkdtempSync(join(tmpdir(), "mbox-"));
-    const seq1 = await appendCaptainMessage({ stateRoot: root, project: "cockpit", message: "hello", taskId: "t1", name: "crew-1" });
-    const seq2 = await appendCaptainMessage({ stateRoot: root, project: "cockpit", message: "again" });
+    const seq1 = await appendCaptainMessage({ stateRoot: root, project: "squadrant", message: "hello", taskId: "t1", name: "crew-1" });
+    const seq2 = await appendCaptainMessage({ stateRoot: root, project: "squadrant", message: "again" });
     expect(seq2).toBe(seq1 + 1);
 
     const entries = [];
-    for await (const e of readFromCursor({ stateRoot: root, project: "cockpit", fromSeq: 1 })) entries.push(e);
+    for await (const e of readFromCursor({ stateRoot: root, project: "squadrant", fromSeq: 1 })) entries.push(e);
     expect(entries).toHaveLength(2);
     expect(entries[0].kind).toBe("captain.message");
     expect(entries[0].message).toBe("hello");
@@ -671,12 +671,12 @@ function fakeClient(over: Partial<TelegramClient> = {}): TelegramClient {
 }
 
 function rec(over: Partial<TaskRecord> = {}): TaskRecord {
-  return { id: "t1", project: "cockpit", name: "crew-1", provider: "claude", state: "working", mode: "interactive", task: "x", lastHeartbeat: 0, createdAt: 0 } as TaskRecord;
+  return { id: "t1", project: "squadrant", name: "crew-1", provider: "claude", state: "working", mode: "interactive", task: "x", lastHeartbeat: 0, createdAt: 0 } as TaskRecord;
 }
 
 const baseDeps = (client: TelegramClient, root: string) => ({
   client,
-  chats: { cockpit: -100 },
+  chats: { squadrant: -100 },
   stateRoot: root,
   appendCaptainMessage: vi.fn(async () => 1),
   resolveCrewName: () => "crew-1",
@@ -688,7 +688,7 @@ describe("telegram subsystem — outbound", () => {
     const root = mkdtempSync(join(tmpdir(), "tg-"));
     const client = fakeClient();
     const sub = await createTelegramSubsystem(baseDeps(client, root));
-    await sub.pushLifecycle({ project: "cockpit", message: "CREW BLOCKED: ?", record: rec() });
+    await sub.pushLifecycle({ project: "squadrant", message: "CREW BLOCKED: ?", record: rec() });
     expect(client.createForumTopic).toHaveBeenCalledWith(-100, "🔧 crew-1");
     expect(client.sendMessage).toHaveBeenCalledWith(-100, "CREW BLOCKED: ?", 42);
   });
@@ -697,8 +697,8 @@ describe("telegram subsystem — outbound", () => {
     const root = mkdtempSync(join(tmpdir(), "tg-"));
     const client = fakeClient();
     const sub = await createTelegramSubsystem(baseDeps(client, root));
-    await sub.pushLifecycle({ project: "cockpit", message: "a", record: rec() });
-    await sub.pushLifecycle({ project: "cockpit", message: "b", record: rec() });
+    await sub.pushLifecycle({ project: "squadrant", message: "a", record: rec() });
+    await sub.pushLifecycle({ project: "squadrant", message: "b", record: rec() });
     expect(client.createForumTopic).toHaveBeenCalledTimes(1);
     expect(client.sendMessage).toHaveBeenCalledTimes(2);
   });
@@ -715,7 +715,7 @@ describe("telegram subsystem — outbound", () => {
     const root = mkdtempSync(join(tmpdir(), "tg-"));
     const client = fakeClient();
     const sub = await createTelegramSubsystem(baseDeps(client, root));
-    await sub.pushLifecycle({ project: "cockpit", message: "CREW DONE", record: rec({ state: "done" }) });
+    await sub.pushLifecycle({ project: "squadrant", message: "CREW DONE", record: rec({ state: "done" }) });
     expect(client.closeForumTopic).toHaveBeenCalledWith(-100, 42);
   });
 
@@ -723,7 +723,7 @@ describe("telegram subsystem — outbound", () => {
     const root = mkdtempSync(join(tmpdir(), "tg-"));
     const client = fakeClient({ sendMessage: vi.fn(async () => { throw new Error("network down"); }) });
     const sub = await createTelegramSubsystem(baseDeps(client, root));
-    await expect(sub.pushLifecycle({ project: "cockpit", message: "x", record: rec() })).resolves.toBeUndefined();
+    await expect(sub.pushLifecycle({ project: "squadrant", message: "x", record: rec() })).resolves.toBeUndefined();
   });
 });
 ```
@@ -830,18 +830,18 @@ The loop is crash-contained: the whole body is wrapped; a thrown `getUpdates` (n
 import { processInboundUpdate } from "../subsystem.js";
 
 describe("telegram subsystem — inbound routing (pure)", () => {
-  const chats = { cockpit: -100, brove: -200 };
+  const chats = { squadrant: -100, brove: -200 };
 
   it("routes a crew-topic reply to that crew's captain via appendCaptainMessage", async () => {
     const append = vi.fn(async () => 1);
-    const findTask = (thread: number) => (thread === 42 ? { project: "cockpit", taskId: "t1" } : undefined);
+    const findTask = (thread: number) => (thread === 42 ? { project: "squadrant", taskId: "t1" } : undefined);
     const handled = await processInboundUpdate({
       update: { update_id: 5, message: { chat: { id: -100, type: "supergroup" }, message_thread_id: 42, text: "use lucia" } },
       chats, findTask, resolveCrewName: () => "crew-2",
       appendCaptainMessage: append, stateRoot: "/tmp", log: () => {},
     });
     expect(handled).toBe(true);
-    expect(append).toHaveBeenCalledWith({ stateRoot: "/tmp", project: "cockpit", message: "📩 [from Telegram · crew-2] use lucia", taskId: "t1", name: "crew-2" });
+    expect(append).toHaveBeenCalledWith({ stateRoot: "/tmp", project: "squadrant", message: "📩 [from Telegram · crew-2] use lucia", taskId: "t1", name: "crew-2" });
   });
 
   it("routes a general-topic reply to the captain (no task)", async () => {
@@ -851,7 +851,7 @@ describe("telegram subsystem — inbound routing (pure)", () => {
       chats, findTask: () => undefined, resolveCrewName: () => undefined,
       appendCaptainMessage: append, stateRoot: "/tmp", log: () => {},
     });
-    expect(append).toHaveBeenCalledWith({ stateRoot: "/tmp", project: "cockpit", message: "📩 [from Telegram] status?", taskId: undefined, name: undefined });
+    expect(append).toHaveBeenCalledWith({ stateRoot: "/tmp", project: "squadrant", message: "📩 [from Telegram] status?", taskId: undefined, name: undefined });
   });
 
   it("ignores updates from a non-allowlisted chat", async () => {
@@ -1000,20 +1000,20 @@ git commit -m "feat(telegram): inbound long-poll loop + captain routing (#65)"
 ## Task 8: Wire subsystem into the daemon
 
 **Files:**
-- Modify: `src/control/cockpitd.ts` (imports; `CockpitdOpts` ~line 74; `notify` composition ~line 272; boot ~line 418; `stop()` ~line 556)
-- Test: `src/control/__tests__/cockpitd.telegram.test.ts` (create)
+- Modify: `src/control/squadrantd.ts` (imports; `SquadrantdOpts` ~line 74; `notify` composition ~line 272; boot ~line 418; `stop()` ~line 556)
+- Test: `src/control/__tests__/squadrantd.telegram.test.ts` (create)
 
 Wires outbound (compose `notify`), inbound (`startInbound` after server start), and teardown (`stop`). The subsystem is injectable via `opts.telegram` so tests never construct a real client. The critical guarantee: **a throwing Telegram subsystem must not affect the daemon core.**
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
-// src/control/__tests__/cockpitd.telegram.test.ts
+// src/control/__tests__/squadrantd.telegram.test.ts
 import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { startCockpitd } from "../cockpitd.js";
+import { startSquadrantd } from "../squadrantd.js";
 import type { TelegramSubsystem } from "../telegram/subsystem.js";
 
 function tmpRoots() {
@@ -1021,18 +1021,18 @@ function tmpRoots() {
   return { stateRoot: join(root, "state"), sockPath: join(root, "d.sock") };
 }
 
-describe("cockpitd telegram wiring", () => {
+describe("squadrantd telegram wiring", () => {
   it("calls pushLifecycle on a notify event without letting a throw escape", async () => {
     const { stateRoot, sockPath } = tmpRoots();
     const pushLifecycle = vi.fn(async () => { throw new Error("tg down"); });
     const telegram: TelegramSubsystem = { pushLifecycle, startInbound: vi.fn(), stop: vi.fn() };
     const notify = vi.fn(async () => {}); // base notify (mailbox) stub
 
-    const h = startCockpitd({ stateRoot, sockPath, sweepMs: 0, rotationIntervalMs: 0, notify, telegram });
+    const h = startSquadrantd({ stateRoot, sockPath, sweepMs: 0, rotationIntervalMs: 0, notify, telegram });
     // Drive one notify by handing the daemon a started+done lifecycle through notify directly:
-    await notify({ project: "cockpit", message: "CREW DONE", record: { id: "t1", project: "cockpit", name: "crew-1", provider: "claude", state: "done" } as any, event: { type: "task.done", id: "t1" } as any });
+    await notify({ project: "squadrant", message: "CREW DONE", record: { id: "t1", project: "squadrant", name: "crew-1", provider: "claude", state: "done" } as any, event: { type: "task.done", id: "t1" } as any });
     // The composed notify (telegram on top of base) is what the daemon uses; assert it via a direct push:
-    await expect(telegram.pushLifecycle({ project: "cockpit", message: "x", record: { id: "t1", project: "cockpit", state: "done" } as any })).resolves.toBeUndefined();
+    await expect(telegram.pushLifecycle({ project: "squadrant", message: "x", record: { id: "t1", project: "squadrant", state: "done" } as any })).resolves.toBeUndefined();
     expect(telegram.startInbound).toHaveBeenCalled();
 
     await h.stop();
@@ -1041,7 +1041,7 @@ describe("cockpitd telegram wiring", () => {
 
   it("does not start telegram when opts.telegram is absent and config has none", async () => {
     const { stateRoot, sockPath } = tmpRoots();
-    const h = startCockpitd({ stateRoot, sockPath, sweepMs: 0, rotationIntervalMs: 0 });
+    const h = startSquadrantd({ stateRoot, sockPath, sweepMs: 0, rotationIntervalMs: 0 });
     // No throw, daemon boots fine without telegram.
     await h.stop();
     expect(true).toBe(true);
@@ -1053,12 +1053,12 @@ Note: the first test asserts the *injected* subsystem is started/stopped and tha
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run src/control/__tests__/cockpitd.telegram.test.ts`
+Run: `npx vitest run src/control/__tests__/squadrantd.telegram.test.ts`
 Expected: FAIL — `opts.telegram` is not accepted / `startInbound` never called.
 
 - [ ] **Step 3: Wire the daemon**
 
-In `src/control/cockpitd.ts`:
+In `src/control/squadrantd.ts`:
 
 (a) Add the import near the other control imports (~line 16):
 
@@ -1069,7 +1069,7 @@ import { appendCaptainMessage } from "./mailbox.js";
 
 (`appendToMailbox`/`rotateIfNeeded` are already imported from `./mailbox.js`; add `appendCaptainMessage` to that existing import instead of a duplicate line.)
 
-(b) Add to `CockpitdOpts` (after `opencodeBridge`, ~line 73):
+(b) Add to `SquadrantdOpts` (after `opencodeBridge`, ~line 73):
 
 ```typescript
   /** Inject a fake Telegram subsystem for tests. Absent + no config.telegram = feature off. */
@@ -1106,7 +1106,7 @@ import { appendCaptainMessage } from "./mailbox.js";
     : baseNotify;
 ```
 
-`startCockpitd` must become `async` is **not** desired (it returns a handle synchronously). Instead, build the subsystem synchronously-then-async via a helper that does the await inside the existing boot IIFE. To keep `startCockpitd` synchronous, define the builder and start inbound inside the boot IIFE. Concretely:
+`startSquadrantd` must become `async` is **not** desired (it returns a handle synchronously). Instead, build the subsystem synchronously-then-async via a helper that does the await inside the existing boot IIFE. To keep `startSquadrantd` synchronous, define the builder and start inbound inside the boot IIFE. Concretely:
 
 - Replace step (d)'s `await createTelegramSubsystemFromConfig()` approach with a deferred build. Declare `let telegram: TelegramSubsystem | null = opts.telegram ?? null;` and compose `composedNotify` to read `telegram` lazily (it already does via the closure variable). Then inside the boot IIFE (the existing `void (async () => { ... })()` near line 382), add at the end:
 
@@ -1155,7 +1155,7 @@ When `opts.telegram` is injected (tests), `startInbound()` must still run — ad
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run src/control/__tests__/cockpitd.telegram.test.ts`
+Run: `npx vitest run src/control/__tests__/squadrantd.telegram.test.ts`
 Expected: PASS (both cases).
 
 - [ ] **Step 5: Run the full daemon test suite for regressions**
@@ -1166,13 +1166,13 @@ Expected: PASS — composing notify and the lazy telegram build do not change ex
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/control/cockpitd.ts src/control/__tests__/cockpitd.telegram.test.ts
-git commit -m "feat(telegram): wire crash-contained subsystem into cockpitd (#65)"
+git add src/control/squadrantd.ts src/control/__tests__/squadrantd.telegram.test.ts
+git commit -m "feat(telegram): wire crash-contained subsystem into squadrantd (#65)"
 ```
 
 ---
 
-## Task 9: `cockpit telegram link` + `status` CLI
+## Task 9: `squadrant telegram link` + `status` CLI
 
 **Files:**
 - Create: `src/commands/telegram.ts`
@@ -1193,7 +1193,7 @@ import type { TgUpdate } from "../../control/telegram/client.js";
 describe("telegram link", () => {
   it("picks the chat_id from the most recent my_chat_member where the bot became admin/member", () => {
     const updates: TgUpdate[] = [
-      { update_id: 1, my_chat_member: { chat: { id: -100, type: "supergroup", title: "cockpit" }, new_chat_member: { status: "administrator" } } },
+      { update_id: 1, my_chat_member: { chat: { id: -100, type: "supergroup", title: "squadrant" }, new_chat_member: { status: "administrator" } } },
       { update_id: 2, message: { chat: { id: -100, type: "supergroup" }, text: "hi" } },
     ];
     expect(resolveLinkChatId(updates)).toBe(-100);
@@ -1206,9 +1206,9 @@ describe("telegram link", () => {
 
 describe("telegram status", () => {
   it("reports linked projects and token validity", () => {
-    const report = buildStatusReport({ tokenValid: true, chats: { cockpit: -100, brove: -200 } });
+    const report = buildStatusReport({ tokenValid: true, chats: { squadrant: -100, brove: -200 } });
     expect(report).toContain("token: valid");
-    expect(report).toContain("cockpit");
+    expect(report).toContain("squadrant");
     expect(report).toContain("-100");
     expect(report).toContain("brove");
   });
@@ -1230,7 +1230,7 @@ Expected: FAIL — module `../telegram.js` not found.
 // src/commands/telegram.ts
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, saveConfig, type CockpitConfig } from "../config.js";
+import { loadConfig, saveConfig, type SquadrantConfig } from "../config.js";
 import { createTelegramClient, type TgUpdate } from "../control/telegram/index.js";
 
 /** Pure: the chat_id of the most recent my_chat_member update (bot added to a group). */
@@ -1252,9 +1252,9 @@ export function buildStatusReport(args: { tokenValid: boolean; chats: Record<str
 }
 
 async function runLink(project: string, configPath?: string): Promise<number> {
-  const config: CockpitConfig = loadConfig(configPath);
+  const config: SquadrantConfig = loadConfig(configPath);
   if (!config.telegram?.botToken) {
-    console.error(chalk.red("telegram link: set telegram.botToken in ~/.config/cockpit/config.json first"));
+    console.error(chalk.red("telegram link: set telegram.botToken in ~/.config/squadrant/config.json first"));
     return 1;
   }
   if (!config.projects[project]) {
@@ -1348,23 +1348,23 @@ Add under the features/usage area of `README.md`:
 ```markdown
 ## Telegram remote control (#65)
 
-Drive cockpit from your phone. Crew lifecycle events (done / blocked / idle) push
+Drive squadrant from your phone. Crew lifecycle events (done / blocked / idle) push
 to Telegram forum topics — one topic per session — and replies route back to the
 captain.
 
 ### Setup
 
 1. Create a bot with [@BotFather](https://t.me/botfather); copy the token.
-2. Add the token to `~/.config/cockpit/config.json`:
+2. Add the token to `~/.config/squadrant/config.json`:
    ```json
    { "telegram": { "botToken": "123456:ABC...", "chats": {} } }
    ```
 3. Create a Telegram **supergroup with Topics enabled** for the project, and add
    your bot as an **admin** (with "Manage topics").
-4. Run `cockpit telegram link <project>` — this binds the group to the project.
-5. Restart the daemon: `launchctl kickstart -kp gui/$(id -u)/com.cockpit.daemon`.
+4. Run `squadrant telegram link <project>` — this binds the group to the project.
+5. Restart the daemon: `launchctl kickstart -kp gui/$(id -u)/com.squadrant.daemon`.
 
-Check status any time with `cockpit telegram status`.
+Check status any time with `squadrant telegram status`.
 
 ### How it works
 
@@ -1382,12 +1382,12 @@ direct-to-crew injection (#249).
 
 - [ ] **Step 2: Add the AGENTS.md note**
 
-Add one bullet where cockpit's notification/remote surfaces are described in `AGENTS.md`:
+Add one bullet where squadrant's notification/remote surfaces are described in `AGENTS.md`:
 
 ```markdown
 - **Telegram remote control** (opt-in, #65): push crew lifecycle to Telegram forum
   topics (one per session) and reply back to the captain. Configure via
-  `cockpit telegram link <project>`. See README "Telegram remote control".
+  `squadrant telegram link <project>`. See README "Telegram remote control".
 ```
 
 - [ ] **Step 3: Commit**
@@ -1435,12 +1435,12 @@ git commit -m "test(telegram): full-suite verification fixes (#65)"
 - Forum-topic mapping, one group per project → Tasks 3, 4, 6. ✅
 - Daemon-hosted, opt-in, crash-contained → Tasks 6 (best-effort push), 7 (loop backoff), 8 (injection + isolation test). ✅
 - Security: chat_id allowlist (derived from `chats`), no shell passthrough → Task 7 (allowlist), Task 5 (message-not-command). ✅
-- Setup `cockpit telegram link` + config → Tasks 1, 9. ✅
+- Setup `squadrant telegram link` + config → Tasks 1, 9. ✅
 - Isolation/failure matrix → Tasks 6, 7, 8 best-effort + backoff + daemon-isolation test. ✅
 - Non-goals (#249/#309/#310, no webhook, no token deltas) → out of scope; not built. ✅
 - Testing strategy (pure units, mocked HTTP, isolation) → every task is TDD with injected I/O. ✅
 
 **Type consistency:** `TelegramClient`, `TgUpdate`, `TelegramState`, `TelegramSubsystem`, `appendCaptainMessage`, `createTelegramSubsystem`, `processInboundUpdate` names are used identically across tasks. `MailboxEntry.kind` widening is the one shared-type change (Task 5), consumed in Task 8.
 
-**Open risk flagged for the executor:** Task 8 step 3 keeps `startCockpitd` synchronous by building the subsystem inside the existing boot IIFE while `composedNotify` closes over the mutable `telegram` variable. If the executor finds the closure timing awkward, the acceptable alternative is to construct the subsystem eagerly with a synchronous `loadTelegramState` variant — but do NOT make `startCockpitd` async (callers depend on the synchronous handle return). Verify the daemon-isolation test (Task 8) passes either way.
+**Open risk flagged for the executor:** Task 8 step 3 keeps `startSquadrantd` synchronous by building the subsystem inside the existing boot IIFE while `composedNotify` closes over the mutable `telegram` variable. If the executor finds the closure timing awkward, the acceptable alternative is to construct the subsystem eagerly with a synchronous `loadTelegramState` variant — but do NOT make `startSquadrantd` async (callers depend on the synchronous handle return). Verify the daemon-isolation test (Task 8) passes either way.
 ```

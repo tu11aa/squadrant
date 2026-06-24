@@ -4,21 +4,21 @@
 >
 > **POST-#332 NOTE (historical):** This spec assumes the `notify-relay` transport, which was **deleted in #332**. Inbound/outbound messages now ride **daemon-direct cmux delivery**.
 
-**Issue:** #65 — Telegram integration for remote cockpit control
+**Issue:** #65 — Telegram integration for remote squadrant control
 **Date:** 2026-06-15
 **Status:** Approved design → ready for implementation plan
 **Target release:** v1.0.0 (bundled with the four pre-Telegram reliability fixes already on `develop`)
 
 ## Goal
 
-Drive cockpit from a phone via Telegram:
+Drive squadrant from a phone via Telegram:
 
 - **Outbound** — push curated lifecycle events (crew done, captain blocked, crew idle) to Telegram.
 - **Inbound** — reply from Telegram and have the message route to the right session.
 
 Success criteria (from #65 acceptance):
 
-1. Cockpit can push a message to the user on Telegram.
+1. Squadrant can push a message to the user on Telegram.
 2. The user replies from Telegram and it routes to the correct session.
 
 ## Scope decisions (locked during brainstorm)
@@ -45,7 +45,7 @@ Success criteria (from #65 acceptance):
 ### Topology
 
 ```
-┌─────────────────────────── cockpitd (daemon) ───────────────────────────┐
+┌─────────────────────────── squadrantd (daemon) ───────────────────────────┐
 │  event hub + mailbox + state-machine + watchdog   (UNCHANGED)            │
 │                                                                          │
 │  ┌─ Telegram subsystem (NEW, opt-in, crash-contained) ──────────────┐   │
@@ -140,7 +140,7 @@ user types in "🔧 crew-2" topic → Telegram
      "📩 [from Telegram · crew-2] use lucia"
         │
         ▼ captain interprets & acts
-  captain → cockpit crew send <project> crew-2 "use lucia"
+  captain → squadrant crew send <project> crew-2 "use lucia"
 ```
 
 - **Through the captain**, not direct-to-crew. The relay already delivers
@@ -157,7 +157,7 @@ One-time, manual:
 1. Create a bot via BotFather → obtain the bot token.
 2. Create a supergroup per project, **enable Topics**, add the bot as admin with
    *manage topics* permission.
-3. Run `cockpit telegram link <project>` — the daemon captures the group's
+3. Run `squadrant telegram link <project>` — the daemon captures the group's
    `chat_id` from the `my_chat_member` update Telegram emits when the bot is
    added, and binds it to the project.
 
@@ -165,7 +165,7 @@ After linking, the daemon creates topics automatically as crews spawn.
 
 ### Configuration
 
-Stored in `~/.config/cockpit` config (JSON, per repo convention):
+Stored in `~/.config/squadrant` config (JSON, per repo convention):
 
 - `config.notifier = "telegram"` (or keep `cmux` and run Telegram in parallel —
   see Open question O1).
