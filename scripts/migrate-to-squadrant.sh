@@ -223,30 +223,56 @@ else
   note "no $CLAUDE_PROJECTS dir — skipping session/memory preservation"
 fi
 
-step "4.6 Rewrite stale 'cockpit crew _hook' commands in Claude Code settings files"
-# The hook-generation source already emits `squadrant crew _hook`, but settings
-# files written on disk BEFORE the rebrand still invoke the removed `cockpit`
-# binary, so every Stop/PostToolUse hook in the captain (and any pre-rebrand crew)
-# fails with "cockpit: command not found". Rewrite the command token in place.
-# Scoped to the leading "cockpit crew _hook" so permission patterns like
+step "4.6 Rewrite stale 'cockpit' tokens in Claude Code settings files (this repo, global ~/.claude, AND every registered project)"
+# Settings files written on disk BEFORE the rebrand still invoke the removed
+# `cockpit` binary — every Stop/PostToolUse hook fails "cockpit: command not
+# found" — and reference old ~/.config/cockpit script paths and the cockpit-hub
+# vault in permission allowlists. Rewrite three exact tokens in place:
+#   cockpit crew _hook -> squadrant crew _hook   (the failing hook command)
+#   .config/cockpit    -> .config/squadrant      (write-status/read-handoff paths)
+#   cockpit-hub        -> squadrant-hub          (spoke-vault Read allowlist)
+# Token-scoped (NOT a blanket cockpit->squadrant) so unrelated patterns like
 # Bash(cockpit:*) are left untouched. Idempotent (a second run matches nothing).
-HOOK_SETTINGS=(
-  "$NEW_REPO/.claude/settings.json"
-  "$NEW_REPO/.claude/settings.local.json"
-  "$HOME/.claude/settings.json"
-  "$HOME/.claude/settings.local.json"
-)
-hooks_fixed=0
-for sf in "${HOOK_SETTINGS[@]}"; do
-  [ -f "$sf" ] || continue
-  if grep -q 'cockpit crew _hook' "$sf" 2>/dev/null; then
-    run "sed -i '' 's/cockpit crew _hook/squadrant crew _hook/g' '$sf'"
-    hooks_fixed=$((hooks_fixed + 1))
-  else
-    note "ok (no stale hook): $sf"
-  fi
-done
-note "$([ "$DRY_RUN" -eq 1 ] && echo 'would rewrite' || echo 'rewrote') hook command in $hooks_fixed settings file(s)"
+# Earlier versions swept only this repo + global ~/.claude and ORPHANED every
+# registered project, so the per-project files are read from config.json here.
+CFG_FOR_HOOKS="$NEW_CONFIG/config.json"; [ -f "$CFG_FOR_HOOKS" ] || CFG_FOR_HOOKS="$OLD_CONFIG/config.json"
+DRY_RUN="$DRY_RUN" NEW_REPO="$NEW_REPO" HOME_DIR="$HOME" CFG="$CFG_FOR_HOOKS" python3 - <<'PY'
+import json, os
+dry = os.environ["DRY_RUN"] == "1"
+repo, home, cfg = os.environ["NEW_REPO"], os.environ["HOME_DIR"], os.environ["CFG"]
+SUBS = [("cockpit crew _hook", "squadrant crew _hook"),
+        (".config/cockpit", ".config/squadrant"),
+        ("cockpit-hub", "squadrant-hub")]
+files = [f"{repo}/.claude/settings.json", f"{repo}/.claude/settings.local.json",
+         f"{home}/.claude/settings.json", f"{home}/.claude/settings.local.json"]
+if os.path.isfile(cfg):
+    try:
+        for p in json.load(open(cfg)).get("projects", {}).values():
+            path = p.get("path") if isinstance(p, dict) else None
+            if path:
+                files.append(os.path.join(path, ".claude", "settings.json"))
+                files.append(os.path.join(path, ".claude", "settings.local.json"))
+    except (ValueError, OSError) as e:
+        print(f"  · could not read registered projects from {cfg}: {e}")
+fixed = 0
+for f in files:
+    if not os.path.isfile(f):
+        continue
+    text = open(f, encoding="utf-8").read()
+    if "cockpit" not in text:
+        continue
+    new = text
+    for a, b in SUBS:
+        new = new.replace(a, b)
+    if new == text:
+        continue
+    print(f"  $ {'would rewrite' if dry else 'rewrite'} {f}")
+    if not dry:
+        json.loads(new)  # guard: only write back valid JSON
+        open(f, "w", encoding="utf-8").write(new)
+    fixed += 1
+print(f"  · {'would rewrite' if dry else 'rewrote'} cockpit tokens in {fixed} settings file(s)")
+PY
 
 step "5. Remove old launchd plist (the rebuilt daemon installs com.squadrant.daemon.plist on first run)"
 [ -f "$OLD_PLIST" ] && run "rm -f '$OLD_PLIST'" || note "old plist absent"

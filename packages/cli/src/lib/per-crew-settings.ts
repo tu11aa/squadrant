@@ -105,6 +105,26 @@ export const CREW_PERMISSION_ALLOWLIST: readonly string[] = [
 ];
 
 /**
+ * Pure: rewrite the three pre-rebrand `cockpit` tokens left in a Claude Code
+ * settings file by the claude-cockpit era. The hook command especially fails
+ * with "cockpit: command not found" on every captain/crew turn-end. Token-
+ * scoped (NOT a blanket cockpit→squadrant) so unrelated patterns like
+ * `Bash(cockpit:*)` are left untouched. Idempotent — a second pass is a no-op.
+ *
+ * This is the runtime self-heal counterpart to the one-time migration sweep
+ * (scripts/migrate-to-squadrant.sh step 4.6): `writePerCrewSettingsLocal`
+ * applies it to a project's settings.local.json on every crew spawn, so a
+ * project that drifted (or was never swept) repairs itself the next time a
+ * crew launches in it.
+ */
+export function healStaleCockpitRefs(raw: string): string {
+  return raw
+    .replaceAll("cockpit crew _hook", "squadrant crew _hook")
+    .replaceAll(".config/cockpit", ".config/squadrant")
+    .replaceAll("cockpit-hub", "squadrant-hub");
+}
+
+/**
  * Pure: merge the crew permission allowlist into a settings object's
  * `permissions.allow`, de-duplicating and preserving any existing entries and
  * sibling permission keys (deny/ask). Never mutates the input.
@@ -157,7 +177,10 @@ export function writePerCrewSettingsLocal(o: {
   const file = join(dir, "settings.local.json");
   let existing: Record<string, unknown> = {};
   try {
-    const raw = readFileSync(file, "utf-8");
+    // Self-heal pre-rebrand `cockpit` tokens (e.g. a stale `cockpit crew _hook`
+    // that would otherwise survive the merge and keep firing "command not
+    // found") before parsing the user's existing settings.
+    const raw = healStaleCockpitRefs(readFileSync(file, "utf-8"));
     existing = JSON.parse(raw);
   } catch {
     // File doesn't exist or isn't valid JSON — start fresh
