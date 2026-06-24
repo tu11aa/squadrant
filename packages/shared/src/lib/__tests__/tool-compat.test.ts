@@ -3,19 +3,19 @@ import { checkToolCompat } from "../tool-compat.js";
 
 describe("checkToolCompat", () => {
   it("returns null when version is within range", () => {
-    expect(checkToolCompat("cmux", "cmux 0.64.8", { min: "0.64.0", lastVerified: "0.64.16" })).toBeNull();
+    expect(checkToolCompat("cmux", "cmux 0.64.8", { min: "0.64.0", lastVerified: "0.64.17" })).toBeNull();
   });
 
   it("returns null when version equals min exactly", () => {
-    expect(checkToolCompat("cmux", "cmux 0.64.0", { min: "0.64.0", lastVerified: "0.64.16" })).toBeNull();
+    expect(checkToolCompat("cmux", "cmux 0.64.0", { min: "0.64.0", lastVerified: "0.64.17" })).toBeNull();
   });
 
   it("returns null when version equals lastVerified exactly", () => {
-    expect(checkToolCompat("cmux", "cmux 0.64.16", { min: "0.64.0", lastVerified: "0.64.16" })).toBeNull();
+    expect(checkToolCompat("cmux", "cmux 0.64.17", { min: "0.64.0", lastVerified: "0.64.17" })).toBeNull();
   });
 
   it("warns when version is below min", () => {
-    const warn = checkToolCompat("cmux", "cmux 0.63.5", { min: "0.64.0", lastVerified: "0.64.16" });
+    const warn = checkToolCompat("cmux", "cmux 0.63.5", { min: "0.64.0", lastVerified: "0.64.17" });
     expect(warn).not.toBeNull();
     expect(warn).toMatch(/< min/);
     expect(warn).toMatch(/0\.64\.0/);
@@ -28,16 +28,16 @@ describe("checkToolCompat", () => {
   });
 
   it("warns when installed version exceeds lastVerified (drift signal)", () => {
-    const warn = checkToolCompat("cmux", "cmux 0.65.0", { min: "0.64.0", lastVerified: "0.64.16" });
+    const warn = checkToolCompat("cmux", "cmux 0.65.0", { min: "0.64.0", lastVerified: "0.64.17" });
     expect(warn).not.toBeNull();
     expect(warn).toMatch(/last-verified/);
-    expect(warn).toMatch(/0\.64\.16/);
+    expect(warn).toMatch(/0\.64\.17/);
     expect(warn).toMatch(/compat audit/i);
   });
 
   it("warn message includes tool name and installed version when above lastVerified", () => {
-    const warn = checkToolCompat("cmux", "cmux 0.65.0", { min: "0.64.0", lastVerified: "0.64.16" });
-    expect(warn).toMatch(/cmux 0\.65\.0 > last-verified 0\.64\.16/);
+    const warn = checkToolCompat("cmux", "cmux 0.65.0", { min: "0.64.0", lastVerified: "0.64.17" });
+    expect(warn).toMatch(/cmux 0\.65\.0 > last-verified 0\.64\.17/);
   });
 
   it("returns null when no lastVerified and version is above min", () => {
@@ -84,7 +84,7 @@ describe("checkToolCompat", () => {
 
   // Manifest shape: all six tools should produce a null when version is in-range
   it("manifest tool entries for cmux/claude/node each have a min and are checkable", () => {
-    expect(checkToolCompat("cmux",  "cmux 0.64.16", { min: "0.64.0",  lastVerified: "0.64.16" })).toBeNull();
+    expect(checkToolCompat("cmux",  "cmux 0.64.17", { min: "0.64.0",  lastVerified: "0.64.17" })).toBeNull();
     expect(checkToolCompat("claude","claude 2.1.32", { min: "2.1.32" })).toBeNull();
     expect(checkToolCompat("node",  "22.0.0",        { min: "18.0.0", lastVerified: "24.6.0" })).toBeNull();
   });

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-06-24
+
+### Changed
+- Bumped the cmux compatibility manifest last-verified version to `0.64.17`. The `0.64.16`→`0.64.17` release is iOS features + macOS-app-internal Swift/SPM refactors + CI; it changes none of the cmux CLI subcommands or socket contract squadrant depends on, so `doctor` no longer warns when running against `0.64.17`.
+
 ## [0.11.1] - 2026-06-24
 
 ### Added
