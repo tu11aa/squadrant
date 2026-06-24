@@ -26,6 +26,7 @@ function drive(opts: Omit<TelegramBridgeOptions, "client">, updates: Array<Parti
     setMyCommands: vi.fn(async () => {}),
     answerCallbackQuery: vi.fn(async () => {}),
     editMessageReplyMarkup: vi.fn(async () => {}),
+    sendChatAction: vi.fn(async () => {}),
   };
   const bridge = createTelegramBridge({ ...opts, client });
   bridge.start();
@@ -234,6 +235,40 @@ describe("channel commands in a project topic (#cmds-anytopic)", () => {
     await drained;
     expect(d.runCommand).not.toHaveBeenCalled();
     expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("not authorized"));
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
+describe("typing indicator", () => {
+  it("fires sendChatAction('typing') for an inbound captain message", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    expect(client.sendChatAction).toHaveBeenCalledWith(CHAT, 7, "typing");
+    expect(d.appendCaptainMessage).toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does NOT fire sendChatAction for a /notify command in a project topic", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/notify", 7)]);
+    await drained;
+    expect(client.sendChatAction).not.toHaveBeenCalled();
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does NOT fire sendChatAction for a /status channel command in a project topic", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/status", 7)]);
+    await drained;
+    expect(client.sendChatAction).not.toHaveBeenCalled();
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     bridge.stop();
   });

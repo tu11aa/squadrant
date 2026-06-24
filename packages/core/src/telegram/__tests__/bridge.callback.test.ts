@@ -159,6 +159,7 @@ function makeInbound(message: unknown): InboundHarness {
     sendMessage,
     answerCallbackQuery: async () => {},
     editMessageReplyMarkup: async () => {},
+    sendChatAction: async () => {},
     createForumTopic: async () => 1,
     getMe: async () => ({ id: 0, username: "" }),
     setMyCommands: async () => {},

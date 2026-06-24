@@ -22,6 +22,7 @@ function fakeClient(onCreate?: () => void) {
     setMyCommands: async () => {},
     answerCallbackQuery: async () => {},
     editMessageReplyMarkup: async () => {},
+    sendChatAction: async () => {},
   };
 }
 
@@ -222,6 +223,7 @@ describe("runNotifyConfirmation", () => {
       setMyCommands: async () => {},
       answerCallbackQuery: async () => {},
       editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
     };
   }
   const tgCfg = { supergroupId: 5, chats: [1] } as any;
