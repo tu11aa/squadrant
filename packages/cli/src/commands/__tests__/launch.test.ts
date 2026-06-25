@@ -22,7 +22,7 @@ vi.mock("@squadrant/shared", async () => {
   return { ...actual, resolveCmuxBin: () => "/Applications/cmux.app/Contents/Resources/bin/cmux", resetCmuxBinCache: vi.fn() };
 });
 
-import { cmuxLocal } from "@squadrant/workspaces";
+import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
 import { deliverStartupPrompt } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
@@ -70,7 +70,7 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   const IDLE = [HR, "❯ ", HR, "   Model: Opus 4.8  Ctx Used: 52.0%", "  ⏵⏵ auto mode on"].join("\n");
   const WORKING = ["✢ Cerebrating… (4s · ↓ 1.2k tokens)", HR, "❯ ", HR, "  ⏵⏵ auto mode on"].join("\n");
 
-  const FAST = { readyTimeoutMs: 100, settleMs: 1, pollMs: 1, maxAttempts: 3 };
+  const FAST = { readyTimeoutMs: 100, settleMs: 1, pollMs: 1, maxAttempts: 3, classifyScreen: classifyStartupSurface };
 
   // A fake runtime whose read-screen returns scripted screens by call index
   // (clamped to the last), recording every send for assertions.
