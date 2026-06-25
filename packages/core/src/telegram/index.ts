@@ -9,3 +9,4 @@ export * from "./state.js";
 export * from "./client.js";
 export * from "./bridge.js";
 export * from "./setup.js";
+export * from "./notify.js";
