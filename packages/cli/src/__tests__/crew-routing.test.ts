@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveCrewRoute } from "../crew-routing.js";
+import { resolveCrewRoute } from "@squadrant/core";
 import type { SquadrantConfig } from "@squadrant/shared";
 
 function makeConfig(overrides?: Partial<SquadrantConfig["defaults"]>): SquadrantConfig {

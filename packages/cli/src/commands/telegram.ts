@@ -6,7 +6,7 @@ import { loadConfig, DEFAULT_CONFIG_PATH, saveProjectOverride, resolveNotify, lo
 import type { SquadrantConfig, TelegramConfig, NotifyConfig, CrewTier } from "@squadrant/shared";
 import { createTelegramClient, loadState, setTopic, topicKey, topicName, detectGroupAndUser, writeTelegramConfig, maskToken, isNotifyActive, setNotify, BOT_COMMANDS, resolveSetupGroup } from "@squadrant/core";
 import type { TelegramClient } from "@squadrant/core";
-import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
+import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
 
 /** Daemon state root (mirrors buildContext): ~/.config/squadrant/state. */
 function defaultStateRoot(): string {

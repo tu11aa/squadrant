@@ -8,7 +8,7 @@ import {
   resolveHome,
   ProjectConfig,
 } from "@squadrant/shared";
-import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
+import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
 
 export function restartAfterProjectsAdd(opts: {
   noRestart?: boolean;

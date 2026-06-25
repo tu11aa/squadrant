@@ -4,7 +4,7 @@ const newPane = vi.hoisted(() => vi.fn());
 const sendToPane = vi.hoisted(() => vi.fn());
 const execSyncMock = vi.hoisted(() => vi.fn());
 
-vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
+vi.mock("node:child_process", () => ({ execSync: execSyncMock, execFile: vi.fn() }));
 
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({

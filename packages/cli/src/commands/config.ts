@@ -6,7 +6,7 @@ import chalk from "chalk";
 import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey } from "@squadrant/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
 import { withStamp } from "@squadrant/shared";
-import { restartDaemonIfRunning, type RestartOutcome } from "../control/restart-daemon.js";
+import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
 
 export interface ConfigCheckOptions {
   configPath: string;

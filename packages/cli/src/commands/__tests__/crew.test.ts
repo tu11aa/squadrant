@@ -114,7 +114,10 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const resolveCrewRoute = vi.hoisted(() => vi.fn());
-vi.mock("../../control/crew-routing.js", () => ({ resolveCrewRoute }));
+vi.mock("@squadrant/core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@squadrant/core")>(),
+  resolveCrewRoute,
+}));
 
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
 import { reapCrewChildren } from "@squadrant/core";

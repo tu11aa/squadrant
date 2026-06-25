@@ -2,6 +2,7 @@
 export * from "./bot-commands.js";
 export * from "./auth.js";
 export * from "./commands.js";
+export * from "./control.js";
 export * from "./ensure-captain.js";
 export * from "./format.js";
 export * from "./state.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { capOutput } from "../telegram-control.js";
+import { capOutput } from "@squadrant/core";
 
 describe("capOutput", () => {
   it("returns trimmed stdout when present", () => {

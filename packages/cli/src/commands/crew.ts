@@ -6,7 +6,7 @@ import chalk from "chalk";
 import { loadConfig } from "@squadrant/shared";
 import { addWorktree, removeWorktree, resolveWorktreeBase, resolveTextInput, TERMINAL_STATES } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
-import { resolveCrewRoute } from "../control/crew-routing.js";
+import { resolveCrewRoute } from "@squadrant/core";
 import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
 import { listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady, getFreePort } from "@squadrant/workspaces";
 import type { PaneRef, PanePlacement, RuntimeDriver } from "@squadrant/workspaces";

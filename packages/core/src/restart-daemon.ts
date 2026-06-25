@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { LABEL, kickstartArgv, tryAcquireDaemonLock, releaseDaemonLock } from "@squadrant/core";
+import { LABEL, kickstartArgv, tryAcquireDaemonLock, releaseDaemonLock } from "./launchd.js";
 
 export type RestartOutcome = "restarted" | "skipped-not-running" | "skipped-opt-out";
 

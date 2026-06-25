@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
-import { restartDaemonIfRunning } from "../control/restart-daemon.js";
+import { restartDaemonIfRunning } from "@squadrant/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 

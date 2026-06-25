@@ -14,6 +14,7 @@ vi.mock("node:child_process", () => ({
   // launch.ts imports both; only execFileSync is exercised by cmuxLocal.
   execFileSync: execFileMock,
   execSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock("@squadrant/shared", async () => {
