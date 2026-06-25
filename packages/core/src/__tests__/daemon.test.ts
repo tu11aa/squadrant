@@ -1,9 +1,10 @@
-// src/control/__tests__/daemon.test.ts
+// packages/core/src/__tests__/daemon.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemon, createStore, crewTag } from "@squadrant/core";
+import { createDaemon, crewTag } from "../daemon.js";
+import { createStore } from "../store.js";
 import type { TaskRecord } from "@squadrant/shared";
 
 function rec(id: string, overrides: Partial<TaskRecord> = {}): TaskRecord {

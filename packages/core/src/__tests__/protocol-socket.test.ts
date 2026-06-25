@@ -1,4 +1,4 @@
-// src/control/__tests__/protocol-socket.test.ts
+// packages/core/src/__tests__/protocol-socket.test.ts
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +8,7 @@ import {
   startServer, sendRequest, encodeMsg, encodeFrame, defaultListenError,
   PROTOCOL_VERSION,
   type NetConn,
-} from "@squadrant/core";
+} from "../protocol.js";
 
 describe("unix socket", () => {
   let cleanup: (() => void) | undefined;

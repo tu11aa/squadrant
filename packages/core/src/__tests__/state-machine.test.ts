@@ -1,6 +1,6 @@
-// src/control/__tests__/state-machine.test.ts
+// packages/core/src/__tests__/state-machine.test.ts
 import { describe, it, expect } from "vitest";
-import { reduce } from "@squadrant/core";
+import { reduce } from "../state-machine.js";
 import type { TaskRecord, DispatchAttempt } from "@squadrant/shared";
 
 function rec(overrides: Partial<TaskRecord> = {}): TaskRecord {
