@@ -662,42 +662,51 @@ describe("squadrant crew spawn", () => {
   });
 
   describe("leveled crew routing (#275)", () => {
+    // routing now runs inside @squadrant/core (crew-spawn.ts) via internal relative import;
+    // the @squadrant/core mock does NOT intercept it. Tests verify outcome (buildCommand model)
+    // and use real config rules so the real resolveCrewRoute returns the expected route.
+    const routingConfig = {
+      ...baseConfig,
+      defaults: {
+        ...baseConfig.defaults,
+        crewRouting: { rules: [{ match: "refactor", agent: "claude", tier: "hard", model: "sonnet" }] },
+      },
+    };
+
     it("uses routed agent+model when no explicit agent/model provided and routing matches", async () => {
-      loadConfig.mockReturnValue(baseConfig);
+      loadConfig.mockReturnValue(routingConfig);
       status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
       listSurfaces.mockResolvedValue([]);
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
       buildCommand.mockReturnValue("claude --model sonnet ...");
       buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-route1" } }));
       squadrantdCall.mockResolvedValue({ id: "task-route1" });
-      resolveCrewRoute.mockReturnValue({ agent: "claude", model: "sonnet", tier: "hard", matchedRule: "refactor|implement" });
 
       const promise = runCrewSpawn({ project: "brove", task: "refactor the daemon" });
       await vi.advanceTimersByTimeAsync(3000);
       await promise;
 
-      expect(resolveCrewRoute).toHaveBeenCalledWith("refactor the daemon", baseConfig);
+      // real resolveCrewRoute (in core) matches the rule and applies model=sonnet
       expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "sonnet" }));
     });
 
     it("explicit --agent overrides routing when agentExplicit=true", async () => {
-      loadConfig.mockReturnValue(baseConfig);
+      // use routingConfig so routing WOULD fire if not suppressed
+      loadConfig.mockReturnValue(routingConfig);
       status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
       listSurfaces.mockResolvedValue([]);
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
       buildCommand.mockReturnValue("gemini ...");
-      // routing would suggest claude/sonnet but agentExplicit=true suppresses it
-      resolveCrewRoute.mockReturnValue({ agent: "claude", model: "sonnet", tier: "hard", matchedRule: "refactor" });
 
       await runCrewSpawn({ project: "brove", task: "refactor the daemon", agent: "gemini", agentExplicit: true });
 
-      // routing should NOT have been consulted
-      expect(resolveCrewRoute).not.toHaveBeenCalled();
+      // agentExplicit=true suppresses routing — model stays undefined (no override applied)
       expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
     });
 
     it("explicit --model overrides routing model even when agentExplicit is false", async () => {
-      loadConfig.mockReturnValue(baseConfig);
+      // use routingConfig so routing WOULD fire if not suppressed
+      loadConfig.mockReturnValue(routingConfig);
       status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
       listSurfaces.mockResolvedValue([]);
       newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
@@ -709,8 +718,7 @@ describe("squadrant crew spawn", () => {
       await vi.advanceTimersByTimeAsync(3000);
       await promise;
 
-      // model passed explicitly → routing skipped entirely
-      expect(resolveCrewRoute).not.toHaveBeenCalled();
+      // explicit model=opus → routing skipped; buildCommand receives the explicit model
       expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: "opus" }));
     });
 
