@@ -25,3 +25,4 @@ export * from "./telegram/index.js";
 export * from "./crew-routing.js";
 export * from "./restart-daemon.js";
 export * from "./group-dispatch.js";
+export * from "./launch-workspace.js";
