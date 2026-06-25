@@ -3,6 +3,10 @@
 // getUpdates is single-consumer — setup runs before the daemon starts polling (#321).
 import fs from "node:fs";
 import type { TelegramClient } from "./client.js";
+import { loadState } from "./state.js";
+import { BOT_COMMANDS } from "./bot-commands.js";
+import { restartDaemonIfRunning } from "../restart-daemon.js";
+import type { RestartOutcome } from "../restart-daemon.js";
 
 /**
  * Decide whether to reuse an existing supergroup or re-detect via getUpdates.
@@ -51,6 +55,42 @@ export async function detectGroupId(
   opts: { timeoutMs?: number; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<number> {
   return (await detectGroupAndUser(client, opts)).supergroupId;
+}
+
+export function resolveSetupToken(
+  existingToken: string | undefined,
+  opts: { resetToken: boolean },
+): "prompt" | "try-reuse" {
+  if (opts.resetToken || !existingToken) return "prompt";
+  return "try-reuse";
+}
+
+/**
+ * Precedence: explicit --user-id flag > detected userId (first-run getUpdates) >
+ * lastUserId persisted in telegram-state.json by the bridge poll (passive capture).
+ */
+export function resolveSetupUserId(
+  flagUserId: number | undefined,
+  detectedUserId: number | undefined,
+  stateRoot: string,
+): number | undefined {
+  return flagUserId ?? detectedUserId ?? loadState(stateRoot).lastUserId;
+}
+
+export async function runRegisterCommands(opts: { client: TelegramClient }): Promise<void> {
+  await opts.client.setMyCommands(BOT_COMMANDS);
+}
+
+export function runTelegramPostSetup(opts: {
+  doRestart?: (o: { reason: string }) => RestartOutcome;
+}): void {
+  const doRestart = opts.doRestart ?? restartDaemonIfRunning;
+  const outcome = doRestart({ reason: "telegram config" });
+  if (outcome === "skipped-not-running") {
+    console.log("(daemon not running — change applies on next start)");
+  } else if (outcome === "skipped-opt-out") {
+    console.log("(run 'squadrant heal daemon' to apply)");
+  }
 }
 
 /**
