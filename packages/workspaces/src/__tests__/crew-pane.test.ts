@@ -2,148 +2,119 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { sendFirstTurnWhenReady } from "../crew-pane.js";
 import type { PaneRef } from "@squadrant/shared";
 
-describe("sendFirstTurnWhenReady", () => {
+// Realistic Claude-Code-style screen: the live input box is the region between the
+// last two horizontal rules. parseDraftFromScreen reads exactly that region, so the
+// #339 fix can use box-empty (submitted) vs box-holds-draft (stranded) as its
+// confirmation signal instead of the fragile "screen changed" heuristic.
+const HR = "─".repeat(60);
+const box = (content: string) =>
+  `…transcript…\n${HR}\n❯ ${content}\n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+const EMPTY_BOX = box("");                 // parseDraftFromScreen → "" (submitted)
+const DRAFT_BOX = box("[Pasted text #1]"); // parseDraftFromScreen → draft  (stranded)
+
+describe("sendFirstTurnWhenReady — claude/codex first-turn (#339)", () => {
   let readPaneScreen: ReturnType<typeof vi.fn>;
   let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
   const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
 
   beforeEach(() => {
     vi.useFakeTimers();
     readPaneScreen = vi.fn();
     sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("polls until pane stabilizes then sends the task once", async () => {
-    let callCount = 0;
+  // #339: the submit CR must be a SEPARATE keystroke issued after the paste settles —
+  // never bundled into the paste send (which is how the CR gets absorbed as a newline
+  // inside the [Pasted text] placeholder). The whole task is pasted exactly once.
+  it("pastes the task once, then submits with a separate Enter — never via send+Enter", async () => {
+    let n = 0;
     readPaneScreen.mockImplementation(async () => {
-      callCount++;
-      if (callCount <= 1) return "";
-      if (callCount <= 3) return "> ";        // stable prompt, advanced past launch
-      if (callCount === 4) return "> ";       // preSend snapshot
-      return "> do the thing";                // after-send: screen changed → no re-send
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // readiness polls + preSend snapshot
+      if (n <= 5) return DRAFT_BOX;  // settle: paste rendered, box holds the draft
+      return EMPTY_BOX;              // post-Enter: box empty → submitted
     });
 
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(4000);
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the big thing", "$ launch");
+    await vi.advanceTimersByTimeAsync(6000);
     await promise;
 
-    expect(sendToPane).toHaveBeenCalledTimes(1);
-    expect(sendToPane).toHaveBeenCalledWith(pane, "do the thing");
-  });
-
-  it("falls back to sending even if pane never stabilises", async () => {
-    readPaneScreen.mockResolvedValue("");
-
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(21000);
-    await promise;
-
-    // Two calls: fallback send + one re-send (post-send check sees an unchanged screen)
-    expect(sendToPane).toHaveBeenCalledTimes(2);
-    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
-    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
-  }, 15000);
-
-  it("re-sends once when the screen is unchanged after the first send", async () => {
-    readPaneScreen.mockResolvedValue("> ");
-
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
-      pane,
-      "do the thing",
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(5000);
-    await promise;
-
-    // Two calls: initial send + one re-send (preSend === afterScreen)
-    expect(sendToPane).toHaveBeenCalledTimes(2);
-    expect(sendToPane).toHaveBeenNthCalledWith(1, pane, "do the thing");
-    expect(sendToPane).toHaveBeenNthCalledWith(2, pane, "do the thing");
-  });
-
-  // #168: sendToPane (since #136) collapses newlines to spaces, so a multi-line
-  // task never appears verbatim in the pane render. The old post-send check
-  // `!afterScreen.includes(task)` therefore always re-sent → duplicate first
-  // turn. The fix compares the screen before vs after sending instead.
-  it("does NOT re-send a multi-line task when the pane render collapses newlines", async () => {
-    const task = "line one\nline two\nline three";
-    let callCount = 0;
-    readPaneScreen.mockImplementation(async () => {
-      callCount++;
-      // reads 1-2: poll (stable), read 3: preSend snapshot — all the bare prompt.
-      if (callCount <= 3) return "> ";
-      return "> line one line two line three";               // after-send: collapsed render
-    });
-
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
-      pane,
-      task,
-      "$ launch",
-    );
-
-    await vi.advanceTimersByTimeAsync(4000);
-    await promise;
-
-    // The screen changed after the send (task was received), so no re-send —
-    // even though `afterScreen.includes(task)` is false for the multi-line task.
-    expect(sendToPane).toHaveBeenCalledTimes(1);
-    expect(sendToPane).toHaveBeenCalledWith(pane, task);
-  });
-
-  // opencode boot-race: the screen can be momentarily static while the launch
-  // command still sits un-entered on the shell line. Sending then concatenates
-  // onto that line → shell parse error. The readiness gate must require the
-  // screen to ADVANCE past the launch-line snapshot, not merely be static.
-  it("does NOT send the first turn while the pane still shows the un-entered launch line", async () => {
-    const launchLine = "$ SQUADRANT_CREW_TASK_ID=t1 opencode";
-    readPaneScreen.mockResolvedValue(launchLine);
-
-    const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
-      pane,
-      "do the thing",
-      launchLine,
-    );
-
-    // Well under the 20s timeout: the screen never advanced past the launch
-    // line, so the readiness gate must not have fired yet.
-    await vi.advanceTimersByTimeAsync(5000);
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "do the big thing");
+    expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
     expect(sendToPane).not.toHaveBeenCalled();
+  });
 
-    // Drain to the timeout so the fallback send fires and the promise resolves.
+  // #339 core regression: when the first Enter is absorbed as a newline (box still
+  // holds the paste), the retry re-issues ONLY the Enter — it must NOT re-paste the
+  // task (re-pasting is what stacks [Pasted text #1][#2][#3] and never submits).
+  it("re-issues ONLY Enter when the first submit is stranded — never re-pastes", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // readiness + preSend
+      if (n <= 5) return DRAFT_BOX;  // settle after paste
+      if (n === 6) return DRAFT_BOX; // post-Enter#1: STILL holds draft → stranded
+      if (n <= 8) return DRAFT_BOX;  // re-settle before Enter#2
+      return EMPTY_BOX;              // post-Enter#2: submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the big thing", "$ launch");
+    await vi.advanceTimersByTimeAsync(8000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1); // paste exactly ONCE, ever
+    expect(sendKeyToPane).toHaveBeenCalledTimes(2); // Enter, then re-Enter
+    expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  // Submission is confirmed by the input box going empty, NOT by "screen changed" —
+  // the paste itself changes the screen, so screen-changed would falsely report a
+  // stranded paste as submitted.
+  it("does not treat the paste landing in the box as a successful submit", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // readiness + preSend
+      return DRAFT_BOX;              // paste landed but box NEVER empties → never submits
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the big thing", "$ launch");
     await vi.advanceTimersByTimeAsync(20000);
     await promise;
-  }, 15000);
+
+    // Box never empties, so the retry loop keeps re-issuing Enter (≥2) and still
+    // never re-pastes. The point: it did not early-return on the paste-changed screen.
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(sendKeyToPane.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
 });
 
 describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
   let readPaneScreen: ReturnType<typeof vi.fn>;
   let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
   const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
 
   beforeEach(() => {
     vi.useFakeTimers();
     readPaneScreen = vi.fn();
     sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
   });
 
   afterEach(() => {
@@ -158,7 +129,7 @@ describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
     readPaneScreen.mockResolvedValue("Ask anything…");
 
     const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
+      rt(),
       pane,
       "do the thing",
       "$ opencode",
@@ -185,7 +156,7 @@ describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
     });
 
     const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
+      rt(),
       pane,
       "do the thing",
       "booting…",
@@ -215,7 +186,7 @@ describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
     });
 
     const promise = sendFirstTurnWhenReady(
-      { readPaneScreen, sendToPane },
+      rt(),
       pane,
       "do the thing",
       "$ opencode",

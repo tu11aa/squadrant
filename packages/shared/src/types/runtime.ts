@@ -50,6 +50,13 @@ export interface RuntimeDriver {
   newPane(opts: RuntimePaneOptions): Promise<PaneRef>;
   closePane(pane: PaneRef): Promise<void>;
   sendToPane(pane: PaneRef, message: string): Promise<void>; // sends text + Enter
+  // Paste text into a pane WITHOUT committing it (no Enter). Pairs with
+  // sendKeyToPane to submit as a separate, settled keystroke — required for the
+  // #339 first-turn fix, where bundling the CR with a large paste lets Claude
+  // Code absorb it as a newline inside the [Pasted text] placeholder.
+  pasteToPane(pane: PaneRef, text: string): Promise<void>;
+  // Send a single literal key press to a pane (e.g. "Enter").
+  sendKeyToPane(pane: PaneRef, key: string): Promise<void>;
   readPaneScreen(pane: PaneRef): Promise<string>;
   // List all surfaces (tabs/panes) inside a workspace, with their titles.
   // Used to find named crews by tab title (#56).

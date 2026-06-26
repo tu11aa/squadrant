@@ -17,6 +17,8 @@ function stubDriver(name: string): RuntimeDriver {
     newPane: vi.fn(async () => ({ workspaceId: "workspace:1", surfaceId: "surface:1" })),
     closePane: vi.fn(async () => {}),
     sendToPane: vi.fn(async () => {}),
+    pasteToPane: vi.fn(async () => {}),
+    sendKeyToPane: vi.fn(async () => {}),
     readPaneScreen: vi.fn(async () => ""),
     listSurfaces: vi.fn(async () => []),
     spawnInjector: vi.fn(async () => ({ workspaceId: "workspace:1", surfaceId: "surface:1" })),

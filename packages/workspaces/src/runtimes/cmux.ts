@@ -429,8 +429,16 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async sendToPane(pane: PaneRef, message: string): Promise<void> {
-      await cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(message)]);
-      await cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, "Enter"]);
+      await this.pasteToPane(pane, message);
+      await this.sendKeyToPane(pane, "Enter");
+    },
+
+    async pasteToPane(pane: PaneRef, text: string): Promise<void> {
+      await cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(text)]);
+    },
+
+    async sendKeyToPane(pane: PaneRef, key: string): Promise<void> {
+      await cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, key]);
     },
 
     async readPaneScreen(pane: PaneRef): Promise<string> {
