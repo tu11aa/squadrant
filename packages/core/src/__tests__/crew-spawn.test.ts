@@ -462,6 +462,21 @@ describe("runCrewSend", () => {
     });
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
   });
+
+  // #448: when deps.sendToPane is injected, it is used instead of runtime.sendToPane
+  // so the CLI can supply the paste-settle-Enter confirmed-submit helper.
+  it("uses deps.sendToPane when provided, bypassing runtime.sendToPane", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const injectedSend = vi.fn().mockResolvedValue(undefined);
+    await runCrewSend(PROJECT, "crew-1", "big message", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([]),
+      emitEvent: vi.fn(),
+      sendToPane: injectedSend,
+    });
+    expect(injectedSend).toHaveBeenCalledWith(expect.anything(), "big message");
+    expect(runtime.sendToPane).not.toHaveBeenCalled();
+  });
 });
 
 // ─── runCrewRead ─────────────────────────────────────────────────────────────

@@ -404,6 +404,11 @@ export async function runCrewSend(
   deps: {
     listTasks(project: string): Promise<TaskRecord[]>;
     emitEvent(project: string, event: ControlEvent): Promise<void>;
+    // Optional confirmed-submit override (#448). When provided, used instead of
+    // runtime.sendToPane so the caller can inject paste-settle-Enter hardening.
+    // Falls back to runtime.sendToPane when absent (preserves existing behaviour
+    // for callers that don't inject it, e.g. unit tests).
+    sendToPane?: (pane: PaneRef, message: string) => Promise<void>;
   },
 ): Promise<void> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
@@ -428,7 +433,8 @@ export async function runCrewSend(
     // Swallow daemon errors so crews without a daemon or offline daemon
     // still receive the sent message.
   }
-  await runtime.sendToPane(crew, message);
+  const deliver = deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg));
+  await deliver(crew, message);
 }
 
 export async function runCrewRead(

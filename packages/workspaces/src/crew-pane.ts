@@ -102,6 +102,36 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
   return { runtime, workspaceId: captain.id };
 }
 
+/**
+ * Deliver a message to a crew pane with the paste-settle-Enter confirmation
+ * sequence from #447. Shared by the follow-up `crew send` path (#448) and
+ * available for first-turn use — both call the same submit hardening:
+ *   1. paste only (no bundled CR)
+ *   2. settle until the input box content stops changing (accumulation closed)
+ *   3. separate Enter keystroke
+ *   4. confirm box empty; re-issue ONLY Enter if stranded (never re-paste)
+ */
+export async function confirmedSendToPane(
+  runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane">,
+  pane: PaneRef,
+  message: string,
+): Promise<void> {
+  const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
+  await runtime.pasteToPane(pane, message);
+  await settleInputBox(runtime, pane);
+  await runtime.sendKeyToPane(pane, "Enter");
+
+  for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
+    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    const draft = parseDraftFromScreen(afterScreen);
+    if (draft === "") return;
+    if (draft === null && afterScreen !== preSendScreen) return;
+    await settleInputBox(runtime, pane);
+    await runtime.sendKeyToPane(pane, "Enter");
+  }
+}
+
 export async function sendFirstTurnWhenReady(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "sendToPane" | "pasteToPane" | "sendKeyToPane">,
   pane: PaneRef,

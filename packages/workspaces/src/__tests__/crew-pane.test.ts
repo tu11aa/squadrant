@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sendFirstTurnWhenReady } from "../crew-pane.js";
+import { sendFirstTurnWhenReady, confirmedSendToPane } from "../crew-pane.js";
 import type { PaneRef } from "@squadrant/shared";
 
 // Realistic Claude-Code-style screen: the live input box is the region between the
@@ -200,5 +200,86 @@ describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
     // Initial send + 2 re-sends (at checks 3 and 7), then accepted at check 8
     expect(sendToPane).toHaveBeenCalledTimes(3);
     expect(sendToPane).toHaveBeenCalledWith(pane, "do the thing");
+  });
+});
+
+// ─── confirmedSendToPane (#448 follow-up send hardening) ─────────────────────
+
+describe("confirmedSendToPane — follow-up crew send (#448)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Core contract: same as first-turn — paste once, separate Enter, no bundled CR.
+  it("pastes the message once and submits with a separate Enter — never via send+Enter", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");           // preSendScreen capture
+      if (n <= 3) return DRAFT_BOX;          // settle: paste landed
+      return EMPTY_BOX;                       // post-Enter: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "follow-up message");
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "follow-up message");
+    expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
+  });
+
+  // #448 regression: when the first Enter is absorbed (box still holds draft),
+  // re-issue ONLY Enter — never re-paste the message.
+  it("re-issues ONLY Enter when the first submit is stranded — never re-pastes", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");           // preSendScreen
+      if (n <= 3) return DRAFT_BOX;          // settle
+      if (n === 4) return DRAFT_BOX;         // post-Enter#1: stranded
+      if (n <= 6) return DRAFT_BOX;          // re-settle
+      return EMPTY_BOX;                       // post-Enter#2: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "big message");
+    await vi.advanceTimersByTimeAsync(5000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(sendKeyToPane).toHaveBeenCalledTimes(2);
+    expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
+  });
+
+  // Short sends must not block waiting for the settle window — the box goes
+  // empty immediately (no paste-mode coalescing) and we return on the first check.
+  it("submits a short message on the first confirmation check", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");           // preSendScreen
+      if (n === 2) return EMPTY_BOX;         // settle: no paste coalescing (empty = stable immediately)
+      return EMPTY_BOX;                       // post-Enter: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "hi");
+    await vi.advanceTimersByTimeAsync(2000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(sendKeyToPane).toHaveBeenCalledTimes(1);
   });
 });

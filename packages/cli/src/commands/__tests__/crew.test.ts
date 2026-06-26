@@ -56,6 +56,9 @@ vi.mock("@squadrant/workspaces", () => ({
   sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
     await sendToPane(pane, task);
   },
+  confirmedSendToPane: async (_runtime: unknown, pane: unknown, msg: string) => {
+    await sendToPane(pane, msg);
+  },
   getFreePort: vi.fn().mockResolvedValue(12345),
 }));
 

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveTextInput } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
-import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, getFreePort } from "@squadrant/workspaces";
+import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver } from "@squadrant/agents";
 import {
   runCrewSpawn as coreRunCrewSpawn,
@@ -62,6 +62,9 @@ export async function runCrewSend(project: string, name: string, message: string
   return coreRunCrewSend(project, name, message, runtime, workspaceId, {
     listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
     emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
+    // #448: use paste-settle-Enter confirmation for follow-up sends (same guard
+    // as first-turn #447) so large messages don't strand in paste mode.
+    sendToPane: (pane, msg) => confirmedSendToPane(runtime, pane, msg),
   });
 }
 
