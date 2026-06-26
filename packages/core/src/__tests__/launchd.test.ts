@@ -1,8 +1,8 @@
-// src/control/__tests__/launchd.test.ts
+// packages/core/src/__tests__/launchd.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath } from "@squadrant/core";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {

@@ -1,7 +1,7 @@
-// src/control/__tests__/watchdog.test.ts
+// packages/core/src/__tests__/watchdog.test.ts
 import { describe, it, expect } from "vitest";
-import { evaluateStall, recoverStall } from "@squadrant/core";
-import { reduce } from "@squadrant/core";
+import { evaluateStall, recoverStall } from "../watchdog.js";
+import { reduce } from "../state-machine.js";
 import type { TaskRecord } from "@squadrant/shared";
 
 function rec(o: Partial<TaskRecord> = {}): TaskRecord {

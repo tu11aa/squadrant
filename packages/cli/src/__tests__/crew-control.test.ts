@@ -1,6 +1,6 @@
 // src/control/__tests__/crew-control.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest } from "../../commands/crew-control.js";
+import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest } from "../commands/crew-control.js";
 
 describe("crew-control request builders", () => {
   it("dispatch request carries project/provider/mode/task and a generated id", () => {

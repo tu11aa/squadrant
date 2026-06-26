@@ -1,10 +1,10 @@
-// src/control/__tests__/liveness.test.ts
+// packages/core/src/__tests__/liveness.classify.test.ts
 import { describe, it, expect } from "vitest";
 import {
   classifyHealth,
   projectHealth,
   type ComponentHealth,
-} from "@squadrant/core";
+} from "../liveness.js";
 
 const find = (cs: ComponentHealth[], kind: ComponentHealth["kind"]) =>
   cs.find((c) => c.kind === kind);

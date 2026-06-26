@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { DaemonCmux, DeferDelivery } from "@squadrant/workspaces";
+import { DaemonCmux } from "@squadrant/workspaces";
+import { DeferDelivery } from "@squadrant/core";
 
 describe("DaemonCmux", () => {
   it("listSurfaces failure returns [] (never throws into the caller)", async () => {

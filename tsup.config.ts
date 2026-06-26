@@ -36,7 +36,7 @@ const inlinePackagesPlugin: Plugin = {
 export default defineConfig({
   entry: {
     index: "packages/cli/src/index.ts",            // -> dist/index.js  (cockpit bin)
-    squadrantd: "packages/cli/src/control/squadrantd.ts", // -> dist/squadrantd.js (launchd daemon)
+    squadrantd: "packages/cli/src/squadrantd.ts", // -> dist/squadrantd.js (launchd daemon)
   },
   format: "esm",
   platform: "node",

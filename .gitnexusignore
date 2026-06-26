@@ -1,0 +1,4 @@
+# Generated ts-rs type mirror for the Codex app-server protocol.
+# Excluded from the GitNexus index — 486 files / ~5,400 LOC of inert type aliases
+# that inflate symbol counts without contributing to execution flows.
+packages/agents/vendor/codex-protocol/**

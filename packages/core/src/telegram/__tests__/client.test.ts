@@ -144,6 +144,27 @@ describe("createTelegramClient.createForumTopic", () => {
   });
 });
 
+describe("createTelegramClient.sendChatAction", () => {
+  it("POSTs chat_id, message_thread_id, and action when a thread is given", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.sendChatAction(-100, 7, "typing");
+
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/sendChatAction");
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, message_thread_id: 7, action: "typing" });
+  });
+
+  it("omits message_thread_id when no thread is given", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.sendChatAction(-100, undefined, "typing");
+
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, action: "typing" });
+  });
+});
+
 describe("createTelegramClient.setMyCommands", () => {
   it("POSTs commands array under the setMyCommands method and resolves", async () => {
     const { fn, calls } = fakeFetch({ ok: true, result: true });

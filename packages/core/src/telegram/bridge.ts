@@ -387,6 +387,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return;
     }
 
+    void client.sendChatAction(cfg.supergroupId, threadId, "typing").catch((e) => {
+      log(`telegram sendChatAction failed: ${(e as Error).message}`);
+    });
     setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
       try {

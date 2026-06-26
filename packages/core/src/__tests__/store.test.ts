@@ -1,9 +1,9 @@
-// src/control/__tests__/store.test.ts
+// packages/core/src/__tests__/store.test.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStore } from "@squadrant/core";
+import { createStore } from "../store.js";
 import type { TaskRecord } from "@squadrant/shared";
 
 function rec(id: string): TaskRecord {

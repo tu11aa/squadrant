@@ -16,6 +16,8 @@ export interface TelegramClient {
   getMe(): Promise<{ id: number; username: string }>;
   /** Register the bot's command menu with Telegram. */
   setMyCommands(commands: Array<{ command: string; description: string }>): Promise<void>;
+  /** Send a chat action (e.g. "typing") to show activity to the user. */
+  sendChatAction(chatId: number, threadId: number | undefined, action: string): Promise<void>;
 }
 
 interface TgResponse<T> {
@@ -72,6 +74,11 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
     },
     async setMyCommands(commands) {
       await call<boolean>("setMyCommands", { commands });
+    },
+    async sendChatAction(chatId, threadId, action) {
+      const body: Record<string, unknown> = { chat_id: chatId, action };
+      if (threadId !== undefined) body.message_thread_id = threadId;
+      await call<unknown>("sendChatAction", body);
     },
   };
 }

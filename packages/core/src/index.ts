@@ -1,5 +1,5 @@
 // @squadrant/core — driver-agnostic daemon / control-plane core.
-export * from "./daemon.js";
+export * from "./daemon/reduce.js";
 export * from "./mailbox.js";
 export * from "./protocol.js";
 export * from "./state-machine.js";
@@ -14,7 +14,7 @@ export * from "./gate.js";
 export * from "./daemon/context.js";
 export * from "./daemon/attach.js";
 export * from "./daemon/start.js";
-export * from "./daemon/delivery.js";
+export * from "./daemon/delivery-loop.js";
 export * from "./daemon/interactive-probe.js";
 export * from "./delivery/captain-delivery.js";
 export * from "./delivery/defer-delivery.js";
@@ -22,3 +22,9 @@ export * from "./session-freshness.js";
 export * from "./crew-protocol.js";
 export * from "./crew-lifecycle.js";
 export * from "./telegram/index.js";
+export * from "./crew-routing.js";
+export * from "./restart-daemon.js";
+export * from "./group-dispatch.js";
+export * from "./launch-workspace.js";
+export * from "./side-session.js";
+export * from "./crew-spawn.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { restartDaemonIfRunning } from "../restart-daemon.js";
+import { restartDaemonIfRunning } from "@squadrant/core";
 
 const base = { reason: "x", env: {} as NodeJS.ProcessEnv };
 

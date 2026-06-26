@@ -6,6 +6,7 @@ const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   execSync: execMock,
   execFileSync: execFileMock,
+  execFile: vi.fn(),
 }));
 
 describe("CmuxNotifier", () => {

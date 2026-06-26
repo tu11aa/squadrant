@@ -1,4 +1,4 @@
-// src/control/squadrantd.ts — host: constructs concrete drivers + thin shim.
+// src/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
 import { join, dirname } from "node:path";
@@ -12,7 +12,7 @@ import { isDaemonSocketLive } from "@squadrant/core";
 import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
-import { createRunCommand, createIsCaptainAlive, createLaunch } from "./telegram-control.js";
+import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";

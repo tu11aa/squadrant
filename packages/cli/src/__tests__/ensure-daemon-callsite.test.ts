@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { daemonEntryPath } from "@squadrant/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const read = (rel: string) => readFileSync(join(here, "..", "..", rel), "utf-8");
+const read = (rel: string) => readFileSync(join(here, "..", rel), "utf-8");
 
 // Guard test: index.ts must call ensureDaemon so the daemon self-heals
 // on every squadrant invocation (mirrors ensureRuntimeSynced philosophy).

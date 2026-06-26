@@ -6,7 +6,7 @@
 // parseCommand).
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { sendRequest } from "@squadrant/core";
+import { sendRequest } from "../protocol.js";
 
 const pExecFile = promisify(execFile);
 
