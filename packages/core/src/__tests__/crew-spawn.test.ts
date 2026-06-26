@@ -297,7 +297,7 @@ describe("runCrewSpawn", () => {
         expect.anything(),
         expect.any(String),
         expect.any(String),
-        expect.objectContaining({ splashMarker: "Ask anything…", retryLimit: 3 }),
+        expect.objectContaining({ splashMarker: "Ask anything…" }),
       );
     });
 

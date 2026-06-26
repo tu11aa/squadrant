@@ -16,6 +16,13 @@ const POLL_INTERVAL_MS = 750;
 const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
 const POST_SEND_CHECK_MS = 750;
 
+// #235 Confirm-on-delivery constants for splash-gated agents (opencode).
+// We poll every POST_SEND_CHECK_MS but only re-send every SPLASH_RESEND_EVERY_N
+// checks — a 3s de-dup guard that prevents double-execution when the TUI is
+// slow to redraw after accepting.
+const SPLASH_MAX_CHECKS = 20;    // 20 × 750ms ≈ 15s confirmation window
+const SPLASH_RESEND_EVERY_N = 4; // re-send every 4 checks ≈ every 3s
+
 /** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
  *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
  *  between release and the crew binding the port; acceptable for local
@@ -110,17 +117,34 @@ export async function sendFirstTurnWhenReady(
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.sendToPane(pane, task);
 
-  // Bounded retry loop (#235): after sending, poll the pane for evidence that
-  // the TUI actually accepted the turn.
-  const retryLimit = acceptanceConfig?.retryLimit ?? 2;
-  for (let attempt = 0; attempt < retryLimit; attempt++) {
-    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
-    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
-      return;
+  // Confirm-on-delivery (#235): poll until the TUI confirms it accepted the turn.
+  if (acceptanceConfig?.splashMarker) {
+    // Splash path (opencode): the "Ask anything…" splash clears once the TUI
+    // consumes the message. We check every POST_SEND_CHECK_MS but re-send only
+    // every SPLASH_RESEND_EVERY_N checks — a 3s de-dup guard that prevents
+    // duplicate task execution when the TUI is slow to redraw after accepting.
+    for (let check = 0; check < SPLASH_MAX_CHECKS; check++) {
+      await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+      const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+      if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
+        return;
+      }
+      if ((check + 1) % SPLASH_RESEND_EVERY_N === 0 && check < SPLASH_MAX_CHECKS - 1) {
+        await runtime.sendToPane(pane, task);
+      }
     }
-    if (attempt < retryLimit - 1) {
-      await runtime.sendToPane(pane, task);
+  } else {
+    // Screen-changed path (claude/codex): acceptance = the screen changed.
+    const retryLimit = acceptanceConfig?.retryLimit ?? 2;
+    for (let attempt = 0; attempt < retryLimit; attempt++) {
+      await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+      const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+      if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
+        return;
+      }
+      if (attempt < retryLimit - 1) {
+        await runtime.sendToPane(pane, task);
+      }
     }
   }
 }

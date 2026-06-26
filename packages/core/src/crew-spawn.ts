@@ -365,14 +365,10 @@ export async function runCrewSpawn(
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     await deps.sendFirstTurn(pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
-      // #235: opencode's idle splash ("Ask anything…") keeps mutating (cursor
-      // blink, status line toggle), so the old screen-changed check would always
-      // see a *different* screen and never re-send a dropped turn. The splashMarker
-      // confirms the TUI actually left splash before declaring acceptance.
+      // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until "Ask
+      // anything…" leaves the screen, re-sending every ~3s to cover slow boots
+      // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.
       splashMarker: "Ask anything…",
-      // opencode has a wider boot-race window than claude, so allow 3 retries
-      // instead of the default 2.
-      retryLimit: 3,
     } satisfies TurnAcceptanceConfig);
     return { ...pane, title };
   }
