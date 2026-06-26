@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome, DeferDelivery } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome } from "../cmux.js";
+import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({

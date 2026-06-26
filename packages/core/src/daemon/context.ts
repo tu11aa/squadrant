@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { spawn as realSpawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { createStore } from "../store.js";
-import { createDaemon } from "../daemon.js";
+import { createDaemon } from "./reduce.js";
 import { loadConfig } from "@squadrant/shared";
 import type { TaskRecord, ControlEvent, Gate, AutoConfigResult } from "@squadrant/shared";
 import type { Socket } from "node:net";

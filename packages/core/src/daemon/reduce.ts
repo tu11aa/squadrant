@@ -1,9 +1,9 @@
 // src/control/daemon.ts
-import type { Store } from "./store.js";
+import type { Store } from "../store.js";
 import type { ControlEvent, TaskRecord, TaskState } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
-import { reduce } from "./state-machine.js";
-import { evaluateStall, recoverStall } from "./watchdog.js";
+import { reduce } from "../state-machine.js";
+import { evaluateStall, recoverStall } from "../watchdog.js";
 export interface DaemonDeps {
   store: Store;
   now: () => number;

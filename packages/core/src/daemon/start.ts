@@ -5,9 +5,9 @@
 // lives in the host (squadrantd.ts) — this file stays free of those imports.
 import { join, dirname } from "node:path";
 import { readdir } from "node:fs/promises";
-import { createDaemon } from "../daemon.js";
+import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
-import { createDelivery } from "./delivery.js";
+import { createDelivery } from "./delivery-loop.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";

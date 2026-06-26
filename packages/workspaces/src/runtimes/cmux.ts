@@ -16,9 +16,7 @@ export class CmuxTimeoutError extends Error {
   }
 }
 
-// Re-exported so root consumers keep the same import path (root → core direction).
 import { DeferDelivery } from "@squadrant/core";
-export { DeferDelivery };
 
 /** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
 export function isInsideCmux(): boolean {

@@ -1,4 +1,4 @@
-export { createCmuxDriver, DeferDelivery, CMUX_TIMEOUT, classifyStartupSurface, isInsideCmux, cmuxLocal } from "./cmux.js";
+export { createCmuxDriver, CMUX_TIMEOUT, classifyStartupSurface, isInsideCmux, cmuxLocal } from "./cmux.js";
 export { RuntimeRegistry } from "./registry.js";
 export type {
   RuntimeDriver,

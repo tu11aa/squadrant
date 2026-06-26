@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDaemon, crewTag } from "../daemon.js";
+import { createDaemon, crewTag } from "../daemon/reduce.js";
 import { createStore } from "../store.js";
 import type { TaskRecord } from "@squadrant/shared";
 
