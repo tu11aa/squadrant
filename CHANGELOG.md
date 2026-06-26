@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-26
+
+### Fixed
+
+- Crew first-turn could silently strand unsubmitted: a large first-turn payload pushed Claude Code into bracketed-paste mode, so the submit Enter landed as a literal newline inside the paste instead of submitting — the crew sat at 0% with the task stuck in its input box. First-turn delivery now pastes, waits for the paste window to settle, sends a separate confirmed Enter, and re-issues only Enter (never re-pastes) if still unsubmitted. ([#339], [#447])
+- Large follow-up `squadrant crew send` messages could strand the same way (the atomic send path hit the identical paste race). The confirmed-submit sequence is now extracted into a shared helper and applied to the follow-up send path too. ([#448], [#449])
+
+### Changed
+
+- The built-in default crew model is now sonnet (was opus); opus remains opt-in via the extreme routing tier or an explicit `--model opus`. This matches the intended tokenomics, makes fresh installs default to sonnet, and resolves the recurring config-drift advisory on upgrade. ([#446])
+
 ## [0.12.0] - 2026-06-26
 
 ### Added
@@ -770,3 +781,9 @@ GitHub-driven automation.
 - P0 roadmap items marked complete; out-of-repo work moved out.
 
 [0.2.0]: https://github.com/tu11aa/claude-cockpit/releases/tag/v0.2.0
+
+[#339]: https://github.com/tu11aa/squadrant/issues/339
+[#446]: https://github.com/tu11aa/squadrant/pull/446
+[#447]: https://github.com/tu11aa/squadrant/pull/447
+[#448]: https://github.com/tu11aa/squadrant/issues/448
+[#449]: https://github.com/tu11aa/squadrant/pull/449
