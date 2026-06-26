@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-26
+
+### Added
+- Telegram: the captain now sends a typing indicator when it receives an inbound message, so the phone shows activity while the captain works. ([#431](https://github.com/tu11aa/squadrant/pull/431))
+
+### Fixed
+- opencode crew first-turn boot-race: spawning an opencode crew could silently drop the first turn at the splash while the daemon recorded the task as working (false-healthy). Replaced the fixed 2.25s retry window with a time-bounded 15s confirm-on-delivery loop. claude/codex paths unchanged. ([#235](https://github.com/tu11aa/squadrant/issues/235), [#442](https://github.com/tu11aa/squadrant/pull/442))
+
+### Changed
+- Internal: completed the thin-wrapper refactor arc ([#367](https://github.com/tu11aa/squadrant/issues/367)) — CLI commands now parse-call-format over orchestration repatriated into @squadrant/core behind a DI seam (group, launch, side, telegram, crew). No user-facing behavior change. ([#432](https://github.com/tu11aa/squadrant/pull/432)–[#439](https://github.com/tu11aa/squadrant/pull/439))
+- Internal: repatriated core test suite out of cli (S1, [#427](https://github.com/tu11aa/squadrant/pull/427)); relocated generated codex protocol mirror to packages/agents/vendor/ (S5, [#429](https://github.com/tu11aa/squadrant/pull/429)); disambiguated daemon/delivery twin namings (S4, [#428](https://github.com/tu11aa/squadrant/pull/428), [#441](https://github.com/tu11aa/squadrant/pull/441)).
+
 ## [0.11.3] - 2026-06-24
 
 ### Added
