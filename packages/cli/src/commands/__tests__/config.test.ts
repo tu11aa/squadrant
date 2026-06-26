@@ -46,7 +46,7 @@ describe("runConfigCheck", () => {
   });
 
   it("--fix does NOT stamp when advisory/invalid drift remains", () => {
-    writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "sonnet" }; });
+    writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "opus" }; });
     const res = runConfigCheck({ configPath: cfgPath, pkgVersion: "0.5.3", fix: true, accept: false });
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk._squadrantVersion).toBeUndefined();
@@ -54,11 +54,11 @@ describe("runConfigCheck", () => {
   });
 
   it("--accept stamps without changing config", () => {
-    writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "sonnet" }; });
+    writeUser((c) => { (c.defaults.roles as any).crew = { agent: "claude", model: "opus" }; });
     runConfigCheck({ configPath: cfgPath, pkgVersion: "0.5.3", fix: false, accept: true });
     const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     expect(onDisk._squadrantVersion).toBe("0.5.3");
-    expect(onDisk.defaults.roles.crew.model).toBe("sonnet");
+    expect(onDisk.defaults.roles.crew.model).toBe("opus");
   });
 });
 

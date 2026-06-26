@@ -51,12 +51,12 @@ describe("config", () => {
     const config = getDefaultConfig();
     expect(config.defaults.roles).toBeDefined();
     expect(config.defaults.roles!.command).toEqual({ agent: "claude", model: "opus" });
-    expect(config.defaults.roles!.crew).toEqual({ agent: "claude", model: "opus" });
+    expect(config.defaults.roles!.crew).toEqual({ agent: "claude", model: "sonnet" });
   });
 
-  it("defaults crews to opus + auto permission mode", () => {
+  it("defaults crews to sonnet + auto permission mode", () => {
     const config = getDefaultConfig();
-    expect(config.defaults.models!.crew).toBe("opus");
+    expect(config.defaults.models!.crew).toBe("sonnet");
     expect(config.defaults.permissions.crew).toBe("auto");
   });
 

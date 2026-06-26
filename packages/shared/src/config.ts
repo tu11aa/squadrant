@@ -150,14 +150,14 @@ export function getDefaultConfig(): SquadrantConfig {
       models: {
         command: "opus",
         captain: "opus",
-        crew: "opus",
+        crew: "sonnet",
         exploration: "haiku",
         review: "opus",
       },
       roles: {
         command: { agent: "claude", model: "opus" },
         captain: { agent: "claude", model: "opus" },
-        crew: { agent: "claude", model: "opus" },
+        crew: { agent: "claude", model: "sonnet" },
         exploration: { agent: "claude", model: "haiku" },
         side: { agent: "claude", model: "opus" },
       },
