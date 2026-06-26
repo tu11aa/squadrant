@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-26
 **Issue:** [#333](https://github.com/tu11aa/squadrant/issues/333)
-**Status:** DESIGN — needs brainstorm + sign-off before any implementation
+**Status:** SIGNED-OFF (2026-06-26) — implementation proceeding per D1–D7 below
 **Research dossier:** `docs/research/2026-06-16-cmux-agent-lifecycle-and-daemon-architecture.md` (archived to hub-vault in #370; recover from git `be3230c`)
 **Related:** #328/#331 (claude event-bridge), #332 (daemon-direct, drop relay), #326 (compat backlog), #114 (native codex TUI + hooks), #329 (hibernation), #31 (multi-driver projection), #201 (codex first-turn hang)
 
@@ -228,68 +228,83 @@ plus a **`SQUADRANT_CREW_TASK_ID`-keyed `KERN_PROCARGS2` process scan** (libproc
 
 ## 5. Migration plan
 
-The refactor is **incremental and additive** — at no point is the daemon without a working lifecycle path. The same daemon work that drops the relay-proxy (#332) drops screen-scraping in one motion, because both fall out once the port owns lifecycle.
+The refactor is **incremental and additive** — at no point is the daemon without a working lifecycle path. Phase ordering follows the signed-off D1 decision: **C (`NativeHookSource`) is primary; A (`CmuxStoreSource`) ships as redundancy.** See § 6 for the signed-off decisions that shaped this plan.
 
-**Phase 0 — port scaffolding (no behaviour change).**
-Define `LifecycleSource`, `LifecycleSnapshot`, `reduceLifecycle`, and a `LifecycleReconciler` in `@squadrant/core` that fans `report()` into the existing `ctx.d.handle` pipeline. Wire the three existing bridges (`CmuxEventsBridge`, `OpencodeSseBridge`, `CodexInteractiveDriver`) to emit through it *unchanged in behaviour* — they become the first three adapters. This is the seam; everything downstream (reducer, watchdog, Telegram tiers) keeps working.
+**Phase 0 — scaffold interface + reducer + research hook mechanism (no behaviour change).**
+Define `LifecycleSource`, `LifecycleSnapshot`, `reduceLifecycle`, and a `LifecycleReconciler` in `@squadrant/core` that fans `report()` into the existing `ctx.d.handle` pipeline. Wire the three existing bridges (`CmuxEventsBridge`, `OpencodeSseBridge`, `CodexInteractiveDriver`) to emit through it *unchanged in behaviour* — they become the first three adapters. This is the seam; everything downstream (reducer, watchdog, Telegram tiers) keeps working. **Concurrently:** research cmux's `AgentHookDef` installer matrix (`CMUXCLI+AgentHookDefinitions.swift`, per-agent template shape, the `squadrantd hooks` subcommand design) to ground Phase 1 before implementation begins.
 
-**Phase 1 — `CmuxStoreSource` (ship A).**
-Add the store-file adapter for claude. Run it **alongside** `CmuxEventsBridge`; the reducer absorbs duplicates idempotently. Verify parity on claude crews (turn-end, working, needsInput). Once parity holds, **retire `CmuxEventsBridge`** (the #328/#331 socket subscription) — it becomes the first thing the port replaces. Extend `CmuxStoreSource` to opencode/codex store files *if* `cmux hooks setup` is run for them (free coverage).
+**Phase 1 — build C (primary, mimic cmux) + A (backup) + codex app-server wrapper.**
+Build `NativeHookSource` (C) mirroring cmux's proven hook mechanism, targeting claude first. Run alongside existing `CmuxEventsBridge`; the reducer absorbs duplicates idempotently. Concurrently ship `CmuxStoreSource` (A) as backup/redundancy — one file-watcher on `~/.cmuxterm/*-hook-sessions.json` + pid-verify, covering whichever agents have `cmux hooks setup` configured. Wrap the existing codex app-server driver as a `LifecycleSource` adapter (mechanism unchanged — see D5). Once C proves parity on claude crews, **retire `CmuxEventsBridge`** (the #328/#331 socket subscription).
 
-**Phase 2 — retire screen-scraping + fold into #332.**
-With `CmuxStoreSource` proving lifecycle for claude and the SSE/app-server sources owning opencode/codex, the ~14 `read-screen` lifecycle sites in `cmux.ts` lose their job. Delete them as part of the #332 daemon-direct refactor (same PR drops relay-proxy *and* scraping). Keep only the *delivery-time* read-screen the defer-while-typing logic needs (#258/#302) — that's input-box state, not lifecycle. (See decision D3 for timing.)
+**Phase 2 — parity + cleanup (deprecate scraping, retire relay when proven).**
+With C proving lifecycle for claude and A + app-server covering opencode/codex: **deprecate-in-place** the ~14 `read-screen` lifecycle sites in `cmux.ts` — mark `@deprecated`, leave as safety net; do **not** delete in this phase (see D3). Retire the relay-proxy fallback on the same parity gate once C + A are stable in production across all agents (see D7; **not in v0.13.0**). File the 'retire screen-scraping' follow-up issue. Keep delivery-time read-screen (#258/#302 defer-while-typing — input-box state, not lifecycle).
 
-**Phase 3 — `NativeHookSource` (build C, per agent).**
-Incrementally install squadrant-owned hooks, one agent at a time, behind a config flag. As each agent's native hooks prove out, that agent's `CorrelationHint` switches to `SQUADRANT_CREW_TASK_ID` and stops depending on cmux's store file. When all four agents are on native hooks, `CmuxStoreSource` becomes optional — the daemon's lifecycle no longer needs cmux at all.
+**Follow-ups post-v0.13.0:**
+- Gemini lifecycle driver (gemini has no driver today; out of scope for #333).
+- Persist/reconstruct schema if DEFER PERSIST (D6) proves insufficient at scale.
+- Full screen-scraping deletion (gated on real-world stability — see D3).
+- Full relay retirement if not completed in Phase 2 (see D7).
 
 **Reconcile with #329 (hibernation).**
 cmux hibernation reclaims RAM from `idle` crews (`allowsHibernation == idle`). A hibernated crew's pid may be gone or suspended while the crew is *logically alive*. The liveness floor must **not** emit `task.session.ended` for a hibernated-but-resumable crew. Rule: if the store/scan shows `idle` + `isRestorable` (cmux field) or a known resumeRef, treat as **alive-idle**, not dead. This is why the liveness layer is advisory (`origin:"scan"`) and never terminal on its own — terminal still needs an explicit signal or a confirmed process-gone-AND-not-restorable. Note hibernation is currently OFF by design (config doc: cmux 0.64.16 hibernation is global-only and would hibernate the captain), so this is a forward-compatibility rule, not a live concern yet.
 
 **Reconcile with #31 (multi-driver projection).**
-`LifecycleSource` slots cleanly under the existing **runtime** plugin seam (it's a property of the terminal/runtime driver, alongside cmux's `DaemonCmux`). `CmuxStoreSource` is the cmux-runtime's lifecycle adapter; a future runtime ships its own. `NativeHookSource` is runtime-independent and can be the default for any runtime that lacks a native lifecycle adapter.
+`LifecycleSource` slots cleanly under the existing **runtime** plugin seam (it's a property of the terminal/runtime driver, alongside cmux's `DaemonCmux`). `NativeHookSource` is runtime-independent and becomes the default for any runtime that lacks a native lifecycle adapter. `CmuxStoreSource` is the cmux-runtime's cmux-specific backup adapter; a future runtime ships its own equivalent. When both exist, the reducer resolves idempotently.
 
 ---
 
-## 6. DECISIONS NEEDING SIGN-OFF
+## 6. DECISIONS — SIGNED OFF 2026-06-26
 
-Each is a crisp choice with a recommendation. The captain + user brainstorm these before implementation.
+All seven decisions were brainstormed and signed off on 2026-06-26. Decisions that reversed the original recommendation are marked ⚠️ **FLIPPED**.
 
-### D1 — A-vs-C sequencing
-**Question:** Ship `CmuxStoreSource` (A) first and build `NativeHookSource` (C) later, or invest directly in C?
-- **(a) A first, then C incrementally.** ✅ *Recommended.* A is cheap (one file watcher + pid-verify), accurate, and covers 16 agents the moment cmux hooks are set up. It proves the port and reducer against real data before we sink effort into the per-agent installer matrix. C lands agent-by-agent behind the same port with zero re-architecture.
-- (b) C directly. Driver-agnostic from day one, but front-loads the entire installer + trust + collision problem and delays *any* improvement over today's claude-only path.
+### D1 — A-vs-C sequencing ⚠️ **FLIPPED**
+
+**SIGNED-OFF (2026-06-26): C-PRIMARY, A-BACKUP.**
+`NativeHookSource` (C) is the primary implementation — it mimics cmux's proven hook mechanism and is driver-agnostic by design. `CmuxStoreSource` (A) ships as backup/redundancy, watching `~/.cmuxterm/*-hook-sessions.json`. Both run under the same port; the reducer handles both idempotently.
+
+*(superseded) Original recommendation: (a) A first, then C incrementally — A is cheap (one file watcher + pid-verify), accurate, and proves the port and reducer against real data before investing in the per-agent installer matrix.*
 
 ### D2 — Event-driven vs poll
-**Question:** What's the port's primary paradigm?
-- **(a) Hybrid: push primary + low-frequency poll liveness floor.** ✅ *Recommended.* Matches reality (SSE/app-server push; store-file watch; process scan poll). Push gives latency and `needsInput`; poll guarantees we notice a dead/hung crew even when hooks fail silently. The `origin` discriminator + "explicit agent wins" reducer makes the two safe to combine.
-- (b) Push-only. Simpler interface, but a crew whose hooks never fire (install failure, sandbox) becomes invisible — no liveness floor.
-- (c) Poll-only. Robust liveness but loses `needsInput` entirely (hook-only signal) — regresses approvals/blocked detection.
 
-### D3 — Screen-scraping retirement timing
-**Question:** When do we delete the ~14 lifecycle `read-screen` sites in `cmux.ts`?
-- **(a) Retire only after A proves parity for claude AND opencode/codex have push sources (they do), folded into the #332 PR.** ✅ *Recommended.* Lowest risk: scraping stays as the safety net until the replacement is verified live across all three agents, then both scraping and relay-proxy die in one #332 refactor. Keep the delivery-time read-screen (#258/#302 defer-while-typing) — that's input-box state, not lifecycle.
-- (b) Retire immediately with Phase 1. Faster cleanup, but removes the fallback before A is battle-tested — risky given scraping's history of catching edge cases (#292).
-- (c) Keep scraping indefinitely as a tertiary fallback. Safest, but leaves the brittle cmux-coupled code we're trying to kill, defeating the point.
+**SIGNED-OFF (2026-06-26): HYBRID push + poll.**
+C pushes via hook (primary); low-frequency poll reconciles stuck state (liveness floor). Push gives latency and `needsInput`; poll guarantees detection of a dead/hung crew when hooks fail silently. The `origin` discriminator + "explicit agent wins" reducer makes the two safe to combine. A poll/scan can never assert `needsInput` — that is hook-only.
+
+*(original recommendation unchanged — option (a) confirmed)*
+
+### D3 — Screen-scraping retirement timing ⚠️ **FLIPPED**
+
+**SIGNED-OFF (2026-06-26): DEPRECATE-IN-PLACE.**
+Keep the ~14 `read-screen` lifecycle sites in `cmux.ts` as a safety net — mark `@deprecated` in the code, **do not delete in v0.13.0**. Retire only after several stable production versions on C + A, gated on real-world stability (not a synthetic test phase). A follow-up 'retire screen-scraping' issue will be filed and left open. Keep delivery-time read-screen (#258/#302) — input-box state, not lifecycle.
+
+*(superseded) Original recommendation: (a) Retire only after A proves parity for claude + opencode/codex, folded into the #332 PR — lowest risk; scraping and relay-proxy die in one motion.*
 
 ### D4 — Double-hook collision (cmux + squadrant both installed)
-**Question:** When `NativeHookSource` installs codex/gemini/opencode hooks that cmux *also* installs, how do we avoid double-processing / fighting?
-- **(a) Namespace squadrant's hooks + idempotent reducer; both fire harmlessly.** ✅ *Recommended.* The reducer already absorbs duplicates (anti-#2576). Squadrant's hook reports `SQUADRANT_CREW_TASK_ID`-keyed; cmux's writes its own store. They don't share state, so they can't corrupt each other. Simplest and most robust.
-- (b) Detect cmux hook presence and defer to `CmuxStoreSource` for that agent (install squadrant hooks only where cmux's are absent). Avoids redundant work but adds a detection/ordering dependency on cmux internals — re-couples C to cmux.
+
+**SIGNED-OFF (2026-06-26): NAMESPACE + IDEMPOTENT hook install.**
+Squadrant's hooks are namespaced and the installer is re-run-safe — it never clobbers pre-existing user hooks. The reducer already absorbs duplicates (anti-#2576). Both cmux and squadrant hooks can fire harmlessly; they write to separate stores and share no mutable state.
+
+*(original recommendation unchanged — option (a) confirmed, re-run-safe emphasis explicit)*
 
 ### D5 — Codex under the port (ties to #114)
-**Question:** Keep codex on the app-server, or move to TUI + native hooks?
-- **(a) Keep the app-server adapter now; revisit TUI+hooks under #114.** ✅ *Recommended.* The app-server already gives turn-end, approvals (`task.approval.requested`), and multi-turn `say()`/`steer()` — wrapping it as a `LifecycleSource` adapter is nearly free and loses nothing. Moving to TUI+hooks unlocks dropping the app-server complexity but reopens hook-trust (D's no-dangerous-flags constraint) and first-turn-hang (#201). Sequence it as its own #114 effort *after* the port exists.
-- (b) Move codex to TUI+native-hooks now, as the first `NativeHookSource` agent. Unifies codex with claude/opencode and kills app-server complexity, but front-loads hook-trust + #201 risk into the port work.
 
-### D6 — Hook-trust handling for codex (no "dangerously" flags)
-**Question:** How does squadrant get its codex hook trusted without `--dangerously-bypass-hook-trust`?
-- **(a) Persist trust once at `squadrantd hooks setup codex` time (mirror how cmux persists it), then run codex normally.** ✅ *Recommended* (pending a source check of how codex stores persisted trust). Honors the user's no-dangerous-flags rule and is a one-time setup cost.
-- (b) Defer codex native hooks entirely; keep codex on the app-server (= choosing D5a). Acceptable fallback if persisted trust proves unworkable.
+**SIGNED-OFF (2026-06-26): KEEP app-server for codex, wrapped as one `LifecycleSource`.**
+Keep the existing codex app-server driver; wrap it as a `LifecycleSource` adapter. Unified at the port interface; mechanism unchanged. Revisit TUI + native hooks under #114 after the port exists.
 
-### D7 — Relay-proxy disposition (#332 boundary)
-**Question:** When the port owns lifecycle, does the relay fully retire?
-- **(a) Fully retire relay-proxy; re-home defer-while-typing (#258/#302) into daemon-direct `cmux send`.** ✅ *Recommended.* The dossier confirms the daemon can call `cmux send/read-screen` directly (socket reachable from any process since 0.64.16), so the relay's reason to exist is gone. Lifecycle moves to the port; delivery moves to daemon-direct. One coherent #332 cut.
-- (b) Keep a thin in-process notification-delivery shim. Less migration risk, but leaves a vestigial component the port was meant to obviate.
+*(original recommendation unchanged — option (a) confirmed)*
+
+### D6 — Session persistence on daemon restart
+
+**SIGNED-OFF (2026-06-26): DEFER PERSIST / RECONSTRUCT.**
+No new persistence layer in v0.13.0. On daemon restart, reconstruct the live session set from the cmux store (`~/.cmuxterm/*-hook-sessions.json`) and live crew panes (analogous to `listCrewPanes`). Session identity is stable across all supported agents: claude exposes `session_id`, codex exposes `resume-id`, opencode exposes `ses_*`-prefixed IDs. Gemini has no driver (out of scope for #333). No standalone trust-handshake state was found in the codebase (verified).
+
+*(superseded) Original D6 question: "Hook-trust handling for codex (no 'dangerously' flags)" — how squadrant gets its codex hook trusted without `--dangerously-bypass-hook-trust`. Deferred: codex stays on app-server (D5), making hook-trust a non-issue for v0.13.0. Re-evaluate when #114 (codex TUI + native hooks) is scoped.*
+
+### D7 — Relay-proxy disposition (#332 boundary) ⚠️ **FLIPPED**
+
+**SIGNED-OFF (2026-06-26): RETIRE RELAY IN PHASE 2, GATED.**
+Verified: the relay main delivery path is gone as of #332, but a live fallback remains for opencode (`claude.ts:183`) and cmux-unreachable paths (`cmux-probe.ts`). Remove in Phase 2 once C + A prove stable in production across all agents, on the same parity gate as screen-scraping deprecation. **Not in v0.13.0.**
+
+*(superseded) Original recommendation: (a) Fully retire relay-proxy in the #332 PR — daemon-direct is the delivery path; relay's reason to exist is gone once lifecycle moves to the port.*
 
 ---
 
