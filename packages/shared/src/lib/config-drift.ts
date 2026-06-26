@@ -35,7 +35,7 @@ const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: SquadrantConfig) => boo
 ];
 
 const KNOWN_DEFAULT_HISTORY: Array<{ path: string; oldDefaults: unknown[] }> = [
-  { path: "defaults.roles.crew.model", oldDefaults: ["sonnet"] },
+  { path: "defaults.roles.crew.model", oldDefaults: ["opus"] },
   { path: "defaults.roles.captain.model", oldDefaults: ["sonnet"] },
 ];
 

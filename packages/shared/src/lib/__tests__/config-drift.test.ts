@@ -50,12 +50,12 @@ describe("detectDrift \u2014 deprecated", () => {
 describe("detectDrift \u2014 changed-default", () => {
   it("flags a field whose value equals the OLD default but the default changed", () => {
     const u = userConfig();
-    (u.defaults.roles as any).crew = { agent: "claude", model: "sonnet" };
+    (u.defaults.roles as any).crew = { agent: "claude", model: "opus" };
     const items = detectDrift(u, getDefaultConfig());
     const cd = items.find((i) => i.kind === "changed-default" && i.path === "defaults.roles.crew.model");
     expect(cd).toBeDefined();
     expect(cd?.severity).toBe("advisory");
-    expect(cd?.suggested).toBe("opus");
+    expect(cd?.suggested).toBe("sonnet");
   });
 
   it("does NOT flag a field the user customized to a third value", () => {
