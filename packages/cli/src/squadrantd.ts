@@ -182,9 +182,10 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const prevSnaps = new Map<string, LifecycleSnapshot>();
     const storeDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
-        if (!hint.cwd) return undefined;
+        if (!hint.cwd && hint.pid == null) return undefined;
         return store.listAll().find(
-          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hint.cwd,
+          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) &&
+            (r.cwd === hint.cwd || (hint.pid != null && r.pid === hint.pid)),
         );
       },
       report: (snap) => {
@@ -201,8 +202,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         if (!changed) return;
         if (newState === "idle") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "cmux-store" } });
-        } else if (newState === "running" || newState === "needsInput") {
+        } else if (newState === "running") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
         }
       },
       log,
@@ -217,9 +221,10 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
     const hookDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
-        if (!hint.cwd) return undefined;
+        if (!hint.cwd && hint.pid == null) return undefined;
         return store.listAll().find(
-          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hint.cwd,
+          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) &&
+            (r.cwd === hint.cwd || (hint.pid != null && r.pid === hint.pid)),
         );
       },
       report: (snap) => {
@@ -236,8 +241,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         if (!changed) return;
         if (newState === "idle") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "native-hook" } });
-        } else if (newState === "running" || newState === "needsInput") {
+        } else if (newState === "running") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
         }
       },
       log,
@@ -264,8 +272,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         if (!changed) return;
         if (newState === "idle") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "codex-appserver" } });
-        } else if (newState === "running" || newState === "needsInput") {
+        } else if (newState === "running") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
         }
       },
       log,
