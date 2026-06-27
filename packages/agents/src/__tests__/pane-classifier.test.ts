@@ -29,6 +29,32 @@ const WORKING_PANE = [
   "  accept edits on (shift+tab to cycle)                    ",
 ].join("\n");
 
+// opencode's native multi-option picker: question buried mid-paragraph, then a
+// ┃-bordered box with numbered options and a keyboard-hint footer.  The footer
+// ("↑↓ select  enter submit  esc dismiss") is the last content line, so the
+// trailing-question detector alone would never fire.
+const OPENCODE_PICKER = [
+  "I need to know how to proceed with the implementation.",
+  "The current approach has some tradeoffs to consider.",
+  "Which strategy should I use for the cache layer?",
+  "╭──────────────────────────────────────────────────────╮",
+  "┃ 1. Use Redis for distributed caching                 ┃",
+  "┃ 2. Use an in-memory LRU for local caching            ┃",
+  "┃ 3. Skip caching entirely                             ┃",
+  "┃ ↑↓ select  enter submit  esc dismiss                 ┃",
+  "╰──────────────────────────────────────────────────────╯",
+].join("\n");
+
+// Same shape but no "?"-terminated line above the options → fallback text.
+const OPENCODE_PICKER_NO_QUESTION = [
+  "Let me know your preference.",
+  "╭──────────────────────────────────────────────────────╮",
+  "┃ 1. Option A                                          ┃",
+  "┃ 2. Option B                                          ┃",
+  "┃ ↑↓ select  enter submit  esc dismiss                 ┃",
+  "╰──────────────────────────────────────────────────────╯",
+].join("\n");
+
 // A pane whose agent output ends in a direct question (mainly the opencode
 // path — opencode has no Stop hook so the daemon never sees a turn-end block).
 const QUESTION_PANE = [
@@ -124,6 +150,19 @@ describe("classifyPaneTail", () => {
       kind: "question",
       text: "Should I retry the request now?",
     });
+  });
+
+  it("classifies an opencode multi-option picker as question with extracted question text", () => {
+    const r = classifyPaneTail(OPENCODE_PICKER);
+    expect(r).toEqual({
+      kind: "question",
+      text: "Which strategy should I use for the cache layer?",
+    });
+  });
+
+  it("classifies an opencode picker with no '?' line above as question with fallback text", () => {
+    const r = classifyPaneTail(OPENCODE_PICKER_NO_QUESTION);
+    expect(r).toEqual({ kind: "question", text: "Crew is awaiting a choice." });
   });
 
   it("does not misfire approval on a numbered list that lacks a Yes/No block", () => {
