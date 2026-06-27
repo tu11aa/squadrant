@@ -37,6 +37,7 @@ const ERROR_BANNER_RE: RegExp[] = [
   /\bmaximum\s+retries\b/i,
 ];
 const OPTION_RE = /^[❯>›]?\s*(\d+)\.\s+(.*\S)\s*$/;
+const PICKER_FOOTER_RE = /↑↓\s*select|enter\s+submit|esc\s+dismiss/i;
 const PURE_CHROME_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▁▂▃▄▅▆▇█▔▏▕]+$/;
 const STATUS_LINE_RE = /accept edits on|shift\+tab|⏵⏵|\? for shortcuts|esc to interrupt|tokens? (used|left)|context left/i;
 
@@ -74,6 +75,16 @@ function classifyPaneTail(
       if (c.endsWith("?")) return { kind: "approval", text: c };
     }
     return { kind: "approval", text: "Crew is awaiting permission approval." };
+  }
+  const hasPickerFooter = cleaned.some((c) => c != null && PICKER_FOOTER_RE.test(c));
+  if (options.length >= 2 && hasPickerFooter) {
+    const firstOptCi = options[0].ci;
+    for (let i = firstOptCi - 1; i >= 0; i--) {
+      const c = cleaned[i];
+      if (c == null) continue;
+      if (c.endsWith("?")) return { kind: "question", text: c };
+    }
+    return { kind: "question", text: "Crew is awaiting a choice." };
   }
   const region = cleaned.filter((c): c is string => c != null).join("\n");
   const q = detectTrailingQuestion(region);

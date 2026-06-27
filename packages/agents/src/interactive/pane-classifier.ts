@@ -55,6 +55,20 @@ export function classifyPaneTail(
     return { kind: "approval", text: "Crew is awaiting permission approval." };
   }
 
+  // ── generic picker: opencode's multi-option widget (no Yes/No) ───────────
+  // The question is buried mid-paragraph; the picker footer ("↑↓ select …")
+  // is the last content line, so detectTrailingQuestion never fires for it.
+  const hasPickerFooter = cleaned.some((c) => c != null && PICKER_FOOTER_RE.test(c));
+  if (options.length >= 2 && hasPickerFooter) {
+    const firstOptCi = options[0].ci;
+    for (let i = firstOptCi - 1; i >= 0; i--) {
+      const c = cleaned[i];
+      if (c == null) continue;
+      if (c.endsWith("?")) return { kind: "question", text: c };
+    }
+    return { kind: "question", text: "Crew is awaiting a choice." };
+  }
+
   // ── question: trailing question in the chrome-stripped agent output region ──
   const region = cleaned.filter((c): c is string => c != null).join("\n");
   const q = detectTrailingQuestion(region);
@@ -88,6 +102,10 @@ const ERROR_BANNER_RE: RegExp[] = [
 // A numbered option line, after chrome stripping: an optional cursor marker
 // (❯ / > / ›), a number, a dot, then the label. e.g. "❯ 1. Yes".
 const OPTION_RE = /^[❯>›]?\s*(\d+)\.\s+(.*\S)\s*$/;
+
+// Footer navigation hint line rendered by opencode's interactive picker widget.
+// The last content line of the picker box is the keyboard-shortcut legend.
+const PICKER_FOOTER_RE = /↑↓\s*select|enter\s+submit|esc\s+dismiss/i;
 
 // Box-drawing / rule characters that make up a pure-chrome line.
 const PURE_CHROME_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▁▂▃▄▅▆▇█▔▏▕]+$/;
