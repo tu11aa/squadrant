@@ -20,8 +20,8 @@ export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
-import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@squadrant/agents";
-import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource } from "@squadrant/workspaces";
+import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource } from "@squadrant/agents";
+import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 
@@ -82,6 +82,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // Emit callbacks close over ctx lazily: ctx.d, ctx.broadcast, and
   // ctx.schedulePromotion are late-bound by startDaemon before any emit fires.
 
+  // D5: codex app-server LifecycleSource — must be created before codexDriver
+  // so the emit closure can call observe(). start() is called in the VITEST-
+  // guarded block below after startDaemon() sets ctx.d.
+  const codexAppServerSource = new CodexAppServerSource();
+
   const codexDriver = opts.codexDriver ?? new CodexInteractiveDriver({
     emit: (ev) => {
       const found = ctx.store.listAll().find((r) => r.id === ev.id);
@@ -101,6 +106,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         ctx.schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
       } else if (ev.type === "task.reattached")
         ctx.broadcast(ev.id, { type: "reattached", taskId: ev.id } as AttachFrame);
+      codexAppServerSource.observe(ev);
     },
   });
 
@@ -132,6 +138,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   });
 
   const cmuxStoreSource = new CmuxStoreSource({ log });
+  const nativeHookSource = new NativeHookSource({ log });
 
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
@@ -175,9 +182,10 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const prevSnaps = new Map<string, LifecycleSnapshot>();
     const storeDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
-        if (!hint.cwd) return undefined;
+        if (!hint.cwd && hint.pid == null) return undefined;
         return store.listAll().find(
-          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hint.cwd,
+          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) &&
+            (r.cwd === hint.cwd || (hint.pid != null && r.pid === hint.pid)),
         );
       },
       report: (snap) => {
@@ -194,19 +202,94 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         if (!changed) return;
         if (newState === "idle") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "cmux-store" } });
-        } else if (newState === "running" || newState === "needsInput") {
+        } else if (newState === "running") {
           void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
         }
       },
       log,
     };
     try { cmuxStoreSource.start(storeDeps); }
     catch (e) { log(`cmux store source start failed: ${(e as Error).message}`); }
+
+    // C1: start native hook source (primary LifecycleSource C). Installs squadrant-
+    // owned hooks into ~/.claude/settings.json (idempotent, namespaced per D4).
+    try { nativeHookSource.install(); }
+    catch (e) { log(`native hook install failed: ${(e as Error).message}`); }
+    const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
+    const hookDeps: LifecycleSourceDeps = {
+      resolve: (hint) => {
+        if (!hint.cwd && hint.pid == null) return undefined;
+        return store.listAll().find(
+          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) &&
+            (r.cwd === hint.cwd || (hint.pid != null && r.pid === hint.pid)),
+        );
+      },
+      report: (snap) => {
+        const found = store.listAll().find((r) => r.id === snap.taskId);
+        if (!found) return;
+        const prev = hookPrevSnaps.get(snap.taskId);
+        const newState = reduceLifecycle(prev, snap);
+        const changed = !prev || newState !== prev.state;
+        hookPrevSnaps.set(snap.taskId, snap);
+        if (!snap.alive) {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.session.ended", id: snap.taskId } });
+          return;
+        }
+        if (!changed) return;
+        if (newState === "idle") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "native-hook" } });
+        } else if (newState === "running") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
+        }
+      },
+      log,
+    };
+    try { nativeHookSource.start(hookDeps); }
+    catch (e) { log(`native hook source start failed: ${(e as Error).message}`); }
+
+    // D5: start codex app-server lifecycle source. codexAppServerSource.observe()
+    // is already wired into the codexDriver emit above; start() connects the deps.
+    const codexPrevSnaps = new Map<string, LifecycleSnapshot>();
+    const codexSourceDeps: LifecycleSourceDeps = {
+      resolve: () => undefined,  // taskId comes from ControlEvent.id; resolve() unused
+      report: (snap) => {
+        const found = store.listAll().find((r) => r.id === snap.taskId);
+        if (!found) return;
+        const prev = codexPrevSnaps.get(snap.taskId);
+        const newState = reduceLifecycle(prev, snap);
+        const changed = !prev || newState !== prev.state;
+        codexPrevSnaps.set(snap.taskId, snap);
+        if (!snap.alive) {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.session.ended", id: snap.taskId } });
+          return;
+        }
+        if (!changed) return;
+        if (newState === "idle") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "codex-appserver" } });
+        } else if (newState === "running") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        } else if (newState === "needsInput") {
+          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
+        }
+      },
+      log,
+    };
+    try { codexAppServerSource.start(codexSourceDeps); }
+    catch (e) { log(`codex app-server source start failed: ${(e as Error).message}`); }
   }
 
   const origStop = h.stop.bind(h);
   h.stop = async () => {
     try { cmuxStoreSource.stop(); } catch { /* best-effort */ }
+    try { nativeHookSource.stop(); } catch { /* best-effort */ }
+    try { codexAppServerSource.stop(); } catch { /* best-effort */ }
     return origStop();
   };
 
