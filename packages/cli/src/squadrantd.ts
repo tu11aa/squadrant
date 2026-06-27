@@ -10,7 +10,9 @@ import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
 import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive } from "@squadrant/core";
+import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
+import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
 import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
@@ -19,7 +21,7 @@ export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge } from "@squadrant/agents";
-import { CmuxEventsBridge, DaemonCmux } from "@squadrant/workspaces";
+import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 
@@ -129,6 +131,8 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     log,
   });
 
+  const cmuxStoreSource = new CmuxStoreSource({ log });
+
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
@@ -162,7 +166,51 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     }
   });
 
-  return startDaemon(ctx, { ...opts, launchHeadless }, PKG_VERSION);
+  const h = startDaemon(ctx, { ...opts, launchHeadless }, PKG_VERSION);
+
+  // A1: start cmux store-file backup lifecycle source alongside CmuxEventsBridge (B1).
+  // startDaemon() guarantees ctx.d is set before returning. Skipped under vitest
+  // (mirrors the B1 guard in start.ts — real fs.watch would touch disk in tests).
+  if (!process.env.VITEST) {
+    const prevSnaps = new Map<string, LifecycleSnapshot>();
+    const storeDeps: LifecycleSourceDeps = {
+      resolve: (hint) => {
+        if (!hint.cwd) return undefined;
+        return store.listAll().find(
+          (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hint.cwd,
+        );
+      },
+      report: (snap) => {
+        const found = store.listAll().find((r) => r.id === snap.taskId);
+        if (!found) return;
+        const prev = prevSnaps.get(snap.taskId);
+        const newState = reduceLifecycle(prev, snap);
+        const changed = !prev || newState !== prev.state;
+        prevSnaps.set(snap.taskId, snap);
+        if (!snap.alive) {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.session.ended", id: snap.taskId } });
+          return;
+        }
+        if (!changed) return;
+        if (newState === "idle") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "cmux-store" } });
+        } else if (newState === "running" || newState === "needsInput") {
+          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
+        }
+      },
+      log,
+    };
+    try { cmuxStoreSource.start(storeDeps); }
+    catch (e) { log(`cmux store source start failed: ${(e as Error).message}`); }
+  }
+
+  const origStop = h.stop.bind(h);
+  h.stop = async () => {
+    try { cmuxStoreSource.stop(); } catch { /* best-effort */ }
+    return origStop();
+  };
+
+  return h;
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).

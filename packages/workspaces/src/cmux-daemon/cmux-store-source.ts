@@ -205,10 +205,11 @@ export class CmuxStoreSource implements LifecycleSource {
     // Pid-verify liveness.
     let alive = this.isPidAlive(session.pid);
 
-    // Hibernation guard (research §7): a session with isRestorable:true may
-    // have its process suspended or reaped by cmux to reclaim RAM. The session
-    // is logically alive — do NOT emit alive:false or trigger task.session.ended.
-    if (!alive && session.isRestorable === true) {
+    // Hibernation guard (research §194): cmux reclaims RAM from idle crews by
+    // suspending or reaping the pid. Only treat a dead pid as logically alive
+    // when the session is restorable AND idle — a running/needsInput session
+    // with a dead pid is genuinely gone, not hibernated.
+    if (!alive && session.isRestorable === true && session.agentLifecycle === "idle") {
       alive = true;
     }
 

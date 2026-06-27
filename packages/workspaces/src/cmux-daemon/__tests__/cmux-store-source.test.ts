@@ -186,15 +186,26 @@ describe("CmuxStoreSource — liveness + hibernation guard", () => {
     expect(reports[0].alive).toBe(false);
   });
 
-  it("sets alive:true when pid is dead but isRestorable:true (hibernated, not dead)", () => {
+  it("sets alive:true when pid is dead but isRestorable:true and agentLifecycle is idle (hibernated)", () => {
     const { deps, reports } = makeDeps();
     const src = makeSource({
-      storeContent: makeStoreFile({ [CREW_SESSION_ID]: makeSession({ isRestorable: true }) }),
+      storeContent: makeStoreFile({ [CREW_SESSION_ID]: makeSession({ isRestorable: true, agentLifecycle: "idle" }) }),
       pidAlive: false,
     });
     src.start(deps);
 
     expect(reports[0].alive).toBe(true);
+  });
+
+  it("sets alive:false when pid is dead, isRestorable:true, but agentLifecycle is not idle", () => {
+    const { deps, reports } = makeDeps();
+    const src = makeSource({
+      storeContent: makeStoreFile({ [CREW_SESSION_ID]: makeSession({ isRestorable: true, agentLifecycle: "running" }) }),
+      pidAlive: false,
+    });
+    src.start(deps);
+
+    expect(reports[0].alive).toBe(false);
   });
 
   it("sets alive:false when pid is dead and isRestorable is absent", () => {
