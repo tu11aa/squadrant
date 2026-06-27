@@ -19,7 +19,9 @@ import {
   RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
   isInsideCmux, cmuxLocal, classifyStartupSurface,
 } from "@squadrant/workspaces";
-import { launchOneWorkspace } from "@squadrant/core";
+import { launchOneWorkspace, loadSessions } from "@squadrant/core";
+import { selectCaptainsInteractive } from "./launch-interactive.js";
+import type { CaptainEntry } from "./launch-interactive.js";
 
 // Re-export for test-import stability (launch.test.ts imports from ../launch.js).
 export { deliverStartupPrompt } from "@squadrant/core";
@@ -137,13 +139,53 @@ export const launchCommand = new Command("launch")
       }
       console.log("");
     } else if (!project) {
-      console.error(
-        chalk.red(
-          "\n  ✘ Specify a project name, or pass --all to launch every captain.\n" +
-            "    For one-shot Command tasks, use `squadrant command --task <briefing|learnings-review|wiki-aggregate>`.\n",
-        ),
-      );
-      process.exit(1);
+      // No args: interactive multi-select when TTY, error otherwise.
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        console.error(
+          chalk.red(
+            "\n  ✘ Specify a project name, or pass --all to launch every captain.\n" +
+              "    For one-shot Command tasks, use `squadrant command --task <briefing|learnings-review|wiki-aggregate>`.\n",
+          ),
+        );
+        process.exit(1);
+      }
+
+      // Interactive: pick captains, then launch in parallel.
+      ensureCmuxReady();
+
+      const sessions = loadSessions(SESSIONS_PATH);
+      const entries: CaptainEntry[] = Object.entries(config.projects).map(([name, proj]) => ({
+        projectName: name,
+        captainName: proj.captainName,
+        lastLaunched: sessions.workspaces[proj.captainName]?.lastLaunched ?? null,
+      }));
+
+      const selected = await selectCaptainsInteractive(entries);
+
+      if (selected.length === 0) {
+        console.log(chalk.yellow("\n  No captains selected.\n"));
+        return;
+      }
+
+      console.log(chalk.bold(`\nLaunching ${selected.length} captain workspace(s) in parallel\n`));
+
+      // Discover + create spoke vaults in parallel (different directories, safe).
+      await Promise.all(selected.map(async (name) => {
+        const proj = config.projects[name];
+        const projPath = resolveHome(proj.path);
+
+        const spokePath = resolveHome(proj.spokeVault);
+        if (!fs.existsSync(spokePath)) {
+          const spokeDriver = new WorkspaceRegistry({ obsidian: createObsidianDriver }).forProject(name, config);
+          await ensureSpokeLayout(spokeDriver);
+          console.log(chalk.cyan(`  ✔ Created spoke vault at ${spokePath}`));
+        }
+
+        console.log(chalk.bold(`\n  Captain: ${proj.captainName} (${name})`));
+        await launchOne(proj.captainName, "captain", projPath, config.defaults.permissions?.captain || "auto", false, true, name);
+      }));
+
+      console.log("");
     } else {
       // Launch captain workspace for a project
       if (!config.projects[project]) {

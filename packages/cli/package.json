@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": { "build": "tsc -b" },
   "dependencies": {
+    "@inquirer/checkbox": "^4.1.5",
     "@squadrant/agents": "workspace:*",
     "@squadrant/core": "workspace:*",
     "@squadrant/shared": "workspace:*",
