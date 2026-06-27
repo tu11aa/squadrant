@@ -2,6 +2,7 @@
 export * from "./drivers/index.js";
 export * from "./projection/index.js";
 export * from "./codex/app-server-client.js";
+export * from "./codex/codex-app-server-source.js";
 export * from "./codex/driver.js";
 export * from "./codex/normalize.js";
 export * from "./opencode/sse-bridge.js";
