@@ -14,16 +14,19 @@ import type { LifecycleSource, LifecycleSourceDeps, LifecycleSnapshot, Lifecycle
 
 // ── Hook event matrix ─────────────────────────────────────────────────────────
 
-// Claude hook event name → sub-command alias (blueprint §9).
+// Claude hook event name → sub-command alias → optional tool matcher (blueprint §9).
 // Non-lifecycle hooks (PostToolUse, SubagentStop) are intentionally excluded;
 // they feed the existing crew._hook bridge and are not part of the 4-state model.
-const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string]> = [
+//
+// Third element (matcher) is passed as the hook entry's "matcher" field.
+// AskUserQuestion is a TOOL, not an event — hook it via PreToolUse with a tool matcher.
+const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   ["SessionStart",     "session-start"],
   ["UserPromptSubmit", "prompt-submit"],
   ["PreToolUse",       "pre-tool-use"],
   ["Stop",             "stop"],
   ["Notification",     "notification"],
-  ["AskUserQuestion",  "ask-question"],
+  ["PreToolUse",       "ask-question", "AskUserQuestion"],
   ["SessionEnd",       "session-end"],
 ];
 
@@ -79,12 +82,13 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   const hooks = settings.hooks as Record<string, unknown>;
 
   let changed = false;
-  for (const [eventName, sub] of CLAUDE_HOOK_EVENTS) {
+  for (const [eventName, sub, matcher] of CLAUDE_HOOK_EVENTS) {
     if (!Array.isArray(hooks[eventName])) {
       hooks[eventName] = [];
     }
     const entries = hooks[eventName] as unknown[];
     const command = `${hookCmd} claude ${sub}`;
+    const hookMatcher = matcher ?? "";
 
     // Idempotency check: skip if our exact command is already registered.
     const alreadyPresent = entries.some(
@@ -97,7 +101,7 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
         ),
     );
     if (!alreadyPresent) {
-      entries.push({ matcher: "", hooks: [{ type: "command", command, timeout: 10 }] });
+      entries.push({ matcher: hookMatcher, hooks: [{ type: "command", command, timeout: 10 }] });
       changed = true;
     }
   }

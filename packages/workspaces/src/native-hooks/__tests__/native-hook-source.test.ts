@@ -61,21 +61,22 @@ function makeSource(installOverrides: Parameters<typeof makeInstallOpts>[0] = {}
 // ── installClaudeHooks ────────────────────────────────────────────────────────
 
 describe("installClaudeHooks — basic installation", () => {
-  it("installs hooks for all 7 lifecycle-relevant events", () => {
+  it("installs hooks for all 7 lifecycle-relevant subs across 6 event keys", () => {
     const { opts, written } = makeInstallOpts();
     installClaudeHooks(opts);
 
     expect(written).toHaveLength(1);
     const result = JSON.parse(written[0].content);
-    const eventNames = [
-      "SessionStart", "UserPromptSubmit", "PreToolUse",
-      "Stop", "Notification", "AskUserQuestion", "SessionEnd",
-    ];
-    for (const ev of eventNames) {
+    // 6 unique event keys (PreToolUse appears twice: catch-all + AskUserQuestion matcher)
+    for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd"]) {
       expect(result.hooks[ev]).toBeDefined();
       expect(Array.isArray(result.hooks[ev])).toBe(true);
       expect(result.hooks[ev].length).toBeGreaterThan(0);
     }
+    // AskUserQuestion is a TOOL not an event — must never be a top-level hook key
+    expect(result.hooks["AskUserQuestion"]).toBeUndefined();
+    // PreToolUse carries both the catch-all and the AskUserQuestion-specific entry
+    expect(result.hooks.PreToolUse).toHaveLength(2);
   });
 
   it("each installed hook entry uses the correct sub-command alias", () => {
@@ -83,19 +84,34 @@ describe("installClaudeHooks — basic installation", () => {
     installClaudeHooks(opts);
 
     const result = JSON.parse(written[0].content);
-    const expectations: Array<[string, string]> = [
+    // Single-entry events: first (and only) entry carries the sub-command
+    const singleEntryExpectations: Array<[string, string]> = [
       ["SessionStart", "session-start"],
       ["UserPromptSubmit", "prompt-submit"],
-      ["PreToolUse", "pre-tool-use"],
       ["Stop", "stop"],
       ["Notification", "notification"],
-      ["AskUserQuestion", "ask-question"],
       ["SessionEnd", "session-end"],
     ];
-    for (const [ev, sub] of expectations) {
+    for (const [ev, sub] of singleEntryExpectations) {
       const entry = result.hooks[ev][0];
       expect(entry.hooks[0].command).toBe(`${HOOK_CMD} claude ${sub}`);
     }
+    // PreToolUse: catch-all (matcher "") and AskUserQuestion-specific (matcher "AskUserQuestion")
+    const hasCmd = (entries: unknown[], cmd: string): boolean =>
+      entries.some(
+        (e) =>
+          Array.isArray((e as Record<string, unknown>).hooks) &&
+          ((e as Record<string, unknown>).hooks as unknown[]).some(
+            (h) => (h as Record<string, unknown>).command === cmd,
+          ),
+      );
+    expect(hasCmd(result.hooks.PreToolUse, `${HOOK_CMD} claude pre-tool-use`)).toBe(true);
+    expect(hasCmd(result.hooks.PreToolUse, `${HOOK_CMD} claude ask-question`)).toBe(true);
+    // ask-question entry must carry the AskUserQuestion tool matcher
+    const askEntry = (result.hooks.PreToolUse as unknown[]).find(
+      (e) => hasCmd([e], `${HOOK_CMD} claude ask-question`),
+    ) as Record<string, unknown> | undefined;
+    expect(askEntry?.matcher).toBe("AskUserQuestion");
   });
 
   it("returns the settings file path", () => {
