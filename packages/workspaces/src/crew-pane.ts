@@ -33,18 +33,25 @@ const SETTLE_MAX_POLLS = 8;        // up to 3.2s for a very large paste to rende
 const SUBMIT_RETRY_LIMIT = 4;      // Enter-only re-issues if the box stays stranded
 
 /** Poll the pane until its input box stops changing across two consecutive reads
- *  (paste fully rendered / accumulation window closed), or the cap is hit. */
+ *  (paste fully rendered / accumulation window closed), or the cap is hit.
+ *  Returns true if the box was observed with content at any point — the caller
+ *  uses this to distinguish "paste rendered then submitted" from "paste never
+ *  rendered, empty box is NOT a confirmation of submit" (#455). */
 async function settleInputBox(
   runtime: Pick<RuntimeDriver, "readPaneScreen">,
   pane: PaneRef,
-): Promise<void> {
+): Promise<boolean> {
   let prev = (await runtime.readPaneScreen(pane)) ?? "";
+  let sawContent = parseDraftFromScreen(prev) !== "" && parseDraftFromScreen(prev) !== null;
   for (let i = 0; i < SETTLE_MAX_POLLS; i++) {
     await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
     const cur = (await runtime.readPaneScreen(pane)) ?? "";
-    if (cur === prev) return;
+    const draft = parseDraftFromScreen(cur);
+    if (draft !== "" && draft !== null) sawContent = true;
+    if (cur === prev) return sawContent;
     prev = cur;
   }
+  return sawContent;
 }
 
 /** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
@@ -118,16 +125,28 @@ export async function confirmedSendToPane(
 ): Promise<void> {
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.pasteToPane(pane, message);
-  await settleInputBox(runtime, pane);
+  // #455: track whether the paste ever rendered so we don't treat an empty box
+  // that was NEVER populated as a successful submit (race: paste still in flight
+  // when settle fires, stable-empty → Enter into nothing → false "submitted").
+  let sawDraft = await settleInputBox(runtime, pane);
   await runtime.sendKeyToPane(pane, "Enter");
 
+  let repasted = false;
   for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
     await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
     const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
     const draft = parseDraftFromScreen(afterScreen);
-    if (draft === "") return;
+    if (draft !== "" && draft !== null) sawDraft = true;
+    // Box confirmed empty AND we observed the paste rendered first → submitted.
+    if (draft === "" && sawDraft) return;
     if (draft === null && afterScreen !== preSendScreen) return;
-    await settleInputBox(runtime, pane);
+    const settled = await settleInputBox(runtime, pane);
+    if (settled) sawDraft = true;
+    // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
+    if (!sawDraft && !repasted) {
+      repasted = true;
+      await runtime.pasteToPane(pane, message);
+    }
     await runtime.sendKeyToPane(pane, "Enter");
   }
 }
@@ -202,22 +221,33 @@ export async function sendFirstTurnWhenReady(
   // re-issue ONLY the Enter (after re-settling) and NEVER re-paste — re-pasting is
   // exactly what stacks [Pasted text #1][#2][#3] and never submits.
   await runtime.pasteToPane(pane, task);
-  await settleInputBox(runtime, pane);
+  // #455: track whether the paste ever rendered so we don't treat an empty box
+  // that was NEVER populated as a successful submit (race: paste still in flight
+  // when settle fires, stable-empty → Enter into nothing → false "submitted").
+  let sawDraft = await settleInputBox(runtime, pane);
   await runtime.sendKeyToPane(pane, "Enter");
 
   const retryLimit = acceptanceConfig?.retryLimit ?? SUBMIT_RETRY_LIMIT;
+  let repasted = false;
   for (let attempt = 0; attempt < retryLimit; attempt++) {
     await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
     const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
     const draft = parseDraftFromScreen(afterScreen);
-    // Box confirmed empty → the draft left the input box → submitted.
-    if (draft === "") return;
+    if (draft !== "" && draft !== null) sawDraft = true;
+    // Box confirmed empty AND we observed the paste rendered first → submitted.
+    if (draft === "" && sawDraft) return;
     // Box not parseable (e.g. an agent TUI without the HR-bounded box, or a
     // transient overlay): fall back to the screen-changed signal so non-claude
     // TUIs aren't worse off than before.
     if (draft === null && afterScreen !== preSendScreen) return;
-    // Still stranded — re-settle and re-issue ONLY the Enter (never re-paste).
-    await settleInputBox(runtime, pane);
+    const settled = await settleInputBox(runtime, pane);
+    if (settled) sawDraft = true;
+    // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
+    if (!sawDraft && !repasted) {
+      repasted = true;
+      await runtime.pasteToPane(pane, task);
+    }
+    // Still stranded — re-issue ONLY the Enter (re-paste only when never rendered).
     await runtime.sendKeyToPane(pane, "Enter");
   }
 }

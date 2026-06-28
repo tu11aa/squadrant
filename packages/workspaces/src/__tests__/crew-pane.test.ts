@@ -264,15 +264,16 @@ describe("confirmedSendToPane — follow-up crew send (#448)", () => {
     expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
   });
 
-  // Short sends must not block waiting for the settle window — the box goes
-  // empty immediately (no paste-mode coalescing) and we return on the first check.
+  // Short sends must not block waiting for the settle window. For short content CC
+  // renders the text directly in the box (no [Pasted text] placeholder), so settle
+  // sees actual content and sawDraft is set; empty box after Enter = submitted.
   it("submits a short message on the first confirmation check", async () => {
     let n = 0;
     readPaneScreen.mockImplementation(async () => {
       n++;
-      if (n === 1) return box("");           // preSendScreen
-      if (n === 2) return EMPTY_BOX;         // settle: no paste coalescing (empty = stable immediately)
-      return EMPTY_BOX;                       // post-Enter: submitted
+      if (n === 1) return box("");         // preSendScreen: idle box
+      if (n <= 3) return box("hi");        // settle: short text rendered immediately (no placeholder)
+      return EMPTY_BOX;                    // post-Enter: submitted
     });
 
     const promise = confirmedSendToPane(rt(), pane, "hi");
@@ -281,5 +282,151 @@ describe("confirmedSendToPane — follow-up crew send (#448)", () => {
 
     expect(pasteToPane).toHaveBeenCalledTimes(1);
     expect(sendKeyToPane).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── #455: large-paste race — empty box before paste renders ─────────────────
+
+describe("sendFirstTurnWhenReady — large paste race (#455)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // #455 core regression: for a large paste the [Pasted text] placeholder may not
+  // have rendered by the time settleInputBox first polls — the box appears stable-
+  // empty. The pre-fix code treats that as "submitted" and returns; the paste then
+  // lands in an unsubmitted state (strand). The fix: only accept empty-box-means-
+  // submitted after the draft was observed non-empty at least once.
+  it("does not declare submitted on leading empties before paste renders (#455 race)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // stability polls + preSend snapshot
+      if (n <= 5) return EMPTY_BOX;  // settle: paste NOT rendered yet (stable-empty bug)
+      if (n === 6) return EMPTY_BOX; // post-Enter#1: still empty (paste in flight)
+      if (n <= 9) return DRAFT_BOX;  // paste finally renders during retry settle
+      return EMPTY_BOX;              // post-Enter#2: box empty → actually submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "very large task", "$ launch");
+    await vi.advanceTimersByTimeAsync(8000);
+    await promise;
+
+    // Must NOT have returned on the leading empty reads before paste rendered.
+    // Paste issued exactly once; Enter issued at least twice (initial no-op + retry).
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(sendKeyToPane.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  // When the paste NEVER renders (e.g. paste-buffer loss), the function must re-paste
+  // once rather than silently declaring success on a never-populated box.
+  it("re-pastes once when paste never renders (never-populated box)", async () => {
+    readPaneScreen.mockResolvedValue(EMPTY_BOX);
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "very large task", "$ launch");
+    await vi.advanceTimersByTimeAsync(10000);
+    await promise;
+
+    // Re-pasted exactly once after the initial paste failed to render.
+    expect(pasteToPane).toHaveBeenCalledTimes(2);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "very large task");
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+});
+
+describe("confirmedSendToPane — large paste race (#455)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Same race as sendFirstTurnWhenReady: settle sees stable-empty, Enter fires into
+  // empty box (no-op), retry-check sees empty → pre-fix BUG declares submitted.
+  it("does not declare submitted on leading empties before paste renders (#455 race)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");   // preSendScreen
+      if (n <= 3) return EMPTY_BOX;  // settle: paste not rendered yet
+      if (n === 4) return EMPTY_BOX; // post-Enter#1: still empty
+      if (n <= 7) return DRAFT_BOX;  // paste renders during retry settle
+      return EMPTY_BOX;              // post-Enter#2: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "big follow-up");
+    await vi.advanceTimersByTimeAsync(6000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(sendKeyToPane.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Exactly ONE submit detected: the moment the box empties AFTER the draft was seen.
+  it("submits exactly once — no double-submit after seeing non-empty then empty", async () => {
+    let returned = false;
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");   // preSendScreen
+      if (n <= 3) return EMPTY_BOX;  // settle: paste not rendered
+      if (n === 4) return EMPTY_BOX; // post-Enter#1: empty (no-op)
+      if (n <= 7) return DRAFT_BOX;  // paste renders during retry settle
+      return EMPTY_BOX;              // post-Enter#2: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "big follow-up");
+    promise.then(() => { returned = true; });
+    await vi.advanceTimersByTimeAsync(6000);
+    await promise;
+
+    // Function returned exactly once (no double-submit loop).
+    expect(returned).toBe(true);
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+  });
+
+  // When paste never renders: re-paste once rather than silently returning on an
+  // empty box that was never populated.
+  it("re-pastes once when paste never renders (never-populated box)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");  // preSendScreen
+      return EMPTY_BOX;             // everything else: paste never appears
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "big follow-up");
+    await vi.advanceTimersByTimeAsync(6000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(2);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "big follow-up");
   });
 });
