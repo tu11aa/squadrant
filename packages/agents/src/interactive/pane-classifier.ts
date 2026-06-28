@@ -77,11 +77,19 @@ export function classifyPaneTail(
   // ── error: a fatal CLI error banner (#196), checked LAST so a recoverable
   // approval/question above always wins. Match the LAST banner line (the final
   // error after any retry chatter is the most informative).
+  // #459: suppress the error verdict when the tail shows an active retry in
+  // flight (e.g. "Retrying in 0s · attempt 1/10") but no exhaustion marker —
+  // Claude Code auto-retries up to 10× and the crew usually recovers.
   let errLine: string | null = null;
   for (const c of cleaned) {
     if (c != null && ERROR_BANNER_RE.some((re) => re.test(c))) errLine = c;
   }
-  if (errLine) return { kind: "error", text: errLine.slice(0, 200) };
+  if (errLine) {
+    const isRetrying = cleaned.some((c) => c != null && RETRYING_RE.test(c));
+    const isExhausted = cleaned.some((c) => c != null && EXHAUSTED_RE.test(c));
+    if (isRetrying && !isExhausted) return null;
+    return { kind: "error", text: errLine.slice(0, 200) };
+  }
 
   return null;
 }
@@ -98,6 +106,14 @@ const ERROR_BANNER_RE: RegExp[] = [
   /\bretr(?:y|ies)\s+(?:exhausted|limit\s+(?:reached|exceeded))\b/i,
   /\bmaximum\s+retries\b/i,
 ];
+
+// Active-retry indicator: the CLI is still retrying (not yet exhausted). Used
+// to suppress a false-fatal-error verdict for in-flight retries (#459).
+const RETRYING_RE = /\bRetrying\b|\battempt\s+\d+\s*\/\s*\d+/i;
+
+// Retry exhaustion: the final retry failed. When present alongside RETRYING_RE,
+// exhaustion wins and the error verdict is still emitted.
+const EXHAUSTED_RE = /\bretr(?:y|ies)\s+(?:exhausted|limit\s+(?:reached|exceeded))\b|\bmaximum\s+retries\b/i;
 
 // A numbered option line, after chrome stripping: an optional cursor marker
 // (❯ / > / ›), a number, a dot, then the label. e.g. "❯ 1. Yes".

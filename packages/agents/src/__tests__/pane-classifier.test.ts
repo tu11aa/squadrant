@@ -177,4 +177,41 @@ describe("classifyPaneTail", () => {
     ].join("\n");
     expect(classifyPaneTail(numberedList)).toBeNull();
   });
+
+  // ── #459: active-retry banner must NOT be classified as fatal error ──────
+
+  it("returns null for an in-flight API retry banner (recoverable, not error)", () => {
+    const tail = [
+      "● Working on the implementation...",
+      "✻ API error · Retrying in 0s · attempt 1/10",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)).toBeNull();
+  });
+
+  it("still classifies a bare API error with no retry indicator as fatal error", () => {
+    const tail = [
+      "● Calling the API...",
+      "API Error: 529 Overloaded",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    const r = classifyPaneTail(tail);
+    expect(r?.kind).toBe("error");
+  });
+
+  it("classifies exhausted retries as fatal error even when retry text is also present", () => {
+    const tail = [
+      "✻ API error · Retrying in 0s · attempt 10/10",
+      "retries exhausted — giving up",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    const r = classifyPaneTail(tail);
+    expect(r?.kind).toBe("error");
+  });
 });
