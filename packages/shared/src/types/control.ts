@@ -85,6 +85,12 @@ export interface TaskRecord {
    *  (no pendingTool → CREW QUIET). Auto-clears: the next PostToolUse recovers
    *  the record to `working` (state-machine + recoverStall). */
   pendingTool?: { name: string; since: number };
+  /** #466: epoch ms when the spawn path positively confirmed the first turn was
+   *  delivered (paste rendered in the box → box emptied = submitted). Unset means
+   *  either the crew was spawned before this field existed, OR delivery was never
+   *  confirmed. The watchdog uses this to emit CREW UNDELIVERED instead of the
+   *  misleading "deep thinking" message for a crew that never received its task. */
+  firstTurnConfirmedAt?: number;
 }
 
 export type ControlEvent =
@@ -131,6 +137,10 @@ export type ControlEvent =
   // task to the absorbing 'cancelled' state. Silent: captain initiated the close
   // so no CREW CANCELLED push is fired (not in ATTENTION_STATES).
   | { type: "task.cancelled"; id: string; reason?: string }
+  // #466: emitted by runCrewSpawn after positively confirming the first turn was
+  // delivered. Stamps firstTurnConfirmedAt on the record so the watchdog can
+  // distinguish a quiet-thinking crew from one that never received its task.
+  | { type: "task.first-turn.confirmed"; id: string }
   // #139: a claude crew's SessionEnd hook fired — the session is GONE. Unlike
   // the other turn-boundary hooks (PostToolUse/SubagentStop = liveness), a dead
   // session must NOT resume 'working' (nothing heartbeats → false CREW STALLED
