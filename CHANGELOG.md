@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-06-29
+
+### Fixed
+
+- Large first-turn paste-strand: spawning a crew with a large task description could strand the
+  crew's first turn unsubmitted — the big payload pushed Claude Code into bracketed-paste mode and
+  the submit Enter was swallowed before the paste finished rendering, so the task sat in the input
+  box and never started. An un-rendered large paste is no longer treated as submitted; delivery
+  settles the paste window first, then sends a separate confirmed Enter. ([#455](https://github.com/tu11aa/squadrant/issues/455))
+- Transient API retry mis-classified as CREW FAILED: when a crew's underlying CLI hit a transient
+  API error and entered its own retry loop, the pane classifier read the in-flight retry as a fatal
+  failure and fired a bogus CREW FAILED signal even though the crew recovered on its own. In-flight
+  retries are no longer classified as terminal failure. ([#459](https://github.com/tu11aa/squadrant/issues/459))
+- Crew spawn collision on stale branch: if a previous crew left its `crew/<name>` branch behind
+  (closed without cleanup), spawning a new crew with the same name hard-failed on the
+  branch-already-exists collision. Stale crew branches are now reused or uniquified on spawn instead
+  of erroring. ([#460](https://github.com/tu11aa/squadrant/issues/460))
+
 ## [0.13.0] - 2026-06-28
 
 ### Added
