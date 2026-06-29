@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-06-29
+
+### Fixed
+
+- First-turn delivery could silently drop under concurrent spawn load: spawning several large
+  multi-line `--agent claude` crews at once could leave one sitting at an empty prompt (0% context)
+  because the boot-readiness gate latched onto the session-start banner before the input box had
+  rendered, so the paste landed in a not-ready box and the retry loop exhausted without confirming
+  submission — while `crew spawn` still reported success and the watchdog mislabeled the inert crew
+  as "deep thinking". The boot gate now waits for a parseable input box before pasting, first-turn
+  delivery reports a delivery status and auto-falls-back to the confirmed send path when the paste
+  can't be confirmed, non-delivery surfaces a warning instead of a false success, and the watchdog
+  emits a distinct "CREW UNDELIVERED" alert (via a new first-turn-confirmed signal) instead of
+  "deep thinking" for a crew that never received its task. ([#466](https://github.com/tu11aa/squadrant/issues/466))
+- Daemon task-ledger cruft and ghost lifecycle notifications: terminal task records accumulated
+  indefinitely, and an abandoned task whose crew surface was gone could still fire CREW IDLE /
+  CREW TIMEOUT notifications, confusingly surfacing mid-session. The daemon now prunes terminal
+  records per project on sweep, suppresses lifecycle notifications for interactive tasks whose
+  surface is provably gone, and `crew tasks --all-terminal` bulk-purges terminal records.
+  ([#457](https://github.com/tu11aa/squadrant/issues/457))
+- `crew spawn --task-file` was not readable from an isolated-worktree crew's working directory; the
+  file is now copied into the worktree root and the crew is given a short pointer first turn.
+  ([#458](https://github.com/tu11aa/squadrant/issues/458))
+- The release workflow reported success even when `npm publish` failed (the publish step was
+  `continue-on-error`), so a bad token could leave npm a version behind while CI stayed green. The
+  publish step now fails the job on error and a verification step confirms the published version is
+  live on the registry. ([#463](https://github.com/tu11aa/squadrant/pull/463))
+
 ## [0.13.1] - 2026-06-29
 
 ### Fixed
