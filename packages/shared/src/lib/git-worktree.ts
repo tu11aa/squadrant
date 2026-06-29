@@ -54,16 +54,77 @@ export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): str
 
 /**
  * Create the crew's worktree + branch and return its absolute path.
- * Fails loud (throws) if git refuses — e.g. the base branch is missing or the
- * branch/path already exists. The caller's name-uniqueness check already
- * prevents live duplicates; a re-spawned-after-close name can collide on the
- * existing branch (rare — pick a new --name).
+ * Handles a stale crew/<name> branch left by a previously-closed crew (#460):
+ * - No existing branch → unchanged behavior.
+ * - Existing branch with no unique commits (merged/empty) → delete and recreate fresh.
+ * - Existing branch with unique commits → uniquify to crew/<name>-2, -3, … so no
+ *   commits are lost and there is no collision. The returned path reflects the
+ *   uniquified name.
  */
 export function addWorktree(spec: WorktreeSpec): string {
-  const wt = worktreePath(spec.repoRoot, spec.worktreeDir, spec.project, spec.name);
+  const originalBranch = crewBranch(spec.name);
+
+  let targetName = spec.name;
+  let targetBranch = originalBranch;
+
+  // Check whether crew/<name> already exists from a prior closed crew.
+  let branchExists = false;
+  try {
+    execFileSync(
+      "git",
+      ["-C", spec.repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${originalBranch}`],
+      { stdio: "pipe" },
+    );
+    branchExists = true;
+  } catch {
+    // Branch does not exist — normal path, nothing to resolve.
+  }
+
+  if (branchExists) {
+    const log = execFileSync(
+      "git",
+      ["-C", spec.repoRoot, "log", "--oneline", `${spec.base}..${originalBranch}`],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    ).toString().trim();
+
+    if (!log) {
+      // No unique commits: safe to delete and let the worktree add recreate it.
+      execFileSync(
+        "git",
+        ["-C", spec.repoRoot, "branch", "-D", originalBranch],
+        { stdio: "pipe" },
+      );
+    } else {
+      // Has unique commits: uniquify to crew/<name>-N so history is preserved.
+      let suffix = 2;
+      while (true) {
+        const candidate = `${spec.name}-${suffix}`;
+        const candidateBranch = crewBranch(candidate);
+        let candidateExists = false;
+        try {
+          execFileSync(
+            "git",
+            ["-C", spec.repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${candidateBranch}`],
+            { stdio: "pipe" },
+          );
+          candidateExists = true;
+        } catch {
+          // Candidate branch is free.
+        }
+        if (!candidateExists) {
+          targetName = candidate;
+          targetBranch = candidateBranch;
+          break;
+        }
+        suffix++;
+      }
+    }
+  }
+
+  const wt = worktreePath(spec.repoRoot, spec.worktreeDir, spec.project, targetName);
   execFileSync(
     "git",
-    ["-C", spec.repoRoot, "worktree", "add", wt, "-b", crewBranch(spec.name), spec.base],
+    ["-C", spec.repoRoot, "worktree", "add", wt, "-b", targetBranch, spec.base],
     { stdio: "pipe" },
   );
   return wt;

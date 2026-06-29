@@ -34,6 +34,10 @@ describe("addWorktree", () => {
   beforeEach(() => execFileSyncMock.mockReset());
 
   it("runs `git -C <repo> worktree add <path> -b crew/<name> <base>` and returns the path", () => {
+    // No existing branch: show-ref throws (not found), worktree add succeeds.
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref
+    execFileSyncMock.mockReturnValue(Buffer.from("")); // worktree add
+
     const wt = addWorktree({
       repoRoot: "/tmp/brove",
       worktreeDir: ".worktrees",
@@ -47,6 +51,63 @@ describe("addWorktree", () => {
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "git",
       ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/crew-1", "develop"],
+      expect.objectContaining({ stdio: "pipe" }),
+    );
+  });
+
+  // ── #460: stale branch collision handling ──────────────────────────────────
+
+  it("deletes and recreates the branch when it exists but has no unique commits (merged)", () => {
+    // show-ref succeeds (branch exists), log returns empty (no unique commits),
+    // branch -D succeeds, worktree add succeeds.
+    execFileSyncMock.mockReturnValueOnce(Buffer.from(""));   // show-ref: branch exists
+    execFileSyncMock.mockReturnValueOnce(Buffer.from(""));   // log: no unique commits
+    execFileSyncMock.mockReturnValueOnce(Buffer.from(""));   // branch -D
+    execFileSyncMock.mockReturnValue(Buffer.from(""));       // worktree add
+
+    const spec = { repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "fix-1", base: "develop" };
+    const wt = addWorktree(spec);
+
+    const expectedPath = path.resolve("/tmp/brove", ".worktrees", "brove-fix-1");
+    expect(wt).toBe(expectedPath);
+
+    // branch -D must have been called
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/brove", "branch", "-D", "crew/fix-1"],
+      expect.objectContaining({ stdio: "pipe" }),
+    );
+    // worktree add must use the original branch name
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/fix-1", "develop"],
+      expect.objectContaining({ stdio: "pipe" }),
+    );
+  });
+
+  it("uniquifies the branch and path when the existing branch has unique commits (preserves history)", () => {
+    // show-ref for original branch: exists; log: has commits;
+    // show-ref for -2 branch: not found; worktree add with -2: succeeds.
+    execFileSyncMock.mockReturnValueOnce(Buffer.from(""));                            // show-ref crew/fix-1: exists
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("abc123 some commit\n"));        // log: has commits
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref crew/fix-1-2: not found
+    execFileSyncMock.mockReturnValue(Buffer.from(""));                                // worktree add
+
+    const spec = { repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "fix-1", base: "develop" };
+    const wt = addWorktree(spec);
+
+    // Path and branch should be uniquified to -2
+    const expectedPath = path.resolve("/tmp/brove", ".worktrees", "brove-fix-1-2");
+    expect(wt).toBe(expectedPath);
+
+    // branch -D must NOT have been called (original branch with commits is untouched)
+    const deleteCalls = execFileSyncMock.mock.calls.filter((c) => Array.isArray(c[1]) && c[1].includes("-D"));
+    expect(deleteCalls).toHaveLength(0);
+
+    // worktree add uses the uniquified name
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/fix-1-2", "develop"],
       expect.objectContaining({ stdio: "pipe" }),
     );
   });
