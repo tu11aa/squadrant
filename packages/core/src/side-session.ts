@@ -93,7 +93,7 @@ export interface SideSpawnDeps {
    */
   agentCmdFactory: (spawnCwd: string) => string;
   /** CLI-edge: deliver the first turn when the agent pane is ready. */
-  sendFirstTurn: (pane: PaneRef, firstTurn: string, preLaunchScreen: string) => Promise<void>;
+  sendFirstTurn: (pane: PaneRef, firstTurn: string, preLaunchScreen: string) => Promise<{ delivered: boolean }>;
 }
 
 export async function runSideSpawn(

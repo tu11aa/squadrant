@@ -136,7 +136,7 @@ function makeSpawnDeps(runtime: RuntimeDriver, agent: ResolvedAgent): CrewSpawnD
     dispatchCrew: vi.fn().mockResolvedValue(rec),
     writeSettingsLocal: vi.fn(),
     writeOpencodeConfig: vi.fn().mockReturnValue("/fake/opencode.json"),
-    sendFirstTurn: vi.fn().mockResolvedValue(undefined),
+    sendFirstTurn: vi.fn().mockResolvedValue({ delivered: true }),
     getFreePort: vi.fn().mockResolvedValue(9876),
     sendCodexFirstTurn: vi.fn().mockResolvedValue(undefined),
     onRouted: vi.fn(),
@@ -237,6 +237,61 @@ describe("runCrewSpawn", () => {
         expect.stringContaining("squadrant crew signal done"),
         expect.any(String),
       );
+    });
+
+    // #466: when sendFirstTurn resolves { delivered: false }, runCrewSpawn must NOT
+    // report clean success — the caller gets the pane ref (crew is usable via send)
+    // but the warning is surfaced via stderr so the captain knows to re-send.
+    it("writes stderr warning when sendFirstTurn returns { delivered: false } (#466)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).toMatch(/first turn.*not.*delivered|not.*delivered.*first turn/i);
+        expect(stderrOutput).toMatch(/crew send/i);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    // #466: when sendFirstTurn resolves { delivered: true }, emitEvent is called
+    // with task.first-turn.confirmed so the daemon can stamp firstTurnConfirmedAt.
+    it("emits task.first-turn.confirmed when sendFirstTurn returns { delivered: true } (#466)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
+      const emitEvent = vi.fn().mockResolvedValue(undefined);
+      deps.emitEvent = emitEvent;
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+
+      expect(emitEvent).toHaveBeenCalledWith(
+        PROJECT,
+        expect.objectContaining({ type: "task.first-turn.confirmed", id: "task-001" }),
+      );
+    });
+
+    // #466: when emitEvent is absent (not wired), delivered=true is a no-op —
+    // the spawn still succeeds (backward-compat for callers without the dep).
+    it("succeeds without error when emitEvent is absent and delivered=true (#466)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
+      // emitEvent intentionally not set
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps),
+      ).resolves.toBeDefined();
     });
 
     it("respects permissionMode from config", async () => {
@@ -589,7 +644,7 @@ describe("runCrewSend", () => {
   it("uses deps.sendToPane when provided, bypassing runtime.sendToPane", async () => {
     const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime("workspace:1", [existing]);
-    const injectedSend = vi.fn().mockResolvedValue(undefined);
+    const injectedSend = vi.fn().mockResolvedValue({ delivered: true });
     await runCrewSend(PROJECT, "crew-1", "big message", runtime, "workspace:1", {
       listTasks: vi.fn().mockResolvedValue([]),
       emitEvent: vi.fn(),

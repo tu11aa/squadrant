@@ -48,6 +48,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
       sendFirstTurnWhenReady(runtime, pane, firstTurn, preLaunchScreen, opts),
     getFreePort,
     sendCodexFirstTurn,
+    // #466: wire delivery confirmation so the daemon stamps firstTurnConfirmedAt.
+    emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
     onRouted: (route) =>
       console.log(
         chalk.dim(

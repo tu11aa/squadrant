@@ -102,7 +102,8 @@ describe("squadrantd push notifications (#109)", () => {
   it("INTERACTIVE quiet (from sweep) triggers exactly one CREW QUIET notify, stays working (#354)", async () => {
     const store = createStore(dir);
     // rec() defaults to mode: "interactive"; no pendingTool → alive-thinking path.
-    store.put(rec("task-idle-1", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
+    // firstTurnConfirmedAt set: this crew received its task and is quietly thinking (#466).
+    store.put(rec("task-idle-1", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250, firstTurnConfirmedAt: 1 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
     await d.sweep();
@@ -117,7 +118,7 @@ describe("squadrantd push notifications (#109)", () => {
 
   it("CREW QUIET fires once per quiet episode across repeated sweeps → no storm (#354)", async () => {
     const store = createStore(dir);
-    store.put(rec("task-idle-2", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
+    store.put(rec("task-idle-2", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250, firstTurnConfirmedAt: 1 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
     await d.sweep(); // quiet → one CREW QUIET
@@ -129,7 +130,7 @@ describe("squadrantd push notifications (#109)", () => {
 
   it("awaiting-input + task.started (captain resumes) → working, no extra notify", async () => {
     const store = createStore(dir);
-    store.put(rec("task-idle-3", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250 }));
+    store.put(rec("task-idle-3", { state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 250, firstTurnConfirmedAt: 1 }));
     const n = fakeNotify();
     const d = createDaemon({ store, now: () => 5000, notify: n.notify });
     await d.sweep(); // → awaiting-input, push #1 (CREW IDLE)

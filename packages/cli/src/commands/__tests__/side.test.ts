@@ -57,6 +57,7 @@ vi.mock("@squadrant/workspaces", () => ({
   },
   sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
     await sendToPane(pane, task);
+    return { delivered: true };
   },
   getFreePort: async () => 12345,
 }));
@@ -560,7 +561,7 @@ describe("crew spawn regression — daemon path unchanged", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(squadrantdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(2); // dispatch + task.first-turn.confirmed
     vi.useRealTimers();
   });
 });

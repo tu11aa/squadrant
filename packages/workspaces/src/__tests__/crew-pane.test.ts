@@ -334,19 +334,211 @@ describe("sendFirstTurnWhenReady — large paste race (#455)", () => {
     expect(sendToPane).not.toHaveBeenCalled();
   });
 
-  // When the paste NEVER renders (e.g. paste-buffer loss), the function must re-paste
-  // once rather than silently declaring success on a never-populated box.
-  it("re-pastes once when paste never renders (never-populated box)", async () => {
+  // When the paste NEVER renders (e.g. paste-buffer loss), the function re-pastes
+  // once in the first path, then falls back to confirmedSendToPane which also
+  // re-pastes once — total 4 paste calls when the box never populates (#466).
+  it("re-pastes in first path then falls back to confirmedSendToPane when paste never renders (#455/#466)", async () => {
     readPaneScreen.mockResolvedValue(EMPTY_BOX);
 
     const promise = sendFirstTurnWhenReady(rt(), pane, "very large task", "$ launch");
+    await vi.advanceTimersByTimeAsync(18000); // first path (~7s) + confirmedSendToPane fallback (~5s)
+    await promise;
+
+    // First path: 1 initial paste + 1 repaste when sawDraft stays false.
+    // confirmedSendToPane fallback: 1 initial paste + 1 repaste = 4 total.
+    expect(pasteToPane.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "very large task");
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #466: boot-gate requires parseable input box ─────────────────────────────
+
+describe("sendFirstTurnWhenReady — boot gate requires parseable box (#466)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  // A stable screen with NO HR-bounded box — e.g. the claude-mem boot banner.
+  const BANNER_ONLY = "=== claude-mem: loading memories ===\n(0 memories loaded)";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Core regression fix: the boot gate must NOT declare ready when the screen is
+  // stable but has no HR-bounded input box. Under load the claude-mem banner
+  // stabilises before the CC input box renders, causing paste into the wrong spot.
+  // After the box appears the paste renders immediately and confirms delivery.
+  it("does not paste while screen is stable but has no parseable input box", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 4) return BANNER_ONLY;   // banner stable, no box — must NOT trigger paste
+      if (n <= 6) return EMPTY_BOX;     // CC box appeared, stabilises → triggers readiness
+      if (n <= 8) return DRAFT_BOX;     // paste renders in box during settle
+      return EMPTY_BOX;                 // box empties after Enter → submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
     await vi.advanceTimersByTimeAsync(10000);
     await promise;
 
-    // Re-pasted exactly once after the initial paste failed to render.
-    expect(pasteToPane).toHaveBeenCalledTimes(2);
-    expect(pasteToPane).toHaveBeenCalledWith(pane, "very large task");
-    expect(sendToPane).not.toHaveBeenCalled();
+    // Paste must only happen AFTER the input box appeared — never during banner.
+    // Exactly one paste: the box was ready when we pasted, draft rendered, submitted.
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+    expect(pasteToPane).toHaveBeenCalledWith(pane, "task text");
+  });
+
+  // When the box appears, delivery succeeds normally.
+  it("returns { delivered: true } once the box appears and submission is confirmed", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return BANNER_ONLY;   // banner stable, no box yet
+      if (n <= 5) return EMPTY_BOX;     // box appeared + stability poll
+      if (n <= 7) return DRAFT_BOX;     // paste settled in box
+      return EMPTY_BOX;                 // box emptied after Enter → submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(10000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── #466: delivery status + self-heal fallback ───────────────────────────────
+
+describe("sendFirstTurnWhenReady — delivery status and self-heal (#466)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Happy path: normal delivery returns { delivered: true }.
+  it("returns { delivered: true } on normal paste-then-submit delivery", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // readiness + preSend
+      if (n <= 5) return DRAFT_BOX;  // settle: paste rendered
+      return EMPTY_BOX;              // post-Enter: submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the thing", "$ launch");
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+  });
+
+  // Self-heal: paste path exhausts (sawDraft=false → box never populated), but the
+  // confirmedSendToPane fallback succeeds. The outcome is { delivered: true }.
+  // This is the key #466 scenario: paste went into a not-yet-ready box (no HR),
+  // but by fallback time the box has settled and accepts the task.
+  it("returns { delivered: true } when fallback confirmedSendToPane succeeds (#466 self-heal)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      // Boot: stable box from the start
+      if (n <= 2) return EMPTY_BOX;
+      // preSend + first paste attempt: paste never renders (race — box not ready)
+      if (n <= 10) return EMPTY_BOX;
+      // Fallback (confirmedSendToPane): box now ready, paste renders, then empties
+      if (n <= 12) return DRAFT_BOX;  // fallback settle: paste rendered
+      return EMPTY_BOX;               // fallback confirm: submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the thing", "$ launch");
+    await vi.advanceTimersByTimeAsync(18000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+    // At least 2 pastes: one in the first path (which failed), one in the fallback
+    expect(pasteToPane.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Hard drop: paste path exhausts with sawDraft=false, AND the fallback also
+  // fails (box never populates). Returns { delivered: false }.
+  it("returns { delivered: false } when both paste path and fallback fail (#466 hard drop)", async () => {
+    readPaneScreen.mockResolvedValue(EMPTY_BOX);
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "do the thing", "$ launch");
+    await vi.advanceTimersByTimeAsync(18000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: false });
+  });
+});
+
+// ─── #466: confirmedSendToPane delivery status ────────────────────────────────
+
+describe("confirmedSendToPane — delivery status (#466)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("returns { delivered: true } when box empties after draft seen", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");     // preSendScreen
+      if (n <= 3) return DRAFT_BOX;   // settle: paste rendered
+      return EMPTY_BOX;               // post-Enter: submitted
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "message");
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+  });
+
+  it("returns { delivered: false } when retry exhausts without confirmation", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return box("");   // preSendScreen
+      return EMPTY_BOX;              // paste never renders, box stays empty
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "message");
+    await vi.advanceTimersByTimeAsync(8000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: false });
   });
 });
 

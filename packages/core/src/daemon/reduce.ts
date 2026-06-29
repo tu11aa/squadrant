@@ -240,6 +240,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.reattached", "task.reopened",
   "task.stalled", "task.idle", "task.quiet", "task.timeout", "task.reconcile-failed",
   "task.cancelled", "task.session.ended",
+  "task.first-turn.confirmed",  // #466: delivery confirmation
 ]);
 
 export function createDaemon(deps: DaemonDeps) {
@@ -467,6 +468,8 @@ export function createDaemon(deps: DaemonDeps) {
         // during pure model thinking). Surface a distinct, non-alarming nudge —
         // NOT 'awaiting-input' (the turn never ended; real CREW IDLE comes only
         // from the Stop hook). State stays `working`; notify once per episode.
+        // #466: if firstTurnConfirmedAt is unset the crew may never have received
+        // its first task — emit CREW UNDELIVERED instead of "deep thinking".
         if (r.mode === "interactive" && r.state === "working" && !r.pendingTool) {
           const liveness = r.attempts.at(-1)?.lastHeartbeatAt ?? r.lastHeartbeat;
           const quiet = t - liveness;
@@ -474,9 +477,16 @@ export function createDaemon(deps: DaemonDeps) {
             if (deps.notify && quietNotifiedAt.get(r.id) !== liveness) {
               quietNotifiedAt.set(r.id, liveness);
               const tag = crewTag(r);
-              const mins = Math.max(1, Math.round(quiet / 60000));
-              const message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
               const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: quiet };
+              let message: string;
+              if (!r.firstTurnConfirmedAt) {
+                // #466: no confirmed delivery → crew may be sitting at an empty
+                // prompt. Alert distinctly so the captain can re-send the task.
+                message = `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed (0 activity) — re-send the task or check the spawn.`;
+              } else {
+                const mins = Math.max(1, Math.round(quiet / 60000));
+                message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
+              }
               try {
                 const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
                 if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});

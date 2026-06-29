@@ -9,6 +9,7 @@ const listSurfaces = vi.hoisted(() => vi.fn());
 const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 const probe = vi.hoisted(() => vi.fn());
+const sendFirstTurnWhenReadyMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
@@ -53,11 +54,10 @@ vi.mock("@squadrant/workspaces", () => ({
     if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`);
     return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
   },
-  sendFirstTurnWhenReady: async (_runtime: unknown, pane: unknown, task: string) => {
-    await sendToPane(pane, task);
-  },
+  sendFirstTurnWhenReady: sendFirstTurnWhenReadyMock,
   confirmedSendToPane: async (_runtime: unknown, pane: unknown, msg: string) => {
     await sendToPane(pane, msg);
+    return { delivered: true };
   },
   getFreePort: vi.fn().mockResolvedValue(12345),
 }));
@@ -178,6 +178,11 @@ describe("squadrant crew spawn", () => {
     resolveCrewRoute.mockReset();
     // Default: no routing match (fall through to existing defaults).
     resolveCrewRoute.mockReturnValue(null);
+    sendFirstTurnWhenReadyMock.mockReset();
+    sendFirstTurnWhenReadyMock.mockImplementation(async (_: unknown, pane: unknown, task: string) => {
+      await sendToPane(pane, task);
+      return { delivered: true };
+    });
   });
 
   afterEach(() => {
@@ -205,7 +210,7 @@ describe("squadrant crew spawn", () => {
       cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
-    expect(squadrantdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(2); // dispatch + task.first-turn.confirmed
     // Squadrant hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
       projectCwd: "/tmp/brove/.worktrees/brove-crew-1",
@@ -411,7 +416,7 @@ describe("squadrant crew spawn", () => {
       task: "do the thing",
       budgetMs: 86400000,
     }));
-    expect(squadrantdCall).toHaveBeenCalledTimes(1);
+    expect(squadrantdCall).toHaveBeenCalledTimes(2); // dispatch + task.first-turn.confirmed
     // Per-crew opencode config uses the daemon-assigned taskId.
     expect(writePerCrewOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({
       project: "brove",
@@ -662,6 +667,53 @@ describe("squadrant crew spawn", () => {
     status.mockResolvedValue(null);
     await expect(runCrewSpawn({ project: "brove", task: "x" }))
       .rejects.toThrow(/captain workspace 'brove-captain' is not running/i);
+  });
+
+  it("delivered:false emits stderr warning and does NOT emit task.first-turn.confirmed (#466)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nd1" } }));
+    squadrantdCall.mockResolvedValue({ id: "task-nd1", project: "brove", provider: "claude", mode: "interactive" });
+    sendFirstTurnWhenReadyMock.mockResolvedValueOnce({ delivered: false });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const promise = runCrewSpawn({ project: "brove", task: "undelivered task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("First turn not delivered"));
+    // emitEvent must NOT fire when delivery fails
+    const kinds = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>)
+      .map(([r]) => r);
+    expect(kinds).not.toContainEqual(expect.objectContaining({ event: { type: "task.first-turn.confirmed", id: "task-nd1" } }));
+
+    stderrSpy.mockRestore();
+  });
+
+  it("delivered:true emits task.first-turn.confirmed event to daemon (#466)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-dt1" } }));
+    squadrantdCall.mockResolvedValue({ id: "task-dt1", project: "brove", provider: "claude", mode: "interactive" });
+
+    const promise = runCrewSpawn({ project: "brove", task: "delivered task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    // squadrantdCall fired twice: once for dispatch, once for task.first-turn.confirmed
+    expect(squadrantdCall).toHaveBeenCalledTimes(2);
+    expect(squadrantdCall).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      kind: "event",
+      project: "brove",
+      event: { type: "task.first-turn.confirmed", id: "task-dt1" },
+    }));
   });
 
   describe("leveled crew routing (#275)", () => {
@@ -1041,6 +1093,11 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     existsSyncMock.mockReturnValue(false);
     resolveCrewRoute.mockReset();
     resolveCrewRoute.mockReturnValue(null);
+    sendFirstTurnWhenReadyMock.mockReset();
+    sendFirstTurnWhenReadyMock.mockImplementation(async (_: unknown, pane: unknown, task: string) => {
+      await sendToPane(pane, task);
+      return { delivered: true };
+    });
     let reads = 0;
     readPaneScreen.mockImplementation(async () => {
       reads++;

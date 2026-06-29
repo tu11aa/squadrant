@@ -119,17 +119,78 @@ describe("daemon handler", () => {
   // #354: a quiet INTERACTIVE crew with no tool in flight is alive-thinking, NOT
   // awaiting-input — the watchdog no longer flips it. It stays `working` and the
   // sweep emits a distinct, non-alarming CREW QUIET notify (once per episode).
+  // #466: firstTurnConfirmedAt must be SET to take the "deep thinking" path;
+  // unset means the first turn may not have landed → CREW UNDELIVERED instead.
   it("sweep: over-budget INTERACTIVE task with no tool in flight stays working + CREW QUIET (#354)", async () => {
     const store = createStore(dir);
     const calls: any[] = [];
     store.put(rec("s1i", { mode: "interactive", state: "working", lastHeartbeat: 0,
-      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+      heartbeatBudgetMs: 100, firstTurnConfirmedAt: 1,  // confirmed → "deep thinking" path
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
     const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
     await d.sweep();
     expect(store.get("p", "s1i")?.state).toBe("working");
     expect(calls.length).toBe(1);
     expect(calls[0].message).toMatch(/CREW QUIET/);
     expect(calls[0].event.type).toBe("task.quiet");
+  });
+
+  // #466: an interactive crew that is quiet past its budget but has NEVER had
+  // firstTurnConfirmedAt set must emit CREW UNDELIVERED — not "deep thinking".
+  // This catches the race where spawn sends the first turn into a not-yet-ready
+  // box and the crew sits idle at an empty prompt (0% ctx, $0.00).
+  it("sweep: interactive quiet task with NO firstTurnConfirmedAt → CREW UNDELIVERED (#466)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    // firstTurnConfirmedAt intentionally absent — first turn may not have landed
+    store.put(rec("u1", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "u1")?.state).toBe("working"); // state unchanged
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
+    expect(calls[0].message).toMatch(/re-send/i);
+    expect(calls[0].event.type).toBe("task.quiet"); // reuses task.quiet as notify vehicle
+  });
+
+  // #466: same crew but WITH firstTurnConfirmedAt set → normal "deep thinking" path.
+  it("sweep: interactive quiet task WITH firstTurnConfirmedAt → CREW QUIET, not UNDELIVERED (#466)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("u2", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      firstTurnConfirmedAt: 50,  // first turn landed
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "u2")?.state).toBe("working");
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW QUIET/);
+    expect(calls[0].message).not.toMatch(/UNDELIVERED/);
+  });
+
+  // #466: task within heartbeat budget — no UNDELIVERED (not yet timed out).
+  it("sweep: interactive task within budget with NO firstTurnConfirmedAt → no notification (#466)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("u3", { mode: "interactive", state: "working", lastHeartbeat: 950,
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 950 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.length).toBe(0); // within budget → silent
+  });
+
+  // #466: task.first-turn.confirmed event stamps firstTurnConfirmedAt on the record.
+  it("task.first-turn.confirmed stamps firstTurnConfirmedAt on the record (#466)", async () => {
+    const store = createStore(dir);
+    store.put(rec("fc1", { state: "working" }));
+    const d = createDaemon({ store, now: () => 500 });
+    const updated = await d.handle({
+      kind: "event", project: "p",
+      event: { type: "task.first-turn.confirmed", id: "fc1" },
+    }) as import("@squadrant/shared").TaskRecord;
+    expect(updated.firstTurnConfirmedAt).toBe(500);
+    expect(store.get("p", "fc1")?.firstTurnConfirmedAt).toBe(500);
   });
 
   // #354: an interactive crew with a tool in flight (PreToolUse, no PostToolUse)

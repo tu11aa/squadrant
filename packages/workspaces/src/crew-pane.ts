@@ -117,12 +117,16 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
  *   2. settle until the input box content stops changing (accumulation closed)
  *   3. separate Enter keystroke
  *   4. confirm box empty; re-issue ONLY Enter if stranded (never re-paste)
+ *
+ * Returns `{ delivered: true }` when the box empties after the draft was seen
+ * (positive submit confirmation), or `{ delivered: false }` if the retry loop
+ * exhausts without confirmation (#466: callers surface non-delivery explicitly).
  */
 export async function confirmedSendToPane(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane">,
   pane: PaneRef,
   message: string,
-): Promise<void> {
+): Promise<{ delivered: boolean }> {
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   await runtime.pasteToPane(pane, message);
   // #455: track whether the paste ever rendered so we don't treat an empty box
@@ -138,8 +142,8 @@ export async function confirmedSendToPane(
     const draft = parseDraftFromScreen(afterScreen);
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
-    if (draft === "" && sawDraft) return;
-    if (draft === null && afterScreen !== preSendScreen) return;
+    if (draft === "" && sawDraft) return { delivered: true };
+    if (draft === null && afterScreen !== preSendScreen) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
@@ -149,6 +153,7 @@ export async function confirmedSendToPane(
     }
     await runtime.sendKeyToPane(pane, "Enter");
   }
+  return { delivered: false };
 }
 
 export async function sendFirstTurnWhenReady(
@@ -157,7 +162,7 @@ export async function sendFirstTurnWhenReady(
   task: string,
   preLaunchScreen: string,
   acceptanceConfig?: TurnAcceptanceConfig,
-): Promise<void> {
+): Promise<{ delivered: boolean }> {
   await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
 
   const maxPolls = Math.floor(
@@ -169,12 +174,14 @@ export async function sendFirstTurnWhenReady(
   for (let i = 0; i < maxPolls && !stable; i++) {
     const screen = (await runtime.readPaneScreen(pane)) ?? "";
     // Ready = the agent prompt is actually up: screen is non-empty, settled
-    // (unchanged between two consecutive reads), AND has advanced past the
-    // un-entered launch command line. The last condition prevents sending the
-    // task onto the shell line before the TUI takes over — which concatenates
-    // onto the launch command and triggers a shell parse error (opencode
-    // boot-race). A momentarily static launch line is not readiness.
-    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen) {
+    // (unchanged between two consecutive reads), has advanced past the un-entered
+    // launch command line, AND (for the claude/codex path) the HR-bounded input
+    // box is actually rendered. The last check prevents pasting into the claude-mem
+    // boot banner which can stabilise BEFORE the CC input box appears under load
+    // (#466 root cause). For the opencode splash path, parseDraftFromScreen would
+    // return null (no HR box), so we skip that check to preserve existing behaviour.
+    const hasInputBox = !!acceptanceConfig?.splashMarker || parseDraftFromScreen(screen) !== null;
+    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && hasInputBox) {
       stable = true;
     } else {
       previousScreen = screen;
@@ -203,13 +210,20 @@ export async function sendFirstTurnWhenReady(
       await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
       const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
       if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
-        return;
+        return { delivered: true };
       }
       if ((check + 1) % SPLASH_RESEND_EVERY_N === 0 && check < SPLASH_MAX_CHECKS - 1) {
         await runtime.sendToPane(pane, task);
       }
     }
-    return;
+    return { delivered: false };
+  }
+
+  // #466: if the box never appeared in the boot window, skip the paste path and
+  // go directly to the settled-box fallback (confirmedSendToPane). By the time we
+  // get here, more time has passed and the box is likely ready.
+  if (!stable) {
+    return confirmedSendToPane(runtime, pane, task);
   }
 
   // Claude/codex path (#339): paste the task, let the [Pasted text] placeholder
@@ -235,11 +249,11 @@ export async function sendFirstTurnWhenReady(
     const draft = parseDraftFromScreen(afterScreen);
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
-    if (draft === "" && sawDraft) return;
+    if (draft === "" && sawDraft) return { delivered: true };
     // Box not parseable (e.g. an agent TUI without the HR-bounded box, or a
     // transient overlay): fall back to the screen-changed signal so non-claude
     // TUIs aren't worse off than before.
-    if (draft === null && afterScreen !== preSendScreen) return;
+    if (draft === null && afterScreen !== preSendScreen) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
@@ -250,4 +264,14 @@ export async function sendFirstTurnWhenReady(
     // Still stranded — re-issue ONLY the Enter (re-paste only when never rendered).
     await runtime.sendKeyToPane(pane, "Enter");
   }
+
+  // #466: retry loop exhausted — if the paste never rendered (sawDraft=false),
+  // the box was likely not ready when we pasted (the #466 timing race). Fall back
+  // once to confirmedSendToPane which starts fresh on a now-settled box.
+  // When sawDraft=true (paste rendered, Enter repeatedly failed), re-pasting would
+  // stack [Pasted text] entries — do not retry, just report non-delivery.
+  if (!sawDraft) {
+    return confirmedSendToPane(runtime, pane, task);
+  }
+  return { delivered: false };
 }
