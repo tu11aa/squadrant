@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-06-29
+
+### Fixed
+
+- First-turn delivery could still silently drop on a **single** (non-concurrent) spawn of a large
+  multi-line `--agent claude` crew — the v0.13.2 fix only covered concurrent-spawn load. Three
+  interlocking causes: the `CREW UNDELIVERED` watchdog was unreachable for a crew whose first turn
+  never landed (it never leaves the `submitted` state), the boot-readiness gate could latch onto the
+  claude-mem startup banner (which has HR lines but no input-box prompt glyph) and paste before the
+  real input box rendered, and a screen change during boot could be mistaken for a confirmed submit.
+  The watchdog now also covers quiet `submitted` crews, the boot gate requires the actual Claude Code
+  input box (`❯` prompt), and a screen-change only counts as delivery when the paste was observed.
+  ([#466](https://github.com/tu11aa/squadrant/issues/466))
+
+### Changed
+
+- First-turn delivery confirmation is now **hook-driven** instead of inferred from the terminal
+  screen. A `UserPromptSubmit` Claude Code hook (registered per crew) fires when the prompt is
+  actually submitted and authoritatively stamps the first-turn-confirmed signal, ending the class of
+  bugs where a screen-scrape heuristic mis-read an opaque TUI. The confirmation is stamped once and
+  is the **sole** confirmation source for claude crews (the screen-scrape remains only as a fallback
+  when the hook cannot be installed). ([#470](https://github.com/tu11aa/squadrant/issues/470),
+  [#472](https://github.com/tu11aa/squadrant/issues/472))
+
 ## [0.13.2] - 2026-06-29
 
 ### Fixed
