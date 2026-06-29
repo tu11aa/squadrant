@@ -118,14 +118,19 @@ export interface CrewSpawnDeps {
   writeSettingsLocal(projectCwd: string): void;
   /** CLI-edge: write opencode permission config for an interactive crew. */
   writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean }): string;
-  /** CLI-edge: deliver the first turn once the agent pane is ready. */
-  sendFirstTurn(pane: PaneRef, firstTurn: string, preLaunchScreen: string, opts?: TurnAcceptanceConfig): Promise<void>;
+  /** CLI-edge: deliver the first turn once the agent pane is ready. Returns
+   *  { delivered: true } when positively confirmed, { delivered: false } when
+   *  all retry paths exhausted without confirmation (#466). */
+  sendFirstTurn(pane: PaneRef, firstTurn: string, preLaunchScreen: string, opts?: TurnAcceptanceConfig): Promise<{ delivered: boolean }>;
   /** CLI-edge: reserve an ephemeral TCP port for opencode's embedded HTTP server. */
   getFreePort(): Promise<number>;
   /** CLI-edge: deliver the task to a freshly-dispatched codex thread. */
   sendCodexFirstTurn(taskId: string, task: string): Promise<void>;
   /** Optional: called after routing to log the selected route (e.g. chalk.dim(...)). */
   onRouted?(route: CrewRouteResult): void;
+  /** #466: optional — when provided, called with task.first-turn.confirmed after
+   *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
+  emitEvent?(project: string, event: ControlEvent): Promise<void>;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -343,7 +348,13 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    const claudeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    // #466: surface non-delivery explicitly instead of silently returning success.
+    if (!claudeResult.delivered) {
+      process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
+    } else {
+      await deps.emitEvent?.(input.project, { type: "task.first-turn.confirmed", id: rec.id });
+    }
     return { ...pane, title };
   }
 
@@ -389,12 +400,18 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
+    const opencodeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until "Ask
       // anything…" leaves the screen, re-sending every ~3s to cover slow boots
       // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.
       splashMarker: "Ask anything…",
     } satisfies TurnAcceptanceConfig);
+    // #466: surface non-delivery; emit confirmed event on success.
+    if (!opencodeResult.delivered) {
+      process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
+    } else {
+      await deps.emitEvent?.(input.project, { type: "task.first-turn.confirmed", id: rec.id });
+    }
     return { ...pane, title };
   }
 
@@ -413,7 +430,11 @@ export async function runCrewSpawn(
   await deps.runtime.sendToPane(pane, cliCommand);
   if (interactive) {
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, firstTurnTask, preLaunchScreen);
+    const genericResult = await deps.sendFirstTurn(pane, firstTurnTask, preLaunchScreen);
+    // Generic branch has no daemon task record — only warn on non-delivery.
+    if (!genericResult.delivered) {
+      process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
+    }
   }
   return { ...pane, title };
 }
