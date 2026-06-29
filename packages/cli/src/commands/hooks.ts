@@ -31,9 +31,12 @@ async function sendToSock(req: unknown): Promise<void> {
 function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
   switch (sub) {
     case "session-start":
-    case "prompt-submit":
     case "pre-tool-use":
       return { type: "task.progress", id: taskId, note: sub };
+    case "prompt-submit":
+      // #470: NativeHookSource path mirrors the crew _hook UserPromptSubmit path.
+      // Reducer stamps firstTurnConfirmedAt only once; subsequent submits become liveness.
+      return { type: "task.first-turn.confirmed", id: taskId };
     case "stop":
       return mapClaudeHookToEvent("Stop", payload, taskId);
     case "notification":

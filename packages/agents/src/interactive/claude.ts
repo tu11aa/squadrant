@@ -14,7 +14,10 @@ import type { ControlEvent } from "@squadrant/shared";
 // while the parent agent still owns the turn. SessionEnd is NOT liveness: it
 // signals the session is gone (crash / Ctrl-C / /exit), so it terminalizes the
 // record (→ task.session.ended) rather than resuming 'working' (#139).
-const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification"] as const;
+// UserPromptSubmit fires before Claude processes each prompt submission, including
+// the first interactive turn — used as the authoritative first-turn confirmation
+// signal (#470), replacing the screen-scrape {delivered} heuristic.
+const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit"] as const;
 
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
@@ -218,6 +221,11 @@ export function mapClaudeHookToEvent(
       // The only resume-liveness hooks: PostToolUse fires after every tool call
       // mid-turn; SubagentStop fires while the parent still owns the turn.
       return { type: "task.progress", id: taskId, note: event.toLowerCase() };
+    case "UserPromptSubmit":
+      // #470: fires before Claude processes each prompt, including the first.
+      // The reducer stamps firstTurnConfirmedAt only on the first occurrence;
+      // subsequent submits (captain crew send follow-ups) are treated as liveness.
+      return { type: "task.first-turn.confirmed", id: taskId };
     default:
       return null;
   }

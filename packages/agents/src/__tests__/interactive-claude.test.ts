@@ -82,4 +82,11 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.Notification[0].hooks[0].command).toContain(HOOK_CMD);
     expect(out.hooks.Notification[0].hooks[0].command).toContain("Notification");
   });
+
+  it("registers a UserPromptSubmit hook for authoritative first-turn confirmation (#470)", () => {
+    const out = mergeClaudeHooks({}, HOOK_CMD);
+    expect(out.hooks.UserPromptSubmit).toBeDefined();
+    expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain(HOOK_CMD);
+    expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain("UserPromptSubmit");
+  });
 });

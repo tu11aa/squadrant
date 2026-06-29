@@ -128,9 +128,12 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.reattached":
       return stampAttempt(base, {}, now);
     case "task.first-turn.confirmed":
-      // #466: stamp the confirmed delivery timestamp. No state change — the crew
-      // stays `working`. The watchdog reads this field to distinguish a quiet-
-      // thinking crew from one that never received its first turn.
+      // #466/#470: stamp firstTurnConfirmedAt on the FIRST occurrence only.
+      // UserPromptSubmit fires on every prompt submit (incl. captain follow-ups);
+      // subsequent events are treated as liveness so the field is never re-stamped.
+      if (rec.firstTurnConfirmedAt) {
+        return { ...rec, lastEvent: "task.progress" };
+      }
       return { ...rec, firstTurnConfirmedAt: now, lastEvent: ev.type };
     case "task.stalled":
     case "task.idle":

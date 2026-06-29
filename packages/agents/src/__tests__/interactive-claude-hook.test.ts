@@ -36,9 +36,13 @@ describe("mapClaudeHookToEvent", () => {
   });
 
   it("unknown event → null", () => {
-    expect(mapClaudeHookToEvent("UserPromptSubmit", {}, TID)).toBeNull();
     expect(mapClaudeHookToEvent("PreToolUse", {}, TID)).toBeNull();
     expect(mapClaudeHookToEvent("", {}, TID)).toBeNull();
+  });
+
+  it("UserPromptSubmit → task.first-turn.confirmed (#470)", () => {
+    const ev = mapClaudeHookToEvent("UserPromptSubmit", {}, TID);
+    expect(ev).toEqual({ type: "task.first-turn.confirmed", id: TID });
   });
 
   it("anti-#2576 invariant: NO input produces task.done or task.failed", () => {

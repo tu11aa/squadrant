@@ -222,6 +222,26 @@ describe("daemon handler", () => {
     expect(store.get("p", "fc1")?.firstTurnConfirmedAt).toBe(500);
   });
 
+  // #470: UserPromptSubmit fires on every prompt (incl. captain crew send follow-ups).
+  // The reducer must NOT re-stamp firstTurnConfirmedAt on the second occurrence.
+  it("task.first-turn.confirmed is idempotent — second event does not re-stamp firstTurnConfirmedAt (#470)", async () => {
+    const store = createStore(dir);
+    store.put(rec("fc2", { state: "working" }));
+    let tick = 500;
+    const d = createDaemon({ store, now: () => tick });
+    // First confirmation stamps at 500.
+    await d.handle({ kind: "event", project: "p", event: { type: "task.first-turn.confirmed", id: "fc2" } });
+    expect(store.get("p", "fc2")?.firstTurnConfirmedAt).toBe(500);
+    // Second confirmation (e.g. from a captain crew send follow-up) must not change the field.
+    tick = 999;
+    const second = await d.handle({
+      kind: "event", project: "p",
+      event: { type: "task.first-turn.confirmed", id: "fc2" },
+    }) as import("@squadrant/shared").TaskRecord;
+    expect(second.firstTurnConfirmedAt).toBe(500);
+    expect(store.get("p", "fc2")?.firstTurnConfirmedAt).toBe(500);
+  });
+
   // #354: an interactive crew with a tool in flight (PreToolUse, no PostToolUse)
   // past the tool-stall budget IS a hung tool call → stalled, with a tool-named,
   // recoverable CREW STALLED warn.
