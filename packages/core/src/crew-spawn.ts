@@ -82,6 +82,11 @@ export interface CrewSpawnInput {
   model?: string;
   /** True when --agent was explicitly passed by the caller; suppresses crew routing. */
   agentExplicit?: boolean;
+  /** Path to the task file when --task-file was used (not '-' for stdin). Set by
+   *  the CLI so runCrewSpawn can copy the file into the isolated worktree root,
+   *  enabling the crew to `Read ./<basename>` without hunting the main checkout (#458).
+   *  Ignored for --shared spawns and when absent. */
+  taskFile?: string;
 }
 
 // ─── CrewSpawnDeps ───────────────────────────────────────────────────────────
@@ -146,6 +151,10 @@ async function findCrewPane(
 async function runCodexInteractiveSpawn(o: {
   project: string;
   task: string;
+  /** Override for first-turn delivery to the model. When set (e.g. "Read ./file.md
+   *  to get your task brief"), used instead of `task` for sendCodexFirstTurn so large
+   *  file contents aren't sent verbatim. The daemon dispatch always uses `task`. */
+  firstTurn?: string;
   cwd: string;
   runtime: RuntimeDriver;
   workspaceId: string;
@@ -177,8 +186,9 @@ async function runCodexInteractiveSpawn(o: {
   // dispatch only opens the thread; the task text never reaches the model
   // unless we send it. Fire-and-forget: the renderer in the tab picks up
   // streamed deltas once it attaches.
-  if (o.task && o.task !== "(interactive)") {
-    void o.sendCodexFirstTurn(rec.id, o.task).catch((e: unknown) => {
+  const firstTurnText = o.firstTurn ?? o.task;
+  if (firstTurnText && firstTurnText !== "(interactive)") {
+    void o.sendCodexFirstTurn(rec.id, firstTurnText).catch((e: unknown) => {
       process.stderr.write(`(first-turn delivery failed: ${(e as Error).message})\n`);
     });
   }
@@ -229,6 +239,20 @@ export async function runCrewSpawn(
       })
     : proj.path;
 
+  // #458: For isolated-worktree spawns with a task file, copy the file into the
+  // worktree root so the crew can find it via `Read ./<basename>` without having
+  // to discover the main checkout path. Use a short first-turn message referencing
+  // the local path to avoid large-paste issues on big task files.
+  // Guards: skip for --shared (file is in the main checkout, already reachable),
+  // skip for stdin ('-') since there is no file to copy.
+  let firstTurnTask = input.task;
+  if (input.taskFile && input.taskFile !== "-" && !input.shared) {
+    const absTaskFile = path.resolve(input.taskFile);
+    const basename = path.basename(absTaskFile);
+    fs.copyFileSync(absTaskFile, path.join(spawnCwd, basename));
+    firstTurnTask = `Read ./${basename} to get your task brief, then execute it.`;
+  }
+
   // #275 leveled crew routing: consult routing rules when agent/model were not
   // explicitly provided by the caller. Explicit --agent or --model always win.
   const route = !input.agentExplicit && !input.model
@@ -256,6 +280,7 @@ export async function runCrewSpawn(
     return runCodexInteractiveSpawn({
       project: input.project,
       task: input.task,
+      firstTurn: firstTurnTask !== input.task ? firstTurnTask : undefined,
       cwd: spawnCwd,
       runtime: deps.runtime,
       workspaceId: captain.id,
@@ -318,7 +343,7 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     return { ...pane, title };
   }
 
@@ -364,7 +389,7 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, `${input.task}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
+    await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until "Ask
       // anything…" leaves the screen, re-sending every ~3s to cover slow boots
       // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.
@@ -388,7 +413,7 @@ export async function runCrewSpawn(
   await deps.runtime.sendToPane(pane, cliCommand);
   if (interactive) {
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    await deps.sendFirstTurn(pane, input.task, preLaunchScreen);
+    await deps.sendFirstTurn(pane, firstTurnTask, preLaunchScreen);
   }
   return { ...pane, title };
 }

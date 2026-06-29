@@ -129,6 +129,9 @@ crewCommand
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
           ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
+          // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
+          // into the isolated worktree root for relative-path access.
+          ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
         });
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));
       } catch (err) {
