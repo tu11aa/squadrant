@@ -622,3 +622,161 @@ describe("confirmedSendToPane — large paste race (#455)", () => {
     expect(pasteToPane).toHaveBeenCalledWith(pane, "big follow-up");
   });
 });
+
+// ─── #466-single DEFECT 2: boot gate must reject HR-bounded banner (no ❯ prompt) ──
+
+describe("sendFirstTurnWhenReady — boot gate rejects HR banner without ❯ (#466-single defect 2)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  // The claude-mem banner that triggers the bug: has two HR lines but NO ❯ prompt
+  // between them. parseDraftFromScreen returns "" (≠ null) → old code treated this
+  // as "box present", boot gate fired, paste went into the banner and was lost.
+  // hasCCInputBox (new gate) requires a ❯ inside the box → correctly defers.
+  const HR = "─".repeat(60);
+  const BANNER_WITH_HR = `${HR}\nclaude-mem: initializing\nLoaded 42 memories\n${HR}`;
+  const EMPTY_BOX_LOCAL = `…transcript…\n${HR}\n❯ \n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+  const DRAFT_BOX_LOCAL = `…transcript…\n${HR}\n❯ [Pasted text #1]\n${HR}\n   Model: Sonnet 4.6`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Core regression: paste must NOT fire while the HR banner (no ❯) is stable.
+  // We track which readPaneScreen call# triggered the first paste — it must be
+  // AFTER the banner period (n<=4). Before the fix the first paste fires at n=3
+  // (preSend captured during BANNER), which fails the > 4 assertion.
+  it("first paste fires AFTER banner period, not during HR banner stabilisation (#466-single defect 2)", async () => {
+    let firstPasteN = -1;
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 4) return BANNER_WITH_HR;   // n=1..4: banner stable, no ❯
+      if (n <= 9) return EMPTY_BOX_LOCAL;  // n=5..9: CC box (has ❯) appears and stays
+      if (n <= 11) return DRAFT_BOX_LOCAL; // n=10..11: paste rendered
+      return EMPTY_BOX_LOCAL;              // n>=12: submitted
+    });
+    pasteToPane.mockImplementation(() => {
+      if (firstPasteN < 0) firstPasteN = n;
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(15000);
+    await promise;
+
+    // BEFORE fix: firstPasteN = 3 (paste during banner at n=3, ≤ 4) → fails
+    // AFTER fix:  firstPasteN = 7 (paste deferred to n=7, CC box stable) → passes
+    expect(firstPasteN).toBeGreaterThan(4);
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  it("returns { delivered: true } when paste deferred until CC box is stable (#466-single defect 2)", async () => {
+    let firstPasteN = -1;
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 4) return BANNER_WITH_HR;
+      if (n <= 9) return EMPTY_BOX_LOCAL;
+      if (n <= 11) return DRAFT_BOX_LOCAL;
+      return EMPTY_BOX_LOCAL;
+    });
+    pasteToPane.mockImplementation(() => {
+      if (firstPasteN < 0) firstPasteN = n;
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(15000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+    expect(firstPasteN).toBeGreaterThan(4);
+  });
+});
+
+// ─── #466-single DEFECT 3: screen-changed must not declare delivery without sawDraft ─
+
+describe("sendFirstTurnWhenReady — screen change without sawDraft is NOT delivery (#466-single defect 3)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Defect 3 scenario: paste is issued into the ready box, the box becomes
+  // non-parseable (CC TUI transitions mid-boot), and the screen changes — but the
+  // draft was never seen. The old code returned { delivered: true } on the screen-
+  // changed branch without requiring sawDraft. After the fix, it must return false.
+  it("returns { delivered: false } when screen changes but paste never rendered in box (#466-single defect 3)", async () => {
+    const NON_PARSEABLE = "CC transitioning — no HR box visible";
+    const HR = "─".repeat(60);
+    const EMPTY_BOX_LOCAL = `…transcript…\n${HR}\n❯ \n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 2) return EMPTY_BOX_LOCAL;  // readiness: stable CC box
+      if (n === 3) return EMPTY_BOX_LOCAL; // preSend snapshot
+      return NON_PARSEABLE;                 // post-paste: non-parseable, screen changed (boot transition)
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "big task", "$ launch");
+    await vi.advanceTimersByTimeAsync(25000);
+    const result = await promise;
+
+    // Screen changed but draft never rendered — NOT a delivery confirmation.
+    expect(result).toEqual({ delivered: false });
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+});
+
+describe("confirmedSendToPane — screen change without sawDraft is NOT delivery (#466-single defect 3)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("returns { delivered: false } when paste never rendered but screen changed (#466-single defect 3)", async () => {
+    const HR = "─".repeat(60);
+    const IDLE_BOX = `…transcript…\n${HR}\n❯ \n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+    const NON_PARSEABLE = "CC transitioning — no HR box visible";
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n === 1) return IDLE_BOX;   // preSendScreen
+      return NON_PARSEABLE;            // after paste: no box, screen changed — draft never rendered
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "message");
+    await vi.advanceTimersByTimeAsync(8000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: false });
+  });
+});

@@ -180,6 +180,35 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(0); // within budget → silent
   });
 
+  // #466-single DEFECT 1: CREW UNDELIVERED must also fire for a spawned interactive
+  // crew still in `submitted` (never received task.started — the first turn was
+  // dropped before CC could process it). The prior fix only wired UNDELIVERED under
+  // `working`, so a silently-dropped crew was never flagged.
+  it("sweep: interactive `submitted` task past budget with no firstTurnConfirmedAt → CREW UNDELIVERED (#466-single)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s-undelivered", { mode: "interactive", state: "submitted", lastHeartbeat: 0,
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(store.get("p", "s-undelivered")?.state).toBe("submitted"); // state unchanged
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
+    expect(calls[0].message).toMatch(/re-send/i);
+    expect(calls[0].event.type).toBe("task.quiet");
+  });
+
+  // A `submitted` crew within the heartbeat budget must NOT fire (no false alarm).
+  it("sweep: interactive `submitted` task WITHIN budget → no notification (#466-single)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s-ok", { mode: "interactive", state: "submitted", lastHeartbeat: 950,
+      heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 950 }] }));
+    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.length).toBe(0);
+  });
+
   // #466: task.first-turn.confirmed event stamps firstTurnConfirmedAt on the record.
   it("task.first-turn.confirmed stamps firstTurnConfirmedAt on the record (#466)", async () => {
     const store = createStore(dir);

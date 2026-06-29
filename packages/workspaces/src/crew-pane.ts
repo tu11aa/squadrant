@@ -6,7 +6,7 @@ import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, isTurnAccepted } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
@@ -143,7 +143,7 @@ export async function confirmedSendToPane(
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
     if (draft === "" && sawDraft) return { delivered: true };
-    if (draft === null && afterScreen !== preSendScreen) return { delivered: true };
+    if (draft === null && afterScreen !== preSendScreen && sawDraft) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
@@ -175,12 +175,15 @@ export async function sendFirstTurnWhenReady(
     const screen = (await runtime.readPaneScreen(pane)) ?? "";
     // Ready = the agent prompt is actually up: screen is non-empty, settled
     // (unchanged between two consecutive reads), has advanced past the un-entered
-    // launch command line, AND (for the claude/codex path) the HR-bounded input
-    // box is actually rendered. The last check prevents pasting into the claude-mem
-    // boot banner which can stabilise BEFORE the CC input box appears under load
-    // (#466 root cause). For the opencode splash path, parseDraftFromScreen would
-    // return null (no HR box), so we skip that check to preserve existing behaviour.
-    const hasInputBox = !!acceptanceConfig?.splashMarker || parseDraftFromScreen(screen) !== null;
+    // launch command line, AND (for the claude/codex path) the CC input box is
+    // rendered with its ❯ prompt glyph. hasCCInputBox is stricter than the old
+    // parseDraftFromScreen(screen)!==null check: the claude-mem startup banner can
+    // produce HR-bounded regions without a ❯ inside — parseDraftFromScreen returns
+    // "" (≠ null) for those, falsely satisfying the old gate. hasCCInputBox
+    // requires the ❯ to be present, so banners do not trigger a premature paste
+    // (#466-single root cause). For the opencode splash path the splashMarker
+    // short-circuits before this check, preserving existing behaviour.
+    const hasInputBox = !!acceptanceConfig?.splashMarker || hasCCInputBox(screen);
     if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && hasInputBox) {
       stable = true;
     } else {
@@ -253,7 +256,7 @@ export async function sendFirstTurnWhenReady(
     // Box not parseable (e.g. an agent TUI without the HR-bounded box, or a
     // transient overlay): fall back to the screen-changed signal so non-claude
     // TUIs aren't worse off than before.
-    if (draft === null && afterScreen !== preSendScreen) return { delivered: true };
+    if (draft === null && afterScreen !== preSendScreen && sawDraft) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
