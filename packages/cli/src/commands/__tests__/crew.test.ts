@@ -210,7 +210,9 @@ describe("squadrant crew spawn", () => {
       cwd: "/tmp/brove/.worktrees/brove-crew-1",
       task: "do the thing",
     }));
-    expect(squadrantdCall).toHaveBeenCalledTimes(2); // dispatch + task.first-turn.confirmed
+    // #472: hooks installed (writeSettingsLocal mock succeeds) → UserPromptSubmit is
+    // sole confirmation source; scrape does NOT emit task.first-turn.confirmed.
+    expect(squadrantdCall).toHaveBeenCalledTimes(1); // dispatch only
     // Squadrant hooks written to .claude/settings.local.json (auto-loaded source) inside the worktree.
     expect(writePerCrewSettingsLocal).toHaveBeenCalledWith(expect.objectContaining({
       projectCwd: "/tmp/brove/.worktrees/brove-crew-1",
@@ -694,7 +696,8 @@ describe("squadrant crew spawn", () => {
     stderrSpy.mockRestore();
   });
 
-  it("delivered:true emits task.first-turn.confirmed event to daemon (#466)", async () => {
+  // #472: hooks installed (writeSettingsLocal mock succeeds) → scrape does NOT emit.
+  it("delivered:true does NOT emit task.first-turn.confirmed from scrape when hooks installed (#472)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -702,17 +705,39 @@ describe("squadrant crew spawn", () => {
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-dt1" } }));
     squadrantdCall.mockResolvedValue({ id: "task-dt1", project: "brove", provider: "claude", mode: "interactive" });
+    // writePerCrewSettingsLocal default mock returns undefined (no throw) → hooksInstalled=true
 
     const promise = runCrewSpawn({ project: "brove", task: "delivered task" });
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    // squadrantdCall fired twice: once for dispatch, once for task.first-turn.confirmed
+    // dispatch only — hook is sole confirmation source
+    expect(squadrantdCall).toHaveBeenCalledTimes(1);
+    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([r]) => r);
+    expect(calls).not.toContainEqual(expect.objectContaining({ event: { type: "task.first-turn.confirmed" } }));
+  });
+
+  // #472 fallback: when writeSettingsLocal throws, scrape emits task.first-turn.confirmed.
+  it("emits task.first-turn.confirmed from scrape when writeSettingsLocal fails (fallback) (#472)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude ...");
+    buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-fb1" } }));
+    squadrantdCall.mockResolvedValue({ id: "task-fb1", project: "brove", provider: "claude", mode: "interactive" });
+    writePerCrewSettingsLocal.mockImplementationOnce(() => { throw new Error("ENOENT"); });
+
+    const promise = runCrewSpawn({ project: "brove", task: "fallback task" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    // dispatch + task.first-turn.confirmed from scrape
     expect(squadrantdCall).toHaveBeenCalledTimes(2);
     expect(squadrantdCall).toHaveBeenNthCalledWith(2, expect.objectContaining({
       kind: "event",
       project: "brove",
-      event: { type: "task.first-turn.confirmed", id: "task-dt1" },
+      event: { type: "task.first-turn.confirmed", id: "task-fb1" },
     }));
   });
 

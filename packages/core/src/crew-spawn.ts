@@ -328,7 +328,16 @@ export async function runCrewSpawn(
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
     // hooks — does not clobber the user's own personal hooks (#134).
-    deps.writeSettingsLocal(spawnCwd);
+    // #472: capture whether hook installation succeeded — when it does, the
+    // UserPromptSubmit hook is the SOLE first-turn confirmation source for
+    // claude crews. If the write fails (rare OS error), fall back to scrape.
+    let hooksInstalled = false;
+    try {
+      deps.writeSettingsLocal(spawnCwd);
+      hooksInstalled = true;
+    } catch {
+      // Hook file write failed — scrape confirmation remains as fallback.
+    }
     const cliCommand = agent.buildCommand({
       prompt: input.task,
       workdir: spawnCwd,
@@ -352,9 +361,11 @@ export async function runCrewSpawn(
     // #466: surface non-delivery explicitly instead of silently returning success.
     if (!claudeResult.delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
-    } else {
+    } else if (!hooksInstalled) {
+      // #472: hooks unavailable — scrape is the only confirmation source for this crew.
       await deps.emitEvent?.(input.project, { type: "task.first-turn.confirmed", id: rec.id });
     }
+    // When hooksInstalled=true: UserPromptSubmit hook stamps firstTurnConfirmedAt.
     return { ...pane, title };
   }
 

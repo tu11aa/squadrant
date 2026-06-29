@@ -561,7 +561,8 @@ describe("crew spawn regression — daemon path unchanged", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    expect(squadrantdCall).toHaveBeenCalledTimes(2); // dispatch + task.first-turn.confirmed
+    // #472: hooks installed (writePerCrewSettingsLocal mock succeeds) → dispatch only, no scrape emit
+    expect(squadrantdCall).toHaveBeenCalledTimes(1); // dispatch only
     vi.useRealTimers();
   });
 });

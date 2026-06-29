@@ -260,13 +260,31 @@ describe("runCrewSpawn", () => {
       }
     });
 
-    // #466: when sendFirstTurn resolves { delivered: true }, emitEvent is called
-    // with task.first-turn.confirmed so the daemon can stamp firstTurnConfirmedAt.
-    it("emits task.first-turn.confirmed when sendFirstTurn returns { delivered: true } (#466)", async () => {
+    // #472: when hooks are installed (writeSettingsLocal succeeds), the scrape must
+    // NOT emit task.first-turn.confirmed — UserPromptSubmit hook is the sole source.
+    it("does NOT emit task.first-turn.confirmed from scrape when hooks installed (#472)", async () => {
       const config = makeConfig();
       const runtime = makeRuntime();
       const agent = makeAgent("claude");
       const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
+      const emitEvent = vi.fn().mockResolvedValue(undefined);
+      deps.emitEvent = emitEvent;
+      // writeSettingsLocal succeeds (default mock returns undefined — no throw)
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+
+      expect(emitEvent).not.toHaveBeenCalled();
+    });
+
+    // #472: when writeSettingsLocal throws (OS error / hook install failure),
+    // scrape confirmation is the fallback so the crew isn't silently lost.
+    it("emits task.first-turn.confirmed from scrape when writeSettingsLocal fails (fallback) (#472)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.writeSettingsLocal = vi.fn().mockImplementation(() => { throw new Error("ENOENT"); });
       deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
       const emitEvent = vi.fn().mockResolvedValue(undefined);
       deps.emitEvent = emitEvent;
