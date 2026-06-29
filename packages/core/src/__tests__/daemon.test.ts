@@ -985,7 +985,170 @@ describe("crewTag (#378)", () => {
   });
 });
 
-// ── Issue #378: purge request kind ──────────────────────────────────────────
+// ── Issue #457: auto-prune terminal records (keep last K per project) ─────────
+
+describe("sweep: terminal record overflow prune (#457)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-prune-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("keeps the most-recent K terminal records when count exceeds the limit", async () => {
+    const store = createStore(dir);
+    const NOW = 1_000_000_000;
+    // Create 22 terminal records with staggered lastHeartbeat values — all recent
+    // (within minutes of NOW) so the 7-day TTL does NOT eat them; only the
+    // overflow prune should act.
+    for (let i = 0; i < 22; i++) {
+      store.put(rec(`term-${String(i).padStart(2, "0")}`, {
+        state: "done", resultRef: "/r",
+        lastHeartbeat: NOW - 600_000 + i * 1000, // oldest: -600s, newest: -578s
+        heartbeatBudgetMs: 86_400_000,
+        createdAt: NOW - 600_000, // 10 min ago, well within any TTL
+      }));
+    }
+    const d = createDaemon({ store, now: () => NOW, taskTimeoutMs: 999_999_999 });
+    await d.sweep();
+    const remaining = store.list("p").filter((r) => r.state === "done");
+    // Should keep exactly 20 (the default TERMINAL_RECORD_KEEP_PER_PROJECT)
+    expect(remaining.length).toBe(20);
+    // The 2 oldest (term-00 and term-01) should be gone
+    expect(store.get("p", "term-00")).toBeUndefined();
+    expect(store.get("p", "term-01")).toBeUndefined();
+    // The most recent (term-21) should remain
+    expect(store.get("p", "term-21")).toBeDefined();
+  });
+
+  it("does NOT prune when terminal count is at or below the limit", async () => {
+    const store = createStore(dir);
+    const NOW = 1_000_000_000;
+    for (let i = 0; i < 20; i++) {
+      store.put(rec(`term-${i}`, {
+        state: "cancelled", lastHeartbeat: NOW - 600_000 + i * 1000,
+        heartbeatBudgetMs: 86_400_000, createdAt: NOW - 600_000,
+      }));
+    }
+    const d = createDaemon({ store, now: () => NOW, taskTimeoutMs: 999_999_999 });
+    await d.sweep();
+    expect(store.list("p").length).toBe(20);
+  });
+
+  it("never prunes non-terminal records regardless of count", async () => {
+    const store = createStore(dir);
+    const NOW = 1_000_000_000;
+    for (let i = 0; i < 25; i++) {
+      store.put(rec(`live-${i}`, {
+        state: "working", lastHeartbeat: NOW - 600_000 + i * 1000,
+        heartbeatBudgetMs: 86_400_000, createdAt: NOW - 600_000,
+        mode: "headless",
+      }));
+    }
+    const d = createDaemon({ store, now: () => NOW, taskTimeoutMs: 999_999_999 });
+    await d.sweep();
+    expect(store.list("p").length).toBe(25);
+  });
+
+  it("prunes per-project independently — overflow in one project does not affect another", async () => {
+    const store = createStore(dir);
+    const NOW = 1_000_000_000;
+    // proj A: 22 terminal records (2 should be pruned)
+    for (let i = 0; i < 22; i++) {
+      store.put(rec(`a-${i}`, {
+        project: "projA", state: "done", resultRef: "/r",
+        lastHeartbeat: NOW - 600_000 + i * 1000, heartbeatBudgetMs: 86_400_000, createdAt: NOW - 600_000,
+      }));
+    }
+    // proj B: 5 terminal records (none should be pruned)
+    for (let i = 0; i < 5; i++) {
+      store.put(rec(`b-${i}`, {
+        project: "projB", state: "done", resultRef: "/r",
+        lastHeartbeat: NOW - 600_000 + i * 1000, heartbeatBudgetMs: 86_400_000, createdAt: NOW - 600_000,
+      }));
+    }
+    const d = createDaemon({ store, now: () => NOW, taskTimeoutMs: 999_999_999 });
+    await d.sweep();
+    expect(store.list("projA").filter((r) => r.state === "done").length).toBe(20);
+    expect(store.list("projB").filter((r) => r.state === "done").length).toBe(5);
+  });
+});
+
+// ── Issue #457: suppress ghost CREW TIMEOUT when surface is gone ────────────
+
+describe("sweep: ghost CREW TIMEOUT suppression (#457)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-ghost-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("interactive task with GONE surface: task is cancelled but notify is NOT called (silent)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("ghost-gone", {
+      mode: "interactive", state: "awaiting-input",
+      createdAt: 0, lastHeartbeat: 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "gone",
+      notify: async (a) => { calls.push(a); },
+    });
+    await d.sweep();
+    expect(store.get("p", "ghost-gone")?.state).toBe("cancelled");
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("interactive task with ALIVE surface: task is cancelled AND notify IS called", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("ghost-alive", {
+      mode: "interactive", state: "working",
+      createdAt: 0, lastHeartbeat: 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "alive",
+      notify: async (a) => { calls.push(a); },
+    });
+    await d.sweep();
+    expect(store.get("p", "ghost-alive")?.state).toBe("cancelled");
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("interactive task with UNKNOWN surface liveness: task is cancelled AND notify IS called (conservative)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("ghost-unknown", {
+      mode: "interactive", state: "working",
+      createdAt: 0, lastHeartbeat: 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "unknown",
+      notify: async (a) => { calls.push(a); },
+    });
+    await d.sweep();
+    expect(store.get("p", "ghost-unknown")?.state).toBe("cancelled");
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+
+  it("HEADLESS task: notify IS called regardless of isSurfaceAlive (headless has no cmux surface)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("ghost-headless", {
+      mode: "headless", state: "working",
+      createdAt: 0, lastHeartbeat: 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    // isSurfaceAlive returns "gone" — should be ignored for headless
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "gone",
+      notify: async (a) => { calls.push(a); },
+    });
+    await d.sweep();
+    expect(store.get("p", "ghost-headless")?.state).toBe("cancelled");
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+  });
+});
+
+// ── Issue #457: purge request kind ──────────────────────────────────────────
 describe("purge (#378)", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-purge-")); });
