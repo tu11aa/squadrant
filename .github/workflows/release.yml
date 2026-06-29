@@ -102,7 +102,22 @@ jobs:
 
       - name: Publish to npm
         if: steps.check.outputs.should_release == 'true' && steps.npmtok.outputs.has_token == 'true'
-        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
+
+      - name: Verify npm publish
+        if: steps.check.outputs.should_release == 'true' && steps.npmtok.outputs.has_token == 'true'
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          for i in 1 2 3 4 5; do
+            PUBLISHED=$(curl -fsSL "https://registry.npmjs.org/squadrant/$VERSION" | node -p "JSON.parse(require('fs').readFileSync(0)).version" 2>/dev/null || true)
+            if [ "$PUBLISHED" = "$VERSION" ]; then
+              echo "✓ squadrant@$VERSION confirmed live on npm"
+              exit 0
+            fi
+            echo "registry not yet showing $VERSION (attempt $i/5), retrying…"
+            sleep 10
+          done
+          echo "::error::squadrant@$VERSION did NOT appear on the npm registry after publish"
+          exit 1
