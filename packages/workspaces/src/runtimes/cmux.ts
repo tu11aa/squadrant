@@ -203,6 +203,30 @@ export function parseDraftFromScreen(screen: string): string | null {
 }
 
 /**
+ * True when the screen contains a real Claude Code input box — two HR boundaries
+ * AND at least one line between them with the CC prompt glyph (❯ or >). This
+ * distinguishes the CC input box from the claude-mem startup banner, which can
+ * produce HR-bounded regions WITHOUT a prompt glyph and stabilise before CC
+ * renders its own TUI. parseDraftFromScreen returns "" for both cases (two HRs
+ * found, no ❯ inside), so !==null does not distinguish them (#466-single fix).
+ */
+export function hasCCInputBox(screen: string): boolean {
+  if (!screen) return false;
+  const lines = screen.split(/\r?\n/);
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) bottomHR = i;
+      else { topHR = i; break; }
+    }
+  }
+  if (topHR === -1) return false;
+  return lines.slice(topHR + 1, bottomHR).some((l) => /[>❯]/.test(l));
+}
+
+/**
  * Extract the RAW input-box content for the #302 buffer-liveness probe — all
  * content lines between the last two HRs, joined, with the prompt glyph and any
  * trailing cursor glyph stripped (but NOT the #294 ghost heuristics: the probe

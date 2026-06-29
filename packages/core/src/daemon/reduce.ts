@@ -447,6 +447,27 @@ export function createDaemon(deps: DaemonDeps) {
             continue;
           }
         }
+        // #466-single: An interactive crew spawned but never started stays in
+        // `submitted` — no task.started hook ever fires, so the CREW QUIET/
+        // UNDELIVERED block below (which requires `working`) is unreachable.
+        // Surface CREW UNDELIVERED here for the quiet-past-budget submitted case
+        // so a silently-dropped first turn is caught regardless of state.
+        if (r.mode === "interactive" && r.state === "submitted" && !r.firstTurnConfirmedAt) {
+          const elapsed = t - r.lastHeartbeat;
+          if (elapsed > r.heartbeatBudgetMs) {
+            if (deps.notify && quietNotifiedAt.get(r.id) !== r.lastHeartbeat) {
+              quietNotifiedAt.set(r.id, r.lastHeartbeat);
+              const tag = crewTag(r);
+              const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: elapsed };
+              const message = `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed (crew never started) — re-send the task or check the spawn.`;
+              try {
+                const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+              } catch { /* swallowed */ }
+            }
+            continue;
+          }
+        }
         // #354: evaluateStall now only stalls a HEADLESS heartbeat timeout or a
         // hung INTERACTIVE tool call (PreToolUse with no PostToolUse past the
         // tool-stall budget). A quiet interactive thinking turn no longer stalls
