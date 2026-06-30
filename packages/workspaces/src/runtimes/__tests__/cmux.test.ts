@@ -741,24 +741,69 @@ describe("sendToSurface draft-preservation", () => {
     expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
   });
 
-  // #258 fix: ghost-invariant (after===before) is now INCONCLUSIVE — it is
-  // indistinguishable from a real draft whose trailing space was trimmed away
-  // by readInputBoxRaw. Bias: protect the human, delay the bot. The ghost text
-  // is still never re-pasted (no materialization). Crew message deferred until
-  // a later probe sees after==="" (ghost dismissed) or a grapheme-aware match.
-  it("probe: ghost INVARIANT under backspace (stays identical) → defers (inconclusive — indistinguishable from trailing-space real draft, #258)", async () => {
+  // Ghost-invariant fix: when backspace is a true no-op on BOTH trimmed AND raw
+  // content (rawBefore===rawAfter), the box holds non-editable ghost/hint text —
+  // a real draft ALWAYS changes under backspace. Deliver immediately; never defer.
+  // Ghost text is still never re-pasted (no materialization vector).
+  it("probe: ghost INVARIANT under backspace (stays identical) → DELIVERS (ghost is non-editable, not a real draft)", async () => {
     const GHOST = "some persistent suggestion";
     probeMock(GHOST, (s) => s); // invariant: backspace is a no-op on non-buffer ghost
     await expect(
       driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined();
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Ghost text is never re-pasted
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("persistent suggestion")))).toBe(false);
+    // Crew message IS delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    // Enter is submitted
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  // Ghost-defer regression (#258 anti-clobber introduced a regression where a
+  // history/hint ghost text — "go — publish it", "wait for both crews to finish" —
+  // that is invariant under the backspace probe (rawBefore===rawAfter) caused
+  // delivery to defer indefinitely. Because the ghost is non-editable the backspace
+  // is a true no-op on both trimmed AND untrimmed content, giving the clean
+  // discrimination: invariant ⇒ not a real draft ⇒ DELIVER.
+  //
+  // RED test: currently DEFERS (bug). Fix: DELIVERS.
+  it("probe: ghost hint invariant under backspace (rawBefore===rawAfter, non-empty box) → DELIVERS (not defers) [ghost-defer regression]", async () => {
+    const GHOST = "go — publish it";
+    // Ghost: backspace is a true no-op on raw AND trimmed content.
+    probeMock(GHOST, (s) => s);
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined(); // MUST deliver, not defer
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Crew message IS delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    // Ghost text is never typed back into the box (no materialization)
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("go — publish it")))).toBe(false);
+    // Enter is submitted
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  // Regression guard: trailing-space real draft must still DEFER after the ghost fix.
+  // rawBefore="hello " (untrimmed) → backspace removes the space → rawAfter="hello"
+  // → rawBefore !== rawAfter → real editable content → restore + defer.
+  it("probe: trailing-space real draft (rawBefore !== rawAfter) → still DEFERS (no-clobber regression guard)", async () => {
+    let rawBox = "hello "; // trailing space removed by backspace
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${rawBox}`);
+      if (args.includes("send-key") && args.includes("backspace")) { rawBox = rawBox.slice(0, -1); return ""; }
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
     ).rejects.toBeInstanceOf(DeferDelivery);
     const calls = execFileMock.mock.calls.map(argvOf);
-    // Ghost text is never re-pasted (materialization guard still holds)
-    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("persistent suggestion")))).toBe(false);
-    // Crew message NOT delivered — deferred to protect any possible real draft
+    // Crew message NOT delivered
     expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
-    // True no-op: backspace didn't change the box → no restore send at all (#258)
-    expect(calls.filter((a) => a[0] === "send")).toHaveLength(0);
+    // The trailing space is restored
+    const sends = calls.filter((a) => a[0] === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][sends[0].length - 1]).toBe(" ");
   });
 
   // #258 trailing-space residual: probe removes the trailing space (which readInputBoxRaw

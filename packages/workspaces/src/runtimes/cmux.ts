@@ -645,15 +645,22 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       // 'inconclusive': could be ghost-invariant (true no-op) or trailing-space
       // draft (backspace removed the space but trim masked it). Distinguish by
-      // comparing the UNTRIMMED raw content: if the box actually changed, the
-      // backspace consumed a real character — restore it before deferring (#258).
-      if (rawBefore !== null && rawAfter !== null && rawBefore !== rawAfter) {
-        const segs = [...new Intl.Segmenter().segment(rawBefore)];
-        const lastGrapheme =
-          segs.length > 0 ? segs[segs.length - 1].segment : rawBefore.slice(-1);
-        await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+      // comparing the UNTRIMMED raw content.
+      if (rawBefore !== null && rawAfter !== null) {
+        if (rawBefore !== rawAfter) {
+          // Raw changed: real trailing-space (or similar) draft — backspace consumed
+          // a real character. Restore the removed grapheme then defer (#258).
+          const segs = [...new Intl.Segmenter().segment(rawBefore)];
+          const lastGrapheme =
+            segs.length > 0 ? segs[segs.length - 1].segment : rawBefore.slice(-1);
+          await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+          throw new DeferDelivery(draft);
+        }
+        // rawBefore === rawAfter: backspace was a true no-op — the box holds ghost/hint
+        // text (non-editable). A real draft ALWAYS changes under backspace. Deliver.
+        await deliver(); return;
       }
-      // → DEFER either way: protect the human's in-progress text, delay the bot.
+      // Null raw reads: can't distinguish ghost from draft → defer (bias: protect human).
       throw new DeferDelivery(draft);
     },
 
