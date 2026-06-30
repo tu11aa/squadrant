@@ -747,6 +747,115 @@ describe("sendFirstTurnWhenReady — screen change without sawDraft is NOT deliv
   });
 });
 
+// ─── #466 RESIDUAL: gate on CC-initialized (not just ❯ box) + realistic budget ──
+// The prod repro (ci-indexer-38): the ❯ input box renders during cold-init while
+// claude-mem's MCP server is still loading — a window where keystrokes are silently
+// dropped (#235/#292). The old gate (hasCCInputBox = just a ❯ between two HRs)
+// declares "ready" in that window and pastes into a box that drops the keystrokes,
+// so the first turn never lands (firstTurnConfirmedAt was stamped 60s later, on the
+// operator's manual `crew send`). The captain startup path already solved this by
+// gating on CC_INITIALIZED_RE (Ctx Used / ⏵⏵ / for shortcuts / accept edits) via
+// classifyStartupSurface. The crew first-turn path must adopt the same contract.
+
+describe("sendFirstTurnWhenReady — gate requires CC initialized, not just ❯ box (#466 residual)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  const HR2 = "─".repeat(60);
+  // ❯ box present but CC NOT initialized — no Ctx Used / ⏵⏵ / shortcuts / accept-edits.
+  // This is the cold-init window (claude-mem MCP loading) where keystrokes are dropped.
+  const COLD_BOX = `…booting…\n${HR2}\n❯ \n${HR2}`;
+  // CC fully initialized: the persistent bottom status block is present.
+  const READY_BOX = `…transcript…\n${HR2}\n❯ \n${HR2}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+  const DRAFT_READY = `…transcript…\n${HR2}\n❯ [Pasted text #1]\n${HR2}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Core root-cause regression: paste must NOT fire while the ❯ box is up but CC
+  // has not yet rendered its initialized status block (keystrokes are dropped here).
+  it("does not paste while the ❯ box is up but CC is not yet initialized (cold-init drop window)", async () => {
+    let firstPasteN = -1;
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 6) return COLD_BOX;     // ❯ visible but NOT initialized — keystrokes dropped
+      if (n <= 9) return READY_BOX;    // CC initialized (Ctx Used) — input accepted
+      if (n <= 11) return DRAFT_READY; // paste rendered in box
+      return READY_BOX;                // box empties after Enter → submitted
+    });
+    pasteToPane.mockImplementation(() => { if (firstPasteN < 0) firstPasteN = n; });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(20000);
+    const result = await promise;
+
+    // BEFORE fix: firstPasteN = 3 (pasted into the cold box) → fails ( ≤ 6 ).
+    // AFTER fix:  paste deferred until CC initialized (firstPasteN > 6).
+    expect(firstPasteN).toBeGreaterThan(6);
+    expect(result).toEqual({ delivered: true });
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  // Realistic budget: a slow boot under load reaches the initialized state only
+  // after the old 20s/24-poll window. The gated readiness wait must give it time
+  // instead of timing out and blind-firing into a still-cold box.
+  it("waits past the old 20s window for a slow boot to initialize (realistic budget)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 28) return COLD_BOX;     // long cold-init (~24s of polls): box up, not initialized
+      if (n <= 31) return READY_BOX;    // finally initialized
+      if (n <= 33) return DRAFT_READY;  // paste rendered
+      return READY_BOX;                 // submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(40000);
+    const result = await promise;
+
+    // BEFORE fix: 20s budget times out into the cold box → blind fallback → dropped.
+    // AFTER fix:  extended budget reaches the initialized box → delivered.
+    expect(result).toEqual({ delivered: true });
+  });
+
+  // pact-network's ACTUAL case: crews cold-init UNDER LOAD, so CC can take 30–60s to
+  // become input-ready (captains boot unloaded in 5–15s — captain parity is too short
+  // here). CC initializes at ~60s of polls. The readiness wait must reach it BEFORE
+  // the confirmedSendToPane fallback blind-fires into a still-cold box. The strong
+  // CC-initialized gate makes a long budget safe: it only waits as long as CC actually
+  // needs, and a crashed/never-ready CC still caps out at the budget.
+  it("delivers when a slow-under-load crew becomes CC-initialized at ~60s (#466 pact-network case)", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 78) return COLD_BOX;     // ~60s of cold-init under load: box up, NOT initialized
+      if (n <= 81) return READY_BOX;    // CC finally initialized (Ctx Used) → readiness + preSend
+      if (n <= 83) return DRAFT_READY;  // paste rendered in box
+      return READY_BOX;                 // box empties after Enter → submitted
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "task text", "$ launch");
+    await vi.advanceTimersByTimeAsync(95000);
+    const result = await promise;
+
+    // BEFORE fix: 30s budget times out at ~poll 38 → confirmedSendToPane fires while
+    //             CC is still cold → keystrokes dropped → delivered:false.
+    // AFTER fix:  90s budget reaches the initialized box at ~poll 80 → delivered.
+    expect(result).toEqual({ delivered: true });
+  });
+});
+
 describe("confirmedSendToPane — screen change without sawDraft is NOT delivery (#466-single defect 3)", () => {
   let readPaneScreen: ReturnType<typeof vi.fn>;
   let pasteToPane: ReturnType<typeof vi.fn>;

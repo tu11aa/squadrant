@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -708,6 +708,27 @@ describe("sendToSurface draft-preservation", () => {
     expect(sends[0][sends[0].length - 1]).toBe("d");
   });
 
+  // #258 emoji fix: trailing emoji (surrogate pair) is correctly classified as
+  // real-draft and the FULL grapheme (not a lone broken surrogate) is restored.
+  it("probe: real draft ending in emoji (😀, surrogate pair) → defers and restores the full grapheme, never re-pastes draft", async () => {
+    const DRAFT = "hello 😀";
+    // Terminal backspace removes the 😀 grapheme; readInputBoxRaw trims trailing
+    // space → box shows "hello" → probeMock simulates this transformation.
+    probeMock(DRAFT, () => "hello");
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Full draft must NEVER be re-pasted
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(DRAFT)))).toBe(false);
+    // Crew message NOT delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+    // The restored char must be the full emoji grapheme, not a broken surrogate
+    const sends = calls.filter((a) => a[0] === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][sends[0].length - 1]).toBe("😀");
+  });
+
   it("probe: ghost that DISMISSES to empty under backspace → delivers message+Enter, NEVER re-sends the ghost text (#302 materialization regression)", async () => {
     const GHOST = "wait for both crews to finish";
     probeMock(GHOST, () => ""); // verified live: the #294 queue ghost dismisses to empty
@@ -720,13 +741,95 @@ describe("sendToSurface draft-preservation", () => {
     expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
   });
 
-  it("probe: ghost INVARIANT under backspace (stays identical) → delivers, never re-sends the ghost", async () => {
+  // Ghost-invariant fix: when backspace is a true no-op on BOTH trimmed AND raw
+  // content (rawBefore===rawAfter), the box holds non-editable ghost/hint text —
+  // a real draft ALWAYS changes under backspace. Deliver immediately; never defer.
+  // Ghost text is still never re-pasted (no materialization vector).
+  it("probe: ghost INVARIANT under backspace (stays identical) → DELIVERS (ghost is non-editable, not a real draft)", async () => {
     const GHOST = "some persistent suggestion";
     probeMock(GHOST, (s) => s); // invariant: backspace is a no-op on non-buffer ghost
-    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined();
     const calls = execFileMock.mock.calls.map(argvOf);
+    // Ghost text is never re-pasted
     expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("persistent suggestion")))).toBe(false);
+    // Crew message IS delivered
     expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    // Enter is submitted
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  // Ghost-defer regression (#258 anti-clobber introduced a regression where a
+  // history/hint ghost text — "go — publish it", "wait for both crews to finish" —
+  // that is invariant under the backspace probe (rawBefore===rawAfter) caused
+  // delivery to defer indefinitely. Because the ghost is non-editable the backspace
+  // is a true no-op on both trimmed AND untrimmed content, giving the clean
+  // discrimination: invariant ⇒ not a real draft ⇒ DELIVER.
+  //
+  // RED test: currently DEFERS (bug). Fix: DELIVERS.
+  it("probe: ghost hint invariant under backspace (rawBefore===rawAfter, non-empty box) → DELIVERS (not defers) [ghost-defer regression]", async () => {
+    const GHOST = "go — publish it";
+    // Ghost: backspace is a true no-op on raw AND trimmed content.
+    probeMock(GHOST, (s) => s);
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined(); // MUST deliver, not defer
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Crew message IS delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    // Ghost text is never typed back into the box (no materialization)
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("go — publish it")))).toBe(false);
+    // Enter is submitted
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  // Regression guard: trailing-space real draft must still DEFER after the ghost fix.
+  // rawBefore="hello " (untrimmed) → backspace removes the space → rawAfter="hello"
+  // → rawBefore !== rawAfter → real editable content → restore + defer.
+  it("probe: trailing-space real draft (rawBefore !== rawAfter) → still DEFERS (no-clobber regression guard)", async () => {
+    let rawBox = "hello "; // trailing space removed by backspace
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${rawBox}`);
+      if (args.includes("send-key") && args.includes("backspace")) { rawBox = rawBox.slice(0, -1); return ""; }
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Crew message NOT delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+    // The trailing space is restored
+    const sends = calls.filter((a) => a[0] === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][sends[0].length - 1]).toBe(" ");
+  });
+
+  // #258 trailing-space residual: probe removes the trailing space (which readInputBoxRaw
+  // trimmed, so before===after in the trimmed view → inconclusive). The RAW (untrimmed)
+  // comparison detects the change and restores the space before deferring — the user's
+  // draft is left intact as "hello ", not mutated to "hello".
+  it("probe: trailing-space draft (inconclusive) → defers AND restores the space (draft preserved)", async () => {
+    let rawBox = "hello "; // trailing space — readInputBoxRaw trims it away → before="hello"
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${rawBox}`);
+      if (args.includes("send-key") && args.includes("backspace")) {
+        rawBox = rawBox.slice(0, -1); // backspace removes the trailing space from terminal
+        return "";
+      }
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // Crew message NOT delivered
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+    // The trailing space is restored — exactly one send(), and it sends " "
+    const sends = calls.filter((a) => a[0] === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0][sends[0].length - 1]).toBe(" ");
   });
 
   it("non-probe call with a draft present defers WITHOUT any keystroke (hot path unchanged — never races typing)", async () => {
@@ -1221,5 +1324,49 @@ describe("classifyStartupSurface (#292 startup-readiness classifier)", () => {
   it("prefers 'working' over 'idle' when both chrome and a live turn are present", () => {
     // The 258 fixture shape: idle-looking input box but an active spinner above.
     expect(classifyStartupSurface(WORKING_STATUS)).toBe("working");
+  });
+});
+
+// #258 probe false-negative cases — RED tests (Step-1: assert DESIRED behavior
+// which FAILS against the current slice(0,-1) logic).
+//
+// The current classifier misses two false-negative triggers and would fall
+// through to deliver() — clobbering a real in-progress user draft:
+//
+//  1. trailing-space: readInputBoxRaw trims trailing whitespace, so a draft
+//     ending in " " produces before="hello" AFTER the trim. Backspace removes
+//     the space from the terminal; box now reads "hello" too → after="hello".
+//     before === after (looks invariant), NOT before.slice(0,-1) → 'no-draft'
+//     → deliver → CLOBBER.
+//
+//  2. trailing emoji (wide/surrogate-pair char): backspace removes one grapheme
+//     ("😀" = U+1F600 = 😀); after="hello " trimmed to "hello".
+//     before.slice(0,-1) removes only the low surrogate (\uDE00), yielding
+//     "hello \uD83D" (broken) ≠ "hello" → 'no-draft' → deliver → CLOBBER.
+//
+// These tests FAIL on the current Step-1 classifier (it returns 'no-draft' for
+// both). They become GREEN in Step-2 after the fix.
+describe("classifyDraftLiveness (#258 probe false-negative detection)", () => {
+  it("returns 'real-draft' for ASCII draft that is 1 char shorter (sanity: positive detection still works)", () => {
+    // "hello world" → backspace removes 'd' → "hello worl"
+    expect(classifyDraftLiveness("hello world", "hello worl")).toBe("real-draft");
+  });
+
+  it("trailing-space: before='hello', after='hello' → 'inconclusive' (should NOT be no-draft)", () => {
+    // User typed "hello " — readInputBoxRaw trims → before="hello".
+    // Backspace removes the space from the terminal box: renders "hello" → after="hello".
+    // Current logic: after !== before.slice(0,-1) ("hell") → 'no-draft' → delivers → CLOBBER.
+    // Desired: 'inconclusive' — ambiguous between ghost-invariant and trailing-space draft;
+    // MUST defer rather than risk clobbering the human's real content.
+    expect(classifyDraftLiveness("hello", "hello")).toBe("inconclusive");
+  });
+
+  it("trailing emoji (surrogate pair): before='hello \\uD83D\\uDE00', after='hello' → 'real-draft'", () => {
+    // User typed "hello 😀" (U+1F600 = surrogate pair 😀).
+    // readInputBoxRaw: before="hello 😀" (no trailing whitespace to trim).
+    // Backspace removes the 😀 grapheme; terminal now shows "hello " → trimmed → after="hello".
+    // Current logic: before.slice(0,-1) = "hello \uD83D" (broken surrogate) ≠ "hello" → 'no-draft' → CLOBBER.
+    // Desired: 'real-draft' (grapheme-aware detection: drop last grapheme "😀" → "hello " → trim → "hello").
+    expect(classifyDraftLiveness("hello 😀", "hello")).toBe("real-draft");
   });
 });

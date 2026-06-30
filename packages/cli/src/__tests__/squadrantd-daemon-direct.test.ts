@@ -90,16 +90,18 @@ describe("squadrantd daemon-direct (#332)", () => {
     const inbox = join(stateRoot, "inbox");
     mkdirSync(inbox, { recursive: true });
 
-    // Seed two STALE entries (older than STALE_THRESHOLD_MS) followed by one
-    // FRESH entry, all written directly so we control the timestamps.
+    // Seed two STALE non-terminal entries followed by one FRESH terminal entry,
+    // written directly so we control timestamps and kinds.
+    // Non-terminal stale entries (task.started) are silently acked (#332 storm).
+    // Terminal stale entries would bypass the skip (#474 D1) — tested separately.
     const staleTs = new Date(Date.now() - STALE_THRESHOLD_MS - 60_000).toISOString();
     const freshTs = new Date().toISOString();
-    const line = (seq: number, ts: string, message: string) =>
-      JSON.stringify({ seq, ts, taskId: "t1", name: "test-crew", kind: "task.done", provider: "claude", payload: {}, message }) + "\n";
+    const mkLine = (seq: number, ts: string, kind: string, message: string) =>
+      JSON.stringify({ seq, ts, taskId: "t1", name: "test-crew", kind, provider: "claude", payload: {}, message }) + "\n";
     appendFileSync(join(inbox, "p.log"),
-      line(1, staleTs, "CREW DONE stale-1") +
-      line(2, staleTs, "CREW DONE stale-2") +
-      line(3, freshTs, "CREW DONE fresh-3"),
+      mkLine(1, staleTs, "task.started", "crew started stale-1") +
+      mkLine(2, staleTs, "task.started", "crew started stale-2") +
+      mkLine(3, freshTs, "task.done", "CREW DONE fresh-3"),
       "utf-8");
     await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
 
@@ -458,6 +460,46 @@ describe("squadrantd daemon-direct (#332)", () => {
     // A subsequent (non-overlapping) tick must NOT re-deliver the already-acked entry.
     await handle.tickDelivery!();
     expect(sent.length).toBe(1);
+  });
+
+  // #474 D1: must-deliver events (task.done / task.blocked / task.failed)
+  // enqueued >5min before the daemon started must be DELIVERED, not stale-acked.
+  // task.blocked is especially critical: a dropped one leaves the captain waiting
+  // forever on a crew question. Today delivery-loop.ts:158 acks ALL stale entries
+  // regardless of kind — this test MUST FAIL until the D1 fix.
+  it("delivers stale must-deliver events (task.done + task.blocked) despite age on daemon restart (#474 / D1)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-474-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const inbox = join(stateRoot, "inbox");
+    mkdirSync(inbox, { recursive: true });
+
+    // Two must-deliver entries enqueued >5min before this daemon session:
+    //   seq 1 — task.done    (CREW DONE): terminal transition
+    //   seq 2 — task.blocked (CREW BLOCKED): crew waiting for captain input
+    const staleTs = new Date(Date.now() - STALE_THRESHOLD_MS - 60_000).toISOString();
+    const mkEntry = (seq: number, kind: string, message: string) =>
+      JSON.stringify({ seq, ts: staleTs, taskId: "t1", name: "test-crew", kind, provider: "claude", payload: {}, message }) + "\n";
+    appendFileSync(join(inbox, "p.log"),
+      mkEntry(1, "task.done",    "CREW DONE stale-terminal") +
+      mkEntry(2, "task.blocked", "CREW BLOCKED stale-blocked"),
+      "utf-8");
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+
+    const cmux = fakeCmux();
+    const handle = startSquadrantd({
+      stateRoot, sockPath: sock, sweepMs: 0,
+      daemonCmux: cmux,
+      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
+    });
+    stop = handle.stop;
+
+    if (handle.tickDelivery) await handle.tickDelivery();
+
+    // Both must-deliver events reach the captain regardless of staleness.
+    expect(cmux.sent.length).toBe(2);
+    expect(cmux.sent[0].text).toMatch(/CREW DONE stale-terminal/);
+    expect(cmux.sent[1].text).toMatch(/CREW BLOCKED stale-blocked/);
   });
 
   it("daemon-direct probe emits task.blocked when interactive crew pane shows a permission prompt", async () => {

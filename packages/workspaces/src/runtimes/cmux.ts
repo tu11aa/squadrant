@@ -235,7 +235,10 @@ export function hasCCInputBox(screen: string): boolean {
  * parseDraftFromScreen this captures EVERY content line, so a multi-line draft's
  * change on its last line is not missed.
  */
-export function readInputBoxRaw(screen: string): string | null {
+export function readInputBoxRaw(
+  screen: string,
+  opts?: { trim?: boolean },
+): string | null {
   if (!screen) return null;
   const lines = screen.split(/\r?\n/);
   const HR_RE = /^\s*─{10,}\s*$/;
@@ -255,7 +258,10 @@ export function readInputBoxRaw(screen: string): string | null {
     s = s.replace(/\s*[▌█▔▎▏]+\s*$/, "");    // drop a trailing cursor glyph
     parts.push(s);
   }
-  return parts.join("").replace(/\s+$/, ""); // trim only the trailing edge
+  const joined = parts.join("");
+  // Default: trim trailing whitespace. Pass { trim: false } to preserve it —
+  // used by the probe branch to detect whether a backspace was a no-op (#258).
+  return opts?.trim === false ? joined : joined.replace(/\s+$/, "");
 }
 
 // #292: Claude Code renders a persistent bottom status block once its TUI is past
@@ -312,6 +318,53 @@ export function classifySendOutcome(payload: string, postBox: string | null): st
   if (postBox === "") return "submitted";
   if (postBox === payload || postBox.includes(payload)) return "stuck";
   return "unknown";
+}
+
+export type DraftLiveness = "real-draft" | "no-draft" | "inconclusive";
+
+/**
+ * Pure probe-liveness decision (#258 fix).
+ * Given `before` / `after` raw box readings (from readInputBoxRaw) around a
+ * single backspace, classify whether a real user draft was present.
+ *
+ * Three-way result — caller mapping:
+ *   "real-draft"   → restore last grapheme, throw DeferDelivery
+ *   "no-draft"     → deliver (ghost positively confirmed dismissed to empty)
+ *   "inconclusive" → throw DeferDelivery (bias: protect human, delay bot)
+ *
+ * "Inconclusive" covers: after===before (ghost-invariant OR trailing-space
+ * trim makes them equal — indistinguishable), null after-read (timing/overlay),
+ * and any other mismatch not explained by grapheme removal. The old code treated
+ * all of these as "no-draft" (fall-through to deliver), which is the #258 clobber.
+ */
+export function classifyDraftLiveness(
+  before: string | null,
+  after: string | null,
+): DraftLiveness {
+  if (before === null || after === null) return "inconclusive";
+
+  // Ghost dismissed to empty → positively confirmed no real draft remains.
+  if (after === "") return "no-draft";
+
+  // Grapheme-aware last-grapheme-removal check (Node 16+ / Intl.Segmenter).
+  // Removes the last grapheme cluster from `before`, trims trailing whitespace
+  // (matching what readInputBoxRaw does on the re-rendered screen), then
+  // compares to `after`. Handles emoji, wide chars, and combining sequences
+  // that slice(0,-1) gets wrong by removing only one UTF-16 code unit.
+  if (before.length > 0) {
+    const segs = [...new Intl.Segmenter().segment(before)];
+    const expected = segs
+      .slice(0, -1)
+      .map((s) => s.segment)
+      .join("")
+      .replace(/\s+$/, "");
+    if (after === expected) return "real-draft";
+  }
+
+  // Everything else — after===before (ghost-invariant or trailing-space trim),
+  // arbitrary mismatch, or other ambiguity — is inconclusive. Defer to protect
+  // the human; a correctly empty box always produces after==="" (caught above).
+  return "inconclusive";
 }
 
 export function createCmuxDriver(): RuntimeDriver {
@@ -558,30 +611,57 @@ export function createCmuxDriver(): RuntimeDriver {
       // defer and carry the content so the relay can track stability (#302).
       if (!opts?.probe) throw new DeferDelivery(draft);
 
-      // #302 buffer-liveness probe (replaces the old destructive backspace×N
-      // clear + re-paste, which MATERIALIZED ghost suggestions). A real draft is
-      // the ONLY thing that yields the "last char removed, still non-empty"
-      // signature under ONE backspace (verified live, CC 2.1.x); a ghost either
-      // stays invariant or dismisses to empty. So we PROTECT only on that exact
-      // signature, and we NEVER re-paste screen-read content.
+      // #302 buffer-liveness probe. classifyDraftLiveness decides from the
+      // before/after box readings whether a real draft is present (#258 fix).
+      // Capture both trimmed (for classification) and untrimmed (for no-op
+      // detection in the inconclusive branch) before sending the backspace.
       const before = readInputBoxRaw(screen);
+      const rawBefore = readInputBoxRaw(screen, { trim: false });
       await cmux(["send-key", "--workspace", ws, "--surface", sf, "backspace"]);
+      // 50ms settle: give the TUI time to re-render before reading back the
+      // result. Without this, a too-fast read may still show the pre-backspace
+      // content, producing a false after===before (timing-race #258).
+      await new Promise<void>((r) => setTimeout(r, 50));
       let afterScreen = "";
       try {
         afterScreen = await cmux(["read-screen", "--workspace", ws, "--surface", sf]);
-      } catch { /* unreadable after probe — treat as no real draft, fall through to deliver */ }
+      } catch { /* unreadable — after stays "", readInputBoxRaw → null → inconclusive → defer */ }
       const after = readInputBoxRaw(afterScreen);
+      const rawAfter = readInputBoxRaw(afterScreen, { trim: false });
 
-      if (before !== null && after !== null && after.length > 0 && after === before.slice(0, -1)) {
-        // Confirmed REAL draft. Restore the single char our probe removed (NOT a
-        // full re-paste — at most one known char), then defer. Never clobber, and
-        // a ghost can never reach this branch, so it can never be materialized.
-        await cmux(["send", "--workspace", ws, "--surface", sf, before.slice(-1)]);
+      const liveness = classifyDraftLiveness(before, after);
+      if (liveness === "real-draft") {
+        // Confirmed real draft. Restore the last grapheme our probe removed
+        // (grapheme-aware — not slice(-1) which breaks emoji, #258), then defer.
+        const segs = before ? [...new Intl.Segmenter().segment(before)] : [];
+        const lastGrapheme =
+          segs.length > 0 ? segs[segs.length - 1].segment : before!.slice(-1);
+        await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
         throw new DeferDelivery(draft);
       }
-
-      // No real draft (ghost dismissed/invariant, or buffer now empty) → deliver.
-      await deliver();
+      if (liveness === "no-draft") {
+        // Ghost positively dismissed to empty — safe to deliver.
+        await deliver(); return;
+      }
+      // 'inconclusive': could be ghost-invariant (true no-op) or trailing-space
+      // draft (backspace removed the space but trim masked it). Distinguish by
+      // comparing the UNTRIMMED raw content.
+      if (rawBefore !== null && rawAfter !== null) {
+        if (rawBefore !== rawAfter) {
+          // Raw changed: real trailing-space (or similar) draft — backspace consumed
+          // a real character. Restore the removed grapheme then defer (#258).
+          const segs = [...new Intl.Segmenter().segment(rawBefore)];
+          const lastGrapheme =
+            segs.length > 0 ? segs[segs.length - 1].segment : rawBefore.slice(-1);
+          await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+          throw new DeferDelivery(draft);
+        }
+        // rawBefore === rawAfter: backspace was a true no-op — the box holds ghost/hint
+        // text (non-editable). A real draft ALWAYS changes under backspace. Deliver.
+        await deliver(); return;
+      }
+      // Null raw reads: can't distinguish ghost from draft → defer (bias: protect human).
+      throw new DeferDelivery(draft);
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {

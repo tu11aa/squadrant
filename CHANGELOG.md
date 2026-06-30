@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-06-30
+
+### Fixed
+
+- **Crew first-turn no longer dropped on slow boot (#466):** crew first-turn delivery now gates on the Claude pane being CC-initialized (the persistent bottom status block), not just the bare input box which renders during claude-mem cold-init where keystrokes are silently dropped. Readiness budget extended 30s->90s because crews cold-init under load (the captain path boots unloaded). First fix in this class to target delivery readiness rather than post-hoc confirmation.
+- **Captain draft no longer clobbered (#258):** delivery defers while the captain's input box has an in-progress draft instead of gluing the crew message onto it and submitting. Grapheme-aware liveness probe (handles drafts ending in a space or emoji), 50ms settle re-read, restores any probed character; inconclusive liveness defers. The maxDefers backstop still guarantees eventual delivery.
+- **Ghost/hint no longer blocks delivery (#258 follow-up):** a ghost/history hint in the captain input box (dim suggestion text) no longer causes delivery to defer forever — a backspace no-op (ghost, non-editable) now delivers, while a real draft (backspace consumes a character) still defers. Closes the regression from the initial #258 defer-on-ambiguity.
+- **Terminal events survive daemon restart (#474):** CREW DONE/BLOCKED/failed/cancelled events bypass the stale-skip and deliver regardless of age, so a daemon restart >5min after enqueue no longer silently drops them. Added per-decision delivery logging to squadrantd.log.
+
+### Removed
+
+- **Inert null-draft escalation (#477):** removed a no-op code path (probe escalation was ignored by the cmux driver for null-drafts) and corrected its misleading test. No behavior change.
+
 ## [0.13.3] - 2026-06-29
 
 ### Fixed

@@ -13,6 +13,11 @@ import type { DaemonContext } from "./context.js";
 const CURSOR_SUBSCRIBER = "captain";
 const CAPTAIN_GONE_STREAK_K = 3;
 
+// Must-deliver event kinds that bypass the stale-skip path (#474 D1).
+// Includes terminal transitions (done/failed/cancelled) AND task.blocked:
+// a dropped task.blocked leaves the captain waiting forever on a crew question.
+const TERMINAL_KINDS = new Set(["task.done", "task.failed", "task.cancelled", "task.blocked"]);
+
 /** Pure: find the captain surface by title in a surface list (#332). */
 export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
   return surfaces.find((s) => s.title === captainTitle) ?? null;
@@ -156,15 +161,24 @@ export function createDelivery(
         // #332 storm BUG 3: silently ack entries that pre-date this daemon
         // session by more than STALE_THRESHOLD_MS.
         if (new Date(entry.ts).getTime() < sessionStartMs - STALE_THRESHOLD_MS) {
-          await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
-          continue;
+          // D1 (#474): terminal events must deliver regardless of age — an
+          // undelivered CREW DONE must reach the captain even after a daemon
+          // restart >5min after enqueue. Non-terminal backlog suppression stays.
+          if (!TERMINAL_KINDS.has(entry.kind)) {
+            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-skipped`);
+            await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
+            continue;
+          }
+          log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
         }
         const result = await d.deliver(entry, (text, sendOpts) =>
           cmux.send(surface!, text, sendOpts),
         );
         if ("delivered" in result) {
+          log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=delivered`);
           await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
         } else {
+          log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred`);
           break;
         }
       }
