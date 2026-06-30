@@ -6,14 +6,20 @@ import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, classifyStartupSurface } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, isTurnAccepted } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
 // Poll-based first-turn delivery timing constants.
 const SEND_FIRST_TURN_FLOOR_MS = 1500;
 const POLL_INTERVAL_MS = 750;
-const SEND_FIRST_TURN_TIMEOUT_MS = 20000;
+// #466 residual: 30s matches the captain startup path's readyTimeoutMs
+// (deliverStartupPrompt). A crew in a fresh worktree with claude-mem's MCP server
+// loading under machine load can take >20s to reach the input-ready state; the old
+// 20s budget timed out into the cold-init box and blind-fired keystrokes that were
+// dropped. The gate below (CC-initialized, not just a ❯ box) needs this headroom to
+// observe the surface actually become ready instead of giving up early.
+const SEND_FIRST_TURN_TIMEOUT_MS = 30000;
 const POST_SEND_CHECK_MS = 750;
 
 // #235 Confirm-on-delivery constants for splash-gated agents (opencode).
@@ -183,8 +189,20 @@ export async function sendFirstTurnWhenReady(
     // requires the ❯ to be present, so banners do not trigger a premature paste
     // (#466-single root cause). For the opencode splash path the splashMarker
     // short-circuits before this check, preserving existing behaviour.
-    const hasInputBox = !!acceptanceConfig?.splashMarker || hasCCInputBox(screen);
-    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && hasInputBox) {
+    // #466 residual: the ❯ input box renders during cold-init while claude-mem's
+    // MCP server is still loading — a window where keystrokes are silently dropped
+    // (#235/#292). hasCCInputBox alone (just a ❯ between two HRs) is satisfied in
+    // that window, so the old gate pasted into a box that dropped the keystrokes and
+    // the first turn never landed. Adopt the captain startup contract: require the
+    // surface to be CC-INITIALIZED (classifyStartupSurface === "idle", i.e. the
+    // persistent bottom status block — Ctx Used / ⏵⏵ / shortcuts / accept edits — is
+    // present and no turn is in flight), in addition to the ❯ box (keeps #469's
+    // banner rejection). The opencode splash path is unchanged: its splashMarker
+    // short-circuits below, so we leave its readiness as "box present".
+    const ready = acceptanceConfig?.splashMarker
+      ? true
+      : hasCCInputBox(screen) && classifyStartupSurface(screen) === "idle";
+    if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && ready) {
       stable = true;
     } else {
       previousScreen = screen;
