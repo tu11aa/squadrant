@@ -46,22 +46,23 @@ describe("CaptainDelivery defer-while-typing (#258/#302)", () => {
     expect(sent).toEqual([]);
   });
 
-  // #474 D2: DeferDelivery(null) means the captain pane has NO visible input box
-  // — this is NOT "captain typing", it means "pane not in input state".
-  // Null-draft defers must escalate to probe after stableProbePolls (3), not
-  // maxDefers (300). Today captain-delivery.ts:71 short-circuits on null content
-  // (`null && ...` = false) so stableCounts never increments and only the 300-
-  // defer backstop eventually fires. This test MUST FAIL until the D2 fix.
-  it("null-draft DeferDelivery escalates to probe after stableProbePolls, not maxDefers (#474 / D2)", async () => {
+  // #477: null-draft means the captain pane has no visible input box — delivery
+  // MUST keep deferring (safe). stableCounts never accumulates on null content
+  // so the probe-escalation path (#302) is never triggered. Only the maxDefers
+  // backstop eventually forces delivery.
+  it("null-draft DeferDelivery never escalates early — maxDefers backstop only (#477)", async () => {
     const probes: boolean[] = [];
-    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 3 });
+    const d = new CaptainDelivery({ maxDefers: 5, stableProbePolls: 3 });
     const send = async (_t: string, opts?: { probe?: boolean }) => {
       probes.push(!!opts?.probe);
-      if (!opts?.probe) throw new DeferDelivery(null); // null draft: pane not in input state
+      if (!opts?.probe) throw new DeferDelivery(null);
     };
-    // Drive for stableProbePolls + 2 iterations; probe must fire by then.
-    for (let i = 0; i < 5; i++) await d.deliver({ seq: 1, message: "x" }, send);
-    // Probe must have fired well before maxDefers (300).
+    // After stableProbePolls+1 polls, probe must NOT have fired (stableCounts stays 0 on null)
+    for (let i = 0; i < 4; i++) await d.deliver({ seq: 1, message: "x" }, send);
+    expect(probes.every((p) => !p)).toBe(true);
+    // maxDefers backstop fires at poll 6 (deferCount reaches maxDefers=5)
+    await d.deliver({ seq: 1, message: "x" }, send);
+    await d.deliver({ seq: 1, message: "x" }, send);
     expect(probes.some((p) => p)).toBe(true);
   });
 });

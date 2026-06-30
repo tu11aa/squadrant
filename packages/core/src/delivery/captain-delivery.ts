@@ -68,12 +68,7 @@ export class CaptainDelivery {
         // Track content stability: byte-identical non-empty draft across
         // consecutive polls means the captain isn't actively typing (#302).
         const content = e.draft;
-        const prev = this.lastContent.get(seq);
-        // D2 (#474): null-draft means the captain pane has no visible input
-        // box — NOT "captain typing". Consecutive nulls escalate like a stable
-        // draft so delivery isn't stuck for maxDefers (300) polls.
-        // Real-draft (byte-identical non-empty) path (#302/#258) is unchanged.
-        if (content === null ? prev === null : (!!content && content === prev)) {
+        if (content && content === this.lastContent.get(seq)) {
           this.stableCounts.set(seq, (this.stableCounts.get(seq) ?? 0) + 1);
         } else {
           this.stableCounts.set(seq, 0);
