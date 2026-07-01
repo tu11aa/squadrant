@@ -227,6 +227,34 @@ export function hasCCInputBox(screen: string): boolean {
 }
 
 /**
+ * True when the HR-bounded region is an AskUserQuestion / permission-approval
+ * SELECTION MODAL rather than the genuine CC input box (#484). Both draw their
+ * own pair of ── borders and highlight the selected option with the same ❯
+ * glyph as a real draft, so neither parseDraftFromScreen nor hasCCInputBox can
+ * tell them apart — a live-captured frame confirms parseDraftFromScreen
+ * returns the highlighted option's own label ("1. Red"), not "" or null (see
+ * docs/reports/484-askuserquestion-fixture.txt). CC renders every selectable
+ * option (AskUserQuestion AND the Bash-approval picker) as a "N. Label" line,
+ * which a real typed draft or ghost/hint placeholder never does — that's the
+ * positive signal used here.
+ */
+export function hasModalOptionList(screen: string): boolean {
+  if (!screen) return false;
+  const lines = screen.split(/\r?\n/);
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) bottomHR = i;
+      else { topHR = i; break; }
+    }
+  }
+  if (topHR === -1) return false;
+  return lines.slice(topHR + 1, bottomHR).some((l) => /^\s*\d+\.\s/.test(l));
+}
+
+/**
  * Extract the RAW input-box content for the #302 buffer-liveness probe — all
  * content lines between the last two HRs, joined, with the prompt glyph and any
  * trailing cursor glyph stripped (but NOT the #294 ghost heuristics: the probe
@@ -603,6 +631,16 @@ export function createCmuxDriver(): RuntimeDriver {
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).
       if (draft === null) throw new DeferDelivery(null);
+
+      // #484: an AskUserQuestion / permission-approval SELECTION MODAL — never
+      // deliver into it, regardless of what parseDraftFromScreen returned or
+      // whether this call is probe-escalated. Checked before the probe branch
+      // below because the probe's backspace-no-op check can't tell "ghost
+      // placeholder" apart from "selection list" (backspace is a no-op
+      // against both) and would otherwise call deliver(), typing the message
+      // and pressing Enter into the picker — auto-confirming whichever option
+      // is highlighted.
+      if (hasModalOptionList(screen)) throw new DeferDelivery(null);
 
       // Empty input — nothing to protect, deliver directly.
       if (draft === "") { await deliver(); return; }

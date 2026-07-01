@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1123,6 +1123,148 @@ describe("parseDraftFromScreen", () => {
       "utf-8",
     );
     expect(parseDraftFromScreen(fixture)).toBe("");
+  });
+});
+
+// #484: AskUserQuestion / permission-approval SELECTION modals draw their own
+// pair of ── HR borders around a numbered option list, and highlight the
+// selected option with the same ❯ glyph as the genuine CC input box. A real
+// captured frame (docs/reports/484-askuserquestion-fixture.txt) confirms
+// parseDraftFromScreen returns the highlighted option's label ("1. Red") —
+// NOT null and NOT "" — so hasCCInputBox (which only checks for *any* ❯/>
+// between the HRs) cannot tell the modal apart from a genuine draft-bearing
+// input box. hasModalOptionList is the positive modal detector: CC renders
+// every selectable option (AskUserQuestion AND the Bash-approval picker) as
+// a "N. Label" line, which a real typed draft or ghost/hint placeholder
+// never does.
+describe("hasModalOptionList (#484 AskUserQuestion / permission-picker detector)", () => {
+  it("returns true for a real captured AskUserQuestion modal frame (regression #484)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-askuserquestion-fixture.txt"),
+      "utf-8",
+    );
+    expect(hasModalOptionList(fixture)).toBe(true);
+  });
+
+  it("returns false for a real captured permission-approval frame (only one HR — already deferred via the #268 null gate)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-permission-fixture.txt"),
+      "utf-8",
+    );
+    expect(hasModalOptionList(fixture)).toBe(false);
+  });
+
+  it("returns false for a real captured genuine idle empty input box", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-idle-fixture.txt"),
+      "utf-8",
+    );
+    expect(hasModalOptionList(fixture)).toBe(false);
+  });
+
+  it("returns false for a genuine typed draft (regression guard for #258)", () => {
+    const screen = makeTestScreen("❯ my draft here", "Some history");
+    expect(hasModalOptionList(screen)).toBe(false);
+  });
+
+  it("returns false when HR boundaries are absent (overlay/scrolled — regression guard for #268)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/268-overlay-fixture.txt"),
+      "utf-8",
+    );
+    expect(hasModalOptionList(fixture)).toBe(false);
+  });
+
+  it("returns false for ghost/hint placeholder text (regression guard for #294 ghost-defer)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/294-ghost-placeholder-fixture.txt"),
+      "utf-8",
+    );
+    expect(hasModalOptionList(fixture)).toBe(false);
+  });
+});
+
+// #484: the DANGEROUS path is the #302 stable-content probe escalation. Once a
+// mailbox entry has been stable (same non-null draft) across stableProbePolls
+// polls, captain-delivery.ts retries with probe:true. The probe's backspace
+// classifier treats "backspace is a no-op on both raw and trimmed content" as
+// proof of a non-editable ghost/hint placeholder → safe to deliver. But
+// backspace is ALSO a no-op against a selection modal (it isn't a text field
+// at all) — without the #484 guard, the probe would misclassify the modal as
+// a ghost and call deliver(), typing the crew message + Enter into the
+// picker and auto-confirming whichever option happens to be highlighted.
+describe("sendToSurface #484 modal/permission-picker deferral", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  it("defers on a real captured AskUserQuestion modal frame, never types or presses Enter (non-probe path)", async () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-askuserquestion-fixture.txt"),
+      "utf-8",
+    );
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return fixture;
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send")).toBe(false);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(false);
+  });
+
+  it("defers on a real captured AskUserQuestion modal frame even when probe-escalated (stable-content path) — never sends backspace, never delivers [#484 regression]", async () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-askuserquestion-fixture.txt"),
+      "utf-8",
+    );
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return fixture;
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    // The modal guard must trip BEFORE the probe ever sends a backspace.
+    expect(calls.some((a) => a.includes("send-key") && a.includes("backspace"))).toBe(false);
+    expect(calls.some((a) => a[0] === "send")).toBe(false);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(false);
+  });
+
+  it("still defers on a real captured permission-approval frame (regression guard, already-safe via the #268 null gate)", async () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-permission-fixture.txt"),
+      "utf-8",
+    );
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return fixture;
+      return "";
+    });
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send")).toBe(false);
+  });
+
+  it("still delivers on a real captured genuine idle empty input box (regression guard)", async () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-idle-fixture.txt"),
+      "utf-8",
+    );
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return fixture;
+      return "";
+    });
+    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
   });
 });
 
