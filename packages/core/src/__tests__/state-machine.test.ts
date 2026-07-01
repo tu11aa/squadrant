@@ -202,13 +202,45 @@ describe("state-machine reduce", () => {
     expect(still.pendingTool).toEqual({ name: "Bash", since: 7000 });
   });
 
-  it("turn boundaries clear pendingTool (turn.completed / task.started)", () => {
-    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
-    const ended = reduce(open, { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
-    expect(ended.pendingTool).toBeUndefined();
-    const started = reduce(reduce(open, { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 8000),
+  it("a genuine turn boundary (no tool in flight) clears pendingTool on turn.completed / task.started", () => {
+    const started = reduce(reduce(rec({ state: "working" }), { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 8000),
       { type: "task.started", id: "t1" }, 9000);
     expect(started.pendingTool).toBeUndefined();
+  });
+
+  // ── #492: CREW IDLE flood — turn.completed contradicted by an in-flight tool ──
+  // Multiple parallel lifecycle sources (cmux-store file-watch, native claude
+  // hooks, cmux's forwarded event stream) independently report turn-end for the
+  // same crew. A stale/heuristic report can assert task.turn.completed while a
+  // real tool call is still open (pendingTool set from its own PreToolUse) — that
+  // is self-contradictory (the daemon's own evidence says a tool never returned),
+  // so it must not be trusted as a genuine turn boundary.
+  it("task.turn.completed while a tool is genuinely in flight is NOT trusted as a turn boundary (#492)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const stillOpen = reduce(open, { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
+    expect(stillOpen.state).toBe("working"); // never flips to awaiting-input
+    expect(stillOpen.pendingTool).toEqual({ name: "Bash", since: 7000 }); // tool window untouched
+    expect(stillOpen.lastHeartbeat).toBe(8000); // still counts as liveness
+  });
+
+  it("repeated contradicted task.turn.completed reports never re-enter awaiting-input (flood guard)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    // Simulate several racing lifecycle sources each independently re-asserting
+    // turn-end on every watchdog tick while the same tool call is still open.
+    let cur = open;
+    for (const t of [8000, 9000, 10000, 11000]) {
+      cur = reduce(cur, { type: "task.turn.completed", id: "t1", turnId: "x" }, t);
+      expect(cur.state).toBe("working");
+    }
+  });
+
+  it("once the tool genuinely returns (PostToolUse), a subsequent task.turn.completed IS a real boundary", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "posttooluse" }, 7500);
+    expect(closed.pendingTool).toBeUndefined();
+    const ended = reduce(closed, { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
+    expect(ended.state).toBe("awaiting-input");
+    expect(ended.pendingTool).toBeUndefined();
   });
 
   it("stalled + task.progress (matching PostToolUse) recovers to working AND clears pendingTool (#354 auto-clear)", () => {

@@ -119,6 +119,15 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // opencode SSE bridge emits task.turn.completed right after an explicit
       // `signal blocked`, and that trailing turn-end must not drop the question.
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      // #492: several parallel lifecycle sources (cmux store-file watch, native
+      // claude hooks, cmux's forwarded event stream) each independently report
+      // turn-end for the same crew. A stale/heuristic report can assert
+      // task.turn.completed while a real tool call is still open (pendingTool set
+      // from its own PreToolUse) — that directly contradicts the daemon's own
+      // evidence (no matching PostToolUse yet), so it is not a genuine turn
+      // boundary. Treat it as liveness only; the real turn-end arrives once the
+      // tool actually returns and pendingTool clears.
+      if (rec.pendingTool) return stampAttempt(base, {}, now);
       return { ...stampAttempt(base, {}, now), state: "awaiting-input", pendingTool: undefined };
     case "task.delta":
       return stampAttempt(base, {}, now);  // heartbeat-only
