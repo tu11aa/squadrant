@@ -157,7 +157,7 @@ function liveDeliveryBehind(d: DaemonSnapshot): number {
 interface Collected {
   now: number;
   daemonT: Tally; projT: Tally; envT: Tally; overall: Tally;
-  errors: number; behind: number; crewAgeMs: number;
+  errors: number; behind: number; crewAgeMs: number; undelivered: number;
 }
 
 function collect(snap: FullSnapshot): Collected {
@@ -174,7 +174,7 @@ function collect(snap: FullSnapshot): Collected {
   ];
   const daemonStates: AnyState[] = [];
   const projStates: AnyState[] = [];
-  let errors = 0, behind = 0, crewAgeMs = 0;
+  let errors = 0, behind = 0, crewAgeMs = 0, undelivered = 0;
   if (snap.daemon !== "unreachable") {
     const t0 = snap.daemon.tier0;
     daemonStates.push("alive"); // the daemon process itself is up
@@ -184,6 +184,8 @@ function collect(snap: FullSnapshot): Collected {
     for (const c of snap.daemon.tier1) {
       projStates.push(c.state);
       if (c.kind === "crew" && c.lastSeenMs != null) crewAgeMs = Math.max(crewAgeMs, now - c.lastSeenMs);
+      // B2/#466: promoted CREW UNDELIVERED signal — see liveness.ts projectHealth.
+      if (c.kind === "crew" && c.detail?.startsWith("undelivered")) undelivered++;
     }
     for (const p of snap.daemon.tier2.projects) {
       if (p.delivery.behind > 0) projStates.push("stale");
@@ -197,7 +199,7 @@ function collect(snap: FullSnapshot): Collected {
     projT: tally(projStates),
     envT: tally(envStates),
     overall: tally([...daemonStates, ...projStates, ...envStates]),
-    errors, behind, crewAgeMs,
+    errors, behind, crewAgeMs, undelivered,
   };
 }
 
@@ -240,6 +242,12 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
     "System Health",
     `${col.overall.alive} of ${col.overall.total} monitored components are alive — the ring shows the full breakdown by state.`,
   ));
+  if (col.undelivered > 0) {
+    out.push(banner(
+      "warn",
+      `⚠ ${col.undelivered} CREW${col.undelivered > 1 ? "S" : ""} UNDELIVERED — first turn may not have landed; re-send the task or check the spawn (see Projects tab)`,
+    ));
+  }
   out.push(
     `<div class="hero a-${mc}">`,
     `<div class="gauge">`,

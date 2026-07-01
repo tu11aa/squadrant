@@ -270,6 +270,30 @@ describe("stopped distinguished from fault (#324/#323)", () => {
   });
 });
 
+describe("CREW UNDELIVERED headline (B2/#466)", () => {
+  const undeliveredCrew: DaemonSnapshot["tier1"] = [
+    { kind: "crew", project: "pact", ref: "pact-crew-1", state: "stale", lastSeenMs: 1, detail: "undelivered (submitted)" },
+  ];
+
+  it("shows a headline banner on Overview counting undelivered crews", () => {
+    const out = renderContent(full(daemon({}, undeliveredCrew)));
+    expect(out).toMatch(/1 CREW UNDELIVERED/i);
+  });
+
+  it("does not show the undelivered banner when no crew is flagged", () => {
+    const normalCrew: DaemonSnapshot["tier1"] = [
+      { kind: "crew", project: "pact", ref: "pact-crew-1", state: "alive", lastSeenMs: 1, detail: "working" },
+    ];
+    const out = renderContent(full(daemon({}, normalCrew)));
+    expect(out).not.toMatch(/undelivered/i);
+  });
+
+  it("Projects tab still shows the raw detail text for the flagged crew row", () => {
+    const out = renderContent(full(daemon({}, undeliveredCrew)));
+    expect(out).toContain("undelivered (submitted)");
+  });
+});
+
 describe("delivery lag bar", () => {
   it("renders an SVG-free delivery bar with acked + behind segments", () => {
     const d = daemon();
