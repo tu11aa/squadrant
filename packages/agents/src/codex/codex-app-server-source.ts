@@ -37,19 +37,27 @@ export class CodexAppServerSource implements LifecycleSource {
   private deps?: LifecycleSourceDeps;
   /** taskId → last reported snapshot (for snapshot() liveness floor). */
   private cache = new Map<string, LifecycleSnapshot>();
+  private active = false;
 
   start(deps: LifecycleSourceDeps): void {
     this.deps = deps;
+    this.active = true;
   }
 
   stop(): void {
     this.deps = undefined;
     this.cache.clear();
+    this.active = false;
   }
 
   /** Returns the last-reported snapshot for a known crew (liveness floor). */
   snapshot(taskId: string): LifecycleSnapshot | undefined {
     return this.cache.get(taskId);
+  }
+
+  /** Read-only source health (B4). Purely push-driven — never errors on its own. */
+  health(): { active: boolean; error: string | null } {
+    return { active: this.active, error: null };
   }
 
   /**

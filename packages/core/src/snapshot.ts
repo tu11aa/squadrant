@@ -18,6 +18,13 @@ export interface TelegramHealth extends TelegramBridgeHealth {
   configured: boolean;
 }
 
+/** B4: one registered LifecycleSource's health (cmux-store/native-hook/codex-appserver). */
+export interface LifecycleSourceHealth {
+  name: string;
+  active: boolean;
+  error: string | null;
+}
+
 export type BuildState = "fresh" | "stale";
 
 /**
@@ -41,6 +48,7 @@ export interface DaemonRoot {
   sweep: { lastSweepAt: number | null; ageMs: number | null; cadenceMs: number };
   log: { errorCount: number; sizeBytes: number; windowMs: number };
   telegram: TelegramHealth;
+  lifecycleSources: LifecycleSourceHealth[];
 }
 
 // ── Tier 2: per-project data plane + global results ───────────────────────────
@@ -92,6 +100,7 @@ export interface DaemonSnapshotInputs {
   sweepCadenceMs: number;
   log: { errorCount: number; sizeBytes: number; windowMs: number };
   telegram: TelegramHealth;
+  lifecycleSources: LifecycleSourceHealth[];
   health: ComponentHealth[];
   projects: Array<{
     project: string;
@@ -126,6 +135,7 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
       },
       log: input.log,
       telegram: input.telegram,
+      lifecycleSources: input.lifecycleSources,
     },
     tier1: input.health,
     tier2: {

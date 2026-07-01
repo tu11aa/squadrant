@@ -34,6 +34,7 @@ function inputs(over: Partial<DaemonSnapshotInputs> = {}): DaemonSnapshotInputs 
     sweepCadenceMs: 30_000,
     log: { errorCount: 0, sizeBytes: 1234, windowMs: 3_600_000 },
     telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+    lifecycleSources: [],
     health: HEALTH,
     projects: [
       {
@@ -164,5 +165,21 @@ describe("assembleDaemonSnapshot", () => {
   it("B3: reports not-configured when telegram isn't set up", () => {
     const snap = assembleDaemonSnapshot(inputs(), NOW);
     expect(snap.tier0.telegram).toEqual({ configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null });
+  });
+
+  it("B4: passes per-source LifecycleSource health through to Tier 0 verbatim", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({ lifecycleSources: [{ name: "cmux-store", active: true, error: null }, { name: "native-hook", active: false, error: "boom" }] }),
+      NOW,
+    );
+    expect(snap.tier0.lifecycleSources).toEqual([
+      { name: "cmux-store", active: true, error: null },
+      { name: "native-hook", active: false, error: "boom" },
+    ]);
+  });
+
+  it("B4: defaults to an empty list when no sources are registered", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier0.lifecycleSources).toEqual([]);
   });
 });

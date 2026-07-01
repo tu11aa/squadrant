@@ -24,6 +24,7 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
       sweep: { lastSweepAt: 1000, ageMs: 8000, cadenceMs: 30_000 },
       log: { errorCount: 0, sizeBytes: 100, windowMs: 3_600_000 },
       telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+      lifecycleSources: [],
       ...over,
     },
     tier1,
@@ -226,6 +227,36 @@ describe("telegram bridge health (B3)", () => {
       telegram: { configured: true, polling: true, lastSuccessfulPollAt: 900_000, lastError: "getUpdates 401 Unauthorized", lastErrorAt: 950_000 },
     })));
     expect(out).toContain("getUpdates 401 Unauthorized");
+  });
+});
+
+describe("lifecycle source health (B4)", () => {
+  it("renders no source rows when none are registered", () => {
+    const out = renderContent(full(daemon({ lifecycleSources: [] })));
+    expect(out).not.toContain("cmux-store");
+  });
+
+  it("renders an active source as healthy", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "cmux-store", active: true, error: null }],
+    })));
+    expect(out).toContain("cmux-store");
+    expect(out).toMatch(/cmux-store[\s\S]*?s-alive/);
+  });
+
+  it("flags an inactive source as a fault", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "native-hook", active: false, error: null }],
+    })));
+    expect(out).toMatch(/native-hook[\s\S]*?s-gone/);
+  });
+
+  it("flags an active-but-errored source as a caution and shows the error text", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "cmux-store", active: true, error: "ENOSPC: watch failed" }],
+    })));
+    expect(out).toMatch(/cmux-store[\s\S]*?s-stale/);
+    expect(out).toContain("ENOSPC: watch failed");
   });
 });
 

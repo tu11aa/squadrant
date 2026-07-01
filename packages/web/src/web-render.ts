@@ -418,6 +418,14 @@ function renderDaemon(snap: FullSnapshot): string {
     instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && squadrant heal daemon") : ""),
     instr("sweep", `${pill(sweepState, sweep)}`),
     instr("telegram", `${pill(tgState, tgLabel)}`),
+    ...t0.lifecycleSources.map((s) => {
+      // B4: architecture-internal debugging aid — a source going dark usually
+      // already manifests as a stale/gone crew via the heartbeat classification;
+      // this just explains WHY without a daemon-log dive.
+      const state: AnyState = !s.active ? "gone" : s.error ? "stale" : "alive";
+      const label = !s.active ? "inactive" : s.error ? s.error : "active";
+      return instr(s.name, `${pill(state, label)}`);
+    }),
     `</div>`,
   );
 

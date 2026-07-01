@@ -143,6 +143,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       telegram: ctx.telegramBridge
         ? { configured: true, ...ctx.telegramBridge.health() }
         : { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+      lifecycleSources: ctx.lifecycleSources.map((s) => ({ name: s.name, ...(s.health?.() ?? { active: true, error: null }) })),
       health: buildHealth(),
       projects,
       results: gatherResults(resultsDir),
