@@ -33,6 +33,8 @@ function inputs(over: Partial<DaemonSnapshotInputs> = {}): DaemonSnapshotInputs 
     lastSweepAt: 9_000,
     sweepCadenceMs: 30_000,
     log: { errorCount: 0, sizeBytes: 1234, windowMs: 3_600_000 },
+    telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+    lifecycleSources: [],
     health: HEALTH,
     projects: [
       {
@@ -126,5 +128,58 @@ describe("assembleDaemonSnapshot", () => {
   it("passes global _results artifact stats through", () => {
     const snap = assembleDaemonSnapshot(inputs(), NOW);
     expect(snap.tier2.results).toEqual({ fileCount: 294, totalBytes: 18_000_000 });
+  });
+
+  it("B1: defaults deferral stats to zero/not-stuck when the caller has none yet", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier2.projects[0].deferral).toEqual({ maxDeferCount: 0, stuck: false });
+  });
+
+  it("B1: passes per-project deferral stats through when the caller supplies them", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({
+        projects: [
+          {
+            project: "squadrant",
+            mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
+            lastAckedSeq: 12,
+            storeByState: { working: 3 },
+            corruptCount: 0,
+            deferral: { maxDeferCount: 47, stuck: false },
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(snap.tier2.projects[0].deferral).toEqual({ maxDeferCount: 47, stuck: false });
+  });
+
+  it("B3: passes telegram bridge health through to Tier 0 verbatim", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({ telegram: { configured: true, polling: true, lastSuccessfulPollAt: 9500, lastError: null, lastErrorAt: null } }),
+      NOW,
+    );
+    expect(snap.tier0.telegram).toEqual({ configured: true, polling: true, lastSuccessfulPollAt: 9500, lastError: null, lastErrorAt: null });
+  });
+
+  it("B3: reports not-configured when telegram isn't set up", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier0.telegram).toEqual({ configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null });
+  });
+
+  it("B4: passes per-source LifecycleSource health through to Tier 0 verbatim", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({ lifecycleSources: [{ name: "cmux-store", active: true, error: null }, { name: "native-hook", active: false, error: "boom" }] }),
+      NOW,
+    );
+    expect(snap.tier0.lifecycleSources).toEqual([
+      { name: "cmux-store", active: true, error: null },
+      { name: "native-hook", active: false, error: "boom" },
+    ]);
+  });
+
+  it("B4: defaults to an empty list when no sources are registered", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier0.lifecycleSources).toEqual([]);
   });
 });

@@ -422,3 +422,36 @@ describe("CmuxStoreSource — stop()", () => {
     expect(reports.length).toBe(reportsAtStop);
   });
 });
+
+describe("CmuxStoreSource — health() (B4)", () => {
+  it("reports inactive with no error before start()", () => {
+    const src = makeSource();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+
+  it("reports active after start()", () => {
+    const { deps } = makeDeps();
+    const src = makeSource();
+    src.start(deps);
+    expect(src.health()).toEqual({ active: true, error: null });
+  });
+
+  it("reports inactive again after stop()", () => {
+    const { deps } = makeDeps();
+    const src = makeSource();
+    src.start(deps);
+    src.stop();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+
+  it("captures a watchDir failure as an error while staying active (initial scan still ran)", () => {
+    const { deps } = makeDeps();
+    const src = makeSource({
+      watchDir: () => { throw new Error("ENOSPC: watch failed"); },
+    });
+    src.start(deps);
+    const h = src.health();
+    expect(h.active).toBe(true);
+    expect(h.error).toContain("ENOSPC");
+  });
+});

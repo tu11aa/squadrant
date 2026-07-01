@@ -300,13 +300,31 @@
     </div>
   </section>
 
+  <!-- SLIDE 5: Delivery & Lifecycle Layer -->
+  <section class="slide">
+    <h2>5 · Delivery &amp; Lifecycle Layer</h2>
+    <p class="sub">Not a package — a layer that spans three of them. Three <code>LifecycleSource</code> adapters normalize agent signals into a 4-state model (<code>packages/core/src/lifecycle-source.ts</code>); the daemon turns transitions into mailbox messages; <code>CaptainDelivery</code> gates every keystroke into the captain's live cmux pane. Full sequence diagram: <code>docs/diagrams/2026-07-01-lifecycle-and-delivery-flow.html</code>.</p>
+    <div class="stage" style="place-items:start;overflow:auto">
+      <table>
+        <thead><tr><th>Piece</th><th>Lives in</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code style="color:var(--core)">LifecycleSource</code> port + <code>reduceLifecycle</code></td><td><code style="color:var(--core)">@squadrant/core</code> — <code>lifecycle-source.ts</code></td><td>Interface + pure 4-rule reducer (agent-authoritative, scan-can't-assert-needsInput, sticky needsInput, no stale regression). Zero concrete adapters.</td></tr>
+          <tr><td><code style="color:var(--agents)">CodexAppServerSource</code></td><td><code style="color:var(--agents)">@squadrant/agents</code> — <code>codex/codex-app-server-source.ts</code></td><td>Wraps <code>CodexInteractiveDriver</code>'s emit; maps <code>ControlEvent</code> → <code>LifecycleSnapshot</code>, push-only.</td></tr>
+          <tr><td><code style="color:var(--workspaces)">NativeHookSource</code> · <code style="color:var(--workspaces)">CmuxStoreSource</code></td><td><code style="color:var(--workspaces)">@squadrant/workspaces</code> — <code>native-hooks/</code>, <code>cmux-daemon/</code></td><td>Claude hook events (primary) and <code>~/.cmuxterm/*-hook-sessions.json</code> file-watch (backup A). Both push agent-originated snapshots.</td></tr>
+          <tr><td><code style="color:var(--core)">CaptainDelivery</code> + mailbox</td><td><code style="color:var(--core)">@squadrant/core</code> — <code>delivery/captain-delivery.ts</code>, <code>daemon/delivery-loop.ts</code>, <code>mailbox.ts</code></td><td>Per-project defer/stable-count state machine; reads unacked mailbox entries every tick, escalates to a liveness probe after N stable polls (#302).</td></tr>
+          <tr><td><code style="color:var(--workspaces)">sendToSurface</code> gate</td><td><code style="color:var(--workspaces)">@squadrant/workspaces</code> — <code>runtimes/cmux.ts</code></td><td>Reads the captain's screen, classifies the input box (draft / empty / not-visible), defers into AskUserQuestion/permission modals (#484), and only then sends text + Enter.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <footer>
     <button id="prev">← Prev</button>
     <div class="dots">
-      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i>
+      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i><i data-i="4"></i>
     </div>
     <button id="next">Next →</button>
-    <span class="num" id="num">1 / 4</span>
+    <span class="num" id="num">1 / 5</span>
   </footer>
 </div>
 

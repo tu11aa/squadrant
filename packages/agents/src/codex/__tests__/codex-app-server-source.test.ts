@@ -251,3 +251,19 @@ describe("CodexAppServerSource — anti-#2576: never reports task.done", () => {
     expect(reports).toHaveLength(0);
   });
 });
+
+describe("CodexAppServerSource — health() (B4)", () => {
+  it("reports inactive before start()", () => {
+    const src = makeSource();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+
+  it("reports active after start(), inactive after stop() (never errors — purely push-driven)", () => {
+    const { deps } = makeDeps();
+    const src = makeSource();
+    src.start(deps);
+    expect(src.health()).toEqual({ active: true, error: null });
+    src.stop();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+});

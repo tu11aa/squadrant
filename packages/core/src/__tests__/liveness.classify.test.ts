@@ -81,4 +81,52 @@ describe("projectHealth (pure projection)", () => {
     const kinds = cs.map((c) => c.kind);
     expect(kinds).not.toContain("relay" as never);
   });
+
+  it("B2: flags a quiet-past-budget interactive crew with no confirmed first turn as undelivered", () => {
+    const cs = projectHealth({
+      ...base,
+      now: 100_000,
+      captainStopped: false,
+      crews: [
+        {
+          id: "a1", name: "alpha", state: "submitted", mode: "interactive",
+          lastHeartbeat: 0, heartbeatBudgetMs: 60_000, firstTurnConfirmedAt: undefined,
+        },
+      ],
+    });
+    const crew = find(cs, "crew")!;
+    expect(crew.detail).toMatch(/undelivered/i);
+  });
+
+  it("B2: a crew with a confirmed first turn is never flagged undelivered, even if quiet past budget", () => {
+    const cs = projectHealth({
+      ...base,
+      now: 100_000,
+      captainStopped: false,
+      crews: [
+        {
+          id: "a1", name: "alpha", state: "working", mode: "interactive",
+          lastHeartbeat: 0, heartbeatBudgetMs: 60_000, firstTurnConfirmedAt: 1,
+        },
+      ],
+    });
+    const crew = find(cs, "crew")!;
+    expect(crew.detail).not.toMatch(/undelivered/i);
+  });
+
+  it("B2: a crew still within its heartbeat budget is never flagged undelivered", () => {
+    const cs = projectHealth({
+      ...base,
+      now: 10_000,
+      captainStopped: false,
+      crews: [
+        {
+          id: "a1", name: "alpha", state: "submitted", mode: "interactive",
+          lastHeartbeat: 0, heartbeatBudgetMs: 60_000, firstTurnConfirmedAt: undefined,
+        },
+      ],
+    });
+    const crew = find(cs, "crew")!;
+    expect(crew.detail).not.toMatch(/undelivered/i);
+  });
 });

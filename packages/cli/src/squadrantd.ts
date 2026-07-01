@@ -143,6 +143,10 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
+  // B4: register for per-source health aggregation in the snapshot. Registering
+  // is inert (no I/O) — only start() below (VITEST-guarded) actually runs a
+  // source, so health() correctly reports inactive until then.
+  ctx.lifecycleSources = [cmuxStoreSource, nativeHookSource, codexAppServerSource];
 
   // ── Telegram bridge (opt-in #65) ──────────────────────────────────────────
   // Built only when config.telegram is present. Skipped under vitest because the

@@ -38,7 +38,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick } = createDelivery(ctx, daemonCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux);
   // Compose the Telegram outbound push onto the notify fan-out: a captain
   // notification also pushes to the project's Telegram topic. When no bridge is
   // configured, notify is the base function unchanged (zero behavior change).
@@ -128,6 +128,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
           lastAckedSeq: cursor?.lastAckedSeq ?? 0,
           storeByState: storeStats.byState,
           corruptCount: storeStats.corruptCount,
+          deferral: deliveryStats(project),
         };
       }),
     );
@@ -139,6 +140,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       lastSweepAt: ctx.lastSweepAt.value,
       sweepCadenceMs: opts.sweepMs ?? 30_000,
       log: gatherLogStats(logPath, now, SNAPSHOT_LOG_WINDOW_MS),
+      telegram: ctx.telegramBridge
+        ? { configured: true, ...ctx.telegramBridge.health() }
+        : { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+      lifecycleSources: ctx.lifecycleSources.map((s) => ({ name: s.name, ...(s.health?.() ?? { active: true, error: null }) })),
       health: buildHealth(),
       projects,
       results: gatherResults(resultsDir),

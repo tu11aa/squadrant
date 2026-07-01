@@ -16,6 +16,7 @@ import type { PaneRef } from "@squadrant/shared";
 import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "../interfaces.js";
 import type { TelegramBridge } from "../telegram/bridge.js";
 import type { AttachFrame } from "../protocol.js";
+import type { LifecycleSource } from "../lifecycle-source.js";
 
 // ── Public injectable options (equivalent of old squadrantd.ts SquadrantdOpts) ───
 
@@ -60,6 +61,9 @@ export interface SquadrantdOpts {
    *  builds the real one only when config.telegram is present (and not under vitest,
    *  since pushLifecycle is composed onto notify and would hit the network). */
   telegramBridge?: TelegramBridge;
+  /** B4: registered LifecycleSource instances (cmux-store/native-hook/codex-appserver),
+   *  for aggregating per-source health into the snapshot. Empty in tests unless injected. */
+  lifecycleSources?: LifecycleSource[];
   /** Inject a fake surface driver for testing daemon-direct delivery. */
   daemonCmux?: DaemonSurfaceDriver;
   /** Factory for constructing the surface driver in production. */
@@ -121,6 +125,8 @@ export interface DaemonContext {
   cmuxEventsBridge: CmuxEventsBridge;
   /** Resolved Telegram bridge — undefined when config.telegram is absent. */
   telegramBridge?: TelegramBridge;
+  /** B4: registered LifecycleSource instances for per-source health aggregation. */
+  lifecycleSources: LifecycleSource[];
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */
@@ -176,6 +182,7 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     opencodeBridge: null as unknown as OpencodeBridge,
     cmuxEventsBridge: null as unknown as CmuxEventsBridge,
     telegramBridge: undefined,
+    lifecycleSources: opts.lifecycleSources ?? [],
     broadcast: () => {},
     schedulePromotion: () => {},
     cancelPromotionsFor: () => {},

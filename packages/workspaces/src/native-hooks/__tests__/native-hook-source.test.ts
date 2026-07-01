@@ -519,3 +519,19 @@ describe("NativeHookSource — install()", () => {
     expect(written2).toHaveLength(0);
   });
 });
+
+describe("NativeHookSource — health() (B4)", () => {
+  it("reports inactive before start()", () => {
+    const { src } = makeSource();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+
+  it("reports active after start(), inactive after stop() (never errors — purely push-driven)", () => {
+    const { src } = makeSource();
+    const { deps } = makeDeps();
+    src.start(deps);
+    expect(src.health()).toEqual({ active: true, error: null });
+    src.stop();
+    expect(src.health()).toEqual({ active: false, error: null });
+  });
+});

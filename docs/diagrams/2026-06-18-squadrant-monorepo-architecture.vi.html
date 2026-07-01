@@ -300,13 +300,31 @@
     </div>
   </section>
 
+  <!-- SLIDE 5: Delivery & Lifecycle Layer -->
+  <section class="slide">
+    <h2>5 · Tầng Giao nhận &amp; Vòng đời</h2>
+    <p class="sub">Không phải một gói — mà là một tầng trải trên ba gói. Ba bộ điều hợp <code>LifecycleSource</code> chuẩn hóa tín hiệu agent thành mô hình 4 trạng thái (<code>packages/core/src/lifecycle-source.ts</code>); daemon biến chuyển trạng thái thành tin nhắn hộp thư; <code>CaptainDelivery</code> canh từng phím gõ vào pane cmux đang sống của Captain. Sơ đồ trình tự đầy đủ: <code>docs/diagrams/2026-07-01-lifecycle-and-delivery-flow.html</code>.</p>
+    <div class="stage" style="place-items:start;overflow:auto">
+      <table>
+        <thead><tr><th>Thành phần</th><th>Nằm trong</th><th>Vai trò</th></tr></thead>
+        <tbody>
+          <tr><td><code style="color:var(--core)">LifecycleSource</code> port + <code>reduceLifecycle</code></td><td><code style="color:var(--core)">@squadrant/core</code> — <code>lifecycle-source.ts</code></td><td>Interface + hàm reducer thuần 4 quy tắc (tín hiệu agent là tối thượng, scan không được khẳng định needsInput, needsInput dính, không thoái lui trạng thái cũ). Không có adapter cụ thể nào.</td></tr>
+          <tr><td><code style="color:var(--agents)">CodexAppServerSource</code></td><td><code style="color:var(--agents)">@squadrant/agents</code> — <code>codex/codex-app-server-source.ts</code></td><td>Bọc emit của <code>CodexInteractiveDriver</code>; ánh xạ <code>ControlEvent</code> → <code>LifecycleSnapshot</code>, chỉ đẩy (push-only).</td></tr>
+          <tr><td><code style="color:var(--workspaces)">NativeHookSource</code> · <code style="color:var(--workspaces)">CmuxStoreSource</code></td><td><code style="color:var(--workspaces)">@squadrant/workspaces</code> — <code>native-hooks/</code>, <code>cmux-daemon/</code></td><td>Sự kiện hook của Claude (chính) và theo dõi file <code>~/.cmuxterm/*-hook-sessions.json</code> (dự phòng A). Cả hai đều đẩy snapshot do agent phát ra.</td></tr>
+          <tr><td><code style="color:var(--core)">CaptainDelivery</code> + hộp thư</td><td><code style="color:var(--core)">@squadrant/core</code> — <code>delivery/captain-delivery.ts</code>, <code>daemon/delivery-loop.ts</code>, <code>mailbox.ts</code></td><td>Máy trạng thái đếm hoãn/ổn định theo dự án; mỗi tick đọc các mục hộp thư chưa xác nhận, leo thang lên dò kiểm tính sống (liveness probe) sau N lần đọc ổn định (#302).</td></tr>
+          <tr><td>Cổng chặn <code style="color:var(--workspaces)">sendToSurface</code></td><td><code style="color:var(--workspaces)">@squadrant/workspaces</code> — <code>runtimes/cmux.ts</code></td><td>Đọc màn hình của Captain, phân loại ô nhập (đang gõ dở / trống / không thấy), hoãn gửi vào modal AskUserQuestion/permission (#484), rồi mới gửi văn bản + Enter.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <footer>
     <button id="prev">← Prev</button>
     <div class="dots">
-      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i>
+      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i><i data-i="4"></i>
     </div>
     <button id="next">Next →</button>
-    <span class="num" id="num">1 / 4</span>
+    <span class="num" id="num">1 / 5</span>
   </footer>
 </div>
 

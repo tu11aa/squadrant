@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -327,5 +327,25 @@ describe("mailboxStats", () => {
     const stats = await mailboxStats(stateRoot, "demo");
     expect(stats.rotationCount).toBe(1);
     expect(stats.maxSeq).toBe(6);
+  });
+
+  it("counts rotated-archive bytes and oldest-entry age when the current log is empty (#322)", async () => {
+    vi.useFakeTimers();
+    try {
+      const stateRoot = freshState();
+      vi.setSystemTime(1_000_000);
+      for (let i = 0; i < 5; i++) {
+        await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+      }
+      await rotateIfNeeded({ stateRoot, project: "demo", maxBytes: 50, maxAgeMs: 999999999, keepCount: 3 });
+      // No append after rotation: current file is fresh/empty, all entries live in the rotated archive.
+      vi.setSystemTime(1_000_000 + 5000);
+      const stats = await mailboxStats(stateRoot, "demo");
+      expect(stats.rotationCount).toBe(1);
+      expect(stats.sizeBytes).toBeGreaterThan(0);
+      expect(stats.oldestEntryAgeMs).toBe(5000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

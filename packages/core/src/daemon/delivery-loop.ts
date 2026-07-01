@@ -1,7 +1,7 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
-import { CaptainDelivery } from "../delivery/captain-delivery.js";
+import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import type { TaskRecord, ControlEvent } from "@squadrant/shared";
@@ -48,6 +48,9 @@ export interface DeliveryResult {
   defaultNotify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void>;
   /** Guarded delivery tick — undefined when daemon-direct mode is OFF. */
   deliveryTick: (() => Promise<void>) | undefined;
+  /** Read-only per-project deferral stats (B1). undefined when daemon-direct mode is OFF,
+   *  or when the project has no CaptainDelivery instance yet (no delivery attempted). */
+  deliveryStats: (project: string) => CaptainDeliveryStats | undefined;
 }
 
 export function createDelivery(
@@ -80,12 +83,13 @@ export function createDelivery(
 
   // ── Daemon-direct delivery loop ───────────────────────────────────────────
   if (!daemonCmux) {
-    return { defaultNotify, deliveryTick: undefined };
+    return { defaultNotify, deliveryTick: undefined, deliveryStats: () => undefined };
   }
 
   const cmux = daemonCmux;
   const cfg = loadConfig();
   const deliveries = new Map<string, CaptainDelivery>();
+  const deliveryStats = (project: string): CaptainDeliveryStats | undefined => deliveries.get(project)?.stats();
   // Captured once at delivery-loop setup. Entries older than
   // sessionStartMs - STALE_THRESHOLD_MS are silently acked (cursor advanced)
   // without delivery. This stops a fresh/empty cursor from re-delivering the
@@ -195,5 +199,5 @@ export function createDelivery(
     }
   };
 
-  return { defaultNotify, deliveryTick };
+  return { defaultNotify, deliveryTick, deliveryStats };
 }
