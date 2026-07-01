@@ -8,6 +8,7 @@
 // the gathered numbers in here; this module never touches the filesystem.
 import type { ComponentHealth } from "./liveness.js";
 import type { MailboxStats } from "./mailbox.js";
+import type { CaptainDeliveryStats } from "./delivery/captain-delivery.js";
 export type { MailboxStats };
 
 export type BuildState = "fresh" | "stale";
@@ -58,6 +59,8 @@ export interface ProjectDataPlane {
   mailbox: MailboxStats;
   delivery: DeliveryLag;
   store: StoreStats;
+  /** B1: read-only captain-delivery deferral visibility (#484/#466-class stalls). */
+  deferral: CaptainDeliveryStats;
 }
 
 export interface DaemonSnapshot {
@@ -87,6 +90,8 @@ export interface DaemonSnapshotInputs {
     lastAckedSeq: number;
     storeByState: Record<string, number>;
     corruptCount: number;
+    /** Omitted when the caller has no CaptainDelivery instance for this project yet. */
+    deferral?: CaptainDeliveryStats;
   }>;
   results: ResultArtifacts;
 }
@@ -123,6 +128,7 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
           behind: Math.max(0, p.mailbox.maxSeq - p.lastAckedSeq),
         },
         store: { byState: p.storeByState, corruptCount: p.corruptCount },
+        deferral: p.deferral ?? { maxDeferCount: 0, stuck: false },
       })),
       results: input.results,
     },

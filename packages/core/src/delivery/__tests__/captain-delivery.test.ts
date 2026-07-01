@@ -66,3 +66,37 @@ describe("CaptainDelivery defer-while-typing (#258/#302)", () => {
     expect(probes.some((p) => p)).toBe(true);
   });
 });
+
+describe("CaptainDelivery.stats (B1 — read-only deferral visibility)", () => {
+  it("reports zero/not-stuck when nothing is in flight", () => {
+    const d = new CaptainDelivery({ maxDefers: 5, stableProbePolls: 3 });
+    expect(d.stats()).toEqual({ maxDeferCount: 0, stuck: false });
+  });
+
+  it("reports the max in-flight defer count across seqs, not stuck below the threshold", async () => {
+    const d = new CaptainDelivery({ maxDefers: 5, stableProbePolls: 999 });
+    const send = async () => { throw new DeferDelivery("draft"); };
+    await d.deliver({ seq: 1, message: "a" }, send);
+    await d.deliver({ seq: 1, message: "a" }, send);
+    await d.deliver({ seq: 2, message: "b" }, send);
+    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: false });
+  });
+
+  it("flags stuck once the max in-flight defer count reaches maxDefers", async () => {
+    const d = new CaptainDelivery({ maxDefers: 2, stableProbePolls: 999 });
+    const send = async () => { throw new DeferDelivery("draft"); };
+    await d.deliver({ seq: 1, message: "a" }, send);
+    await d.deliver({ seq: 1, message: "a" }, send);
+    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: true });
+  });
+
+  it("clears a seq's defer count once it delivers", async () => {
+    let fail = true;
+    const d = new CaptainDelivery({ maxDefers: 5, stableProbePolls: 999 });
+    const send = async () => { if (fail) throw new DeferDelivery("draft"); };
+    await d.deliver({ seq: 1, message: "a" }, send);
+    fail = false;
+    await d.deliver({ seq: 1, message: "a" }, send);
+    expect(d.stats()).toEqual({ maxDeferCount: 0, stuck: false });
+  });
+});

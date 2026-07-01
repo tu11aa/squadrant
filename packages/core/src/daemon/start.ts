@@ -38,7 +38,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick } = createDelivery(ctx, daemonCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux);
   // Compose the Telegram outbound push onto the notify fan-out: a captain
   // notification also pushes to the project's Telegram topic. When no bridge is
   // configured, notify is the base function unchanged (zero behavior change).
@@ -128,6 +128,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
           lastAckedSeq: cursor?.lastAckedSeq ?? 0,
           storeByState: storeStats.byState,
           corruptCount: storeStats.corruptCount,
+          deferral: deliveryStats(project),
         };
       }),
     );

@@ -127,4 +127,28 @@ describe("assembleDaemonSnapshot", () => {
     const snap = assembleDaemonSnapshot(inputs(), NOW);
     expect(snap.tier2.results).toEqual({ fileCount: 294, totalBytes: 18_000_000 });
   });
+
+  it("B1: defaults deferral stats to zero/not-stuck when the caller has none yet", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier2.projects[0].deferral).toEqual({ maxDeferCount: 0, stuck: false });
+  });
+
+  it("B1: passes per-project deferral stats through when the caller supplies them", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({
+        projects: [
+          {
+            project: "squadrant",
+            mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
+            lastAckedSeq: 12,
+            storeByState: { working: 3 },
+            corruptCount: 0,
+            deferral: { maxDeferCount: 47, stuck: false },
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(snap.tier2.projects[0].deferral).toEqual({ maxDeferCount: 47, stuck: false });
+  });
 });

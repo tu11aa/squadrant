@@ -33,6 +33,7 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
           mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
           delivery: { maxSeq: 12, lastAckedSeq: 12, behind: 0 },
           store: { byState: { working: 3, blocked: 1 }, corruptCount: 0 },
+          deferral: { maxDeferCount: 0, stuck: false },
         },
       ],
       results: { fileCount: 294, totalBytes: 18_000_000 },
@@ -251,6 +252,7 @@ describe("stopped distinguished from fault (#324/#323)", () => {
       mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
       delivery: { maxSeq: 10, lastAckedSeq: 2, behind: 8 },
       store: { byState: { cancelled: 2 }, corruptCount: 0 },
+      deferral: { maxDeferCount: 0, stuck: false },
     }];
     const out = renderContent(full(d));
     // The card stays 'stopped' — delivery lag behind a closed captain is expected.
@@ -264,6 +266,7 @@ describe("stopped distinguished from fault (#324/#323)", () => {
       mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
       delivery: { maxSeq: 10, lastAckedSeq: 10, behind: 0 },
       store: { byState: {}, corruptCount: 1 },
+      deferral: { maxDeferCount: 0, stuck: false },
     }];
     const out = renderContent(full(d));
     expect(out).toMatch(/data-rollup="gone"/);
@@ -291,6 +294,58 @@ describe("CREW UNDELIVERED headline (B2/#466)", () => {
   it("Projects tab still shows the raw detail text for the flagged crew row", () => {
     const out = renderContent(full(daemon({}, undeliveredCrew)));
     expect(out).toContain("undelivered (submitted)");
+  });
+});
+
+describe("delivery deferral visibility (B1/#484/#466)", () => {
+  it("renders the in-flight defer count in the project's delivery block", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 47, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toContain("47");
+    expect(out).toMatch(/defer/i);
+  });
+
+  it("does not roll up or flag a project with zero in-flight defers", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 0, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="alive"/);
+    expect(out).not.toMatch(/delivery stuck/i);
+  });
+
+  it("rolls a project with in-flight (but not yet stuck) defers up to 'stale'", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 5, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="stale"/);
+  });
+
+  it("rolls a stuck project (deferCount crossed threshold) up to 'gone' with a headline flag", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 300, stuck: true };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="gone"/);
+    expect(out).toMatch(/delivery stuck/i);
+  });
+
+  it("shows the global max in-flight defer count as an Overview trend", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 47, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toContain('data-spark="defers"');
+    expect(out).toMatch(/Delivery defers/i);
+  });
+
+  it("a stopped captain's leftover deferral does not false-alarm (#324/#323 pattern)", () => {
+    const stoppedCaptain: DaemonSnapshot["tier1"] = [
+      { kind: "captain", project: "squadrant", ref: "squadrant-captain", state: "stopped", lastSeenMs: null },
+    ];
+    const d = daemon({}, stoppedCaptain);
+    d.tier2.projects[0].deferral = { maxDeferCount: 300, stuck: true };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="stopped"/);
+    expect(out).not.toMatch(/data-rollup="gone"/);
   });
 });
 
