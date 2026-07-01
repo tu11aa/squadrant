@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-01
+
+### Added
+
+- **Dashboard health monitoring (#491, closes #322):** four new health signals surfaced on the web dashboard.
+  - **B1** — `CaptainDelivery.stats()` exposes an in-flight defer count and a `stuck` flag once it crosses `maxDefers`; Overview gets a "Delivery defers" trend and each project card rolls up to caution/fault (guarded on `!captainStopped`).
+  - **B2** — the CREW UNDELIVERED watchdog condition is promoted to a first-class `ComponentHealth` signal (`detail = "undelivered (<state>)"`) instead of only firing as a notification side-channel; Overview gets a headline banner + count.
+  - **B3** — `TelegramBridge.health()` tracks `polling`, `lastSuccessfulPollAt`, and the last poll error, closing the "false green while the poll loop is silently dead" gap; surfaced as a Daemon-tab instrument row.
+  - **B4** — `LifecycleSource` gets an optional `health()`, implemented on `CmuxStoreSource`, `NativeHookSource`, and `CodexAppServerSource`, aggregated and rendered as per-source instrument rows on the Daemon tab.
+
+### Fixed
+
+- **`mailboxStats` now includes rotated archives (#322):** `sizeBytes`/`oldestEntryAgeMs` previously only counted the current un-rotated log file.
+
+### Docs
+
+- **README rewritten as a user-journey guide (#489):** split into a top-level narrative (You → Captains → Crews) plus a separate QUICKSTART and reference doc.
+- **Architecture diagrams refreshed (#490):** added a self-contained lifecycle+delivery flow diagram and updated the monorepo architecture diagram.
+
 ## [0.13.5] - 2026-07-01
 
 ### Fixed
