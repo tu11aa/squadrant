@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Squadrant — Lifecycle &amp; Delivery Flow · v0.13.5</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#30363d; --ink:#e6edf3; --dim:#9aa4b0;
+    --shared:#58a6ff; --core:#d29922; --agents:#3fb950; --workspaces:#bc8cff; --web:#39c5cf; --cli:#f85149;
+    --defer:#f0883e; --deliver:#3fb950; --danger:#f85149;
+    --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace; --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  #deck{height:100vh;display:flex;flex-direction:column}
+  header{padding:14px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex:0 0 auto}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .tag{font-family:var(--mono);font-size:11px;color:var(--dim);border:1px solid var(--line);padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  .slide{flex:1;display:none;padding:20px 44px 6px;overflow:auto}
+  .slide.active{display:flex;flex-direction:column;animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  .slide h2{margin:0 0 5px;font-size:21px}
+  .slide .sub{color:var(--dim);font-size:14px;margin:0;max-width:1120px;line-height:1.55}
+  .stage{flex:1;display:grid;place-items:center;padding:6px 0}
+  svg{width:100%;height:auto;max-height:70vh;display:block}
+  .bt{font-family:var(--sans);font-weight:600;font-size:14px;fill:var(--ink)}
+  .bs{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .chip{font-family:var(--mono);font-size:11.5px;fill:var(--ink)}
+  .edge{stroke:#52606d;stroke-width:2;fill:none;marker-end:url(#ar)}
+  .edgew{stroke:#52606d;stroke-width:1.5;fill:none;stroke-dasharray:4 4;marker-end:url(#ar)}
+  .edged{stroke:var(--defer);stroke-width:2;fill:none;marker-end:url(#ard)}
+  .edgeg{stroke:var(--deliver);stroke-width:2;fill:none;marker-end:url(#arg)}
+  .elabel{font-family:var(--mono);font-size:11px;fill:var(--dim)}
+  .glabel{font-family:var(--mono);font-size:11px;fill:var(--deliver)}
+  .dlabel{font-family:var(--mono);font-size:11px;fill:var(--defer)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);padding:6px 0 2px}
+  .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);padding:10px 28px;display:flex;align-items:center;gap:16px}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;font-family:var(--sans)}
+  button:hover{border-color:var(--shared)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer} .dots i.on{background:var(--shared);transform:scale(1.25)}
+  .num{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:54px;text-align:right}
+  code{font-family:var(--mono);background:#1f2530;padding:1px 5px;border-radius:4px;font-size:.9em}
+  table{border-collapse:collapse;width:100%;max-width:1120px;font-size:13px}
+  td,th{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel);color:var(--dim);font-weight:600}
+  .note{max-width:1120px;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--defer);border-radius:6px;padding:10px 14px;font-size:12.5px;color:var(--dim);margin-top:10px;line-height:1.5}
+  .note b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div id="deck">
+  <header>
+    <h1>🔁 Squadrant — Lifecycle &amp; Delivery Flow</h1>
+    <span class="tag">crew signal → captain pane · v0.13.5 · 2026-07-01</span>
+    <div class="spacer"></div>
+    <span class="tag">space / → · A = autoplay</span>
+  </header>
+
+  <!-- SLIDE 1: Big picture -->
+  <section class="slide active">
+    <h2>1 · Big Picture</h2>
+    <p class="sub">A crew's lifecycle change reaches the captain's live cmux pane through four hops: a <b style="color:var(--agents)">LifecycleSource</b> normalizes a raw signal, the <b style="color:var(--core)">daemon</b> reduces it to a <code>ControlEvent</code> and appends a mailbox message, the <b style="color:var(--core)">delivery loop</b> ticks every ~1s reading unacked entries, and the <b style="color:var(--workspaces)">CaptainDelivery gate</b> in <code>cmux.ts</code> only ever types into a positively-confirmed-empty input box.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 460">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--defer)"/></marker>
+          <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--deliver)"/></marker>
+        </defs>
+
+        <!-- Sources -->
+        <rect x="20" y="30" width="190" height="90" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="115" y="56" text-anchor="middle" fill="var(--workspaces)">NativeHookSource</text>
+        <text class="bs" x="115" y="74" text-anchor="middle">claude hooks</text>
+        <text class="bs" x="115" y="90" text-anchor="middle">(primary, push)</text>
+
+        <rect x="20" y="130" width="190" height="90" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
+        <text class="chip" x="115" y="156" text-anchor="middle" fill="var(--workspaces)">CmuxStoreSource</text>
+        <text class="bs" x="115" y="174" text-anchor="middle">~/.cmuxterm/*.json</text>
+        <text class="bs" x="115" y="190" text-anchor="middle">(backup, file-watch)</text>
+
+        <rect x="20" y="230" width="190" height="90" rx="8" fill="var(--panel)" stroke="var(--agents)" stroke-width="1.5"/>
+        <text class="chip" x="115" y="256" text-anchor="middle" fill="var(--agents)">CodexAppServerSource</text>
+        <text class="bs" x="115" y="274" text-anchor="middle">driver.emit() wrap</text>
+        <text class="bs" x="115" y="290" text-anchor="middle">(push, codex only)</text>
+
+        <!-- reduceLifecycle -->
+        <rect x="270" y="130" width="180" height="90" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="360" y="156" text-anchor="middle" fill="var(--core)">reduceLifecycle()</text>
+        <text class="bs" x="360" y="174" text-anchor="middle">pure 4-rule reducer</text>
+        <text class="bs" x="360" y="190" text-anchor="middle">→ LifecycleState</text>
+
+        <!-- daemon reducer -->
+        <rect x="500" y="130" width="180" height="90" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="590" y="156" text-anchor="middle" fill="var(--core)">daemon reduce()</text>
+        <text class="bs" x="590" y="174" text-anchor="middle">ControlEvent → notify()</text>
+        <text class="bs" x="590" y="190" text-anchor="middle">task.blocked / .turn.completed</text>
+
+        <!-- mailbox -->
+        <rect x="730" y="130" width="170" height="90" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="815" y="156" text-anchor="middle" fill="var(--core)">appendToMailbox()</text>
+        <text class="bs" x="815" y="174" text-anchor="middle">per-project disk file</text>
+        <text class="bs" x="815" y="190" text-anchor="middle">mailbox.ts</text>
+
+        <!-- delivery loop -->
+        <rect x="500" y="260" width="180" height="90" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="590" y="286" text-anchor="middle" fill="var(--core)">deliveryTick()</text>
+        <text class="bs" x="590" y="304" text-anchor="middle">~1s poll · readFromCursor</text>
+        <text class="bs" x="590" y="320" text-anchor="middle">delivery-loop.ts</text>
+
+        <!-- CaptainDelivery gate -->
+        <rect x="730" y="260" width="170" height="90" rx="8" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="2.5"/>
+        <text class="chip" x="815" y="286" text-anchor="middle" fill="var(--workspaces)">sendToSurface()</text>
+        <text class="bs" x="815" y="304" text-anchor="middle">CaptainDelivery gate</text>
+        <text class="bs" x="815" y="320" text-anchor="middle">runtimes/cmux.ts</text>
+
+        <!-- captain pane -->
+        <rect x="960" y="195" width="190" height="90" rx="8" fill="var(--panel)" stroke="var(--cli)" stroke-width="2"/>
+        <text class="chip" x="1055" y="221" text-anchor="middle" fill="var(--cli)">⚓ Captain pane</text>
+        <text class="bs" x="1055" y="239" text-anchor="middle">live cmux surface</text>
+        <text class="bs" x="1055" y="255" text-anchor="middle">text + Enter, only if safe</text>
+
+        <!-- edges -->
+        <line class="edge" x1="210" y1="70" x2="270" y2="150"/>
+        <line class="edge" x1="210" y1="175" x2="270" y2="175"/>
+        <line class="edge" x1="210" y1="275" x2="270" y2="195"/>
+        <line class="edge" x1="450" y1="175" x2="500" y2="175"/>
+        <line class="edge" x1="680" y1="175" x2="730" y2="175"/>
+        <line class="edge" x1="815" y1="220" x2="590" y2="260"/>
+        <line class="edge" x1="680" y1="305" x2="730" y2="305"/>
+        <line class="edgeg" x1="900" y1="290" x2="960" y2="255"/>
+        <path class="edged" d="M815,350 C880,410 620,410 590,350" fill="none" marker-end="url(#ard)"/>
+        <text class="glabel" x="905" y="270">deliver: text+Enter</text>
+        <text class="dlabel" x="700" y="415" text-anchor="middle">defer: retry next tick (~1s)</text>
+
+        <text class="elabel" x="360" y="120">3 sources, 1 vocabulary</text>
+        <text class="elabel" x="500" y="345">every ~1s per project</text>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><b style="background:var(--workspaces)"></b>@squadrant/workspaces</span>
+      <span><b style="background:var(--core)"></b>@squadrant/core</span>
+      <span><b style="background:var(--agents)"></b>@squadrant/agents</span>
+      <span><b style="background:var(--cli)"></b>@squadrant/cli surface</span>
+      <span><b style="background:var(--deliver)"></b>deliver path</span>
+      <span><b style="background:var(--defer)"></b>defer path</span>
+    </div>
+  </section>
+
+  <!-- SLIDE 2: Three LifecycleSources -->
+  <section class="slide">
+    <h2>2 · Three LifecycleSource Adapters, One Reducer</h2>
+    <p class="sub">All three implement the same <code>LifecycleSource</code> port (<code>packages/core/src/lifecycle-source.ts</code>) and normalize into <code>LifecycleSnapshot</code>: <code>{ taskId, state, alive, origin, at }</code>. Every snapshot feeds <code>reduceLifecycle(prev, next)</code> — a pure function with 4 rules: agent-originated signals are authoritative; a scan can never assert <code>needsInput</code>; agent-set <code>needsInput</code> is sticky against scans; a stale scan never regresses a more-recent agent state.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 440">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <!-- NativeHookSource -->
+        <rect x="30" y="30" width="330" height="180" rx="10" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="bt" x="195" y="58" text-anchor="middle" fill="var(--workspaces)">NativeHookSource</text>
+        <text class="bs" x="195" y="76" text-anchor="middle">native-hooks/native-hook-source.ts</text>
+        <text class="chip" x="50" y="102">PRIMARY · squadrant-owned</text>
+        <text class="bs" x="50" y="120">installClaudeHooks() → ~/.claude/settings.json</text>
+        <text class="bs" x="50" y="136">SessionStart/UserPromptSubmit/PreToolUse/</text>
+        <text class="bs" x="50" y="150">Stop/Notification/SessionEnd</text>
+        <text class="bs" x="50" y="168">PreToolUse+matcher:AskUserQuestion → needsInput</text>
+        <text class="bs" x="50" y="184">handleHook(sub, taskId, pid?) — push, origin:"agent"</text>
+        <text class="bs" x="50" y="200">correlate: SQUADRANT_CREW_TASK_ID (strongest)</text>
+
+        <!-- CmuxStoreSource -->
+        <rect x="30" y="230" width="330" height="180" rx="10" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="bt" x="195" y="258" text-anchor="middle" fill="var(--workspaces)">CmuxStoreSource</text>
+        <text class="bs" x="195" y="276" text-anchor="middle">cmux-daemon/cmux-store-source.ts</text>
+        <text class="chip" x="50" y="302">BACKUP A · file-watch, debounced 50ms</text>
+        <text class="bs" x="50" y="320">watches ~/.cmuxterm/*-hook-sessions.json</text>
+        <text class="bs" x="50" y="336">agentLifecycle field already 4-state (no remap)</text>
+        <text class="bs" x="50" y="352">hibernation guard: dead pid + isRestorable +</text>
+        <text class="bs" x="50" y="368">idle ⇒ still alive (cmux RAM reclaim)</text>
+        <text class="bs" x="50" y="384">correlate: cwd → pid → sessionId</text>
+
+        <!-- CodexAppServerSource -->
+        <rect x="400" y="30" width="330" height="180" rx="10" fill="var(--panel)" stroke="var(--agents)" stroke-width="2"/>
+        <text class="bt" x="565" y="58" text-anchor="middle" fill="var(--agents)">CodexAppServerSource</text>
+        <text class="bs" x="565" y="76" text-anchor="middle">agents/src/codex/codex-app-server-source.ts</text>
+        <text class="chip" x="420" y="102">codex-only · wraps driver.emit</text>
+        <text class="bs" x="420" y="120">observe(ev: ControlEvent) — push-only</text>
+        <text class="bs" x="420" y="136">task.started/.progress/.delta → running</text>
+        <text class="bs" x="420" y="152">task.turn.completed/.failed → idle</text>
+        <text class="bs" x="420" y="168">task.approval.requested/.input.requested</text>
+        <text class="bs" x="420" y="184">→ needsInput</text>
+        <text class="bs" x="420" y="200">taskId from ev.id — no resolve() lookup needed</text>
+
+        <!-- reduceLifecycle -->
+        <rect x="800" y="90" width="350" height="260" rx="10" fill="var(--panel2)" stroke="var(--core)" stroke-width="2.5"/>
+        <text class="bt" x="975" y="120" text-anchor="middle" fill="var(--core)">reduceLifecycle(prev, next)</text>
+        <text class="bs" x="975" y="138" text-anchor="middle">lifecycle-source.ts — pure, no side effects</text>
+        <text class="chip" x="820" y="168">1. next.origin==="agent" → next.state</text>
+        <text class="bs" x="820" y="182">(agent signals are always trusted)</text>
+        <text class="chip" x="820" y="204">2. next.state==="needsInput" &amp;&amp; scan</text>
+        <text class="bs" x="820" y="218">→ keep prev (scan can't assert needsInput)</text>
+        <text class="chip" x="820" y="240">3. prev.state==="needsInput" → sticky</text>
+        <text class="bs" x="820" y="254">(only an agent-originated "running" relaxes it)</text>
+        <text class="chip" x="820" y="276">4. prev.origin==="agent" &amp;&amp; prev.at&gt;=next.at</text>
+        <text class="bs" x="820" y="290">→ keep prev (stale scan can't regress)</text>
+        <text class="bs" x="820" y="320" fill="var(--core)">→ LifecycleState: running|idle|needsInput|unknown</text>
+
+        <!-- edges -->
+        <line class="edge" x1="360" y1="120" x2="800" y2="200"/>
+        <line class="edge" x1="360" y1="320" x2="800" y2="260"/>
+        <line class="edge" x1="730" y1="120" x2="800" y2="180"/>
+      </svg>
+    </div>
+    <div class="note">Wired in <code>packages/cli/src/squadrantd.ts</code>: each source gets its own <code>deps.report()</code> closure with a <code>prevSnaps</code> map keyed by taskId. After <code>reduceLifecycle</code> the daemon diffs old vs. new state and calls <code>ctx.d.handle({kind:"event", event:{type: "task.blocked"|"task.turn.completed"|"task.progress"|"task.session.ended", ...}})</code> — this is where a normalized lifecycle state becomes a <code>ControlEvent</code> the daemon reducer understands (Slide 3).</div>
+  </section>
+
+  <!-- SLIDE 3: Daemon -> Mailbox -->
+  <section class="slide">
+    <h2>3 · Daemon Reduce → Mailbox → Delivery Tick</h2>
+    <p class="sub">The daemon's <code>reduce()</code> (state-machine transition) calls <code>deps.notify({project, message, record, event})</code> on notify-worthy transitions. The default <code>notify</code> is <code>defaultNotify</code> (<code>daemon/delivery-loop.ts</code>), which appends a formatted message to a per-project mailbox file on disk — decoupling event production from captain delivery.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 400">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
+
+        <rect x="20" y="140" width="220" height="110" rx="8" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="130" y="168" text-anchor="middle" fill="var(--core)">ControlEvent</text>
+        <text class="bs" x="130" y="186" text-anchor="middle">task.blocked / .turn.completed /</text>
+        <text class="bs" x="130" y="202" text-anchor="middle">.progress / .session.ended</text>
+        <text class="bs" x="130" y="222" text-anchor="middle">from Slide 2's reduceLifecycle diff</text>
+
+        <rect x="290" y="140" width="220" height="110" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="400" y="168" text-anchor="middle" fill="var(--core)">reduce()</text>
+        <text class="bs" x="400" y="186" text-anchor="middle">daemon/reduce.ts</text>
+        <text class="bs" x="400" y="202" text-anchor="middle">state-machine transition +</text>
+        <text class="bs" x="400" y="218" text-anchor="middle">deps.notify({project, message, record, event})</text>
+
+        <rect x="560" y="140" width="220" height="110" rx="8" fill="var(--panel2)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="670" y="168" text-anchor="middle" fill="var(--core)">defaultNotify()</text>
+        <text class="bs" x="670" y="186" text-anchor="middle">daemon/delivery-loop.ts</text>
+        <text class="bs" x="670" y="202" text-anchor="middle">appendToMailbox({stateRoot, project,</text>
+        <text class="bs" x="670" y="218" text-anchor="middle">taskRecord, event, message})</text>
+
+        <rect x="830" y="140" width="180" height="110" rx="8" fill="var(--panel)" stroke="var(--core)" stroke-width="2"/>
+        <text class="chip" x="920" y="168" text-anchor="middle" fill="var(--core)">mailbox file</text>
+        <text class="bs" x="920" y="186" text-anchor="middle">disk, per project</text>
+        <text class="bs" x="920" y="202" text-anchor="middle">append-only, seq-numbered</text>
+        <text class="bs" x="920" y="218" text-anchor="middle">mailbox.ts</text>
+
+        <!-- delivery tick -->
+        <rect x="300" y="290" width="560" height="90" rx="8" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="chip" x="580" y="316" text-anchor="middle" fill="var(--workspaces)">deliveryTick() — ~1s, per project, re-entrancy guarded</text>
+        <text class="bs" x="580" y="336" text-anchor="middle">discoverCaptainSurface(cmux.listSurfaces) · readCursor(lastAckedSeq)</text>
+        <text class="bs" x="580" y="354" text-anchor="middle">for await entry of readFromCursor(fromSeq: lastAcked+1) → CaptainDelivery.deliver(entry, send)</text>
+
+        <!-- edges -->
+        <line class="edge" x1="240" y1="195" x2="290" y2="195"/>
+        <line class="edge" x1="510" y1="195" x2="560" y2="195"/>
+        <line class="edge" x1="780" y1="195" x2="830" y2="195"/>
+        <path class="edge" d="M920,250 L920,335 L860,335" fill="none" marker-end="url(#ar)"/>
+        <text class="elabel" x="850" y="270">readFromCursor()</text>
+        <text class="elabel" x="290" y="130">TERMINAL_KINDS bypass stale-skip (#474 D1):</text>
+        <text class="elabel" x="290" y="115">task.done/.failed/.cancelled/.blocked always deliver</text>
+      </svg>
+    </div>
+    <div class="note">Stale-skip (#332): entries older than <code>sessionStartMs - STALE_THRESHOLD_MS</code> at daemon-boot are silently acked (cursor advanced, no delivery) — except <b>terminal kinds</b>, which always deliver even late. This stops a fresh daemon restart from replaying a captain's entire historical backlog, while guaranteeing a <code>task.blocked</code> or <code>task.done</code> is never silently dropped.</div>
+  </section>
+
+  <!-- SLIDE 4: CaptainDelivery gate -->
+  <section class="slide">
+    <h2>4 · CaptainDelivery Gate — <code>sendToSurface()</code> in <code>cmux.ts</code></h2>
+    <p class="sub">The last hop is the highest-stakes one: never type into the captain's live keyboard input. <code>parseDraftFromScreen</code> returns a 3-state read of the screen; <code>hasModalOptionList</code> (#484) catches AskUserQuestion/permission modals that the 3-state read can't distinguish from an empty or ghost box; the probe (#302) only fires when content has been byte-stable for N polls.</p>
+    <div class="stage">
+      <svg viewBox="0 0 1180 970">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--defer)"/></marker>
+          <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--deliver)"/></marker>
+        </defs>
+
+        <!-- entry -->
+        <rect x="480" y="10" width="220" height="50" rx="8" fill="var(--panel)" stroke="var(--dim)" stroke-width="1.5"/>
+        <text class="chip" x="590" y="40" text-anchor="middle">cmux read-screen</text>
+
+        <!-- parseDraftFromScreen -->
+        <rect x="390" y="90" width="400" height="90" rx="8" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="chip" x="590" y="118" text-anchor="middle" fill="var(--workspaces)">parseDraftFromScreen(screen)</text>
+        <text class="bs" x="590" y="136" text-anchor="middle">3-state: "draft text" | "" | null</text>
+        <text class="bs" x="590" y="152" text-anchor="middle">scans between the last two HR (──) boundaries</text>
+        <text class="bs" x="590" y="168" text-anchor="middle">draft = the result</text>
+
+        <!-- null branch (terminal) -->
+        <rect x="30" y="240" width="250" height="90" rx="8" fill="var(--panel)" stroke="var(--defer)" stroke-width="2"/>
+        <text class="chip" x="155" y="266" text-anchor="middle">draft === null</text>
+        <text class="bs" x="155" y="284" text-anchor="middle">box not visible (overlay/scroll)</text>
+        <text class="dlabel" x="155" y="302" text-anchor="middle">→ throw DeferDelivery(null)</text>
+
+        <!-- hasModalOptionList: gates BOTH "" and draft-text outcomes -->
+        <rect x="340" y="240" width="520" height="110" rx="8" fill="var(--panel2)" stroke="var(--danger)" stroke-width="2.5"/>
+        <text class="chip" x="600" y="266" text-anchor="middle" fill="var(--danger)">draft !== null → hasModalOptionList(screen)</text>
+        <text class="bs" x="600" y="284" text-anchor="middle">"N. Label" line between the HRs? (#484)</text>
+        <text class="bs" x="600" y="300" text-anchor="middle">catches AskUserQuestion / permission picker —</text>
+        <text class="bs" x="600" y="316" text-anchor="middle">same ❯ glyph as a draft, checked BEFORE the draft/probe branch</text>
+        <text class="dlabel" x="600" y="336" text-anchor="middle">true → throw DeferDelivery(null), regardless of draft value</text>
+
+        <!-- modal defer terminal -->
+        <rect x="340" y="390" width="280" height="90" rx="8" fill="var(--panel)" stroke="var(--defer)" stroke-width="2"/>
+        <text class="chip" x="480" y="416" text-anchor="middle">modal detected</text>
+        <text class="bs" x="480" y="434" text-anchor="middle">a modal's backspace-no-op looks</text>
+        <text class="bs" x="480" y="450" text-anchor="middle">identical to a ghost's — must gate here,</text>
+        <text class="dlabel" x="480" y="468" text-anchor="middle">before the probe branch can run</text>
+
+        <!-- empty branch (terminal) -->
+        <rect x="660" y="390" width="230" height="90" rx="8" fill="var(--panel)" stroke="var(--deliver)" stroke-width="2"/>
+        <text class="chip" x="775" y="416" text-anchor="middle">draft === "" (confirmed empty)</text>
+        <text class="glabel" x="775" y="434" text-anchor="middle">→ deliver(): send text + Enter</text>
+        <text class="bs" x="775" y="452" text-anchor="middle">nothing to protect</text>
+        <text class="bs" x="775" y="468" text-anchor="middle">most common outcome, idle captain</text>
+
+        <!-- draft nonempty -->
+        <rect x="930" y="390" width="230" height="110" rx="8" fill="var(--panel2)" stroke="var(--workspaces)" stroke-width="2"/>
+        <text class="chip" x="1045" y="416" text-anchor="middle" fill="var(--workspaces)">draft has content</text>
+        <text class="bs" x="1045" y="434" text-anchor="middle">a real or ghost draft is</text>
+        <text class="bs" x="1045" y="450" text-anchor="middle">present in the input box</text>
+        <text class="bs" x="1045" y="466" text-anchor="middle">carries content for #302</text>
+        <text class="bs" x="1045" y="482" text-anchor="middle">stability tracking either way</text>
+
+        <!-- no-probe defer terminal -->
+        <rect x="990" y="550" width="170" height="90" rx="8" fill="var(--panel)" stroke="var(--defer)" stroke-width="2"/>
+        <text class="chip" x="1075" y="576" text-anchor="middle">!opts.probe</text>
+        <text class="bs" x="1075" y="594" text-anchor="middle">hot path — never</text>
+        <text class="bs" x="1075" y="608" text-anchor="middle">keystroke a human draft</text>
+        <text class="dlabel" x="1075" y="626" text-anchor="middle">→ defer(draft)</text>
+
+        <!-- probe escalation box -->
+        <rect x="700" y="670" width="460" height="280" rx="10" fill="var(--panel)" stroke="var(--core)" stroke-width="2.5"/>
+        <text class="bt" x="930" y="698" text-anchor="middle" fill="var(--core)">opts.probe === true — #302 escalation</text>
+        <text class="bs" x="930" y="718" text-anchor="middle">CaptainDelivery sets probe when content has been</text>
+        <text class="bs" x="930" y="734" text-anchor="middle">byte-stable ≥ stableProbePolls, or deferCount ≥ maxDefers</text>
+        <text class="chip" x="720" y="758">1. send-key backspace, settle 50ms, re-read screen</text>
+        <text class="chip" x="720" y="776">2. classifyDraftLiveness(before, after)</text>
+        <text class="bs" x="730" y="792">grapheme-aware (Intl.Segmenter) — emoji-safe</text>
+        <text class="bs" x="730" y="812">"real-draft" → restore last grapheme, defer(draft)</text>
+        <text class="bs" x="730" y="828">"no-draft" (after === "") → deliver()</text>
+        <text class="bs" x="730" y="844">"inconclusive" → compare RAW untrimmed before/after:</text>
+        <text class="bs" x="750" y="860">changed → restore grapheme, defer</text>
+        <text class="bs" x="750" y="876">unchanged (true no-op/ghost) → deliver</text>
+        <text class="bs" x="750" y="892">unreadable → defer (bias: protect the human)</text>
+        <text class="bs" x="930" y="920" text-anchor="middle" fill="var(--core)">captain-delivery.ts resets stableCounts only when</text>
+        <text class="bs" x="930" y="936" text-anchor="middle" fill="var(--core)">content changes between polls — not on every defer</text>
+
+        <!-- edges -->
+        <line class="edge" x1="590" y1="60" x2="590" y2="90"/>
+        <line class="edged" x1="470" y1="180" x2="180" y2="240"/>
+        <line class="edge" x1="590" y1="180" x2="590" y2="240"/>
+        <text class="dlabel" x="330" y="205">null</text>
+        <text class="elabel" x="610" y="205">not null ("" or draft)</text>
+
+        <line class="edged" x1="480" y1="350" x2="480" y2="390"/>
+        <text class="dlabel" x="490" y="374">true</text>
+        <line class="edgeg" x1="700" y1="350" x2="775" y2="390"/>
+        <text class="glabel" x="700" y="374">false, draft===""</text>
+        <line class="edge" x1="820" y1="350" x2="1045" y2="390"/>
+        <text class="elabel" x="900" y="374">false, draft has content</text>
+
+        <line class="edged" x1="1100" y1="500" x2="1090" y2="550"/>
+        <text class="dlabel" x="1160" y="530" text-anchor="end">!probe</text>
+        <line class="edge" x1="1010" y1="500" x2="930" y2="670"/>
+        <text class="elabel" x="1015" y="580">probe===true</text>
+      </svg>
+    </div>
+    <div class="note"><b>Not part of this gate:</b> <code>hasCCInputBox()</code> (also defined in <code>cmux.ts</code>) is used by a <i>different</i> pipeline — <code>sendFirstTurnWhenReady()</code> in <code>packages/workspaces/src/crew-pane.ts</code>, which gates the <b>captain → newly-spawned-crew</b> first message, not crew → captain delivery. Both share the HR-boundary screen-parsing approach but serve opposite directions of the mailbox flow (see the #466 slow-boot investigation for the first-turn gate's own history).</div>
+  </section>
+
+  <!-- SLIDE 5: Reference -->
+  <section class="slide">
+    <h2>5 · Symbol Reference</h2>
+    <p class="sub">Every box on Slides 1–4, with file and line numbers as of develop @ v0.13.5 (2026-07-01).</p>
+    <div class="stage" style="place-items:start;overflow:auto">
+      <table>
+        <thead><tr><th>Symbol</th><th>File</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>LifecycleSource</code>, <code>reduceLifecycle</code></td><td><code>packages/core/src/lifecycle-source.ts</code></td><td>Port interface + pure 4-rule reducer</td></tr>
+          <tr><td><code>NativeHookSource</code></td><td><code>packages/workspaces/src/native-hooks/native-hook-source.ts</code></td><td>Primary source — squadrant-owned claude hooks</td></tr>
+          <tr><td><code>CmuxStoreSource</code></td><td><code>packages/workspaces/src/cmux-daemon/cmux-store-source.ts</code></td><td>Backup source — watches cmux's own hook-sessions store</td></tr>
+          <tr><td><code>CodexAppServerSource</code></td><td><code>packages/agents/src/codex/codex-app-server-source.ts</code></td><td>Codex-only source — wraps driver ControlEvents</td></tr>
+          <tr><td>source wiring (3×, per-source <code>prevSnaps</code> + <code>report()</code>)</td><td><code>packages/cli/src/squadrantd.ts</code></td><td>Turns a reduced <code>LifecycleState</code> into a <code>ControlEvent</code></td></tr>
+          <tr><td><code>reduce()</code> / <code>deps.notify()</code></td><td><code>packages/core/src/daemon/reduce.ts</code></td><td>State-machine transition + notify hook</td></tr>
+          <tr><td><code>defaultNotify</code>, <code>createDelivery</code>, <code>deliveryTick</code></td><td><code>packages/core/src/daemon/delivery-loop.ts</code></td><td>Mailbox append + ~1s per-project delivery poll</td></tr>
+          <tr><td><code>appendToMailbox</code>, <code>readFromCursor</code>, <code>readCursor</code>/<code>writeCursor</code></td><td><code>packages/core/src/mailbox.ts</code></td><td>Append-only per-project disk mailbox + cursor</td></tr>
+          <tr><td><code>CaptainDelivery</code>, <code>deliverable</code></td><td><code>packages/core/src/delivery/captain-delivery.ts</code></td><td>Defer/stable-count state machine, probe decision</td></tr>
+          <tr><td><code>DeferDelivery</code></td><td><code>packages/core/src/delivery/defer-delivery.js</code></td><td>Thrown by the runtime driver to signal "don't advance cursor"</td></tr>
+          <tr><td><code>sendToSurface</code>, <code>parseDraftFromScreen</code>, <code>hasModalOptionList</code>, <code>classifyDraftLiveness</code>, <code>readInputBoxRaw</code></td><td><code>packages/workspaces/src/runtimes/cmux.ts</code></td><td>The CaptainDelivery gate — this is where #484 and #302 live</td></tr>
+          <tr><td><code>hasCCInputBox</code>, <code>sendFirstTurnWhenReady</code></td><td><code>packages/workspaces/src/runtimes/cmux.ts</code>, <code>packages/workspaces/src/crew-pane.ts</code></td><td>Separate gate — captain → crew first turn (not shown above)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <button id="prev">← Prev</button>
+    <div class="dots">
+      <i class="on" data-i="0"></i><i data-i="1"></i><i data-i="2"></i><i data-i="3"></i><i data-i="4"></i>
+    </div>
+    <button id="next">Next →</button>
+    <span class="num" id="num">1 / 5</span>
+  </footer>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  const dots = document.querySelectorAll('.dots i');
+  let cur = 0, timer;
+  function go(n) {
+    slides[cur].classList.remove('active');
+    dots[cur].classList.remove('on');
+    cur = (n + slides.length) % slides.length;
+    slides[cur].classList.add('active');
+    dots[cur].classList.add('on');
+    document.getElementById('num').textContent = (cur + 1) + ' / ' + slides.length;
+  }
+  document.getElementById('next').onclick = () => { stopAuto(); go(cur + 1); };
+  document.getElementById('prev').onclick = () => { stopAuto(); go(cur - 1); };
+  dots.forEach(d => d.onclick = () => { stopAuto(); go(+d.dataset.i); });
+  function startAuto() { timer = setInterval(() => go(cur + 1), 4000); }
+  function stopAuto() { clearInterval(timer); }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { stopAuto(); go(cur + 1); }
+    if (e.key === 'ArrowLeft') { stopAuto(); go(cur - 1); }
+    if (e.key === 'a' || e.key === 'A') { stopAuto(); startAuto(); }
+  });
+</script>
+</body>
+</html>
