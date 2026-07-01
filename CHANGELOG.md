@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-07-01
+
+### Fixed
+
+- **Daemon no longer auto-answers the captain's modal (#484):** delivery no longer auto-submits into the captain's `AskUserQuestion`/permission modal. A positive `N. Label` option-list detector (`hasModalOptionList`) defers delivery before the ghost/probe branches can mistake a modal's highlighted option for a live draft.
+
 ## [0.13.4] - 2026-06-30
 
 ### Fixed
