@@ -140,6 +140,9 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       lastSweepAt: ctx.lastSweepAt.value,
       sweepCadenceMs: opts.sweepMs ?? 30_000,
       log: gatherLogStats(logPath, now, SNAPSHOT_LOG_WINDOW_MS),
+      telegram: ctx.telegramBridge
+        ? { configured: true, ...ctx.telegramBridge.health() }
+        : { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
       health: buildHealth(),
       projects,
       results: gatherResults(resultsDir),

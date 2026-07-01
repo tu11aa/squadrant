@@ -33,6 +33,7 @@ function inputs(over: Partial<DaemonSnapshotInputs> = {}): DaemonSnapshotInputs 
     lastSweepAt: 9_000,
     sweepCadenceMs: 30_000,
     log: { errorCount: 0, sizeBytes: 1234, windowMs: 3_600_000 },
+    telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
     health: HEALTH,
     projects: [
       {
@@ -150,5 +151,18 @@ describe("assembleDaemonSnapshot", () => {
       NOW,
     );
     expect(snap.tier2.projects[0].deferral).toEqual({ maxDeferCount: 47, stuck: false });
+  });
+
+  it("B3: passes telegram bridge health through to Tier 0 verbatim", () => {
+    const snap = assembleDaemonSnapshot(
+      inputs({ telegram: { configured: true, polling: true, lastSuccessfulPollAt: 9500, lastError: null, lastErrorAt: null } }),
+      NOW,
+    );
+    expect(snap.tier0.telegram).toEqual({ configured: true, polling: true, lastSuccessfulPollAt: 9500, lastError: null, lastErrorAt: null });
+  });
+
+  it("B3: reports not-configured when telegram isn't set up", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier0.telegram).toEqual({ configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null });
   });
 });

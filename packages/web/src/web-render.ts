@@ -398,12 +398,26 @@ function renderDaemon(snap: FullSnapshot): string {
   // caution at most, with a trend sparkline, never a red master alarm.
   const logState: AnyState = t0.log.errorCount > 0 ? "stale" : "alive";
 
+  // B3: not configured is a calm "unknown" (nothing to alarm on); a dead poll
+  // loop (configured but not polling) is the false-green risk the report called
+  // out, so it bubbles a fault rather than looking indistinguishable from idle.
+  const tg = t0.telegram;
+  const tgState: AnyState = !tg.configured ? "unknown" : !tg.polling ? "gone" : tg.lastError ? "stale" : "alive";
+  const tgLabel = !tg.configured
+    ? "not configured"
+    : !tg.polling
+      ? "poll loop stopped"
+      : tg.lastError
+        ? `polling · ${tg.lastError}`
+        : `polling · last ok ${fmtAge(tg.lastSuccessfulPollAt == null ? null : snap.generatedAt - tg.lastSuccessfulPollAt)}`;
+
   out.push(
     `<div class="instr-grid">`,
     instr("process", `<span class="mono">squadrantd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
     instr("uptime", `<span class="mono">${fmtDur(t0.uptimeMs)}</span>`),
     instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && squadrant heal daemon") : ""),
     instr("sweep", `${pill(sweepState, sweep)}`),
+    instr("telegram", `${pill(tgState, tgLabel)}`),
     `</div>`,
   );
 

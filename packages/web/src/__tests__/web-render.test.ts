@@ -23,6 +23,7 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
       build: { state: "fresh", processStartedAt: 2000, distBuiltAt: 1000 },
       sweep: { lastSweepAt: 1000, ageMs: 8000, cadenceMs: 30_000 },
       log: { errorCount: 0, sizeBytes: 100, windowMs: 3_600_000 },
+      telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
       ...over,
     },
     tier1,
@@ -194,6 +195,37 @@ describe("daemon log error metric (fix b)", () => {
     // 7 log errors must NOT push the master annunciator to CRITICAL.
     expect(out).toContain('class="annunciator a-warn');
     expect(out).not.toContain('class="annunciator a-crit');
+  });
+});
+
+describe("telegram bridge health (B3)", () => {
+  it("shows 'not configured' (unknown) when no bridge is set up", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toContain("telegram");
+    expect(out).toContain("not configured");
+  });
+
+  it("shows a healthy polling state when configured with no error", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: true, lastSuccessfulPollAt: 999_900, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toMatch(/polling/i);
+  });
+
+  it("flags a dead poll loop (configured but not polling) as a fault, not a false green", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: false, lastSuccessfulPollAt: 500_000, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toMatch(/data-panel="daemon"[\s\S]*telegram[\s\S]*?s-gone/);
+  });
+
+  it("shows the last poll error as a caution while still polling", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: true, lastSuccessfulPollAt: 900_000, lastError: "getUpdates 401 Unauthorized", lastErrorAt: 950_000 },
+    })));
+    expect(out).toContain("getUpdates 401 Unauthorized");
   });
 });
 

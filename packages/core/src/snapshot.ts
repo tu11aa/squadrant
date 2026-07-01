@@ -9,7 +9,14 @@
 import type { ComponentHealth } from "./liveness.js";
 import type { MailboxStats } from "./mailbox.js";
 import type { CaptainDeliveryStats } from "./delivery/captain-delivery.js";
+import type { TelegramBridgeHealth } from "./telegram/bridge.js";
 export type { MailboxStats };
+
+/** B3: Telegram bridge status. `configured: false` when no bridge is set up
+ *  (v.s. `configured: true` with a dead poll loop — a distinct, worse state). */
+export interface TelegramHealth extends TelegramBridgeHealth {
+  configured: boolean;
+}
 
 export type BuildState = "fresh" | "stale";
 
@@ -33,6 +40,7 @@ export interface DaemonRoot {
   /** lastSweepAt/ageMs are null until the first sweep has run. */
   sweep: { lastSweepAt: number | null; ageMs: number | null; cadenceMs: number };
   log: { errorCount: number; sizeBytes: number; windowMs: number };
+  telegram: TelegramHealth;
 }
 
 // ── Tier 2: per-project data plane + global results ───────────────────────────
@@ -83,6 +91,7 @@ export interface DaemonSnapshotInputs {
   lastSweepAt: number | null;
   sweepCadenceMs: number;
   log: { errorCount: number; sizeBytes: number; windowMs: number };
+  telegram: TelegramHealth;
   health: ComponentHealth[];
   projects: Array<{
     project: string;
@@ -116,6 +125,7 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
         cadenceMs: input.sweepCadenceMs,
       },
       log: input.log,
+      telegram: input.telegram,
     },
     tier1: input.health,
     tier2: {

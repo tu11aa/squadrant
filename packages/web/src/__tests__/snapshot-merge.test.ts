@@ -16,6 +16,7 @@ const daemon: DaemonSnapshot = {
     build: { state: "fresh", processStartedAt: 1, distBuiltAt: 0 },
     sweep: { lastSweepAt: 1, ageMs: 4, cadenceMs: 30_000 },
     log: { errorCount: 0, sizeBytes: 0, windowMs: 3_600_000 },
+    telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
   },
   tier1: [],
   tier2: { projects: [], results: { fileCount: 0, totalBytes: 0 } },
