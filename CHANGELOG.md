@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-07-01
+
+### Fixed
+
+- **CREW IDLE no longer floods the captain during long tool-executing crew turns (#492):** `task.turn.completed` is treated as liveness-only while a tool call is still in flight, vetoing spurious awaiting-input flaps from racing lifecycle sources.
+
 ## [0.14.0] - 2026-07-01
 
 ### Added

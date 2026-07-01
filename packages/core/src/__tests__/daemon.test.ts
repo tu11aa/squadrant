@@ -699,6 +699,40 @@ describe("daemon – blocked crew resume path (#183)", () => {
       await d.handle({ kind: "event", project: "p", event: { type: "task.blocked", id: "t-blk", reason: "r", question: "q" } });
       expect(calls.filter((c) => c.message.includes("CREW BLOCKED"))).toHaveLength(1);
     });
+
+    // #492: a long tool-executing turn floods the captain with CREW IDLE ~once
+    // per watchdog tick while the daemon's own task state stays 'working'. Root
+    // cause: squadrant's daemon wires THREE parallel lifecycle sources for the
+    // same interactive crew (cmux-store file-watch, native claude hooks, cmux's
+    // forwarded event stream) — any one of them can independently (and
+    // erroneously) report task.turn.completed while a real tool call is still
+    // open. Reproduced here at the daemon/notify level (not just state-machine)
+    // to prove the flood is silenced end-to-end.
+    it("a genuinely in-flight tool call absorbs repeated turn.completed flaps with ZERO CREW IDLE fires (#492)", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-flood", { state: "working" }));
+      const calls: any[] = [];
+      let nowMs = 100_000; // long past any captain-turn debounce window
+      const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });
+      // The real tool call starts (PreToolUse) — pendingTool opens.
+      await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-flood", note: "agent.hook.PreToolUse", tool: "Bash" } });
+      // Three independent lifecycle sources each flap turn.completed on their
+      // own watchdog tick while the SAME tool call is still outstanding.
+      for (const t of [110_000, 130_000, 150_000, 170_000]) {
+        nowMs = t;
+        await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-flood", turnId: "racy-source" } });
+      }
+      expect(store.get("p", "t-flood")?.state).toBe("working");
+      expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(0);
+
+      // Once the tool genuinely returns, the NEXT turn-end is real and delivers.
+      nowMs = 180_000;
+      await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-flood", note: "posttooluse" } });
+      nowMs = 190_000;
+      await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-flood", turnId: "racy-source" } });
+      expect(store.get("p", "t-flood")?.state).toBe("awaiting-input");
+      expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(1);
+    });
   });
 
   it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#183)", async () => {
