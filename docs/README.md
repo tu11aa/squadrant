@@ -10,7 +10,9 @@ Current references that stay accurate as the project evolves.
 
 | File | Purpose | Status |
 |---|---|---|
-| [../README.md](../README.md) | Project overview, install, commands, monorepo structure | Active |
+| [../README.md](../README.md) | Pitch — mental model, why you'd want it, install | Active |
+| [../QUICKSTART.md](../QUICKSTART.md) | Hands-on first run — install, first captain, first crew, Telegram | Active |
+| [reference.md](reference.md) | Full command table, monorepo structure, architecture, Telegram, config schema | Active |
 | [../CLAUDE.md](../CLAUDE.md) | Claude Code agent instructions — GitNexus, repository layout, coding discipline | Active |
 | [../AGENTS.md](../AGENTS.md) | Canonical multi-agent instructions (canonical per multi-agent direction) | Active |
 | [architecture.html](architecture.html) | Detailed architecture reference — roles, daemon, driver seams, projection | Active (refreshed 2026-06-18) |
