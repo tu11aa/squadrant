@@ -157,7 +157,7 @@ function liveDeliveryBehind(d: DaemonSnapshot): number {
 interface Collected {
   now: number;
   daemonT: Tally; projT: Tally; envT: Tally; overall: Tally;
-  errors: number; behind: number; crewAgeMs: number;
+  errors: number; behind: number; crewAgeMs: number; undelivered: number; maxDeferCount: number;
 }
 
 function collect(snap: FullSnapshot): Collected {
@@ -174,7 +174,7 @@ function collect(snap: FullSnapshot): Collected {
   ];
   const daemonStates: AnyState[] = [];
   const projStates: AnyState[] = [];
-  let errors = 0, behind = 0, crewAgeMs = 0;
+  let errors = 0, behind = 0, crewAgeMs = 0, undelivered = 0, maxDeferCount = 0;
   if (snap.daemon !== "unreachable") {
     const t0 = snap.daemon.tier0;
     daemonStates.push("alive"); // the daemon process itself is up
@@ -184,10 +184,13 @@ function collect(snap: FullSnapshot): Collected {
     for (const c of snap.daemon.tier1) {
       projStates.push(c.state);
       if (c.kind === "crew" && c.lastSeenMs != null) crewAgeMs = Math.max(crewAgeMs, now - c.lastSeenMs);
+      // B2/#466: promoted CREW UNDELIVERED signal — see liveness.ts projectHealth.
+      if (c.kind === "crew" && c.detail?.startsWith("undelivered")) undelivered++;
     }
     for (const p of snap.daemon.tier2.projects) {
       if (p.delivery.behind > 0) projStates.push("stale");
       if (p.store.corruptCount > 0) projStates.push("gone");
+      maxDeferCount = Math.max(maxDeferCount, p.deferral.maxDeferCount);
     }
     behind = liveDeliveryBehind(snap.daemon);
   }
@@ -197,7 +200,7 @@ function collect(snap: FullSnapshot): Collected {
     projT: tally(projStates),
     envT: tally(envStates),
     overall: tally([...daemonStates, ...projStates, ...envStates]),
-    errors, behind, crewAgeMs,
+    errors, behind, crewAgeMs, undelivered, maxDeferCount,
   };
 }
 
@@ -240,6 +243,12 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
     "System Health",
     `${col.overall.alive} of ${col.overall.total} monitored components are alive — the ring shows the full breakdown by state.`,
   ));
+  if (col.undelivered > 0) {
+    out.push(banner(
+      "warn",
+      `⚠ ${col.undelivered} CREW${col.undelivered > 1 ? "S" : ""} UNDELIVERED — first turn may not have landed; re-send the task or check the spawn (see Projects tab)`,
+    ));
+  }
   out.push(
     `<div class="hero a-${mc}">`,
     `<div class="gauge">`,
@@ -271,6 +280,7 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
     trendCard("errors", "Daemon log", `${col.errors}`, "errors the daemon logged in the last window"),
     trendCard("behind", "Delivery lag", `${col.behind}`, "messages captains have not read yet"),
     trendCard("crewAge", "Crew heartbeat", linkLost ? "—" : fmtDur(col.crewAgeMs), "time since the quietest crew was last seen"),
+    trendCard("defers", "Delivery defers", `${col.maxDeferCount}`, "highest in-flight retry count for any project's captain delivery (#484/#466)"),
     `</div>`,
   );
 
@@ -323,10 +333,18 @@ function renderProjects(snap: FullSnapshot, now: number): string {
     // contribute a `stale` to the rollup (#324/#323). A genuine fault (corrupt
     // store) still bubbles `gone` and out-ranks the stopped headline.
     const captainStopped = comps.some((c) => c.kind === "captain" && c.state === "stopped");
+    // B1: an in-flight defer is a caution; crossing the maxDefers threshold ("stuck") is
+    // the exact #484/#466-class incident this session spent all day fixing, so it bubbles
+    // a fault. Guarded on !captainStopped so a closed captain's stale leftover counts never
+    // false-alarm (#324/#323 pattern).
+    const deferralState: AnyState =
+      !captainStopped && dp && dp.deferral.stuck ? "gone" :
+      !captainStopped && dp && dp.deferral.maxDeferCount > 0 ? "stale" : "alive";
     const rollupStates: AnyState[] = [
       ...comps.map((c) => c.state),
       !captainStopped && dp && dp.delivery.behind > 0 ? "stale" : "alive",
       dp && dp.store.corruptCount > 0 ? "gone" : "alive",
+      deferralState,
     ];
     const rollup = worst(rollupStates);
     out.push(`<article class="card" data-rollup="${rollup}">`);
@@ -345,7 +363,7 @@ function renderProjects(snap: FullSnapshot, now: number): string {
       out.push(
         `<div class="dp-grid">`,
         `<div class="dp-block"><span class="dp-l">mailbox</span><span class="dp-v"><span class="mono">${dp.mailbox.maxSeq}</span> entries · ${fmtBytes(dp.mailbox.sizeBytes)} · rotated ${dp.mailbox.rotationCount} · oldest ${fmtAge(dp.mailbox.oldestEntryAgeMs)}</span></div>`,
-        `<div class="dp-block"><span class="dp-l">captain delivery</span>${deliveryBar(dp.delivery.behind, dp.mailbox.maxSeq)}<span class="dp-v"><span class="mono">${dp.delivery.behind}</span> behind</span></div>`,
+        `<div class="dp-block"><span class="dp-l">captain delivery</span>${deliveryBar(dp.delivery.behind, dp.mailbox.maxSeq)}<span class="dp-v"><span class="mono">${dp.delivery.behind}</span> behind${dp.deferral.maxDeferCount > 0 ? ` · <span class="mono">${dp.deferral.maxDeferCount}</span> deferred${dp.deferral.stuck ? ` ${pill("gone", "delivery stuck")}` : ""}` : ""}</span></div>`,
         `<div class="dp-block"><span class="dp-l">task store</span><span class="chips">${counts || `<span class="dim small">no tasks</span>`}${dp.store.corruptCount > 0 ? pill("gone", `${dp.store.corruptCount} corrupt`) : ""}</span></div>`,
         `</div>`,
       );
@@ -380,12 +398,34 @@ function renderDaemon(snap: FullSnapshot): string {
   // caution at most, with a trend sparkline, never a red master alarm.
   const logState: AnyState = t0.log.errorCount > 0 ? "stale" : "alive";
 
+  // B3: not configured is a calm "unknown" (nothing to alarm on); a dead poll
+  // loop (configured but not polling) is the false-green risk the report called
+  // out, so it bubbles a fault rather than looking indistinguishable from idle.
+  const tg = t0.telegram;
+  const tgState: AnyState = !tg.configured ? "unknown" : !tg.polling ? "gone" : tg.lastError ? "stale" : "alive";
+  const tgLabel = !tg.configured
+    ? "not configured"
+    : !tg.polling
+      ? "poll loop stopped"
+      : tg.lastError
+        ? `polling · ${tg.lastError}`
+        : `polling · last ok ${fmtAge(tg.lastSuccessfulPollAt == null ? null : snap.generatedAt - tg.lastSuccessfulPollAt)}`;
+
   out.push(
     `<div class="instr-grid">`,
     instr("process", `<span class="mono">squadrantd</span> ${statePill("alive")}`, `<span class="instr-sub">pid ${t0.pid} · v${esc(t0.version)}</span>`),
     instr("uptime", `<span class="mono">${fmtDur(t0.uptimeMs)}</span>`),
     instr("build", `${pill(buildState, t0.build.state)}`, t0.build.state === "stale" ? remediation("npm run build && squadrant heal daemon") : ""),
     instr("sweep", `${pill(sweepState, sweep)}`),
+    instr("telegram", `${pill(tgState, tgLabel)}`),
+    ...t0.lifecycleSources.map((s) => {
+      // B4: architecture-internal debugging aid — a source going dark usually
+      // already manifests as a stale/gone crew via the heartbeat classification;
+      // this just explains WHY without a daemon-log dive.
+      const state: AnyState = !s.active ? "gone" : s.error ? "stale" : "alive";
+      const label = !s.active ? "inactive" : s.error ? s.error : "active";
+      return instr(s.name, `${pill(state, label)}`);
+    }),
     `</div>`,
   );
 
@@ -469,6 +509,7 @@ function metricsBlob(col: Collected, linkLost: boolean): string {
     errors: linkLost ? 0 : col.errors,
     behind: linkLost ? 0 : col.behind,
     crewAgeMs: linkLost ? 0 : col.crewAgeMs,
+    maxDeferCount: linkLost ? 0 : col.maxDeferCount,
     alive: col.overall.alive, stale: col.overall.stale, gone: col.overall.gone, stopped: col.overall.stopped, unknown: col.overall.unknown,
   };
   // Escape `</` defensively so the JSON can never close the <script> early.
@@ -707,7 +748,7 @@ const CLIENT_JS = `
 (function(){
   var activeTab='overview';var hist={};var prev={};
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
-  function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);}
+  function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);pushHist('defers',m.maxDeferCount,m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
   function drawSparks(){var ns=document.querySelectorAll('[data-spark]');for(var i=0;i<ns.length;i++){ns[i].innerHTML=sparkSVG(hist[ns[i].getAttribute('data-spark')]||[]);}}
   function applyTab(){var ts=document.querySelectorAll('[data-tab]');for(var i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-tab')===activeTab;ts[i].setAttribute('aria-selected',on?'true':'false');ts[i].classList.toggle('on',on);}var ps=document.querySelectorAll('[data-panel]');for(var j=0;j<ps.length;j++){var on2=ps[j].getAttribute('data-panel')===activeTab;ps[j].hidden=!on2;}}

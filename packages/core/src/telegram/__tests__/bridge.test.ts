@@ -408,6 +408,93 @@ describe("inbound poll", () => {
   });
 });
 
+describe("health() (B3 — dashboard visibility into the poll loop)", () => {
+  it("reports not-polling with no poll history before start()", () => {
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => [],
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: freshRoot(), client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+    expect(bridge.health()).toEqual({ polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null });
+  });
+
+  it("stamps lastSuccessfulPollAt after a clean poll and reports polling=true", async () => {
+    const root = freshRoot();
+    let n = 0;
+    const polled = deferred();
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => { n++; if (n === 1) polled.resolve(); return []; },
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+    bridge.start();
+    await polled.promise;
+    await waitFor(() => bridge.health().lastSuccessfulPollAt !== null);
+    const h = bridge.health();
+    expect(h.polling).toBe(true);
+    expect(h.lastError).toBeNull();
+    expect(typeof h.lastSuccessfulPollAt).toBe("number");
+  });
+
+  it("stamps lastError/lastErrorAt on a failing poll without clearing polling", async () => {
+    const root = freshRoot();
+    const failed = deferred();
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => { failed.resolve(); throw new Error("getUpdates boom"); },
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+    bridge.start();
+    await failed.promise;
+    await waitFor(() => bridge.health().lastError !== null);
+    const h = bridge.health();
+    expect(h.polling).toBe(true);
+    expect(h.lastError).toContain("getUpdates boom");
+    expect(typeof h.lastErrorAt).toBe("number");
+  });
+
+  it("reports polling=false after stop()", async () => {
+    const root = freshRoot();
+    const client: TelegramClient = {
+      sendMessage: async () => {},
+      createForumTopic: async () => 1,
+      getUpdates: async () => [],
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+    bridge.start();
+    await waitFor(() => bridge.health().lastSuccessfulPollAt !== null);
+    bridge.stop();
+    expect(bridge.health().polling).toBe(false);
+  });
+});
+
 describe("lastUserId passive capture", () => {
   it("records m.from.id to state on an allowlisted inbound message", async () => {
     const root = freshRoot();

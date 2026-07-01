@@ -22,11 +22,21 @@ interface CallbackQuery {
   data?: string;
 }
 
+/** Read-only poll-loop health (B3 — dashboard visibility). A silently-dying
+ *  getUpdates loop otherwise looks identical to a healthy quiet one from outside. */
+export interface TelegramBridgeHealth {
+  polling: boolean;
+  lastSuccessfulPollAt: number | null;
+  lastError: string | null;
+  lastErrorAt: number | null;
+}
+
 export interface TelegramBridge {
   start(): void;
   stop(): void;
   /** Outbound, best-effort: a Telegram failure is swallowed (logged), never thrown. */
   pushLifecycle(project: string, ev: ControlEvent): void;
+  health(): TelegramBridgeHealth;
 }
 
 export interface TelegramBridgeOptions {
@@ -94,6 +104,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
   let running = false;
+  let lastSuccessfulPollAt: number | null = null;
+  let lastError: string | null = null;
+  let lastErrorAt: number | null = null;
 
   function persistOffset(next: number): void {
     const s = loadState(stateRoot);
@@ -451,7 +464,10 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
           await handleUpdate(u);
           persistOffset(u.update_id + 1);
         }
+        lastSuccessfulPollAt = Date.now();
       } catch (e) {
+        lastError = (e as Error).message;
+        lastErrorAt = Date.now();
         log(`telegram inbound poll failed: ${(e as Error).message}`);
       }
       if (running) await sleep(pollMs);
@@ -473,6 +489,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       void deliverOutbound(project, ev).catch((e) => {
         log(`telegram outbound failed project=${project}: ${(e as Error).message}`);
       });
+    },
+    health() {
+      return { polling: running, lastSuccessfulPollAt, lastError, lastErrorAt };
     },
   };
 }

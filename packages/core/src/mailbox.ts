@@ -275,14 +275,19 @@ export interface MailboxStats {
  */
 export async function mailboxStats(stateRoot: string, project: string): Promise<MailboxStats> {
   const file = logPath(stateRoot, project);
-  let sizeBytes = 0;
-  try { sizeBytes = (await fs.stat(file)).size; }
-  catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
   const rotated = await listRotatedOldestFirst(stateRoot, project);
+  let sizeBytes = 0;
+  for (const f of [file, ...rotated]) {
+    try { sizeBytes += (await fs.stat(f)).size; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+  }
+  // Oldest entry lives in the oldest rotated archive when one exists (listRotatedOldestFirst
+  // returns oldest-first), otherwise it's the current file.
+  const oldestFile = rotated[0] ?? file;
   return {
     maxSeq: await readMaxSeq(stateRoot, project),
     sizeBytes,
-    oldestEntryAgeMs: await oldestEntryAgeMs(file),
+    oldestEntryAgeMs: await oldestEntryAgeMs(oldestFile),
     rotationCount: rotated.length,
   };
 }

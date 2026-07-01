@@ -16,6 +16,15 @@ export interface CaptainDeliveryOptions {
 export type SendFn = (text: string, opts?: { probe?: boolean }) => Promise<void>;
 export type DeliverResult = { delivered: true } | { deferred: true };
 
+/** Read-only deferral snapshot (B1 — dashboard visibility into #484/#466-class stalls). */
+export interface CaptainDeliveryStats {
+  /** Highest in-flight deferCount across all seqs currently being retried (0 when none). */
+  maxDeferCount: number;
+  /** true once maxDeferCount has reached the configured maxDefers threshold — the same
+   *  point at which delivery force-escalates to a probe send. */
+  stuck: boolean;
+}
+
 /**
  * Unified-formatter helper (#214/#210): the daemon's formatMessage is the single
  * source of truth for the captain-facing message. Returns null for entries the
@@ -79,5 +88,12 @@ export class CaptainDelivery {
       // Non-DeferDelivery errors: don't advance cursor, retry next poll.
       return { deferred: true };
     }
+  }
+
+  /** Read-only. Never mutates — safe to poll from the snapshot assembler every tick. */
+  stats(): CaptainDeliveryStats {
+    let maxDeferCount = 0;
+    for (const c of this.deferCounts.values()) if (c > maxDeferCount) maxDeferCount = c;
+    return { maxDeferCount, stuck: maxDeferCount >= this.opts.maxDefers };
   }
 }

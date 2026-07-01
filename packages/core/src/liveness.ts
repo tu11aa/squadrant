@@ -66,6 +66,13 @@ export interface CrewLiveness {
   state: TaskState;
   lastHeartbeat: number;
   mode: Mode;
+  /** Set once the crew's first turn is confirmed delivered (#466). Absent/undefined
+   *  means "never confirmed" — combined with heartbeatBudgetMs below to detect a
+   *  dropped first turn (mirrors daemon/reduce.ts's CREW UNDELIVERED watchdog). */
+  firstTurnConfirmedAt?: number;
+  /** Per-task stall threshold. Omitted when the caller doesn't have it (older
+   *  callers) — undelivered detection is skipped in that case, never a hard error. */
+  heartbeatBudgetMs?: number;
 }
 
 /**
@@ -121,13 +128,21 @@ export function projectHealth(input: {
   // ── crews (one row per non-terminal crew) ────────────────────────────────
   for (const c of crews) {
     if (TERMINAL.has(c.state)) continue;
+    // #466/B2: promote the CREW UNDELIVERED watchdog condition (daemon/reduce.ts)
+    // to a first-class, grep-able detail so it doesn't wait for the heartbeat
+    // window to age the row into stale/gone before it's noticeable.
+    const undelivered =
+      c.mode === "interactive" &&
+      !c.firstTurnConfirmedAt &&
+      c.heartbeatBudgetMs != null &&
+      now - c.lastHeartbeat > c.heartbeatBudgetMs;
     out.push({
       kind: "crew",
       project,
       ref: c.name ?? c.id.slice(0, 8),
       state: classifyHealth(c.lastHeartbeat, now, CREW_STALE_MS, CREW_GONE_MS),
       lastSeenMs: c.lastHeartbeat,
-      detail: c.state,
+      detail: undelivered ? `undelivered (${c.state})` : c.state,
     });
   }
 

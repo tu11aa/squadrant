@@ -78,6 +78,12 @@ export interface LifecycleSource {
    * A poll result MUST set origin:"scan" and MUST NOT assert state:"needsInput".
    */
   snapshot?(taskId: string): LifecycleSnapshot | undefined;
+  /**
+   * Read-only source-level health (B4 — dashboard visibility into which sources
+   * are up). Optional: a source with no fallible startup can omit it and the
+   * daemon assumes {active: true, error: null} once registered.
+   */
+  health?(): { active: boolean; error: string | null };
 }
 
 // ── the one reducer all sources feed ────────────────────────────────────────

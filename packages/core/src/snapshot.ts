@@ -8,7 +8,22 @@
 // the gathered numbers in here; this module never touches the filesystem.
 import type { ComponentHealth } from "./liveness.js";
 import type { MailboxStats } from "./mailbox.js";
+import type { CaptainDeliveryStats } from "./delivery/captain-delivery.js";
+import type { TelegramBridgeHealth } from "./telegram/bridge.js";
 export type { MailboxStats };
+
+/** B3: Telegram bridge status. `configured: false` when no bridge is set up
+ *  (v.s. `configured: true` with a dead poll loop — a distinct, worse state). */
+export interface TelegramHealth extends TelegramBridgeHealth {
+  configured: boolean;
+}
+
+/** B4: one registered LifecycleSource's health (cmux-store/native-hook/codex-appserver). */
+export interface LifecycleSourceHealth {
+  name: string;
+  active: boolean;
+  error: string | null;
+}
 
 export type BuildState = "fresh" | "stale";
 
@@ -32,6 +47,8 @@ export interface DaemonRoot {
   /** lastSweepAt/ageMs are null until the first sweep has run. */
   sweep: { lastSweepAt: number | null; ageMs: number | null; cadenceMs: number };
   log: { errorCount: number; sizeBytes: number; windowMs: number };
+  telegram: TelegramHealth;
+  lifecycleSources: LifecycleSourceHealth[];
 }
 
 // ── Tier 2: per-project data plane + global results ───────────────────────────
@@ -58,6 +75,8 @@ export interface ProjectDataPlane {
   mailbox: MailboxStats;
   delivery: DeliveryLag;
   store: StoreStats;
+  /** B1: read-only captain-delivery deferral visibility (#484/#466-class stalls). */
+  deferral: CaptainDeliveryStats;
 }
 
 export interface DaemonSnapshot {
@@ -80,6 +99,8 @@ export interface DaemonSnapshotInputs {
   lastSweepAt: number | null;
   sweepCadenceMs: number;
   log: { errorCount: number; sizeBytes: number; windowMs: number };
+  telegram: TelegramHealth;
+  lifecycleSources: LifecycleSourceHealth[];
   health: ComponentHealth[];
   projects: Array<{
     project: string;
@@ -87,6 +108,8 @@ export interface DaemonSnapshotInputs {
     lastAckedSeq: number;
     storeByState: Record<string, number>;
     corruptCount: number;
+    /** Omitted when the caller has no CaptainDelivery instance for this project yet. */
+    deferral?: CaptainDeliveryStats;
   }>;
   results: ResultArtifacts;
 }
@@ -111,6 +134,8 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
         cadenceMs: input.sweepCadenceMs,
       },
       log: input.log,
+      telegram: input.telegram,
+      lifecycleSources: input.lifecycleSources,
     },
     tier1: input.health,
     tier2: {
@@ -123,6 +148,7 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
           behind: Math.max(0, p.mailbox.maxSeq - p.lastAckedSeq),
         },
         store: { byState: p.storeByState, corruptCount: p.corruptCount },
+        deferral: p.deferral ?? { maxDeferCount: 0, stuck: false },
       })),
       results: input.results,
     },

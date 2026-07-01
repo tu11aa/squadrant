@@ -23,6 +23,8 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
       build: { state: "fresh", processStartedAt: 2000, distBuiltAt: 1000 },
       sweep: { lastSweepAt: 1000, ageMs: 8000, cadenceMs: 30_000 },
       log: { errorCount: 0, sizeBytes: 100, windowMs: 3_600_000 },
+      telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+      lifecycleSources: [],
       ...over,
     },
     tier1,
@@ -33,6 +35,7 @@ function daemon(over: Partial<DaemonSnapshot["tier0"]> = {}, tier1: DaemonSnapsh
           mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
           delivery: { maxSeq: 12, lastAckedSeq: 12, behind: 0 },
           store: { byState: { working: 3, blocked: 1 }, corruptCount: 0 },
+          deferral: { maxDeferCount: 0, stuck: false },
         },
       ],
       results: { fileCount: 294, totalBytes: 18_000_000 },
@@ -196,6 +199,67 @@ describe("daemon log error metric (fix b)", () => {
   });
 });
 
+describe("telegram bridge health (B3)", () => {
+  it("shows 'not configured' (unknown) when no bridge is set up", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: false, polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toContain("telegram");
+    expect(out).toContain("not configured");
+  });
+
+  it("shows a healthy polling state when configured with no error", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: true, lastSuccessfulPollAt: 999_900, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toMatch(/polling/i);
+  });
+
+  it("flags a dead poll loop (configured but not polling) as a fault, not a false green", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: false, lastSuccessfulPollAt: 500_000, lastError: null, lastErrorAt: null },
+    })));
+    expect(out).toMatch(/data-panel="daemon"[\s\S]*telegram[\s\S]*?s-gone/);
+  });
+
+  it("shows the last poll error as a caution while still polling", () => {
+    const out = renderContent(full(daemon({
+      telegram: { configured: true, polling: true, lastSuccessfulPollAt: 900_000, lastError: "getUpdates 401 Unauthorized", lastErrorAt: 950_000 },
+    })));
+    expect(out).toContain("getUpdates 401 Unauthorized");
+  });
+});
+
+describe("lifecycle source health (B4)", () => {
+  it("renders no source rows when none are registered", () => {
+    const out = renderContent(full(daemon({ lifecycleSources: [] })));
+    expect(out).not.toContain("cmux-store");
+  });
+
+  it("renders an active source as healthy", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "cmux-store", active: true, error: null }],
+    })));
+    expect(out).toContain("cmux-store");
+    expect(out).toMatch(/cmux-store[\s\S]*?s-alive/);
+  });
+
+  it("flags an inactive source as a fault", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "native-hook", active: false, error: null }],
+    })));
+    expect(out).toMatch(/native-hook[\s\S]*?s-gone/);
+  });
+
+  it("flags an active-but-errored source as a caution and shows the error text", () => {
+    const out = renderContent(full(daemon({
+      lifecycleSources: [{ name: "cmux-store", active: true, error: "ENOSPC: watch failed" }],
+    })));
+    expect(out).toMatch(/cmux-store[\s\S]*?s-stale/);
+    expect(out).toContain("ENOSPC: watch failed");
+  });
+});
+
 describe("daemon unreachable", () => {
   it("shows the unreachable banner but still renders Tier 3/4", () => {
     const out = renderContent(full("unreachable"));
@@ -251,6 +315,7 @@ describe("stopped distinguished from fault (#324/#323)", () => {
       mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
       delivery: { maxSeq: 10, lastAckedSeq: 2, behind: 8 },
       store: { byState: { cancelled: 2 }, corruptCount: 0 },
+      deferral: { maxDeferCount: 0, stuck: false },
     }];
     const out = renderContent(full(d));
     // The card stays 'stopped' — delivery lag behind a closed captain is expected.
@@ -264,9 +329,86 @@ describe("stopped distinguished from fault (#324/#323)", () => {
       mailbox: { maxSeq: 10, sizeBytes: 100, oldestEntryAgeMs: 60_000, rotationCount: 0 },
       delivery: { maxSeq: 10, lastAckedSeq: 10, behind: 0 },
       store: { byState: {}, corruptCount: 1 },
+      deferral: { maxDeferCount: 0, stuck: false },
     }];
     const out = renderContent(full(d));
     expect(out).toMatch(/data-rollup="gone"/);
+  });
+});
+
+describe("CREW UNDELIVERED headline (B2/#466)", () => {
+  const undeliveredCrew: DaemonSnapshot["tier1"] = [
+    { kind: "crew", project: "pact", ref: "pact-crew-1", state: "stale", lastSeenMs: 1, detail: "undelivered (submitted)" },
+  ];
+
+  it("shows a headline banner on Overview counting undelivered crews", () => {
+    const out = renderContent(full(daemon({}, undeliveredCrew)));
+    expect(out).toMatch(/1 CREW UNDELIVERED/i);
+  });
+
+  it("does not show the undelivered banner when no crew is flagged", () => {
+    const normalCrew: DaemonSnapshot["tier1"] = [
+      { kind: "crew", project: "pact", ref: "pact-crew-1", state: "alive", lastSeenMs: 1, detail: "working" },
+    ];
+    const out = renderContent(full(daemon({}, normalCrew)));
+    expect(out).not.toMatch(/undelivered/i);
+  });
+
+  it("Projects tab still shows the raw detail text for the flagged crew row", () => {
+    const out = renderContent(full(daemon({}, undeliveredCrew)));
+    expect(out).toContain("undelivered (submitted)");
+  });
+});
+
+describe("delivery deferral visibility (B1/#484/#466)", () => {
+  it("renders the in-flight defer count in the project's delivery block", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 47, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toContain("47");
+    expect(out).toMatch(/defer/i);
+  });
+
+  it("does not roll up or flag a project with zero in-flight defers", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 0, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="alive"/);
+    expect(out).not.toMatch(/delivery stuck/i);
+  });
+
+  it("rolls a project with in-flight (but not yet stuck) defers up to 'stale'", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 5, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="stale"/);
+  });
+
+  it("rolls a stuck project (deferCount crossed threshold) up to 'gone' with a headline flag", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 300, stuck: true };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="gone"/);
+    expect(out).toMatch(/delivery stuck/i);
+  });
+
+  it("shows the global max in-flight defer count as an Overview trend", () => {
+    const d = daemon();
+    d.tier2.projects[0].deferral = { maxDeferCount: 47, stuck: false };
+    const out = renderContent(full(d));
+    expect(out).toContain('data-spark="defers"');
+    expect(out).toMatch(/Delivery defers/i);
+  });
+
+  it("a stopped captain's leftover deferral does not false-alarm (#324/#323 pattern)", () => {
+    const stoppedCaptain: DaemonSnapshot["tier1"] = [
+      { kind: "captain", project: "squadrant", ref: "squadrant-captain", state: "stopped", lastSeenMs: null },
+    ];
+    const d = daemon({}, stoppedCaptain);
+    d.tier2.projects[0].deferral = { maxDeferCount: 300, stuck: true };
+    const out = renderContent(full(d));
+    expect(out).toMatch(/data-rollup="stopped"/);
+    expect(out).not.toMatch(/data-rollup="gone"/);
   });
 });
 
