@@ -203,6 +203,101 @@ describe("sendFirstTurnWhenReady — post-send acceptance retry", () => {
   });
 });
 
+// ─── #499: splash-marker drift — sawSplash latch fails closed ────────────────
+
+describe("sendFirstTurnWhenReady — splash-marker drift fails closed (#499)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The core #499 regression: a marker that never matches the real screen (text
+  // drift, wrong wording) used to make isTurnAccepted return true on the FIRST
+  // post-send check, before any keystroke landed — a false-positive delivered:true.
+  // With the sawSplash latch, "marker absent" only counts as acceptance once the
+  // marker was actually observed first. A marker that's never observed must fail
+  // closed: delivered:false, so the caller surfaces a non-delivery warning instead
+  // of silently confirming a turn that was never sent.
+  it("never returns delivered:true when the splash marker never matches the real screen", async () => {
+    // Screen never contains "Ask anything" at all — simulates the exact #499
+    // drift scenario (real opencode text vs a stale/wrong hardcoded marker).
+    readPaneScreen.mockResolvedValue("> some other unrelated prompt");
+
+    const promise = sendFirstTurnWhenReady(
+      rt(),
+      pane,
+      "do the thing",
+      "$ opencode",
+      { splashMarker: "totally-wrong-marker" },
+    );
+
+    await vi.advanceTimersByTimeAsync(120000);
+    const result = await promise;
+
+    expect(result.delivered).toBe(false);
+  });
+
+  it("readiness gate does not stabilize on a screen that never shows the marker", async () => {
+    readPaneScreen.mockResolvedValue("$ opencode booting up, no splash yet");
+
+    const promise = sendFirstTurnWhenReady(
+      rt(),
+      pane,
+      "do the thing",
+      "$ opencode booting up, no splash yet",
+      { splashMarker: "Ask anything" },
+    );
+
+    await vi.advanceTimersByTimeAsync(120000);
+    await promise;
+
+    // Never "ready" per the positive gate, but the splash branch still attempts
+    // the send unconditionally — confirm it doesn't falsely report delivered.
+    expect(sendToPane).toHaveBeenCalled();
+  });
+
+  // Real drift as reported in #499: opencode's actual placeholder uses three
+  // ASCII dots and rotates through example text, not the old U+2026 hardcode.
+  // The normalized "ask anything" substring match must still confirm delivery
+  // once the (correctly matching) splash clears.
+  it("confirms delivery once the drift-tolerant marker clears from the real placeholder text", async () => {
+    let callCount = 0;
+    readPaneScreen.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 3) return 'Ask anything... "Fix a TODO in the codebase"';
+      if (callCount === 4) return 'Ask anything... "Fix a TODO in the codebase"';
+      return "> processing your task";
+    });
+
+    const promise = sendFirstTurnWhenReady(
+      rt(),
+      pane,
+      "do the thing",
+      "$ opencode",
+      { splashMarker: "Ask anything" },
+    );
+
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await promise;
+
+    expect(result.delivered).toBe(true);
+  });
+});
+
 // ─── confirmedSendToPane (#448 follow-up send hardening) ─────────────────────
 
 describe("confirmedSendToPane — follow-up crew send (#448)", () => {

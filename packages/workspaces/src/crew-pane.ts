@@ -7,7 +7,7 @@ import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
 import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, classifyStartupSurface } from "./runtimes/cmux.js";
-import { titleFor, isCrewTitle, isTurnAccepted } from "@squadrant/core";
+import { titleFor, isCrewTitle, screenHasSplashMarker } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
 // Poll-based first-turn delivery timing constants.
@@ -201,10 +201,12 @@ export async function sendFirstTurnWhenReady(
     // surface to be CC-INITIALIZED (classifyStartupSurface === "idle", i.e. the
     // persistent bottom status block — Ctx Used / ⏵⏵ / shortcuts / accept edits — is
     // present and no turn is in flight), in addition to the ❯ box (keeps #469's
-    // banner rejection). The opencode splash path is unchanged: its splashMarker
-    // short-circuits below, so we leave its readiness as "box present".
+    // banner rejection). For the opencode splash path (#499), readiness is a
+    // POSITIVE signal too: the marker must actually be visible on screen (not
+    // hardcoded true) — otherwise a booting/mid-transition screen could be
+    // declared "stable" before the TUI has rendered its idle splash at all.
     const ready = acceptanceConfig?.splashMarker
-      ? true
+      ? screenHasSplashMarker(screen, acceptanceConfig.splashMarker)
       : hasCCInputBox(screen) && classifyStartupSurface(screen) === "idle";
     if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && ready) {
       stable = true;
@@ -230,11 +232,23 @@ export async function sendFirstTurnWhenReady(
     // opencode's TUI does not collapse pastes into placeholders, so the atomic
     // send+Enter (sendToPane) is correct here and must stay (it was just fixed
     // and live-verified in #235). The #339 paste race is claude-specific.
+    //
+    // #499: sawSplash latches once the marker has actually been observed on
+    // screen. Only THEN does the marker's absence count as acceptance — this
+    // mirrors the claude path's sawDraft gate. Without the latch, a marker that
+    // never matches (drift, misconfiguration) makes isTurnAccepted return true
+    // on the very first check, before any keystroke lands, and silently
+    // confirms delivery of a turn that was never sent. With the latch, the same
+    // situation exhausts the confirm window and fails closed (delivered:false),
+    // surfacing the non-delivery warning instead.
+    let sawSplash = screenHasSplashMarker(preSendScreen, acceptanceConfig.splashMarker);
     await runtime.sendToPane(pane, task);
     for (let check = 0; check < SPLASH_MAX_CHECKS; check++) {
       await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
       const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-      if (isTurnAccepted(preSendScreen, afterScreen, acceptanceConfig)) {
+      if (screenHasSplashMarker(afterScreen, acceptanceConfig.splashMarker)) {
+        sawSplash = true;
+      } else if (sawSplash) {
         return { delivered: true };
       }
       if ((check + 1) % SPLASH_RESEND_EVERY_N === 0 && check < SPLASH_MAX_CHECKS - 1) {

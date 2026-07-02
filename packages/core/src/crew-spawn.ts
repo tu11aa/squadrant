@@ -412,10 +412,16 @@ export async function runCrewSpawn(
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const opencodeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
-      // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until "Ask
-      // anything…" leaves the screen, re-sending every ~3s to cover slow boots
+      // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until the idle
+      // splash leaves the screen, re-sending every ~3s to cover slow boots
       // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.
-      splashMarker: "Ask anything…",
+      // #499: match a stable substring ("ask anything", case/whitespace/ellipsis
+      // -insensitive via screenHasSplashMarker) rather than the exact wording —
+      // opencode's real placeholder rotates through example prompts and uses
+      // three ASCII dots ("Ask anything...") or a longer command hint ("Ask
+      // anything, / for commands, @ for context..."), never the literal
+      // "Ask anything…" (U+2026) this used to hardcode, which never matched.
+      splashMarker: "Ask anything",
     } satisfies TurnAcceptanceConfig);
     // #466: surface non-delivery; emit confirmed event on success.
     if (!opencodeResult.delivered) {

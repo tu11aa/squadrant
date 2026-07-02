@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isTurnAccepted,
+  screenHasSplashMarker,
   buildCompletionProtocol,
   shellQuote,
   titleFor,
@@ -48,6 +49,30 @@ describe("isTurnAccepted", () => {
       "> ready",
       { splashMarker: "Ask anything…" },
     )).toBe(true);
+  });
+});
+
+// #499: the marker is drift-prone — opencode's real placeholder rotates through
+// example prompts and uses three ASCII dots ("Ask anything...") or a longer
+// command hint, never the exact U+2026 ellipsis the marker used to hardcode.
+describe("screenHasSplashMarker (#499 drift-robust matching)", () => {
+  it("matches three ASCII dots against a U+2026-ellipsis marker", () => {
+    expect(screenHasSplashMarker("Ask anything... \"Fix a TODO\"", "Ask anything…")).toBe(true);
+  });
+
+  it("matches a stable substring marker against the longer real placeholder", () => {
+    expect(screenHasSplashMarker(
+      "Ask anything, / for commands, @ for context...",
+      "Ask anything",
+    )).toBe(true);
+  });
+
+  it("matches case-insensitively", () => {
+    expect(screenHasSplashMarker("ASK ANYTHING... something", "Ask anything")).toBe(true);
+  });
+
+  it("does not match when the marker text is genuinely absent", () => {
+    expect(screenHasSplashMarker("> processing your task", "Ask anything")).toBe(false);
   });
 });
 

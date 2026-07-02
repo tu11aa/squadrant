@@ -463,7 +463,7 @@ describe("runCrewSpawn", () => {
         expect.anything(),
         expect.any(String),
         expect.any(String),
-        expect.objectContaining({ splashMarker: "Ask anything…" }),
+        expect.objectContaining({ splashMarker: "Ask anything" }),
       );
     });
 
