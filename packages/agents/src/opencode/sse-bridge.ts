@@ -23,7 +23,17 @@ export interface OpencodeSseBridgeDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Backoff between reconnect attempts (ms, default 500). */
   reconnectMs?: number;
-  /** Attempts to reach the server before giving up the boot wait (default 60 ≈ 30s). */
+  /** Attempts to reach the server before giving up the boot wait (default 240
+   *  ≈ 120s). Must comfortably outlast the crew's own first-turn delivery
+   *  budget (SEND_FIRST_TURN_TIMEOUT_MS = 90s in crew-pane.ts) — #504:
+   *  otherwise the bridge can give up and permanently stop watching a crew
+   *  (both turn-end AND permission-gate detection) while the CLI's own
+   *  pane-polling delivery mechanism is still patiently retrying and
+   *  eventually succeeds, leaving the daemon silently, irrecoverably blind
+   *  for the rest of that crew's life. Live-reproduced 2026-07-02: opencode's
+   *  embedded HTTP server took >30s to bind under concurrent crew-spawn load,
+   *  the bridge gave up at 60 attempts, and the crew's later permission gate
+   *  (which fires correctly once subscribed — verified live) was never seen. */
   maxBootAttempts?: number;
   log?: (msg: string) => void;
 }
@@ -102,7 +112,7 @@ export class OpencodeSseBridge {
     const fetchImpl = this.deps.fetchImpl ?? fetch;
     const sleep = this.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
     const reconnectMs = this.deps.reconnectMs ?? 500;
-    const maxBoot = this.deps.maxBootAttempts ?? 60;
+    const maxBoot = this.deps.maxBootAttempts ?? 240;
     const url = `http://127.0.0.1:${port}/event`;
     let booted = false;
     let bootAttempts = 0;

@@ -64,18 +64,45 @@ describe("dispatchToSibling", () => {
     sendRequestMock.mockResolvedValue([]);
   });
 
-  // ── same-group gate ──────────────────────────────────────────────────────
+  // ── cross-project reach (#246 hard gate relaxed) ──────────────────────────
 
-  it("rejects dispatch to a project NOT in the same group", async () => {
+  it("allows dispatch to a project NOT in the same group when its captain is alive", async () => {
+    sendRequestMock.mockImplementation((_sock: string, msg: any) => {
+      if (msg?.kind === "health") {
+        return [{ kind: "captain", project: "projC", state: "alive", lastSeenMs: Date.now() }];
+      }
+      if (msg?.kind === "dispatch") return msg.record;
+      return undefined;
+    });
+
+    const result = await dispatchToSibling({
+      fromProject: "projA",
+      toProject: "projC",
+      task: "do something",
+    });
+
+    expect((result as any).originProject).toBe("projA");
+    expect((result as any).project).toBe("projC");
+  });
+
+  it("rejects cross-group dispatch to a down captain WITHOUT booting it", async () => {
+    const bootCaptain = vi.fn().mockResolvedValue(undefined);
+    sendRequestMock.mockResolvedValue([]); // health: nobody alive
+
     await expect(
       dispatchToSibling({
         fromProject: "projA",
         toProject: "projC",
         task: "do something",
+        bootCaptain,
       }),
-    ).rejects.toThrow(/not in the same group/i);
+    ).rejects.toThrow(/does not auto-boot|start it manually|ping/i);
 
-    expect(sendRequestMock).not.toHaveBeenCalled();
+    expect(bootCaptain).not.toHaveBeenCalled();
+    expect(sendRequestMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "dispatch" }),
+    );
   });
 
   it("rejects dispatch when toProject has acceptDelegations: false", async () => {
@@ -92,7 +119,23 @@ describe("dispatchToSibling", () => {
     expect(sendRequestMock).not.toHaveBeenCalled();
   });
 
-  // ── warmup timeout ───────────────────────────────────────────────────────
+  it("rejects cross-group dispatch when toProject has acceptDelegations: false, even if alive", async () => {
+    loadConfig.mockReturnValue(makeConfig());
+    (loadConfig() as any).projects.projC.acceptDelegations = false;
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projC", state: "alive", lastSeenMs: Date.now() },
+    ]);
+
+    await expect(
+      dispatchToSibling({
+        fromProject: "projA",
+        toProject: "projC",
+        task: "do something",
+      }),
+    ).rejects.toThrow(/acceptDelegations.*false/i);
+  });
+
+  // ── warmup / boot-if-down (same-group only) ───────────────────────────────
 
   it("fails clearly when warmup times out", async () => {
     // health returns empty → captain not alive; no bootCaptain provided → skip boot → warmup times out
@@ -107,6 +150,33 @@ describe("dispatchToSibling", () => {
         warmupPollMs: 20,
       }),
     ).rejects.toThrow(/timed out waiting for captain warmup/i);
+  });
+
+  it("boots a down same-group captain via bootCaptain, then dispatches", async () => {
+    const bootCaptain = vi.fn().mockImplementation(async () => {
+      booted = true;
+    });
+    let booted = false;
+    sendRequestMock.mockImplementation((_sock: string, msg: any) => {
+      if (msg?.kind === "health") {
+        return booted
+          ? [{ kind: "captain", project: "projB", state: "alive", lastSeenMs: Date.now() }]
+          : [];
+      }
+      if (msg?.kind === "dispatch") return msg.record;
+      return undefined;
+    });
+
+    const result = await dispatchToSibling({
+      fromProject: "projA",
+      toProject: "projB",
+      task: "do something",
+      bootCaptain,
+      warmupPollMs: 5,
+    });
+
+    expect(bootCaptain).toHaveBeenCalledWith("projB");
+    expect((result as any).project).toBe("projB");
   });
 
   // ── task record shape ────────────────────────────────────────────────────

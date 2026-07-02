@@ -135,17 +135,17 @@ describe("daemon handler", () => {
     expect(calls[0].event.type).toBe("task.quiet");
   });
 
-  // #466: an interactive crew that is quiet past its budget but has NEVER had
-  // firstTurnConfirmedAt set must emit CREW UNDELIVERED — not "deep thinking".
-  // This catches the race where spawn sends the first turn into a not-yet-ready
-  // box and the crew sits idle at an empty prompt (0% ctx, $0.00).
-  it("sweep: interactive quiet task with NO firstTurnConfirmedAt → CREW UNDELIVERED (#466)", async () => {
+  // #466: an interactive crew whose first turn is undelivered past the dedicated
+  // (createdAt-based) budget must emit CREW UNDELIVERED — not "deep thinking" —
+  // even when no resendFirstTurn capability is wired (pure unit test / non-cmux
+  // deployment), which preserves the prior alert-only behavior as a fallback.
+  it("sweep: interactive task with NO firstTurnConfirmedAt past the undelivered budget → CREW UNDELIVERED (#466)", async () => {
     const store = createStore(dir);
     const calls: any[] = [];
     // firstTurnConfirmedAt intentionally absent — first turn may not have landed
-    store.put(rec("u1", { mode: "interactive", state: "working", lastHeartbeat: 0,
+    store.put(rec("u1", { mode: "interactive", state: "working", createdAt: 0, lastHeartbeat: 0,
       heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
-    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    const d = createDaemon({ store, now: () => 1000, firstTurnUndeliveredBudgetMs: 100, notify: async (a) => { calls.push(a); } });
     await d.sweep();
     expect(store.get("p", "u1")?.state).toBe("working"); // state unchanged
     expect(calls.length).toBe(1);
@@ -169,13 +169,14 @@ describe("daemon handler", () => {
     expect(calls[0].message).not.toMatch(/UNDELIVERED/);
   });
 
-  // #466: task within heartbeat budget — no UNDELIVERED (not yet timed out).
-  it("sweep: interactive task within budget with NO firstTurnConfirmedAt → no notification (#466)", async () => {
+  // #466: task within the undelivered budget (measured from createdAt) — no
+  // UNDELIVERED (not yet timed out).
+  it("sweep: interactive task within the undelivered budget with NO firstTurnConfirmedAt → no notification (#466)", async () => {
     const store = createStore(dir);
     const calls: any[] = [];
-    store.put(rec("u3", { mode: "interactive", state: "working", lastHeartbeat: 950,
+    store.put(rec("u3", { mode: "interactive", state: "working", createdAt: 950, lastHeartbeat: 950,
       heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 950 }] }));
-    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    const d = createDaemon({ store, now: () => 1000, firstTurnUndeliveredBudgetMs: 100, notify: async (a) => { calls.push(a); } });
     await d.sweep();
     expect(calls.length).toBe(0); // within budget → silent
   });
@@ -184,12 +185,12 @@ describe("daemon handler", () => {
   // crew still in `submitted` (never received task.started — the first turn was
   // dropped before CC could process it). The prior fix only wired UNDELIVERED under
   // `working`, so a silently-dropped crew was never flagged.
-  it("sweep: interactive `submitted` task past budget with no firstTurnConfirmedAt → CREW UNDELIVERED (#466-single)", async () => {
+  it("sweep: interactive `submitted` task past the undelivered budget with no firstTurnConfirmedAt → CREW UNDELIVERED (#466-single)", async () => {
     const store = createStore(dir);
     const calls: any[] = [];
-    store.put(rec("s-undelivered", { mode: "interactive", state: "submitted", lastHeartbeat: 0,
+    store.put(rec("s-undelivered", { mode: "interactive", state: "submitted", createdAt: 0, lastHeartbeat: 0,
       heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
-    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    const d = createDaemon({ store, now: () => 1000, firstTurnUndeliveredBudgetMs: 100, notify: async (a) => { calls.push(a); } });
     await d.sweep();
     expect(store.get("p", "s-undelivered")?.state).toBe("submitted"); // state unchanged
     expect(calls.length).toBe(1);
@@ -198,15 +199,114 @@ describe("daemon handler", () => {
     expect(calls[0].event.type).toBe("task.quiet");
   });
 
-  // A `submitted` crew within the heartbeat budget must NOT fire (no false alarm).
-  it("sweep: interactive `submitted` task WITHIN budget → no notification (#466-single)", async () => {
+  // A `submitted` crew within the undelivered budget must NOT fire (no false alarm).
+  it("sweep: interactive `submitted` task WITHIN the undelivered budget → no notification (#466-single)", async () => {
     const store = createStore(dir);
     const calls: any[] = [];
-    store.put(rec("s-ok", { mode: "interactive", state: "submitted", lastHeartbeat: 950,
+    store.put(rec("s-ok", { mode: "interactive", state: "submitted", createdAt: 950, lastHeartbeat: 950,
       heartbeatBudgetMs: 100, attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 950 }] }));
-    const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+    const d = createDaemon({ store, now: () => 1000, firstTurnUndeliveredBudgetMs: 100, notify: async (a) => { calls.push(a); } });
     await d.sweep();
     expect(calls.length).toBe(0);
+  });
+
+  // ─── #466 self-heal: auto-resend the first turn instead of only alerting ────
+
+  // The core self-heal contract: once the undelivered budget elapses, the daemon
+  // calls the injected resendFirstTurn hook and — on a positively-confirmed
+  // delivery — stamps firstTurnConfirmedAt itself, with NO manual `crew send`.
+  // heartbeatBudgetMs is deliberately huge and lastHeartbeat is fresh (990, 10ms
+  // before `now`) to prove the undelivered check is decoupled from heartbeat
+  // liveness — a heartbeat that keeps resetting must NOT mask a genuinely
+  // undelivered first turn (the root-cause finding from #466's frozen frame).
+  it("sweep: past-budget working task auto-resends and self-confirms without a manual crew send (#466 self-heal)", async () => {
+    const store = createStore(dir);
+    const notifyCalls: any[] = [];
+    const resendCalls: TaskRecord[] = [];
+    store.put(rec("heal1", { mode: "interactive", state: "working", createdAt: 0, lastHeartbeat: 990,
+      heartbeatBudgetMs: 86_400_000, // huge — the old quiet-based check would never fire on this
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 990 }] }));
+    const d = createDaemon({
+      store, now: () => 1000,
+      firstTurnUndeliveredBudgetMs: 100,
+      notify: async (a) => { notifyCalls.push(a); },
+      resendFirstTurn: async (r) => { resendCalls.push(r); return { delivered: true }; },
+    });
+    await d.sweep();
+    expect(resendCalls.length).toBe(1);
+    expect(resendCalls[0].id).toBe("heal1");
+    expect(store.get("p", "heal1")?.state).toBe("working"); // no forced state transition
+    expect(store.get("p", "heal1")?.firstTurnConfirmedAt).toBe(1000); // self-stamped
+    expect(notifyCalls.some((c) => /AUTO-RESENT/.test(c.message))).toBe(true);
+  });
+
+  // The `submitted` path (crew never even reached task.started) gets the same
+  // self-heal treatment.
+  it("sweep: past-budget `submitted` task also auto-resends and self-confirms (#466 self-heal)", async () => {
+    const store = createStore(dir);
+    const resendCalls: TaskRecord[] = [];
+    store.put(rec("heal5", { mode: "interactive", state: "submitted", createdAt: 0, lastHeartbeat: 0,
+      heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({
+      store, now: () => 1000,
+      firstTurnUndeliveredBudgetMs: 100,
+      resendFirstTurn: async (r) => { resendCalls.push(r); return { delivered: true }; },
+    });
+    await d.sweep();
+    expect(resendCalls.length).toBe(1);
+    expect(store.get("p", "heal5")?.firstTurnConfirmedAt).toBe(1000);
+  });
+
+  // CRITICAL SAFETY: never double-deliver. Once firstTurnConfirmedAt is already
+  // set, resendFirstTurn must never be invoked, regardless of how far past the
+  // budget the record is.
+  it("sweep: never calls resendFirstTurn once firstTurnConfirmedAt is already confirmed (#466 no double-delivery)", async () => {
+    const store = createStore(dir);
+    const resendCalls: TaskRecord[] = [];
+    store.put(rec("heal2", { mode: "interactive", state: "working", createdAt: 0, lastHeartbeat: 0,
+      firstTurnConfirmedAt: 5, heartbeatBudgetMs: 86_400_000,
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({
+      store, now: () => 1000,
+      firstTurnUndeliveredBudgetMs: 100,
+      resendFirstTurn: async (r) => { resendCalls.push(r); return { delivered: true }; },
+    });
+    await d.sweep();
+    expect(resendCalls.length).toBe(0);
+  });
+
+  // CRITICAL SAFETY: the resend must RE-CHECK readiness on its own (never a
+  // blind paste) — modeled here by a resendFirstTurn that reports delivered:false
+  // when it decides the pane isn't ready. A failed attempt must not corrupt
+  // state and must be retried later (debounce test below), not treated as fatal.
+  // Also verifies the debounce: a second sweep tick within the cooldown window
+  // must NOT re-invoke resendFirstTurn, and a tick after the cooldown elapses
+  // DOES retry.
+  it("sweep: debounces resend attempts and retries after the cooldown elapses (#466 debounce)", async () => {
+    const store = createStore(dir);
+    const notifyCalls: any[] = [];
+    const resendCalls: TaskRecord[] = [];
+    store.put(rec("heal4", { mode: "interactive", state: "working", createdAt: 0, lastHeartbeat: 0,
+      heartbeatBudgetMs: 86_400_000,
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    let tick = 1000;
+    const d = createDaemon({
+      store, now: () => tick,
+      firstTurnUndeliveredBudgetMs: 100,
+      firstTurnResendCooldownMs: 500,
+      notify: async (a) => { notifyCalls.push(a); },
+      resendFirstTurn: async (r) => { resendCalls.push(r); return { delivered: false }; }, // pane still not ready
+    });
+    await d.sweep(); // t=1000: first attempt
+    expect(resendCalls.length).toBe(1);
+    expect(notifyCalls.some((c) => /will retry/i.test(c.message))).toBe(true);
+    tick = 1200; // 200ms later — inside the 500ms cooldown
+    await d.sweep();
+    expect(resendCalls.length).toBe(1); // debounced
+    tick = 1600; // 600ms after the first attempt — cooldown elapsed
+    await d.sweep();
+    expect(resendCalls.length).toBe(2); // retried
+    expect(store.get("p", "heal4")?.firstTurnConfirmedAt).toBeUndefined(); // never fabricated
   });
 
   // #466: task.first-turn.confirmed event stamps firstTurnConfirmedAt on the record.

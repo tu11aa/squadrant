@@ -5,18 +5,18 @@ import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
 import type { RuntimeDriver } from "@squadrant/workspaces";
 import type { SquadrantConfig } from "@squadrant/shared";
 
-function buildRegistry(): RuntimeRegistry {
+export function buildRegistry(): RuntimeRegistry {
   return new RuntimeRegistry({
     cmux: createCmuxDriver(),
   });
 }
 
-interface ResolvedTarget {
+export interface ResolvedTarget {
   driver: RuntimeDriver;
   workspaceName: string;
 }
 
-function resolveTarget(
+export function resolveTarget(
   registry: RuntimeRegistry,
   config: SquadrantConfig,
   target: string | undefined,
@@ -41,7 +41,7 @@ function resolveTarget(
   };
 }
 
-async function needRef(resolved: ResolvedTarget): Promise<string> {
+export async function needRef(resolved: ResolvedTarget): Promise<string> {
   const ref = await resolved.driver.status(resolved.workspaceName);
   if (!ref) {
     throw new Error(`Workspace '${resolved.workspaceName}' is not running`);

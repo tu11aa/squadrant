@@ -97,6 +97,36 @@ describe("OpencodeSseBridge", () => {
     expect(log).toHaveBeenCalled();
   });
 
+  // #504: the bridge's boot-grace window must outlast the crew's own
+  // first-turn delivery budget (SEND_FIRST_TURN_TIMEOUT_MS = 90s in
+  // crew-pane.ts, i.e. 180 attempts at the 500ms default reconnect
+  // interval) — otherwise the daemon can permanently stop watching a crew
+  // (missing both turn-end AND permission-gate events) while the CLI's own
+  // pane-polling delivery is still succeeding. Live-reproduced 2026-07-02:
+  // squadrantd.log recorded the bridge giving up after 60 attempts (30s)
+  // during a real CP3 permission-gate run.
+  it("default boot-grace window outlasts the 90s first-turn delivery budget (#504)", async () => {
+    const events: ControlEvent[] = [];
+    const ATTEMPTS_PAST_OLD_30S_BUDGET = 180; // 90s / 500ms — old default (60) gave up here
+    const fetchImpl = vi.fn();
+    for (let i = 0; i < ATTEMPTS_PAST_OLD_30S_BUDGET; i++) {
+      fetchImpl.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    }
+    fetchImpl.mockResolvedValue(
+      sseResponse(['data: {"type":"session.idle","properties":{"sessionID":"s"}}\n']),
+    );
+    const bridge = new OpencodeSseBridge({
+      emit: (e) => events.push(e),
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      // No maxBootAttempts override — exercises the real default.
+    });
+    bridge.start({ taskId: "t7", port: 8000 });
+    for (let i = 0; i < ATTEMPTS_PAST_OLD_30S_BUDGET + 10; i++) await flush();
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(ATTEMPTS_PAST_OLD_30S_BUDGET);
+    expect(events).toEqual([{ type: "task.turn.completed", id: "t7", turnId: "s" }]);
+  });
+
   it("stop() aborts the subscription and ignores later data", async () => {
     const events: ControlEvent[] = [];
     let pulled = 0;

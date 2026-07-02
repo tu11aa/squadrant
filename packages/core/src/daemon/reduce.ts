@@ -62,7 +62,34 @@ export interface DaemonDeps {
    * Distinct from the per-task heartbeat budget (stall detection).
    */
   taskTimeoutMs?: number;
+  /**
+   * #466 self-heal: re-deliver a crew's first turn when the daemon detects it
+   * never landed (firstTurnConfirmedAt still absent past firstTurnUndeliveredBudgetMs).
+   * MUST re-check TUI/pane readiness itself before sending — never blind-send
+   * into a still-booting pane — and return { delivered: true } ONLY on a
+   * positively-confirmed submit (mirrors sendFirstTurnWhenReady/confirmedSendToPane).
+   * When absent, sweep falls back to the prior alert-only behavior (pure unit
+   * tests, non-cmux deployments).
+   */
+  resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /** Override for testing; production default is DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS. */
+  firstTurnUndeliveredBudgetMs?: number;
+  /** Override for testing; production default is DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS. */
+  firstTurnResendCooldownMs?: number;
 }
+
+// #466: dedicated, tight budget for detecting an undelivered first turn —
+// measured from createdAt (monotonic; never reset by heartbeat activity), NOT
+// from lastHeartbeat/heartbeatBudgetMs. The frozen-frame root cause showed
+// heartbeats can keep flowing on a crew whose first turn never landed, which
+// would mask the drop indefinitely under a heartbeat-based gate. The default
+// sits comfortably above crew-pane's own SEND_FIRST_TURN_TIMEOUT_MS (90s) plus
+// its confirmedSendToPane fallback retries (worst case ~100s), so the daemon's
+// resend never races the crew's own in-flight first-turn delivery attempt.
+export const DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS = 120_000;
+// Minimum gap between resend attempts for the same task — avoids hammering a
+// still-not-ready pane with pastes every sweep tick.
+export const DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS = 60_000;
 
 // #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
 // heartbeat continuously yet be stuck on one task — the stall watchdog won't
@@ -254,6 +281,79 @@ export function createDaemon(deps: DaemonDeps) {
   // the quiet episode so exactly one QUIET fires per episode; when the crew shows
   // activity again, liveness advances and a later quiet episode re-notifies.
   const quietNotifiedAt = new Map<string, number>();
+  // #466: per-task debounce for first-turn resend attempts — avoids hammering
+  // a still-not-ready pane with pastes every sweep tick.
+  const resendAttemptedAt = new Map<string, number>();
+  const firstTurnUndeliveredBudgetMs = deps.firstTurnUndeliveredBudgetMs ?? DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS;
+  const firstTurnResendCooldownMs = deps.firstTurnResendCooldownMs ?? DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS;
+
+  // Shared event-application core (extracted from handle()'s "event" case) so
+  // the #466 self-heal path below can stamp task.first-turn.confirmed through
+  // the same reduce → store.put → firePush pipeline as a normal socket event.
+  async function applyEvent(project: string, event: ControlEvent): Promise<TaskRecord> {
+    if (!KNOWN_EVENT_TYPES.has((event as any).type)) {
+      throw new Error(`unknown event type '${(event as any).type}' — not a valid ControlEvent`);
+    }
+    const cur = store.get(project, event.id);
+    if (!cur) throw new Error(`unknown task ${event.id}`);
+    if (event.type === "task.started") lastCaptainTurnAt.set(event.id, now());
+    if (event.type === "task.session.ended" && !TERMINAL_STATES.has(cur.state)) {
+      const liveness = deps.isSurfaceAlive ? await deps.isSurfaceAlive(cur) : "unknown";
+      if (liveness !== "gone") return cur; // alive/unknown: no-op, keep current state
+    }
+    const next = reduce(cur, event, now());
+    if (next !== cur) {
+      store.put(next); // skip redundant write on terminal no-ops
+      firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id));
+    }
+    return next;
+  }
+
+  // #466 self-heal: attempt to recover a task whose first turn never landed.
+  // Called from sweep() once undeliveredMs exceeds firstTurnUndeliveredBudgetMs.
+  // Debounced per-task via resendAttemptedAt. Re-fetches the record from the
+  // store right before acting so a confirmation that lands concurrently (e.g.
+  // the UserPromptSubmit hook) is never double-delivered — CRITICAL SAFETY.
+  async function attemptFirstTurnRecovery(r: TaskRecord, undeliveredMs: number): Promise<void> {
+    const lastAttempt = resendAttemptedAt.get(r.id);
+    if (lastAttempt != null && now() - lastAttempt < firstTurnResendCooldownMs) return;
+    resendAttemptedAt.set(r.id, now());
+
+    const fresh = store.get(r.project, r.id);
+    if (!fresh || fresh.firstTurnConfirmedAt) return; // already landed — idempotent no-op
+
+    const tag = crewTag(fresh);
+    const fireNotify = (message: string) => {
+      if (!deps.notify) return;
+      const synthEvent: ControlEvent = { type: "task.quiet", id: fresh.id, quietMs: undeliveredMs };
+      try {
+        const p = deps.notify({ project: fresh.project, message, record: store.get(fresh.project, fresh.id) ?? fresh, event: synthEvent });
+        if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+      } catch { /* swallowed — a flaky notifier must never trip the sweep */ }
+    };
+
+    if (!deps.resendFirstTurn) {
+      // No resend capability wired (pure unit tests / non-cmux deployment) —
+      // preserve the prior alert-only behavior.
+      fireNotify(`⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed (0 activity) — re-send the task or check the spawn.`);
+      return;
+    }
+
+    let result: { delivered: boolean };
+    try { result = await deps.resendFirstTurn(fresh); }
+    catch { result = { delivered: false }; }
+
+    if (result.delivered) {
+      // The reducer's task.first-turn.confirmed path is itself idempotent
+      // (first occurrence only — #470), so calling it here is safe even if the
+      // resend's own hook confirmation raced ahead of us.
+      try { await applyEvent(fresh.project, { type: "task.first-turn.confirmed", id: fresh.id }); } catch { /* best-effort */ }
+      fireNotify(`🔁 CREW FIRST-TURN AUTO-RESENT ${tag}: first turn had not landed after ${Math.round(undeliveredMs / 1000)}s — re-sent automatically.`);
+    } else {
+      fireNotify(`⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed — auto-resend attempted but the pane wasn't ready; will retry.`);
+    }
+  }
+
   return {
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
@@ -307,26 +407,7 @@ export function createDaemon(deps: DaemonDeps) {
           if (!KNOWN_EVENT_TYPES.has((req.event as any).type)) {
             throw new Error(`unknown event type '${(req.event as any).type}' — not a valid ControlEvent`);
           }
-          const cur = store.get(req.project, req.event.id);
-          if (!cur) throw new Error(`unknown task ${req.event.id}`);
-          // A captain turn (crew send/reply) arrives as task.started → record it
-          // so a quick trailing turn-end is debounced (#210).
-          if (req.event.type === "task.started") lastCaptainTurnAt.set(req.event.id, now());
-          // #227: gate SessionEnd behind surface-liveness — only terminalize
-          // when the surface is provably GONE. Prevents a nested/spurious
-          // SessionEnd from false-cancelling a live crew while preserving the
-          // #139 dead-crew behavior. "unknown" never cancels (transient cmux
-          // outage), identical to the sweep reaper's semantics.
-          if (req.event.type === "task.session.ended" && !TERMINAL_STATES.has(cur.state)) {
-            const liveness = deps.isSurfaceAlive ? await deps.isSurfaceAlive(cur) : "unknown";
-            if (liveness !== "gone") return cur; // alive/unknown: no-op, keep current state
-          }
-          const next = reduce(cur, req.event, now());
-          if (next !== cur) {
-            store.put(next); // skip redundant write on terminal no-ops
-            firePush(deps, req.project, cur.state, next, req.event, lastCaptainTurnAt.get(next.id));
-          }
-          return next;
+          return applyEvent(req.project, req.event);
         }
         case "status": {
           const r = store.get(req.project, req.id);
@@ -389,6 +470,10 @@ export function createDaemon(deps: DaemonDeps) {
         }
       }
 
+      // #466: first-turn recovery attempts fired this tick — awaited together at
+      // the end so the loop below never blocks on a slow pane round-trip.
+      const recoveryPromises: Promise<void>[] = [];
+
       for (const r of store.listAll()) {
         // #378: GC terminal records whose last heartbeat is older than the TTL.
         if (TERMINAL_STATES.has(r.state) && t - r.lastHeartbeat > TERMINAL_RECORD_TTL_MS) {
@@ -448,23 +533,14 @@ export function createDaemon(deps: DaemonDeps) {
           }
         }
         // #466-single: An interactive crew spawned but never started stays in
-        // `submitted` — no task.started hook ever fires, so the CREW QUIET/
-        // UNDELIVERED block below (which requires `working`) is unreachable.
-        // Surface CREW UNDELIVERED here for the quiet-past-budget submitted case
-        // so a silently-dropped first turn is caught regardless of state.
+        // `submitted` — no task.started hook ever fires, so the working-state
+        // undelivered check below is unreachable. Recover it here too, keyed
+        // off createdAt (not lastHeartbeat/heartbeatBudgetMs — see #466 self-heal
+        // below) so a silently-dropped first turn is caught regardless of state.
         if (r.mode === "interactive" && r.state === "submitted" && !r.firstTurnConfirmedAt) {
-          const elapsed = t - r.lastHeartbeat;
-          if (elapsed > r.heartbeatBudgetMs) {
-            if (deps.notify && quietNotifiedAt.get(r.id) !== r.lastHeartbeat) {
-              quietNotifiedAt.set(r.id, r.lastHeartbeat);
-              const tag = crewTag(r);
-              const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: elapsed };
-              const message = `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed (crew never started) — re-send the task or check the spawn.`;
-              try {
-                const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
-                if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
-              } catch { /* swallowed */ }
-            }
+          const undeliveredMs = t - r.createdAt;
+          if (undeliveredMs > firstTurnUndeliveredBudgetMs) {
+            recoveryPromises.push(attemptFirstTurnRecovery(r, undeliveredMs));
             continue;
           }
         }
@@ -484,14 +560,28 @@ export function createDaemon(deps: DaemonDeps) {
           firePush(deps, r.project, r.state, idle, synthEvent, lastCaptainTurnAt.get(r.id));
           continue;
         }
+        // #466 self-heal: an interactive `working` crew that has NEVER had
+        // firstTurnConfirmedAt set may be sitting at an empty prompt (the crew
+        // pane never actually ingested the first turn). Checked BEFORE the
+        // heartbeat-driven CREW QUIET branch below and gated on createdAt, NOT
+        // on heartbeat liveness — the frozen-frame root cause showed heartbeats
+        // can keep flowing on a crew whose first turn never landed, which would
+        // otherwise mask the drop indefinitely.
+        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool && !r.firstTurnConfirmedAt) {
+          const undeliveredMs = t - r.createdAt;
+          if (undeliveredMs > firstTurnUndeliveredBudgetMs) {
+            recoveryPromises.push(attemptFirstTurnRecovery(r, undeliveredMs));
+            continue;
+          }
+        }
         // #354 CREW QUIET: a `working` interactive crew quiet past its heartbeat
         // budget with NO tool in flight is alive but deep-thinking (no hook fires
         // during pure model thinking). Surface a distinct, non-alarming nudge —
         // NOT 'awaiting-input' (the turn never ended; real CREW IDLE comes only
         // from the Stop hook). State stays `working`; notify once per episode.
-        // #466: if firstTurnConfirmedAt is unset the crew may never have received
-        // its first task — emit CREW UNDELIVERED instead of "deep thinking".
-        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool) {
+        // Only reachable once firstTurnConfirmedAt is set — the undelivered
+        // check above owns the !firstTurnConfirmedAt case.
+        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool && r.firstTurnConfirmedAt) {
           const liveness = r.attempts.at(-1)?.lastHeartbeatAt ?? r.lastHeartbeat;
           const quiet = t - liveness;
           if (quiet > r.heartbeatBudgetMs) {
@@ -499,15 +589,8 @@ export function createDaemon(deps: DaemonDeps) {
               quietNotifiedAt.set(r.id, liveness);
               const tag = crewTag(r);
               const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: quiet };
-              let message: string;
-              if (!r.firstTurnConfirmedAt) {
-                // #466: no confirmed delivery → crew may be sitting at an empty
-                // prompt. Alert distinctly so the captain can re-send the task.
-                message = `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed (0 activity) — re-send the task or check the spawn.`;
-              } else {
-                const mins = Math.max(1, Math.round(quiet / 60000));
-                message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
-              }
+              const mins = Math.max(1, Math.round(quiet / 60000));
+              const message = `CREW QUIET ${tag}: working ~${mins}min with no tool activity — likely deep thinking (no reply expected yet).`;
               try {
                 const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
                 if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
@@ -523,6 +606,10 @@ export function createDaemon(deps: DaemonDeps) {
         // recoverStall does NOT check heartbeat freshness — guard per its contract
         if (recovered && t - r.lastHeartbeat <= r.heartbeatBudgetMs) store.put(recovered);
       }
+      // #466: wait for this tick's first-turn recovery attempts. They ran
+      // independently (not serialized in the loop above), so this only adds
+      // the latency of the slowest single attempt, not their sum.
+      await Promise.all(recoveryPromises);
     },
     async reconcile(): Promise<void> {
       const alive = deps.isPidAlive ?? (() => true);

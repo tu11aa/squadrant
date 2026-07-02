@@ -1,5 +1,6 @@
-// Cross-project intra-group dispatch orchestration (#246/#367).
-// Pure-ish library function: validation + boot-if-down + record-task.
+// Cross-project dispatch orchestration (#246/#367; hard group-gate relaxed for
+// cross-project ping & dispatch). Pure-ish library function: validation +
+// boot-if-down (same-group only) + record-task.
 // CLI-edge concerns (shelling out to `squadrant launch`) are injected via bootCaptain.
 
 import { randomUUID } from "node:crypto";
@@ -71,9 +72,10 @@ export interface GroupDispatchOpts {
 }
 
 /**
- * Dispatch a task to a sibling project in the same group.
- * Validates same-group membership and acceptDelegations, boots the target captain
- * if needed (via injected bootCaptain), then records the task via the daemon.
+ * Dispatch a task to any registered project. Validates acceptDelegations,
+ * then records the task via the daemon. Same-group targets additionally get
+ * boot-if-down (via injected bootCaptain); cross-group targets must already
+ * be running — see the same-group check inline below.
  * Dispatch-and-yield: returns immediately after recording.
  */
 export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRecord> {
@@ -85,15 +87,12 @@ export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRe
     throw new Error(`target project '${opts.toProject}' not found in config`);
   }
 
-  // #246: same-group gate — hard boundary
-  if (!fromCfg.group || !toCfg.group || fromCfg.group !== toCfg.group) {
-    throw new Error(
-      `cannot dispatch: '${opts.toProject}' (group: ${toCfg.group ?? "none"}) ` +
-      `is not in the same group as '${opts.fromProject}' (group: ${fromCfg.group ?? "none"})`,
-    );
-  }
+  // #246/#367: dispatch reaches any registered project. Same group only grants
+  // the richer guarantees below (auto-accept default, boot-if-down); it is no
+  // longer a hard gate on whether dispatch is allowed at all.
+  const sameGroup = !!fromCfg?.group && !!toCfg.group && fromCfg.group === toCfg.group;
 
-  // #246: acceptDelegations check
+  // #246: acceptDelegations check (applies regardless of group)
   if (toCfg.acceptDelegations === false) {
     throw new Error(
       `cannot dispatch to '${opts.toProject}': project has acceptDelegations set to false`,
@@ -102,9 +101,17 @@ export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRe
 
   const sockPath = opts.sockPath ?? DEFAULT_SOCK_PATH;
 
-  // Ensure target captain is up; boot via injected callback if not
+  // Ensure target captain is up. Same-group boots via the injected callback;
+  // cross-group does not auto-boot — fail fast with a clear next step instead.
   const alive = await isCaptainAlive(opts.toProject, sockPath);
   if (!alive) {
+    if (!sameGroup) {
+      throw new Error(
+        `cannot dispatch to '${opts.toProject}': captain is not running and cross-group ` +
+        `dispatch does not auto-boot it. Use 'squadrant ping ${opts.toProject} "<msg>"' or ` +
+        `start it manually with 'squadrant launch ${opts.toProject}', then retry.`,
+      );
+    }
     if (opts.bootCaptain) {
       await opts.bootCaptain(opts.toProject);
     }

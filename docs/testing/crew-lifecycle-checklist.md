@@ -160,6 +160,7 @@ notification reaching the captain session, not just the crew screen.
 | 2026-06-03 | codex | ffc97f6 | PASS | PASS | DEFERRED (--approval) | GAP (#210) | PASS | PASS | Signals via `--task-id` (PR #173) self-injected in `developerInstructions`; verified live. Earlier 'fail' was a test error (bare signal w/o `--task-id`). |
 | 2026-06-03 | opencode | ffc97f6 | PASS | PASS | DEFERRED (config) | GAP (#210) | PASS | PASS | All explicit signals + SSE turn-end work; CP4 ping blocked by #210. |
 | 2026-06-19 | (all agents) | e06bc3a | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING — captain live run in progress; validates #354 three-state CP4 (QUIET/STALLED/IDLE) + #332 daemon-direct delivery (relay deleted) |
+| 2026-07-02 | (all agents) | d5b71ff | PASS | PASS | DEFERRED (auto mode) | PENDING | PASS | PASS | Core smoke on installed 0.14.1 + cmux 0.64.17: CP1 first-turn delivery + CP2 blocked→answer + CP5 done + CP6 reopen all PASS ×3 (claude/opencode/codex). CP3 deferred-by-design (auto mode). CP4 not run this pass. Finding: codex now INTERACTIVE (crew send reaches it, verified live). confirmedSendToPane follow-up-send false-warns "not delivered" on opencode+codex then auto-retries+lands (cosmetic, same screen-scrape-drift class as #499). |
 
 ---
 
