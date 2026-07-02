@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-07-02
+
+### Fixed
+
+- **fix(crew): opencode first-turn drop from splash-marker drift (#499):** the hardcoded splash marker `Ask anything…` (U+2026 ellipsis) never matched opencode's real render, `Ask anything...` (ASCII dots), so first-turn delivery confirmation could false-positive with no retry safety net. Fixed with drift-tolerant matching, a `sawSplash` fail-closed latch, and a positive readiness gate.
+
 ## [0.14.1] - 2026-07-01
 
 ### Fixed
