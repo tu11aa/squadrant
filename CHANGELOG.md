@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-07-02
+
+### Added
+
+- **`squadrant ping`/`squadrant dispatch` reach any registered project (#506):** cross-project ping (fire-and-forget) and dispatch (tracked task, report-back) are no longer gated on shared group membership — any registered project can reach any other. Group membership now only grants extras: `acceptDelegations` gating and boot-if-down (cross-group dispatch fails fast instead of burning the full warmup timeout on a target that was never going to boot). `squadrant group dispatch` is now a deprecated alias for `squadrant dispatch`.
+
+### Fixed
+
+- **Daemon self-heals undelivered first turns instead of only alerting (#466):** the CREW UNDELIVERED watchdog measured "undelivered" from `lastHeartbeat`, which unrelated heartbeats kept resetting — a dropped first turn could go unrecovered indefinitely while the task still reported `working`. The sweep now measures the undelivered window from `createdAt` (monotonic, immune to heartbeat masking) and auto-resends the first turn once past budget, re-checking TUI readiness and confirmation state to stay idempotent. Scoped to `claude` crews for now.
+- **opencode SSE bridge boot-grace raised 30s -> 120s (#504):** the bridge's connection-retry window (30s) was shorter than the first-turn delivery budget (90s) it needs to outlast, so under concurrent crew-spawn load a slow-to-bind opencode server could cause the bridge to give up before delivery even completed — permanently blinding turn-end and permission-gate detection for that crew with only a log line, no captain-visible signal.
+
 ## [0.14.2] - 2026-07-02
 
 ### Fixed
