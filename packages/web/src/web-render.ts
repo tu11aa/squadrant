@@ -169,7 +169,11 @@ function collect(snap: FullSnapshot): Collected {
     env.vaults.hub.state,
     ...env.vaults.spokes.map((s) => s.state),
     env.config.parseable.state,
-    env.config.sessions.state,
+    // Template-hash drift (env.config.sessions.state) is demoted to soft/info:
+    // projects registered but idle/never-launched legitimately sit on older
+    // template versions, so drift alone is not actionable trouble. Its own
+    // status still renders in the Environment tab; it just no longer rolls up
+    // into envT/overall/masterClass.
     ...env.config.projectPaths.map((p) => p.state),
   ];
   const daemonStates: AnyState[] = [];
@@ -188,7 +192,11 @@ function collect(snap: FullSnapshot): Collected {
       if (c.kind === "crew" && c.detail?.startsWith("undelivered")) undelivered++;
     }
     for (const p of snap.daemon.tier2.projects) {
-      if (p.delivery.behind > 0) projStates.push("stale");
+      // Idle/never-launched projects (captain not alive — stopped or unknown)
+      // are health-neutral: unread backlog for an offline captain is expected,
+      // not a live caution. Mirrors liveDeliveryBehind's alive-only gate below.
+      const captain = snap.daemon.tier1.find((c) => c.kind === "captain" && c.project === p.project);
+      if (captain?.state === "alive" && p.delivery.behind > 0) projStates.push("stale");
       if (p.store.corruptCount > 0) projStates.push("gone");
       maxDeferCount = Math.max(maxDeferCount, p.deferral.maxDeferCount);
     }

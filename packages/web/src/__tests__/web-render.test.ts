@@ -459,6 +459,58 @@ describe("global delivery-lag excludes offline-captain projects", () => {
   });
 });
 
+describe("idle/never-launched projects are health-neutral for the master annunciator", () => {
+  it("an idle project (captain unknown) with delivery backlog does NOT trip DEGRADED", () => {
+    const d = daemon();
+    d.tier1 = [
+      { kind: "captain", project: "squadrant", ref: "captain", state: "unknown", lastSeenMs: null },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 2, behind: 8 };
+    const out = renderContent(full(d));
+    expect(out).toContain('class="annunciator a-ok');
+    expect(out).toContain("NOMINAL");
+    expect(out).not.toContain('class="annunciator a-warn');
+  });
+
+  it("template-hash drift alone does NOT trip DEGRADED (demoted to soft/info)", () => {
+    const drifted: ExternalProbes = {
+      ...externalHealthy,
+      config: { ...externalHealthy.config, sessions: { state: "stale", detail: "template drift: 12 distinct hashes" } },
+    };
+    const out = renderContent(full(daemon(), drifted));
+    expect(out).toContain('class="annunciator a-ok');
+    expect(out).toContain("NOMINAL");
+    // the drift signal still surfaces in the Environment tab, just doesn't roll up
+    expect(out).toContain("template drift: 12 distinct hashes");
+  });
+
+  it("a fleet of idle/unknown projects plus template drift together still reads NOMINAL", () => {
+    const d = daemon();
+    d.tier1 = [
+      { kind: "captain", project: "squadrant", ref: "captain", state: "unknown", lastSeenMs: null },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 2, behind: 8 };
+    const drifted: ExternalProbes = {
+      ...externalHealthy,
+      config: { ...externalHealthy.config, sessions: { state: "stale", detail: "template drift: 12 distinct hashes" } },
+    };
+    const out = renderContent(full(d, drifted));
+    expect(out).toContain('class="annunciator a-ok');
+    expect(out).toContain("NOMINAL");
+  });
+
+  it("delivery backlog for a genuinely ALIVE captain still trips DEGRADED (regression guard)", () => {
+    const d = daemon();
+    d.tier1 = [
+      { kind: "captain", project: "squadrant", ref: "captain", state: "alive", lastSeenMs: 999_000 },
+    ];
+    d.tier2.projects[0].delivery = { maxSeq: 10, lastAckedSeq: 2, behind: 8 };
+    const out = renderContent(full(d));
+    expect(out).toContain('class="annunciator a-warn');
+    expect(out).toContain("DEGRADED");
+  });
+});
+
 describe("global results location", () => {
   it("global results line appears only in the daemon tab, not the projects tab", () => {
     const out = renderContent(full(daemon()));
