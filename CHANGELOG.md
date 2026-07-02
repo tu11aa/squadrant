@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **fix(crew): opencode first-turn drop from splash-marker drift (#499):** the hardcoded splash marker `Ask anything…` (U+2026 ellipsis) never matched opencode's real render, `Ask anything...` (ASCII dots), so first-turn delivery confirmation could false-positive with no retry safety net. Fixed with drift-tolerant matching, a `sawSplash` fail-closed latch, and a positive readiness gate.
+- **fix(web): idle/never-launched projects health-neutral in the dashboard rollup (#498):** projects registered but idle/never-launched (captain not alive) no longer trip the master annunciator to DEGRADED, and template-hash drift is demoted out of the rollup — only a genuinely alive captain's delivery backlog or real faults read DEGRADED now.
 
 ## [0.14.1] - 2026-07-01
 
