@@ -59,6 +59,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const d = createDaemon({
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
     isSurfaceAlive: surfaceProbe,
+    resendFirstTurn: ctx.resendFirstTurn,
     launchHeadless: opts.launchHeadless!,
     isHeadlessInFlight: (id) => inFlightHeadlessIds.has(id),
     launchInteractive: async (rec) => {

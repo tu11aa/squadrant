@@ -166,6 +166,35 @@ export async function confirmedSendToPane(
   return { delivered: false };
 }
 
+/**
+ * #466 daemon self-heal: the pane-touching primitive behind the daemon's
+ * sweep-loop first-turn resend hook. Finds the crew's own pane by title (never
+ * blind-sends anywhere), RE-CHECKS TUI readiness itself (never blind-pastes into
+ * a still-booting box — CRITICAL SAFETY), and only then submits via the same
+ * paste-settle-Enter path a manual `crew send` uses. Returns { delivered: false }
+ * without touching the pane when the crew can't be found or isn't ready yet —
+ * the caller (the daemon sweep loop) retries on a later tick.
+ */
+export async function resendCrewFirstTurn(
+  runtime: Pick<RuntimeDriver, "status" | "listSurfaces" | "readPaneScreen" | "pasteToPane" | "sendKeyToPane">,
+  captainName: string,
+  project: string,
+  name: string,
+  message: string,
+): Promise<{ delivered: boolean }> {
+  const captain = await runtime.status(captainName);
+  if (!captain) return { delivered: false };
+  const surfaces = await runtime.listSurfaces(captain.id);
+  const want = titleFor(project, name);
+  const pane = surfaces.find((s) => s.title === want);
+  if (!pane) return { delivered: false };
+  const screen = (await runtime.readPaneScreen(pane)) ?? "";
+  if (!hasCCInputBox(screen) || classifyStartupSurface(screen) !== "idle") {
+    return { delivered: false }; // still not ready — caller retries on a later tick
+  }
+  return confirmedSendToPane(runtime, pane, message);
+}
+
 export async function sendFirstTurnWhenReady(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "sendToPane" | "pasteToPane" | "sendKeyToPane">,
   pane: PaneRef,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sendFirstTurnWhenReady, confirmedSendToPane } from "../crew-pane.js";
-import type { PaneRef } from "@squadrant/shared";
+import { sendFirstTurnWhenReady, confirmedSendToPane, resendCrewFirstTurn } from "../crew-pane.js";
+import type { PaneRef, WorkspaceRef } from "@squadrant/shared";
 
 // Realistic Claude-Code-style screen: the live input box is the region between the
 // last two horizontal rules. parseDraftFromScreen reads exactly that region, so the
@@ -982,5 +982,97 @@ describe("confirmedSendToPane — screen change without sawDraft is NOT delivery
     const result = await promise;
 
     expect(result).toEqual({ delivered: false });
+  });
+});
+
+// #466 daemon self-heal: resendCrewFirstTurn is the pane-touching primitive the
+// daemon's sweep-loop resend hook calls. It must find the crew's own pane (not
+// blind-send anywhere), RE-CHECK TUI readiness itself (never blind-paste into a
+// still-booting box), and only then submit via the same paste-settle-Enter path
+// as a manual `crew send`.
+describe("resendCrewFirstTurn — #466 daemon self-heal", () => {
+  const HR = "─".repeat(60);
+  const box = (content: string) =>
+    `…transcript…\n${HR}\n❯ ${content}\n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+  const READY_EMPTY_BOX = box(""); // hasCCInputBox ✓ + classifyStartupSurface === "idle"
+  const BOOTING_SCREEN = "claude-mem: loading MCP server…\n(no input box yet)";
+
+  const captainPane: WorkspaceRef = { id: "w:captain", name: "p-captain", status: "running" };
+  const crewPane: PaneRef = { workspaceId: "w:captain", surfaceId: "s:crew1" };
+  const crewTitle = "🔧 p:crew1";
+
+  let status: ReturnType<typeof vi.fn>;
+  let listSurfaces: ReturnType<typeof vi.fn>;
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const rt = () => ({ status, listSurfaces, readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    status = vi.fn();
+    listSurfaces = vi.fn();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("delivers when the crew pane is found and its box is CC-initialized-ready", async () => {
+    status.mockResolvedValue(captainPane);
+    listSurfaces.mockResolvedValue([{ ...crewPane, title: crewTitle }]);
+    // confirmedSendToPane needs to observe the draft rendered before it can
+    // confirm submission — simulate paste rendering then the box clearing.
+    let readCount = 0;
+    readPaneScreen.mockImplementation(async () => {
+      readCount++;
+      if (readCount === 1) return READY_EMPTY_BOX;              // resendCrewFirstTurn's own readiness check
+      if (readCount === 2) return READY_EMPTY_BOX;              // confirmedSendToPane preSendScreen
+      if (readCount <= 4) return box("[Pasted text #1]");       // settle: draft rendered
+      return READY_EMPTY_BOX;                                    // post-Enter: box empty → submitted
+    });
+
+    const promise = resendCrewFirstTurn(rt(), "p-captain", "p", "crew1", "the task");
+    await vi.advanceTimersByTimeAsync(8000);
+    const result = await promise;
+
+    expect(result).toEqual({ delivered: true });
+    expect(pasteToPane).toHaveBeenCalledWith({ ...crewPane, title: crewTitle }, "the task");
+  });
+
+  it("returns delivered:false without touching the pane when the captain workspace can't be found", async () => {
+    status.mockResolvedValue(null);
+
+    const result = await resendCrewFirstTurn(rt(), "p-captain", "p", "crew1", "the task");
+
+    expect(result).toEqual({ delivered: false });
+    expect(pasteToPane).not.toHaveBeenCalled();
+    expect(sendKeyToPane).not.toHaveBeenCalled();
+  });
+
+  it("returns delivered:false without touching the pane when no surface matches the crew's title", async () => {
+    status.mockResolvedValue(captainPane);
+    listSurfaces.mockResolvedValue([{ workspaceId: "w:captain", surfaceId: "s:other", title: "🔧 p:someone-else" }]);
+
+    const result = await resendCrewFirstTurn(rt(), "p-captain", "p", "crew1", "the task");
+
+    expect(result).toEqual({ delivered: false });
+    expect(pasteToPane).not.toHaveBeenCalled();
+  });
+
+  // CRITICAL SAFETY (#466): never blind-send into a still-booting pane. If the
+  // re-check finds the box not yet CC-initialized-ready, resendCrewFirstTurn
+  // must return delivered:false WITHOUT pasting anything — the daemon retries
+  // on a later sweep tick instead.
+  it("returns delivered:false without pasting when the pane is still not ready (never blind-sends)", async () => {
+    status.mockResolvedValue(captainPane);
+    listSurfaces.mockResolvedValue([{ ...crewPane, title: crewTitle }]);
+    readPaneScreen.mockResolvedValue(BOOTING_SCREEN);
+
+    const result = await resendCrewFirstTurn(rt(), "p-captain", "p", "crew1", "the task");
+
+    expect(result).toEqual({ delivered: false });
+    expect(pasteToPane).not.toHaveBeenCalled();
+    expect(sendKeyToPane).not.toHaveBeenCalled();
   });
 });

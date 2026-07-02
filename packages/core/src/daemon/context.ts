@@ -72,6 +72,11 @@ export interface SquadrantdOpts {
   captainSurfaces?: Record<string, PaneRef>;
   /** #348: override the cmux socket auto-config re-check. */
   runCmuxAutoConfig?: () => Promise<AutoConfigResult>;
+  /** #466 self-heal: re-deliver a crew's first turn when the daemon detects it
+   *  never landed. Production wiring lives in squadrantd.ts (host); inject a
+   *  fake for tests. See DaemonDeps.resendFirstTurn (daemon/reduce.ts) for the
+   *  full contract. */
+  resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
@@ -117,6 +122,9 @@ export interface DaemonContext {
   notify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
   /** Resolved surface driver for daemon-direct delivery. */
   daemonCmux: DaemonSurfaceDriver | undefined;
+  /** #466 self-heal: resolved first-turn resend function (undefined when
+   *  opts.resendFirstTurn was not provided, e.g. non-cmux deployments). */
+  resendFirstTurn: ((rec: TaskRecord) => Promise<{ delivered: boolean }>) | undefined;
   /** Resolved agent driver. */
   codexDriver: AgentDriver;
   /** Resolved opencode SSE bridge. */
@@ -174,6 +182,7 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     activeHeadlessKills: new Set(),
     captainMissingStreak: new Map(),
     stoppedProjects: new Set(),
+    resendFirstTurn: opts.resendFirstTurn,
     // Late-bound — start.ts fills these before first use:
     d: null as unknown as ReturnType<typeof createDaemon>,
     notify: null as unknown as DaemonContext["notify"],

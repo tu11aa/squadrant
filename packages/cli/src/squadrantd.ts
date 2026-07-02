@@ -15,13 +15,14 @@ import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
 import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
+import { buildCompletionProtocol } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource } from "@squadrant/agents";
-import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource } from "@squadrant/workspaces";
+import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 
@@ -159,6 +160,22 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // ── daemonCmux resolution ─────────────────────────────────────────────────
   ctx.daemonCmux = opts.daemonCmux
     ?? (opts.makeDaemonCmux ?? (() => new DaemonCmux(createCmuxDriver())))();
+
+  // ── #466 self-heal: first-turn resend wiring ──────────────────────────────
+  // Uses a fresh cmux RuntimeDriver (independent of daemonCmux's narrower
+  // DaemonSurfaceDriver seam, which lacks the paste/sendKey primitives) to
+  // drive the same paste-settle-Enter delivery path a manual `crew send` uses.
+  // Scoped to claude crews — the facet #466's frozen frame confirmed; other
+  // providers safely report non-delivery (the daemon's sweep loop still alerts
+  // via CREW UNDELIVERED rather than silently retrying forever).
+  const resendRuntime = createCmuxDriver();
+  ctx.resendFirstTurn = opts.resendFirstTurn ?? (async (rec) => {
+    if (rec.provider !== "claude" || !rec.name) return { delivered: false };
+    const proj = loadConfig().projects[rec.project];
+    const captainName = proj?.captainName ?? `${rec.project}-captain`;
+    const message = `${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project)}`;
+    return resendCrewFirstTurn(resendRuntime, captainName, rec.project, rec.name, message);
+  });
 
   // ── launchHeadless default ────────────────────────────────────────────────
   // Kept here so this file is the sole importer of headless-launcher (daemon/* can't).
