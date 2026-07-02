@@ -191,7 +191,7 @@ To change the effort dial: `squadrant effort <max|balance|low>` or use the `squa
 - **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
 - **For simple tasks**, don't mention GSD — the crew will handle it directly.
 
-> Non-Claude agents (codex / gemini) currently still launch in print-mode (one-shot) rather than as interactive sessions; `send` won't reach them yet. Prefer Claude crews when you want multi-turn dialogue.
+> codex crews are fully interactive (parity with claude/opencode) — `send` reaches them for follow-up turns (verified live 2026-07-02). gemini currently still launches in print-mode (one-shot) rather than as an interactive session; `send` won't reach it yet.
 
 ## Task Coordination
 

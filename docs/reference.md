@@ -93,7 +93,7 @@ See the [architecture diagram](diagrams/2026-06-18-squadrant-monorepo-architectu
 
 - **Command** (Opus) — *on-demand* cross-project session. Spawned by `squadrant command --task <briefing|learnings-review|wiki-aggregate>` in a split pane; exits when the task completes. No persistent Command process.
 - **Captain** (Opus) — project leader, uses Agent Teams + git worktrees
-- **Crew** (Sonnet by default) — interactive sub-session running as a new tab in the captain's workspace (or a split pane via `--direction`). Each crew is named (`crew-1`, `crew-2`, …) and stays idle between turns waiting for the captain's next message — same model as a Claude Agent Team subagent. Spawn with `squadrant crew spawn`, send follow-ups with `squadrant crew send`, close when done. Works with any agent CLI (claude and opencode are fully interactive; codex/gemini currently print-mode). Uses GSD for complex tasks.
+- **Crew** (Sonnet by default) — interactive sub-session running as a new tab in the captain's workspace (or a split pane via `--direction`). Each crew is named (`crew-1`, `crew-2`, …) and stays idle between turns waiting for the captain's next message — same model as a Claude Agent Team subagent. Spawn with `squadrant crew spawn`, send follow-ups with `squadrant crew send`, close when done. Works with any agent CLI (claude, opencode, and codex are fully interactive; gemini currently print-mode). Uses GSD for complex tasks.
 
 ### Model Routing
 
@@ -118,7 +118,7 @@ User-facing notifications run behind a pluggable **notifier driver** (currently 
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
-Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `squadrant shutdown`. Non-Claude agents (codex/gemini) currently still launch in print-mode; full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-squadrant-thin-redirect-design.md`](specs/archive/2026-05-05-squadrant-thin-redirect-design.md).
+Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `squadrant shutdown`. codex now launches interactively (parity with claude/opencode); gemini currently still launches in print-mode, full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-squadrant-thin-redirect-design.md`](specs/archive/2026-05-05-squadrant-thin-redirect-design.md).
 
 ### Effort Dial (Tokenomics)
 
