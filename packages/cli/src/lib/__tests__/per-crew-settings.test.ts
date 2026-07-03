@@ -416,6 +416,21 @@ describe("ensureGlobalOpencodeConfig — #141 provision-if-absent", () => {
     expect(fs.readFileSync(configPath(), "utf-8")).toBe(existing);
   });
 
+  it("does not clobber a config written concurrently between the two racing calls (TOCTOU)", () => {
+    // Simulates two callers racing to provision the same absent path: the
+    // exclusive-create ('wx') write means only the first writer's content
+    // survives — no existsSync-then-writeFileSync gap for a second caller to
+    // land in between.
+    const first = ensureGlobalOpencodeConfig(configPath());
+    const contentAfterFirst = fs.readFileSync(configPath(), "utf-8");
+
+    const second = ensureGlobalOpencodeConfig(configPath());
+
+    expect(first).toBe(configPath());
+    expect(second).toBeNull();
+    expect(fs.readFileSync(configPath(), "utf-8")).toBe(contentAfterFirst);
+  });
+
   it("default path constant points at ~/.config/opencode/opencode.json", () => {
     expect(DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH).toBe(
       path.join(os.homedir(), ".config", "opencode", "opencode.json"),
