@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { mergeClaudeHooks } from "@squadrant/agents";
 
 /**
@@ -205,6 +206,33 @@ export function writePerCrewSettingsLocal(o: {
  * BLOCKED → captain's decision is POSTed back). Default (no flag) keeps bash
  * "allow" — opencode crews stay fully autonomous unless `--approval` is passed.
  */
+export const DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.json");
+
+/**
+ * #141: provision a minimal global opencode.json (model default) the first time
+ * squadrant runs `init`, so a fresh user's opencode crews don't silently fall
+ * back to opencode's own defaults (see writePerCrewOpencodeConfig doc above —
+ * the per-crew config deep-merges with this file for model/plugin/mcp). Never
+ * overwrites an existing file — uses an exclusive-create write ('wx') so a
+ * concurrent writer wins the race instead of one clobbering the other (no
+ * separate existsSync check, which would TOCTOU-race a concurrent create).
+ * Returns the path if it wrote one, or null if a config was already present.
+ */
+export function ensureGlobalOpencodeConfig(configPath: string = DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH): string | null {
+  mkdirSync(dirname(configPath), { recursive: true });
+  const defaultConfig = {
+    $schema: "https://opencode.ai/config.json",
+    model: "anthropic/claude-sonnet-4-5",
+  };
+  try {
+    writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2) + "\n", { flag: "wx" });
+    return configPath;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw err;
+  }
+}
+
 export function writePerCrewOpencodeConfig(o: {
   stateRoot: string;
   project: string;
