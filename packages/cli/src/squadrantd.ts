@@ -60,7 +60,7 @@ function buildTelegramBridge(
   // sender is allowlisted (gated inside the bridge); passing them is always safe.
   const ensureCaptainAlive = createEnsureCaptainAlive({
     isAlive: createIsCaptainAlive(DAEMON_SOCK),
-    launch: createLaunch(CLI_BIN),
+    launch: createLaunch(CLI_BIN, log),
   });
   const runCommand = createRunCommand(CLI_BIN);
   const sendReply = (threadId: number | undefined, text: string, replyMarkup?: unknown) =>
