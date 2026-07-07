@@ -54,7 +54,10 @@ export function createIsCaptainAlive(sock: string): (project: string) => Promise
         kind: string; project: string; state: string;
       }>;
       const captain = health?.find((h) => h.kind === "captain" && h.project === project);
-      return captain != null && captain.state !== "gone" && captain.state !== "unknown";
+      // Captain rows only ever report "alive" | "stopped" | "unknown" (see
+      // liveness.ts projectHealth) — "stopped" means the workspace was closed
+      // (down), so it must NOT count as alive.
+      return captain?.state === "alive";
     } catch {
       return false;
     }
