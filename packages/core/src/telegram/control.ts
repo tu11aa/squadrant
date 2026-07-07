@@ -64,9 +64,30 @@ export function createIsCaptainAlive(sock: string): (project: string) => Promise
   };
 }
 
-/** Boot a captain via async execFile (NEVER execSync on the daemon hot path). */
-export function createLaunch(cliBin: string): (project: string) => Promise<void> {
-  return async (project: string) => {
-    await pExecFile(process.execPath, [cliBin, "launch", project], { timeout: 30_000 });
-  };
+/** Boot a captain via async execFile (NEVER execSync on the daemon hot path).
+ *  --headless (#520): the daemon has no CMUX_WORKSPACE_ID and no terminal, so
+ *  a plain `squadrant launch` would open the cmux GUI app and exit 0 without
+ *  ever creating a workspace. --headless makes launch drive runtime.spawn
+ *  directly instead. `log`, when given, records the subprocess's captured
+ *  output (or failure) so a broken launch leaves a diagnostic trail instead
+ *  of failing silently while ensureCaptainAlive polls to a timeout. */
+export function createLaunch(cliBin: string, log?: (m: string) => void): (project: string) => Promise<void> {
+  return (project: string) =>
+    new Promise<void>((resolve, reject) => {
+      execFile(
+        process.execPath,
+        [cliBin, "launch", project, "--headless"],
+        { timeout: 30_000 },
+        (err, stdout, stderr) => {
+          const output = capOutput(stdout ?? "", stderr ?? "");
+          if (err) {
+            log?.(`launch ${project} failed: ${output}`);
+            reject(err);
+            return;
+          }
+          if (output !== "(no output)") log?.(`launch ${project}: ${output}`);
+          resolve();
+        },
+      );
+    });
 }

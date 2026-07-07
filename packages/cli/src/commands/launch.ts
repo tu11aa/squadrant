@@ -31,8 +31,12 @@ const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 const SESSIONS_PATH = path.join(os.homedir(), ".config", "squadrant", "sessions.json");
 
-function ensureCmuxReady(): void {
-  if (isInsideCmux()) return;
+// #520: a non-interactive caller (the daemon's Telegram boot-if-down path)
+// has no CMUX_WORKSPACE_ID and no terminal to run `open` from — headless=true
+// bypasses the isInsideCmux() gate entirely so launchOneWorkspace can drive
+// runtime.spawn directly, the same way crew-spawn already does from the daemon.
+export function ensureCmuxReady(headless: boolean): void {
+  if (headless || isInsideCmux()) return;
 
   console.log(chalk.yellow("\n  Not running inside cmux. Opening cmux app...\n"));
   execSync(`open "${CMUX_APP}"`, { stdio: "inherit" });
@@ -47,8 +51,10 @@ export const launchCommand = new Command("launch")
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
   .option("--all", "Launch all captain workspaces")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean }) => {
+  .option("--headless", "Skip the interactive cmux-app requirement (used by the daemon to boot captains without a terminal)")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean; headless?: boolean }) => {
     const config = loadConfig();
+    let hadFailure = false;
 
     // Build agent driver registry
     const drivers = {
@@ -71,7 +77,7 @@ export const launchCommand = new Command("launch")
       pinToTop = false,
       projectName?: string,
     ): Promise<void> {
-      ensureCmuxReady();
+      ensureCmuxReady(!!opts.headless);
 
       const roleConfig = config.defaults.roles?.[role as keyof NonNullable<typeof config.defaults.roles>];
       const agentName = roleConfig?.agent || "claude";
@@ -116,6 +122,7 @@ export const launchCommand = new Command("launch")
         });
       } catch (err) {
         console.error(chalk.red(`  ✘ Failed: ${(err as Error).message}`));
+        hadFailure = true;
       }
     }
 
@@ -151,7 +158,7 @@ export const launchCommand = new Command("launch")
       }
 
       // Interactive: pick captains, then launch in parallel.
-      ensureCmuxReady();
+      ensureCmuxReady(!!opts.headless);
 
       const sessions = loadSessions(SESSIONS_PATH);
       const entries: CaptainEntry[] = Object.entries(config.projects).map(([name, proj]) => ({
@@ -215,4 +222,9 @@ export const launchCommand = new Command("launch")
       );
       await launchOne(proj.captainName, "captain", projPath, config.defaults.permissions?.captain || "auto", false, true, project);
     }
+
+    // #520: surface a real launch failure (e.g. cmux spawn error) as a non-zero
+    // exit so the daemon's execFile-based caller can tell launch didn't work,
+    // instead of silently exiting 0 while ensureCaptainAlive polls to a timeout.
+    if (hadFailure) process.exitCode = 1;
   });
