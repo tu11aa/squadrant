@@ -407,7 +407,15 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
       try {
         const r = await ensureCaptainAlive(resolved.project);
-        if (r === "timeout") await reply(threadId, "⚠️ captain didn't warm up; message queued.");
+        // The ensure() result IS the delivery signal — "live captain reachable",
+        // not "message read" (no cap-side ack protocol). Surfacing it means a
+        // false-positive isAlive (#517) fails loud in Telegram instead of silently
+        // stranding the message in the mailbox.
+        if (r === "timeout") {
+          await reply(threadId, `❌ couldn't reach ${resolved.project} captain — saved to mailbox, will deliver when you open the workspace.`);
+        } else {
+          await reply(threadId, `📨 delivered to ${resolved.project} captain`);
+        }
       } catch (e) {
         log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`);
       }
