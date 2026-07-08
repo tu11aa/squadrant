@@ -2,7 +2,7 @@
 // Driver-seam interfaces: the contracts that squadrantd's driver-agnostic core depends on.
 // Concrete implementations (CodexInteractiveDriver, OpencodeSseBridge, CmuxEventsBridge,
 // DaemonCmux) live in the root package host and implement these structurally.
-import type { PaneRef } from "@squadrant/shared";
+import type { PaneRef, RuntimeLivenessRecord } from "@squadrant/shared";
 
 /** Interactive agent runtime driver (codex/claude/opencode thread ops). */
 export interface AgentDriver {
@@ -44,4 +44,7 @@ export interface DaemonSurfaceDriver extends DirectCmuxReader {
   listSurfaces(wsId: string): Promise<PaneRef[]>;
   send: (surface: PaneRef, text: string, opts?: { probe?: boolean }) => Promise<void>;
   readPaneScreen(pane: PaneRef): Promise<string | null>;
+  /** Ground-truth liveness from the runtime's own session store (§5.4).
+   *  Optional — a runtime with no such store omits it. */
+  liveness?(): Promise<RuntimeLivenessRecord[]>;
 }

@@ -1,5 +1,11 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { RuntimeDriver, PaneRef } from "../runtimes/types.js";
 import { DeferDelivery } from "@squadrant/core";
+import { loadConfig } from "@squadrant/shared";
+import type { RuntimeLivenessRecord } from "@squadrant/shared";
+import { parseStoreRecords } from "./store-fingerprint.js";
 
 /**
  * #332: daemon-side cmux access. The daemon (a launchd process, NOT a cmux
@@ -51,5 +57,20 @@ export class DaemonCmux {
   async isAvailable(): Promise<boolean> {
     try { await this.driver.listSurfaces(""); return true; }
     catch { return false; }
+  }
+
+  /** Ground-truth liveness from cmux's own hook-sessions store (§5.4). */
+  async liveness(): Promise<RuntimeLivenessRecord[]> {
+    const dir = process.env.CMUX_AGENT_HOOK_STATE_DIR ?? join(homedir(), ".cmuxterm");
+    const projects = loadConfig().projects as Record<string, { path: string }>;
+    let files: string[] = [];
+    try { files = readdirSync(dir).filter((f) => f.endsWith("-hook-sessions.json") && !f.endsWith(".lock")); }
+    catch { return []; }
+    const out: RuntimeLivenessRecord[] = [];
+    for (const f of files) {
+      try { out.push(...parseStoreRecords(readFileSync(join(dir, f), "utf-8"), projects)); }
+      catch { /* skip unreadable/corrupt file */ }
+    }
+    return out;
   }
 }
