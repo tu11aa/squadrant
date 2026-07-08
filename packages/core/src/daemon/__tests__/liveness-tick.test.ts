@@ -54,4 +54,20 @@ describe("runLivenessTick", () => {
       runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => true, now: () => 5_000 }),
     ).resolves.toBeUndefined();
   });
+
+  it("liveness() throwing (bad read, e.g. locked/corrupt store) leaves the registry untouched — NOT markEnded", async () => {
+    const reg = memReg();
+    reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
+    const reaped: string[] = [];
+    await runLivenessTick({
+      registry: reg,
+      liveness: async () => { throw new Error("all store files unreadable this tick"); },
+      isPidAlive: () => true,
+      now: () => 5_000,
+      reap: (p) => { reaped.push(p); return 0; },
+    });
+    expect(reg.get("p")?.lastState).toBe("start"); // NOT "end" — no false close
+    expect(reg.get("p")?.pidAlive).toBe(true);
+    expect(reaped).toEqual([]); // no reap on a failed read
+  });
 });

@@ -24,12 +24,19 @@ function projectFromCwd(cwd: string, projects: Record<string, { path: string }>)
   return undefined;
 }
 
+/**
+ * Parse one store file's content. Throws on invalid JSON — a corrupt/mid-write
+ * file is a failed read, NOT a valid file with zero sessions; callers (see
+ * `readLivenessSnapshot`) must be able to tell the two apart so a locked file
+ * never false-reads as "no captains".
+ */
 export function parseStoreRecords(
   fileContent: string,
   projects: Record<string, { path: string }>,
 ): RuntimeLivenessRecord[] {
   let parsed: { sessions?: Record<string, RawSession> };
-  try { parsed = JSON.parse(fileContent); } catch { return []; }
+  try { parsed = JSON.parse(fileContent); }
+  catch (e) { throw new Error(`parseStoreRecords: invalid JSON: ${(e as Error).message}`); }
   const out: RuntimeLivenessRecord[] = [];
   for (const s of Object.values(parsed.sessions ?? {})) {
     const cwd = s.cwd ?? s.launchCommand?.workingDirectory ?? "";
@@ -43,6 +50,32 @@ export function parseStoreRecords(
       present: true,
       isRestorable: s.isRestorable,
     });
+  }
+  return out;
+}
+
+/**
+ * Read+parse every given store file, tolerating individual bad files (locked
+ * mid-write, corrupt) as long as at least one yields a good read. Only throws
+ * when EVERY file failed — a locked/corrupt store must never look like "read
+ * succeeded, zero captains present" (that would false-close every known
+ * captain this tick). Genuinely zero files (none present) is a valid empty read.
+ */
+export function readLivenessSnapshot(
+  files: string[],
+  readFile: (filename: string) => string,
+  projects: Record<string, { path: string }>,
+): RuntimeLivenessRecord[] {
+  const out: RuntimeLivenessRecord[] = [];
+  let successes = 0;
+  for (const f of files) {
+    try {
+      out.push(...parseStoreRecords(readFile(f), projects));
+      successes++;
+    } catch { /* this file unreadable/corrupt — other files may still be good */ }
+  }
+  if (files.length > 0 && successes === 0) {
+    throw new Error(`readLivenessSnapshot: all ${files.length} store file(s) unreadable/corrupt this tick`);
   }
   return out;
 }
