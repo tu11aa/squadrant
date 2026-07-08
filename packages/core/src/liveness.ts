@@ -5,7 +5,7 @@
 // so it is fully unit-testable. All runtime probing (cmux reads for captain
 // presence) is gathered by the caller (squadrantd) and passed in already-resolved;
 // this module never touches cmux.
-import type { TaskState, Mode } from "@squadrant/shared";
+import type { TaskState, Mode, LivenessEntry } from "@squadrant/shared";
 
 export type ComponentKind = "captain" | "crew" | "command";
 
@@ -80,7 +80,9 @@ export interface CrewLiveness {
  * Emits: a captain row, a command row (only when applicable), and one row per
  * non-terminal crew.
  *
- * Captain liveness (#332): driven by the daemon-direct delivery loop.
+ * Captain liveness: prefers the registry-derived `captainState` (§4.1/§4.5 —
+ * ground-truth from the LivenessRegistry) when supplied; falls back to the
+ * legacy `captainStopped` tri-state for callers that haven't migrated:
  *   captainStopped === false  → captain surface was found on last delivery tick → ALIVE
  *   captainStopped === true   → surface gone for 3+ consecutive ticks → STOPPED
  *                               (intentional close — its crews are reaped and
@@ -91,8 +93,10 @@ export function projectHealth(input: {
   project: string;
   now: number;
   captainName: string;
-  /** Delivery-loop captain surface state. See docs above. */
+  /** Delivery-loop captain surface state. See docs above. Ignored when `captainState` is supplied. */
   captainStopped: boolean | null;
+  /** Registry-derived captain state (Task 4+). Wins over `captainStopped` when present. */
+  captainState?: HealthState;
   /** true/false when a command workspace is expected; null = not applicable. */
   commandPresent: boolean | null;
   crews: CrewLiveness[];
@@ -101,17 +105,21 @@ export function projectHealth(input: {
   const out: ComponentHealth[] = [];
 
   // ── captain ────────────────────────────────────────────────────────────
-  const captainState: HealthState =
+  const captainState: HealthState = input.captainState ?? (
     captainStopped === true ? "stopped" :
     captainStopped === false ? "alive" :
-    "unknown";
+    "unknown"
+  );
   out.push({
     kind: "captain",
     project,
     ref: captainName,
     state: captainState,
     lastSeenMs: null,
-    detail: captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" : undefined,
+    detail:
+      captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
+      captainState === "gone" ? "captain process died (crash) — crews reaped" :
+      undefined,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────
@@ -175,3 +183,40 @@ export function healCmdFor(c: ComponentHealth): string | null {
 
 /** Per-project relay health — REMOVED (#332). No longer tracked by daemon. */
 export type RelayHealth = never;
+
+/**
+ * Pure. Derive a captain HealthState from its registry entry.
+ * First match wins — order matters (a clean close reads `stopped` even though
+ * its pid also dies).
+ */
+export function deriveCaptainState(e: LivenessEntry | undefined): HealthState {
+  if (!e) return "unknown";
+  if (e.lastState === "end") return "stopped"; // clean close — magenta, not a fault (#324)
+  if (!e.pidAlive) return "gone";              // pid dead, record present → crash
+  return "alive";
+}
+
+/**
+ * Pure. Reconcile an incoming signal against the prior entry.
+ * Precedence: runtime ≥ agent (authoritative for presence/intent) > scan
+ * (liveness-only). A `scan` updates `pidAlive` but never presence/intent, and
+ * never resurrects a dead pid — only a newer runtime/agent open (greater
+ * startedAt) does.
+ */
+export function reconcileLiveness(
+  prev: LivenessEntry | undefined,
+  next: LivenessEntry,
+): LivenessEntry {
+  if (!prev) return next;
+  if (next.source === "scan") {
+    // liveness-only: adopt pidAlive (and lastSeenAt) onto prev; keep presence/intent.
+    // A stale scan (older than prev, by lastSeenAt — scans of the same session
+    // share startedAt, so recency must be judged by lastSeenAt) must not flip a
+    // dead pid back to alive.
+    const pidAlive = next.lastSeenAt >= prev.lastSeenAt ? next.pidAlive : prev.pidAlive;
+    return { ...prev, pidAlive, lastSeenAt: Math.max(prev.lastSeenAt, next.lastSeenAt) };
+  }
+  // runtime/agent authoritative. A newer open (or any end) wins; a stale one is ignored.
+  if (next.startedAt >= prev.startedAt || next.lastState === "end") return next;
+  return prev;
+}

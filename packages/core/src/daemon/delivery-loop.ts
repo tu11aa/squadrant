@@ -4,14 +4,15 @@ import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mai
 import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
-import type { TaskRecord, ControlEvent } from "@squadrant/shared";
+import { deriveCaptainState } from "../liveness.js";
+import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
 import type { Store } from "../store.js";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import type { DaemonContext } from "./context.js";
+import type { LivenessRegistry } from "./liveness-registry.js";
 
 const CURSOR_SUBSCRIBER = "captain";
-const CAPTAIN_GONE_STREAK_K = 3;
 
 // Must-deliver event kinds that bypass the stale-skip path (#474 D1).
 // Includes terminal transitions (done/failed/cancelled) AND task.blocked:
@@ -44,6 +45,71 @@ export function reapOrphanedCrews(store: Pick<Store, "list" | "put">, project: s
   return reaped;
 }
 
+export interface LivenessTickDeps {
+  registry: LivenessRegistry;
+  liveness: () => Promise<RuntimeLivenessRecord[]>;
+  isPidAlive: (pid: number) => boolean;
+  now: () => number;
+  /** Reap a stopped/gone captain's orphaned crews (#324 — fold-in of the old
+   *  streak-triggered reap, now driven by the registry). Optional so pure
+   *  liveness-only callers can omit it. Idempotent (already-terminal crews are
+   *  skipped), so calling it every tick for a non-alive captain is safe. */
+  reap?: (project: string) => number;
+  /** One grep-able line per applied/transitioned record (§4.4): `[role/source]
+   *  project pid=… → state`. Optional so pure liveness-only callers can omit it. */
+  log?: (msg: string) => void;
+}
+
+function logEntry(log: ((msg: string) => void) | undefined, project: string, e: LivenessEntry | undefined): void {
+  if (!log || !e) return;
+  log(`[${e.role}/${e.source}] ${project} pid=${e.pid} → ${deriveCaptainState(e)}`);
+}
+
+/** One reconcile+floor pass over captain records. Runtime snapshot is authoritative;
+ *  the pid floor arbitrates liveness; a captain absent from the snapshot is marked
+ *  cleanly-closed (stopped) but NOT dropped. */
+export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
+  const now = deps.now();
+  let records: RuntimeLivenessRecord[] = [];
+  try { records = await deps.liveness(); } catch { return; } // runtime unreachable → leave registry as-is
+  const seen = new Set<string>();
+
+  for (const r of records) {
+    if (r.role !== "captain") continue;
+    seen.add(r.project);
+    const entry: LivenessEntry = {
+      project: r.project, role: "captain", pid: r.pid, sessionId: r.sessionId,
+      startedAt: now, lastState: "start", lastSeenAt: now,
+      pidAlive: r.pid != null ? deps.isPidAlive(r.pid) : true, // pid:null hibernated → alive-unknown
+      source: "runtime",
+    };
+    // Preserve original startedAt if we already knew this captain (avoid churn):
+    const prev = deps.registry.get(r.project);
+    if (prev && prev.lastState === "start") entry.startedAt = prev.startedAt;
+    deps.registry.apply(entry);
+    if (r.pid != null) deps.registry.setPidAlive(r.project, deps.isPidAlive(r.pid), now);
+    logEntry(deps.log, r.project, deps.registry.get(r.project));
+  }
+
+  // Captains we knew but the snapshot no longer lists → clean close.
+  for (const e of deps.registry.all()) {
+    if (e.role === "captain" && e.lastState === "start" && !seen.has(e.project)) {
+      deps.registry.markEnded(e.project, now);
+      logEntry(deps.log, e.project, deps.registry.get(e.project));
+    }
+  }
+
+  // Reap orphaned crews for any captain the registry now considers stopped
+  // (clean close) or gone (crash).
+  if (deps.reap) {
+    for (const e of deps.registry.all()) {
+      if (e.role !== "captain") continue;
+      const state = deriveCaptainState(e);
+      if (state === "stopped" || state === "gone") deps.reap(e.project);
+    }
+  }
+}
+
 export interface DeliveryResult {
   defaultNotify: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void>;
   /** Guarded delivery tick — undefined when daemon-direct mode is OFF. */
@@ -57,7 +123,7 @@ export function createDelivery(
   ctx: DaemonContext,
   daemonCmux: DaemonSurfaceDriver | undefined,
 ): DeliveryResult {
-  const { stateRoot, store, log, captainMissingStreak, stoppedProjects, opts } = ctx;
+  const { stateRoot, store, log, livenessRegistry, isPidAlive, opts } = ctx;
 
   // ── Default push-notification wiring (mailbox-injector spec) ─────────────
   const defaultNotify = async (args: {
@@ -101,6 +167,24 @@ export function createDelivery(
   let delivering = false;
 
   const deliveryCore = async () => {
+    // Registry is the liveness authority (Task 4) — reconcile it from the
+    // runtime snapshot + pid floor before this tick's per-project pass.
+    await runLivenessTick({
+      registry: livenessRegistry,
+      liveness: () => (cmux.liveness ? cmux.liveness() : Promise.resolve([])),
+      isPidAlive,
+      now: () => Date.now(),
+      log,
+      reap: (project) => {
+        const reaped = reapOrphanedCrews(store, project);
+        if (reaped > 0) {
+          const title = cfg.projects?.[project]?.captainName ?? `${project}-captain`;
+          log(`captain ${title}: reaped ${reaped} orphaned crew(s)`);
+        }
+        return reaped;
+      },
+    });
+
     const injectedSurfaces = opts.captainSurfaces ?? {};
     const allProjects = [...new Set([
       ...Object.keys(cfg.projects ?? {}),
@@ -112,44 +196,20 @@ export function createDelivery(
       const projCfg = cfg.projects?.[project];
       const captainTitle = projCfg?.captainName ?? `${project}-captain`;
 
-      // Try real discovery from cmux.
+      // Surface discovery is ONLY for the delivery target (where to cmux.send);
+      // captain presence/liveness authority now lives in livenessRegistry.
       const wsId = cmux.findWorkspaceId ? await cmux.findWorkspaceId(captainTitle) : null;
       let surface: PaneRef | null = null;
-      let surfacesLength = 0;
 
       if (wsId) {
         const surfaces = await cmux.listSurfaces(wsId);
-        surfacesLength = surfaces.length;
         surface = discoverCaptainSurface(surfaces, captainTitle);
       }
 
       // Fall back to injected surface (tests / config-less projects).
       if (!surface) surface = injectedSurfaces[project] ?? null;
 
-      if (surface) {
-        // Captain found — if previously reaped, un-reap and reset streak.
-        if (stoppedProjects.has(project)) {
-          stoppedProjects.delete(project);
-          captainMissingStreak.set(project, 0);
-        }
-        captainMissingStreak.set(project, 0);
-      } else {
-        // Streak tracking: surfaces.length > 0 means cmux is reachable but the
-        // captain's pane is provably absent. surfaces.length === 0 means cmux
-        // was unreachable (fail-soft → []), treat as "unknown" — never increment.
-        if (surfacesLength > 0) {
-          const streak = (captainMissingStreak.get(project) ?? 0) + 1;
-          captainMissingStreak.set(project, streak);
-          if (streak >= CAPTAIN_GONE_STREAK_K) {
-            if (!stoppedProjects.has(project)) {
-              stoppedProjects.add(project);
-              const reaped = reapOrphanedCrews(store, project);
-              log(`captain ${captainTitle}: surface gone for ${CAPTAIN_GONE_STREAK_K} sweeps — stopping delivery${reaped > 0 ? `, reaped ${reaped} orphaned crew(s)` : ""}`);
-            }
-          }
-        }
-        continue;
-      }
+      if (!surface) continue;
 
       const cursor = await readCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER });
       const lastAcked = cursor?.lastAckedSeq ?? 0;

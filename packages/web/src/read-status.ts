@@ -1,5 +1,6 @@
 import type { SquadrantConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
+import type { ComponentHealth, HealthState } from "@squadrant/core";
 
 export type SquadrantdCall = (req: unknown) => Promise<unknown>;
 
@@ -24,6 +25,13 @@ function deriveState(tasks: TaskRecord[]): DashboardState {
   if (tasks.some(t => t.state === "failed" || t.state === "stalled")) return "errored";
   if (tasks.some(t => t.state === "working")) return "busy";
   return "idle";
+}
+
+/** Captain liveness dominates task activity (§6): a gone/stopped captain means
+ *  the project is offline regardless of what its (about-to-be-reaped) tasks say. */
+export function deriveRowState(tasks: TaskRecord[], captainState: HealthState): DashboardState {
+  if (captainState === "gone" || captainState === "stopped") return "offline";
+  return deriveState(tasks);
 }
 
 function buildExcerpt(tasks: TaskRecord[]): string {
@@ -52,13 +60,26 @@ export async function readAllStatuses(deps: ReadStatusDeps): Promise<ProjectStat
     return result as TaskRecord[];
   });
 
+  // Fetch health ONCE (not per project) and index captain state by project —
+  // captain liveness dominates task-derived state (§6).
+  const captainStateByProject = new Map<string, HealthState>();
+  if (deps.call) {
+    try {
+      const health = (await deps.call({ kind: "health" })) as ComponentHealth[];
+      for (const h of health ?? []) {
+        if (h.kind === "captain") captainStateByProject.set(h.project, h.state);
+      }
+    } catch { /* health unavailable — fall back to task-derived state only */ }
+  }
+
   const rows: ProjectStatus[] = [];
   for (const [name, project] of Object.entries(deps.config.projects)) {
     try {
       const tasks = await listTasks(name);
+      const captainState = captainStateByProject.get(name) ?? "unknown";
       rows.push({
         project: name,
-        state: deriveState(tasks),
+        state: deriveRowState(tasks, captainState),
         lastChecked: new Date().toISOString(),
         captainWorkspace: project.captainName,
         excerpt: buildExcerpt(tasks),

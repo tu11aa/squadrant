@@ -7,6 +7,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { sendRequest } from "../protocol.js";
+import type { ComponentHealth } from "../liveness.js";
 
 const pExecFile = promisify(execFile);
 
@@ -46,18 +47,18 @@ export function createRunCommand(cliBin: string): (argv: string[]) => Promise<st
   };
 }
 
+/** Pure: a captain counts alive ONLY in state "alive" — stopped (closed),
+ *  gone (crashed), and unknown/missing all mean "not alive" → boot (#517). */
+export function isCaptainAliveFromHealth(rows: ComponentHealth[], project: string): boolean {
+  return rows.some((h) => h.kind === "captain" && h.project === project && h.state === "alive");
+}
+
 /** Liveness probe via the daemon health endpoint (mirrors group.ts isCaptainAlive). */
 export function createIsCaptainAlive(sock: string): (project: string) => Promise<boolean> {
   return async (project: string) => {
     try {
-      const health = (await sendRequest(sock, { kind: "health", project }, 5000)) as Array<{
-        kind: string; project: string; state: string;
-      }>;
-      const captain = health?.find((h) => h.kind === "captain" && h.project === project);
-      // Captain rows only ever report "alive" | "stopped" | "unknown" (see
-      // liveness.ts projectHealth) — "stopped" means the workspace was closed
-      // (down), so it must NOT count as alive.
-      return captain?.state === "alive";
+      const health = (await sendRequest(sock, { kind: "health", project }, 5000)) as ComponentHealth[];
+      return isCaptainAliveFromHealth(health ?? [], project);
     } catch {
       return false;
     }
