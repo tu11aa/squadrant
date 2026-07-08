@@ -283,40 +283,38 @@ describe("squadrantd daemon-direct (#332)", () => {
 
     const captainTitle = "p-captain";
     const crewPane = crewPaneTitle("p", "orphan");
-    let surfCall = 0;
-    // Index 0 is consumed by boot d.reconcile() (probes the crew's own pane —
-    // keep BOTH panes present so the crew survives reconcile and is reaped only
-    // by the captain-stopped path). Then tick N uses index N.
-    const surfResults: PaneRef[][] = [
-      [{ workspaceId: "ws:1", surfaceId: "s0", title: captainTitle }, { workspaceId: "ws:1", surfaceId: "sc", title: crewPane }], // reconcile: captain+crew present
-      [{ workspaceId: "ws:1", surfaceId: "s1", title: captainTitle }, { workspaceId: "ws:1", surfaceId: "sc", title: crewPane }], // tick 1: found → deliver
-      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 2: gone, streak=1
-      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 3: gone, streak=2
-      [{ workspaceId: "ws:1", surfaceId: "s2", title: "other" }], // tick 4: gone, streak=3 → reap crews + stop
-    ];
+    // Ground-truth liveness (Task 4): the registry — not the surface sweep —
+    // now decides captain presence. Surfaces stay present throughout so this
+    // test isolates the registry-driven reap from delivery-target discovery.
+    let captainPresent = true;
     const cmux = {
       sent: [] as Array<{ text: string }>,
       send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
-      listSurfaces: async () => surfResults[Math.min(surfCall++, surfResults.length - 1)],
+      listSurfaces: async () => [
+        { workspaceId: "ws:1", surfaceId: "s1", title: captainTitle },
+        { workspaceId: "ws:1", surfaceId: "sc", title: crewPane },
+      ],
       readScreen: async () => null,
       isAvailable: async () => true,
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
+      liveness: async () => captainPresent
+        ? [{ role: "captain" as const, project: "p", pid: 424242, sessionId: "s", present: true }]
+        : [],
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux, isPidAlive: () => true });
     stop = handle.stop;
 
-    // Let boot reconcile settle (consumes index 0) before the manual ticks.
+    // Let boot reconcile settle before the manual ticks.
     await new Promise((r) => setTimeout(r, 20));
 
     // Crew is still live (working) before the captain goes away.
     const before = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
     expect(before.state).toBe("working");
 
-    if (handle.tickDelivery) await handle.tickDelivery(); // tick 1: captain found → deliver
-    if (handle.tickDelivery) await handle.tickDelivery(); // tick 2: streak=1
-    if (handle.tickDelivery) await handle.tickDelivery(); // tick 3: streak=2
-    if (handle.tickDelivery) await handle.tickDelivery(); // tick 4: streak=3 → reap
+    if (handle.tickDelivery) await handle.tickDelivery(); // captain present → deliver, crew untouched
+    captainPresent = false; // captain workspace closed
+    if (handle.tickDelivery) await handle.tickDelivery(); // registry sees captain absent → stopped → reap
 
     // The orphaned crew is reaped to a terminal state with the captain-stopped marker.
     const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;

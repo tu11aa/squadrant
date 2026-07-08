@@ -11,7 +11,7 @@ import { createDelivery } from "./delivery-loop.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";
-import { projectHealth, type ComponentHealth } from "../liveness.js";
+import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./snapshot-gather.js";
@@ -99,15 +99,14 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     for (const project of names) {
       const proj = config.projects[project];
       const captainName = proj?.captainName ?? `${project}-captain`;
-      // Captain liveness from the delivery loop: stopped=true → gone,
-      // streak===0 → alive (last tick found the surface), else unknown.
-      const stopped = ctx.stoppedProjects.has(project);
-      const streak = ctx.captainMissingStreak.get(project);
-      const captainStopped: boolean | null = stopped ? true : streak === 0 ? false : null;
+      // Captain liveness from the ground-truth registry (Task 4) — runtime
+      // snapshot + pid floor, survives daemon restart (§4.1/§4.5).
+      const capEntry = ctx.livenessRegistry.get(project);
       out.push(
         ...projectHealth({
           project, now, captainName,
-          captainStopped,
+          captainStopped: null,
+          captainState: deriveCaptainState(capEntry),
           commandPresent: null,
           crews: store.list(project),
         }),

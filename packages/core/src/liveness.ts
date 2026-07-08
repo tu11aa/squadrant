@@ -80,7 +80,9 @@ export interface CrewLiveness {
  * Emits: a captain row, a command row (only when applicable), and one row per
  * non-terminal crew.
  *
- * Captain liveness (#332): driven by the daemon-direct delivery loop.
+ * Captain liveness: prefers the registry-derived `captainState` (§4.1/§4.5 —
+ * ground-truth from the LivenessRegistry) when supplied; falls back to the
+ * legacy `captainStopped` tri-state for callers that haven't migrated:
  *   captainStopped === false  → captain surface was found on last delivery tick → ALIVE
  *   captainStopped === true   → surface gone for 3+ consecutive ticks → STOPPED
  *                               (intentional close — its crews are reaped and
@@ -91,8 +93,10 @@ export function projectHealth(input: {
   project: string;
   now: number;
   captainName: string;
-  /** Delivery-loop captain surface state. See docs above. */
+  /** Delivery-loop captain surface state. See docs above. Ignored when `captainState` is supplied. */
   captainStopped: boolean | null;
+  /** Registry-derived captain state (Task 4+). Wins over `captainStopped` when present. */
+  captainState?: HealthState;
   /** true/false when a command workspace is expected; null = not applicable. */
   commandPresent: boolean | null;
   crews: CrewLiveness[];
@@ -101,17 +105,21 @@ export function projectHealth(input: {
   const out: ComponentHealth[] = [];
 
   // ── captain ────────────────────────────────────────────────────────────
-  const captainState: HealthState =
+  const captainState: HealthState = input.captainState ?? (
     captainStopped === true ? "stopped" :
     captainStopped === false ? "alive" :
-    "unknown";
+    "unknown"
+  );
   out.push({
     kind: "captain",
     project,
     ref: captainName,
     state: captainState,
     lastSeenMs: null,
-    detail: captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" : undefined,
+    detail:
+      captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
+      captainState === "gone" ? "captain process died (crash) — crews reaped" :
+      undefined,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────
