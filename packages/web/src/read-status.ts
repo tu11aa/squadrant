@@ -30,7 +30,7 @@ function deriveState(tasks: TaskRecord[]): DashboardState {
 /** Captain liveness dominates task activity (§6): a gone/stopped captain means
  *  the project is offline regardless of what its (about-to-be-reaped) tasks say. */
 export function deriveRowState(tasks: TaskRecord[], captainState: HealthState): DashboardState {
-  if (captainState === "gone" || captainState === "stopped") return "offline";
+  if (captainState === "gone" || captainState === "stopped" || captainState === "unknown") return "offline";
   return deriveState(tasks);
 }
 

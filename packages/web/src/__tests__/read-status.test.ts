@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { SquadrantConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 import type { ComponentHealth } from "@squadrant/core";
+import type { ReadStatusDeps } from "../read-status.js";
 import { readAllStatuses, deriveRowState } from "../read-status.js";
 
 function makeConfig(): SquadrantConfig {
@@ -34,6 +35,20 @@ function mkTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   };
 }
 
+function makeAliveCall(extra: Record<string, ComponentHealth["state"]> = {}): ReadStatusDeps["call"] {
+  return async (req: unknown) => {
+    const r = req as { kind: string; project?: string };
+    if (r.kind === "health") {
+      return [
+        { kind: "captain", project: "brove", ref: "brove-captain", state: extra.brove ?? "alive", lastSeenMs: null },
+        { kind: "captain", project: "solder", ref: "solder-captain", state: extra.solder ?? "alive", lastSeenMs: null },
+      ] as ComponentHealth[];
+    }
+    if (r.kind === "list") return [];
+    throw new Error(`unexpected request kind: ${r.kind}`);
+  };
+}
+
 describe("readAllStatuses", () => {
   it("returns one row per registered project", async () => {
     const rows = await readAllStatuses({
@@ -49,6 +64,7 @@ describe("readAllStatuses", () => {
   it("maps state to idle when no tasks or all done", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "done" }), mkTask({ state: "submitted" })],
     });
 
@@ -58,6 +74,7 @@ describe("readAllStatuses", () => {
   it("maps state to busy when any task is working", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "working" })],
     });
 
@@ -67,6 +84,7 @@ describe("readAllStatuses", () => {
   it("maps state to blocked when any task is blocked", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "blocked" })],
     });
 
@@ -76,6 +94,7 @@ describe("readAllStatuses", () => {
   it("maps state to blocked when any task is awaiting-input", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "awaiting-input" })],
     });
 
@@ -85,6 +104,7 @@ describe("readAllStatuses", () => {
   it("maps state to errored when any task has failed", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "failed" })],
     });
 
@@ -94,6 +114,7 @@ describe("readAllStatuses", () => {
   it("maps state to errored when any task is stalled", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "stalled" })],
     });
 
@@ -103,6 +124,7 @@ describe("readAllStatuses", () => {
   it("state precedence: blocked beats errored", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [
         mkTask({ state: "blocked" }),
         mkTask({ state: "failed" }),
@@ -116,6 +138,7 @@ describe("readAllStatuses", () => {
   it("state precedence: errored beats busy", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [
         mkTask({ state: "failed" }),
         mkTask({ state: "working" }),
@@ -140,6 +163,7 @@ describe("readAllStatuses", () => {
   it("preserves project name from config", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall({ brove: "alive", solder: "alive" }),
       listTasks: async (project) => {
         if (project === "brove") return [mkTask({ state: "working", task: "brove task" })];
         return [mkTask({ state: "done", task: "solder task" })];
@@ -153,6 +177,7 @@ describe("readAllStatuses", () => {
   it("builds excerpt with active task titles", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [
         mkTask({ state: "working", name: "feat-x", task: "build feature x" }),
         mkTask({ state: "blocked", name: "fix-y", task: "fix bug y" }),
@@ -168,6 +193,7 @@ describe("readAllStatuses", () => {
   it("builds summary-only excerpt when no active tasks", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [mkTask({ state: "done" })],
     });
 
@@ -178,6 +204,7 @@ describe("readAllStatuses", () => {
     const before = Date.now();
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall(),
       listTasks: async () => [],
     });
     const after = Date.now();
@@ -192,6 +219,7 @@ describe("readAllStatuses", () => {
     let callCount = 0;
     const rows = await readAllStatuses({
       config: makeConfig(),
+      call: makeAliveCall({ solder: "alive" }),
       listTasks: async (project) => {
         callCount++;
         if (project === "brove") throw new Error("down");
@@ -202,6 +230,22 @@ describe("readAllStatuses", () => {
     expect(rows[0].state).toBe("offline");
     expect(rows[1].state).toBe("busy");
     expect(callCount).toBe(2);
+  });
+
+  it("captain unknown → offline when health endpoint omitted a project", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      call: async (req: unknown) => {
+        const r = req as { kind: string; project?: string };
+        if (r.kind === "health") return [] as ComponentHealth[]; // no captain entries at all
+        if (r.kind === "list") return [mkTask({ state: "working" })];
+        throw new Error(`unexpected request kind: ${r.kind}`);
+      },
+    });
+
+    // Both projects have working tasks but both captains are unknown (not in health)
+    expect(rows[0].state).toBe("offline");
+    expect(rows[1].state).toBe("offline");
   });
 
   it("captain state from health dominates task-derived state, fetched once and indexed per project", async () => {
@@ -238,7 +282,10 @@ describe("deriveRowState", () => {
   it("captain alive → task-derived", () => {
     expect(deriveRowState([mkTask({ state: "working" })], "alive")).toBe("busy");
   });
-  it("captain unknown → task-derived (no health source / not applicable)", () => {
-    expect(deriveRowState([], "unknown")).toBe("idle");
+  it("captain unknown → offline (no registry entry = not running)", () => {
+    expect(deriveRowState([], "unknown")).toBe("offline");
+  });
+  it("captain unknown → offline regardless of working tasks", () => {
+    expect(deriveRowState([mkTask({ state: "working" })], "unknown")).toBe("offline");
   });
 });
