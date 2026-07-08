@@ -297,6 +297,17 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
 }
 
 // ── Tab: PROJECTS ───────────────────────────────────────────────────────────────
+function filterBar(): string {
+  return [
+    `<div class="filter-bar" role="group" aria-label="Filter projects by status">`,
+    `<button class="filter-btn on" data-filter="all" aria-pressed="true">All</button>`,
+    `<button class="filter-btn" data-filter="alive" aria-pressed="false">Nominal</button>`,
+    `<button class="filter-btn" data-filter="caution" aria-pressed="false">Caution</button>`,
+    `<button class="filter-btn" data-filter="offline" aria-pressed="false">Offline</button>`,
+    `</div>`,
+  ].join("");
+}
+
 function componentRow(c: ComponentHealth, now: number): string {
   const detail = c.detail ? esc(c.detail) : "";
   const row =
@@ -330,6 +341,7 @@ function renderProjects(snap: FullSnapshot, now: number): string {
     out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>squadrant heal daemon</code></div></section>`);
     return out.join("");
   }
+  out.push(filterBar());
   const d = snap.daemon;
   const projects = new Set<string>([...d.tier1.map((c) => c.project), ...d.tier2.projects.map((p) => p.project)]);
   if (projects.size === 0) out.push(`<div class="empty">No projects registered yet.</div>`);
@@ -355,8 +367,10 @@ function renderProjects(snap: FullSnapshot, now: number): string {
       deferralState,
     ];
     const rollup = worst(rollupStates);
+    const captainComp = comps.find(c => c.kind === "captain");
+    const captainState = captainComp?.state ?? "unknown";
     out.push(`<article class="card" data-rollup="${rollup}">`);
-    out.push(`<header class="card-head"><span class="card-title">${esc(project)}</span>${statePill(rollup)}</header>`);
+    out.push(`<header class="card-head"><span class="card-title">${esc(project)}</span><div class="card-badges"><span class="captain-badge">captain ${statePill(captainState)}</span>${statePill(rollup)}</div></header>`);
     if (comps.length) {
       out.push(
         `<table class="grid"><thead><tr><th>status</th><th>kind</th><th>ref</th><th>last seen</th><th>detail</th></tr></thead><tbody>`,
@@ -687,6 +701,17 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .spark-area{fill:var(--hud);opacity:.1}
 .spark-dot{fill:var(--hud)}
 
+/* Filter bar */
+.filter-bar{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
+.filter-btn{appearance:none;background:var(--panel-2);border:1px solid var(--bezel);border-radius:999px;
+  padding:4px 13px;cursor:pointer;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;
+  font-size:10px;font-weight:600;color:var(--ink-dim);transition:all .15s ease}
+.filter-btn:hover{background:var(--panel);border-color:var(--ink-dim);color:var(--ink)}
+.filter-btn.on{background:var(--hud);border-color:var(--hud);color:#fff;box-shadow:0 1px 3px rgba(11,111,194,.3)}
+.card-badges{display:flex;align-items:center;gap:8px;flex:none}
+.captain-badge{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--ink-dim);letter-spacing:.04em}
+.captain-badge .pill{font-size:10px;padding:1px 7px}
+
 /* Cards / tables */
 .card{border:1px solid var(--bezel);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);padding:14px 16px;margin-bottom:14px;border-left:3px solid var(--bezel)}
 .card[data-rollup="gone"]{border-left-color:var(--crit)}
@@ -754,7 +779,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 // charts after each frame.
 const CLIENT_JS = `
 (function(){
-  var activeTab='overview';var hist={};var prev={};
+  var activeTab='overview';var hist={};var prev={};var currentFilter='all';
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
   function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);pushHist('defers',m.maxDeferCount,m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
@@ -762,8 +787,9 @@ const CLIENT_JS = `
   function applyTab(){var ts=document.querySelectorAll('[data-tab]');for(var i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-tab')===activeTab;ts[i].setAttribute('aria-selected',on?'true':'false');ts[i].classList.toggle('on',on);}var ps=document.querySelectorAll('[data-panel]');for(var j=0;j<ps.length;j++){var on2=ps[j].getAttribute('data-panel')===activeTab;ps[j].hidden=!on2;}}
   function ease(k){return k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;}
   function countUps(){var ns=document.querySelectorAll('[data-countup]');for(var i=0;i<ns.length;i++){(function(el){var key=el.getAttribute('data-countup');var to=parseFloat(el.getAttribute('data-value'))||0;var from=prev[key]!=null?prev[key]:0;prev[key]=to;if(from===to){el.textContent=to;return;}var s=null;function step(ts){if(s===null)s=ts;var k=Math.min(1,(ts-s)/600);el.textContent=Math.round(from+(to-from)*ease(k));if(k<1)requestAnimationFrame(step);}requestAnimationFrame(step);})(ns[i]);}}
-  function refresh(){ingest();applyTab();drawSparks();countUps();}
-  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}});
+  function applyFilter(){document.querySelectorAll('[data-panel="projects"] .card').forEach(function(c){var r=c.getAttribute('data-rollup');if(currentFilter==='all'){c.hidden=false;}else if(currentFilter==='alive'){c.hidden=r!=='alive';}else if(currentFilter==='caution'){c.hidden=r!=='stale';}else if(currentFilter==='offline'){c.hidden=r!=='gone'&&r!=='stopped'&&r!=='unknown';}});document.querySelectorAll('.filter-btn').forEach(function(x){var on=x.getAttribute('data-filter')===currentFilter;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false');});}
+  function refresh(){ingest();applyTab();drawSparks();countUps();applyFilter();}
+  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}var fb=e.target&&e.target.closest?e.target.closest('[data-filter]'):null;if(fb){currentFilter=fb.getAttribute('data-filter');applyFilter();}});
   document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
   var led=document.getElementById('led');var conn=document.getElementById('conn');var updated=document.getElementById('updated');
   function tickAge(){if(!generatedAt)return;var s=Math.max(0,Math.round((Date.now()-generatedAt)/1000));updated.textContent='updated '+s+'s ago';}
