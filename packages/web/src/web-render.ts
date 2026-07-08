@@ -14,7 +14,7 @@
 // only when applicable; remediation is COPY-ABLE TEXT (never buttons — read-only
 // beta). Zero new deps: vanilla JS + modern CSS + inline SVG.
 import type { HealthState, ComponentHealth, DaemonSnapshot } from "@squadrant/core";
-import { healCmdFor, ageText } from "@squadrant/core";
+import { healCmdFor, ageText, CREW_STALE_MS } from "@squadrant/core";
 import type { FullSnapshot } from "./snapshot-merge.js";
 import type { ExternalProbes, Probe, ProbeState } from "./probes.js";
 
@@ -510,7 +510,13 @@ function renderEnv(ext: ExternalProbes): string {
   return out.join("");
 }
 
-// ── Tab: LIVE (compact grid) ────────────────────────────────────────────────────
+// ── Tab: LIVE (mission control) ─────────────────────────────────────────────────
+const ATTN_ORDER: Record<AnyState, number> = { stale: 0, gone: 1, alive: 2, unknown: 3, stopped: 4 };
+const STATE_LABEL: Record<string, string> = { alive: "running", stale: "blocked", gone: "errored", unknown: "idle", stopped: "offline" };
+const STATE_CLS: Record<string, string> = { alive: "s-alive", stale: "s-stale", gone: "s-gone", unknown: "s-unknown", stopped: "s-stopped" };
+const STATE_ORDER = ["alive", "stale", "gone", "unknown", "stopped"];
+const TASK_ICON: Record<string, string> = { done: "✓", working: "▶", blocked: "●", failed: "✕", cancelled: "⊙" };
+
 function renderLiveGrid(snap: FullSnapshot, now: number): string {
   const out: string[] = [`<section class="panel" data-panel="live" role="tabpanel" aria-label="Live">`];
   if (snap.daemon === "unreachable") {
@@ -522,7 +528,12 @@ function renderLiveGrid(snap: FullSnapshot, now: number): string {
   if (projects.size === 0) {
     out.push(`<div class="empty">No projects registered yet.</div>`);
   } else {
-    out.push(`<table class="live-grid"><tbody>`);
+    // Gather per-project data
+    interface RowData { name: string; rollup: AnyState; captainState: HealthState; detail: string; crews: ComponentHealth[]; tasks: Record<string, number>; }
+    const rows: RowData[] = [];
+    const stateCounts: Record<string, number> = {};
+    for (const s of STATE_ORDER) stateCounts[s] = 0;
+
     for (const project of projects) {
       const comps = d.tier1.filter((c) => c.project === project);
       const dp = d.tier2.projects.find((p) => p.project === project);
@@ -551,11 +562,55 @@ function renderLiveGrid(snap: FullSnapshot, now: number): string {
       } else if (captainState === "alive") {
         detail = "captain idle";
       }
-      out.push(`<tr class="live-row" data-rollup="${rollup}">`);
-      out.push(`<td class="live-dot"><span class="pdot s-${rollup}"></span></td>`);
-      out.push(`<td class="live-name">${esc(project)}</td>`);
-      out.push(`<td class="live-state">${statePill(captainState)}</td>`);
-      out.push(`<td class="live-detail dim">${esc(detail)}</td>`);
+      rows.push({ name: project, rollup, captainState, detail, crews, tasks: dp?.store.byState ?? {} });
+      stateCounts[rollup]++;
+    }
+
+    // State-count header
+    const headerLabels = STATE_ORDER.map((s) => `${STATE_LABEL[s]}`);
+    out.push(`<div class="live-header" data-live-header="">`);
+    out.push(headerLabels.map((l) => {
+      const raw = Object.entries(STATE_LABEL).find(([, v]) => v === l)![0];
+      const c = stateCounts[raw];
+      const cls = c === 0 ? "zero" : "";
+      return `<span class="live-stat ${cls}"><span class="pdot ${STATE_CLS[raw]}"></span>${c} ${l}</span>`;
+    }).join(` <span class="live-sep">·</span> `));
+    out.push(`</div>`);
+
+    // Attention-first sort, secondary alpha
+    rows.sort((a, b) => {
+      const d = (ATTN_ORDER[a.rollup] ?? 99) - (ATTN_ORDER[b.rollup] ?? 99);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+
+    out.push(`<table class="live-grid" data-live-table=""><thead><tr class="lh-row">`);
+    out.push(`<th class="lh-dot"></th><th class="lh-name">Project</th><th class="lh-state">Status</th><th class="lh-detail">Activity</th><th class="lh-lastseen">Last Seen</th><th class="lh-tasks">Tasks</th>`);
+    out.push(`</tr></thead><tbody>`);
+    for (const row of rows) {
+      // Crew last-seen: max age (quietest crew)
+      let maxAge = -1;
+      let maxSeenMs: number | null = null;
+      for (const c of row.crews) {
+        if (c.lastSeenMs != null) {
+          const age = now - c.lastSeenMs;
+          if (age > maxAge) { maxAge = age; maxSeenMs = c.lastSeenMs; }
+        }
+      }
+      const crewAgeStr = maxSeenMs == null ? "—" : ageText(maxSeenMs, now);
+      const crewAgeQuiet = maxSeenMs != null && maxAge > CREW_STALE_MS;
+      // Task counts
+      const tParts: string[] = [];
+      for (const [st, n] of Object.entries(row.tasks)) {
+        const icon = TASK_ICON[st] ?? st[0];
+        tParts.push(`<span class="tk">${n}${esc(icon)}</span>`);
+      }
+      out.push(`<tr class="live-row" data-rollup="${row.rollup}" data-project="${esc(row.name)}">`);
+      out.push(`<td class="live-dot"><span class="pdot s-${row.rollup}"></span></td>`);
+      out.push(`<td class="live-name">${esc(row.name)}</td>`);
+      out.push(`<td class="live-state">${statePill(row.captainState)}</td>`);
+      out.push(`<td class="live-detail dim">${esc(row.detail)}</td>`);
+      out.push(`<td class="live-lastseen${crewAgeQuiet ? " quiet" : ""}">${crewAgeStr}</td>`);
+      out.push(`<td class="live-tasks">${tParts.join("") || "<span class=\"dim\">—</span>"}</td>`);
       out.push(`</tr>`);
     }
     out.push(`</tbody></table>`);
@@ -757,22 +812,41 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .spark-area{fill:var(--hud);opacity:.1}
 .spark-dot{fill:var(--hud)}
 
-/* Live grid (compact per-project rows) */
+/* Live grid (mission control) */
 .live-grid{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
-.live-row td{padding:5px 6px;vertical-align:middle;border-bottom:1px solid var(--track);white-space:nowrap}
+.live-grid td,.live-grid th{padding:5px 6px;vertical-align:middle;white-space:nowrap}
+.live-grid th{padding:6px 6px 8px;text-align:left;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:9px;color:var(--ink-dim);border-bottom:1px solid var(--bezel);font-weight:600;cursor:default}
+.live-grid th:hover{color:var(--ink)}
+.live-row td{border-bottom:1px solid var(--track)}
 .live-row:last-child td{border-bottom:0}
-.live-dot{width:20px;text-align:center;padding-right:0!important}
+.lh-dot{width:22px;text-align:center}
+.lh-name{width:auto;min-width:14%}
+.lh-state{width:88px;text-align:right;padding-right:12px!important}
+.lh-detail{width:auto}
+.lh-lastseen{width:105px}
+.lh-tasks{width:90px;text-align:right}
+.live-dot{width:22px;text-align:center;padding-right:0!important}
 .live-dot .pdot{display:inline-block;vertical-align:middle}
-.live-name{font-weight:600;width:20%}
-.live-state{width:auto;text-align:right;padding-right:12px!important}
+.live-name{font-weight:600}
+.live-state{width:88px;text-align:right;padding-right:12px!important}
 .live-state .pill{font-size:10px;padding:1px 7px}
-.live-detail{overflow:hidden;text-overflow:ellipsis;width:auto;color:var(--ink-dim)}
+.live-detail{overflow:hidden;text-overflow:ellipsis;color:var(--ink-dim)}
+.live-lastseen{width:105px;font-size:11px;color:var(--ink-dim)}
+.live-lastseen.quiet{color:var(--warn);font-weight:600}
+.live-tasks{width:90px;text-align:right;font-size:11px}
+.live-tasks .tk{padding:0 3px}
+.live-tasks .tk:first-child{padding-left:0}
 .live-row[data-rollup="gone"] td.live-dot .pdot{background:var(--crit);box-shadow:0 0 6px var(--crit)}
 .live-row[data-rollup="stale"] td.live-dot .pdot{background:var(--warn);box-shadow:0 0 6px var(--warn)}
 .live-row[data-rollup="stopped"] td.live-dot .pdot{background:var(--stopped)}
 .live-row[data-rollup="alive"] td.live-dot .pdot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .live-row[data-rollup="unknown"] td.live-dot .pdot{background:var(--unk)}
 .live-row:hover{background:var(--panel-2)}
+.live-header{display:flex;gap:8px 16px;flex-wrap:wrap;padding:6px 0 10px;font-size:12px;cursor:default;user-select:none}
+.live-stat{display:flex;align-items:center;gap:5px;font-weight:600}
+.live-stat .pdot{width:6px;height:6px}
+.live-stat.zero{opacity:.35}
+.live-sep{color:var(--ink-dim);opacity:.4}
 
 /* Filter bar */
 .filter-bar{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
