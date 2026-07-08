@@ -104,14 +104,14 @@ describe("explanatory titles + captions", () => {
 });
 
 describe("tabbed navigation", () => {
-  it("renders all four tabs as a tablist", () => {
+  it("renders all five tabs as a tablist, live first", () => {
     const out = renderContent(full(daemon()));
     expect(out).toContain('role="tablist"');
-    for (const tab of ["overview", "projects", "daemon", "environment"]) {
+    for (const tab of ["live", "overview", "projects", "daemon", "environment"]) {
       expect(out).toContain(`data-tab="${tab}"`);
       expect(out).toContain(`data-panel="${tab}"`);
     }
-    expect(out).toContain("Overview");
+    expect(out).toContain("Live");
     expect(out).toContain("Environment");
   });
 });
