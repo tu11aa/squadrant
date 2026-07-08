@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { SquadrantConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
-import { readAllStatuses } from "../read-status.js";
+import type { ComponentHealth } from "@squadrant/core";
+import { readAllStatuses, deriveRowState } from "../read-status.js";
 
 function makeConfig(): SquadrantConfig {
   return {
@@ -201,5 +202,43 @@ describe("readAllStatuses", () => {
     expect(rows[0].state).toBe("offline");
     expect(rows[1].state).toBe("busy");
     expect(callCount).toBe(2);
+  });
+
+  it("captain state from health dominates task-derived state, fetched once and indexed per project", async () => {
+    let healthCalls = 0;
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      call: async (req: unknown) => {
+        const r = req as { kind: string; project?: string };
+        if (r.kind === "health") {
+          healthCalls++;
+          return [
+            { kind: "captain", project: "brove", ref: "brove-captain", state: "gone", lastSeenMs: null },
+            { kind: "captain", project: "solder", ref: "solder-captain", state: "alive", lastSeenMs: null },
+          ] as ComponentHealth[];
+        }
+        if (r.kind === "list") return [mkTask({ state: "working" })];
+        throw new Error(`unexpected request kind: ${r.kind}`);
+      },
+    });
+
+    expect(rows[0].state).toBe("offline"); // brove: gone dominates despite a working task
+    expect(rows[1].state).toBe("busy");    // solder: alive → task-derived
+    expect(healthCalls).toBe(1);           // fetched once, not per project
+  });
+});
+
+describe("deriveRowState", () => {
+  it("captain gone → offline regardless of working tasks", () => {
+    expect(deriveRowState([mkTask({ state: "working" })], "gone")).toBe("offline");
+  });
+  it("captain stopped → offline", () => {
+    expect(deriveRowState([], "stopped")).toBe("offline");
+  });
+  it("captain alive → task-derived", () => {
+    expect(deriveRowState([mkTask({ state: "working" })], "alive")).toBe("busy");
+  });
+  it("captain unknown → task-derived (no health source / not applicable)", () => {
+    expect(deriveRowState([], "unknown")).toBe("idle");
   });
 });
