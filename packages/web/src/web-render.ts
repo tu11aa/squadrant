@@ -583,8 +583,15 @@ function renderLiveGrid(snap: FullSnapshot, now: number): string {
       return d !== 0 ? d : a.name.localeCompare(b.name);
     });
 
+    out.push(`<div class="live-controls">`);
+    out.push(`<input type="text" class="live-search" placeholder="Search projects or crews…" data-live-search="">`);
+    out.push(`<div class="filter-bar" role="group" aria-label="Filter live rows by status">`);
+    for (const fb of [["all","All"],["alive","Nominal"],["caution","Caution"],["offline","Offline"]]) {
+      out.push(`<button class="filter-btn${fb[0]==="all"?" on":""}" data-filter="${fb[0]}" data-live-filter="" aria-pressed="${fb[0]==="all"?"true":"false"}">${fb[1]}</button>`);
+    }
+    out.push(`</div></div>`);
     out.push(`<table class="live-grid" data-live-table=""><thead><tr class="lh-row">`);
-    out.push(`<th class="lh-dot"></th><th class="lh-name">Project</th><th class="lh-state">Status</th><th class="lh-detail">Activity</th><th class="lh-lastseen">Last Seen</th><th class="lh-tasks">Tasks</th>`);
+    out.push(`<th class="lh-dot"></th><th class="lh-name" data-sort="name">Project</th><th class="lh-state" data-sort="attention">Status</th><th class="lh-detail">Activity</th><th class="lh-lastseen" data-sort="activity">Last Seen</th><th class="lh-tasks">Tasks</th>`);
     out.push(`</tr></thead><tbody>`);
     for (const row of rows) {
       // Crew last-seen: max age (quietest crew)
@@ -604,7 +611,7 @@ function renderLiveGrid(snap: FullSnapshot, now: number): string {
         const icon = TASK_ICON[st] ?? st[0];
         tParts.push(`<span class="tk">${n}${esc(icon)}</span>`);
       }
-      out.push(`<tr class="live-row" data-rollup="${row.rollup}" data-project="${esc(row.name)}">`);
+      out.push(`<tr class="live-row" data-rollup="${row.rollup}" data-project="${esc(row.name)}" data-max-age="${maxAge}">`);
       out.push(`<td class="live-dot"><span class="pdot s-${row.rollup}"></span></td>`);
       out.push(`<td class="live-name">${esc(row.name)}</td>`);
       out.push(`<td class="live-state">${statePill(row.captainState)}</td>`);
@@ -812,6 +819,12 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .spark-area{fill:var(--hud);opacity:.1}
 .spark-dot{fill:var(--hud)}
 
+/* Live controls (search + filter bar) */
+.live-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 10px}
+.live-search{flex:1;min-width:140px;max-width:300px;padding:5px 10px;border:1px solid var(--bezel);border-radius:8px;background:var(--panel);color:var(--ink);font:12px/1.4 ui-monospace,monospace;outline:none;transition:border-color .15s ease}
+.live-search:focus{border-color:var(--hud);box-shadow:0 0 0 2px rgba(11,111,194,.15)}
+.live-search::placeholder{color:var(--ink-dim);opacity:.7}
+
 /* Live grid (mission control) */
 .live-grid{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
 .live-grid td,.live-grid th{padding:5px 6px;vertical-align:middle;white-space:nowrap}
@@ -926,7 +939,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 // charts after each frame.
 const CLIENT_JS = `
 (function(){
-  var activeTab='live';var hist={};var prev={};var currentFilter='all';
+  var activeTab='live';var hist={};var prev={};var currentFilter='all';var currentSort='attention';var sortAsc=true;var currentSearch='';
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
   function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);pushHist('defers',m.maxDeferCount,m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
@@ -934,10 +947,14 @@ const CLIENT_JS = `
   function applyTab(){var ts=document.querySelectorAll('[data-tab]');for(var i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-tab')===activeTab;ts[i].setAttribute('aria-selected',on?'true':'false');ts[i].classList.toggle('on',on);}var ps=document.querySelectorAll('[data-panel]');for(var j=0;j<ps.length;j++){var on2=ps[j].getAttribute('data-panel')===activeTab;ps[j].hidden=!on2;}}
   function ease(k){return k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;}
   function countUps(){var ns=document.querySelectorAll('[data-countup]');for(var i=0;i<ns.length;i++){(function(el){var key=el.getAttribute('data-countup');var to=parseFloat(el.getAttribute('data-value'))||0;var from=prev[key]!=null?prev[key]:0;prev[key]=to;if(from===to){el.textContent=to;return;}var s=null;function step(ts){if(s===null)s=ts;var k=Math.min(1,(ts-s)/600);el.textContent=Math.round(from+(to-from)*ease(k));if(k<1)requestAnimationFrame(step);}requestAnimationFrame(step);})(ns[i]);}}
-  function applyFilter(){document.querySelectorAll('[data-panel="projects"] .card').forEach(function(c){var r=c.getAttribute('data-rollup');if(currentFilter==='all'){c.hidden=false;}else if(currentFilter==='alive'){c.hidden=r!=='alive';}else if(currentFilter==='caution'){c.hidden=r!=='stale';}else if(currentFilter==='offline'){c.hidden=r!=='gone'&&r!=='stopped'&&r!=='unknown';}});document.querySelectorAll('.filter-btn').forEach(function(x){var on=x.getAttribute('data-filter')===currentFilter;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false');});}
-  function refresh(){ingest();applyTab();drawSparks();countUps();applyFilter();}
-  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}var fb=e.target&&e.target.closest?e.target.closest('[data-filter]'):null;if(fb){currentFilter=fb.getAttribute('data-filter');applyFilter();}});
+  function hideByFilter(r,filter){if(filter==='all')return false;if(filter==='alive')return r!=='alive';if(filter==='caution')return r!=='stale';if(filter==='offline')return r!=='gone'&&r!=='stopped'&&r!=='unknown';return false;}
+  function applyFilter(){document.querySelectorAll('[data-panel="projects"] .card').forEach(function(c){c.hidden=hideByFilter(c.getAttribute('data-rollup'),currentFilter);});document.querySelectorAll('[data-panel="live"] .live-row').forEach(function(c){c.hidden=hideByFilter(c.getAttribute('data-rollup'),currentFilter);});document.querySelectorAll('.filter-btn').forEach(function(x){var on=x.getAttribute('data-filter')===currentFilter;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false');});}
+  function applySearch(){var q=currentSearch.toLowerCase();document.querySelectorAll('[data-panel="live"] .live-row').forEach(function(r){if(!q){if(!hideByFilter(r.getAttribute('data-rollup'),currentFilter))r.hidden=false;return;}var pn=(r.getAttribute('data-project')||'').toLowerCase();var dd=((r.querySelector('.live-detail')||{}).textContent||'').toLowerCase();var rl=r.getAttribute('data-rollup');if(hideByFilter(rl,currentFilter)){r.hidden=true;return;}r.hidden=pn.indexOf(q)===-1&&dd.indexOf(q)===-1;});}
+  function applySort(){var table=document.querySelector('[data-panel="live"] [data-live-table]');if(!table)return;var tbody=table.querySelector('tbody');if(!tbody)return;var rows=Array.prototype.slice.call(tbody.querySelectorAll('.live-row'));var dir=sortAsc?1:-1;rows.sort(function(a,b){var va,vb;if(currentSort==='name'){va=(a.getAttribute('data-project')||'').toLowerCase();vb=(b.getAttribute('data-project')||'').toLowerCase();}else if(currentSort==='attention'){var order={gone:0,stale:1,alive:2,unknown:3,stopped:4};va=order[a.getAttribute('data-rollup')]??99;vb=order[b.getAttribute('data-rollup')]??99;if(va===vb){va=(a.getAttribute('data-project')||'').toLowerCase();vb=(b.getAttribute('data-project')||'').toLowerCase();return va<vb?-1:va>vb?1:0;}}else if(currentSort==='activity'){va=parseInt(a.getAttribute('data-max-age'))||0;vb=parseInt(b.getAttribute('data-max-age'))||0;}return va<vb?-dir:va>vb?dir:0;});rows.forEach(function(r){tbody.appendChild(r);});}
+  function refresh(){ingest();applyTab();drawSparks();countUps();applyFilter();applySearch();applySort();}
+  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}var fb=e.target&&e.target.closest?e.target.closest('[data-filter]'):null;if(fb){currentFilter=fb.getAttribute('data-filter');applyFilter();applySearch();}var sh=e.target&&e.target.closest?e.target.closest('[data-sort]'):null;if(sh){var key=sh.getAttribute('data-sort');if(key===currentSort)sortAsc=!sortAsc;else{currentSort=key;sortAsc=true;}applySort();}});
   document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['live','overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
+  document.addEventListener('input',function(e){var sb=e.target&&e.target.closest?e.target.closest('[data-live-search]'):null;if(sb){currentSearch=sb.value;applySearch();}});
   var led=document.getElementById('led');var conn=document.getElementById('conn');var updated=document.getElementById('updated');
   function tickAge(){if(!generatedAt)return;var s=Math.max(0,Math.round((Date.now()-generatedAt)/1000));updated.textContent='updated '+s+'s ago';}
   setInterval(tickAge,1000);
