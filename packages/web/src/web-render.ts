@@ -510,8 +510,63 @@ function renderEnv(ext: ExternalProbes): string {
   return out.join("");
 }
 
+// ── Tab: LIVE (compact grid) ────────────────────────────────────────────────────
+function renderLiveGrid(snap: FullSnapshot, now: number): string {
+  const out: string[] = [`<section class="panel" data-panel="live" role="tabpanel" aria-label="Live">`];
+  if (snap.daemon === "unreachable") {
+    out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>squadrant heal daemon</code></div></section>`);
+    return out.join("");
+  }
+  const d = snap.daemon;
+  const projects = new Set<string>([...d.tier1.map((c) => c.project), ...d.tier2.projects.map((p) => p.project)]);
+  if (projects.size === 0) {
+    out.push(`<div class="empty">No projects registered yet.</div>`);
+  } else {
+    out.push(`<table class="live-grid"><tbody>`);
+    for (const project of projects) {
+      const comps = d.tier1.filter((c) => c.project === project);
+      const dp = d.tier2.projects.find((p) => p.project === project);
+      const captainStopped = comps.some((c) => c.kind === "captain" && c.state === "stopped");
+      const deferralState: AnyState =
+        !captainStopped && dp && dp.deferral.stuck ? "gone" :
+        !captainStopped && dp && dp.deferral.maxDeferCount > 0 ? "stale" : "alive";
+      const rollupStates: AnyState[] = [
+        ...comps.map((c) => c.state),
+        !captainStopped && dp && dp.delivery.behind > 0 ? "stale" : "alive",
+        dp && dp.store.corruptCount > 0 ? "gone" : "alive",
+        deferralState,
+      ];
+      const rollup = worst(rollupStates);
+      const captainComp = comps.find((c) => c.kind === "captain");
+      const captainState = captainComp?.state ?? "unknown";
+      const crews = comps.filter((c) => c.kind === "crew");
+      let detail = "";
+      if (crews.length > 0) {
+        const alive = crews.filter((c) => c.state === "alive");
+        const other = crews.filter((c) => c.state !== "alive");
+        const parts: string[] = [];
+        if (alive.length > 0) parts.push(`${alive.length} working — ${alive.map((c) => c.ref).join("; ")}`);
+        for (const c of other) parts.push(`${c.state} — ${c.ref}`);
+        detail = parts.join(", ");
+      } else if (captainState === "alive") {
+        detail = "captain idle";
+      }
+      out.push(`<tr class="live-row" data-rollup="${rollup}">`);
+      out.push(`<td class="live-dot"><span class="pdot s-${rollup}"></span></td>`);
+      out.push(`<td class="live-name">${esc(project)}</td>`);
+      out.push(`<td class="live-state">${statePill(captainState)}</td>`);
+      out.push(`<td class="live-detail dim">${esc(detail)}</td>`);
+      out.push(`</tr>`);
+    }
+    out.push(`</tbody></table>`);
+  }
+  out.push(`</section>`);
+  return out.join("");
+}
+
 // ── Tab nav + content assembly ──────────────────────────────────────────────────
 const TABS: Array<[string, string]> = [
+  ["live", "Live"],
   ["overview", "Overview"],
   ["projects", "Projects"],
   ["daemon", "Daemon"],
@@ -573,6 +628,7 @@ export function renderContent(snap: FullSnapshot): string {
 
   out.push(tabNav());
   out.push(`<div class="panels">`);
+  out.push(renderLiveGrid(snap, col.now));
   out.push(renderOverview(snap, col));
   out.push(renderProjects(snap, col.now));
   out.push(renderDaemon(snap));
@@ -701,6 +757,23 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .spark-area{fill:var(--hud);opacity:.1}
 .spark-dot{fill:var(--hud)}
 
+/* Live grid (compact per-project rows) */
+.live-grid{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.live-row td{padding:5px 6px;vertical-align:middle;border-bottom:1px solid var(--track);white-space:nowrap}
+.live-row:last-child td{border-bottom:0}
+.live-dot{width:20px;text-align:center;padding-right:0!important}
+.live-dot .pdot{display:inline-block;vertical-align:middle}
+.live-name{font-weight:600;width:20%}
+.live-state{width:auto;text-align:right;padding-right:12px!important}
+.live-state .pill{font-size:10px;padding:1px 7px}
+.live-detail{overflow:hidden;text-overflow:ellipsis;width:auto;color:var(--ink-dim)}
+.live-row[data-rollup="gone"] td.live-dot .pdot{background:var(--crit);box-shadow:0 0 6px var(--crit)}
+.live-row[data-rollup="stale"] td.live-dot .pdot{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+.live-row[data-rollup="stopped"] td.live-dot .pdot{background:var(--stopped)}
+.live-row[data-rollup="alive"] td.live-dot .pdot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.live-row[data-rollup="unknown"] td.live-dot .pdot{background:var(--unk)}
+.live-row:hover{background:var(--panel-2)}
+
 /* Filter bar */
 .filter-bar{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
 .filter-btn{appearance:none;background:var(--panel-2);border:1px solid var(--bezel);border-radius:999px;
@@ -779,7 +852,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 // charts after each frame.
 const CLIENT_JS = `
 (function(){
-  var activeTab='overview';var hist={};var prev={};var currentFilter='all';
+  var activeTab='live';var hist={};var prev={};var currentFilter='all';
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
   function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);pushHist('defers',m.maxDeferCount,m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
@@ -790,7 +863,7 @@ const CLIENT_JS = `
   function applyFilter(){document.querySelectorAll('[data-panel="projects"] .card').forEach(function(c){var r=c.getAttribute('data-rollup');if(currentFilter==='all'){c.hidden=false;}else if(currentFilter==='alive'){c.hidden=r!=='alive';}else if(currentFilter==='caution'){c.hidden=r!=='stale';}else if(currentFilter==='offline'){c.hidden=r!=='gone'&&r!=='stopped'&&r!=='unknown';}});document.querySelectorAll('.filter-btn').forEach(function(x){var on=x.getAttribute('data-filter')===currentFilter;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false');});}
   function refresh(){ingest();applyTab();drawSparks();countUps();applyFilter();}
   document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}var fb=e.target&&e.target.closest?e.target.closest('[data-filter]'):null;if(fb){currentFilter=fb.getAttribute('data-filter');applyFilter();}});
-  document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
+  document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['live','overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
   var led=document.getElementById('led');var conn=document.getElementById('conn');var updated=document.getElementById('updated');
   function tickAge(){if(!generatedAt)return;var s=Math.max(0,Math.round((Date.now()-generatedAt)/1000));updated.textContent='updated '+s+'s ago';}
   setInterval(tickAge,1000);
