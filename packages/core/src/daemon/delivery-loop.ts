@@ -55,6 +55,14 @@ export interface LivenessTickDeps {
    *  liveness-only callers can omit it. Idempotent (already-terminal crews are
    *  skipped), so calling it every tick for a non-alive captain is safe. */
   reap?: (project: string) => number;
+  /** One grep-able line per applied/transitioned record (§4.4): `[role/source]
+   *  project pid=… → state`. Optional so pure liveness-only callers can omit it. */
+  log?: (msg: string) => void;
+}
+
+function logEntry(log: ((msg: string) => void) | undefined, project: string, e: LivenessEntry | undefined): void {
+  if (!log || !e) return;
+  log(`[${e.role}/${e.source}] ${project} pid=${e.pid} → ${deriveCaptainState(e)}`);
 }
 
 /** One reconcile+floor pass over captain records. Runtime snapshot is authoritative;
@@ -80,12 +88,14 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
     if (prev && prev.lastState === "start") entry.startedAt = prev.startedAt;
     deps.registry.apply(entry);
     if (r.pid != null) deps.registry.setPidAlive(r.project, deps.isPidAlive(r.pid), now);
+    logEntry(deps.log, r.project, deps.registry.get(r.project));
   }
 
   // Captains we knew but the snapshot no longer lists → clean close.
   for (const e of deps.registry.all()) {
     if (e.role === "captain" && e.lastState === "start" && !seen.has(e.project)) {
       deps.registry.markEnded(e.project, now);
+      logEntry(deps.log, e.project, deps.registry.get(e.project));
     }
   }
 
@@ -164,6 +174,7 @@ export function createDelivery(
       liveness: () => (cmux.liveness ? cmux.liveness() : Promise.resolve([])),
       isPidAlive,
       now: () => Date.now(),
+      log,
       reap: (project) => {
         const reaped = reapOrphanedCrews(store, project);
         if (reaped > 0) {
