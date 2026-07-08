@@ -12,7 +12,7 @@ vi.mock("@squadrant/shared", () => ({
   resolveHome: (p: string) => p,
 }));
 
-import { dispatchToSibling } from "../group-dispatch.js";
+import { dispatchToSibling, isCaptainAlive } from "../group-dispatch.js";
 
 const makeConfig = (overrides: Record<string, any> = {}) => {
   const projects: Record<string, any> = {
@@ -205,5 +205,38 @@ describe("dispatchToSibling", () => {
     expect((result as any).project).toBe("projB");
     expect((result as any).state).toBe("submitted");
     expect((result as any).task).toBe("update the docs");
+  });
+});
+
+// ── isCaptainAlive (#517: "stopped" was mistakenly treated as alive) ─────────
+describe("isCaptainAlive", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("returns true only when the captain row reports state 'alive'", async () => {
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projA", state: "alive", lastSeenMs: Date.now() },
+    ]);
+    expect(await isCaptainAlive("projA")).toBe(true);
+  });
+
+  it("returns false when the captain workspace was closed (state 'stopped' = down)", async () => {
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projA", state: "stopped", lastSeenMs: Date.now() },
+    ]);
+    expect(await isCaptainAlive("projA")).toBe(false);
+  });
+
+  it("returns false when the captain state is unknown", async () => {
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projA", state: "unknown", lastSeenMs: null },
+    ]);
+    expect(await isCaptainAlive("projA")).toBe(false);
+  });
+
+  it("returns false when there is no captain row at all", async () => {
+    sendRequestMock.mockResolvedValue([]);
+    expect(await isCaptainAlive("projA")).toBe(false);
   });
 });

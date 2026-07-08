@@ -17,6 +17,15 @@ const emitMock = vi.hoisted(() => vi.fn(async (_src: unknown, dest: { path: stri
   bytesWritten: 42,
 })));
 
+const ensureGlobalOpencodeConfigMock = vi.hoisted(() =>
+  vi.fn((): string | null => "/tmp/mock-opencode/opencode.json"),
+);
+
+vi.mock("../../lib/per-crew-settings.js", () => ({
+  ensureGlobalOpencodeConfig: ensureGlobalOpencodeConfigMock,
+  DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH: "/tmp/mock-opencode/opencode.json",
+}));
+
 vi.mock("@squadrant/shared", async () => {
   const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
   return {
@@ -107,10 +116,20 @@ describe("init — non-TTY path", () => {
     expect(text).toContain("squadrant launch");
   });
 
-  it("does NOT call saveConfig in non-TTY mode (no side effects)", async () => {
+  it("prints opencode CLI install + global config guidance (#140)", async () => {
+    await runInit({ isTTY: false });
+
+    const text = output.join("\n");
+    expect(text).toContain("opencode");
+    expect(text).toContain("npm install -g opencode-ai");
+    expect(text).toContain("/tmp/mock-opencode/opencode.json");
+  });
+
+  it("does NOT call saveConfig or provision opencode config in non-TTY mode (no side effects)", async () => {
     await runInit({ isTTY: false });
     expect(saveConfigMock).not.toHaveBeenCalled();
     expect(ensureRuntimeSyncedMock).not.toHaveBeenCalled();
+    expect(ensureGlobalOpencodeConfigMock).not.toHaveBeenCalled();
   });
 
   it("does not hang when stdin is /dev/null equivalent (isTTY=false)", async () => {
@@ -216,6 +235,38 @@ describe("init — re-run-safe (TTY mode)", () => {
     expect(emitMock).toHaveBeenCalledTimes(3);
     const text = output.join("\n");
     expect(text).toMatch(/codex.*proj-codex|proj-codex.*codex/i);
+  });
+
+  it("provisions a default global opencode config when absent (#141)", async () => {
+    vi.spyOn(fs, "existsSync").mockImplementation(() => false);
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => "{}");
+    vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => []);
+    ensureGlobalOpencodeConfigMock.mockReturnValueOnce("/tmp/mock-opencode/opencode.json");
+
+    await runInit({ isTTY: true, hub: tmpDir });
+
+    expect(ensureGlobalOpencodeConfigMock).toHaveBeenCalledOnce();
+    const text = output.join("\n");
+    expect(text).toContain("Default model config created at /tmp/mock-opencode/opencode.json");
+  });
+
+  it("does NOT overwrite an existing global opencode config", async () => {
+    vi.spyOn(fs, "existsSync").mockImplementation(() => false);
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => "{}");
+    vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => []);
+    ensureGlobalOpencodeConfigMock.mockReturnValueOnce(null);
+
+    await runInit({ isTTY: true, hub: tmpDir });
+
+    expect(ensureGlobalOpencodeConfigMock).toHaveBeenCalledOnce();
+    const text = output.join("\n");
+    expect(text).toContain("/tmp/mock-opencode/opencode.json already exists (unchanged)");
   });
 
   it("skips agent-teams write when already enabled", async () => {

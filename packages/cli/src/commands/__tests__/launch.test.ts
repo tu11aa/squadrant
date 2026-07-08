@@ -7,13 +7,14 @@
 // the parent terminal. The fix routes them through cmuxLocal, which pipes
 // (captures) fd 2 instead of inheriting it. These tests pin that contract.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const execFileMock = vi.hoisted(() => vi.fn());
+const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   // launch.ts imports both; only execFileSync is exercised by cmuxLocal.
   execFileSync: execFileMock,
-  execSync: vi.fn(),
+  execSync: execSyncMock,
   execFile: vi.fn(),
 }));
 
@@ -23,7 +24,7 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
-import { deliverStartupPrompt } from "../launch.js";
+import { deliverStartupPrompt, ensureCmuxReady } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -54,6 +55,48 @@ describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   it("returns trimmed stdout for callers that need the output", () => {
     execFileMock.mockReturnValue("  workspace:7 squadrant-captain  \n");
     expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 squadrant-captain");
+  });
+});
+
+// #520: `squadrant launch` run from the daemon (no CMUX_WORKSPACE_ID, no TTY)
+// silently no-op'd — ensureCmuxReady() opened the cmux GUI app and called
+// process.exit(0) before any workspace was ever created, so Telegram
+// auto-launch's ensureCaptainAlive polled isAlive() for the full warmup
+// window and always timed out. --headless lets a non-interactive caller
+// (the daemon) bypass the isInsideCmux() gate and drive launchOneWorkspace
+// directly, the same way crew-spawn already does from the daemon.
+describe("ensureCmuxReady (#520 daemon headless launch)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let exitSpy: any;
+
+  beforeEach(() => {
+    execSyncMock.mockReset();
+    delete process.env.CMUX_WORKSPACE_ID;
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((): never => {
+      throw new Error("process.exit called");
+    }) as never);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+  });
+
+  it("does not open the cmux app or exit when headless=true, even outside cmux", () => {
+    expect(() => ensureCmuxReady(true)).not.toThrow();
+    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("still opens the cmux app and exits when headless=false and not inside cmux (pins existing interactive behavior)", () => {
+    expect(() => ensureCmuxReady(false)).toThrow("process.exit called");
+    expect(execSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open the cmux app when already inside cmux, regardless of headless", () => {
+    process.env.CMUX_WORKSPACE_ID = "workspace:1";
+    expect(() => ensureCmuxReady(false)).not.toThrow();
+    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });
 

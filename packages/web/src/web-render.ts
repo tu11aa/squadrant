@@ -14,7 +14,7 @@
 // only when applicable; remediation is COPY-ABLE TEXT (never buttons — read-only
 // beta). Zero new deps: vanilla JS + modern CSS + inline SVG.
 import type { HealthState, ComponentHealth, DaemonSnapshot } from "@squadrant/core";
-import { healCmdFor, ageText } from "@squadrant/core";
+import { healCmdFor, ageText, CREW_STALE_MS } from "@squadrant/core";
 import type { FullSnapshot } from "./snapshot-merge.js";
 import type { ExternalProbes, Probe, ProbeState } from "./probes.js";
 
@@ -297,6 +297,17 @@ function renderOverview(snap: FullSnapshot, col: Collected): string {
 }
 
 // ── Tab: PROJECTS ───────────────────────────────────────────────────────────────
+function filterBar(): string {
+  return [
+    `<div class="filter-bar" role="group" aria-label="Filter projects by status">`,
+    `<button class="filter-btn on" data-filter="all" aria-pressed="true">All</button>`,
+    `<button class="filter-btn" data-filter="alive" aria-pressed="false">Nominal</button>`,
+    `<button class="filter-btn" data-filter="caution" aria-pressed="false">Caution</button>`,
+    `<button class="filter-btn" data-filter="offline" aria-pressed="false">Offline</button>`,
+    `</div>`,
+  ].join("");
+}
+
 function componentRow(c: ComponentHealth, now: number): string {
   const detail = c.detail ? esc(c.detail) : "";
   const row =
@@ -330,6 +341,7 @@ function renderProjects(snap: FullSnapshot, now: number): string {
     out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>squadrant heal daemon</code></div></section>`);
     return out.join("");
   }
+  out.push(filterBar());
   const d = snap.daemon;
   const projects = new Set<string>([...d.tier1.map((c) => c.project), ...d.tier2.projects.map((p) => p.project)]);
   if (projects.size === 0) out.push(`<div class="empty">No projects registered yet.</div>`);
@@ -355,8 +367,10 @@ function renderProjects(snap: FullSnapshot, now: number): string {
       deferralState,
     ];
     const rollup = worst(rollupStates);
+    const captainComp = comps.find(c => c.kind === "captain");
+    const captainState = captainComp?.state ?? "unknown";
     out.push(`<article class="card" data-rollup="${rollup}">`);
-    out.push(`<header class="card-head"><span class="card-title">${esc(project)}</span>${statePill(rollup)}</header>`);
+    out.push(`<header class="card-head"><span class="card-title">${esc(project)}</span><div class="card-badges"><span class="captain-badge">captain ${statePill(captainState)}</span>${statePill(rollup)}</div></header>`);
     if (comps.length) {
       out.push(
         `<table class="grid"><thead><tr><th>status</th><th>kind</th><th>ref</th><th>last seen</th><th>detail</th></tr></thead><tbody>`,
@@ -496,8 +510,142 @@ function renderEnv(ext: ExternalProbes): string {
   return out.join("");
 }
 
+// ── Tab: LIVE (mission control) ─────────────────────────────────────────────────
+const ATTN_ORDER: Record<AnyState, number> = { stale: 0, gone: 1, alive: 2, unknown: 3, stopped: 4 };
+const STATE_LABEL: Record<string, string> = { alive: "running", stale: "blocked", gone: "errored", unknown: "idle", stopped: "offline" };
+const STATE_CLS: Record<string, string> = { alive: "s-alive", stale: "s-stale", gone: "s-gone", unknown: "s-unknown", stopped: "s-stopped" };
+const STATE_ORDER = ["alive", "stale", "gone", "unknown", "stopped"];
+const TASK_ICON: Record<string, string> = { done: "✓", working: "▶", blocked: "●", failed: "✕", cancelled: "⊙" };
+
+function renderLiveGrid(snap: FullSnapshot, now: number): string {
+  const out: string[] = [`<section class="panel" data-panel="live" role="tabpanel" aria-label="Live">`];
+  if (snap.daemon === "unreachable") {
+    out.push(`<div class="empty">Telemetry link lost — per-project data is served by the daemon. Start it to restore: <code>squadrant heal daemon</code></div></section>`);
+    return out.join("");
+  }
+  const d = snap.daemon;
+  const projects = new Set<string>([...d.tier1.map((c) => c.project), ...d.tier2.projects.map((p) => p.project)]);
+  if (projects.size === 0) {
+    out.push(`<div class="empty">No projects registered yet.</div>`);
+  } else {
+    // Gather per-project data
+    interface RowData { name: string; rollup: AnyState; captainState: HealthState; detail: string; crews: ComponentHealth[]; tasks: Record<string, number>; }
+    const rows: RowData[] = [];
+    const stateCounts: Record<string, number> = {};
+    for (const s of STATE_ORDER) stateCounts[s] = 0;
+
+    for (const project of projects) {
+      const comps = d.tier1.filter((c) => c.project === project);
+      const dp = d.tier2.projects.find((p) => p.project === project);
+      const captainStopped = comps.some((c) => c.kind === "captain" && c.state === "stopped");
+      const deferralState: AnyState =
+        !captainStopped && dp && dp.deferral.stuck ? "gone" :
+        !captainStopped && dp && dp.deferral.maxDeferCount > 0 ? "stale" : "alive";
+      const rollupStates: AnyState[] = [
+        ...comps.map((c) => c.state),
+        !captainStopped && dp && dp.delivery.behind > 0 ? "stale" : "alive",
+        dp && dp.store.corruptCount > 0 ? "gone" : "alive",
+        deferralState,
+      ];
+      const rollup = worst(rollupStates);
+      const captainComp = comps.find((c) => c.kind === "captain");
+      const captainState = captainComp?.state ?? "unknown";
+      const crews = comps.filter((c) => c.kind === "crew");
+      let detail = "";
+      if (crews.length > 0) {
+        const alive = crews.filter((c) => c.state === "alive");
+        const other = crews.filter((c) => c.state !== "alive");
+        const parts: string[] = [];
+        if (alive.length > 0) parts.push(`${alive.length} working — ${alive.map((c) => c.ref).join("; ")}`);
+        for (const c of other) parts.push(`${c.state} — ${c.ref}`);
+        detail = parts.join(", ");
+      } else if (captainState === "alive") {
+        detail = "captain idle";
+      }
+      rows.push({ name: project, rollup, captainState, detail, crews, tasks: dp?.store.byState ?? {} });
+      stateCounts[rollup]++;
+    }
+
+    // State-count header
+    const headerLabels = STATE_ORDER.map((s) => `${STATE_LABEL[s]}`);
+    out.push(`<div class="live-header" data-live-header="">`);
+    out.push(headerLabels.map((l) => {
+      const raw = Object.entries(STATE_LABEL).find(([, v]) => v === l)![0];
+      const c = stateCounts[raw];
+      const cls = c === 0 ? "zero" : "";
+      return `<span class="live-stat ${cls}"><span class="pdot ${STATE_CLS[raw]}"></span>${c} ${l}</span>`;
+    }).join(` <span class="live-sep">·</span> `));
+    out.push(`</div>`);
+
+    // Attention-first sort, secondary alpha
+    rows.sort((a, b) => {
+      const d = (ATTN_ORDER[a.rollup] ?? 99) - (ATTN_ORDER[b.rollup] ?? 99);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+
+    out.push(`<div class="live-controls">`);
+    out.push(`<input type="text" class="live-search" placeholder="Search projects or crews…" data-live-search="">`);
+    out.push(`<div class="filter-bar" role="group" aria-label="Filter live rows by status">`);
+    for (const fb of [["all","All"],["alive","Nominal"],["caution","Caution"],["offline","Offline"]]) {
+      out.push(`<button class="filter-btn${fb[0]==="all"?" on":""}" data-filter="${fb[0]}" data-live-filter="" aria-pressed="${fb[0]==="all"?"true":"false"}">${fb[1]}</button>`);
+    }
+    out.push(`</div></div>`);
+    out.push(`<table class="live-grid" data-live-table=""><thead><tr class="lh-row">`);
+    out.push(`<th class="lh-dot"></th><th class="lh-name" data-sort="name">Project</th><th class="lh-state" data-sort="attention">Status</th><th class="lh-detail">Activity</th><th class="lh-lastseen" data-sort="activity">Last Seen</th><th class="lh-tasks">Tasks</th>`);
+    out.push(`</tr></thead><tbody>`);
+    for (const row of rows) {
+      // Crew last-seen: max age (quietest crew)
+      let maxAge = -1;
+      let maxSeenMs: number | null = null;
+      for (const c of row.crews) {
+        if (c.lastSeenMs != null) {
+          const age = now - c.lastSeenMs;
+          if (age > maxAge) { maxAge = age; maxSeenMs = c.lastSeenMs; }
+        }
+      }
+      const crewAgeStr = maxSeenMs == null ? "—" : ageText(maxSeenMs, now);
+      const crewAgeQuiet = maxSeenMs != null && maxAge > CREW_STALE_MS;
+      // Task counts
+      const tParts: string[] = [];
+      for (const [st, n] of Object.entries(row.tasks)) {
+        const icon = TASK_ICON[st] ?? st[0];
+        tParts.push(`<span class="tk">${n}${esc(icon)}</span>`);
+      }
+      out.push(`<tr class="live-row" data-rollup="${row.rollup}" data-project="${esc(row.name)}" data-max-age="${maxAge}">`);
+      out.push(`<td class="live-dot"><span class="pdot s-${row.rollup}"></span></td>`);
+      out.push(`<td class="live-name">${esc(row.name)}</td>`);
+      out.push(`<td class="live-state">${statePill(row.captainState)}</td>`);
+      out.push(`<td class="live-detail dim">${esc(row.detail)}</td>`);
+      out.push(`<td class="live-lastseen${crewAgeQuiet ? " quiet" : ""}">${crewAgeStr}</td>`);
+      out.push(`<td class="live-tasks">${tParts.join("") || "<span class=\"dim\">—</span>"}</td>`);
+      out.push(`</tr>`);
+      // Expandable per-crew detail row (hidden by default)
+      out.push(`<tr class="live-expand" data-project="${esc(row.name)}" hidden>`);
+      out.push(`<td colspan="6"><div class="live-crew-list">`);
+      out.push(`<div class="live-crew-head"><span class="lc-name">Crew</span><span class="lc-state">Status</span><span class="lc-lastseen">Last Seen</span><span class="lc-detail">Detail</span></div>`);
+      for (const c of row.crews) {
+        const cs = ageText(c.lastSeenMs, now);
+        out.push(`<div class="live-crew-row"><span class="lc-name">${esc(c.ref)}</span><span class="lc-state">${statePill(c.state)}</span><span class="lc-lastseen">${cs}</span><span class="lc-detail dim">${c.detail ? esc(c.detail) : ""}</span></div>`);
+      }
+      if (row.crews.length === 0) {
+        out.push(`<div class="live-crew-row dim"><span class="lc-name" colspan="4">no live crews</span></div>`);
+      }
+      out.push(`</div><div class="live-crew-meta">`);
+      out.push(`<span class="lc-meta-item">pid: — (incoming)</span>`);
+      out.push(`<span class="lc-meta-item">uptime: — (incoming)</span>`);
+      out.push(`<span class="lc-meta-item">agent: — (incoming)</span>`);
+      out.push(`<span class="lc-meta-item">model: — (incoming)</span>`);
+      out.push(`</div></td></tr>`);
+    }
+    out.push(`</tbody></table>`);
+  }
+  out.push(`</section>`);
+  return out.join("");
+}
+
 // ── Tab nav + content assembly ──────────────────────────────────────────────────
 const TABS: Array<[string, string]> = [
+  ["live", "Live"],
   ["overview", "Overview"],
   ["projects", "Projects"],
   ["daemon", "Daemon"],
@@ -559,6 +707,7 @@ export function renderContent(snap: FullSnapshot): string {
 
   out.push(tabNav());
   out.push(`<div class="panels">`);
+  out.push(renderLiveGrid(snap, col.now));
   out.push(renderOverview(snap, col));
   out.push(renderProjects(snap, col.now));
   out.push(renderDaemon(snap));
@@ -687,6 +836,77 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 .spark-area{fill:var(--hud);opacity:.1}
 .spark-dot{fill:var(--hud)}
 
+/* Live controls (search + filter bar) */
+.live-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 10px}
+.live-search{flex:1;min-width:140px;max-width:300px;padding:5px 10px;border:1px solid var(--bezel);border-radius:8px;background:var(--panel);color:var(--ink);font:12px/1.4 ui-monospace,monospace;outline:none;transition:border-color .15s ease}
+.live-search:focus{border-color:var(--hud);box-shadow:0 0 0 2px rgba(11,111,194,.15)}
+.live-search::placeholder{color:var(--ink-dim);opacity:.7}
+
+/* Live grid (mission control) */
+.live-grid{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.live-grid td,.live-grid th{padding:5px 6px;vertical-align:middle;white-space:nowrap}
+.live-grid th{padding:6px 6px 8px;text-align:left;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:9px;color:var(--ink-dim);border-bottom:1px solid var(--bezel);font-weight:600;cursor:default}
+.live-grid th:hover{color:var(--ink)}
+.live-row td{border-bottom:1px solid var(--track)}
+.live-row:last-child td{border-bottom:0}
+.lh-dot{width:22px;text-align:center}
+.lh-name{width:auto;min-width:14%}
+.lh-state{width:88px;text-align:right;padding-right:12px!important}
+.lh-detail{width:auto}
+.lh-lastseen{width:105px}
+.lh-tasks{width:90px;text-align:right}
+.live-dot{width:22px;text-align:center;padding-right:0!important}
+.live-dot .pdot{display:inline-block;vertical-align:middle}
+.live-name{font-weight:600}
+.live-state{width:88px;text-align:right;padding-right:12px!important}
+.live-state .pill{font-size:10px;padding:1px 7px}
+.live-detail{overflow:hidden;text-overflow:ellipsis;color:var(--ink-dim)}
+.live-lastseen{width:105px;font-size:11px;color:var(--ink-dim)}
+.live-lastseen.quiet{color:var(--warn);font-weight:600}
+.live-tasks{width:90px;text-align:right;font-size:11px}
+.live-tasks .tk{padding:0 3px}
+.live-tasks .tk:first-child{padding-left:0}
+.live-row.expanded td{border-bottom-color:transparent}
+.live-expand td{padding:0 6px 10px;background:var(--panel-2);border-bottom:1px solid var(--track)}
+.live-expand td:first-child{border-radius:0 0 0 8px}
+.live-expand td:last-child{border-radius:0 0 8px 0}
+.live-crew-list{display:table;width:100%;border-collapse:collapse;font-size:12px}
+.live-crew-head,.live-crew-row{display:table-row}
+.live-crew-head>span,.live-crew-row>span{display:table-cell;padding:4px 8px;white-space:nowrap;vertical-align:middle}
+.live-crew-head>span{font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:9px;color:var(--ink-dim);font-weight:600;border-bottom:1px solid var(--bezel)}
+.live-crew-row>span{border-bottom:1px solid var(--track)}
+.live-crew-row:last-child>span{border-bottom:0}
+.lc-name{font-weight:600}
+.lc-state{width:80px}
+.lc-state .pill{font-size:10px;padding:1px 7px}
+.lc-lastseen{width:90px;color:var(--ink-dim);font-size:11px}
+.lc-detail{color:var(--ink-dim);font-size:11px}
+.live-crew-meta{display:flex;gap:14px;padding:6px 8px 0;font-size:11px;color:var(--ink-dim);border-top:1px solid var(--track);margin-top:4px;padding-top:6px}
+.lc-meta-item{white-space:nowrap}
+.live-row.expanded+.live-expand td{background:var(--panel-2)}
+.live-row[data-rollup="gone"] td.live-dot .pdot{background:var(--crit);box-shadow:0 0 6px var(--crit)}
+.live-row[data-rollup="stale"] td.live-dot .pdot{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+.live-row[data-rollup="stopped"] td.live-dot .pdot{background:var(--stopped)}
+.live-row[data-rollup="alive"] td.live-dot .pdot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.live-row[data-rollup="unknown"] td.live-dot .pdot{background:var(--unk)}
+.live-row:hover{background:var(--panel-2)}
+.live-header{display:flex;gap:8px 16px;flex-wrap:wrap;padding:6px 0 10px;font-size:12px;cursor:default;user-select:none}
+.live-stat{display:flex;align-items:center;gap:5px;font-weight:600}
+.live-stat .pdot{width:6px;height:6px}
+.live-stat.zero{opacity:.35}
+.live-sep{color:var(--ink-dim);opacity:.4}
+
+/* Filter bar */
+.filter-bar{display:flex;gap:6px;margin:0 0 14px;flex-wrap:wrap}
+.filter-btn{appearance:none;background:var(--panel-2);border:1px solid var(--bezel);border-radius:999px;
+  padding:4px 13px;cursor:pointer;font-family:system-ui,sans-serif;text-transform:uppercase;letter-spacing:.1em;
+  font-size:10px;font-weight:600;color:var(--ink-dim);transition:all .15s ease}
+.filter-btn:hover{background:var(--panel);border-color:var(--ink-dim);color:var(--ink)}
+.filter-btn.on{background:var(--hud);border-color:var(--hud);color:#fff;box-shadow:0 1px 3px rgba(11,111,194,.3)}
+.card-badges{display:flex;align-items:center;gap:8px;flex:none}
+.captain-badge{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--ink-dim);letter-spacing:.04em}
+.captain-badge .pill{font-size:10px;padding:1px 7px}
+
 /* Cards / tables */
 .card{border:1px solid var(--bezel);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);padding:14px 16px;margin-bottom:14px;border-left:3px solid var(--bezel)}
 .card[data-rollup="gone"]{border-left-color:var(--crit)}
@@ -754,7 +974,7 @@ body{margin:0;min-height:100vh;background:radial-gradient(1200px 760px at 50% -2
 // charts after each frame.
 const CLIENT_JS = `
 (function(){
-  var activeTab='overview';var hist={};var prev={};
+  var activeTab='live';var hist={};var prev={};var currentFilter='all';var currentSort='attention';var sortAsc=true;var currentSearch='';var expandedProjects={};
   function pushHist(k,v,t){var a=hist[k]||(hist[k]=[]);if(a.length&&a[a.length-1].t===t)return;a.push({t:t,v:v});if(a.length>48)a.shift();}
   function ingest(){var el=document.getElementById('squadrant-metrics');if(!el)return;var m;try{m=JSON.parse(el.textContent);}catch(e){return;}pushHist('errors',m.errors,m.t);pushHist('behind',m.behind,m.t);pushHist('crewAge',Math.round(m.crewAgeMs/1000),m.t);pushHist('defers',m.maxDeferCount,m.t);}
   function sparkSVG(a){var W=100,H=28,p=2;if(!a.length)return'';var vs=a.map(function(x){return x.v;});var mx=Math.max.apply(null,vs),mn=Math.min.apply(null,vs);if(mx===mn)mx=mn+1;var n=a.length;var pts=a.map(function(x,i){var px=n>1?p+i/(n-1)*(W-2*p):W/2;var py=H-p-(x.v-mn)/(mx-mn)*(H-2*p);return[px,py];});var d=pts.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');var last=pts[pts.length-1];var area=d+' L'+last[0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';return'<path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+d+'"/><circle class="spark-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2"/>';}
@@ -762,9 +982,15 @@ const CLIENT_JS = `
   function applyTab(){var ts=document.querySelectorAll('[data-tab]');for(var i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-tab')===activeTab;ts[i].setAttribute('aria-selected',on?'true':'false');ts[i].classList.toggle('on',on);}var ps=document.querySelectorAll('[data-panel]');for(var j=0;j<ps.length;j++){var on2=ps[j].getAttribute('data-panel')===activeTab;ps[j].hidden=!on2;}}
   function ease(k){return k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;}
   function countUps(){var ns=document.querySelectorAll('[data-countup]');for(var i=0;i<ns.length;i++){(function(el){var key=el.getAttribute('data-countup');var to=parseFloat(el.getAttribute('data-value'))||0;var from=prev[key]!=null?prev[key]:0;prev[key]=to;if(from===to){el.textContent=to;return;}var s=null;function step(ts){if(s===null)s=ts;var k=Math.min(1,(ts-s)/600);el.textContent=Math.round(from+(to-from)*ease(k));if(k<1)requestAnimationFrame(step);}requestAnimationFrame(step);})(ns[i]);}}
-  function refresh(){ingest();applyTab();drawSparks();countUps();}
-  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}});
-  document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
+  function hideByFilter(r,filter){if(filter==='all')return false;if(filter==='alive')return r!=='alive';if(filter==='caution')return r!=='stale';if(filter==='offline')return r!=='gone'&&r!=='stopped'&&r!=='unknown';return false;}
+  function applyFilter(){document.querySelectorAll('[data-panel="projects"] .card').forEach(function(c){c.hidden=hideByFilter(c.getAttribute('data-rollup'),currentFilter);});document.querySelectorAll('[data-panel="live"] .live-row').forEach(function(c){c.hidden=hideByFilter(c.getAttribute('data-rollup'),currentFilter);});document.querySelectorAll('.filter-btn').forEach(function(x){var on=x.getAttribute('data-filter')===currentFilter;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false');});}
+  function applySearch(){var q=currentSearch.toLowerCase();document.querySelectorAll('[data-panel="live"] .live-row').forEach(function(r){if(!q){if(!hideByFilter(r.getAttribute('data-rollup'),currentFilter))r.hidden=false;return;}var pn=(r.getAttribute('data-project')||'').toLowerCase();var dd=((r.querySelector('.live-detail')||{}).textContent||'').toLowerCase();var rl=r.getAttribute('data-rollup');if(hideByFilter(rl,currentFilter)){r.hidden=true;return;}r.hidden=pn.indexOf(q)===-1&&dd.indexOf(q)===-1;});}
+  function applySort(){var table=document.querySelector('[data-panel="live"] [data-live-table]');if(!table)return;var tbody=table.querySelector('tbody');if(!tbody)return;var rows=Array.prototype.slice.call(tbody.querySelectorAll('.live-row'));var dir=sortAsc?1:-1;rows.sort(function(a,b){var va,vb;if(currentSort==='name'){va=(a.getAttribute('data-project')||'').toLowerCase();vb=(b.getAttribute('data-project')||'').toLowerCase();}else if(currentSort==='attention'){var order={gone:0,stale:1,alive:2,unknown:3,stopped:4};va=order[a.getAttribute('data-rollup')]??99;vb=order[b.getAttribute('data-rollup')]??99;if(va===vb){va=(a.getAttribute('data-project')||'').toLowerCase();vb=(b.getAttribute('data-project')||'').toLowerCase();return va<vb?-1:va>vb?1:0;}}else if(currentSort==='activity'){va=parseInt(a.getAttribute('data-max-age'))||0;vb=parseInt(b.getAttribute('data-max-age'))||0;}return va<vb?-dir:va>vb?dir:0;});rows.forEach(function(r){tbody.appendChild(r);});}
+  function applyExpand(){document.querySelectorAll('[data-panel="live"] .live-row').forEach(function(r){var pn=r.getAttribute('data-project');var er=document.querySelector('[data-panel="live"] .live-expand[data-project="'+pn+'"]');if(er){var show=!!expandedProjects[pn];er.hidden=!show;r.classList.toggle('expanded',show);}});}
+  function refresh(){ingest();applyTab();drawSparks();countUps();applyFilter();applySearch();applySort();applyExpand();}
+  document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('[data-tab]'):null;if(t){activeTab=t.getAttribute('data-tab');applyTab();var c=document.getElementById('content');if(c){c.classList.remove('swap');void c.offsetWidth;c.classList.add('swap');}}var fb=e.target&&e.target.closest?e.target.closest('[data-filter]'):null;if(fb){currentFilter=fb.getAttribute('data-filter');applyFilter();applySearch();}var sh=e.target&&e.target.closest?e.target.closest('[data-sort]'):null;if(sh){var key=sh.getAttribute('data-sort');if(key===currentSort)sortAsc=!sortAsc;else{currentSort=key;sortAsc=true;}applySort();}var lr=e.target&&e.target.closest?e.target.closest('[data-panel="live"] .live-row'):null;if(lr&&!e.target.closest('[data-sort]')){var pn=lr.getAttribute('data-project');var er=document.querySelector('[data-panel="live"] .live-expand[data-project="'+pn+'"]');if(er){var show=er.hidden;er.hidden=!show;lr.classList.toggle('expanded',!!show);expandedProjects[pn]=!!show;}}});
+  document.addEventListener('keydown',function(e){var ae=document.activeElement;if((e.key==='ArrowRight'||e.key==='ArrowLeft')&&ae&&ae.getAttribute&&ae.getAttribute('data-tab')){var o=['live','overview','projects','daemon','environment'];var i=o.indexOf(activeTab);i=(i+(e.key==='ArrowRight'?1:o.length-1))%o.length;activeTab=o[i];applyTab();var nt=document.querySelector('[data-tab="'+activeTab+'"]');if(nt)nt.focus();e.preventDefault();}});
+  document.addEventListener('input',function(e){var sb=e.target&&e.target.closest?e.target.closest('[data-live-search]'):null;if(sb){currentSearch=sb.value;applySearch();}});
   var led=document.getElementById('led');var conn=document.getElementById('conn');var updated=document.getElementById('updated');
   function tickAge(){if(!generatedAt)return;var s=Math.max(0,Math.round((Date.now()-generatedAt)/1000));updated.textContent='updated '+s+'s ago';}
   setInterval(tickAge,1000);

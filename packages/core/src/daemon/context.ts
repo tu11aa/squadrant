@@ -17,6 +17,7 @@ import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver
 import type { TelegramBridge } from "../telegram/bridge.js";
 import type { AttachFrame } from "../protocol.js";
 import type { LifecycleSource } from "../lifecycle-source.js";
+import { LivenessRegistry } from "./liveness-registry.js";
 
 // ── Public injectable options (equivalent of old squadrantd.ts SquadrantdOpts) ───
 
@@ -109,10 +110,8 @@ export interface DaemonContext {
   inFlightHeadlessIds: Set<string>;
   /** Cancel handles for in-flight headless runs. */
   activeHeadlessKills: Set<() => void>;
-  /** #332 delivery streak counter per project for captain-absent reaping. */
-  captainMissingStreak: Map<string, number>;
-  /** #332 projects whose captain surface is confirmed gone. */
-  stoppedProjects: Set<string>;
+  /** Ground-truth captain liveness — persisted, survives daemon restart (§4.1/§5.3). */
+  livenessRegistry: LivenessRegistry;
 
   // ── Late-bound: assigned by start.ts before any timer/server fires ──────────
 
@@ -180,8 +179,11 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     attachConns: new Map(),
     inFlightHeadlessIds: new Set(),
     activeHeadlessKills: new Set(),
-    captainMissingStreak: new Map(),
-    stoppedProjects: new Set(),
+    livenessRegistry: (() => {
+      const r = new LivenessRegistry({ path: join(stateRoot, "liveness.json") });
+      r.load();
+      return r;
+    })(),
     resendFirstTurn: opts.resendFirstTurn,
     // Late-bound — start.ts fills these before first use:
     d: null as unknown as ReturnType<typeof createDaemon>,

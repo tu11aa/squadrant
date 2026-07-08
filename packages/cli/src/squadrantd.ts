@@ -4,7 +4,7 @@
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
@@ -22,9 +22,10 @@ export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource } from "@squadrant/agents";
-import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn } from "@squadrant/workspaces";
+import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
+import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 // Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
@@ -59,7 +60,7 @@ function buildTelegramBridge(
   // sender is allowlisted (gated inside the bridge); passing them is always safe.
   const ensureCaptainAlive = createEnsureCaptainAlive({
     isAlive: createIsCaptainAlive(DAEMON_SOCK),
-    launch: createLaunch(CLI_BIN),
+    launch: createLaunch(CLI_BIN, log),
   });
   const runCommand = createRunCommand(CLI_BIN);
   const sendReply = (threadId: number | undefined, text: string, replyMarkup?: unknown) =>
@@ -304,6 +305,28 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     };
     try { codexAppServerSource.start(codexSourceDeps); }
     catch (e) { log(`codex app-server source start failed: ${(e as Error).message}`); }
+  }
+
+  // Daemon-restart broadcast: notify every running captain that the daemon
+  // bounced, but only when the running build actually changed (version bump
+  // or local rebuild) — a same-build launchd crash-restart stays silent.
+  // Skipped under vitest (touches the real config + cmux driver, mirrors the
+  // other real-I/O boot actions guarded the same way above).
+  if (!process.env.VITEST) {
+    try {
+      const buildMtimeMs = statSync(SELF_PATH).mtimeMs;
+      const restartConfig = loadConfig();
+      const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
+      void maybeBroadcastDaemonRestart({
+        version: PKG_VERSION,
+        buildMtimeMs,
+        stateRoot,
+        config: restartConfig,
+        driver: registry.global(restartConfig),
+      });
+    } catch (e) {
+      log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);
+    }
   }
 
   const origStop = h.stop.bind(h);

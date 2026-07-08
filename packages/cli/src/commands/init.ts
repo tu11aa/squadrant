@@ -15,6 +15,7 @@ import {
 } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { ensureRuntimeSynced } from "@squadrant/shared";
+import { ensureGlobalOpencodeConfig, DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH } from "../lib/per-crew-settings.js";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -81,6 +82,9 @@ export const initCommand = new Command("init")
       console.log(chalk.cyan("       /plugin marketplace add superpowers"));
       console.log(chalk.cyan("       /plugin marketplace add thedotmack/claude-mem"));
       console.log(chalk.cyan("       /plugin marketplace add context7"));
+      console.log(chalk.dim("\n       Using opencode crews? Install the CLI:"));
+      console.log(chalk.cyan("       npm install -g opencode-ai"));
+      console.log(chalk.dim(`       (squadrant provisions a default model in ${DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH} if it's missing)`));
       console.log(chalk.bold("\n  4/5  Register first project"));
       console.log(chalk.cyan("       squadrant projects add <name> <path>"));
       console.log(chalk.bold("\n  5/5  Telegram (optional)"));
@@ -193,6 +197,16 @@ export const initCommand = new Command("init")
     console.log(chalk.cyan("      /plugin marketplace add thedotmack/claude-mem"));
     console.log(chalk.cyan("      /plugin marketplace add context7\n"));
     console.log(chalk.dim("    Squadrant never auto-installs plugins — open Claude Code and run the commands above."));
+
+    console.log(chalk.bold("\n    Using opencode crews?"));
+    console.log(chalk.cyan("      npm install -g opencode-ai"));
+    const opencodeConfigWritten = ensureGlobalOpencodeConfig();
+    if (opencodeConfigWritten) {
+      console.log(chalk.green(`    ✔ Default model config created at ${opencodeConfigWritten}`));
+    } else {
+      console.log(chalk.dim(`    - ${DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH} already exists (unchanged)`));
+    }
+    console.log(chalk.dim("    Per-crew config deep-merges with this file — edit it to change opencode's default model/plugins/mcp."));
 
     // ── 4/5  Register first project ─────────────────────────────────────────
     stepHeader(4, 5, "Register first project");

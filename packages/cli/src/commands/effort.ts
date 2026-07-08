@@ -18,9 +18,9 @@ export interface EffortGetResult {
   description: string;
 }
 
-export function runEffortGet(configPath = DEFAULT_CONFIG_PATH): EffortGetResult {
+export function runEffortGet(configPath = DEFAULT_CONFIG_PATH, projectName?: string): EffortGetResult {
   const config = loadConfig(configPath);
-  const effort = resolveEffort(config);
+  const effort = resolveEffort(config, projectName);
   const description = `${effort}: ${EFFORT_MEANING[effort]}`;
   return { effort, description };
 }
@@ -83,10 +83,12 @@ export async function notifyCaptainsOfEffort(
 export const effortCommand = new Command("effort")
   .description("Get or set the global crew tokenomics dial (max | balance | low)")
   .argument("[value]", "effort level to set: max | balance | low")
-  .action(async (value: string | undefined) => {
+  .option("--project <name>", "show resolved effort for a specific project")
+  .action(async (value: string | undefined, options: { project?: string }) => {
     if (value === undefined) {
-      const { effort, description } = runEffortGet();
-      console.log(chalk.bold("Current effort:"), chalk.cyan(effort));
+      const { effort, description } = runEffortGet(undefined, options.project);
+      const label = options.project ? `${options.project} project` : "global";
+      console.log(chalk.bold(`Current effort (${label}):`), chalk.cyan(effort));
       console.log(chalk.dim(EFFORT_MEANING[effort]));
       return;
     }

@@ -110,6 +110,21 @@ describe("handleUpdate routing", () => {
     expect(d.appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({ project: "brove", source: "telegram" }),
     );
+    // #517 follow-up: "launched" is a live-captain-reachable success, same as "alive".
+    expect(d.sendReply).toHaveBeenCalledWith(7, "📨 delivered to brove captain");
+    bridge.stop();
+  });
+
+  it("acks delivery when the captain was already alive (no boot needed)", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const d = deps({ ensureCaptainAlive: vi.fn(async () => "alive" as const) });
+    const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    expect(d.sendReply).toHaveBeenCalledWith(7, "📨 delivered to brove captain");
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "brove", source: "telegram" }),
+    );
     bridge.stop();
   });
 
@@ -125,13 +140,16 @@ describe("handleUpdate routing", () => {
     bridge.stop();
   });
 
-  it("warns into the topic when warmup times out but still queues the message", async () => {
+  it("sends an explicit failure into the topic when warmup times out but still queues the message", async () => {
     setTopic(stateRoot, "brove", 7);
     const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
     const d = deps({ ensureCaptainAlive: vi.fn(async () => "timeout" as const) });
     const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
     await drained;
-    expect(d.sendReply).toHaveBeenCalledWith(7, expect.stringContaining("warm up"));
+    expect(d.sendReply).toHaveBeenCalledWith(
+      7,
+      "❌ couldn't reach brove captain — saved to mailbox, will deliver when you open the workspace.",
+    );
     expect(d.appendCaptainMessage).toHaveBeenCalled();
     bridge.stop();
   });

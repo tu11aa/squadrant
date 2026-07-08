@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-08
+
+### Added
+
+- **Captain liveness redesign — hybrid ground-truth (retires the streak sweep):** captain open/close/crash detection is now driven by a persisted `LivenessRegistry` (`<stateRoot>/liveness.json`, survives daemon restart) reconciled from the cmux session store via a new `DaemonSurfaceDriver.liveness()` seam and arbitrated by a per-tick pid floor. It distinguishes a clean close (`stopped`) from a crash (`gone` — store record lingers with a dead pid) from `alive`, with provenance precedence `runtime ≥ agent > scan`. Replaces the K=3 title-sweep streak model that produced both false-positives and false-negatives and lost all state on daemon restart. Dashboards, the health IPC, and the Telegram boot-if-down probe now read one ground-truth source.
+- **Per-project effort override:** `resolveEffort` now honors a per-project `effort` in the project override config; `squadrant effort --project <name>` shows the resolved value. The global dial is unchanged, and a project with no override falls back to it.
+- **Web dashboard LIVE "mission control" tab (now the default tab):** a compact one-line-per-project view with a state-count header, attention-first ordering (blocked/errored float up, offline sinks), last-seen-age and task-count columns, a search box, sortable column headers, a status filter, and expandable per-crew detail rows. (Per-crew pid/uptime/agent/model are placeholders pending #524.)
+- **Web dashboard: status filter + per-captain badge** on the projects view.
+- **opencode init setup guidance + default global config provisioning (#511).**
+- **Daemon broadcasts a restart notice to captains on build change (#510).**
+
+### Fixed
+
+- **Captain misclassified as alive when stopped, blocking Telegram auto-launch (#517):** the alive check now reads fresh pid-verified health, so a stopped or crashed captain no longer reads `alive` and correctly triggers boot-if-down.
+- **`squadrant launch` boot-if-down was a silent no-op outside cmux (#520):** added an explicit `--headless` launch path.
+- **CLI and web dashboards showed non-running captains as `idle`:** a captain with no registry entry (`unknown`) now correctly renders `offline`.
+- **A locked or partial cmux store read no longer false-closes captains:** `liveness()` now throws on an unreadable snapshot (leaving the registry intact) instead of returning an empty set that would mark every captain stopped.
+- **CREW IDLE flood during long tool-executing turns (#492):** verified fixed (the `pendingTool` veto holds) and closed.
+
+### Changed
+
+- **Retired the title-sweep / K=3 streak captain-liveness model** in favor of the registry + pid floor.
+
 ## [0.14.3] - 2026-07-02
 
 ### Added

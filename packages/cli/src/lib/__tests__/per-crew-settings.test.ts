@@ -9,6 +9,8 @@ import {
   healStaleCockpitRefs,
   CREW_PERMISSION_ALLOWLIST,
   mergeCrewPermissions,
+  ensureGlobalOpencodeConfig,
+  DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH,
 } from "../per-crew-settings.js";
 
 describe("writePerCrewSettings", () => {
@@ -372,5 +374,66 @@ describe("writePerCrewOpencodeConfig", () => {
     expect(json.permission.edit).toBe("allow");
     expect(json.permission.read).toBe("allow");
     expect(json.permission.external_directory).toEqual({ "**": "allow" });
+  });
+});
+
+describe("ensureGlobalOpencodeConfig — #141 provision-if-absent", () => {
+  let tmp: string;
+  const configPath = () => path.join(tmp, "opencode", "opencode.json");
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-global-opencode-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes a minimal default config (schema + model) when none exists", () => {
+    const out = ensureGlobalOpencodeConfig(configPath());
+    expect(out).toBe(configPath());
+    expect(fs.existsSync(configPath())).toBe(true);
+    const json = JSON.parse(fs.readFileSync(configPath(), "utf-8"));
+    expect(json).toEqual({
+      $schema: "https://opencode.ai/config.json",
+      model: "anthropic/claude-sonnet-4-5",
+    });
+  });
+
+  it("creates intermediate directories", () => {
+    ensureGlobalOpencodeConfig(configPath());
+    expect(fs.statSync(path.dirname(configPath())).isDirectory()).toBe(true);
+  });
+
+  it("returns null and never overwrites an existing config", () => {
+    fs.mkdirSync(path.dirname(configPath()), { recursive: true });
+    const existing = JSON.stringify({ model: "user-chosen/model", plugin: ["some-plugin"] }, null, 2);
+    fs.writeFileSync(configPath(), existing);
+
+    const out = ensureGlobalOpencodeConfig(configPath());
+
+    expect(out).toBeNull();
+    expect(fs.readFileSync(configPath(), "utf-8")).toBe(existing);
+  });
+
+  it("does not clobber a config written concurrently between the two racing calls (TOCTOU)", () => {
+    // Simulates two callers racing to provision the same absent path: the
+    // exclusive-create ('wx') write means only the first writer's content
+    // survives — no existsSync-then-writeFileSync gap for a second caller to
+    // land in between.
+    const first = ensureGlobalOpencodeConfig(configPath());
+    const contentAfterFirst = fs.readFileSync(configPath(), "utf-8");
+
+    const second = ensureGlobalOpencodeConfig(configPath());
+
+    expect(first).toBe(configPath());
+    expect(second).toBeNull();
+    expect(fs.readFileSync(configPath(), "utf-8")).toBe(contentAfterFirst);
+  });
+
+  it("default path constant points at ~/.config/opencode/opencode.json", () => {
+    expect(DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH).toBe(
+      path.join(os.homedir(), ".config", "opencode", "opencode.json"),
+    );
   });
 });
