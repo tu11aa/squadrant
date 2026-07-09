@@ -4,6 +4,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, saveConfig, resolveEffort, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
 import type { SquadrantConfig, Effort } from "@squadrant/shared";
+import { appendCaptainMessage } from "@squadrant/core";
 
 const VALID_EFFORTS: Effort[] = ["max", "balance", "low"];
 
@@ -36,10 +37,9 @@ export function runEffortSet(value: string, configPath = DEFAULT_CONFIG_PATH): v
   saveConfig(config, configPath);
 }
 
-/** Minimal slice of RuntimeDriver used to notify a captain. */
+/** Minimal slice of RuntimeDriver used to resolve captain status. */
 interface EffortNotifyDriver {
   status(nameOrId: string): Promise<{ id: string } | null>;
-  send(ref: string, message: string): Promise<void>;
 }
 
 /** Resolve a path through symlinks; fall back to a plain resolve if it
@@ -53,26 +53,28 @@ function canonical(p: string): string {
 }
 
 /**
- * Send the effort-change notice to every running captain EXCEPT the one in the
- * current working directory. The captain that ran `squadrant effort` already saw
- * the stdout '✔ effort → ...' confirmation, so injecting the notice into its own
- * pane is a duplicate self-notification. Other running captains still get it.
+ * Send the effort-change notice to every running captain via the mailbox.
+ * The captain that ran `squadrant effort` already saw stdout, so that project
+ * is excluded. Routes through the mailbox so the daemon's delivery-loop drains
+ * it with draft protection (#529).
+ * appendCaptainMessage is a closure capturing stateRoot from the caller.
  */
 export async function notifyCaptainsOfEffort(
   effort: Effort,
   config: SquadrantConfig,
   driver: EffortNotifyDriver,
   cwd: string = process.cwd(),
+  append?: (project: string, text: string) => Promise<void>,
 ): Promise<void> {
   const here = canonical(cwd);
   const notice = `🎚️ effort → ${effort}: ${EFFORT_MEANING[effort]}`;
-  for (const [, proj] of Object.entries(config.projects)) {
+  for (const [projName, proj] of Object.entries(config.projects)) {
     // Skip the captain running in this same directory — it already saw stdout.
     if (canonical(proj.path) === here) continue;
     try {
       const ref = await driver.status(proj.captainName);
-      if (ref) {
-        await driver.send(ref.id, notice);
+      if (ref && append) {
+        await append(projName, notice);
       }
     } catch {
       // individual project captain unreachable — skip
@@ -104,14 +106,18 @@ export const effortCommand = new Command("effort")
     console.log(chalk.green(`✔ effort → ${effort}`));
     console.log(chalk.dim(EFFORT_MEANING[effort]));
 
-    // Best-effort active notify: send a one-line notice to any running captain.
+    // Best-effort active notify: enqueue to the mailbox for every running captain.
     // Never hard-fails — config is already written above.
+    // Routes through the mailbox (not driver.send) to avoid clobbering user draft (#529).
     try {
       const { createCmuxDriver, RuntimeRegistry } = await import("@squadrant/workspaces");
       const config = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       const driver = registry.global(config);
-      await notifyCaptainsOfEffort(effort, config, driver);
+      const stateRoot = path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+      const append = (project: string, text: string) =>
+        appendCaptainMessage({ stateRoot, project, text, source: "telegram" as const });
+      await notifyCaptainsOfEffort(effort, config, driver, process.cwd(), append);
     } catch {
       // runtime unavailable — config already written, change applies on next launch
       console.log(chalk.dim("(no running captain detected — change applies on next launch)"));
