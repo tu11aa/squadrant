@@ -155,6 +155,7 @@ record is a lie that will be believed the moment someone writes the first reader
 | 5 | `mailbox.ts` | `packages/core/src/mailbox.ts:154` | widen `source` to `"telegram" \| "daemon" \| "cli"` |
 | 6 | `notifiers/cmux.ts` | `:32` | **no change** — shells out to `runtime send --command`, fixed transitively |
 | 7 | restart + effort broadcasts | — | **no change** — PR #530 already routes them via `appendCaptainMessage` |
+| 8 | stale-skip (#531) | `packages/core/src/daemon/delivery-loop.ts:239-246` | exempt `captain.message` when `payload.source !== "daemon"` |
 
 ## Migration: deleting `runtime send-key`
 
@@ -188,14 +189,60 @@ is the whole argument against the rejected alternative below.
 - **Raw-but-benign `sendToPane` callers** — `crew-spawn.ts:189,358,412,447`, `side-session.ts:158,190`,
   `dashboard.ts:77`, `command.ts:80`. They target freshly created empty panes. Safe by construction,
   not by guard. Unchanged, but note the assumption is unenforced.
-- **The stale-skip rule** (`delivery-loop.ts:239`). Unchanged. Fail-fast means new entries are only
-  written when the daemon is alive, so they drain long before the 5-minute window.
+- ~~**The stale-skip rule**~~ — now **in scope**, see "Folded in: #531" above.
 - **`confirmedSendToPane`** (`crew-pane.ts:135`) — protects against paste-strand (#339); guarantees
   the *crew's* payload is submitted. It does **not** check for a human draft, and it targets crew
   panes. Different protection, different subject. Do not conflate. The name is a trap: `confirmed`
   reads as "safe for the user" and is not.
 
-## Known adjacent bug (file separately)
+## Folded in: #531 — silent drop of human messages
+
+**Confirmed in production**, not hypothetical. `squadrantd.log`:
+
+```
+2026-07-07T16:57:15.303Z delivery seq=85 kind=captain.message outcome=stale-skipped
+```
+
+That seq is still in `state/inbox/brove-mobile.log`:
+
+```json
+{"seq":85,"ts":"2026-07-07T14:14:48.715Z","kind":"captain.message",
+ "payload":{"source":"telegram"},
+ "message":"📩 [from Telegram] Hi, this messahe to test new quadrant bug fix and state (second test)"}
+```
+
+A real inbound Telegram message from the owner, enqueued at 14:14, silently acked and discarded at
+16:57 when the daemon restarted 2h43m later. It never reached the captain, and nothing surfaced the
+loss.
+
+### Why the current rule eats it
+
+`delivery-loop.ts:239-246` skips any entry older than `sessionStartMs - STALE_THRESHOLD_MS` unless
+its kind is in `TERMINAL_KINDS`. But terminal kinds already deliver regardless of age (#474). So the
+only thing stale-skip actually suppresses is **non-terminal bot chatter** — `task.started`, turn
+events — which is exactly the storm #332 BUG-3 was written to dam. It eats human messages by
+accident, not by design.
+
+### The rule
+
+Exempting *all* `captain.message` would resurrect stale system notices: a `⚠️ Daemon restarted` from
+two days ago injected today is noise. The correct axis is `payload.source`:
+
+| `source` | Producer | Stale behaviour |
+|---|---|---|
+| `telegram` | the human | **always deliver** — someone is waiting for a reply |
+| `cli` | human/agent typing `ping` / `runtime send` | **always deliver** |
+| `daemon` | restart / effort broadcast | may be skipped — context has expired |
+
+> `captain.message` is exempt from stale-skip **iff** `payload.source !== "daemon"`.
+
+This gives `payload.source` — a field nothing has ever read — its first consumer, and retroactively
+justifies widening it to include `"cli"` (change #5).
+
+Storm risk is bounded: only human-originated messages are exempt, they are low-volume, and delivery
+is still paced one entry per tick behind the draft guard.
+
+## Known adjacent bug (superseded — now in scope)
 
 Telegram inbound is also `kind: "captain.message"`, which is **not** in `TERMINAL_KINDS`
 (`delivery-loop.ts:20`). Any `captain.message` that is enqueued but **not yet delivered** when the
@@ -240,6 +287,11 @@ Each surface, unit level, with a fake driver:
   fail against current `develop`* — that failure is the evidence the gap is real. A test that passes
   before the fix proves nothing.
 - **`send-key`** — the command is no longer registered on the CLI program.
+- **#531 stale-skip** — an entry with `kind: "captain.message"`, `payload.source: "telegram"`, and a
+  `ts` older than `sessionStartMs - STALE_THRESHOLD_MS` **is delivered**, and the cursor is not
+  advanced past it undelivered. *This test must fail against current `develop`.* Companion test: the
+  same entry with `source: "daemon"` **is** stale-skipped, proving the exemption is scoped and did
+  not simply disable the storm dam.
 
 Assert on **call counts**, not just mailbox contents. The point is that nothing keystrokes the pane.
 
