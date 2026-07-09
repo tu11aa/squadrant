@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { LivenessRegistry } from "../liveness-registry.js";
 import { runLivenessTick } from "../delivery-loop.js";
+import { deriveCaptainState } from "../../liveness.js";
 import type { RuntimeLivenessRecord } from "@squadrant/shared";
 
 const memReg = () => new LivenessRegistry({ path: "/x/l.json", readFile: () => undefined, writeFile: () => {} });
@@ -91,5 +92,35 @@ describe("runLivenessTick", () => {
     await expect(
       runLivenessTick({ registry: reg, liveness: async () => [rec], isPidAlive: () => true, now: () => 5_000 }),
     ).resolves.toBeUndefined();
+  });
+
+  // ── #527: multiple cmux sessions sharing a project cwd ─────────────────
+
+  it("two records same project, DEAD pid iterated LAST → picks alive (regression for #527)", async () => {
+    const reg = memReg();
+    const live: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s1", present: true };
+    const dead: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 200, sessionId: "s2", present: true, isRestorable: true };
+    await runLivenessTick({
+      registry: reg,
+      liveness: async () => [live, dead],
+      isPidAlive: (pid) => pid === 100,
+      now: () => 5_000,
+    });
+    expect(reg.get("p")?.pidAlive).toBe(true);
+    expect(deriveCaptainState(reg.get("p"))).toBe("alive");
+  });
+
+  it("two records same project, both pids dead → captain gone", async () => {
+    const reg = memReg();
+    const dead1: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s1", present: true, isRestorable: true };
+    const dead2: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 200, sessionId: "s2", present: true, isRestorable: true };
+    await runLivenessTick({
+      registry: reg,
+      liveness: async () => [dead1, dead2],
+      isPidAlive: () => false,
+      now: () => 5_000,
+    });
+    expect(reg.get("p")?.pidAlive).toBe(false);
+    expect(deriveCaptainState(reg.get("p"))).toBe("gone");
   });
 });

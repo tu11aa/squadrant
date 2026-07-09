@@ -74,21 +74,33 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
   try { records = await deps.liveness(); } catch { return; } // runtime unreachable → leave registry as-is
   const seen = new Set<string>();
 
+  // #527: multiple cmux sessions can share a cwd, producing duplicate project
+  // entries. Group by project and pick one winner to avoid last-write-wins
+  // collision (dead pid overwriting live).
+  const byProject = new Map<string, RuntimeLivenessRecord[]>();
   for (const r of records) {
     if (r.role !== "captain") continue;
-    seen.add(r.project);
+    let arr = byProject.get(r.project);
+    if (!arr) { arr = []; byProject.set(r.project, arr); }
+    arr.push(r);
+  }
+
+  for (const [project, recs] of byProject) {
+    seen.add(project);
+    // Prefer pidAlive===true (or pid:null hibernated), then first in order.
+    const winner = recs.find(r => r.pid == null || deps.isPidAlive(r.pid)) ?? recs[0];
     const entry: LivenessEntry = {
-      project: r.project, role: "captain", pid: r.pid, sessionId: r.sessionId,
+      project, role: "captain", pid: winner.pid, sessionId: winner.sessionId,
       startedAt: now, lastState: "start", lastSeenAt: now,
-      pidAlive: r.pid != null ? deps.isPidAlive(r.pid) : true, // pid:null hibernated → alive-unknown
+      pidAlive: winner.pid != null ? deps.isPidAlive(winner.pid) : true,
       source: "runtime",
     };
     // Preserve original startedAt if we already knew this captain (avoid churn):
-    const prev = deps.registry.get(r.project);
+    const prev = deps.registry.get(project);
     if (prev && prev.lastState === "start") entry.startedAt = prev.startedAt;
     deps.registry.apply(entry);
-    if (r.pid != null) deps.registry.setPidAlive(r.project, deps.isPidAlive(r.pid), now);
-    logEntry(deps.log, r.project, deps.registry.get(r.project));
+    if (winner.pid != null) deps.registry.setPidAlive(project, deps.isPidAlive(winner.pid), now);
+    logEntry(deps.log, project, deps.registry.get(project));
   }
 
   // Captains we knew but the snapshot no longer lists → clean close.
