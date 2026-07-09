@@ -198,10 +198,22 @@ is the whole argument against the rejected alternative below.
 ## Known adjacent bug (file separately)
 
 Telegram inbound is also `kind: "captain.message"`, which is **not** in `TERMINAL_KINDS`
-(`delivery-loop.ts:20`). An inbound Telegram message enqueued while the daemon is down is
-**silently acked and dropped** when the daemon next boots more than `STALE_THRESHOLD_MS` later
-(`delivery-loop.ts:239-246` advances the cursor). Pre-existing, outside #529. Owner elected to
-leave it and file separately.
+(`delivery-loop.ts:20`). Any `captain.message` that is enqueued but **not yet delivered** when the
+daemon restarts more than `STALE_THRESHOLD_MS` (5 min, `interactive-probe.ts:7`) later is silently
+acked and dropped — `delivery-loop.ts:239-246` advances the cursor past it.
+
+Reachable two ways, both ordinary:
+
+1. The captain has a draft, so delivery defers (#302) — then the daemon restarts.
+2. The captain workspace is **closed**, so `delivery-loop.ts:224` (`if (!surface) continue;`) never
+   reads the cursor at all. Messages queue for as long as the workspace is shut. Reopen it and
+   restart the daemon, and the whole backlog is discarded.
+
+Note the bridge runs **inside** the daemon (`squadrantd.ts:68`), so a message cannot be enqueued
+while the daemon is down — there is no consumer. The trigger is an *undelivered* message surviving a
+restart, not one *sent* during an outage.
+
+Pre-existing, outside #529. Owner elected to file separately and fix later.
 
 ## Why it fired when it did
 
