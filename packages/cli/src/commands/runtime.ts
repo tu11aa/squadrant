@@ -94,18 +94,18 @@ export async function runRuntimeSend(arg1: string, arg2: string | undefined, opt
   const resolved = resolveTarget(registry, config, target, !!opts.command);
   await needRef(resolved);
   
-  const finalProject = opts.command ? config.commandName : target!;
-  
-  const { join } = await import("node:path");
-  const { homedir } = await import("node:os");
-  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+      const finalProject = opts.command ? config.commandName : target!;
+      
+      const { join, dirname } = await import("node:path");
+      const { DEFAULT_CONFIG_PATH } = await import("@squadrant/shared");
+      const stateRoot = join(dirname(DEFAULT_CONFIG_PATH), "state");
 
-  await appendCaptainMessage({
-    stateRoot,
-    project: finalProject,
-    text: message,
-    source: "cli",
-  });
+      await appendCaptainMessage({
+        stateRoot,
+        project: finalProject,
+        text: message,
+        source: "cli",
+      });
 }
 
 runtimeCommand
