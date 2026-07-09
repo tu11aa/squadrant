@@ -4,11 +4,10 @@
 // registered project's captain pane. No tracked task, no report-back.
 // Reuses the same delivery mechanism as `squadrant runtime send`.
 
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, DEFAULT_CONFIG_PATH } from "@squadrant/shared";
 import { appendCaptainMessage } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
 import { requireDaemon } from "../lib/require-daemon.js";
@@ -21,7 +20,7 @@ export async function runPing(project: string, message: string): Promise<void> {
   await requireDaemon();
   await needRef(resolved);
   
-  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+  const stateRoot = join(dirname(DEFAULT_CONFIG_PATH), "state");
   await appendCaptainMessage({
     stateRoot,
     project,

@@ -27,6 +27,7 @@ vi.mock("@squadrant/workspaces", () => ({
 const loadConfig = vi.hoisted(() => vi.fn());
 vi.mock("@squadrant/shared", () => ({
   loadConfig,
+  DEFAULT_CONFIG_PATH: "/dummy/path/.config/squadrant/config.json",
 }));
 
 const appendCaptainMessage = vi.hoisted(() => vi.fn());
