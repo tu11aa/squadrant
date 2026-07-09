@@ -64,7 +64,7 @@ export async function notifyCaptainsOfEffort(
   config: SquadrantConfig,
   driver: EffortNotifyDriver,
   cwd: string = process.cwd(),
-  append?: (project: string, text: string) => Promise<void>,
+  append: (project: string, text: string) => Promise<void>,
 ): Promise<void> {
   const here = canonical(cwd);
   const notice = `🎚️ effort → ${effort}: ${EFFORT_MEANING[effort]}`;
@@ -73,7 +73,7 @@ export async function notifyCaptainsOfEffort(
     if (canonical(proj.path) === here) continue;
     try {
       const ref = await driver.status(proj.captainName);
-      if (ref && append) {
+      if (ref) {
         await append(projName, notice);
       }
     } catch {
@@ -116,7 +116,7 @@ export const effortCommand = new Command("effort")
       const driver = registry.global(config);
       const stateRoot = path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
       const append = (project: string, text: string) =>
-        appendCaptainMessage({ stateRoot, project, text, source: "telegram" as const });
+        appendCaptainMessage({ stateRoot, project, text, source: "daemon" });
       await notifyCaptainsOfEffort(effort, config, driver, process.cwd(), append);
     } catch {
       // runtime unavailable — config already written, change applies on next launch

@@ -324,7 +324,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         config: restartConfig,
         driver: registry.global(restartConfig),
         appendCaptainMessage: (project: string, text: string) =>
-          appendCaptainMessage({ stateRoot, project, text, source: "telegram" as const }),
+          appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
       });
     } catch (e) {
       log(`daemon-restart broadcast setup failed: ${(e as Error).message}`);

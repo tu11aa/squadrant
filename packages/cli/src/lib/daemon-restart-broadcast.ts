@@ -59,14 +59,14 @@ export async function notifyCaptainsOfDaemonRestart(
   config: SquadrantConfig,
   driver: DaemonRestartNotifyDriver,
   isDevRebuild = false,
-  appendCaptainMessage?: AppendCaptainMessageFn,
+  appendCaptainMessage: AppendCaptainMessageFn,
 ): Promise<void> {
-  const notice = appendCaptainMessage ? restartNotice(version, isDevRebuild) : "";
+  const notice = restartNotice(version, isDevRebuild);
   for (const [projName] of Object.entries(config.projects)) {
     try {
       const proj = config.projects[projName];
       const ref = await driver.status(proj.captainName);
-      if (ref && appendCaptainMessage) {
+      if (ref) {
         await appendCaptainMessage(projName, notice);
       }
     } catch {
