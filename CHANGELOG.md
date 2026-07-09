@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-07-08
+### BREAKING
+
+- **Deleted the `squadrant runtime send-key` command.** It had zero callers across all plugins and templates. Deferring an unconditional `Enter` keypress through the mailbox guard changes its semantics entirely (what it submits depends on what draft the user typed while the key was queued). If you need to simulate a raw keypress without draft protection, shell out to the underlying binary directly: `/Applications/cmux.app/Contents/Resources/bin/cmux send-key --workspace "workspace:N" Enter`.
 
 ### Added
 

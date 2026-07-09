@@ -151,7 +151,7 @@ export async function appendCaptainMessage(opts: {
   stateRoot: string;
   project: string;
   text: string;
-  source: "telegram" | "daemon";
+  source: "telegram" | "daemon" | "cli";
 }): Promise<void> {
   await appendEntry(opts.stateRoot, opts.project, (seq) => ({
     seq,
