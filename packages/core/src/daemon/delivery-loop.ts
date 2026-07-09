@@ -202,11 +202,14 @@ export function createDelivery(
       ...Object.keys(cfg.projects ?? {}),
       ...Object.keys(injectedSurfaces),
       ...store.listAll().map((t) => t.project),
+      cfg.commandName,
     ])];
 
     for (const project of allProjects) {
       const projCfg = cfg.projects?.[project];
-      const captainTitle = projCfg?.captainName ?? `${project}-captain`;
+      const captainTitle = project === cfg.commandName 
+        ? cfg.commandName 
+        : (projCfg?.captainName ?? `${project}-captain`);
 
       // Surface discovery is ONLY for the delivery target (where to cmux.send);
       // captain presence/liveness authority now lives in livenessRegistry.
@@ -241,11 +244,17 @@ export function createDelivery(
           // undelivered CREW DONE must reach the captain even after a daemon
           // restart >5min after enqueue. Non-terminal backlog suppression stays.
           if (!TERMINAL_KINDS.has(entry.kind)) {
-            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-skipped`);
-            await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
-            continue;
+            // #531: exempt non-daemon captain.message (human/cli) from stale-skip
+            const isExemptMessage = entry.kind === "captain.message" && entry.payload?.source !== "daemon";
+            if (!isExemptMessage) {
+              log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-skipped`);
+              await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
+              continue;
+            }
+            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-exempt-deliver`);
+          } else {
+            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
           }
-          log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
         }
         const result = await d.deliver(entry, (text, sendOpts) =>
           cmux.send(surface!, text, sendOpts),

@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import os from "node:os";
 import { getDefaultConfig, saveConfig } from "@squadrant/shared";
 import type { SquadrantConfig, ProjectConfig } from "@squadrant/shared";
-import { runEffortGet, runEffortSet, notifyCaptainsOfEffort } from "../effort.js";
+import { runEffortGet, runEffortSet, notifyCaptainsOfEffort, effortCommand } from "../effort.js";
+
+const requireDaemon = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/require-daemon.js", () => ({
+  requireDaemon,
+}));
 
 let dir: string;
 let cfgPath: string;
@@ -13,6 +18,8 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-effort-"));
   cfgPath = path.join(dir, "config.json");
   saveConfig(getDefaultConfig(), cfgPath);
+  vi.resetAllMocks();
+  requireDaemon.mockResolvedValue(undefined);
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -187,5 +194,23 @@ describe("effort notify (self-notification exclusion)", () => {
 
     expect(sent).toHaveLength(0);
     expect(spy.projects.sort()).toEqual(["a", "b"]);
+  });
+
+  it("handles driver failure gracefully without throwing (best effort)", async () => {
+    const config = configWithProjects({
+      a: project(path.join(dir, "projA"), "captain-a"),
+    });
+
+    const driver = {
+      status: vi.fn().mockRejectedValue(new Error("daemon unreachable"))
+    };
+    
+    const append = vi.fn();
+    
+    // Should NOT throw
+    await notifyCaptainsOfEffort("low", config, driver, path.join(dir, "elsewhere"), append);
+    
+    // And should not have appended
+    expect(append).not.toHaveBeenCalled();
   });
 });
