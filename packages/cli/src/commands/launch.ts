@@ -50,9 +50,15 @@ export const launchCommand = new Command("launch")
   )
   .argument("[project]", "Project name to launch captain for")
   .option("--fresh", "Start a new session instead of resuming the last one")
+  .option("--keep", "Resume the latest session even on a new day / after a template change")
   .option("--all", "Launch all captain workspaces")
   .option("--headless", "Skip the interactive cmux-app requirement (used by the daemon to boot captains without a terminal)")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; all?: boolean; headless?: boolean }) => {
+  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean }) => {
+    if (opts.fresh && opts.keep) {
+      console.error(chalk.red("\n  ✘ --fresh and --keep are mutually exclusive\n"));
+      process.exit(1);
+    }
+
     const config = loadConfig();
     let hadFailure = false;
 
@@ -100,6 +106,7 @@ export const launchCommand = new Command("launch")
           role,
           cwd,
           forceFreshOverride: opts.fresh,
+          keepOverride: opts.keep,
           sessionsPath: SESSIONS_PATH,
           templatesDir: TEMPLATES_DIR,
           agentCmdFactory: (forceFresh) =>
