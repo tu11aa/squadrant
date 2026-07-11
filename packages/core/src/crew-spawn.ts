@@ -471,7 +471,7 @@ export async function runCrewSend(
     // runtime.sendToPane so the caller can inject paste-settle-Enter hardening.
     // Falls back to runtime.sendToPane when absent (preserves existing behaviour
     // for callers that don't inject it, e.g. unit tests).
-    sendToPane?: (pane: PaneRef, message: string) => Promise<{ delivered: boolean }>;
+    sendToPane?: (pane: PaneRef, message: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }>;
   },
 ): Promise<void> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
@@ -496,8 +496,18 @@ export async function runCrewSend(
     // Swallow daemon errors so crews without a daemon or offline daemon
     // still receive the sent message.
   }
-  const deliver = deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
-  const { delivered } = await deliver(crew, message);
+  const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
+    deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
+  const { delivered, blockedByModal } = await deliver(crew, message);
+  // #516: an open AskUserQuestion/permission modal must fail LOUDLY — throwing
+  // (rather than the generic delivered:false warning below) stops the CLI's
+  // "✔ Sent" success line from printing, so the captain can't mistake this for
+  // a delivered message and unknowingly let the crew act on the modal's default.
+  if (blockedByModal) {
+    throw new Error(
+      `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. Wait for the prompt to close, then re-send with 'squadrant crew send ${project} ${name}'.`,
+    );
+  }
   if (!delivered) {
     process.stderr.write(`⚠️  Message not delivered to crew '${name}' — use 'squadrant crew send ${project} ${name}' to re-send.\n`);
   }

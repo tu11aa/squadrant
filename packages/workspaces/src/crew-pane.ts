@@ -6,7 +6,7 @@ import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, classifyStartupSurface } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, classifyStartupSurface } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, screenHasSplashMarker } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
@@ -131,13 +131,24 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
  * Returns `{ delivered: true }` when the box empties after the draft was seen
  * (positive submit confirmation), or `{ delivered: false }` if the retry loop
  * exhausts without confirmation (#466: callers surface non-delivery explicitly).
+ * Returns `{ delivered: false, blockedByModal: true }` without touching the
+ * pane at all when an AskUserQuestion/permission SELECTION MODAL is open (#516).
  */
 export async function confirmedSendToPane(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane">,
   pane: PaneRef,
   message: string,
-): Promise<{ delivered: boolean }> {
+): Promise<{ delivered: boolean; blockedByModal?: boolean }> {
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
+  // #516: a selection modal renders its highlighted default option ("❯ 1. Red")
+  // in the same HR-bounded region a real draft would occupy, so the settle
+  // loop below can't tell "modal open" apart from "draft present" — sending
+  // Enter here would CONFIRM the modal's default instead of delivering the
+  // captain's message (mirrors the #484 guard on the sendToSurface delivery
+  // path, which has no equivalent here). Never keystroke into it.
+  if (hasModalOptionList(preSendScreen)) {
+    return { delivered: false, blockedByModal: true };
+  }
   await runtime.pasteToPane(pane, message);
   // #455: track whether the paste ever rendered so we don't treat an empty box
   // that was NEVER populated as a successful submit (race: paste still in flight

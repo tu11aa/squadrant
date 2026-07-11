@@ -671,6 +671,23 @@ describe("runCrewSend", () => {
     expect(injectedSend).toHaveBeenCalledWith(expect.anything(), "big message");
     expect(runtime.sendToPane).not.toHaveBeenCalled();
   });
+
+  // #516: when the injected sendToPane reports blockedByModal (an open
+  // AskUserQuestion/permission modal), the send must fail LOUDLY — a thrown
+  // error, not a silent 'success' — so the captain knows the message never
+  // reached the crew instead of the crew silently acting on its default option.
+  it("throws loudly when send is blocked by an open modal (#516)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const injectedSend = vi.fn().mockResolvedValue({ delivered: false, blockedByModal: true });
+    await expect(
+      runCrewSend(PROJECT, "crew-1", "pick option 2", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([]),
+        emitEvent: vi.fn(),
+        sendToPane: injectedSend,
+      }),
+    ).rejects.toThrow(/interactive prompt/i);
+  });
 });
 
 // ─── runCrewRead ─────────────────────────────────────────────────────────────

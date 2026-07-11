@@ -380,6 +380,68 @@ describe("confirmedSendToPane — follow-up crew send (#448)", () => {
   });
 });
 
+// ─── #516: modal-aware crew send ──────────────────────────────────────────────
+// The delivery-path guard (sendToSurface, #484) already refuses to keystroke
+// into an open AskUserQuestion/permission SELECTION MODAL. confirmedSendToPane
+// — the primitive behind captain `crew send` — has no equivalent guard: it
+// pastes the captain's message and unconditionally fires Enter, which the
+// modal reads as "confirm the highlighted (Recommended) option". The captain's
+// message is dropped with no error, and the crew commits to the wrong choice
+// (#516 production incidents on friendslop-factory).
+const MODAL_SCREEN = `…transcript…
+${HR}
+ ☐ Color
+
+Which color do you prefer?
+
+❯ 1. Red
+     Red
+  2. Blue
+     Blue
+  3. Green
+     Green
+  4. Type something.
+${HR}
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel`;
+
+describe("confirmedSendToPane — modal-aware crew send (#516)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, pasteToPane, sendKeyToPane });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("never keystrokes into an open AskUserQuestion modal — fails loudly instead of confirming the default", async () => {
+    readPaneScreen.mockResolvedValue(MODAL_SCREEN);
+
+    const promise = confirmedSendToPane(rt(), pane, "pick option 2");
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await promise;
+
+    // The modal's highlighted default must never be auto-confirmed by our Enter.
+    expect(sendKeyToPane).not.toHaveBeenCalled();
+    // The message must never be typed into the picker either.
+    expect(pasteToPane).not.toHaveBeenCalled();
+    // Non-delivery must be distinguishable from an ordinary retry-exhausted
+    // failure so the caller can warn the captain LOUDLY (not the generic
+    // "use crew send to re-send" message).
+    expect(result).toEqual({ delivered: false, blockedByModal: true });
+  });
+});
+
 // ─── #455: large-paste race — empty box before paste renders ─────────────────
 
 describe("sendFirstTurnWhenReady — large paste race (#455)", () => {
