@@ -120,6 +120,9 @@ export interface SquadrantConfig {
     /** #317 global crew tokenomics dial. Absent ⇒ "balance" (today's behavior).
      *  Biases the captain toward stronger ("max") or cheaper ("low") crew models. */
     effort?: "max" | "balance" | "low";
+    /** #536 startup npm-registry update check. Default true (absent ⇒ enabled);
+     *  set false to opt out. NO_UPDATE_NOTIFIER env var also opts out. */
+    updateCheck?: boolean;
   };
   metrics: {
     enabled: boolean;

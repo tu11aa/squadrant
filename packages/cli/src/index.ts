@@ -38,6 +38,7 @@ import { hooksCommand } from "./commands/hooks.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
+import { notifyIfUpdateAvailable } from "@squadrant/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -70,6 +71,12 @@ if (process.argv[2] !== "config") {
           );
         }
       }
+
+      // #536: best-effort update-available check. Not awaited so it never blocks command
+      // logic; the unref'd node:https transport and bounded race inside notifyIfUpdateAvailable
+      // (see update-check.ts) mean a pending check can't delay process exit either, and a
+      // failed attempt is cached so an offline machine doesn't re-hit the registry every run.
+      void notifyIfUpdateAvailable({ config: cfg, currentVersion: pkg.version });
     }
   } catch {
     // Drift banner is best-effort; never block the CLI.
