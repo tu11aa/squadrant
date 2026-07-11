@@ -157,20 +157,38 @@ export function addWorktree(spec: WorktreeSpec): string {
 
 /**
  * #387: `git worktree add` never populates node_modules — a fresh worktree
- * has none. Its own pnpm workspace root is the worktree itself (each worktree
- * carries its own pnpm-workspace.yaml, so `pnpm -C <wt> install` never touches
- * the main checkout or a sibling worktree), but Node's module resolution walks
- * up parent directories looking for node_modules. Since worktrees live nested
- * under <repoRoot>/<worktreeDir>/, a worktree with no local node_modules
- * silently falls through to the main checkout's node_modules instead of
- * failing — so a crew's tsc/vitest run can type-check or test against the
- * main repo's stale code without any error. Installing here, synchronously,
- * before the worktree is handed to a crew closes that gap: the worktree
- * always has its own complete dependency tree, or worktree creation fails
- * loudly instead of leaving a crew to discover the gap mid-task.
+ * has none. Node's module resolution walks up parent directories looking for
+ * node_modules, and since worktrees live nested under <repoRoot>/<worktreeDir>/,
+ * a worktree with no local node_modules silently falls through to the main
+ * checkout's node_modules instead of failing — so a crew's tsc/vitest run can
+ * type-check or test against the main repo's stale code without any error.
+ * Installing here, synchronously, before the worktree is handed to a crew
+ * closes that gap: the worktree always has its own complete dependency tree,
+ * or worktree creation fails loudly instead of leaving a crew to discover the
+ * gap mid-task.
+ *
+ * addWorktree() is called for every registered project, not just squadrant's
+ * own repo — projects use pnpm, yarn, or npm, and some aren't JS projects at
+ * all. Detect the package manager from its lockfile rather than assuming
+ * pnpm; each is invoked with its own frozen/reproducible-install flag so this
+ * never silently drifts the project's lockfile. No package.json → nothing to
+ * install, not an error. package.json with no recognized lockfile → skip
+ * rather than guess: without a lockfile there's no deterministic manifest to
+ * freeze against, and guessing a package manager risks generating a stray
+ * lockfile the crew never asked for.
  */
 function installWorktreeDependencies(wt: string): void {
-  execFileSync("pnpm", ["-C", wt, "install", "--frozen-lockfile"], { stdio: "pipe" });
+  if (!fs.existsSync(path.join(wt, "package.json"))) return;
+
+  if (fs.existsSync(path.join(wt, "pnpm-lock.yaml"))) {
+    execFileSync("pnpm", ["-C", wt, "install", "--frozen-lockfile"], { stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "yarn.lock"))) {
+    execFileSync("yarn", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "package-lock.json"))) {
+    execFileSync("npm", ["ci"], { cwd: wt, stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "bun.lockb"))) {
+    execFileSync("bun", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+  }
 }
 
 /**

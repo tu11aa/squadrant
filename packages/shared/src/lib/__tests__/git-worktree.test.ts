@@ -12,7 +12,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 // file) — mock it so addWorktree tests stay hermetic instead of writing into
 // /tmp on a real macOS dev machine.
 const mkdirSyncMock = vi.hoisted(() => vi.fn());
-const existsSyncMock = vi.hoisted(() => vi.fn(() => false));
+const existsSyncMock = vi.hoisted(() => vi.fn((_p?: unknown) => false));
 const writeFileSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -26,6 +26,25 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase } from "../git-worktree.js";
+
+// #387: addWorktree() runs for every registered project, not just pnpm ones —
+// stub existsSync per project "kind" so installWorktreeDependencies sees the
+// lockfile (or absence of package.json/lockfile) a real project would have.
+function mockProjectFiles(kind: "pnpm" | "yarn" | "npm" | "bun" | "no-lockfile" | "non-js"): void {
+  existsSyncMock.mockReset();
+  existsSyncMock.mockImplementation((p: unknown) => {
+    const s = String(p);
+    if (kind === "non-js") return false;
+    if (s.endsWith("package.json")) return true;
+    switch (kind) {
+      case "pnpm": return s.endsWith("pnpm-lock.yaml");
+      case "yarn": return s.endsWith("yarn.lock");
+      case "npm": return s.endsWith("package-lock.json");
+      case "bun": return s.endsWith("bun.lockb");
+      case "no-lockfile": return false;
+    }
+  });
+}
 
 describe("worktreePath", () => {
   it("resolves <repoRoot>/<worktreeDir>/<project>-<name>", () => {
@@ -48,7 +67,12 @@ describe("crewBranch", () => {
 });
 
 describe("addWorktree", () => {
-  beforeEach(() => execFileSyncMock.mockReset());
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    mkdirSyncMock.mockReset();
+    writeFileSyncMock.mockReset();
+    mockProjectFiles("pnpm"); // default: squadrant itself is a pnpm project
+  });
 
   it("runs `git -C <repo> worktree add <path> -b crew/<name> <base>` and returns the path", () => {
     // No existing branch: show-ref throws (not found), worktree add succeeds.
@@ -165,6 +189,76 @@ describe("addWorktree", () => {
       ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/fix-1-2", "develop"],
       expect.objectContaining({ stdio: "pipe" }),
     );
+  });
+});
+
+// ── #387: addWorktree() serves every registered project, not just pnpm ones ─
+
+describe("addWorktree — package manager detection (#387)", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref
+    execFileSyncMock.mockReturnValue(Buffer.from("")); // worktree add, then install
+    mkdirSyncMock.mockReset();
+    writeFileSyncMock.mockReset();
+  });
+
+  it("installs a yarn project via `yarn install --frozen-lockfile`", () => {
+    mockProjectFiles("yarn");
+
+    const wt = addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "yarn",
+      ["install", "--frozen-lockfile"],
+      expect.objectContaining({ cwd: wt, stdio: "pipe" }),
+    );
+  });
+
+  it("installs an npm project via `npm ci`", () => {
+    mockProjectFiles("npm");
+
+    const wt = addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "npm",
+      ["ci"],
+      expect.objectContaining({ cwd: wt, stdio: "pipe" }),
+    );
+  });
+
+  it("installs a bun project via `bun install --frozen-lockfile`", () => {
+    mockProjectFiles("bun");
+
+    const wt = addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "bun",
+      ["install", "--frozen-lockfile"],
+      expect.objectContaining({ cwd: wt, stdio: "pipe" }),
+    );
+  });
+
+  it("skips install for a non-JS project (no package.json) without throwing", () => {
+    mockProjectFiles("non-js");
+
+    expect(() =>
+      addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" }),
+    ).not.toThrow();
+
+    const nonGitCalls = execFileSyncMock.mock.calls.filter((c) => c[0] !== "git");
+    expect(nonGitCalls).toHaveLength(0);
+  });
+
+  it("skips install when package.json has no recognized lockfile, without guessing a package manager", () => {
+    mockProjectFiles("no-lockfile");
+
+    expect(() =>
+      addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" }),
+    ).not.toThrow();
+
+    const nonGitCalls = execFileSyncMock.mock.calls.filter((c) => c[0] !== "git");
+    expect(nonGitCalls).toHaveLength(0);
   });
 });
 
