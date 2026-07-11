@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sendFirstTurnWhenReady, confirmedSendToPane, resendCrewFirstTurn } from "../crew-pane.js";
+import { sendFirstTurnWhenReady, confirmedSendToPane, resendCrewFirstTurn, paneHasOpenModal } from "../crew-pane.js";
 import type { PaneRef, WorkspaceRef } from "@squadrant/shared";
 
 // Realistic Claude-Code-style screen: the live input box is the region between the
@@ -439,6 +439,24 @@ describe("confirmedSendToPane — modal-aware crew send (#516)", () => {
     // failure so the caller can warn the captain LOUDLY (not the generic
     // "use crew send to re-send" message).
     expect(result).toEqual({ delivered: false, blockedByModal: true });
+  });
+});
+
+// #516 review follow-up: runCrewSend needs a side-effect-free precheck it can
+// run BEFORE its daemon-state emit block, so a modal-blocked send never flips
+// task state either. paneHasOpenModal is that precheck — a single read, no
+// pane touch — reusing the same hasModalOptionList detection as the guard above.
+describe("paneHasOpenModal (#516)", () => {
+  it("returns true when the pane shows an open selection modal", async () => {
+    const readPaneScreen = vi.fn().mockResolvedValue(MODAL_SCREEN);
+    const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+    await expect(paneHasOpenModal({ readPaneScreen }, pane)).resolves.toBe(true);
+  });
+
+  it("returns false for an ordinary idle pane", async () => {
+    const readPaneScreen = vi.fn().mockResolvedValue(EMPTY_BOX);
+    const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+    await expect(paneHasOpenModal({ readPaneScreen }, pane)).resolves.toBe(false);
   });
 });
 

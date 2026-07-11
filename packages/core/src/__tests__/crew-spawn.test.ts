@@ -688,6 +688,33 @@ describe("runCrewSend", () => {
       }),
     ).rejects.toThrow(/interactive prompt/i);
   });
+
+  // #516 review follow-up: the daemon-state emit block (task.reopened/task.started)
+  // ran BEFORE the blockedByModal check, so a modal-blocked send still flipped a
+  // blocked task to working — clearing BLOCKED before the crew ever saw the new
+  // message. That is the exact lost-signal class #183 protects against. The
+  // isBlockedByModal precheck must run first and make the whole send a TRUE no-op
+  // on daemon state — not just a no-op on the pane — when a modal is open.
+  it("emits NO daemon event and never attempts delivery when isBlockedByModal reports an open modal (#516)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    const listTasks = vi.fn().mockResolvedValue([
+      { id: "t1", name: "crew-1", state: "blocked" } as Partial<TaskRecord>,
+    ]);
+    const isBlockedByModal = vi.fn().mockResolvedValue(true);
+    const injectedSend = vi.fn();
+    await expect(
+      runCrewSend(PROJECT, "crew-1", "pick option 2", runtime, "workspace:1", {
+        listTasks,
+        emitEvent,
+        sendToPane: injectedSend,
+        isBlockedByModal,
+      }),
+    ).rejects.toThrow(/interactive prompt/i);
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(injectedSend).not.toHaveBeenCalled();
+  });
 });
 
 // ─── runCrewRead ─────────────────────────────────────────────────────────────

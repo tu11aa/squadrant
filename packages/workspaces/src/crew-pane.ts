@@ -120,6 +120,23 @@ export async function resolveCaptainWorkspace(project: string): Promise<{
 }
 
 /**
+ * #516: cheap, side-effect-free check for an open AskUserQuestion/permission
+ * SELECTION MODAL — a single screen read, no paste, no keystroke. Lets
+ * runCrewSend skip its daemon-state emit (task.reopened/task.started) AND the
+ * pane touch entirely when the crew can't actually receive the message right
+ * now, so a modal-blocked send is a true no-op rather than just skipping the
+ * pane write. confirmedSendToPane keeps its own copy of this check as the
+ * pane-touch backstop for the TOCTOU window between this precheck and delivery.
+ */
+export async function paneHasOpenModal(
+  runtime: Pick<RuntimeDriver, "readPaneScreen">,
+  pane: PaneRef,
+): Promise<boolean> {
+  const screen = (await runtime.readPaneScreen(pane)) ?? "";
+  return hasModalOptionList(screen);
+}
+
+/**
  * Deliver a message to a crew pane with the paste-settle-Enter confirmation
  * sequence from #447. Shared by the follow-up `crew send` path (#448) and
  * available for first-turn use — both call the same submit hardening:

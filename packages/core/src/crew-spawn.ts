@@ -472,11 +472,23 @@ export async function runCrewSend(
     // Falls back to runtime.sendToPane when absent (preserves existing behaviour
     // for callers that don't inject it, e.g. unit tests).
     sendToPane?: (pane: PaneRef, message: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }>;
+    // #516: optional side-effect-free precheck for an open AskUserQuestion/
+    // permission modal. Checked BEFORE the daemon-state emit block below so a
+    // modal-blocked send is a true no-op on daemon state, not just on the pane.
+    // Deliberately separate from sendToPane: that closure only reports
+    // blockedByModal AFTER attempting delivery, which is too late here — the
+    // emit block must never run for a message that never reached the crew.
+    isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
   },
 ): Promise<void> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
+  }
+  const blockedByModalMessage = () =>
+    `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. Wait for the prompt to close, then re-send with 'squadrant crew send ${project} ${name}'.`;
+  if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
+    throw new Error(blockedByModalMessage());
   }
   // Best-effort attention-state handling before delivering the captain's answer.
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
@@ -499,14 +511,12 @@ export async function runCrewSend(
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
   const { delivered, blockedByModal } = await deliver(crew, message);
-  // #516: an open AskUserQuestion/permission modal must fail LOUDLY — throwing
-  // (rather than the generic delivered:false warning below) stops the CLI's
-  // "✔ Sent" success line from printing, so the captain can't mistake this for
-  // a delivered message and unknowingly let the crew act on the modal's default.
+  // #516 backstop: covers the TOCTOU window between the precheck above and this
+  // delivery attempt, and callers that don't inject isBlockedByModal at all. By
+  // this point the emit block (if any) has already run — unavoidable without the
+  // precheck — but the send still fails loudly instead of reporting success.
   if (blockedByModal) {
-    throw new Error(
-      `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. Wait for the prompt to close, then re-send with 'squadrant crew send ${project} ${name}'.`,
-    );
+    throw new Error(blockedByModalMessage());
   }
   if (!delivered) {
     process.stderr.write(`⚠️  Message not delivered to crew '${name}' — use 'squadrant crew send ${project} ${name}' to re-send.\n`);
