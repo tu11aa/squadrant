@@ -332,18 +332,30 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   }
 
   const origStop = h.stop.bind(h);
-  h.stop = async () => {
+  h.stop = async (reason?: string) => {
     try { cmuxStoreSource.stop(); } catch { /* best-effort */ }
     try { nativeHookSource.stop(); } catch { /* best-effort */ }
     try { codexAppServerSource.stop(); } catch { /* best-effort */ }
-    return origStop();
+    return origStop(reason);
   };
 
   return h;
 }
 
+/** Greppable crash marker (#535) — matches the `[squadrantd] <iso> <msg>` shape
+ *  ctx.log uses, but writes directly since ctx.log doesn't exist until buildContext()
+ *  runs; a crash before that point must still be diagnosable. */
+function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: unknown): void {
+  const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${kind} pid=${process.pid} error=${message}\n`);
+}
+
 // Executed by launchd (ProgramArguments → this file's compiled .js).
 if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
+  // Registered before any boot work so a crash during startup is still logged.
+  process.on("uncaughtException", (err) => { logCrashMarker("uncaughtException", err); process.exit(1); });
+  process.on("unhandledRejection", (reason) => { logCrashMarker("unhandledRejection", reason); process.exit(1); });
+
   void (async () => {
     // #360 layer 1: this entry takes no CLI flags. A build smoke-test like
     // `node dist/squadrantd.js --help` must NOT boot a daemon — it would hang
@@ -363,6 +375,12 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       process.exit(0);
     }
     const h = startSquadrantd({ sweepMs: 30000 });
-    process.on("SIGTERM", () => { h.stop(); process.exit(0); });
+    // #535: await stop() before exiting — it writes the exit marker and runs
+    // teardown (bridges, in-flight headless kills) synchronously-then-async;
+    // exiting immediately after firing it (not awaiting) raced process.exit()
+    // against that work and silently dropped it every time.
+    const shutdown = (signal: "SIGTERM" | "SIGINT") => { void h.stop(signal).finally(() => process.exit(0)); };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   })();
 }

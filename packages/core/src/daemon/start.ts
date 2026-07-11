@@ -21,7 +21,9 @@ const CURSOR_SUBSCRIBER = "captain";
 const SNAPSHOT_LOG_WINDOW_MS = 60 * 60 * 1000;
 
 export interface DaemonHandle {
-  stop(): Promise<void>;
+  /** `reason` is folded into the exit log line (e.g. "SIGTERM", "SIGINT") so a
+   *  restart is diagnosable from the log instead of inferred (#535). */
+  stop(reason?: string): Promise<void>;
   tickDelivery: (() => Promise<void>) | undefined;
   tickProbe: (() => Promise<void>) | undefined;
 }
@@ -216,7 +218,9 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   // ── Server + timers ───────────────────────────────────────────────────────
 
   const server = createServer(ctx, { buildHealth, gatherSnapshotInputs, cancelPromotionsFor, broadcast });
-  log(`started pid=${process.pid} sock=${ctx.sockPath} stateRoot=${stateRoot}`);
+  // #535: greppable boot marker — a restart must be diagnosable from the log,
+  // never inferred from process START time.
+  log(`boot pid=${process.pid} version=${pkgVersion} socket=${ctx.sockPath} stateRoot=${stateRoot}`);
 
   let deliveryTick: (() => Promise<void>) | undefined = initialDeliveryTick;
   let probeTick: (() => Promise<void>) | undefined;
@@ -280,7 +284,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   }
 
   return {
-    stop(): Promise<void> {
+    stop(reason = "requested"): Promise<void> {
+      // #535: write the exit marker synchronously, before any async
+      // teardown, so it lands even if the caller doesn't await this promise.
+      log(`exit pid=${process.pid} reason=${reason}`);
       if (deliveryTimer) clearInterval(deliveryTimer);
       if (probeTimer) clearInterval(probeTimer);
       if (timer) clearInterval(timer);
@@ -289,7 +296,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       try { ctx.telegramBridge?.stop(); } catch { /* best-effort */ }
       try { ctx.codexDriver.stop?.(); } catch { /* best-effort */ }
       for (const kill of ctx.activeHeadlessKills) kill();
-      return new Promise<void>((resolve) => server.close(() => { log("stopped"); resolve(); }));
+      return new Promise<void>((resolve) => server.close(() => { log(`exit-complete pid=${process.pid}`); resolve(); }));
     },
     tickDelivery: deliveryTick,
     tickProbe: probeTick,
