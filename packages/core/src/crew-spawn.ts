@@ -516,6 +516,13 @@ export async function runCrewRead(
   return runtime.readPaneScreen(crew);
 }
 
+// #513: close's listTasks() lookup can race a same-name crew's own dispatch —
+// closing immediately after spawn may snapshot the daemon before the task
+// record is registered. A few short retries close that window without adding
+// meaningful latency to the common (already-registered) case.
+const CLOSE_LOOKUP_RETRIES = 3;
+const CLOSE_LOOKUP_RETRY_DELAY_MS = 150;
+
 export async function runCrewClose(
   project: string,
   name: string,
@@ -525,8 +532,11 @@ export async function runCrewClose(
     listTasks(project: string): Promise<TaskRecord[]>;
     emitEvent(project: string, event: ControlEvent): Promise<void>;
     closeCodexThread(taskId: string): Promise<void>;
+    /** Injectable for tests; defaults to a real delay. */
+    sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<void> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // resolveCaptainWorkspace already validated the project exists; reload for its
   // root path so we can tell a worktree crew (cwd != root) from a root crew.
   const projRoot = loadConfig().projects[project]?.path;
@@ -542,21 +552,34 @@ export async function runCrewClose(
   // its own worktree (cwd recorded by the daemon differs from the root checkout).
   let worktreeCwd: string | undefined;
   try {
-    const tasks = await deps.listTasks(project);
-    const task = tasks.find((t) => t.name === name);
-    if (task) {
-      taskId = task.id;
-      if (task.cwd && projRoot && task.cwd !== projRoot) {
-        worktreeCwd = task.cwd;
+    let matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    // #513: the record may not be registered yet (close raced spawn's own
+    // dispatch). Retry briefly before concluding this crew has no daemon task.
+    for (let attempt = 0; attempt < CLOSE_LOOKUP_RETRIES && matches.length === 0; attempt++) {
+      await sleep(CLOSE_LOOKUP_RETRY_DELAY_MS);
+      matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    }
+    if (matches.length > 0) {
+      // #513: a name can match more than one record (e.g. an orphaned record
+      // left by a prior close that raced dispatch, followed by a same-name
+      // respawn). Terminalize every non-terminal match so none linger to fire
+      // a phantom CREW STALLED/IDLE later. Reap/worktree cleanup below anchors
+      // on the most-recently-dispatched match — the one the live pane belongs to.
+      const primary = matches.reduce((a, b) => ((b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a));
+      taskId = primary.id;
+      if (primary.cwd && projRoot && primary.cwd !== projRoot) {
+        worktreeCwd = primary.cwd;
       }
-      if (!TERMINAL_STATES.has(task.state)) {
-        await deps.emitEvent(project, { type: "task.cancelled", id: task.id, reason: "closed by captain" });
-      }
-      // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
-      // (and its per-thread MCP servers) live on the shared app-server, so closing
-      // the pane alone leaks them. Tell the daemon to archive the thread.
-      if (task.provider === "codex") {
-        await deps.closeCodexThread(task.id);
+      for (const task of matches) {
+        if (!TERMINAL_STATES.has(task.state)) {
+          await deps.emitEvent(project, { type: "task.cancelled", id: task.id, reason: "closed by captain" });
+        }
+        // Codex teardown: the pane only hosts the `crew attach` renderer; the thread
+        // (and its per-thread MCP servers) live on the shared app-server, so closing
+        // the pane alone leaks them. Tell the daemon to archive the thread.
+        if (task.provider === "codex") {
+          await deps.closeCodexThread(task.id);
+        }
       }
     }
   } catch {

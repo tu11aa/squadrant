@@ -790,6 +790,22 @@ describe("daemon – blocked crew resume path (#183)", () => {
       expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(1);
     });
 
+    // #522: awaiting-input is reached ONLY via a genuine turn-boundary event
+    // (never a watchdog guess — see reduce.ts formatMessage). A deliberate
+    // turn-end mid-plan (e.g. a long-lived crew pausing between sequential
+    // subtasks) is mechanically identical to any other turn-end, so the
+    // message must read calm rather than like a possible stall.
+    it("uses calm 'awaiting your reply' phrasing, not the old alarming 'review and reply or close' wording (#522)", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-calm", { state: "working" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 50_000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-calm", turnId: "turn-1" } });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].message).toBe(`CREW IDLE ${crewTag(store.get("p", "t-calm")!)}: turn ended, awaiting your reply.`);
+      expect(calls[0].message).not.toContain("review and reply or close");
+    });
+
     it("does NOT debounce CREW BLOCKED even right after a captain turn", async () => {
       const store = createStore(dir);
       store.put(rec("t-blk", { state: "working" }));

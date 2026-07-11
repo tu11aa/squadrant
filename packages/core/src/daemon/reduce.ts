@@ -172,7 +172,15 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
     }
     case "awaiting-input":
-      return `CREW IDLE ${tag}: turn ended / awaiting your input — review and reply or close.`;
+      // #522: 'awaiting-input' is reached ONLY via a genuine turn-boundary event
+      // (task.turn.completed — see state-machine.ts) — there is no separate
+      // watchdog-derived path into this state (the old wall-clock idle flip was
+      // retired by #354; evaluateStall never produces 'awaiting-input'). So this
+      // always means "the crew deliberately ended its turn", including the
+      // common case of a long-lived crew pausing between sequential subtasks.
+      // The former "review and reply or close" phrasing read like a possible
+      // fault and forced a spot-check every time; state calmly instead.
+      return `CREW IDLE ${tag}: turn ended, awaiting your reply.`;
     default:
       return null;
   }
