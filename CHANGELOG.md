@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-07-11
+
+### Fixed
+
+- **Crew worktrees silently type-checked and tested against the MAIN checkout instead of their own code (#387):** `git worktree add` never populates `node_modules`, and crew worktrees live nested under `<repoRoot>/.worktrees/`. A worktree with no local `node_modules` does not fail — Node's module resolution silently walks UP past it into the main checkout's `node_modules`. So a crew's `tsc`/`vitest` could resolve workspace packages to the main repo's stale code rather than the crew's own uncommitted changes, and pass. This made crew self-verification unreliable: a TS2339 slipped past every local check and was caught only by CI. `addWorktree()` now installs the worktree's own dependencies immediately on creation, detecting the package manager from the lockfile present (pnpm / yarn / npm / bun), no-opping for non-JS projects, and warning loudly (rather than silently skipping) when a package.json has no lockfile. pnpm was NOT at fault — each worktree correctly carries its own workspace root.
+- **N concurrent crews could starve the machine and take down the cmux control plane (#387):** crews run build/test commands at their own discretion, so there is no central point to queue them. The crew's top-level process is now launched under `nice -n 10`, which every child it forks (tsc, vitest workers) inherits — so a burst of concurrent crew builds degrades gracefully instead of starving cmux and the daemon.
+- **Spotlight indexing exclusion for crew worktrees is now automatic (#387):** the `.metadata_never_index` marker is written to the worktree root on creation (macOS only, best-effort). Previously this was a manual, uncommitted, single-machine mitigation.
+
 ## [0.16.0] - 2026-07-11
 
 ### Added
