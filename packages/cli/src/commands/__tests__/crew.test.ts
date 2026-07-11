@@ -59,6 +59,7 @@ vi.mock("@squadrant/workspaces", () => ({
     await sendToPane(pane, msg);
     return { delivered: true };
   },
+  paneHasOpenModal: async () => false,
   getFreePort: vi.fn().mockResolvedValue(12345),
 }));
 
