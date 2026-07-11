@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`runtime send`/`ping`'s mailbox routing (#529) reported success for messages that were never delivered (#566):** routing CLI-originated sends through the mailbox to protect an in-progress draft (#529) turned an unconditional direct send into one gated by the async delivery loop, but the CLI reported success the instant the append landed on disk — with no confirmation the delivery loop ever drained it (e.g. a captain falsely reported "stopped", #565). `runtime send` now polls the delivery cursor after appending and fails loudly (non-zero exit, no `✔`) if delivery isn't confirmed within 15s, while keeping the #529 draft-clobber protection intact.
+- **`crew send` printed `✔ Sent` and exited 0 for a message that was never delivered (#566):** `confirmedSendToPane`'s paste-settle-Enter retry loop already correctly reported `{ delivered: false }` when the box never emptied, but `runCrewSend` only wrote a stderr warning for that case instead of throwing — the CLI's success path ran unconditionally. Non-modal, non-delivered follow-up sends now throw (matching the existing `#516` modal-blocked behavior), so the caller sees a loud failure instead of a false "sent".
+
 ## [0.16.1] - 2026-07-11
 
 ### Fixed

@@ -520,7 +520,12 @@ export async function runCrewSend(
     throw new Error(blockedByModalMessage());
   }
   if (!delivered) {
-    process.stderr.write(`⚠️  Message not delivered to crew '${name}' — use 'squadrant crew send ${project} ${name}' to re-send.\n`);
+    // #566: a follow-up send has no self-heal sweep behind it (unlike first-turn
+    // delivery, which the daemon retries via resendCrewFirstTurn) — a stderr-only
+    // warning here let the CLI's own catch block never fire, so it printed "✔ Sent"
+    // and exited 0 for a message that was never submitted. Throw so the caller
+    // fails loudly instead.
+    throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
 }
 
