@@ -32,9 +32,11 @@ vi.mock("@squadrant/shared", () => ({
 }));
 
 const appendCaptainMessage = vi.hoisted(() => vi.fn());
+const waitForCaptainDelivery = vi.hoisted(() => vi.fn());
 vi.mock("@squadrant/core", async (importOriginal) => ({
   ...((await importOriginal()) as any),
   appendCaptainMessage,
+  waitForCaptainDelivery,
 }));
 
 const requireDaemon = vi.hoisted(() => vi.fn());
@@ -69,6 +71,8 @@ describe("runtime send", () => {
     loadConfig.mockReturnValue(makeConfig());
     requireDaemon.mockResolvedValue(undefined);
     status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    appendCaptainMessage.mockResolvedValue(42);
+    waitForCaptainDelivery.mockResolvedValue(true);
   });
 
   it("delivers the message via the mailbox (enqueue) when daemon is running", async () => {
@@ -103,9 +107,34 @@ describe("runtime send", () => {
     requireDaemon.mockRejectedValue(new Error("daemon not running"));
 
     await expect(runRuntimeSend("projA", "hello from runtime send", {})).rejects.toThrow(/daemon not running/i);
-    
+
     expect(send).not.toHaveBeenCalled();
     expect(sendKey).not.toHaveBeenCalled();
     expect(appendCaptainMessage).not.toHaveBeenCalled();
+  });
+
+  // #566 bug (b): v0.16 routed runtime send through the mailbox (#529) so a
+  // draft in progress is never clobbered, but that made success gated on the
+  // async delivery loop while the CLI reported success the instant the append
+  // landed — regardless of whether a captain was ever there to receive it.
+  it("waits for the delivery cursor to confirm the message actually reached the pane", async () => {
+    await runRuntimeSend("projA", "hello from runtime send", {});
+
+    expect(waitForCaptainDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "projA", seq: 42 }),
+    );
+  });
+
+  // The core regression: a captain falsely reported "stopped"/unreachable (#565)
+  // must not turn into a silent success. If delivery is never confirmed, the
+  // command must fail loudly (reject) rather than resolve.
+  it("fails loudly when delivery is never confirmed (captain unreachable/falsely-stopped, #565-class)", async () => {
+    waitForCaptainDelivery.mockResolvedValue(false);
+
+    await expect(runRuntimeSend("projA", "hello from runtime send", {})).rejects.toThrow(/not confirmed|not delivered/i);
+
+    // The send attempt itself must still have been made — never pre-gated on
+    // a liveness verdict — only the *confirmation* is what fails here.
+    expect(appendCaptainMessage).toHaveBeenCalled();
   });
 });

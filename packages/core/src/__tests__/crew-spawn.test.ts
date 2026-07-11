@@ -715,6 +715,25 @@ describe("runCrewSend", () => {
     expect(emitEvent).not.toHaveBeenCalled();
     expect(injectedSend).not.toHaveBeenCalled();
   });
+
+  // #566 bug (a): confirmedSendToPane correctly reports { delivered: false } when
+  // the paste/Enter could never be confirmed (e.g. the box never went empty), but
+  // runCrewSend only wrote a stderr warning and returned normally — the CLI never
+  // saw a rejection, so it printed "✔ Sent" and exited 0 for a message that was
+  // never submitted. A non-delivered, non-modal send must fail loudly (throw),
+  // exactly like the blockedByModal case above.
+  it("throws loudly when send is not delivered and not blocked by a modal (#566)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const injectedSend = vi.fn().mockResolvedValue({ delivered: false });
+    await expect(
+      runCrewSend(PROJECT, "crew-1", "hello", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([]),
+        emitEvent: vi.fn(),
+        sendToPane: injectedSend,
+      }),
+    ).rejects.toThrow(/not delivered/i);
+  });
 });
 
 // ─── runCrewRead ─────────────────────────────────────────────────────────────

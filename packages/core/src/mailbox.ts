@@ -152,8 +152,8 @@ export async function appendCaptainMessage(opts: {
   project: string;
   text: string;
   source: "telegram" | "daemon" | "cli";
-}): Promise<void> {
-  await appendEntry(opts.stateRoot, opts.project, (seq) => ({
+}): Promise<number> {
+  return appendEntry(opts.stateRoot, opts.project, (seq) => ({
     seq,
     ts: new Date().toISOString(),
     kind: "captain.message",
@@ -194,6 +194,34 @@ export async function readCursor(opts: CursorOpts): Promise<CursorState | null> 
     return JSON.parse(buf) as CursorState;
   } catch {
     return null;
+  }
+}
+
+export interface WaitForCaptainDeliveryOpts {
+  stateRoot: string;
+  project: string;
+  /** The seq returned by appendCaptainMessage/appendToMailbox for the entry to confirm. */
+  seq: number;
+  /** Delivery cursor subscriber to poll (default "captain" — the only current subscriber). */
+  subscriber?: string;
+  timeoutMs: number;
+  pollMs: number;
+}
+
+/**
+ * Poll the delivery cursor until it has acked `seq` (the delivery loop drained
+ * the entry) or the timeout elapses (#566). A CLI-originated send only knows
+ * its message reached the pane once the cursor advances past its own seq —
+ * appending to the mailbox alone proves nothing about delivery.
+ */
+export async function waitForCaptainDelivery(opts: WaitForCaptainDeliveryOpts): Promise<boolean> {
+  const subscriber = opts.subscriber ?? "captain";
+  const deadline = Date.now() + opts.timeoutMs;
+  for (;;) {
+    const cursor = await readCursor({ stateRoot: opts.stateRoot, project: opts.project, subscriber });
+    if (cursor && cursor.lastAckedSeq >= opts.seq) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, opts.pollMs));
   }
 }
 
