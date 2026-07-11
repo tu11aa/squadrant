@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two racing captain records for one project could flip a live captain to `gone` (#527):** when two cmux sessions share a cwd (a live captain plus a stale corpse from session restore), the runtime snapshot returned two records for the same project key and `LivenessRegistry`'s last-write-wins apply could let the dead-pid record win. Records are now grouped and deduplicated per project before applying, preferring the record with a live pid.
 - **Daemon-restart and effort broadcasts could clobber an in-progress captain draft (#529):** both broadcasts wrote directly into the captain pane via `CmuxDriver.send`, unconditionally overwriting whatever the user was typing. They now route through the same mailbox (`appendCaptainMessage`) the delivery loop already drain-protects.
 - **CLI-originated interrupts (ping, runtime send) bypassed the same draft-clobber protection (#529, #531):** routed through the mailbox; `squadrant runtime send-key` is removed (see Breaking).
-- **Crew close/respawn race could leave a zombie task record or fire a false `CREW STALLED` for an already-closed crew (#513, #522).**
+- **Crew close/respawn race could leave a zombie task record or fire a false `CREW STALLED` for an already-closed crew (#513).**
+
+### Changed
+
+- **`CREW IDLE` wording softened (#522):** `awaiting-input` is reached only via a genuine turn-boundary event (`task.turn.completed`) — never a watchdog-derived path — so it always means the crew deliberately ended its turn, including a long-lived crew pausing between sequential subtasks. The old "review and reply or close" phrasing read like a possible fault; it now reads "turn ended, awaiting your reply."
 
 ### BREAKING
 
