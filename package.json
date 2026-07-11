@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -b --force packages/shared packages/core packages/agents packages/workspaces packages/web packages/cli && tsup",
     "dev": "tsup --watch",
-    "test": "vitest",
+    "test": "node scripts/heavy-lock.mjs -- vitest run",
+    "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "codex:gen-types": "bash scripts/gen-codex-types.sh"
   },
