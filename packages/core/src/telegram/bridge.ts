@@ -45,7 +45,7 @@ export interface TelegramBridgeOptions {
   /** Root for per-project override files. Defaults to ~/.config/squadrant. */
   configRoot?: string;
   client: TelegramClient;
-  appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" | "daemon" | "cli" }) => Promise<void>;
+  appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" | "daemon" | "cli" }) => Promise<void | number>;
   log: (msg: string) => void;
   // ── Control surfaces (#402/#403/#321) — all optional. When undefined the bridge
   // keeps exact v1 behavior (queue-only project topics, General topic dropped).

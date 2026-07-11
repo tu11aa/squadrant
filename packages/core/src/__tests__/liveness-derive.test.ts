@@ -37,4 +37,30 @@ describe("reconcileLiveness — runtime ≥ agent > scan", () => {
     const closed = base({ source: "runtime", lastState: "end", lastSeenAt: 2_000 });
     expect(reconcileLiveness(prev, closed).lastState).toBe("end");
   });
+
+  // #565: a captain that comes back after being marked stopped/gone must be
+  // re-adopted even when the fresh runtime snapshot's startedAt is OLDER than
+  // the stale record's — a live pid outranks a startedAt comparison once prev
+  // is already dead. Reproduces the live incident: same session, prev pid dead
+  // + lastState="end" with a startedAt 6.6s NEWER than the live reopen signal.
+  it("re-adopts a live pid even when its startedAt is older than a dead prev (#565)", () => {
+    const prev = base({
+      pid: 10194, lastState: "end", pidAlive: false,
+      startedAt: 1_675_625, lastSeenAt: 1_675_625,
+    });
+    const reopen = base({
+      pid: 61850, lastState: "start", pidAlive: true,
+      startedAt: 1_669_016, lastSeenAt: 2_000_000,
+    });
+    const out = reconcileLiveness(prev, reopen);
+    expect(out.pidAlive).toBe(true);
+    expect(out.lastState).toBe("start");
+    expect(out.pid).toBe(61850);
+  });
+
+  it("does NOT let a stale-but-alive duplicate override an already-alive prev (#527 guard)", () => {
+    const prev = base({ pid: 100, lastState: "start", pidAlive: true, startedAt: 5_000 });
+    const staleDuplicate = base({ pid: 200, lastState: "start", pidAlive: true, startedAt: 1_000 });
+    expect(reconcileLiveness(prev, staleDuplicate)).toBe(prev);
+  });
 });

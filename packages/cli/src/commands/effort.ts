@@ -64,7 +64,7 @@ export async function notifyCaptainsOfEffort(
   config: SquadrantConfig,
   driver: EffortNotifyDriver,
   cwd: string = process.cwd(),
-  append: (project: string, text: string) => Promise<void>,
+  append: (project: string, text: string) => Promise<void | number>,
 ): Promise<void> {
   const here = canonical(cwd);
   const notice = `🎚️ effort → ${effort}: ${EFFORT_MEANING[effort]}`;

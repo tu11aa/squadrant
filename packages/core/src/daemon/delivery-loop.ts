@@ -74,12 +74,25 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
   try { records = await deps.liveness(); } catch { return; } // runtime unreachable → leave registry as-is
   const seen = new Set<string>();
 
+  // #565: cmux's own store can degrade a session's launchCommand (observed live:
+  // a crash/reattach left it as bare `["claude"]`, no --append-system-prompt-file)
+  // so the record reads role:"unknown" even though it's the exact same session
+  // already confirmed as this project's captain. SessionId identity outranks a
+  // degraded launchCommand classification — restore "captain" for any record
+  // whose sessionId matches an already-known captain for that project.
+  const knownCaptainSessions = new Map<string, string>(); // sessionId → project
+  for (const e of deps.registry.all()) {
+    if (e.role === "captain") knownCaptainSessions.set(e.sessionId, e.project);
+  }
+
   // #527: multiple cmux sessions can share a cwd, producing duplicate project
   // entries. Group by project and pick one winner to avoid last-write-wins
   // collision (dead pid overwriting live).
   const byProject = new Map<string, RuntimeLivenessRecord[]>();
   for (const r of records) {
-    if (r.role !== "captain") continue;
+    const role = r.role === "captain" || knownCaptainSessions.get(r.sessionId) === r.project
+      ? "captain" : r.role;
+    if (role !== "captain") continue;
     let arr = byProject.get(r.project);
     if (!arr) { arr = []; byProject.set(r.project, arr); }
     arr.push(r);
@@ -103,12 +116,21 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
     logEntry(deps.log, project, deps.registry.get(project));
   }
 
-  // Captains we knew but the snapshot no longer lists → clean close.
+  // Captains we knew but the snapshot no longer lists → clean close — but ONLY
+  // with positive evidence the pid is actually dead (#565). Absence from a
+  // single snapshot read is not proof of death (a store-file parsing glitch,
+  // a degraded record, a transient cmux hiccup); inferring "ended" from
+  // absence alone silently and permanently pauses delivery for a captain that
+  // is still running. When the tracked pid can't be confirmed dead (still
+  // alive, or unknown/null), leave the entry alone.
   for (const e of deps.registry.all()) {
-    if (e.role === "captain" && e.lastState === "start" && !seen.has(e.project)) {
-      deps.registry.markEnded(e.project, now);
-      logEntry(deps.log, e.project, deps.registry.get(e.project));
+    if (e.role !== "captain" || e.lastState !== "start" || seen.has(e.project)) continue;
+    if (e.pid == null || deps.isPidAlive(e.pid)) {
+      deps.log?.(`[${e.role}/runtime] ${e.project} pid=${e.pid} missing from snapshot but not confirmed dead — leaving alive`);
+      continue;
     }
+    deps.registry.markEnded(e.project, now);
+    logEntry(deps.log, e.project, deps.registry.get(e.project));
   }
 
   // Reap orphaned crews for any captain the registry now considers stopped

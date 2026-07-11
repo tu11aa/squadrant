@@ -262,7 +262,16 @@ describe("squadrantd daemon-direct (#332)", () => {
     // If tick 9 had captain found, delivery would resume to 3.
   });
 
-  it("reaps the stopped project's orphaned interactive crews to 'cancelled' (captain-stopped)", async () => {
+  // #565: reaping is destructive (it terminalizes live crew tasks), so the
+  // contract changed on purpose — "absent from the runtime snapshot" is no
+  // longer sufficient to reap on its own. The daemon now requires POSITIVE
+  // evidence the captain's pid is actually dead. A genuine close (user closes
+  // the workspace) kills the pid too, so this fixture simulates both: the
+  // snapshot going empty AND the tracked pid dying. Absence alone (the old
+  // contract, asserted by this test pre-#565) would silently reap crews that
+  // are still working the moment cmux's snapshot merely glitches — that's
+  // exactly what cost the user 3 live crews the morning of the incident.
+  it("reaps the stopped project's orphaned interactive crews to 'cancelled' (captain-stopped) — genuine close: snapshot empty AND pid confirmed dead", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-orphan-"));
     const sock = join(dir, "c.sock");
     const stateRoot = join(dir, "state");
@@ -287,6 +296,7 @@ describe("squadrantd daemon-direct (#332)", () => {
     // now decides captain presence. Surfaces stay present throughout so this
     // test isolates the registry-driven reap from delivery-target discovery.
     let captainPresent = true;
+    let captainPidAlive = true; // genuine close kills the pid too, not just the snapshot entry
     const cmux = {
       sent: [] as Array<{ text: string }>,
       send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
@@ -302,7 +312,7 @@ describe("squadrantd daemon-direct (#332)", () => {
         : [],
     } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
 
-    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux, isPidAlive: () => true });
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux, isPidAlive: () => captainPidAlive });
     stop = handle.stop;
 
     // Let boot reconcile settle before the manual ticks.
@@ -314,12 +324,71 @@ describe("squadrantd daemon-direct (#332)", () => {
 
     if (handle.tickDelivery) await handle.tickDelivery(); // captain present → deliver, crew untouched
     captainPresent = false; // captain workspace closed
-    if (handle.tickDelivery) await handle.tickDelivery(); // registry sees captain absent → stopped → reap
+    captainPidAlive = false; // ...and the process is confirmed dead (genuine close)
+    if (handle.tickDelivery) await handle.tickDelivery(); // registry sees captain gone + pid dead → stopped → reap
 
     // The orphaned crew is reaped to a terminal state with the captain-stopped marker.
     const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
     expect(after.state).toBe("cancelled");
     expect(after.lastEvent).toBe("captain-stopped");
+  });
+
+  // #565 — the actual incident: the captain vanishes from the runtime
+  // snapshot (a cmux store glitch, e.g. a degraded launchCommand losing its
+  // role marker) but its pid is still very much alive. The crew must NOT be
+  // reaped — absence-from-snapshot alone is no longer positive evidence of
+  // death.
+  it("captain absent from snapshot but pid still alive → crew is NOT reaped, task stays 'working' (#565)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-orphan-alive-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
+
+    const crew: TaskRecord = {
+      id: "orphan-1", project: "p", provider: "claude", mode: "interactive",
+      state: "working", task: "build", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "task.started", heartbeatBudgetMs: 1000,
+      name: "orphan",
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    await appendToMailbox({ stateRoot, project: "p", taskRecord: crew, event: EVENT, message: "CREW DONE #1" });
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+    mkdirSync(join(stateRoot, "p"), { recursive: true });
+    writeFileSync(join(stateRoot, "p", `${crew.id}.json`), JSON.stringify(crew));
+
+    const captainTitle = "p-captain";
+    const crewPane = crewPaneTitle("p", "orphan");
+    let captainPresent = true;
+    const cmux = {
+      sent: [] as Array<{ text: string }>,
+      send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
+      listSurfaces: async () => [
+        { workspaceId: "ws:1", surfaceId: "s1", title: captainTitle },
+        { workspaceId: "ws:1", surfaceId: "sc", title: crewPane },
+      ],
+      readScreen: async () => null,
+      isAvailable: async () => true,
+      findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
+      // Only the runtime snapshot glitches (goes empty) — the pid never dies.
+      liveness: async () => captainPresent
+        ? [{ role: "captain" as const, project: "p", pid: 424242, sessionId: "s", present: true }]
+        : [],
+    } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
+
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux, isPidAlive: () => true });
+    stop = handle.stop;
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const before = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
+    expect(before.state).toBe("working");
+
+    if (handle.tickDelivery) await handle.tickDelivery(); // captain present → deliver, crew untouched
+    captainPresent = false; // snapshot glitch: captain vanishes from the runtime read
+    if (handle.tickDelivery) await handle.tickDelivery(); // pid still alive → must NOT infer death
+
+    const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
+    expect(after.state).toBe("working");
   });
 
   it("does NOT reap on a single transient empty sweep (K>1)", async () => {
