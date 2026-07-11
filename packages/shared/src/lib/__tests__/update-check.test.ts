@@ -11,10 +11,15 @@ const { isNewerVersion, isCacheStale, isUpdateCheckDisabled, formatUpdateNotice,
   "../update-check.js"
 );
 
+function makeSocket() {
+  const socket = new EventEmitter() as EventEmitter & { unref: () => void };
+  socket.unref = vi.fn();
+  return socket;
+}
+
 function makeReq() {
-  const req = new EventEmitter() as EventEmitter & { setTimeout: (...a: unknown[]) => void; unref: () => void; destroy: () => void };
+  const req = new EventEmitter() as EventEmitter & { setTimeout: (...a: unknown[]) => void; destroy: () => void };
   req.setTimeout = vi.fn();
-  req.unref = vi.fn();
   req.destroy = vi.fn(() => req.emit("error", new Error("destroyed")));
   return req;
 }
@@ -150,14 +155,18 @@ describe("fetchLatestVersion (real node:https transport)", () => {
     await expect(fetchLatestVersion(undefined, 1000)).resolves.toBeNull();
   });
 
-  it("unrefs the pending request so a hung connection can never hold the process open", async () => {
+  it("unrefs the socket (not the request — ClientRequest itself has no unref()) so a hung connection can never hold the process open", async () => {
     const req = makeReq(); // never invokes the response callback — simulates a stalled connection
-    httpsGetMock.mockImplementation(() => req);
+    const socket = makeSocket();
+    httpsGetMock.mockImplementation(() => {
+      queueMicrotask(() => req.emit("socket", socket));
+      return req;
+    });
 
     const start = performance.now();
     await expect(fetchLatestVersion(undefined, 50)).resolves.toBeNull();
     expect(performance.now() - start).toBeLessThan(500);
-    expect(req.unref).toHaveBeenCalled();
+    expect(socket.unref).toHaveBeenCalled();
   });
 });
 

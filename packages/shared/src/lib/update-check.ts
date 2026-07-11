@@ -32,10 +32,11 @@ export type RegistryRequest = (url: string, timeoutMs: number) => Promise<unknow
  * Fetches over node:https rather than global fetch(): a fetch() Promise exposes no
  * handle to detach from the event loop, so a pending request left ref'd would delay
  * process exit by up to timeoutMs on every single invocation of an offline machine.
- * req.unref() is Node's documented mechanism for exactly this — it lets the process
- * exit immediately once the CLI's own work is done, dropping the response if it
- * arrives after. That's fine: this check is a best-effort background notice, never
- * something the CLI's exit should wait on.
+ * http.ClientRequest itself has no unref() — the socket does, assigned asynchronously
+ * via the 'socket' event — so we unref that once it's available. This is Node's
+ * documented mechanism for exactly this: it lets the process exit immediately once
+ * the CLI's own work is done, dropping the response if it arrives after. That's fine:
+ * this check is a best-effort background notice, never something exit should wait on.
  */
 const requestJson: RegistryRequest = (url, timeoutMs) =>
   new Promise((resolve) => {
@@ -56,9 +57,9 @@ const requestJson: RegistryRequest = (url, timeoutMs) =>
         }
       });
     });
+    req.on("socket", (socket) => socket.unref());
     req.setTimeout(timeoutMs, () => req.destroy());
     req.on("error", () => resolve(null));
-    req.unref();
   });
 
 export function isUpdateCheckDisabled(
