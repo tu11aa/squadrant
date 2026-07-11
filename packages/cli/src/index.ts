@@ -38,6 +38,7 @@ import { hooksCommand } from "./commands/hooks.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
+import { notifyIfUpdateAvailable } from "@squadrant/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -70,6 +71,10 @@ if (process.argv[2] !== "config") {
           );
         }
       }
+
+      // #536: best-effort, fire-and-forget update-available check — never awaited,
+      // so it can't add latency; every failure mode inside is caught and silent.
+      void notifyIfUpdateAvailable({ config: cfg, currentVersion: pkg.version });
     }
   } catch {
     // Drift banner is best-effort; never block the CLI.
