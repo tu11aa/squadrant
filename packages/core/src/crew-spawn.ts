@@ -25,6 +25,7 @@ import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 import {
   buildCompletionProtocol,
   shellQuote,
+  niceCrewCommand,
   titleFor,
   isCrewTitle,
   nameFromTitle,
@@ -355,7 +356,7 @@ export async function runCrewSpawn(
     // Prefix the CLI command with env so the hook bridge + signal verb running
     // inside the crew's cmux tab can identify their task.
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${cliCommand}`);
+    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const claudeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     // #466: surface non-delivery explicitly instead of silently returning success.
@@ -409,7 +410,7 @@ export async function runCrewSpawn(
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${cliCommand}`);
+    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const opencodeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until the idle
@@ -444,7 +445,7 @@ export async function runCrewSpawn(
   const direction: PanePlacement = input.direction ?? "tab";
   const title = titleFor(input.project, name);
   const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
-  await deps.runtime.sendToPane(pane, cliCommand);
+  await deps.runtime.sendToPane(pane, niceCrewCommand(cliCommand));
   if (interactive) {
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const genericResult = await deps.sendFirstTurn(pane, firstTurnTask, preLaunchScreen);
