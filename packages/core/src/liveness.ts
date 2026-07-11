@@ -218,5 +218,12 @@ export function reconcileLiveness(
   }
   // runtime/agent authoritative. A newer open (or any end) wins; a stale one is ignored.
   if (next.startedAt >= prev.startedAt || next.lastState === "end") return next;
+  // #565: prev is already dead (stopped/gone) and next reports a live pid — a
+  // live process outranks a startedAt comparison, otherwise a captain that
+  // comes back can never be re-adopted once wrongly marked dead. Does not
+  // apply when prev is still alive: an older-but-live duplicate must not
+  // override the currently-tracked live session (#527).
+  const prevAlive = prev.lastState === "start" && prev.pidAlive;
+  if (!prevAlive && next.lastState === "start" && next.pidAlive) return next;
   return prev;
 }
