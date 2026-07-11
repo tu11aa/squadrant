@@ -15,7 +15,7 @@ export interface DaemonRestartNotifyDriver {
 
 /** Matches the appendCaptainMessage signature from @squadrant/core/mailbox.
  *  The caller provides the closure with stateRoot already bound. */
-export type AppendCaptainMessageFn = (project: string, text: string) => Promise<void>;
+export type AppendCaptainMessageFn = (project: string, text: string) => Promise<void | number>;
 
 function statePath(stateRoot: string): string {
   return path.join(stateRoot, "daemon-restart-state.json");
