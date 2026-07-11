@@ -811,4 +811,100 @@ describe("runCrewClose", () => {
     // pane found, pane closed; no throw despite daemon error
     expect(runtime.closePane).toHaveBeenCalledOnce();
   });
+
+  // ── #513: same-name respawn zombie regression ────────────────────────────
+  // Repro: spawn cv-qa (opencode) -> close IMMEDIATELY -> respawn cv-qa
+  // (claude). The daemon later fires a false CREW STALLED for the CLOSED
+  // opencode task because close's single listTasks() snapshot missed the
+  // record (registration race) and/or a stale same-name record survives
+  // uncancelled once a second one exists.
+
+  it("retries the name lookup when the first snapshot has no match yet, then terminalizes it (registration race)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:cv-qa" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "b3449b4a", name: "cv-qa", state: "working", provider: "opencode", cwd: PROJ_PATH } as Partial<TaskRecord>;
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    // First snapshot: dispatch hasn't landed yet (empty). Second snapshot: it has.
+    const listTasks = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([task]);
+
+    await runCrewClose(PROJECT, "cv-qa", runtime, "workspace:1", {
+      listTasks,
+      emitEvent,
+      closeCodexThread: vi.fn(),
+      sleep: vi.fn().mockResolvedValue(undefined), // no real delay in tests
+    });
+
+    expect(listTasks.mock.calls.length).toBeGreaterThan(1);
+    expect(emitEvent).toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.cancelled", id: "b3449b4a" }),
+    );
+  });
+
+  it("gives up after bounded retries and still closes the pane when no daemon record ever appears", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:cv-qa" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    const listTasks = vi.fn().mockResolvedValue([]);
+
+    await runCrewClose(PROJECT, "cv-qa", runtime, "workspace:1", {
+      listTasks,
+      emitEvent,
+      closeCodexThread: vi.fn(),
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(emitEvent).not.toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.cancelled" }),
+    );
+    expect(runtime.closePane).toHaveBeenCalledOnce();
+  });
+
+  it("terminalizes EVERY non-terminal record matching the name, not just the first match (duplicate same-name records)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:cv-qa" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    // A prior close-race left an orphaned opencode record uncancelled; the
+    // live claude crew (respawned under the same name) is the one being closed now.
+    const zombie = { id: "b3449b4a", name: "cv-qa", state: "working", provider: "opencode", cwd: PROJ_PATH, createdAt: 1000 } as Partial<TaskRecord>;
+    const live = { id: "f6f5200d", name: "cv-qa", state: "working", provider: "claude", cwd: PROJ_PATH, createdAt: 2000 } as Partial<TaskRecord>;
+
+    await runCrewClose(PROJECT, "cv-qa", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([zombie, live]),
+      emitEvent,
+      closeCodexThread: vi.fn(),
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(emitEvent).toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.cancelled", id: "b3449b4a" }),
+    );
+    expect(emitEvent).toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.cancelled", id: "f6f5200d" }),
+    );
+  });
+
+  it("anchors reap/worktree cleanup on the most-recently-dispatched match when duplicates exist", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:cv-qa" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const oldWorktree = `${PROJ_PATH}/.worktrees/myproj-cv-qa-old`;
+    const newWorktree = `${PROJ_PATH}/.worktrees/myproj-cv-qa-new`;
+    const zombie = { id: "old-id", name: "cv-qa", state: "working", provider: "opencode", cwd: oldWorktree, createdAt: 1000 } as Partial<TaskRecord>;
+    const live = { id: "new-id", name: "cv-qa", state: "working", provider: "claude", cwd: newWorktree, createdAt: 2000 } as Partial<TaskRecord>;
+
+    await runCrewClose(PROJECT, "cv-qa", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([zombie, live]),
+      emitEvent: vi.fn().mockResolvedValue(undefined),
+      closeCodexThread: vi.fn(),
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(removeWorktreeMock).toHaveBeenCalledWith(PROJ_PATH, newWorktree);
+    expect(removeWorktreeMock).not.toHaveBeenCalledWith(PROJ_PATH, oldWorktree);
+  });
 });
