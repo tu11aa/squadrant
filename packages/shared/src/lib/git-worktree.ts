@@ -10,6 +10,7 @@
 // Builds and the daemon still run from the MAIN checkout's `dist`; worktrees
 // edit source only (issue #216 caveat).
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 export interface WorktreeSpec {
@@ -32,6 +33,27 @@ export function worktreePath(repoRoot: string, worktreeDir: string, project: str
 /** Crew branch name for a worktree crew. */
 export function crewBranch(name: string): string {
   return `crew/${name}`;
+}
+
+/**
+ * #387: macOS Spotlight (mds/mdworker) indexing every crew worktree's
+ * node_modules can itself starve CPU. A `.metadata_never_index` marker file
+ * excludes its directory (recursively, including subdirectories created
+ * later) from indexing. Dropping ONE marker in the worktree ROOT (once, the
+ * first time a project spawns a worktree crew) covers every crew worktree
+ * ever created under it after — no per-worktree marker needed. Best-effort
+ * and macOS-only: never blocks worktree creation over an indexing nicety.
+ */
+function ensureSpotlightExcluded(repoRoot: string, worktreeDir: string): void {
+  if (process.platform !== "darwin") return;
+  try {
+    const dir = path.resolve(repoRoot, worktreeDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const marker = path.join(dir, ".metadata_never_index");
+    if (!fs.existsSync(marker)) fs.writeFileSync(marker, "");
+  } catch {
+    // Best-effort — Spotlight exclusion is a nicety, not a correctness requirement.
+  }
 }
 
 // #359: derive the branch a new worktree should be based on. Reads origin/HEAD
@@ -62,6 +84,8 @@ export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): str
  *   uniquified name.
  */
 export function addWorktree(spec: WorktreeSpec): string {
+  ensureSpotlightExcluded(spec.repoRoot, spec.worktreeDir);
+
   const originalBranch = crewBranch(spec.name);
 
   let targetName = spec.name;
@@ -127,7 +151,51 @@ export function addWorktree(spec: WorktreeSpec): string {
     ["-C", spec.repoRoot, "worktree", "add", wt, "-b", targetBranch, spec.base],
     { stdio: "pipe" },
   );
+  installWorktreeDependencies(wt);
   return wt;
+}
+
+/**
+ * #387: `git worktree add` never populates node_modules — a fresh worktree
+ * has none. Node's module resolution walks up parent directories looking for
+ * node_modules, and since worktrees live nested under <repoRoot>/<worktreeDir>/,
+ * a worktree with no local node_modules silently falls through to the main
+ * checkout's node_modules instead of failing — so a crew's tsc/vitest run can
+ * type-check or test against the main repo's stale code without any error.
+ * Installing here, synchronously, before the worktree is handed to a crew
+ * closes that gap: the worktree always has its own complete dependency tree,
+ * or worktree creation fails loudly instead of leaving a crew to discover the
+ * gap mid-task.
+ *
+ * addWorktree() is called for every registered project, not just squadrant's
+ * own repo — projects use pnpm, yarn, or npm, and some aren't JS projects at
+ * all. Detect the package manager from its lockfile rather than assuming
+ * pnpm; each is invoked with its own frozen/reproducible-install flag so this
+ * never silently drifts the project's lockfile. No package.json → nothing to
+ * install, not an error. package.json with no recognized lockfile → skip
+ * rather than guess: without a lockfile there's no deterministic manifest to
+ * freeze against, and guessing a package manager risks generating a stray
+ * lockfile the crew never asked for — but that skip still leaves the worktree
+ * without its own node_modules, i.e. still exposed to the exact silent
+ * cross-checkout resolution this function exists to close. Warn on stderr so
+ * that exposure is visible instead of silent.
+ */
+function installWorktreeDependencies(wt: string): void {
+  if (!fs.existsSync(path.join(wt, "package.json"))) return;
+
+  if (fs.existsSync(path.join(wt, "pnpm-lock.yaml"))) {
+    execFileSync("pnpm", ["-C", wt, "install", "--frozen-lockfile"], { stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "yarn.lock"))) {
+    execFileSync("yarn", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "package-lock.json"))) {
+    execFileSync("npm", ["ci"], { cwd: wt, stdio: "pipe" });
+  } else if (fs.existsSync(path.join(wt, "bun.lockb"))) {
+    execFileSync("bun", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+  } else {
+    process.stderr.write(
+      `worktree ${wt}: package.json present but no lockfile — dependencies not installed; local typechecks/tests may resolve against the main checkout instead of this worktree.\n`,
+    );
+  }
 }
 
 /**
