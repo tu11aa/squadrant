@@ -250,15 +250,21 @@ describe("addWorktree — package manager detection (#387)", () => {
     expect(nonGitCalls).toHaveLength(0);
   });
 
-  it("skips install when package.json has no recognized lockfile, without guessing a package manager", () => {
+  it("skips install when package.json has no recognized lockfile, without guessing a package manager, but warns on stderr", () => {
     mockProjectFiles("no-lockfile");
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    expect(() =>
-      addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" }),
-    ).not.toThrow();
+    let wt = "";
+    expect(() => {
+      wt = addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+    }).not.toThrow();
 
     const nonGitCalls = execFileSyncMock.mock.calls.filter((c) => c[0] !== "git");
     expect(nonGitCalls).toHaveLength(0);
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining(wt));
+    expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("no lockfile"));
+
+    stderrWrite.mockRestore();
   });
 });
 

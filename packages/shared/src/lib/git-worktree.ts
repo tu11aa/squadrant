@@ -175,7 +175,10 @@ export function addWorktree(spec: WorktreeSpec): string {
  * install, not an error. package.json with no recognized lockfile → skip
  * rather than guess: without a lockfile there's no deterministic manifest to
  * freeze against, and guessing a package manager risks generating a stray
- * lockfile the crew never asked for.
+ * lockfile the crew never asked for — but that skip still leaves the worktree
+ * without its own node_modules, i.e. still exposed to the exact silent
+ * cross-checkout resolution this function exists to close. Warn on stderr so
+ * that exposure is visible instead of silent.
  */
 function installWorktreeDependencies(wt: string): void {
   if (!fs.existsSync(path.join(wt, "package.json"))) return;
@@ -188,6 +191,10 @@ function installWorktreeDependencies(wt: string): void {
     execFileSync("npm", ["ci"], { cwd: wt, stdio: "pipe" });
   } else if (fs.existsSync(path.join(wt, "bun.lockb"))) {
     execFileSync("bun", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+  } else {
+    process.stderr.write(
+      `worktree ${wt}: package.json present but no lockfile — dependencies not installed; local typechecks/tests may resolve against the main checkout instead of this worktree.\n`,
+    );
   }
 }
 
