@@ -1,17 +1,21 @@
 // Best-effort "daemon restarted" broadcast to all running captains, fired on
 // daemon boot — but only when the running build actually changed (version or
-// local rebuild), not on a same-build launchd crash-restart. Modeled exactly
-// on notifyCaptainsOfEffort (commands/effort.ts): same driver seam, same
-// best-effort/never-throw contract.
+// local rebuild), not on a same-build launchd crash-restart. Routes through the
+// mailbox (appendCaptainMessage) so the daemon's delivery-loop drains it with
+// draft protection, instead of raw driver.send which clobbers the user's draft
+// (#529).
 import fs from "node:fs";
 import path from "node:path";
 import type { SquadrantConfig } from "@squadrant/shared";
 
-/** Minimal slice of RuntimeDriver used to notify a captain. */
+/** Minimal slice of RuntimeDriver used to resolve captain status. */
 export interface DaemonRestartNotifyDriver {
   status(nameOrId: string): Promise<{ id: string } | null>;
-  send(ref: string, message: string): Promise<void>;
 }
+
+/** Matches the appendCaptainMessage signature from @squadrant/core/mailbox.
+ *  The caller provides the closure with stateRoot already bound. */
+export type AppendCaptainMessageFn = (project: string, text: string) => Promise<void>;
 
 function statePath(stateRoot: string): string {
   return path.join(stateRoot, "daemon-restart-state.json");
@@ -44,22 +48,26 @@ function restartNotice(version: string, isDevRebuild: boolean): string {
 }
 
 /**
- * Send the daemon-restart notice to every running captain. Unlike
- * notifyCaptainsOfEffort there is no initiating cwd captain to exclude — the
- * daemon boots independently of any captain — so this reaches ALL of them.
+ * Send the daemon-restart notice to every running captain via the mailbox.
+ * Unlike notifyCaptainsOfEffort there is no initiating cwd captain to exclude —
+ * the daemon boots independently of any captain — so this reaches ALL of them.
+ * The appendCaptainMessage callback is a closure that captures stateRoot from
+ * the caller (squadrantd.ts), so it takes (projectName, text).
  */
 export async function notifyCaptainsOfDaemonRestart(
   version: string,
   config: SquadrantConfig,
   driver: DaemonRestartNotifyDriver,
   isDevRebuild = false,
+  appendCaptainMessage: AppendCaptainMessageFn,
 ): Promise<void> {
   const notice = restartNotice(version, isDevRebuild);
-  for (const [, proj] of Object.entries(config.projects)) {
+  for (const [projName] of Object.entries(config.projects)) {
     try {
+      const proj = config.projects[projName];
       const ref = await driver.status(proj.captainName);
       if (ref) {
-        await driver.send(ref.id, notice);
+        await appendCaptainMessage(projName, notice);
       }
     } catch {
       // individual project captain unreachable — skip
@@ -73,6 +81,7 @@ export interface MaybeBroadcastDaemonRestartOpts {
   stateRoot: string;
   config: SquadrantConfig;
   driver: DaemonRestartNotifyDriver;
+  appendCaptainMessage: AppendCaptainMessageFn;
 }
 
 /**
@@ -83,12 +92,12 @@ export interface MaybeBroadcastDaemonRestartOpts {
  */
 export async function maybeBroadcastDaemonRestart(opts: MaybeBroadcastDaemonRestartOpts): Promise<void> {
   try {
-    const { version, buildMtimeMs, stateRoot, config, driver } = opts;
+    const { version, buildMtimeMs, stateRoot, config, driver, appendCaptainMessage } = opts;
     const signature = computeRestartSignature(version, buildMtimeMs);
     const previous = readPersistedRestartSignature(stateRoot);
     if (previous === signature) return;
     const isDevRebuild = previous !== null && previous.split("::")[0] === version;
-    await notifyCaptainsOfDaemonRestart(version, config, driver, isDevRebuild);
+    await notifyCaptainsOfDaemonRestart(version, config, driver, isDevRebuild, appendCaptainMessage);
     writePersistedRestartSignature(stateRoot, signature);
   } catch {
     // best-effort — never let a broadcast failure block or crash daemon boot

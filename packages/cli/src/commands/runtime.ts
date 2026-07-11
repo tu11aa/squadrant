@@ -76,6 +76,38 @@ runtimeCommand
     }
   });
 
+export async function runRuntimeSend(arg1: string, arg2: string | undefined, opts: { command?: boolean }) {
+  const config = loadConfig();
+  const registry = buildRegistry();
+  
+  if (opts.command && arg2 !== undefined) {
+    throw new Error("With --command, pass only the message (not a project name)");
+  }
+  const target = opts.command ? undefined : arg1;
+  const message = opts.command ? arg1 : arg2;
+  if (!message) throw new Error("Message is required");
+  
+  const { requireDaemon } = await import("../lib/require-daemon.js");
+  const { appendCaptainMessage } = await import("@squadrant/core");
+  await requireDaemon();
+  
+  const resolved = resolveTarget(registry, config, target, !!opts.command);
+  await needRef(resolved);
+  
+      const finalProject = opts.command ? config.commandName : target!;
+      
+      const { join, dirname } = await import("node:path");
+      const { DEFAULT_CONFIG_PATH } = await import("@squadrant/shared");
+      const stateRoot = join(dirname(DEFAULT_CONFIG_PATH), "state");
+
+      await appendCaptainMessage({
+        stateRoot,
+        project: finalProject,
+        text: message,
+        source: "cli",
+      });
+}
+
 runtimeCommand
   .command("send")
   .description("Send a message to a target workspace AND commit with Enter. With --command, the first positional is the message.")
@@ -83,43 +115,8 @@ runtimeCommand
   .argument("[arg2]", "Message (when target is a project). Omit when using --command.")
   .option("--command", "Target the command workspace")
   .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean }) => {
-    const config = loadConfig();
-    const registry = buildRegistry();
     try {
-      if (opts.command && arg2 !== undefined) {
-        throw new Error("With --command, pass only the message (not a project name)");
-      }
-      const target = opts.command ? undefined : arg1;
-      const message = opts.command ? arg1 : arg2;
-      if (!message) throw new Error("Message is required");
-      const resolved = resolveTarget(registry, config, target, !!opts.command);
-      const ref = await needRef(resolved);
-      await resolved.driver.send(ref, message);
-    } catch (err) {
-      console.error(chalk.red((err as Error).message));
-      process.exit(1);
-    }
-  });
-
-runtimeCommand
-  .command("send-key")
-  .description("Send a literal key press (e.g. Enter, Escape) to a target workspace. With --command, the first positional is the key.")
-  .argument("<arg1>", "Project name, or the key when --command is used")
-  .argument("[arg2]", "Key name (when target is a project). Omit when using --command.")
-  .option("--command", "Target the command workspace")
-  .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean }) => {
-    const config = loadConfig();
-    const registry = buildRegistry();
-    try {
-      if (opts.command && arg2 !== undefined) {
-        throw new Error("With --command, pass only the key (not a project name)");
-      }
-      const target = opts.command ? undefined : arg1;
-      const key = opts.command ? arg1 : arg2;
-      if (!key) throw new Error("Key is required");
-      const resolved = resolveTarget(registry, config, target, !!opts.command);
-      const ref = await needRef(resolved);
-      await resolved.driver.sendKey(ref, key);
+      await runRuntimeSend(arg1, arg2, opts);
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);

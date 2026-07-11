@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import os from "node:os";
 import { getDefaultConfig, saveConfig } from "@squadrant/shared";
 import type { SquadrantConfig, ProjectConfig } from "@squadrant/shared";
-import { runEffortGet, runEffortSet, notifyCaptainsOfEffort } from "../effort.js";
+import { runEffortGet, runEffortSet, notifyCaptainsOfEffort, effortCommand } from "../effort.js";
+
+const requireDaemon = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/require-daemon.js", () => ({
+  requireDaemon,
+}));
 
 let dir: string;
 let cfgPath: string;
@@ -13,6 +18,8 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-effort-"));
   cfgPath = path.join(dir, "config.json");
   saveConfig(getDefaultConfig(), cfgPath);
+  vi.resetAllMocks();
+  requireDaemon.mockResolvedValue(undefined);
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -120,7 +127,26 @@ describe("effort notify (self-notification exclusion)", () => {
     return { path: p, captainName, spokeVault: "", host: "" };
   }
 
-  it("does NOT notify the captain whose project path is the cwd, but DOES notify the others", async () => {
+  /** Track calls to appendCaptainMessage — used to prove the broadcast routes
+   *  through the mailbox instead of driver.send. */
+  function makeAppendSpy(): {
+    fn: (project: string, text: string) => Promise<void>;
+    projects: string[];
+    texts: string[];
+  } {
+    const projects: string[] = [];
+    const texts: string[] = [];
+    return {
+      fn: async (project, text) => {
+        projects.push(project);
+        texts.push(text);
+      },
+      projects,
+      texts,
+    };
+  }
+
+  it("does NOT call driver.send — enqueues to mailbox instead", async () => {
     const projA = fs.mkdtempSync(path.join(dir, "projA-"));
     const projB = fs.mkdtempSync(path.join(dir, "projB-"));
     const config = configWithProjects({
@@ -128,13 +154,15 @@ describe("effort notify (self-notification exclusion)", () => {
       b: project(projB, "captain-b"),
     });
     const sent: Array<{ captain: string; message: string }> = [];
+    const spy = makeAppendSpy();
 
-    await notifyCaptainsOfEffort("low", config, makeDriver(sent), projA);
+    await notifyCaptainsOfEffort("low", config, makeDriver(sent), projA, spy.fn);
 
-    const captains = sent.map((s) => s.captain);
-    expect(captains).not.toContain("captain-a"); // self — already saw stdout
-    expect(captains).toContain("captain-b"); // other running captain still notified
-    expect(captains).toHaveLength(1);
+    // MUST NOT call driver.send
+    expect(sent).toHaveLength(0);
+    // MUST enqueue to mailbox instead — only project-b (cwd-projA excluded)
+    expect(spy.projects).toEqual(["b"]);
+    expect(spy.texts[0]).toContain("effort");
   });
 
   it("matches cwd through symlinks (realpath), still excluding self", async () => {
@@ -143,11 +171,13 @@ describe("effort notify (self-notification exclusion)", () => {
     fs.symlinkSync(projA, link);
     const config = configWithProjects({ a: project(projA, "captain-a") });
     const sent: Array<{ captain: string; message: string }> = [];
+    const spy = makeAppendSpy();
 
     // cwd given via the symlink should still resolve to projA and skip it.
-    await notifyCaptainsOfEffort("max", config, makeDriver(sent), link);
+    await notifyCaptainsOfEffort("max", config, makeDriver(sent), link, spy.fn);
 
     expect(sent).toHaveLength(0);
+    expect(spy.projects).toHaveLength(0);
   });
 
   it("notifies every captain when cwd matches no project path", async () => {
@@ -158,9 +188,29 @@ describe("effort notify (self-notification exclusion)", () => {
       b: project(projB, "captain-b"),
     });
     const sent: Array<{ captain: string; message: string }> = [];
+    const spy = makeAppendSpy();
 
-    await notifyCaptainsOfEffort("balance", config, makeDriver(sent), path.join(dir, "elsewhere"));
+    await notifyCaptainsOfEffort("balance", config, makeDriver(sent), path.join(dir, "elsewhere"), spy.fn);
 
-    expect(sent.map((s) => s.captain).sort()).toEqual(["captain-a", "captain-b"]);
+    expect(sent).toHaveLength(0);
+    expect(spy.projects.sort()).toEqual(["a", "b"]);
+  });
+
+  it("handles driver failure gracefully without throwing (best effort)", async () => {
+    const config = configWithProjects({
+      a: project(path.join(dir, "projA"), "captain-a"),
+    });
+
+    const driver = {
+      status: vi.fn().mockRejectedValue(new Error("daemon unreachable"))
+    };
+    
+    const append = vi.fn();
+    
+    // Should NOT throw
+    await notifyCaptainsOfEffort("low", config, driver, path.join(dir, "elsewhere"), append);
+    
+    // And should not have appended
+    expect(append).not.toHaveBeenCalled();
   });
 });

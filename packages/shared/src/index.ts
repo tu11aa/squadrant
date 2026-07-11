@@ -14,6 +14,7 @@ export * from "./lib/cmux-probe.js";
 export * from "./lib/compat-manifest.js";
 export * from "./lib/config-drift.js";
 export * from "./lib/config-version.js";
+export * from "./lib/update-check.js";
 export * from "./lib/git-worktree.js";
 export * from "./lib/resolve-text-input.js";
 export * from "./lib/runtime-sync.js";

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Command } from "commander";
 
 const status = vi.hoisted(() => vi.fn());
 const send = vi.hoisted(() => vi.fn());
@@ -41,7 +42,11 @@ vi.mock("../../lib/require-daemon.js", () => ({
   requireDaemon,
 }));
 
-import { runPing } from "../ping.js";
+// Mock process.exit and console.error
+vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+vi.spyOn(console, "error").mockImplementation(() => {});
+
+import { runRuntimeSend } from "../runtime.js";
 
 const makeConfig = () => ({
   commandName: "command",
@@ -58,48 +63,46 @@ const makeConfig = () => ({
   metrics: { enabled: false, path: "/tmp/metrics.json" },
 });
 
-describe("runPing", () => {
+describe("runtime send", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     loadConfig.mockReturnValue(makeConfig());
     requireDaemon.mockResolvedValue(undefined);
-  });
-
-  it("rejects an unregistered project with a clear error", async () => {
-    await expect(runPing("nope", "hello")).rejects.toThrow(/not found/i);
-    expect(send).not.toHaveBeenCalled();
-    expect(sendKey).not.toHaveBeenCalled();
-    expect(appendCaptainMessage).not.toHaveBeenCalled();
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
   });
 
   it("delivers the message via the mailbox (enqueue) when daemon is running", async () => {
-    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
-
-    await runPing("projA", "hello from ping");
+    await runRuntimeSend("projA", "hello from runtime send", {});
 
     expect(send).not.toHaveBeenCalled();
     expect(sendKey).not.toHaveBeenCalled();
     expect(appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         project: "projA",
-        text: "hello from ping",
+        text: "hello from runtime send",
         source: "cli",
       })
     );
   });
 
-  it("errors clearly when the target captain is not running (no auto-boot)", async () => {
-    status.mockResolvedValue(null);
+  it("enqueues under cfg.commandName when using --command", async () => {
+    await runRuntimeSend("hello from command", undefined, { command: true });
 
-    await expect(runPing("projA", "hello")).rejects.toThrow(/not running/i);
     expect(send).not.toHaveBeenCalled();
-    expect(appendCaptainMessage).not.toHaveBeenCalled();
+    expect(sendKey).not.toHaveBeenCalled();
+    expect(appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "command",
+        text: "hello from command",
+        source: "cli",
+      })
+    );
   });
 
   it("enqueues nothing if the daemon is not running", async () => {
     requireDaemon.mockRejectedValue(new Error("daemon not running"));
 
-    await expect(runPing("projA", "hello")).rejects.toThrow(/daemon not running/i);
+    await expect(runRuntimeSend("projA", "hello from runtime send", {})).rejects.toThrow(/daemon not running/i);
     
     expect(send).not.toHaveBeenCalled();
     expect(sendKey).not.toHaveBeenCalled();

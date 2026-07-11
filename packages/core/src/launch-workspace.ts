@@ -178,6 +178,13 @@ export interface LaunchOneOpts {
   cwd: string;
   /** Honour the --fresh CLI flag when true. */
   forceFreshOverride?: boolean;
+  /**
+   * Honour the --keep CLI flag when true: suppress the "new day" and
+   * "template instructions updated" auto-fresh reasons so the session
+   * resumes. Never suppresses "first launch" — there is no session to
+   * resume yet.
+   */
+  keepOverride?: boolean;
   sessionsPath: string;
   templatesDir: string;
   /**
@@ -212,7 +219,9 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
       sessionsPath: opts.sessionsPath,
       templatesDir: opts.templatesDir,
     });
-    if (auto.fresh) {
+    if (auto.fresh && opts.keepOverride && auto.reason !== "first launch") {
+      opts.onFreshReason?.(`keeping previous session (--keep) despite: ${auto.reason}`);
+    } else if (auto.fresh) {
       opts.onFreshReason?.(auto.reason ?? "starting fresh");
       forceFresh = true;
     }
