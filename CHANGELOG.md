@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-11
+
+### Added
+
+- **Update notifier: warn installed users when a newer squadrant is on npm (#536):** CLI startup checks `registry.npmjs.org` directly (never the `npm view` CDN — see the v0.13.1 silent-publish-failure incident), caching the result for ~24h. Behind → a single actionable stderr line; up-to-date, offline, or timed-out → silent no-op, fired fire-and-forget via `node:https` with the request socket `unref()`'d so it never adds latency or blocks process exit. A failed check backs off for 1h instead of re-hitting the registry on every invocation. Opt-out via `defaults.updateCheck=false` or `NO_UPDATE_NOTIFIER`.
+- **`squadrant launch --keep` flag (#534):** mirrors `--fresh` — resumes the latest session even after a day rollover or template-hash change, so a captain session can survive across day/template boundaries instead of being forced fresh. Still starts fresh on a genuine first launch. `--fresh` and `--keep` are mutually exclusive.
+- **Daemon boot/exit markers (#535):** the daemon now stamps an explicit boot marker on start and an exit marker on a clean `stop()`, closing an un-awaited-shutdown gap where teardown could be skipped from the log's perspective on restart.
+
+### Fixed
+
+- **`squadrant status` default view showed a live captain as offline (#538):** the default table derived its captain indicator from `status.md`'s `captain_session` frontmatter — a Reactor-engine relic (retired #155) nothing writes anymore — while `--detailed` already read the daemon's `LivenessRegistry` correctly. The default view now shares the same `queryHealth()` call as `--detailed`; an unreachable daemon renders `?` rather than asserting offline (a false "unknown" is safe, a false "offline" is not).
+- **Captain `crew send` could silently confirm an open modal's default option, dropping the intended message (#516):** `confirmedSendToPane` had no equivalent to the delivery path's `hasModalOptionList` guard, so a paste+Enter into an open `AskUserQuestion`/permission modal would confirm the modal's highlighted default instead of delivering the message — this produced two wrong commits in production. `crew send` now precheck-fails loudly (throws, no "✔ Sent") instead of silently succeeding, without prematurely clearing a task's `BLOCKED` state ahead of the precheck.
+- **Two racing captain records for one project could flip a live captain to `gone` (#527):** when two cmux sessions share a cwd (a live captain plus a stale corpse from session restore), the runtime snapshot returned two records for the same project key and `LivenessRegistry`'s last-write-wins apply could let the dead-pid record win. Records are now grouped and deduplicated per project before applying, preferring the record with a live pid.
+- **Daemon-restart and effort broadcasts could clobber an in-progress captain draft (#529):** both broadcasts wrote directly into the captain pane via `CmuxDriver.send`, unconditionally overwriting whatever the user was typing. They now route through the same mailbox (`appendCaptainMessage`) the delivery loop already drain-protects.
+- **CLI-originated interrupts (ping, runtime send) bypassed the same draft-clobber protection (#529, #531):** routed through the mailbox; `squadrant runtime send-key` is removed (see Breaking).
+- **Crew close/respawn race could leave a zombie task record or fire a false `CREW STALLED` for an already-closed crew (#513, #522).**
+
 ### BREAKING
 
 - **Deleted the `squadrant runtime send-key` command.** It had zero callers across all plugins and templates. Deferring an unconditional `Enter` keypress through the mailbox guard changes its semantics entirely (what it submits depends on what draft the user typed while the key was queued). If you need to simulate a raw keypress without draft protection, shell out to the underlying binary directly: `/Applications/cmux.app/Contents/Resources/bin/cmux send-key --workspace "workspace:N" Enter`.
+
+## [0.15.0] - 2026-07-08
 
 ### Added
 
