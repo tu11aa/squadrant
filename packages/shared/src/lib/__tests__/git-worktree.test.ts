@@ -1,10 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import path from "node:path";
 
 const execFileSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   const merged = { ...actual, execFileSync: execFileSyncMock };
+  return { ...merged, default: merged };
+});
+
+// #387: ensureSpotlightExcluded touches the real filesystem (mkdir + marker
+// file) — mock it so addWorktree tests stay hermetic instead of writing into
+// /tmp on a real macOS dev machine.
+const mkdirSyncMock = vi.hoisted(() => vi.fn());
+const existsSyncMock = vi.hoisted(() => vi.fn(() => false));
+const writeFileSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const merged = {
+    ...actual,
+    mkdirSync: mkdirSyncMock,
+    existsSync: existsSyncMock,
+    writeFileSync: writeFileSyncMock,
+  };
   return { ...merged, default: merged };
 });
 
@@ -53,6 +70,44 @@ describe("addWorktree", () => {
       ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/crew-1", "develop"],
       expect.objectContaining({ stdio: "pipe" }),
     );
+  });
+
+  // ── #387: install a real, isolated dependency tree so a crew's own worktree
+  // never silently falls through to the main checkout's node_modules ────────
+
+  it("installs dependencies in the new worktree via `pnpm -C <wt> install --frozen-lockfile`", () => {
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref
+    execFileSyncMock.mockReturnValue(Buffer.from("")); // worktree add, then pnpm install
+
+    const wt = addWorktree({
+      repoRoot: "/tmp/brove",
+      worktreeDir: ".worktrees",
+      project: "brove",
+      name: "crew-1",
+      base: "develop",
+    });
+
+    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+      "pnpm",
+      ["-C", wt, "install", "--frozen-lockfile"],
+      expect.objectContaining({ stdio: "pipe" }),
+    );
+  });
+
+  it("propagates a failed install instead of handing the crew a broken worktree", () => {
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("")); // worktree add
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("ERR_PNPM_FROZEN_LOCKFILE"); }); // pnpm install
+
+    expect(() =>
+      addWorktree({
+        repoRoot: "/tmp/brove",
+        worktreeDir: ".worktrees",
+        project: "brove",
+        name: "crew-1",
+        base: "develop",
+      }),
+    ).toThrow("ERR_PNPM_FROZEN_LOCKFILE");
   });
 
   // ── #460: stale branch collision handling ──────────────────────────────────
@@ -110,6 +165,53 @@ describe("addWorktree", () => {
       ["-C", "/tmp/brove", "worktree", "add", expectedPath, "-b", "crew/fix-1-2", "develop"],
       expect.objectContaining({ stdio: "pipe" }),
     );
+  });
+});
+
+// ── #387: Spotlight (mds) exclusion marker on the worktree root ─────────────
+
+describe("addWorktree — Spotlight exclusion (#387)", () => {
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("not found"); }); // show-ref
+    execFileSyncMock.mockReturnValue(Buffer.from("")); // worktree add, pnpm install
+    mkdirSyncMock.mockReset();
+    existsSyncMock.mockReset().mockReturnValue(false);
+    writeFileSyncMock.mockReset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  });
+
+  it("drops a .metadata_never_index marker in the worktree root on darwin", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+
+    addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    const worktreeDirAbs = path.resolve("/tmp/brove", ".worktrees");
+    expect(mkdirSyncMock).toHaveBeenCalledWith(worktreeDirAbs, { recursive: true });
+    expect(writeFileSyncMock).toHaveBeenCalledWith(path.join(worktreeDirAbs, ".metadata_never_index"), "");
+  });
+
+  it("skips the marker on non-darwin platforms", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+
+    addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    expect(mkdirSyncMock).not.toHaveBeenCalled();
+    expect(writeFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite the marker when it already exists (one marker covers every worktree under it)", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    existsSyncMock.mockReturnValue(true);
+
+    addWorktree({ repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" });
+
+    expect(writeFileSyncMock).not.toHaveBeenCalled();
   });
 });
 

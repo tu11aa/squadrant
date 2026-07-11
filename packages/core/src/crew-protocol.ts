@@ -82,6 +82,23 @@ export function titleFor(project: string, name: string): string {
   return `🔧 ${project}:${name}`;
 }
 
+// #387: crews run arbitrary CPU-heavy commands (npm run build && npm test) at
+// their own discretion — squadrant never sees or controls those invocations,
+// so there's no central point to queue or cap them. `nice` sidesteps that:
+// applied to the crew's top-level CLI process at launch, every child it later
+// forks (tsc, vitest workers, pnpm) inherits the lowered scheduling priority.
+// Under N concurrent crews this keeps the OS scheduler favoring cmux/the
+// daemon's control-plane process over crew compute, so a burst of crew builds
+// slows down instead of starving the process that both crews depend on to stay
+// reachable. NICE_LEVEL 10 is a moderate deprioritization (range -20..19,
+// default 0) — enough to yield under contention without idling crew work when
+// the machine is otherwise quiet.
+const CREW_NICE_LEVEL = 10;
+
+export function niceCrewCommand(cmd: string): string {
+  return `nice -n ${CREW_NICE_LEVEL} ${cmd}`;
+}
+
 export function isCrewTitle(project: string, title: string): boolean {
   return title.startsWith(`🔧 ${project}:`);
 }

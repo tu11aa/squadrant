@@ -10,6 +10,7 @@
 // Builds and the daemon still run from the MAIN checkout's `dist`; worktrees
 // edit source only (issue #216 caveat).
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 export interface WorktreeSpec {
@@ -32,6 +33,27 @@ export function worktreePath(repoRoot: string, worktreeDir: string, project: str
 /** Crew branch name for a worktree crew. */
 export function crewBranch(name: string): string {
   return `crew/${name}`;
+}
+
+/**
+ * #387: macOS Spotlight (mds/mdworker) indexing every crew worktree's
+ * node_modules can itself starve CPU. A `.metadata_never_index` marker file
+ * excludes its directory (recursively, including subdirectories created
+ * later) from indexing. Dropping ONE marker in the worktree ROOT (once, the
+ * first time a project spawns a worktree crew) covers every crew worktree
+ * ever created under it after — no per-worktree marker needed. Best-effort
+ * and macOS-only: never blocks worktree creation over an indexing nicety.
+ */
+function ensureSpotlightExcluded(repoRoot: string, worktreeDir: string): void {
+  if (process.platform !== "darwin") return;
+  try {
+    const dir = path.resolve(repoRoot, worktreeDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const marker = path.join(dir, ".metadata_never_index");
+    if (!fs.existsSync(marker)) fs.writeFileSync(marker, "");
+  } catch {
+    // Best-effort — Spotlight exclusion is a nicety, not a correctness requirement.
+  }
 }
 
 // #359: derive the branch a new worktree should be based on. Reads origin/HEAD
@@ -62,6 +84,8 @@ export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): str
  *   uniquified name.
  */
 export function addWorktree(spec: WorktreeSpec): string {
+  ensureSpotlightExcluded(spec.repoRoot, spec.worktreeDir);
+
   const originalBranch = crewBranch(spec.name);
 
   let targetName = spec.name;
@@ -127,7 +151,26 @@ export function addWorktree(spec: WorktreeSpec): string {
     ["-C", spec.repoRoot, "worktree", "add", wt, "-b", targetBranch, spec.base],
     { stdio: "pipe" },
   );
+  installWorktreeDependencies(wt);
   return wt;
+}
+
+/**
+ * #387: `git worktree add` never populates node_modules — a fresh worktree
+ * has none. Its own pnpm workspace root is the worktree itself (each worktree
+ * carries its own pnpm-workspace.yaml, so `pnpm -C <wt> install` never touches
+ * the main checkout or a sibling worktree), but Node's module resolution walks
+ * up parent directories looking for node_modules. Since worktrees live nested
+ * under <repoRoot>/<worktreeDir>/, a worktree with no local node_modules
+ * silently falls through to the main checkout's node_modules instead of
+ * failing — so a crew's tsc/vitest run can type-check or test against the
+ * main repo's stale code without any error. Installing here, synchronously,
+ * before the worktree is handed to a crew closes that gap: the worktree
+ * always has its own complete dependency tree, or worktree creation fails
+ * loudly instead of leaving a crew to discover the gap mid-task.
+ */
+function installWorktreeDependencies(wt: string): void {
+  execFileSync("pnpm", ["-C", wt, "install", "--frozen-lockfile"], { stdio: "pipe" });
 }
 
 /**
