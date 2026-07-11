@@ -1,16 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import https from "node:https";
 import type { SquadrantConfig } from "../config.js";
 
 export interface UpdateCheckState {
   lastChecked?: number;
   latestKnown?: string;
+  /** Set when the most recent check attempt failed (offline/timeout). Drives a shorter
+   *  FAILURE_RETRY_MS backoff instead of the full 24h success interval, so an offline
+   *  machine retries roughly hourly instead of hitting the registry on every invocation. */
+  lastCheckFailed?: boolean;
 }
 
 export interface CheckForUpdateOutcome {
   notice: string | null;
-  /** New state to persist, or null when nothing changed (opt-out / cache hit / fetch failure). */
+  /** New state to persist, or null when nothing changed (opt-out / cache hit). */
   newState: UpdateCheckState | null;
 }
 
@@ -18,7 +23,43 @@ export const UPDATE_CHECK_STATE_PATH = path.join(os.homedir(), ".config", "squad
 
 const REGISTRY_URL = "https://registry.npmjs.org/squadrant/latest";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const FAILURE_RETRY_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 1500;
+
+export type RegistryRequest = (url: string, timeoutMs: number) => Promise<unknown>;
+
+/**
+ * Fetches over node:https rather than global fetch(): a fetch() Promise exposes no
+ * handle to detach from the event loop, so a pending request left ref'd would delay
+ * process exit by up to timeoutMs on every single invocation of an offline machine.
+ * req.unref() is Node's documented mechanism for exactly this — it lets the process
+ * exit immediately once the CLI's own work is done, dropping the response if it
+ * arrives after. That's fine: this check is a best-effort background notice, never
+ * something the CLI's exit should wait on.
+ */
+const requestJson: RegistryRequest = (url, timeoutMs) =>
+  new Promise((resolve) => {
+    const req = https.get(url, { headers: { "user-agent": "squadrant-update-check" } }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve(null);
+        return;
+      }
+      let body = "";
+      res.setEncoding("utf-8");
+      res.on("data", (chunk) => (body += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.setTimeout(timeoutMs, () => req.destroy());
+    req.on("error", () => resolve(null));
+    req.unref();
+  });
 
 export function isUpdateCheckDisabled(
   config: Pick<SquadrantConfig, "defaults"> | undefined,
@@ -28,9 +69,14 @@ export function isUpdateCheckDisabled(
   return config?.defaults?.updateCheck === false;
 }
 
-export function isCacheStale(state: UpdateCheckState | undefined, now: number, intervalMs = CHECK_INTERVAL_MS): boolean {
+export function isCacheStale(
+  state: UpdateCheckState | undefined,
+  now: number,
+  intervalMs = CHECK_INTERVAL_MS,
+  failureIntervalMs = FAILURE_RETRY_MS,
+): boolean {
   if (!state?.lastChecked) return true;
-  return now - state.lastChecked >= intervalMs;
+  return now - state.lastChecked >= (state.lastCheckFailed ? failureIntervalMs : intervalMs);
 }
 
 export function isNewerVersion(latest: string, current: string): boolean {
@@ -48,28 +94,24 @@ export function formatUpdateNotice(latest: string, current: string): string {
 
 /**
  * Queries the npm registry directly (never the `npm view` CDN — see the v0.13.1 incident).
- * Never throws; races the request against its own timer so a bad network resolves to null
- * within timeoutMs even if the injected fetch implementation ignores the abort signal.
+ * Never throws. Races the request against its own unref'd timer, so the *logical* result
+ * is always bounded by timeoutMs regardless of how requestFn behaves — real network
+ * failures are additionally handled by requestJson's own req.unref()/setTimeout, which
+ * guarantees the underlying resource can never hold the process open either.
  */
 export async function fetchLatestVersion(
-  fetchImpl: typeof fetch = fetch,
+  requestFn: RegistryRequest = requestJson,
   timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<string | null> {
-  const controller = new AbortController();
   const timeout = new Promise<null>((resolve) => {
-    const timer = setTimeout(() => {
-      controller.abort();
-      resolve(null);
-    }, timeoutMs);
+    const timer = setTimeout(() => resolve(null), timeoutMs);
     timer.unref?.();
   });
 
   const request = (async (): Promise<string | null> => {
     try {
-      const res = await fetchImpl(REGISTRY_URL, { signal: controller.signal });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { version?: unknown };
-      return typeof data.version === "string" ? data.version : null;
+      const data = (await requestFn(REGISTRY_URL, timeoutMs)) as { version?: unknown } | null;
+      return typeof data?.version === "string" ? data.version : null;
     } catch {
       return null;
     }
@@ -78,25 +120,27 @@ export async function fetchLatestVersion(
   return Promise.race([request, timeout]);
 }
 
-/** Pure decision core: given cache state and injected fetch, decides whether to print a notice and what state to persist. No filesystem access. */
+/** Pure decision core: given cache state and an injected request function, decides whether
+ *  to print a notice and what state to persist. No filesystem access. */
 export async function checkForUpdate(opts: {
   currentVersion: string;
   state: UpdateCheckState | undefined;
   now: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: RegistryRequest;
   intervalMs?: number;
+  failureIntervalMs?: number;
   timeoutMs?: number;
 }): Promise<CheckForUpdateOutcome> {
-  if (!isCacheStale(opts.state, opts.now, opts.intervalMs)) {
+  if (!isCacheStale(opts.state, opts.now, opts.intervalMs, opts.failureIntervalMs)) {
     const latest = opts.state?.latestKnown;
     const notice = latest && isNewerVersion(latest, opts.currentVersion) ? formatUpdateNotice(latest, opts.currentVersion) : null;
     return { notice, newState: null };
   }
 
   const latest = await fetchLatestVersion(opts.fetchImpl, opts.timeoutMs);
-  if (!latest) return { notice: null, newState: null };
+  if (!latest) return { notice: null, newState: { lastChecked: opts.now, lastCheckFailed: true } };
 
-  const newState: UpdateCheckState = { lastChecked: opts.now, latestKnown: latest };
+  const newState: UpdateCheckState = { lastChecked: opts.now, latestKnown: latest, lastCheckFailed: false };
   const notice = isNewerVersion(latest, opts.currentVersion) ? formatUpdateNotice(latest, opts.currentVersion) : null;
   return { notice, newState };
 }
@@ -120,13 +164,17 @@ export function writeUpdateCheckState(state: UpdateCheckState, statePath: string
 
 /**
  * CLI entrypoint wiring: opt-out check, cache read, decision, cache write, notice print —
- * all in one best-effort call that never throws and never blocks past fetchLatestVersion's timeout.
+ * all in one best-effort call that never throws. Not awaiting this at the call site keeps
+ * it off the command's own logic; the unref'd transport (see requestJson) and the bounded
+ * race in fetchLatestVersion mean a pending check can't delay process exit either, and a
+ * failed attempt is cached (see isCacheStale's failureIntervalMs) so an offline machine
+ * doesn't retry the registry on every single invocation.
  */
 export async function notifyIfUpdateAvailable(opts: {
   config: Pick<SquadrantConfig, "defaults"> | undefined;
   currentVersion: string;
   env?: NodeJS.ProcessEnv;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: RegistryRequest;
   statePath?: string;
   readState?: (statePath: string) => UpdateCheckState | undefined;
   writeState?: (state: UpdateCheckState, statePath: string) => void;

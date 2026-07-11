@@ -72,8 +72,10 @@ if (process.argv[2] !== "config") {
         }
       }
 
-      // #536: best-effort, fire-and-forget update-available check — never awaited,
-      // so it can't add latency; every failure mode inside is caught and silent.
+      // #536: best-effort update-available check. Not awaited so it never blocks command
+      // logic; the unref'd node:https transport and bounded race inside notifyIfUpdateAvailable
+      // (see update-check.ts) mean a pending check can't delay process exit either, and a
+      // failed attempt is cached so an offline machine doesn't re-hit the registry every run.
       void notifyIfUpdateAvailable({ config: cfg, currentVersion: pkg.version });
     }
   } catch {
