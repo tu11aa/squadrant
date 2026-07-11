@@ -14,11 +14,45 @@ describe("runLivenessTick", () => {
     expect(reg.get("p")?.pidAlive).toBe(true);
     expect(reg.get("p")?.lastState).toBe("start");
   });
-  it("captain absent from snapshot → markEnded (stopped), entry kept", async () => {
+  it("captain absent from snapshot + pid confirmed dead → markEnded (stopped), entry kept", async () => {
     const reg = memReg();
     reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
-    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => true, now: () => 5_000 });
+    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => false, now: () => 5_000 });
     expect(reg.get("p")?.lastState).toBe("end");
+  });
+
+  // #565: absence from a single snapshot is not proof of death. Reproduces the
+  // live incident — bet2fun-app's captain vanished from the runtime snapshot
+  // (its cmux record degraded to role:"unknown") while its pid was still very
+  // much alive; the old code inferred "ended" from absence alone and silently
+  // paused delivery + reaped its live crews forever.
+  it("captain absent from snapshot but pid still alive → NOT marked ended (#565 fail-safe)", async () => {
+    const reg = memReg();
+    reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
+    const lines: string[] = [];
+    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => true, now: () => 5_000, log: (m) => lines.push(m) });
+    expect(reg.get("p")?.lastState).toBe("start");
+    expect(deriveCaptainState(reg.get("p"))).toBe("alive");
+    expect(lines).toContainEqual(expect.stringContaining("missing from snapshot but not confirmed dead"));
+  });
+
+  it("captain absent from snapshot with an unknown (null) pid → left alone, not marked ended (#565 fail-safe)", async () => {
+    const reg = memReg();
+    reg.apply({ project: "p", role: "captain", pid: null, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
+    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => { throw new Error("must not be called with a null pid"); }, now: () => 5_000 });
+    expect(reg.get("p")?.lastState).toBe("start");
+  });
+
+  // #565 root cause: cmux degraded the live captain's launchCommand so
+  // roleFromTemplate can no longer classify it — the record shows up with
+  // role:"unknown" even though its sessionId is the one we already confirmed
+  // is this project's captain.
+  it("record with role:unknown but a known-captain sessionId is still treated as the captain (#565)", async () => {
+    const reg = memReg();
+    reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "end", lastSeenAt: 1_000, pidAlive: false, source: "runtime" });
+    const degraded: RuntimeLivenessRecord = { role: "unknown", project: "p", pid: 100, sessionId: "s", present: true };
+    await runLivenessTick({ registry: reg, liveness: async () => [degraded], isPidAlive: () => true, now: () => 5_000 });
+    expect(deriveCaptainState(reg.get("p"))).toBe("alive");
   });
   it("present record + dead pid → pidAlive false (→ gone)", async () => {
     const reg = memReg();
@@ -27,12 +61,20 @@ describe("runLivenessTick", () => {
     expect(reg.get("p")?.pidAlive).toBe(false);
   });
 
-  it("captain absent from snapshot (→ stopped) triggers reap", async () => {
+  it("captain absent from snapshot + pid confirmed dead (→ stopped) triggers reap", async () => {
+    const reg = memReg();
+    reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
+    const reaped: string[] = [];
+    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => false, now: () => 5_000, reap: (p) => { reaped.push(p); return 0; } });
+    expect(reaped).toEqual(["p"]);
+  });
+
+  it("captain absent from snapshot but pid still alive → NOT reaped (#565 fail-safe)", async () => {
     const reg = memReg();
     reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
     const reaped: string[] = [];
     await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => true, now: () => 5_000, reap: (p) => { reaped.push(p); return 0; } });
-    expect(reaped).toEqual(["p"]);
+    expect(reaped).toEqual([]);
   });
   it("present record + dead pid (→ gone) triggers reap", async () => {
     const reg = memReg();
@@ -79,11 +121,11 @@ describe("runLivenessTick", () => {
     await runLivenessTick({ registry: reg, liveness: async () => [rec], isPidAlive: () => true, now: () => 5_000, log: (m) => lines.push(m) });
     expect(lines).toContainEqual(expect.stringContaining("[captain/runtime] p pid=100 → alive"));
   });
-  it("logs the state transition when a captain goes absent (→ stopped)", async () => {
+  it("logs the state transition when a captain goes absent + pid confirmed dead (→ stopped)", async () => {
     const reg = memReg();
     reg.apply({ project: "p", role: "captain", pid: 100, sessionId: "s", startedAt: 1_000, lastState: "start", lastSeenAt: 1_000, pidAlive: true, source: "runtime" });
     const lines: string[] = [];
-    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => true, now: () => 5_000, log: (m) => lines.push(m) });
+    await runLivenessTick({ registry: reg, liveness: async () => [], isPidAlive: () => false, now: () => 5_000, log: (m) => lines.push(m) });
     expect(lines).toContainEqual(expect.stringContaining("[captain/runtime] p pid=100 → stopped"));
   });
   it("no log dep supplied → tick still completes (optional)", async () => {
