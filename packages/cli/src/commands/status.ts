@@ -4,10 +4,10 @@ import matter from "gray-matter";
 import { loadConfig } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
+import type { ComponentHealth } from "@squadrant/core";
 
 interface StatusFrontmatter {
   project?: string;
-  captain_session?: string;
   last_updated?: string;
   active_crew?: number;
   tasks_total?: number;
@@ -40,6 +40,20 @@ function progressBar(completed: number, total: number): string {
   return `${bar} ${pct}%`;
 }
 
+/**
+ * Pure. Render the captain liveness indicator from the daemon's registry-derived
+ * state (#538) — never from status.md, which nothing writes to.
+ * `undefined` means the daemon returned no entry for this project (never
+ * registered / not yet probed); together with "unknown" it renders "?" rather
+ * than the offline glyph, since asserting offline on missing data is a false
+ * negative (#538's core ask).
+ */
+export function captainIndicator(state: ComponentHealth["state"] | undefined): string {
+  if (state === "alive" || state === "stale") return chalk.green("●");
+  if (state === undefined || state === "unknown") return chalk.dim("?");
+  return chalk.dim("○");
+}
+
 export const statusCommand = new Command("status")
   .description("Show status of all projects from spoke vault status files")
   .option("--detailed", "also show live per-component service health from the daemon (#77)")
@@ -51,6 +65,19 @@ export const statusCommand = new Command("status")
     if (projects.length === 0) {
       console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
       return;
+    }
+
+    // Ground-truth captain liveness comes from the daemon's LivenessRegistry
+    // (#538) — status.md's `captain_session` frontmatter is written by nothing
+    // and was always stale/absent, producing false "offline" reads for captains
+    // that were demonstrably alive. `null` means the daemon is unreachable —
+    // liveness is genuinely unknown, not offline (#538's core ask).
+    const health = await queryHealth();
+    const captainStateByProject = new Map<string, ComponentHealth["state"]>();
+    if (health) {
+      for (const c of health) {
+        if (c.kind === "captain") captainStateByProject.set(c.project, c.state);
+      }
     }
 
     console.log(chalk.bold("\nProject Status\n"));
@@ -78,10 +105,7 @@ export const statusCommand = new Command("status")
         continue;
       }
 
-      const sessionIndicator =
-        fm.captain_session === "active"
-          ? chalk.green("●")
-          : chalk.dim("○");
+      const sessionIndicator = captainIndicator(captainStateByProject.get(name));
       const captainDisplay = `${project.captainName.padEnd(11)} ${sessionIndicator}`;
       const crew = String(fm.active_crew ?? 0).padEnd(6);
       const progress = progressBar(
@@ -100,6 +124,6 @@ export const statusCommand = new Command("status")
     // #77: --detailed adds the live service-health view (relay/captain/crew/
     // command per-component last-seen + state) queried from the daemon.
     if (opts.detailed) {
-      printServiceHealth(await queryHealth());
+      printServiceHealth(health);
     }
   });
