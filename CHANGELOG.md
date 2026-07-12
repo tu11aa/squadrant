@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-07-12
+
+### Fixed
+
+- **A crew's blocked `AskUserQuestion` prompt could go completely unnoticed — no `CREW BLOCKED` ever fired (#560).** A crew's own per-crew Claude hook set had no `PreToolUse` coverage at all, so opening the question modal emitted nothing to the daemon; detection had accidentally been leaning on an unrelated hook subsystem that didn't reliably cover crews. Crews now get a dedicated `PreToolUse → AskUserQuestion` hook that extracts the real question and options from the tool call and reports it as blocked-on-input, even falling back to a generic message if the tool payload is malformed — so a stalled crew is always surfaced instead of silently waiting forever.
+- **`CREW DONE` could be lost because the send and close paths disagreed on which task record was "the" active one, and a signal on an already-finished task reported success while doing nothing (#574, #557).** When a crew had duplicate task records under the same name, sending and closing picked different ones, so the two ends of a crew's lifecycle could silently drift onto different task ids. Task-record selection is now shared logic used everywhere, and `crew signal done|blocked|failed` now fails loudly instead of quietly no-opping when the target task is already in a terminal state.
+- **`effort set --project` silently rewrote the global effort dial instead of the named project's override, and captains could be told about an effort change that didn't actually apply to them (#575, #576).** The `--project` flag was accepted but ignored, so a per-project effort request landed globally; notifications were also broadcast as one blanket message, so a project running its own override could be told a value that wasn't actually its effective effort. `effort set --project` now writes a scoped per-project override (and rejects an unknown project name outright instead of writing a stray file), and change notices are computed per recipient so only captains whose effective effort actually changed hear about it.
+
 ## [0.16.2] - 2026-07-12
 
 ### Fixed

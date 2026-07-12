@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification } from "../interactive/claude.js";
+import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt } from "../interactive/claude.js";
 
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
@@ -380,5 +380,123 @@ describe("mapClaudeHookToEvent Stop last_assistant_message (#174 primary source)
   it("empty/whitespace last_assistant_message falls through to transcript resolution", () => {
     const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "   " }, TID);
     expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+});
+
+// #560: AskUserQuestion is a TOOL call, not a hook event — Claude fires PreToolUse
+// (matcher-scoped to "AskUserQuestion") right as the modal opens and blocks the
+// turn awaiting a human selection. Before this, a crew's own hook set had no
+// PreToolUse coverage at all, so it emitted nothing and the daemon never learned
+// the crew was blocked.
+describe("formatAskUserQuestionPrompt (#560 — real question/options text)", () => {
+  it("formats a single question with its options", () => {
+    const toolInput = {
+      questions: [
+        { question: "Which auth approach?", header: "Auth", multiSelect: false, options: [
+          { label: "OAuth", description: "..." },
+          { label: "API key", description: "..." },
+        ] },
+      ],
+    };
+    expect(formatAskUserQuestionPrompt(toolInput)).toBe("Which auth approach? (options: OAuth, API key)");
+  });
+
+  it("formats multiple questions, joined", () => {
+    const toolInput = {
+      questions: [
+        { question: "Ship now?", options: [{ label: "Yes" }, { label: "No" }] },
+        { question: "Which env?", options: [{ label: "staging" }, { label: "prod" }] },
+      ],
+    };
+    expect(formatAskUserQuestionPrompt(toolInput)).toBe(
+      "Ship now? (options: Yes, No) | Which env? (options: staging, prod)",
+    );
+  });
+
+  it("formats a question with no options (free-form)", () => {
+    expect(formatAskUserQuestionPrompt({ questions: [{ question: "What should I name it?" }] }))
+      .toBe("What should I name it?");
+  });
+
+  it("returns null for missing/empty/malformed questions array — never throws", () => {
+    expect(formatAskUserQuestionPrompt(undefined)).toBeNull();
+    expect(formatAskUserQuestionPrompt(null)).toBeNull();
+    expect(formatAskUserQuestionPrompt({})).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: [] })).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: "not an array" })).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: [{}, { question: 42 }] })).toBeNull();
+  });
+});
+
+// #560 review fix: task.input.requested — NOT task.blocked — is the event that
+// carries requestId and drives ctx.schedulePromotion (squadrantd.ts) — the
+// answer-routing machinery #562 needs. task.blocked has no requestId field at
+// all, so mapping AskUserQuestion to it would delete the only signal #562
+// could build on. task.input.requested already does everything #560 needs
+// too: state-machine.ts maps it to state 'blocked' with the question,
+// telegram/format.ts renders it, tiers.ts includes it.
+describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
+  const TID = "task-abc";
+
+  it("tool_name AskUserQuestion → task.input.requested carrying the real question + options and a requestId", () => {
+    const payload = {
+      tool_name: "AskUserQuestion",
+      tool_input: {
+        questions: [
+          { question: "Silent fallback or labelled fallback?", options: [
+            { label: "Silent" }, { label: "Labelled" },
+          ] },
+        ],
+      },
+    };
+    const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
+    expect(ev?.type).toBe("task.input.requested");
+    expect(ev).toMatchObject({
+      type: "task.input.requested",
+      id: TID,
+      question: "Silent fallback or labelled fallback? (options: Silent, Labelled)",
+    });
+    // requestId: Claude's PreToolUse payload carries no native per-tool-call id
+    // (session_id/cwd/tool_name/tool_input only — verified against the
+    // documented payload shape) — a real, distinct value is still required
+    // (not a hardcoded 0) so schedulePromotion's `${taskId}#${requestId}` key
+    // doesn't collide across successive prompts for the same crew.
+    expect(typeof (ev as any).requestId).toBe("number");
+    expect(Number.isFinite((ev as any).requestId)).toBe(true);
+  });
+
+  it("two calls in quick succession get distinct requestIds (no collision on schedulePromotion's dedup key)", () => {
+    const payload = { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "A?" }] } };
+    const first = mapClaudeHookToEvent("PreToolUse", payload, TID) as any;
+    const second = mapClaudeHookToEvent("PreToolUse", { ...payload, tool_input: { questions: [{ question: "B?" }] } }, TID) as any;
+    expect(first.requestId).not.toBe(second.requestId);
+  });
+
+  it("tool_name AskUserQuestion with malformed/missing tool_input → STILL task.input.requested with a generic fallback, never null", () => {
+    for (const payload of [
+      { tool_name: "AskUserQuestion" },
+      { tool_name: "AskUserQuestion", tool_input: {} },
+      { tool_name: "AskUserQuestion", tool_input: { questions: [] } },
+      { tool_name: "AskUserQuestion", tool_input: null },
+    ]) {
+      const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("task.input.requested");
+    }
+  });
+
+  it("other tool names (e.g. Bash) → null — matcher scoping means this shouldn't fire, but stay conservative if it does", () => {
+    expect(mapClaudeHookToEvent("PreToolUse", { tool_name: "Bash", tool_input: { command: "ls" } }, TID)).toBeNull();
+  });
+
+  it("missing tool_name → null (unchanged pre-existing behavior for a bare/unmatched PreToolUse)", () => {
+    expect(mapClaudeHookToEvent("PreToolUse", {}, TID)).toBeNull();
+    expect(mapClaudeHookToEvent("PreToolUse", null, TID)).toBeNull();
+  });
+
+  it("anti-#2576 invariant: never task.done or task.failed regardless of tool_input shape", () => {
+    const ev = mapClaudeHookToEvent("PreToolUse", { tool_name: "AskUserQuestion", tool_input: {} }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
   });
 });

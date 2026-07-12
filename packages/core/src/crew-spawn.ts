@@ -459,6 +459,17 @@ export async function runCrewSpawn(
 
 // ─── crew session operations ──────────────────────────────────────────────────
 
+// #574: the single record-selection rule for "which task record is THE record
+// for this crew name" when duplicates exist (e.g. an orphaned record left by a
+// close/respawn race, #513). Every call site that resolves a crew name to a
+// task record MUST go through this helper — runCrewSend and runCrewClose used
+// to each inline their own pick (first-match vs most-recent), and disagreed on
+// live vs. stale duplicates, causing the two sides of a crew's lifecycle to
+// silently track different ids.
+function pickMostRecentTask(tasks: TaskRecord[]): TaskRecord {
+  return tasks.reduce((a, b) => ((b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a));
+}
+
 export async function runCrewSend(
   project: string,
   name: string,
@@ -496,8 +507,8 @@ export async function runCrewSend(
   // Blocked task: emit task.started to clear blocked→working so a subsequent real
   // permission prompt re-fires CREW BLOCKED (#182).
   try {
-    const tasks = await deps.listTasks(project);
-    const task = tasks.find((t) => t.name === name);
+    const matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    const task = matches.length > 0 ? pickMostRecentTask(matches) : undefined;
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
@@ -591,7 +602,7 @@ export async function runCrewClose(
       // respawn). Terminalize every non-terminal match so none linger to fire
       // a phantom CREW STALLED/IDLE later. Reap/worktree cleanup below anchors
       // on the most-recently-dispatched match — the one the live pane belongs to.
-      const primary = matches.reduce((a, b) => ((b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a));
+      const primary = pickMostRecentTask(matches);
       taskId = primary.id;
       if (primary.cwd && projRoot && primary.cwd !== projRoot) {
         worktreeCwd = primary.cwd;

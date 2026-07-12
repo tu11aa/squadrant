@@ -89,4 +89,46 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain(HOOK_CMD);
     expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain("UserPromptSubmit");
   });
+
+  // #560: an AskUserQuestion tool call blocks the crew waiting for a human, but
+  // the crew's own hook set had no PreToolUse entry at all — the crew's Claude
+  // process fired zero signal on it. Scoped to the AskUserQuestion matcher (not
+  // a bare PreToolUse) so it doesn't double the per-tool-call hook overhead
+  // PostToolUse already covers.
+  it("registers a matcher-scoped PreToolUse hook for AskUserQuestion detection (#560)", () => {
+    const out = mergeClaudeHooks({}, HOOK_CMD);
+    expect(out.hooks.PreToolUse).toBeDefined();
+    const entry = out.hooks.PreToolUse.find((m: any) => m.matcher === "AskUserQuestion");
+    expect(entry).toBeDefined();
+    expect(entry.hooks[0].command).toContain(HOOK_CMD);
+    expect(entry.hooks[0].command).toContain("PreToolUse");
+  });
+
+  it("PreToolUse/AskUserQuestion hook is idempotent — merging twice yields one entry", () => {
+    const once = mergeClaudeHooks({}, HOOK_CMD);
+    const twice = mergeClaudeHooks(once, HOOK_CMD);
+    const matched = twice.hooks.PreToolUse.filter((m: any) => m.matcher === "AskUserQuestion");
+    expect(matched).toHaveLength(1);
+  });
+
+  // Dedup footgun: installHookEntry used to key "already present" on command
+  // substring alone, scanning ALL entries for an event regardless of matcher.
+  // A pre-existing BARE entry for the same event+command (e.g. from a future
+  // change that adds "PreToolUse" to the broad EVENTS list too) would make the
+  // matcher-scoped install look "already done" and silently skip — even though
+  // the bare entry (matcher "") never fires for the AskUserQuestion-scoped
+  // case. Keyed on (event, matcher) so the two coexist correctly.
+  it("a pre-existing bare-matcher entry for the same event+command does not silently block the matcher-scoped install", () => {
+    const existing = {
+      hooks: {
+        PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: `${HOOK_CMD} PreToolUse` }] }],
+      },
+    };
+    const out = mergeClaudeHooks(existing, HOOK_CMD);
+    const scoped = out.hooks.PreToolUse.find((m: any) => m.matcher === "AskUserQuestion");
+    expect(scoped).toBeDefined();
+    // The pre-existing bare entry must survive untouched.
+    const bare = out.hooks.PreToolUse.find((m: any) => m.matcher === "");
+    expect(bare).toBeDefined();
+  });
 });
