@@ -1,6 +1,6 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
-import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
+import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
 import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
@@ -190,6 +190,13 @@ export function createDelivery(
   const cfg = loadConfig();
   const deliveries = new Map<string, CaptainDelivery>();
   const deliveryStats = (project: string): CaptainDeliveryStats | undefined => deliveries.get(project)?.stats();
+  // #579/#484: deferring forever behind an actively-changing draft is the
+  // correct, SAFE behaviour — but safe-and-silent is #560's disease. Track
+  // which projects we've already alerted on for the CURRENT stall episode so
+  // the alert fires exactly once per episode (edge-triggered, mirrors the
+  // #354 quietNotifiedAt / #492 anti-flood pattern), not once per poll. Clears
+  // when stats().stuck drops back to false, re-arming for a later episode.
+  const stuckNotified = new Set<string>();
   // Captured once at delivery-loop setup. Entries older than
   // sessionStartMs - STALE_THRESHOLD_MS are silently acked (cursor advanced)
   // without delivery. This stops a fresh/empty cursor from re-delivering the
@@ -288,6 +295,27 @@ export function createDelivery(
           log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred`);
           break;
         }
+      }
+
+      // #579/#484: fail LOUD, not silent, once this project's delivery is
+      // stuck (deferCount crossed maxDefers — an actively-changing draft that
+      // never stabilizes, so the structural probe never gets to run). This is
+      // a real mailbox entry (queued behind the block like any other daemon→
+      // captain message, e.g. #529's restart broadcast), not just a dashboard
+      // stat — it gives the operator a discoverable trail even if they never
+      // open the dashboard. Fires once per stall episode.
+      const stuck = d.stats().stuck;
+      if (stuck && !stuckNotified.has(project)) {
+        stuckNotified.add(project);
+        const { maxDeferCount } = d.stats();
+        log(`delivery stuck project=${project} deferCount=${maxDeferCount}`);
+        appendCaptainMessage({
+          stateRoot, project,
+          text: `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`,
+          source: "daemon",
+        }).catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
+      } else if (!stuck && stuckNotified.has(project)) {
+        stuckNotified.delete(project);
       }
     }
   };
