@@ -1,0 +1,14 @@
+⏺ PR #577 is up and the fix574 task-record selection bug is closed out. Summary posted
+  above with the before/after selection logic and the null-safety follow-up noted for
+  review.
+
+✳ Cerebrating… (12s · ↓ 3.1k tokens)
+  ⎿  Tip: Use /rewind to go back to a previous state of your codebase.
+
+──────────────────────────────────────────────────────────────────────────────────────────
+❯ signal done and let the captain merge
+──────────────────────────────────────────────────────────────────────────────────────────
+   Model: Sonnet 5  Ctx Used: 41.0%  Cost: $2.14  Session: 1hr 03m
+   Session ID: d4916c50-11c9-4a1e-9f2a-6e1e6d9c9a01  Thinking: none
+   ⎇ crew/fix574  𖠰 develop
+  ⏵⏵ auto mode on

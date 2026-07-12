@@ -59,11 +59,19 @@ export class CaptainDelivery {
 
     const seq = entry.seq;
     const deferCount = this.deferCounts.get(seq) ?? 0;
-    // #302: probe early once content has been stable for stableProbePolls
-    // polls (captain not typing) — kills the ~5min stall; the 300-defer
-    // backstop still guarantees delivery never hangs forever.
+    // #302/#484: probe ONLY once content has been stable for stableProbePolls
+    // polls (captain not typing / a ghost that isn't re-rendering). A probe
+    // send makes sendToSurface inject a REAL backspace keystroke into the live
+    // pane to run the structural liveness test (#258) — safe against a stable
+    // box, but unsafe against one that's still actively changing: repeatedly
+    // backspacing a genuinely-typing human's draft risks racing their next
+    // keystroke and, per #484's reopened root-cause, eventually misclassifying
+    // and force-delivering into it. deferCount alone must NEVER trigger a
+    // probe — an actively-changing draft defers indefinitely until it goes
+    // stable (paused) or empty (submitted); maxDefers stays meaningful only as
+    // the `stuck` dashboard signal in stats() below, decoupled from escalation.
     const stable = (this.stableCounts.get(seq) ?? 0) >= this.opts.stableProbePolls;
-    const probe = stable || deferCount >= this.opts.maxDefers;
+    const probe = stable;
 
     try {
       await send(msg, probe ? { probe: true } : undefined);
