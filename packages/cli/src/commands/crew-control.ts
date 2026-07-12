@@ -201,11 +201,18 @@ export async function runCrewSignal(
     throw new Error("not running under a crew (SQUADRANT_CREW_TASK_ID unset)");
   if (!project)
     throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
-  const current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord;
-  if (TERMINAL_STATES.has(current.state)) {
+  // The record can legitimately be missing (a dropped/pruned task id, #554 —
+  // terminal records are pruned past a per-project cap, or a fresh daemon
+  // hasn't registered it yet). That is NOT evidence the task is terminal, so
+  // it must never be treated as such — and never dereferenced blindly, or a
+  // crash here drops CREW DONE exactly like #574 did, just via a new door.
+  // Fall through to the normal emit, which surfaces its own clear error if the
+  // id truly doesn't exist.
+  const current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  if (current && TERMINAL_STATES.has(current.state)) {
     throw new Error(
-      `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored. ` +
-        `If this crew started a new turn, its task record was never reopened — re-send via 'squadrant crew send' first.`,
+      `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
+        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it before signaling again.`,
     );
   }
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });

@@ -76,4 +76,19 @@ describe("runCrewSignal (#557)", () => {
     await runCrewSignal("done", { taskId: "t1", project: "p", message: "finished", writeResult: () => "ref" }, { call });
     expect(call).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: expect.objectContaining({ type: "task.done", id: "t1" }) }));
   });
+
+  // Pre-merge review: the status call can resolve with no record at all — a
+  // dropped/pruned task id (#554: terminal records are pruned past a 20-record
+  // cap; the record can also simply not exist yet on a fresh/racy daemon). A
+  // missing record is NOT evidence of "already terminal" — treating it as such
+  // (or worse, dereferencing .state on it) must never crash `crew signal done`.
+  // A crash here drops CREW DONE exactly like #574 did, just via a new door.
+  it("does not throw a TypeError and still sends the event when status resolves with no record (dropped/pruned task, #554)", async () => {
+    const call = vi.fn().mockImplementation(async (req: any) => {
+      if (req.kind === "status") return undefined;
+      return { ok: true };
+    });
+    await runCrewSignal("done", { taskId: "gone-id", project: "p", message: "finished", writeResult: () => "ref" }, { call });
+    expect(call).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: expect.objectContaining({ type: "task.done", id: "gone-id" }) }));
+  });
 });
