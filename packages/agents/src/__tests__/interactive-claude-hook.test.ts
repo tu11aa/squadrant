@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification } from "../interactive/claude.js";
+import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt } from "../interactive/claude.js";
 
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
@@ -380,5 +380,102 @@ describe("mapClaudeHookToEvent Stop last_assistant_message (#174 primary source)
   it("empty/whitespace last_assistant_message falls through to transcript resolution", () => {
     const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "   " }, TID);
     expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+});
+
+// #560: AskUserQuestion is a TOOL call, not a hook event — Claude fires PreToolUse
+// (matcher-scoped to "AskUserQuestion") right as the modal opens and blocks the
+// turn awaiting a human selection. Before this, a crew's own hook set had no
+// PreToolUse coverage at all, so it emitted nothing and the daemon never learned
+// the crew was blocked.
+describe("formatAskUserQuestionPrompt (#560 — real question/options text)", () => {
+  it("formats a single question with its options", () => {
+    const toolInput = {
+      questions: [
+        { question: "Which auth approach?", header: "Auth", multiSelect: false, options: [
+          { label: "OAuth", description: "..." },
+          { label: "API key", description: "..." },
+        ] },
+      ],
+    };
+    expect(formatAskUserQuestionPrompt(toolInput)).toBe("Which auth approach? (options: OAuth, API key)");
+  });
+
+  it("formats multiple questions, joined", () => {
+    const toolInput = {
+      questions: [
+        { question: "Ship now?", options: [{ label: "Yes" }, { label: "No" }] },
+        { question: "Which env?", options: [{ label: "staging" }, { label: "prod" }] },
+      ],
+    };
+    expect(formatAskUserQuestionPrompt(toolInput)).toBe(
+      "Ship now? (options: Yes, No) | Which env? (options: staging, prod)",
+    );
+  });
+
+  it("formats a question with no options (free-form)", () => {
+    expect(formatAskUserQuestionPrompt({ questions: [{ question: "What should I name it?" }] }))
+      .toBe("What should I name it?");
+  });
+
+  it("returns null for missing/empty/malformed questions array — never throws", () => {
+    expect(formatAskUserQuestionPrompt(undefined)).toBeNull();
+    expect(formatAskUserQuestionPrompt(null)).toBeNull();
+    expect(formatAskUserQuestionPrompt({})).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: [] })).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: "not an array" })).toBeNull();
+    expect(formatAskUserQuestionPrompt({ questions: [{}, { question: 42 }] })).toBeNull();
+  });
+});
+
+describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
+  const TID = "task-abc";
+
+  it("tool_name AskUserQuestion → task.blocked carrying the real question + options", () => {
+    const payload = {
+      tool_name: "AskUserQuestion",
+      tool_input: {
+        questions: [
+          { question: "Silent fallback or labelled fallback?", options: [
+            { label: "Silent" }, { label: "Labelled" },
+          ] },
+        ],
+      },
+    };
+    const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
+    expect(ev).toEqual({
+      type: "task.blocked",
+      id: TID,
+      reason: "crew opened an AskUserQuestion prompt",
+      question: "Silent fallback or labelled fallback? (options: Silent, Labelled)",
+    });
+  });
+
+  it("tool_name AskUserQuestion with malformed/missing tool_input → STILL task.blocked with a generic fallback, never null", () => {
+    for (const payload of [
+      { tool_name: "AskUserQuestion" },
+      { tool_name: "AskUserQuestion", tool_input: {} },
+      { tool_name: "AskUserQuestion", tool_input: { questions: [] } },
+      { tool_name: "AskUserQuestion", tool_input: null },
+    ]) {
+      const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("task.blocked");
+    }
+  });
+
+  it("other tool names (e.g. Bash) → null — matcher scoping means this shouldn't fire, but stay conservative if it does", () => {
+    expect(mapClaudeHookToEvent("PreToolUse", { tool_name: "Bash", tool_input: { command: "ls" } }, TID)).toBeNull();
+  });
+
+  it("missing tool_name → null (unchanged pre-existing behavior for a bare/unmatched PreToolUse)", () => {
+    expect(mapClaudeHookToEvent("PreToolUse", {}, TID)).toBeNull();
+    expect(mapClaudeHookToEvent("PreToolUse", null, TID)).toBeNull();
+  });
+
+  it("anti-#2576 invariant: never task.done or task.failed regardless of tool_input shape", () => {
+    const ev = mapClaudeHookToEvent("PreToolUse", { tool_name: "AskUserQuestion", tool_input: {} }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
   });
 });

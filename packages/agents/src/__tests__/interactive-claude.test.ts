@@ -89,4 +89,25 @@ describe("claude interactive hook merge", () => {
     expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain(HOOK_CMD);
     expect(out.hooks.UserPromptSubmit[0].hooks[0].command).toContain("UserPromptSubmit");
   });
+
+  // #560: an AskUserQuestion tool call blocks the crew waiting for a human, but
+  // the crew's own hook set had no PreToolUse entry at all — the crew's Claude
+  // process fired zero signal on it. Scoped to the AskUserQuestion matcher (not
+  // a bare PreToolUse) so it doesn't double the per-tool-call hook overhead
+  // PostToolUse already covers.
+  it("registers a matcher-scoped PreToolUse hook for AskUserQuestion detection (#560)", () => {
+    const out = mergeClaudeHooks({}, HOOK_CMD);
+    expect(out.hooks.PreToolUse).toBeDefined();
+    const entry = out.hooks.PreToolUse.find((m: any) => m.matcher === "AskUserQuestion");
+    expect(entry).toBeDefined();
+    expect(entry.hooks[0].command).toContain(HOOK_CMD);
+    expect(entry.hooks[0].command).toContain("PreToolUse");
+  });
+
+  it("PreToolUse/AskUserQuestion hook is idempotent — merging twice yields one entry", () => {
+    const once = mergeClaudeHooks({}, HOOK_CMD);
+    const twice = mergeClaudeHooks(once, HOOK_CMD);
+    const matched = twice.hooks.PreToolUse.filter((m: any) => m.matcher === "AskUserQuestion");
+    expect(matched).toHaveLength(1);
+  });
 });

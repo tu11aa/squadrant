@@ -25,10 +25,14 @@ async function sendToSock(req: unknown): Promise<void> {
  * Map a NativeHookSource sub-alias to a ControlEvent.
  *
  * "stop", "notification", "session-end" delegate to mapClaudeHookToEvent (which
- * handles detectTrailingQuestion and isPermissionNotification). The new subs
- * not covered by the existing per-crew mapper are handled inline.
+ * handles detectTrailingQuestion and isPermissionNotification). "ask-question"
+ * also delegates to it (#560) — it fires from the same PreToolUse+AskUserQuestion
+ * matcher as the crew's own hook set, so it must extract the real question/options
+ * from tool_input the same way (the previous inline version read a `payload.question`
+ * field that doesn't exist in Claude's actual PreToolUse payload, so it always fell
+ * back to a generic placeholder). The remaining subs are handled inline.
  */
-function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
+export function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
   switch (sub) {
     case "session-start":
     case "pre-tool-use":
@@ -41,12 +45,8 @@ function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent
       return mapClaudeHookToEvent("Stop", payload, taskId);
     case "notification":
       return mapClaudeHookToEvent("Notification", payload, taskId);
-    case "ask-question": {
-      const q = typeof (payload as Record<string, unknown>)?.question === "string"
-        ? (payload as Record<string, unknown>).question as string
-        : "awaiting input";
-      return { type: "task.input.requested", id: taskId, requestId: 0, question: q };
-    }
+    case "ask-question":
+      return mapClaudeHookToEvent("PreToolUse", payload, taskId);
     case "session-end":
       return mapClaudeHookToEvent("SessionEnd", payload, taskId);
     default:
