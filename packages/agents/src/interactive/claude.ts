@@ -19,6 +19,26 @@ import type { ControlEvent } from "@squadrant/shared";
 // signal (#470), replacing the screen-scrape {delivered} heuristic.
 const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit"] as const;
 
+// #560: matcher-scoped hook entries beyond the broad EVENTS list above — fires
+// only for the named tool, not every tool call. AskUserQuestion is CC's native
+// interactive-prompt tool: PreToolUse fires the instant it opens (and blocks
+// the turn awaiting a human selection), so this is the earliest possible signal
+// that a crew is blocked on a question. Scoped to this one tool so it doesn't
+// double the per-tool-call hook overhead PostToolUse already covers.
+const MATCHED_EVENTS: ReadonlyArray<readonly [event: string, matcher: string]> = [
+  ["PreToolUse", "AskUserQuestion"],
+];
+
+// #560: Claude's PreToolUse hook payload carries no native per-tool-call id
+// (documented shape is session_id/cwd/tool_name/tool_input only — no
+// tool_use_id), so there is no "real" requestId to forward. Seeded from
+// Date.now() and incremented per call (this module runs fresh per hook
+// invocation, so in practice each call gets Date.now() at that moment) so
+// schedulePromotion's `${taskId}#${requestId}` dedup key never collides
+// across successive AskUserQuestion prompts for the same crew, unlike a
+// hardcoded 0 would.
+let nextAskUserQuestionRequestId = Date.now();
+
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
  * daemon-supervised crew path needs per-invocation settings to inject the
@@ -48,18 +68,36 @@ export function isPermissionNotification(message: string): boolean {
   return lower.includes("permission") || lower.includes("approve");
 }
 
+// Keyed on (event, matcher) — NOT command alone. An event can carry both a
+// bare entry (matcher "", from EVENTS) and a matcher-scoped entry (from
+// MATCHED_EVENTS) with the identical command string (only the matcher
+// differs; Claude dispatches on matcher, not on the command text). Scanning
+// ALL entries for the event regardless of matcher would make the
+// matcher-scoped install look "already done" the moment a bare entry for the
+// same event+command exists, and silently skip installing it — the same
+// silent-drop failure mode this hook set exists to close (#560).
+function installHookEntry(hooks: Record<string, unknown>, event: string, matcher: string, command: string): void {
+  if (!Array.isArray(hooks[event])) hooks[event] = [];
+  const entries = hooks[event] as unknown[];
+  const already = entries.some(
+    (m) => (m as any)?.matcher === matcher &&
+      Array.isArray((m as any)?.hooks) &&
+      (m as any).hooks.some((h: any) => typeof h?.command === "string" && h.command.includes(command)),
+  );
+  if (!already) {
+    entries.push({ matcher, hooks: [{ type: "command", command, timeout: 10 }] });
+  }
+}
+
 /** Pure, idempotent merge of squadrant hooks into a Claude settings object. */
 export function mergeClaudeHooks(settings: any, hookCmd: string): any {
   const next = structuredClone(settings ?? {});
   next.hooks ??= {};
   for (const ev of EVENTS) {
-    if (!Array.isArray(next.hooks[ev])) next.hooks[ev] = [];
-    const already = next.hooks[ev].some((m: any) =>
-      Array.isArray(m?.hooks) && m.hooks.some((h: any) => typeof h.command === "string" && h.command.includes(hookCmd)),
-    );
-    if (!already) {
-      next.hooks[ev].push({ matcher: "", hooks: [{ type: "command", command: `${hookCmd} ${ev}`, timeout: 10 }] });
-    }
+    installHookEntry(next.hooks, ev, "", `${hookCmd} ${ev}`);
+  }
+  for (const [ev, matcher] of MATCHED_EVENTS) {
+    installHookEntry(next.hooks, ev, matcher, `${hookCmd} ${ev}`);
   }
   return next;
 }
@@ -164,6 +202,33 @@ function resolveLastAssistantText(payload: unknown): string | null {
 }
 
 /**
+ * Pure: render an AskUserQuestion tool call's `tool_input` (the raw arguments
+ * Claude passes to the tool — `{ questions: [{ question, header, options,
+ * multiSelect }] }`) into a human-readable prompt for CREW BLOCKED, carrying
+ * both the question text AND its options (#560's proposal explicitly asks for
+ * both — an option-less "awaiting input" placeholder can't be answered by
+ * #562's answer channel or checked for staleness by #563).
+ * Never throws; returns null when the shape doesn't match (caller must still
+ * surface SOME text — see mapClaudeHookToEvent's PreToolUse case).
+ */
+export function formatAskUserQuestionPrompt(toolInput: unknown): string | null {
+  const questions = (toolInput as { questions?: unknown } | null | undefined)?.questions;
+  if (!Array.isArray(questions) || questions.length === 0) return null;
+  const parts: string[] = [];
+  for (const q of questions) {
+    if (!q || typeof q !== "object") continue;
+    const text = (q as any).question;
+    if (typeof text !== "string" || !text.trim()) continue;
+    const options = Array.isArray((q as any).options) ? (q as any).options : [];
+    const labels = options
+      .map((o: any) => (o && typeof o.label === "string" ? o.label.trim() : null))
+      .filter((l: string | null): l is string => !!l);
+    parts.push(labels.length > 0 ? `${text.trim()} (options: ${labels.join(", ")})` : text.trim());
+  }
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+/**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
@@ -188,6 +253,20 @@ function resolveLastAssistantText(payload: unknown): string | null {
  * state-machine idempotency (already-blocked → no-op, from #176) deduplicates.
  * Non-permission notifications (idle liveness) → task.progress. Missing/non-string
  * message → task.progress (never throws, hook must exit 0).
+ *
+ * PreToolUse = matcher-scoped to AskUserQuestion only (#560): the crew's own
+ * hook set registers this ONLY for that tool (see MATCHED_EVENTS above), so in
+ * practice tool_name is always "AskUserQuestion" here. Still checked
+ * defensively — a config regression to a bare/unmatched PreToolUse must not
+ * silently start reporting task.input.requested for every tool call. When it
+ * IS AskUserQuestion, this maps to task.input.requested (NOT task.blocked —
+ * task.blocked has no requestId field, and requestId is what
+ * ctx.schedulePromotion in squadrantd.ts keys its answer-routing timer on;
+ * task.input.requested already drives state-machine.ts → state 'blocked',
+ * the CREW BLOCKED notification, and Telegram formatting) UNCONDITIONALLY —
+ * even a malformed/unreadable tool_input still produces a generic fallback
+ * question rather than falling through to null, because a detection path
+ * that can silently fail to fire is the exact defect #560 exists to close.
  */
 export function mapClaudeHookToEvent(
   event: string,
@@ -195,6 +274,13 @@ export function mapClaudeHookToEvent(
   taskId: string,
 ): ControlEvent | null {
   switch (event) {
+    case "PreToolUse": {
+      const toolName = (payload as any)?.tool_name;
+      if (toolName !== "AskUserQuestion") return null;
+      const question = formatAskUserQuestionPrompt((payload as any)?.tool_input)
+        ?? "crew opened an AskUserQuestion prompt (options unavailable)";
+      return { type: "task.input.requested", id: taskId, requestId: nextAskUserQuestionRequestId++, question };
+    }
     case "Stop": {
       const text = resolveLastAssistantText(payload);
       const question = text ? detectTrailingQuestion(text) : null;
