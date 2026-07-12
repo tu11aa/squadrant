@@ -173,6 +173,53 @@ function defaultWriteResult(id: string, payload: string): string {
 }
 
 /**
+ * #557: `squadrant crew signal <state>` used to emit its event and exit 0
+ * unconditionally — but the daemon's reduce() treats terminal states as
+ * absorbing (any event on an already-terminal task record is a silent no-op,
+ * see state-machine.ts). A signal that lands on a task record which is
+ * already done/failed/cancelled therefore changed nothing while still
+ * reporting success, exactly the class of bug #566 fixed for `crew send`:
+ * a call site must confirm its effect landed or fail loudly, never
+ * silent-succeed. This wraps buildSignalRequest with an upfront status check
+ * so the CLI throws instead of emitting an event doomed to be ignored.
+ */
+export async function runCrewSignal(
+  signal: "done" | "blocked" | "failed",
+  o: {
+    message?: string;
+    question?: string;
+    error?: string;
+    taskId?: string;
+    project?: string;
+    writeResult?: (id: string, payload: string) => string;
+  },
+  deps: { call: (req: unknown) => Promise<unknown> },
+): Promise<void> {
+  const taskId = o.taskId ?? process.env.SQUADRANT_CREW_TASK_ID;
+  const project = o.project ?? process.env.SQUADRANT_CREW_PROJECT;
+  if (!taskId)
+    throw new Error("not running under a crew (SQUADRANT_CREW_TASK_ID unset)");
+  if (!project)
+    throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
+  // The record can legitimately be missing (a dropped/pruned task id, #554 —
+  // terminal records are pruned past a per-project cap, or a fresh daemon
+  // hasn't registered it yet). That is NOT evidence the task is terminal, so
+  // it must never be treated as such — and never dereferenced blindly, or a
+  // crash here drops CREW DONE exactly like #574 did, just via a new door.
+  // Fall through to the normal emit, which surfaces its own clear error if the
+  // id truly doesn't exist.
+  const current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  if (current && TERMINAL_STATES.has(current.state)) {
+    throw new Error(
+      `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
+        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it before signaling again.`,
+    );
+  }
+  const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
+  await deps.call(req);
+}
+
+/**
  * Attach the control-plane verbs onto an existing `squadrant crew` command so
  * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
  * The control-plane task listing is `tasks` (not `list`) to avoid colliding
@@ -307,15 +354,14 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         process.exit(2);
       }
       try {
-        const req = buildSignalRequest(state as "done" | "blocked" | "failed", {
+        await runCrewSignal(state as "done" | "blocked" | "failed", {
           ...(opts.message !== undefined ? { message: opts.message } : {}),
           ...(opts.question !== undefined ? { question: opts.question } : {}),
           ...(opts.error !== undefined ? { error: opts.error } : {}),
           ...(opts.taskId !== undefined ? { taskId: opts.taskId } : {}),
           ...(opts.project !== undefined ? { project: opts.project } : {}),
           writeResult: defaultWriteResult,
-        });
-        await squadrantdCall(req);
+        }, { call: squadrantdCall });
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
