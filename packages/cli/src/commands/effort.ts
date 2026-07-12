@@ -26,9 +26,17 @@ export interface EffortGetResult {
   description: string;
 }
 
-export function runEffortGet(configPath = DEFAULT_CONFIG_PATH, projectName?: string): EffortGetResult {
+export function runEffortGet(
+  configPath = DEFAULT_CONFIG_PATH,
+  projectName?: string,
+  projectConfigRoot?: string,
+): EffortGetResult {
   const config = loadConfig(configPath);
-  const effort = resolveEffort(config, projectName);
+  if (projectName && !(projectName in config.projects)) {
+    const known = Object.keys(config.projects).sort().join(", ") || "(no projects registered)";
+    throw new Error(`Unknown project '${projectName}'. Known projects: ${known}`);
+  }
+  const effort = resolveEffort(config, projectName, projectConfigRoot);
   const description = `${effort}: ${EFFORT_MEANING[effort]}`;
   return { effort, description };
 }
@@ -135,10 +143,16 @@ export const effortCommand = new Command("effort")
   .option("--project <name>", "target a specific project (get: show its resolved effort; set: write a per-project override)")
   .action(async (value: string | undefined, options: { project?: string }) => {
     if (value === undefined) {
-      const { effort, description } = runEffortGet(undefined, options.project);
+      let result: EffortGetResult;
+      try {
+        result = runEffortGet(undefined, options.project);
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+        process.exit(1);
+      }
       const label = options.project ? `${options.project} project` : "global";
-      console.log(chalk.bold(`Current effort (${label}):`), chalk.cyan(effort));
-      console.log(chalk.dim(EFFORT_MEANING[effort]));
+      console.log(chalk.bold(`Current effort (${label}):`), chalk.cyan(result.effort));
+      console.log(chalk.dim(EFFORT_MEANING[result.effort]));
       return;
     }
 

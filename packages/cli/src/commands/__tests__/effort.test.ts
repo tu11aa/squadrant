@@ -50,6 +50,40 @@ describe("effort get", () => {
     const result = runEffortGet(cfgPath);
     expect(result.effort).toBe("max");
   });
+
+  it("returns the resolved effort for a registered project", () => {
+    const config = getDefaultConfig();
+    (config.defaults as any).effort = "low";
+    config.projects.oneplan = { path: path.join(dir, "proj-oneplan"), captainName: "captain-oneplan", spokeVault: "", host: "" };
+    saveConfig(config, cfgPath);
+    const result = runEffortGet(cfgPath, "oneplan", dir);
+    expect(result.effort).toBe("low");
+  });
+
+  it("hard-fails on an unknown --project name instead of silently answering with the global value (#576)", () => {
+    const config = getDefaultConfig();
+    config.projects.oneplan = { path: path.join(dir, "proj-oneplan"), captainName: "captain-oneplan", spokeVault: "", host: "" };
+    saveConfig(config, cfgPath);
+
+    // typo: "onplan" instead of "oneplan" — must NOT silently answer with the global default
+    expect(() => runEffortGet(cfgPath, "onplan", dir)).toThrow(/unknown project/i);
+  });
+
+  it("unknown-project error on get lists the registered project names", () => {
+    const config = getDefaultConfig();
+    config.projects.oneplan = { path: path.join(dir, "proj-oneplan"), captainName: "captain-oneplan", spokeVault: "", host: "" };
+    config.projects.brove = { path: path.join(dir, "proj-brove"), captainName: "captain-brove", spokeVault: "", host: "" };
+    saveConfig(config, cfgPath);
+
+    let message = "";
+    try {
+      runEffortGet(cfgPath, "onplan", dir);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("oneplan");
+    expect(message).toContain("brove");
+  });
 });
 
 describe("effort set", () => {
