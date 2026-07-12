@@ -1,6 +1,7 @@
 // src/control/__tests__/crew-control.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest } from "../commands/crew-control.js";
+import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest, runCrewSignal } from "../commands/crew-control.js";
+import type { TaskRecord } from "@squadrant/shared";
 
 describe("crew-control request builders", () => {
   it("dispatch request carries project/provider/mode/task and a generated id", () => {
@@ -47,5 +48,32 @@ describe("crew-control request builders", () => {
     expect(r.kind).toBe("gate-resolve");
     expect(r.gateId).toBe("g1");
     expect(r.payload).toEqual({ text: "approve", decision: "approve" });
+  });
+});
+
+// #557: `crew signal done` returned exit 0 for a task that was already terminal
+// (e.g. a duplicate/stale record picked by #574's divergent selection) — the
+// daemon's reduce() silently absorbs any event on a terminal record, and the
+// CLI never inspected the resulting state, so a signal that changed nothing
+// still reported success. runCrewSignal must check current state FIRST and
+// fail loudly instead of emitting an event that will be silently ignored.
+describe("runCrewSignal (#557)", () => {
+  it("fails loudly instead of silently succeeding when the target task is already terminal", async () => {
+    const call = vi.fn().mockResolvedValue({ id: "t1", state: "done" } as Partial<TaskRecord>);
+    await expect(
+      runCrewSignal("done", { taskId: "t1", project: "p", message: "finished" }, { call }),
+    ).rejects.toThrow(/already terminal/i);
+    // Only the status check ran — no task.done event was sent for the no-op.
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith(buildStatusRequest("p", "t1"));
+  });
+
+  it("sends the event normally when the target task is not yet terminal", async () => {
+    const call = vi.fn().mockImplementation(async (req: any) => {
+      if (req.kind === "status") return { id: "t1", state: "working" };
+      return { ok: true };
+    });
+    await runCrewSignal("done", { taskId: "t1", project: "p", message: "finished", writeResult: () => "ref" }, { call });
+    expect(call).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: expect.objectContaining({ type: "task.done", id: "t1" }) }));
   });
 });

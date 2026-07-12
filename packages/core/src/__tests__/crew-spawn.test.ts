@@ -657,6 +657,29 @@ describe("runCrewSend", () => {
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
   });
 
+  // #574: runCrewSend picked tasks.find() = FIRST same-name match, while
+  // runCrewClose (#513) picks the MOST RECENT same-name match. With duplicate
+  // records (e.g. an orphaned record from a prior close/respawn race), the two
+  // call sites disagreed on which record is "the" live one — send would reopen
+  // a stale record instead of the one the live crew actually reports against,
+  // so a later `crew signal done` targeting the live (already-terminal) record
+  // never observably reopened, silently dropping CREW DONE. Send must pick the
+  // same most-recent-by-createdAt record as close.
+  it("reopens the MOST RECENT same-name record, not the first match (duplicate same-name records, #574)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:cv-qa" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    // Stale orphaned record (non-terminal, earlier) listed BEFORE the live
+    // crew's own record (terminal, later) — array order must not matter.
+    const stale = { id: "old-id", name: "cv-qa", state: "working", createdAt: 1000 } as Partial<TaskRecord>;
+    const live = { id: "new-id", name: "cv-qa", state: "done", createdAt: 2000 } as Partial<TaskRecord>;
+    await runCrewSend(PROJECT, "cv-qa", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([stale, live]),
+      emitEvent,
+    });
+    expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.reopened", id: "new-id" });
+  });
+
   // #448: when deps.sendToPane is injected, it is used instead of runtime.sendToPane
   // so the CLI can supply the paste-settle-Enter confirmed-submit helper.
   it("uses deps.sendToPane when provided, bypassing runtime.sendToPane", async () => {
