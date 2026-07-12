@@ -10,7 +10,11 @@ import { mapHookSub } from "../hooks.js";
 describe("mapHookSub — ask-question (#560)", () => {
   const TID = "task-abc";
 
-  it("delegates to the real AskUserQuestion extraction — carries the actual question + options", () => {
+  // task.input.requested — not task.blocked — is the event that carries
+  // requestId and drives ctx.schedulePromotion (squadrantd.ts), the
+  // answer-routing machinery #562 depends on. It already does everything
+  // #560 needs too (state-machine.ts maps it to state 'blocked').
+  it("delegates to the real AskUserQuestion extraction — carries the actual question + options + a requestId", () => {
     const payload = {
       tool_name: "AskUserQuestion",
       tool_input: {
@@ -20,18 +24,19 @@ describe("mapHookSub — ask-question (#560)", () => {
       },
     };
     const ev = mapHookSub("ask-question", payload, TID);
-    expect(ev).toEqual({
-      type: "task.blocked",
+    expect(ev?.type).toBe("task.input.requested");
+    expect(ev).toMatchObject({
+      type: "task.input.requested",
       id: TID,
-      reason: "crew opened an AskUserQuestion prompt",
       question: "Which env should I deploy to? (options: staging, prod)",
     });
+    expect(typeof (ev as any).requestId).toBe("number");
   });
 
-  it("still fires task.blocked even with a malformed/missing tool_input — never silently drops the signal", () => {
+  it("still fires task.input.requested even with a malformed/missing tool_input — never silently drops the signal", () => {
     const ev = mapHookSub("ask-question", { tool_name: "AskUserQuestion" }, TID);
     expect(ev).not.toBeNull();
-    expect(ev!.type).toBe("task.blocked");
+    expect(ev!.type).toBe("task.input.requested");
   });
 
   it("other subs still map as before (no regression)", () => {

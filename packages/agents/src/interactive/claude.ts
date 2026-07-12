@@ -29,6 +29,16 @@ const MATCHED_EVENTS: ReadonlyArray<readonly [event: string, matcher: string]> =
   ["PreToolUse", "AskUserQuestion"],
 ];
 
+// #560: Claude's PreToolUse hook payload carries no native per-tool-call id
+// (documented shape is session_id/cwd/tool_name/tool_input only — no
+// tool_use_id), so there is no "real" requestId to forward. Seeded from
+// Date.now() and incremented per call (this module runs fresh per hook
+// invocation, so in practice each call gets Date.now() at that moment) so
+// schedulePromotion's `${taskId}#${requestId}` dedup key never collides
+// across successive AskUserQuestion prompts for the same crew, unlike a
+// hardcoded 0 would.
+let nextAskUserQuestionRequestId = Date.now();
+
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
  * daemon-supervised crew path needs per-invocation settings to inject the
@@ -58,11 +68,20 @@ export function isPermissionNotification(message: string): boolean {
   return lower.includes("permission") || lower.includes("approve");
 }
 
+// Keyed on (event, matcher) — NOT command alone. An event can carry both a
+// bare entry (matcher "", from EVENTS) and a matcher-scoped entry (from
+// MATCHED_EVENTS) with the identical command string (only the matcher
+// differs; Claude dispatches on matcher, not on the command text). Scanning
+// ALL entries for the event regardless of matcher would make the
+// matcher-scoped install look "already done" the moment a bare entry for the
+// same event+command exists, and silently skip installing it — the same
+// silent-drop failure mode this hook set exists to close (#560).
 function installHookEntry(hooks: Record<string, unknown>, event: string, matcher: string, command: string): void {
   if (!Array.isArray(hooks[event])) hooks[event] = [];
   const entries = hooks[event] as unknown[];
   const already = entries.some(
-    (m) => Array.isArray((m as any)?.hooks) &&
+    (m) => (m as any)?.matcher === matcher &&
+      Array.isArray((m as any)?.hooks) &&
       (m as any).hooks.some((h: any) => typeof h?.command === "string" && h.command.includes(command)),
   );
   if (!already) {
@@ -239,11 +258,15 @@ export function formatAskUserQuestionPrompt(toolInput: unknown): string | null {
  * hook set registers this ONLY for that tool (see MATCHED_EVENTS above), so in
  * practice tool_name is always "AskUserQuestion" here. Still checked
  * defensively — a config regression to a bare/unmatched PreToolUse must not
- * silently start reporting task.blocked for every tool call. When it IS
- * AskUserQuestion, this maps to task.blocked UNCONDITIONALLY — even a
- * malformed/unreadable tool_input still produces a generic fallback question
- * rather than falling through to null, because a detection path that can
- * silently fail to fire is the exact defect #560 exists to close.
+ * silently start reporting task.input.requested for every tool call. When it
+ * IS AskUserQuestion, this maps to task.input.requested (NOT task.blocked —
+ * task.blocked has no requestId field, and requestId is what
+ * ctx.schedulePromotion in squadrantd.ts keys its answer-routing timer on;
+ * task.input.requested already drives state-machine.ts → state 'blocked',
+ * the CREW BLOCKED notification, and Telegram formatting) UNCONDITIONALLY —
+ * even a malformed/unreadable tool_input still produces a generic fallback
+ * question rather than falling through to null, because a detection path
+ * that can silently fail to fire is the exact defect #560 exists to close.
  */
 export function mapClaudeHookToEvent(
   event: string,
@@ -256,7 +279,7 @@ export function mapClaudeHookToEvent(
       if (toolName !== "AskUserQuestion") return null;
       const question = formatAskUserQuestionPrompt((payload as any)?.tool_input)
         ?? "crew opened an AskUserQuestion prompt (options unavailable)";
-      return { type: "task.blocked", id: taskId, reason: "crew opened an AskUserQuestion prompt", question };
+      return { type: "task.input.requested", id: taskId, requestId: nextAskUserQuestionRequestId++, question };
     }
     case "Stop": {
       const text = resolveLastAssistantText(payload);

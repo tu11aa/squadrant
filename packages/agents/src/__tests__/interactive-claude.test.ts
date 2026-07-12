@@ -110,4 +110,25 @@ describe("claude interactive hook merge", () => {
     const matched = twice.hooks.PreToolUse.filter((m: any) => m.matcher === "AskUserQuestion");
     expect(matched).toHaveLength(1);
   });
+
+  // Dedup footgun: installHookEntry used to key "already present" on command
+  // substring alone, scanning ALL entries for an event regardless of matcher.
+  // A pre-existing BARE entry for the same event+command (e.g. from a future
+  // change that adds "PreToolUse" to the broad EVENTS list too) would make the
+  // matcher-scoped install look "already done" and silently skip — even though
+  // the bare entry (matcher "") never fires for the AskUserQuestion-scoped
+  // case. Keyed on (event, matcher) so the two coexist correctly.
+  it("a pre-existing bare-matcher entry for the same event+command does not silently block the matcher-scoped install", () => {
+    const existing = {
+      hooks: {
+        PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: `${HOOK_CMD} PreToolUse` }] }],
+      },
+    };
+    const out = mergeClaudeHooks(existing, HOOK_CMD);
+    const scoped = out.hooks.PreToolUse.find((m: any) => m.matcher === "AskUserQuestion");
+    expect(scoped).toBeDefined();
+    // The pre-existing bare entry must survive untouched.
+    const bare = out.hooks.PreToolUse.find((m: any) => m.matcher === "");
+    expect(bare).toBeDefined();
+  });
 });

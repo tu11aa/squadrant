@@ -428,10 +428,17 @@ describe("formatAskUserQuestionPrompt (#560 — real question/options text)", ()
   });
 });
 
+// #560 review fix: task.input.requested — NOT task.blocked — is the event that
+// carries requestId and drives ctx.schedulePromotion (squadrantd.ts) — the
+// answer-routing machinery #562 needs. task.blocked has no requestId field at
+// all, so mapping AskUserQuestion to it would delete the only signal #562
+// could build on. task.input.requested already does everything #560 needs
+// too: state-machine.ts maps it to state 'blocked' with the question,
+// telegram/format.ts renders it, tiers.ts includes it.
 describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
   const TID = "task-abc";
 
-  it("tool_name AskUserQuestion → task.blocked carrying the real question + options", () => {
+  it("tool_name AskUserQuestion → task.input.requested carrying the real question + options and a requestId", () => {
     const payload = {
       tool_name: "AskUserQuestion",
       tool_input: {
@@ -443,15 +450,29 @@ describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
       },
     };
     const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
-    expect(ev).toEqual({
-      type: "task.blocked",
+    expect(ev?.type).toBe("task.input.requested");
+    expect(ev).toMatchObject({
+      type: "task.input.requested",
       id: TID,
-      reason: "crew opened an AskUserQuestion prompt",
       question: "Silent fallback or labelled fallback? (options: Silent, Labelled)",
     });
+    // requestId: Claude's PreToolUse payload carries no native per-tool-call id
+    // (session_id/cwd/tool_name/tool_input only — verified against the
+    // documented payload shape) — a real, distinct value is still required
+    // (not a hardcoded 0) so schedulePromotion's `${taskId}#${requestId}` key
+    // doesn't collide across successive prompts for the same crew.
+    expect(typeof (ev as any).requestId).toBe("number");
+    expect(Number.isFinite((ev as any).requestId)).toBe(true);
   });
 
-  it("tool_name AskUserQuestion with malformed/missing tool_input → STILL task.blocked with a generic fallback, never null", () => {
+  it("two calls in quick succession get distinct requestIds (no collision on schedulePromotion's dedup key)", () => {
+    const payload = { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "A?" }] } };
+    const first = mapClaudeHookToEvent("PreToolUse", payload, TID) as any;
+    const second = mapClaudeHookToEvent("PreToolUse", { ...payload, tool_input: { questions: [{ question: "B?" }] } }, TID) as any;
+    expect(first.requestId).not.toBe(second.requestId);
+  });
+
+  it("tool_name AskUserQuestion with malformed/missing tool_input → STILL task.input.requested with a generic fallback, never null", () => {
     for (const payload of [
       { tool_name: "AskUserQuestion" },
       { tool_name: "AskUserQuestion", tool_input: {} },
@@ -460,7 +481,7 @@ describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
     ]) {
       const ev = mapClaudeHookToEvent("PreToolUse", payload, TID);
       expect(ev).not.toBeNull();
-      expect(ev!.type).toBe("task.blocked");
+      expect(ev!.type).toBe("task.input.requested");
     }
   });
 
