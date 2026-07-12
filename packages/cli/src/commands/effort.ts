@@ -50,6 +50,11 @@ export function runEffortSet(
     );
   }
   if (projectName) {
+    const config = loadConfig(configPath);
+    if (!(projectName in config.projects)) {
+      const known = Object.keys(config.projects).sort().join(", ") || "(no projects registered)";
+      throw new Error(`Unknown project '${projectName}'. Known projects: ${known}`);
+    }
     saveProjectOverride(projectName, { effort: value as Effort }, projectConfigRoot);
     return;
   }
@@ -125,7 +130,7 @@ export async function notifyCaptainsOfEffort(
 }
 
 export const effortCommand = new Command("effort")
-  .description("Get or set the global crew tokenomics dial (max | balance | low)")
+  .description("Get or set the crew tokenomics dial (max | balance | low) — global by default, or per-project with --project")
   .argument("[value]", "effort level to set: max | balance | low")
   .option("--project <name>", "target a specific project (get: show its resolved effort; set: write a per-project override)")
   .action(async (value: string | undefined, options: { project?: string }) => {

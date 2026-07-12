@@ -105,9 +105,14 @@ describe("effort set", () => {
 });
 
 describe("effort set — per-project scope (#575)", () => {
+  function registerProject(config: SquadrantConfig, name: string): void {
+    config.projects[name] = { path: path.join(dir, `proj-${name}`), captainName: `captain-${name}`, spokeVault: "", host: "" };
+  }
+
   it("writes the override into projects/<name>.json, not defaults.effort", () => {
     const config = getDefaultConfig();
     (config.defaults as any).effort = "low";
+    registerProject(config, "oneplan");
     saveConfig(config, cfgPath);
 
     runEffortSet("balance", cfgPath, "oneplan", dir);
@@ -121,6 +126,7 @@ describe("effort set — per-project scope (#575)", () => {
   it("does not affect a different project's resolved effort", () => {
     const config = getDefaultConfig();
     (config.defaults as any).effort = "low";
+    registerProject(config, "oneplan");
     saveConfig(config, cfgPath);
 
     runEffortSet("max", cfgPath, "oneplan", dir);
@@ -130,16 +136,55 @@ describe("effort set — per-project scope (#575)", () => {
   });
 
   it("round-trips: project-scoped set then resolveEffort for that project returns the new value", () => {
+    const config = getDefaultConfig();
+    registerProject(config, "my-proj");
+    saveConfig(config, cfgPath);
+
     runEffortSet("max", cfgPath, "my-proj", dir);
     const reloaded = loadConfig(cfgPath);
     expect(resolveEffort(reloaded, "my-proj", dir)).toBe("max");
   });
 
   it("rejects invalid value without writing a project override", () => {
+    const config = getDefaultConfig();
+    registerProject(config, "oneplan");
+    saveConfig(config, cfgPath);
+
     expect(() => runEffortSet("turbo", cfgPath, "oneplan", dir)).toThrow();
     const reloaded = loadConfig(cfgPath);
     // no override was created — falls back to the (untouched) global default
     expect(resolveEffort(reloaded, "oneplan", dir)).toBe(resolveEffort(reloaded));
+  });
+
+  it("hard-fails on an unknown --project name instead of silently writing an override", () => {
+    const config = getDefaultConfig();
+    registerProject(config, "oneplan");
+    saveConfig(config, cfgPath);
+
+    // typo: "onplan" instead of "oneplan" — must NOT silently succeed
+    expect(() => runEffortSet("max", cfgPath, "onplan", dir)).toThrow(/unknown project/i);
+
+    // no override file was created for the typo'd name
+    expect(fs.existsSync(path.join(dir, "projects", "onplan.json"))).toBe(false);
+    // the real project's effort is untouched
+    const reloaded = loadConfig(cfgPath);
+    expect(resolveEffort(reloaded, "oneplan", dir)).toBe(resolveEffort(reloaded));
+  });
+
+  it("unknown-project error lists the registered project names", () => {
+    const config = getDefaultConfig();
+    registerProject(config, "oneplan");
+    registerProject(config, "brove");
+    saveConfig(config, cfgPath);
+
+    let message = "";
+    try {
+      runEffortSet("max", cfgPath, "onplan", dir);
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("oneplan");
+    expect(message).toContain("brove");
   });
 });
 
