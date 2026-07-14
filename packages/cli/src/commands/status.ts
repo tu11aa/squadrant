@@ -47,11 +47,49 @@ function progressBar(completed: number, total: number): string {
  * registered / not yet probed); together with "unknown" it renders "?" rather
  * than the offline glyph, since asserting offline on missing data is a false
  * negative (#538's core ask).
+ * "stopped" (deliberate, clean shutdown) gets its own magenta glyph, distinct
+ * from "gone" (crashed / dark past the gone window — a genuine fault) — see
+ * liveness.ts's #324 comment ("clean close — magenta, not a fault"). Collapsing
+ * both into the same dim ○ left the operator unable to tell "I stopped this"
+ * from "this died on me" (#549).
  */
 export function captainIndicator(state: ComponentHealth["state"] | undefined): string {
   if (state === "alive" || state === "stale") return chalk.green("●");
+  if (state === "stopped") return chalk.magenta("⏻");
   if (state === undefined || state === "unknown") return chalk.dim("?");
   return chalk.dim("○");
+}
+
+/** Result of attempting to read a project's status.md — "ok" only when it
+ *  exists and parsed cleanly; "missing" and "unreadable" must render
+ *  distinctly so a corrupt file is never silently mistaken for an absent one. */
+export type StatusMdState = "ok" | "missing" | "unreadable";
+
+/**
+ * Pure. Render one project's status row. status.md is an optional human note
+ * layered on top of daemon-derived captain liveness (#549) — a project with
+ * no status.md, or an unreadable one, still renders with its real captain
+ * state, rather than being dropped from the table entirely.
+ */
+export function formatProjectRow(
+  name: string,
+  captainName: string,
+  fm: StatusFrontmatter,
+  statusMdState: StatusMdState,
+  captainState: ComponentHealth["state"] | undefined,
+): string {
+  const sessionIndicator = captainIndicator(captainState);
+  const captainDisplay = `${captainName.padEnd(11)} ${sessionIndicator}`;
+  const crew = statusMdState === "ok" ? String(fm.active_crew ?? 0).padEnd(6) : chalk.dim("?").padEnd(6);
+  const progress =
+    statusMdState === "ok"
+      ? progressBar(fm.tasks_completed ?? 0, fm.tasks_total ?? 0).padEnd(25)
+      : statusMdState === "unreadable"
+        ? chalk.red("status.md unreadable").padEnd(25)
+        : chalk.dim("no notes").padEnd(25);
+  const updated = statusMdState === "ok" ? timeAgo(fm.last_updated) : chalk.dim("—");
+
+  return `  ${name.padEnd(18)} ${captainDisplay}  ${crew} ${progress} ${updated}`;
 }
 
 export const statusCommand = new Command("status")
@@ -91,31 +129,23 @@ export const statusCommand = new Command("status")
     for (const [name, project] of projects) {
       const workspace = registry.forProject(name, config);
 
-      if (!(await workspace.exists("status.md"))) {
-        console.log(`  ${name.padEnd(18)} ${chalk.dim("no status.md")}`);
-        continue;
-      }
-
       let fm: StatusFrontmatter = {};
-      try {
-        const raw = await workspace.read("status.md");
-        fm = matter(raw).data as StatusFrontmatter;
-      } catch {
-        console.log(`  ${name.padEnd(18)} ${chalk.red("error reading status.md")}`);
-        continue;
+      let statusMdState: StatusMdState = "missing";
+      if (await workspace.exists("status.md")) {
+        try {
+          const raw = await workspace.read("status.md");
+          fm = matter(raw).data as StatusFrontmatter;
+          statusMdState = "ok";
+        } catch {
+          // Corrupt/unreadable status.md — render distinctly from "missing"
+          // (formatProjectRow) so the operator doesn't lose the fact that the
+          // file is broken, while still showing live captain state (#549).
+          statusMdState = "unreadable";
+        }
       }
-
-      const sessionIndicator = captainIndicator(captainStateByProject.get(name));
-      const captainDisplay = `${project.captainName.padEnd(11)} ${sessionIndicator}`;
-      const crew = String(fm.active_crew ?? 0).padEnd(6);
-      const progress = progressBar(
-        fm.tasks_completed ?? 0,
-        fm.tasks_total ?? 0,
-      ).padEnd(25);
-      const updated = timeAgo(fm.last_updated);
 
       console.log(
-        `  ${name.padEnd(18)} ${captainDisplay}  ${crew} ${progress} ${updated}`,
+        formatProjectRow(name, project.captainName, fm, statusMdState, captainStateByProject.get(name)),
       );
     }
 
