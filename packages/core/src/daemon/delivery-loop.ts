@@ -158,6 +158,10 @@ export function createDelivery(
   daemonCmux: DaemonSurfaceDriver | undefined,
 ): DeliveryResult {
   const { stateRoot, store, log, livenessRegistry, isPidAlive, opts, telegramBridge } = ctx;
+  // Default to a no-op so tests that construct a bare ctx object (not via
+  // buildContext) don't need to inject this. squadrantd.ts always overrides
+  // ctx.notifyFault with the real one in production (see context.ts).
+  const notifyFault = ctx.notifyFault ?? (() => {});
 
   // ── Default push-notification wiring (mailbox-injector spec) ─────────────
   const defaultNotify = async (args: {
@@ -306,8 +310,20 @@ export function createDelivery(
       // reporting and only surfaces once the stall has already resolved
       // (fail-silent-then-apologize). Kept here as a post-resolution audit
       // trail, discoverable even if the operator never opens the dashboard.
-      // The operator-facing alert is the out-of-band Telegram push below,
-      // which never touches the stuck pane and reaches them WHILE stuck.
+      //
+      // Two independent out-of-band channels fire alongside it, neither of
+      // which touches the stuck pane/mailbox:
+      //  - notifyFault: the notifier plugin slot (cmux by default — see
+      //    @squadrant/workspaces' NotifierRegistry). ALWAYS resolved in
+      //    production (never undefined), so it's the channel that works with
+      //    ZERO Telegram configuration — closing the gap where Telegram alone
+      //    left every non-Telegram install silent.
+      //  - telegramBridge.pushRaw: reaches a phone even when the operator
+      //    isn't watching a terminal. Optional — only when Telegram is set up.
+      // The daemon's own health snapshot (`deferral.stuck`) is also surfaced
+      // as `detail` on the captain's ComponentHealth row (see liveness.ts),
+      // so `squadrant doctor` / `squadrant status --detailed` show it too —
+      // a third, pull-based, zero-configuration surface.
       const stuck = d.stats().stuck;
       if (stuck && !stuckNotified.has(project)) {
         stuckNotified.add(project);
@@ -316,6 +332,8 @@ export function createDelivery(
         const text = `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
         appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
           .catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
+        Promise.resolve(notifyFault(project, text))
+          .catch((e) => log(`delivery stuck fault-notify failed project=${project}: ${(e as Error).message}`));
         telegramBridge?.pushRaw(project, text);
       } else if (!stuck && stuckNotified.has(project)) {
         stuckNotified.delete(project);

@@ -193,14 +193,19 @@ describe("pushRaw (out-of-band system alert, #579/#484 DELIVERY STUCK)", () => {
     expect(sendCalls).toEqual([[-100500, 55, "⚠️ DELIVERY STUCK: test"]]);
   });
 
-  it("drops the alert when the project is MUTED (mute state still respected)", async () => {
-    const root = freshRoot();
-    const sendMessage = vi.fn();
-    const createForumTopic = vi.fn();
+  it("still sends even when the project is MUTED — a fault is not routine notification noise", async () => {
+    // Decision (per #579/#484 review): mute silences routine crew noise
+    // (progress/done/blocked), not operational faults. A muted project with a
+    // stuck delivery must still alert, or muting silently reintroduces the
+    // exact silent-stall bug this alert exists to prevent (Gap 2).
+    const root = freshRoot(); // fresh root == default-muted (absent live state)
+    const sent = deferred();
+    const sendCalls: Array<[number, number | undefined, string]> = [];
+    const createForumTopic = vi.fn(async () => 42);
     const client: TelegramClient = {
       getUpdates: async () => [],
       createForumTopic,
-      sendMessage,
+      sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
       getMe: async () => ({ id: 0, username: "" }),
       setMyCommands: async () => {},
       answerCallbackQuery: async () => {},
@@ -211,10 +216,10 @@ describe("pushRaw (out-of-band system alert, #579/#484 DELIVERY STUCK)", () => {
     active = bridge;
 
     bridge.pushRaw("squadrant", "⚠️ DELIVERY STUCK: test");
-    await new Promise<void>((r) => setTimeout(r, 20));
+    await sent.promise;
 
-    expect(createForumTopic).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(createForumTopic).toHaveBeenCalled();
+    expect(sendCalls).toEqual([[-100500, 42, "⚠️ DELIVERY STUCK: test"]]);
   });
 
   it("swallows a rejecting sendMessage (crash-contained, logged, never throws)", async () => {

@@ -36,11 +36,15 @@ export interface TelegramBridge {
   stop(): void;
   /** Outbound, best-effort: a Telegram failure is swallowed (logged), never thrown. */
   pushLifecycle(project: string, ev: ControlEvent): void;
-  /** Outbound, best-effort, out-of-band: raw text alert not tied to a crew
-   *  lifecycle event (so it bypasses the crew-tier filter — mute state still
-   *  applies). For alerts that must reach the operator even while the
-   *  captain pane's own delivery path (mailbox → pane) is itself stuck
-   *  (#579/#484's DELIVERY STUCK), since it never touches that path. */
+  /** Outbound, best-effort, out-of-band, fault-class alert — for system faults
+   *  (e.g. #579/#484's DELIVERY STUCK), not routine crew notifications. Bypasses
+   *  BOTH the crew-tier filter AND per-project mute: mute is a user's choice to
+   *  silence routine notification *noise* (crew progress/done/blocked), a
+   *  choice about volume. It was never a choice to hide "your instructions
+   *  can't reach the captain" — an operational fault, not noise. A muted
+   *  project with a stuck delivery must still alert, or muting silently
+   *  reintroduces the exact silent-stall bug this alert exists to prevent.
+   *  Never touches the mailbox/pane path (so it can't itself get stuck). */
   pushRaw(project: string, text: string): void;
   health(): TelegramBridgeHealth;
 }
@@ -141,13 +145,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     await sendToTopic(project, formatLifecycle(project, ev));
   }
 
-  // Outbound, out-of-band: a system-level alert not tied to a crew lifecycle
-  // event type, so the crew-tier filter doesn't apply — mute state still does.
+  // Outbound, out-of-band, fault-class: bypasses BOTH the crew-tier filter AND
+  // mute (see the pushRaw docstring for why mute must not silence a fault).
   async function deliverRawOutbound(project: string, text: string): Promise<void> {
-    const resolved = resolveNotify(cfg.notify, loadProjectOverride(project, configRoot));
-    const live = loadState(stateRoot).notify[project]; // boolean | undefined
-    const active = live ?? resolved.active;
-    if (!active) return; // muted → no topic create, no send
     await sendToTopic(project, text);
   }
 

@@ -111,6 +111,11 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
           captainState: deriveCaptainState(capEntry),
           commandPresent: null,
           crews: store.list(project),
+          // #579/#484 Gap 3: surface the same deferral stats already exposed to
+          // the snapshot (line ~135 below) on the health row too, so `squadrant
+          // doctor` / `squadrant status --detailed` show a stuck delivery with
+          // zero configuration.
+          captainDeferral: deliveryStats(project),
         }),
       );
     }

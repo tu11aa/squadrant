@@ -5,8 +5,8 @@ const execMock = vi.hoisted(() => vi.fn());
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   execSync: execMock,
-  execFileSync: execFileMock,
-  execFile: vi.fn(),
+  // Node-callback shape: util.promisify(execFile) awaits (err, stdout, stderr).
+  execFile: execFileMock,
 }));
 
 describe("CmuxNotifier", () => {
@@ -20,12 +20,13 @@ describe("CmuxNotifier", () => {
   });
 
   it("notify invokes 'squadrant runtime send --command' with the message as one argv element", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_file, _args, _opts, cb) => cb(null, "", ""));
     await createCmuxNotifier({}).notify("hello world");
     expect(execFileMock).toHaveBeenCalledWith(
       "squadrant",
       ["runtime", "send", "--command", "hello world"],
       expect.anything(),
+      expect.any(Function),
     );
   });
 
@@ -33,7 +34,7 @@ describe("CmuxNotifier", () => {
   // commands must reach the spawn as a single literal argv element, never parsed
   // by a shell. Same class as #118/#119.
   it("notify delivers backtick/$() shell metacharacters as a literal argv element, not executed", async () => {
-    execFileMock.mockReturnValue("");
+    execFileMock.mockImplementation((_file, _args, _opts, cb) => cb(null, "", ""));
     const malicious = 'done `cmux close-workspace` and $(rm -rf /)';
     await createCmuxNotifier({}).notify(malicious);
     const call = execFileMock.mock.calls[0];
@@ -45,8 +46,25 @@ describe("CmuxNotifier", () => {
   });
 
   it("notify throws when squadrant runtime send fails", async () => {
-    execFileMock.mockImplementation(() => { throw new Error("send failed"); });
+    execFileMock.mockImplementation((_file, _args, _opts, cb) => cb(new Error("send failed")));
     await expect(createCmuxNotifier({}).notify("x")).rejects.toThrow(/send failed/);
+  });
+
+  // #579/#484 Gap 1: the daemon calls notify() from inside its own event loop
+  // (the DELIVERY STUCK fault alert) — it must never block that loop the way
+  // execFileSync would. Proves notify() doesn't return/resolve synchronously.
+  it("notify does not block synchronously — resolves only after the async callback fires", async () => {
+    let resolved = false;
+    let fireCallback!: () => void;
+    execFileMock.mockImplementation((_file, _args, _opts, cb) => {
+      fireCallback = () => cb(null, "", "");
+    });
+    const p = createCmuxNotifier({}).notify("x").then(() => { resolved = true; });
+    await Promise.resolve(); // let the notify() call proceed to the execFile mock
+    expect(resolved).toBe(false); // still pending — proves no sync execFileSync-style block
+    fireCallback();
+    await p;
+    expect(resolved).toBe(true);
   });
 
   it("probe returns installed+reachable=true when status succeeds (exit 0)", async () => {

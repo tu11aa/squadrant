@@ -179,6 +179,54 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     expect(pushRaw).toHaveBeenCalledWith(project, expect.stringContaining("DELIVERY STUCK"));
   });
 
+  it("#579/#484 Gap 1: pushes the alert via notifyFault even with NO telegramBridge configured — the config-free channel every install has", async () => {
+    // Most installs have no Telegram set up. Before this fix, the ONLY
+    // out-of-band channel was `telegramBridge?.pushRaw` — undefined bridge
+    // meant that call silently no-op'd, leaving the alert with no channel
+    // that could reach the operator while still stuck (appendCaptainMessage
+    // queues behind the same block). notifyFault must be resolved and called
+    // regardless of whether telegramBridge is injected at all.
+    const stateRoot = freshState();
+    const project = "epsilon";
+    const captainName = `${project}-captain`;
+    mockConfig({ projects: { [project]: { captainName } } });
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    let n = 0;
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(`typing-${n++}`); },
+    };
+    const notifyFault = vi.fn();
+    const deliv = createDelivery({
+      // NOTE: no telegramBridge key at all — proves this doesn't depend on it.
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {}, notifyFault,
+    } as any, cmux as any);
+
+    for (let i = 0; i < 6; i++) await deliv.deliveryTick!();
+
+    expect(notifyFault).toHaveBeenCalledTimes(1);
+    expect(notifyFault).toHaveBeenCalledWith(project, expect.stringContaining("DELIVERY STUCK"));
+  });
+
   it("re-arms after recovery — a second, later stall episode alerts again", async () => {
     const stateRoot = freshState();
     const project = "gamma";
