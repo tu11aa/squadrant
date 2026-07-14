@@ -157,7 +157,7 @@ export function createDelivery(
   ctx: DaemonContext,
   daemonCmux: DaemonSurfaceDriver | undefined,
 ): DeliveryResult {
-  const { stateRoot, store, log, livenessRegistry, isPidAlive, opts } = ctx;
+  const { stateRoot, store, log, livenessRegistry, isPidAlive, opts, telegramBridge } = ctx;
 
   // ── Default push-notification wiring (mailbox-injector spec) ─────────────
   const defaultNotify = async (args: {
@@ -299,21 +299,24 @@ export function createDelivery(
 
       // #579/#484: fail LOUD, not silent, once this project's delivery is
       // stuck (deferCount crossed maxDefers — an actively-changing draft that
-      // never stabilizes, so the structural probe never gets to run). This is
-      // a real mailbox entry (queued behind the block like any other daemon→
-      // captain message, e.g. #529's restart broadcast), not just a dashboard
-      // stat — it gives the operator a discoverable trail even if they never
-      // open the dashboard. Fires once per stall episode.
+      // never stabilizes, so the structural probe never gets to run).
+      //
+      // The mailbox entry alone is NOT enough: it's drained by this same
+      // stuck delivery pipeline, so it queues behind the very block it's
+      // reporting and only surfaces once the stall has already resolved
+      // (fail-silent-then-apologize). Kept here as a post-resolution audit
+      // trail, discoverable even if the operator never opens the dashboard.
+      // The operator-facing alert is the out-of-band Telegram push below,
+      // which never touches the stuck pane and reaches them WHILE stuck.
       const stuck = d.stats().stuck;
       if (stuck && !stuckNotified.has(project)) {
         stuckNotified.add(project);
         const { maxDeferCount } = d.stats();
         log(`delivery stuck project=${project} deferCount=${maxDeferCount}`);
-        appendCaptainMessage({
-          stateRoot, project,
-          text: `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`,
-          source: "daemon",
-        }).catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
+        const text = `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
+        appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
+          .catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
+        telegramBridge?.pushRaw(project, text);
       } else if (!stuck && stuckNotified.has(project)) {
         stuckNotified.delete(project);
       }

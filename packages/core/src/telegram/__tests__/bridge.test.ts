@@ -167,6 +167,85 @@ describe("pushLifecycle notify gate", () => {
   });
 });
 
+describe("pushRaw (out-of-band system alert, #579/#484 DELIVERY STUCK)", () => {
+  it("sends raw text to the project's topic, bypassing formatLifecycle/crew-tier", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 55);
+    setNotify(root, "demo", true);
+    const sent = deferred();
+    const sendCalls: Array<[number, number | undefined, string]> = [];
+    const client: TelegramClient = {
+      getUpdates: async () => [],
+      createForumTopic: async () => 1,
+      sendMessage: async (c, th, text) => { sendCalls.push([c, th, text]); sent.resolve(); },
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+
+    bridge.pushRaw("demo", "⚠️ DELIVERY STUCK: test");
+    await sent.promise;
+
+    expect(sendCalls).toEqual([[-100500, 55, "⚠️ DELIVERY STUCK: test"]]);
+  });
+
+  it("drops the alert when the project is MUTED (mute state still respected)", async () => {
+    const root = freshRoot();
+    const sendMessage = vi.fn();
+    const createForumTopic = vi.fn();
+    const client: TelegramClient = {
+      getUpdates: async () => [],
+      createForumTopic,
+      sendMessage,
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({ cfg, stateRoot: root, client, appendCaptainMessage: async () => {}, log: () => {} });
+    active = bridge;
+
+    bridge.pushRaw("squadrant", "⚠️ DELIVERY STUCK: test");
+    await new Promise<void>((r) => setTimeout(r, 20));
+
+    expect(createForumTopic).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("swallows a rejecting sendMessage (crash-contained, logged, never throws)", async () => {
+    const root = freshRoot();
+    setTopic(root, "demo", 55);
+    setNotify(root, "demo", true);
+    const logged = deferred();
+    const logs: string[] = [];
+    const client: TelegramClient = {
+      getUpdates: async () => [],
+      createForumTopic: async () => 1,
+      sendMessage: async () => { throw new Error("network down"); },
+      getMe: async () => ({ id: 0, username: "" }),
+      setMyCommands: async () => {},
+      answerCallbackQuery: async () => {},
+      editMessageReplyMarkup: async () => {},
+      sendChatAction: async () => {},
+    };
+    const bridge = createTelegramBridge({
+      cfg, stateRoot: root, client,
+      appendCaptainMessage: async () => {},
+      log: (m) => { logs.push(m); logged.resolve(); },
+    });
+    active = bridge;
+
+    expect(() => bridge.pushRaw("demo", "⚠️ DELIVERY STUCK: test")).not.toThrow();
+    await logged.promise;
+    expect(logs.some((m) => m.includes("network down"))).toBe(true);
+  });
+});
+
 describe("auto-unmute + in-topic /mute /unmute", () => {
   const USER_ID = 42;
   const cfgWithControl: TelegramConfig = {

@@ -131,6 +131,54 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     expect(texts.some((t) => t.includes("DELIVERY STUCK"))).toBe(false);
   });
 
+  it("pushes the alert out-of-band via telegramBridge — reaches the operator WHILE still stuck, not queued behind the same blocked pane", async () => {
+    // The mailbox entry alone doesn't work: it's drained by this same stuck
+    // delivery pipeline, so it queues behind the very block it's reporting.
+    // telegramBridge.pushRaw never touches the pane/mailbox, so it must fire
+    // on the SAME tick that crosses maxDefers — before the draft ever clears.
+    const stateRoot = freshState();
+    const project = "delta";
+    const captainName = `${project}-captain`;
+    mockConfig({ projects: { [project]: { captainName } } });
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    let n = 0;
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(`typing-${n++}`); },
+    };
+    const pushRaw = vi.fn();
+    const telegramBridge = { start: vi.fn(), stop: vi.fn(), pushLifecycle: vi.fn(), pushRaw, health: vi.fn() };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {}, telegramBridge,
+    } as any, cmux as any);
+
+    // Still stuck (draft never clears) — the mailbox alert would still be
+    // queued behind the block, but pushRaw must already have fired.
+    for (let i = 0; i < 6; i++) await deliv.deliveryTick!();
+
+    expect(pushRaw).toHaveBeenCalledTimes(1);
+    expect(pushRaw).toHaveBeenCalledWith(project, expect.stringContaining("DELIVERY STUCK"));
+  });
+
   it("re-arms after recovery — a second, later stall episode alerts again", async () => {
     const stateRoot = freshState();
     const project = "gamma";

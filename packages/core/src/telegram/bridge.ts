@@ -36,6 +36,12 @@ export interface TelegramBridge {
   stop(): void;
   /** Outbound, best-effort: a Telegram failure is swallowed (logged), never thrown. */
   pushLifecycle(project: string, ev: ControlEvent): void;
+  /** Outbound, best-effort, out-of-band: raw text alert not tied to a crew
+   *  lifecycle event (so it bypasses the crew-tier filter — mute state still
+   *  applies). For alerts that must reach the operator even while the
+   *  captain pane's own delivery path (mailbox → pane) is itself stuck
+   *  (#579/#484's DELIVERY STUCK), since it never touches that path. */
+  pushRaw(project: string, text: string): void;
   health(): TelegramBridgeHealth;
 }
 
@@ -114,6 +120,16 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     saveState(stateRoot, s);
   }
 
+  // Resolve (or lazily create) a project's topic and send raw text into it.
+  async function sendToTopic(project: string, text: string): Promise<void> {
+    let threadId = loadState(stateRoot).topics[topicKey(project)];
+    if (threadId === undefined) {
+      threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
+      setTopic(stateRoot, project, threadId);
+    }
+    await client.sendMessage(cfg.supergroupId, threadId, text);
+  }
+
   // Outbound: resolve active (live state wins over config default) + crew-tier
   // filter, then resolve (or lazily create) the project's topic and send.
   async function deliverOutbound(project: string, ev: ControlEvent): Promise<void> {
@@ -122,12 +138,17 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     const active = live ?? resolved.active;
     if (!active) return;                                // muted → no topic create, no send
     if (!tierIncludes(resolved.crew, ev.type)) return; // tier filter
-    let threadId = loadState(stateRoot).topics[topicKey(project)];
-    if (threadId === undefined) {
-      threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
-      setTopic(stateRoot, project, threadId);
-    }
-    await client.sendMessage(cfg.supergroupId, threadId, formatLifecycle(project, ev));
+    await sendToTopic(project, formatLifecycle(project, ev));
+  }
+
+  // Outbound, out-of-band: a system-level alert not tied to a crew lifecycle
+  // event type, so the crew-tier filter doesn't apply — mute state still does.
+  async function deliverRawOutbound(project: string, text: string): Promise<void> {
+    const resolved = resolveNotify(cfg.notify, loadProjectOverride(project, configRoot));
+    const live = loadState(stateRoot).notify[project]; // boolean | undefined
+    const active = live ?? resolved.active;
+    if (!active) return; // muted → no topic create, no send
+    await sendToTopic(project, text);
   }
 
   // Live notify state for a project: resolved config (built-in→global→override)
@@ -496,6 +517,11 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       // the daemon's notify path.
       void deliverOutbound(project, ev).catch((e) => {
         log(`telegram outbound failed project=${project}: ${(e as Error).message}`);
+      });
+    },
+    pushRaw(project, text) {
+      void deliverRawOutbound(project, text).catch((e) => {
+        log(`telegram raw push failed project=${project}: ${(e as Error).message}`);
       });
     },
     health() {
