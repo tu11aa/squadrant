@@ -54,6 +54,30 @@ export function captainIndicator(state: ComponentHealth["state"] | undefined): s
   return chalk.dim("○");
 }
 
+/**
+ * Pure. Render one project's status row. status.md is an optional human note
+ * layered on top of daemon-derived captain liveness (#549) — a project with
+ * no status.md (or an unparseable one) still renders with its real captain
+ * state, rather than being dropped from the table entirely.
+ */
+export function formatProjectRow(
+  name: string,
+  captainName: string,
+  fm: StatusFrontmatter,
+  hasStatusMd: boolean,
+  captainState: ComponentHealth["state"] | undefined,
+): string {
+  const sessionIndicator = captainIndicator(captainState);
+  const captainDisplay = `${captainName.padEnd(11)} ${sessionIndicator}`;
+  const crew = hasStatusMd ? String(fm.active_crew ?? 0).padEnd(6) : chalk.dim("?").padEnd(6);
+  const progress = hasStatusMd
+    ? progressBar(fm.tasks_completed ?? 0, fm.tasks_total ?? 0).padEnd(25)
+    : chalk.dim("no notes").padEnd(25);
+  const updated = hasStatusMd ? timeAgo(fm.last_updated) : chalk.dim("—");
+
+  return `  ${name.padEnd(18)} ${captainDisplay}  ${crew} ${progress} ${updated}`;
+}
+
 export const statusCommand = new Command("status")
   .description("Show status of all projects from spoke vault status files")
   .option("--detailed", "also show live per-component service health from the daemon (#77)")
@@ -91,31 +115,21 @@ export const statusCommand = new Command("status")
     for (const [name, project] of projects) {
       const workspace = registry.forProject(name, config);
 
-      if (!(await workspace.exists("status.md"))) {
-        console.log(`  ${name.padEnd(18)} ${chalk.dim("no status.md")}`);
-        continue;
-      }
-
       let fm: StatusFrontmatter = {};
-      try {
-        const raw = await workspace.read("status.md");
-        fm = matter(raw).data as StatusFrontmatter;
-      } catch {
-        console.log(`  ${name.padEnd(18)} ${chalk.red("error reading status.md")}`);
-        continue;
+      let hasStatusMd = false;
+      if (await workspace.exists("status.md")) {
+        try {
+          const raw = await workspace.read("status.md");
+          fm = matter(raw).data as StatusFrontmatter;
+          hasStatusMd = true;
+        } catch {
+          // Unreadable status.md — fall through and render with hasStatusMd=false
+          // so the row still shows live captain state instead of being dropped.
+        }
       }
-
-      const sessionIndicator = captainIndicator(captainStateByProject.get(name));
-      const captainDisplay = `${project.captainName.padEnd(11)} ${sessionIndicator}`;
-      const crew = String(fm.active_crew ?? 0).padEnd(6);
-      const progress = progressBar(
-        fm.tasks_completed ?? 0,
-        fm.tasks_total ?? 0,
-      ).padEnd(25);
-      const updated = timeAgo(fm.last_updated);
 
       console.log(
-        `  ${name.padEnd(18)} ${captainDisplay}  ${crew} ${progress} ${updated}`,
+        formatProjectRow(name, project.captainName, fm, hasStatusMd, captainStateByProject.get(name)),
       );
     }
 
