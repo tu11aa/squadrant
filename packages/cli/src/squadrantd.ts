@@ -25,6 +25,7 @@ import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerS
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
+import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -69,6 +70,23 @@ function buildTelegramBridge(
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
     ensureCaptainAlive, runCommand, sendReply,
   });
+}
+
+/** Construct the real out-of-band fault-alert channel (#579/#484 Gap 1) via the
+ *  notifier plugin slot — cmux by default (@squadrant/workspaces), or whichever
+ *  provider `config.notifier` names, so this works with ZERO extra config for
+ *  the vast majority of installs (cmux is squadrant's own runtime, not an
+ *  opt-in integration like Telegram). Best-effort: a notify failure is logged,
+ *  never thrown into the daemon's delivery loop. */
+function buildNotifyFault(log: (m: string) => void): (project: string, text: string) => Promise<void> {
+  const registry = new NotifierRegistry({ cmux: createCmuxNotifier });
+  return async (project: string, text: string) => {
+    try {
+      await registry.get(loadConfig()).notify(`[${project}] ${text}`);
+    } catch (e) {
+      log(`fault notify failed project=${project}: ${(e as Error).message}`);
+    }
+  };
 }
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
@@ -157,6 +175,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   const tgCfg = loadConfig().telegram;
   ctx.telegramBridge = opts.telegramBridge
     ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log) : undefined);
+
+  // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────
+  // Skipped under vitest (would shell out to the real `squadrant` CLI); tests
+  // inject opts.notifyFault, or fall back to buildContext()'s no-op default.
+  if (opts.notifyFault) ctx.notifyFault = opts.notifyFault;
+  else if (!process.env.VITEST) ctx.notifyFault = buildNotifyFault(log);
 
   // ── daemonCmux resolution ─────────────────────────────────────────────────
   ctx.daemonCmux = opts.daemonCmux

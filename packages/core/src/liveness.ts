@@ -100,6 +100,13 @@ export function projectHealth(input: {
   /** true/false when a command workspace is expected; null = not applicable. */
   commandPresent: boolean | null;
   crews: CrewLiveness[];
+  /** #579/#484 Gap 3: this project's captain-delivery deferral state (from
+   *  CaptainDelivery.stats() — see delivery/captain-delivery.ts), surfaced as
+   *  `detail` on the captain row so `squadrant doctor` / `squadrant status
+   *  --detailed` show a stuck delivery with zero extra configuration (no
+   *  Telegram, no mute state to fight) — a pull-based fallback that can never
+   *  be silenced, unlike the push alerts in delivery-loop.ts. */
+  captainDeferral?: { stuck: boolean; maxDeferCount: number };
 }): ComponentHealth[] {
   const { project, now, captainName, captainStopped, commandPresent, crews } = input;
   const out: ComponentHealth[] = [];
@@ -110,6 +117,7 @@ export function projectHealth(input: {
     captainStopped === false ? "alive" :
     "unknown"
   );
+  const deferral = input.captainDeferral;
   out.push({
     kind: "captain",
     project,
@@ -119,6 +127,7 @@ export function projectHealth(input: {
     detail:
       captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
       captainState === "gone" ? "captain process died (crash) — crews reaped" :
+      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries) — draft/ghost text blocking captain pane; input never touched, delivers automatically once cleared` :
       undefined,
   });
 

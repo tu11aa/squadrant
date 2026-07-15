@@ -1,6 +1,6 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
-import { appendToMailbox, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
+import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
 import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
@@ -157,7 +157,11 @@ export function createDelivery(
   ctx: DaemonContext,
   daemonCmux: DaemonSurfaceDriver | undefined,
 ): DeliveryResult {
-  const { stateRoot, store, log, livenessRegistry, isPidAlive, opts } = ctx;
+  const { stateRoot, store, log, livenessRegistry, isPidAlive, opts, telegramBridge } = ctx;
+  // Default to a no-op so tests that construct a bare ctx object (not via
+  // buildContext) don't need to inject this. squadrantd.ts always overrides
+  // ctx.notifyFault with the real one in production (see context.ts).
+  const notifyFault = ctx.notifyFault ?? (() => {});
 
   // ── Default push-notification wiring (mailbox-injector spec) ─────────────
   const defaultNotify = async (args: {
@@ -190,6 +194,13 @@ export function createDelivery(
   const cfg = loadConfig();
   const deliveries = new Map<string, CaptainDelivery>();
   const deliveryStats = (project: string): CaptainDeliveryStats | undefined => deliveries.get(project)?.stats();
+  // #579/#484: deferring forever behind an actively-changing draft is the
+  // correct, SAFE behaviour — but safe-and-silent is #560's disease. Track
+  // which projects we've already alerted on for the CURRENT stall episode so
+  // the alert fires exactly once per episode (edge-triggered, mirrors the
+  // #354 quietNotifiedAt / #492 anti-flood pattern), not once per poll. Clears
+  // when stats().stuck drops back to false, re-arming for a later episode.
+  const stuckNotified = new Set<string>();
   // Captured once at delivery-loop setup. Entries older than
   // sessionStartMs - STALE_THRESHOLD_MS are silently acked (cursor advanced)
   // without delivery. This stops a fresh/empty cursor from re-delivering the
@@ -288,6 +299,44 @@ export function createDelivery(
           log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred`);
           break;
         }
+      }
+
+      // #579/#484: fail LOUD, not silent, once this project's delivery is
+      // stuck (deferCount crossed maxDefers — an actively-changing draft that
+      // never stabilizes, so the structural probe never gets to run).
+      //
+      // The mailbox entry alone is NOT enough: it's drained by this same
+      // stuck delivery pipeline, so it queues behind the very block it's
+      // reporting and only surfaces once the stall has already resolved
+      // (fail-silent-then-apologize). Kept here as a post-resolution audit
+      // trail, discoverable even if the operator never opens the dashboard.
+      //
+      // Two independent out-of-band channels fire alongside it, neither of
+      // which touches the stuck pane/mailbox:
+      //  - notifyFault: the notifier plugin slot (cmux by default — see
+      //    @squadrant/workspaces' NotifierRegistry). ALWAYS resolved in
+      //    production (never undefined), so it's the channel that works with
+      //    ZERO Telegram configuration — closing the gap where Telegram alone
+      //    left every non-Telegram install silent.
+      //  - telegramBridge.pushRaw: reaches a phone even when the operator
+      //    isn't watching a terminal. Optional — only when Telegram is set up.
+      // The daemon's own health snapshot (`deferral.stuck`) is also surfaced
+      // as `detail` on the captain's ComponentHealth row (see liveness.ts),
+      // so `squadrant doctor` / `squadrant status --detailed` show it too —
+      // a third, pull-based, zero-configuration surface.
+      const stuck = d.stats().stuck;
+      if (stuck && !stuckNotified.has(project)) {
+        stuckNotified.add(project);
+        const { maxDeferCount } = d.stats();
+        log(`delivery stuck project=${project} deferCount=${maxDeferCount}`);
+        const text = `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
+        appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
+          .catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
+        Promise.resolve(notifyFault(project, text))
+          .catch((e) => log(`delivery stuck fault-notify failed project=${project}: ${(e as Error).message}`));
+        telegramBridge?.pushRaw(project, text);
+      } else if (!stuck && stuckNotified.has(project)) {
+        stuckNotified.delete(project);
       }
     }
   };

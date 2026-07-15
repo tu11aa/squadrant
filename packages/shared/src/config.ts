@@ -87,7 +87,9 @@ export interface SquadrantConfig {
     targets?: string[];
   };
   delivery?: {
-    /** Max consecutive defers before force-delivering a message (~1s poll cadence). Default: 300 (~5min). */
+    /** Defer count at which a stuck delivery is flagged on the dashboard (B1). Does NOT
+     *  force delivery on its own — probing an actively-changing draft is unsafe (#484); only
+     *  content stability (stableProbePolls) escalates to a probe. Default: 300 (~5min). */
     maxDeferDeliveries?: number;
     /** Consecutive stable-content polls before probing early to avoid a stall (#302). Default: 3 (~3s). */
     stableProbePolls?: number;

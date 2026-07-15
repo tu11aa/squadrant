@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-07-15
+
+### Fixed
+
+- **The captain-delivery probe could inject a real backspace keystroke into a draft the captain was actively typing, and force-deliver a queued message on top of it — this fired 4 times in production and stalled a P1 security task for 27 minutes (#579, #484).** The `maxDefers` backstop escalated to a live backspace-invariance probe purely on *how many times* delivery had deferred, even while the pane's content was still changing every poll — a genuinely typing captain, or a Claude Code suggested-prompt ghost that didn't match the narrow "Press...to..." detection regex (#579), would eventually cross that count and get probed anyway. Probe escalation now requires **content stability** (byte-identical polls) and never fires on defer count alone, so a live, changing draft is never touched. Because deferring forever behind a genuinely stuck delivery was previously silent, a new **"DELIVERY STUCK" alert** now fires once per stall (and re-arms after recovery) through the notifier plugin and Telegram — routed **out-of-band**, not through the same captain mailbox the stall is blocking, so the operator can be reached *while* delivery is still stuck rather than only after it clears.
+- **`squadrant status` hid a live captain entirely if the project had no `status.md`, even though `status.md` is documented as optional (#549).** The default table used `status.md` as the source of truth for whether a project's row rendered at all, so a project that had never written one — or had a corrupted one — silently vanished from the table with "no status.md," even while the daemon's liveness registry showed the captain demonstrably alive. Captain liveness is now always rendered from daemon state, with `status.md` only supplying the optional crew/task/progress columns on top of it. A corrupt `status.md` is now shown distinctly ("status.md unreadable", in red) instead of being swallowed and rendered the same as a missing one, and a deliberately-stopped captain now gets its own magenta indicator instead of being lumped in with one that crashed.
+
 ## [0.16.3] - 2026-07-12
 
 ### Fixed

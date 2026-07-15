@@ -1,0 +1,33 @@
+# Evidence: #574 live repro + unexplained phantom draft
+# captured: 2026-07-12T05:29:37Z
+# daemon version: 0.16.2
+
+## daemon's view of the task (note: state=working, crew is NOT working)
+361d836d  claude  working  task.progress  Fix #574 and #557 together — they are one bug class: a crew'
+
+## pane tail — idle prompt with UNSUBMITTED draft in the input box
+  
+  Committed 48ffa1e, pushed to crew/fix574, ran 1 shell command 
+
+⏺ Pushed to PR #577. Summary of this follow-up:
+
+  - Added a failing-first test that reproduced the exact TypeError: Cannot read properties of undefined (reading 'state') when the status lookup resolves with no
+  record.
+  - Fixed runCrewSignal to treat a missing record as "not confirmed terminal" and fall through to the normal emit (which surfaces its own clear "unknown task"
+  error if the id truly doesn't exist), instead of crashing.
+  - Reworded the already-terminal error message — it's read by the crew, which can't run crew send on itself — to tell the crew to stop and ask the captain
+  instead.
+  - Full suite re-verified green: 167 files / 2047 tests passed, 1 pre-existing skip. No stray processes.
+
+✻ Worked for 2m 53s
+
+※ recap: Fixed and pushed both parts of PR #577 for the #574/#557 crew-signal bug, including a follow-up fix for a null-guard issue a reviewer flagged. Full test
+  suite is green; next step is waiting for review/merge into develop. (disable recaps in /config)
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ signal done and let the captain merge
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Model: Sonnet 5  Ctx Used: 16.0%  Cost: $4.67  Session: 12m 
+   Session ID: bf56dc82-f5d5-456e-88f8-7c663f5b3dba  Thinking: high 
+   ⎇ crew/fix574  𖠰 squadrant-fix574 
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #577 · ← for agents
