@@ -78,6 +78,14 @@ export interface SquadrantdOpts {
    *  fake for tests. See DaemonDeps.resendFirstTurn (daemon/reduce.ts) for the
    *  full contract. */
   resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /** #579/#484 Gap 1: config-free, out-of-band fault-alert channel — routed
+   *  through the notifier plugin slot (@squadrant/workspaces' NotifierRegistry,
+   *  cmux by default) rather than hardwired to Telegram, so it works for every
+   *  install (most have no Telegram configured) and for any future notifier
+   *  provider. core can't import @squadrant/workspaces (one-way DAG), so the
+   *  host (squadrantd.ts) builds the real implementation and injects it here —
+   *  mirrors how telegramBridge is wired. Must never throw/block; best-effort. */
+  notifyFault?: (project: string, text: string) => Promise<void> | void;
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
@@ -132,6 +140,14 @@ export interface DaemonContext {
   cmuxEventsBridge: CmuxEventsBridge;
   /** Resolved Telegram bridge — undefined when config.telegram is absent. */
   telegramBridge?: TelegramBridge;
+  /** Resolved out-of-band fault-alert function (#579/#484 Gap 1) — ALWAYS a
+   *  real function, never undefined: defaults to a no-op here (core has no
+   *  notifier implementation to fall back to) but squadrantd.ts (the host)
+   *  always overrides it with the real notifier-registry-backed one before any
+   *  event can fire, so production never silently no-ops. Tests that construct
+   *  DaemonContext directly (bypassing squadrantd.ts) keep the no-op, which is
+   *  correct for isolated unit tests. */
+  notifyFault: (project: string, text: string) => Promise<void> | void;
   /** B4: registered LifecycleSource instances for per-source health aggregation. */
   lifecycleSources: LifecycleSource[];
   /** Fan-out to attach clients (set by createAttach). */
@@ -193,6 +209,7 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     opencodeBridge: null as unknown as OpencodeBridge,
     cmuxEventsBridge: null as unknown as CmuxEventsBridge,
     telegramBridge: undefined,
+    notifyFault: opts.notifyFault ?? (() => {}),
     lifecycleSources: opts.lifecycleSources ?? [],
     broadcast: () => {},
     schedulePromotion: () => {},

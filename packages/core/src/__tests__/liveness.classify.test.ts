@@ -51,6 +51,40 @@ describe("projectHealth (pure projection)", () => {
     expect(captain.detail).toMatch(/closed/i);
   });
 
+  // #579/#484 Gap 3: a stuck captain-delivery deferral must surface as a
+  // human-visible `detail` on the (otherwise "alive") captain row — the
+  // config-free, un-muteable pull surface for `squadrant doctor` /
+  // `squadrant status --detailed`.
+  it("captainDeferral.stuck=true → captain row carries a DELIVERY STUCK detail even though the captain is alive", () => {
+    const cs = projectHealth({
+      ...base, now: 1_000, captainStopped: false,
+      captainDeferral: { stuck: true, maxDeferCount: 300 },
+    });
+    const captain = find(cs, "captain")!;
+    expect(captain.state).toBe("alive"); // captain itself is fine — delivery is what's stuck
+    expect(captain.detail).toMatch(/delivery stuck/i);
+    expect(captain.detail).toContain("300");
+  });
+
+  it("captainDeferral.stuck=false (or omitted) → no stuck detail on an otherwise-healthy captain", () => {
+    const withStats = projectHealth({
+      ...base, now: 1_000, captainStopped: false,
+      captainDeferral: { stuck: false, maxDeferCount: 2 },
+    });
+    expect(find(withStats, "captain")!.detail).toBeUndefined();
+
+    const omitted = projectHealth({ ...base, now: 1_000, captainStopped: false });
+    expect(find(omitted, "captain")!.detail).toBeUndefined();
+  });
+
+  it("captainStopped=true wins over a stuck deferral — an intentional close explains the detail, not a stale defer count", () => {
+    const cs = projectHealth({
+      ...base, now: 1_000, captainStopped: true,
+      captainDeferral: { stuck: true, maxDeferCount: 300 },
+    });
+    expect(find(cs, "captain")!.detail).toMatch(/closed/i);
+  });
+
   it("captainStopped=null → captain unknown (no signal yet)", () => {
     const cs = projectHealth({ ...base, now: 1_000, captainStopped: null });
     expect(find(cs, "captain")!.state).toBe("unknown");

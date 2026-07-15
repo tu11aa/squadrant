@@ -867,6 +867,83 @@ describe("sendToSurface draft-preservation", () => {
   });
 });
 
+// #579/#484 chain: a FREE-FORM suggested-prompt ghost (no "Press ... to ..."
+// shape, doesn't match #294's content regex) is misread by parseDraftFromScreen
+// as literal draft text (see the "parseDraftFromScreen" describe block above).
+// The safety net for this is NOT content matching — it's the SAME structural
+// backspace-invariance probe (#258/#302/classifyDraftLiveness) that already
+// protects against every other non-editable ghost shape. These tests use the
+// two real captured strings from #579 to prove the probe delivers past them
+// exactly like it does the enumerated #294 shape, and that the hot (non-probe)
+// path still never keystrokes into them — the ghost's CONTENT is irrelevant to
+// safety; only its structural (backspace-invariant) behavior is.
+describe("sendToSurface #579 free-form ghost (structural backspace-invariance, not content regex)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+  });
+
+  function probeMock(initial: string, onBackspace: (s: string) => string) {
+    let box = initial;
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${box}`);
+      if (args.includes("send-key") && args.includes("backspace")) { box = onBackspace(box); return ""; }
+      return "";
+    });
+  }
+
+  it("hot path (no probe): a free-form ghost is deferred WITHOUT any keystroke, same as any other draft-shaped content", async () => {
+    const GHOST = "signal done and let the captain merge";
+    probeMock(GHOST, (s) => s);
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a.includes("backspace"))).toBe(false);
+    expect(calls.some((a) => a[0] === "send")).toBe(false);
+  });
+
+  it("probe: free-form ghost #1 ('signal done and let the captain merge') invariant under backspace → DELIVERS, never re-typed", async () => {
+    const GHOST = "signal done and let the captain merge";
+    probeMock(GHOST, (s) => s); // non-editable: backspace is a no-op, exactly like #294's shape
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined();
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(GHOST)))).toBe(false);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  it("probe: free-form ghost #2 ('go ahead and start on #562 now') invariant under backspace → DELIVERS, never re-typed", async () => {
+    const GHOST = "go ahead and start on #562 now";
+    probeMock(GHOST, (s) => s);
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).resolves.toBeUndefined();
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes(GHOST)))).toBe(false);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(true);
+    expect(calls.some((a) => a.includes("send-key") && a.includes("Enter"))).toBe(true);
+  });
+
+  // Adversarial check on this fix itself: if a free-form ghost happened to be
+  // EDITABLE (backspace actually removes a character — e.g. a future CC version
+  // renders it as real pre-filled buffer content instead of a display overlay),
+  // the probe must classify it as a real draft and defer — never execute an
+  // unauthored instruction. Structural detection must fail CLOSED, not open.
+  it("probe: a ghost-shaped string that turns out to be backspace-EDITABLE is treated as a real draft — defers, never delivers (fail-closed)", async () => {
+    const LOOKS_LIKE_GHOST = "go ahead and start on #562 now";
+    probeMock(LOOKS_LIKE_GHOST, (s) => s.slice(0, -1)); // hypothetically editable
+    await expect(
+      driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done", { probe: true }),
+    ).rejects.toBeInstanceOf(DeferDelivery);
+    const calls = execFileMock.mock.calls.map(argvOf);
+    expect(calls.some((a) => a[0] === "send" && a.some((s: string) => s.includes("crew done")))).toBe(false);
+  });
+});
+
 // #339: debug-gated send instrumentation. The DONE→captain submit is a text
 // burst then a SEPARATE send-key Enter; intermittently the Enter mis-lands as a
 // newline, stranding the payload in the input box. SQUADRANT_DEBUG_SEND turns on a
@@ -1123,6 +1200,42 @@ describe("parseDraftFromScreen", () => {
       "utf-8",
     );
     expect(parseDraftFromScreen(fixture)).toBe("");
+  });
+
+  // #579: Claude Code also renders FREE-FORM suggested-next-prompt ghost text
+  // (not the "Press ... to ..." UI-hint shape #294 catches). Two real captures:
+  // "signal done and let the captain merge" and "go ahead and start on #562 now",
+  // both observed the instant a crew's turn ended, neither typed by anyone.
+  // parseDraftFromScreen has ONE content-regex ghost filter (#294's shape) and
+  // these do NOT match it, so they fall through and come back as literal draft
+  // text — this is the documented trap, not a bug in parseDraftFromScreen itself:
+  // safety for THIS class lives downstream in the structural backspace-invariance
+  // probe (classifyDraftLiveness), not in enumerating ghost content here. See the
+  // "sendToSurface #579 free-form ghost" describe block below for the safety net.
+  it("does NOT filter a free-form suggested-prompt ghost — returns it as literal draft text (#579 trap, by design — safety is downstream)", () => {
+    const screen = makeTestScreen("❯ signal done and let the captain merge");
+    expect(parseDraftFromScreen(screen)).toBe("signal done and let the captain merge");
+  });
+
+  it("does NOT filter a second free-form suggested-prompt ghost shape either (#579 — proves the gap isn't a single enumerable string)", () => {
+    const screen = makeTestScreen("❯ go ahead and start on #562 now");
+    expect(parseDraftFromScreen(screen)).toBe("go ahead and start on #562 now");
+  });
+
+  it("returns the real fixture-1 free-form ghost as literal draft text (#579 captured evidence)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/579-freeform-ghost-fixture-1.txt"),
+      "utf-8",
+    );
+    expect(parseDraftFromScreen(fixture)).toBe("signal done and let the captain merge");
+  });
+
+  it("returns the real fixture-2 free-form ghost as literal draft text (#579 captured evidence)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/579-freeform-ghost-fixture-2.txt"),
+      "utf-8",
+    );
+    expect(parseDraftFromScreen(fixture)).toBe("go ahead and start on #562 now");
   });
 });
 

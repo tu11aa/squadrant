@@ -58,7 +58,7 @@ describe("squadrantd telegram bridge wiring", () => {
     dir = mkdtempSync(join(tmpdir(), "cp-tg-wired-"));
     const notify = vi.fn();
     const bridge = {
-      start: vi.fn(), stop: vi.fn(), pushLifecycle: vi.fn(),
+      start: vi.fn(), stop: vi.fn(), pushLifecycle: vi.fn(), pushRaw: vi.fn(),
       health: vi.fn(() => ({ polling: false, lastSuccessfulPollAt: null, lastError: null, lastErrorAt: null })),
     };
     const handle = startSquadrantd({
