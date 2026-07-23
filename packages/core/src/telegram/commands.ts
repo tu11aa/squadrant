@@ -6,7 +6,7 @@
 //
 // argv tokens are verified against the real CLI (packages/cli/src/commands/):
 //   status → `status`, projects → `projects list`, crews → `crew list <p>`,
-//   launch → `launch <p>`, effort → `effort [mode]`, config → `config get|set`,
+//   launch → `launch <p> --headless`, effort → `effort [mode]`, config → `config get|set`,
 //   spawn → `crew spawn <p> <task>`.
 
 export type ParsedCommand =
@@ -42,8 +42,13 @@ const REGISTRY: Record<string, Entry> = {
     build: (a) => (a[0] ? ok("crews", ["crew", "list", a[0]]) : usage("crews", "usage: /crews <project>")),
   },
   launch: {
+    // --headless (#586, same reason as #520 on the boot-if-down path): runCommand
+    // execs this argv from the daemon, which has no CMUX_WORKSPACE_ID and no
+    // terminal — a plain `launch` would open the cmux GUI app and exit 0 before
+    // the workspace is ever launched.
     usage: "/launch <project>",
-    build: (a) => (a[0] ? ok("launch", ["launch", a[0]]) : usage("launch", "usage: /launch <project>")),
+    build: (a) =>
+      a[0] ? ok("launch", ["launch", a[0], "--headless"]) : usage("launch", "usage: /launch <project>"),
   },
   effort: {
     usage: "/effort [max|balance|low]",
