@@ -648,11 +648,19 @@ describe("cmux driver", () => {
   });
 
   describe("showDiff (#596)", () => {
+    // cmux's `diff` subcommand defines --focus <true|false> (value required);
+    // only --no-focus is a bare flag. A prior version of this assertion expected
+    // a bare "--focus", which passed here (execFile is mocked, so the args array
+    // is never handed to real cmux) but broke the actual CLI with
+    // "Error: --focus requires a value". Assert the value explicitly so this
+    // mock can't drift from cmux's real flag contract again.
     it("calls cmux diff --branch with base/cwd/workspace and defaults layout=split, focused", async () => {
       execFileMock.mockReturnValue("");
       await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
       const cmd = cmdOf(execFileMock.mock.calls[0]);
-      expect(cmd).toBe("diff --branch --base develop --cwd /repo/wt --workspace workspace:10 --layout split --focus");
+      expect(cmd).toBe(
+        "diff --branch --base develop --cwd /repo/wt --workspace workspace:10 --layout split --focus true",
+      );
     });
 
     it("passes --layout unified when requested", async () => {
