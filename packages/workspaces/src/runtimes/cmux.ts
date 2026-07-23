@@ -702,6 +702,28 @@ export function createCmuxDriver(): RuntimeDriver {
       throw new DeferDelivery(draft);
     },
 
+    async showDiff(opts: {
+      workspaceId: string;
+      cwd: string;
+      base: string;
+      title?: string;
+      layout?: "split" | "unified";
+      focus?: boolean;
+      lastTurn?: boolean;
+    }): Promise<void> {
+      const args = [
+        "diff", "--branch",
+        "--base", opts.base,
+        "--cwd", opts.cwd,
+        "--workspace", opts.workspaceId,
+        "--layout", opts.layout ?? "split",
+      ];
+      if (opts.title) args.push("--title", opts.title);
+      if (opts.lastTurn) args.push("--last-turn");
+      args.push(opts.focus === false ? "--no-focus" : "--focus");
+      await cmux(args);
+    },
+
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {
       let output: string;
       try {

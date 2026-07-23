@@ -646,6 +646,55 @@ describe("cmux driver", () => {
     });
     expect(await driver.listSurfaces("workspace:10")).toEqual([]);
   });
+
+  describe("showDiff (#596)", () => {
+    it("calls cmux diff --branch with base/cwd/workspace and defaults layout=split, focused", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      const cmd = cmdOf(execFileMock.mock.calls[0]);
+      expect(cmd).toBe("diff --branch --base develop --cwd /repo/wt --workspace workspace:10 --layout split --focus");
+    });
+
+    it("passes --layout unified when requested", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", layout: "unified" });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("unified");
+      expect(args).not.toContain("split");
+    });
+
+    it("passes --no-focus when focus:false", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", focus: false });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("--no-focus");
+      expect(args).not.toContain("--focus");
+    });
+
+    it("includes --title only when a title is given (no literal 'undefined' arg)", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--title");
+
+      execFileMock.mockReset();
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", title: "crew/fix vs develop" });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("--title");
+      expect(args).toContain("crew/fix vs develop");
+    });
+
+    it("appends --last-turn only when lastTurn:true", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", lastTurn: true });
+      expect(argvOf(execFileMock.mock.calls[0])).toContain("--last-turn");
+
+      execFileMock.mockReset();
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--last-turn");
+    });
+  });
 });
 
 describe("sendToSurface draft-preservation", () => {
