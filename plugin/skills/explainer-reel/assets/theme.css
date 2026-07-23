@@ -1,0 +1,99 @@
+/*
+  explainer-reel dark-neon theme — design tokens for the style-pack.
+  Decoded from @duchminh_nguyen's reel series (see ../references/design-tokens.md).
+  Copy this whole file inline into a scene's <style> block — the deliverable is one
+  self-contained .html file, so don't leave this as an external stylesheet reference.
+*/
+:root {
+  /* -- surface -- */
+  --er-bg: #060608;
+  --er-vignette: radial-gradient(ellipse at 50% 45%, #1a0f18 0%, #060608 65%);
+
+  /* -- neon accent palette (meaning is fixed, never remap mid-piece) -- */
+  --er-client: #d9b843;   /* yellow  = client / requester */
+  --er-server: #d454e0;   /* magenta = server / authority */
+  --er-ok: #3ddc84;       /* green   = verified / hit / success */
+  --er-cache: #8b6bff;    /* purple  = cache / redis / storage tier */
+  --er-danger: #ff5a3c;   /* red-orange = danger / counter / tamper / title */
+
+  /* -- monoline -- */
+  --er-line: #aeb4bd;     /* default stroke, unaccented (funnel, connectors) */
+  --er-line-dim: #4a4e56; /* dimmed/inactive context stroke */
+  --er-stroke-w: 1.5;
+
+  /* -- glow -- */
+  --er-glow-blur: 4px;
+
+  /* -- type -- */
+  --er-font-title: 'Barlow Condensed', 'Oswald', 'Arial Narrow', sans-serif;
+  --er-font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html, body { margin: 0; background: var(--er-bg); }
+
+.er-stage {
+  background: var(--er-bg);
+  background-image: var(--er-vignette);
+  color: var(--er-line);
+  font-family: var(--er-font-mono);
+  position: relative;
+  overflow: hidden;
+}
+
+/* -- chrome: handle / title / footer -- */
+.er-handle {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: var(--er-line-dim);
+}
+.er-title {
+  text-align: center;
+  font-family: var(--er-font-title);
+  font-weight: 800;
+  font-size: 34px;
+  letter-spacing: 0.02em;
+  color: var(--er-danger);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--er-danger) 55%, transparent);
+  margin: 2px 0 10px;
+}
+.er-title-rule {
+  border: none;
+  border-top: 1px solid var(--er-line-dim);
+  opacity: 0.4;
+  margin: 0 0 18px;
+}
+.er-footer {
+  position: absolute;
+  left: 0; right: 0; bottom: 22px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--er-line-dim);
+  text-transform: uppercase;
+}
+
+/* -- svg monoline defaults -- */
+.er-svg-root { display: block; }
+.er-mono {
+  fill: none;
+  stroke: var(--er-line);
+  stroke-width: var(--er-stroke-w);
+}
+.er-dim { stroke: var(--er-line-dim) !important; opacity: 0.5; }
+
+/* glow filter is defined per-scene via <filter id="er-glow"> (feGaussianBlur),
+   applied with filter: url(#er-glow) on accent strokes/badges when they're "live" */
+.er-glow { filter: url(#er-glow); }
+
+/* -- reusable node/component classes (see component-library.md) -- */
+.er-panel-rect { fill: #0b0c10; stroke-width: var(--er-stroke-w); rx: 6; }
+.er-panel-title { font-size: 10px; letter-spacing: 0.08em; }
+.er-panel-line { stroke: var(--er-line-dim); stroke-width: 3; stroke-linecap: round; opacity: 0.6; }
+.er-panel-dot { r: 2.5; }
+
+.er-pill-rect { fill: #0b0c10; stroke: var(--er-line); stroke-width: var(--er-stroke-w); rx: 4; }
+.er-pill-text { font-size: 9px; fill: var(--er-line); font-family: var(--er-font-mono); }
+
+.er-badge-hex { fill: none; stroke-width: var(--er-stroke-w); }
+.er-badge-label { font-size: 10px; letter-spacing: 0.1em; font-family: var(--er-font-mono); }
