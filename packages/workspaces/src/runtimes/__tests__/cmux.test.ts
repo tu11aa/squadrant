@@ -5,9 +5,15 @@ import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOp
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
+// showPatch (#604) pipes its patch to the child's stdin instead of an argv
+// entry — captured here so tests can assert the patch text was actually
+// written, not just that some args were passed.
+const stdinEndMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   // Bridge: execFileMock is kept synchronous so assertions on mock.calls stay
   // unchanged; this wrapper adapts it to the callback-based execFile signature.
+  // Returns a fake ChildProcess (stdin.end only) — real execFile's async
+  // return value is the child process, and showPatch writes to its stdin.
   execFile: (bin: string, args: string[], opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
     try {
       const result = execFileMock(bin, args, opts);
@@ -15,6 +21,7 @@ vi.mock("node:child_process", () => ({
     } catch (err) {
       cb(err as Error, "");
     }
+    return { stdin: { end: stdinEndMock } };
   },
 }));
 
@@ -702,6 +709,50 @@ describe("cmux driver", () => {
       await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
       expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--last-turn");
     });
+  });
+});
+
+describe("showPatch (#604)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    stdinEndMock.mockReset();
+    execFileMock.mockReturnValue("");
+  });
+
+  it("pipes the patch to `cmux diff -` via stdin — not as an argv entry", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "diff --git a/x b/x\n+hi\n" });
+    expect(cmdOf(execFileMock.mock.calls[0])).toBe(
+      "diff - --workspace workspace:10 --layout split --focus true",
+    );
+    expect(stdinEndMock).toHaveBeenCalledWith("diff --git a/x b/x\n+hi\n");
+  });
+
+  it("passes --layout unified when requested", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", layout: "unified" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("unified");
+    expect(args).not.toContain("split");
+  });
+
+  it("passes --no-focus when focus:false", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", focus: false });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--no-focus");
+    expect(args).not.toContain("--focus");
+  });
+
+  it("includes --title only when a title is given (no literal 'undefined' arg)", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p" });
+    expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--title");
+
+    execFileMock.mockReset();
+    execFileMock.mockReturnValue("");
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", title: "PR #603" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--title");
+    expect(args).toContain("PR #603");
   });
 });
 

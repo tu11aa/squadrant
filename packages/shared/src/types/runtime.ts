@@ -104,4 +104,18 @@ export interface RuntimeDriver {
     // mid-task, before it has committed anything to review.
     source?: "branch" | "staged" | "unstaged";
   }): Promise<void>;
+
+  // Render a patch string (not a git source) in the runtime's native diff
+  // surface (#604). Used for `squadrant diff --pr <N>` (gh pr diff output) and
+  // `--base/--head` (merge-base diff output) — both produce a self-contained
+  // patch with no associated cwd/base ref, unlike showDiff's git-source review.
+  // cmux: pipes the patch to `cmux diff -` via stdin. Optional: runtimes
+  // without a native diff viewer simply omit it.
+  showPatch?(opts: {
+    workspaceId: string;
+    patch: string;      // unified diff / patch text (e.g. `gh pr diff` or `git diff` output)
+    title?: string;
+    layout?: "split" | "unified";
+    focus?: boolean;
+  }): Promise<void>;
 }

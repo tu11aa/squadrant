@@ -62,6 +62,30 @@ function cmux(args: string[]): Promise<string> {
   });
 }
 
+// Same as cmux() but writes `input` to the child's stdin before it exits —
+// used by showPatch (#604) for cmux's stdin-based diff mode (`cmux diff -`).
+// execFile's callback form still returns the underlying ChildProcess
+// synchronously, so its stdin is available immediately.
+function cmuxStdin(args: string[], input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      resolveCmuxBin(),
+      args,
+      { encoding: "utf-8", timeout: CMUX_TIMEOUT, env: { ...process.env, CMUX_QUIET: "1" } },
+      (err, stdout) => {
+        if (err) {
+          reject((err as NodeJS.ErrnoException).code === "ETIMEDOUT"
+            ? new CmuxTimeoutError(args.join(" "))
+            : err);
+          return;
+        }
+        resolve((stdout as string).trim());
+      },
+    );
+    child.stdin!.end(input);
+  });
+}
+
 // Shape of `cmux workspace list --json` (cmux 0.64.16). Only the fields we
 // consume are typed; everything else in the payload is ignored.
 interface CmuxWorkspaceListJson {
@@ -731,6 +755,21 @@ export function createCmuxDriver(): RuntimeDriver {
       if (opts.focus === false) args.push("--no-focus");
       else args.push("--focus", "true");
       await cmux(args);
+    },
+
+    async showPatch(opts: {
+      workspaceId: string;
+      patch: string;
+      title?: string;
+      layout?: "split" | "unified";
+      focus?: boolean;
+    }): Promise<void> {
+      const args = ["diff", "-", "--workspace", opts.workspaceId, "--layout", opts.layout ?? "split"];
+      if (opts.title) args.push("--title", opts.title);
+      // Same --focus <true|false> contract as showDiff (#603): only --no-focus is bare.
+      if (opts.focus === false) args.push("--no-focus");
+      else args.push("--focus", "true");
+      await cmuxStdin(args, opts.patch);
     },
 
     async listSurfaces(workspaceId: string): Promise<PaneRef[]> {

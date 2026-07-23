@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TaskRecord } from "@squadrant/shared";
-import { resolveDiffTarget, resolveDiffSources } from "../diff.js";
+import { resolveDiffTarget, resolveDiffSources, resolveDiffMode, buildCrewDiffStats, parseCrewPick } from "../diff.js";
 import type { DiffOptions } from "../diff.js";
 
 // ─── resolveDiffTarget (pure) ──────────────────────────────────────────────
@@ -82,6 +82,142 @@ describe("resolveDiffSources (#599)", () => {
   });
 });
 
+// ─── resolveDiffMode (#604) ─────────────────────────────────────────────────
+
+describe("resolveDiffMode (#604)", () => {
+  it("crew arg only → crew mode", () => {
+    expect(resolveDiffMode("fix-579", {})).toEqual({ mode: "crew", crew: "fix-579" });
+  });
+
+  it("--pr only → pr mode", () => {
+    expect(resolveDiffMode(undefined, { pr: "603" })).toEqual({ mode: "pr", pr: "603" });
+  });
+
+  it("--base + --head → refs mode", () => {
+    expect(resolveDiffMode(undefined, { base: "develop", head: "some/branch" })).toEqual({
+      mode: "refs",
+      base: "develop",
+      head: "some/branch",
+    });
+  });
+
+  it("--against <ref> → refs mode, base=ref, head=HEAD", () => {
+    expect(resolveDiffMode(undefined, { against: "develop" })).toEqual({
+      mode: "refs",
+      base: "develop",
+      head: "HEAD",
+    });
+  });
+
+  it("no crew, no flags → pick mode", () => {
+    expect(resolveDiffMode(undefined, {})).toEqual({ mode: "pick" });
+  });
+
+  it("crew + --pr → throws mutually-exclusive error", () => {
+    expect(() => resolveDiffMode("fix-579", { pr: "603" })).toThrow(/mutually exclusive/);
+  });
+
+  it("crew + --base → throws mutually-exclusive error", () => {
+    expect(() => resolveDiffMode("fix-579", { base: "develop", head: "x" })).toThrow(/mutually exclusive/);
+  });
+
+  it("--pr + --base → throws mutually-exclusive error", () => {
+    expect(() => resolveDiffMode(undefined, { pr: "603", base: "develop", head: "x" })).toThrow(/mutually exclusive/);
+  });
+
+  it("--against + --base → throws (ambiguous)", () => {
+    expect(() => resolveDiffMode(undefined, { against: "develop", base: "other" })).toThrow(/--against/);
+  });
+
+  it("--base without --head → throws (must be used together)", () => {
+    expect(() => resolveDiffMode(undefined, { base: "develop" })).toThrow(/--base and --head/);
+  });
+
+  it("--head without --base → throws (must be used together)", () => {
+    expect(() => resolveDiffMode(undefined, { head: "some/branch" })).toThrow(/--base and --head/);
+  });
+});
+
+// ─── buildCrewDiffStats (#604) ──────────────────────────────────────────────
+
+describe("buildCrewDiffStats (#604)", () => {
+  function makeLiveTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
+    return {
+      id: "t1", project: "brove", provider: "claude", mode: "interactive", state: "working",
+      task: "fix", createdAt: 1, lastHeartbeat: 1, lastEvent: "task.started",
+      heartbeatBudgetMs: 300000, attempts: [], ...overrides,
+    };
+  }
+
+  it("filters out terminal-state tasks", () => {
+    const tasks = [
+      makeLiveTask({ name: "alive", state: "working" }),
+      makeLiveTask({ id: "t2", name: "dead", state: "done" }),
+    ];
+    const stats = buildCrewDiffStats(tasks, "/repo", "develop", () => "1 file changed");
+    expect(stats.map((s) => s.name)).toEqual(["alive"]);
+  });
+
+  it("dedups by name, keeping the most-recently-created record", () => {
+    const tasks = [
+      makeLiveTask({ id: "old", name: "fix-579", cwd: "/repo/.worktrees/old", createdAt: 100 }),
+      makeLiveTask({ id: "new", name: "fix-579", cwd: "/repo/.worktrees/new", createdAt: 200 }),
+    ];
+    const stats = buildCrewDiffStats(tasks, "/repo", "develop", () => "");
+    expect(stats).toHaveLength(1);
+    expect(stats[0].cwd).toBe("/repo/.worktrees/new");
+  });
+
+  it("falls back to projectPath when a task has no cwd", () => {
+    const tasks = [makeLiveTask({ name: "shared-crew", cwd: undefined })];
+    const stats = buildCrewDiffStats(tasks, "/repo", "develop", () => "");
+    expect(stats[0].cwd).toBe("/repo");
+  });
+
+  it("calls getStat with (cwd, base) and trims the result", () => {
+    const tasks = [makeLiveTask({ name: "fix-579", cwd: "/repo/.worktrees/fix-579" })];
+    const getStat = vi.fn().mockReturnValue("  1 file changed, 2 insertions(+)  \n");
+    const stats = buildCrewDiffStats(tasks, "/repo", "develop", getStat);
+    expect(getStat).toHaveBeenCalledWith("/repo/.worktrees/fix-579", "develop");
+    expect(stats[0].stat).toBe("1 file changed, 2 insertions(+)");
+  });
+
+  it("skips tasks with no name (unnamed/legacy records)", () => {
+    const tasks = [makeLiveTask({ name: undefined })];
+    expect(buildCrewDiffStats(tasks, "/repo", "develop", () => "")).toEqual([]);
+  });
+});
+
+// ─── parseCrewPick (#604) ───────────────────────────────────────────────────
+
+describe("parseCrewPick (#604)", () => {
+  const stats = [
+    { name: "fix-579", cwd: "/a", stat: "1 file" },
+    { name: "fix-580", cwd: "/b", stat: "2 files" },
+  ];
+
+  it("parses a 1-based numeric index", () => {
+    expect(parseCrewPick("1", stats)).toBe("fix-579");
+    expect(parseCrewPick("2", stats)).toBe("fix-580");
+  });
+
+  it("parses a crew name directly", () => {
+    expect(parseCrewPick("fix-580", stats)).toBe("fix-580");
+  });
+
+  it("throws on an out-of-range index", () => {
+    expect(() => parseCrewPick("3", stats)).toThrow(/Invalid selection/);
+  });
+
+  it("throws on an unknown name", () => {
+    expect(() => parseCrewPick("ghost", stats)).toThrow(/Invalid selection/);
+  });
+
+  it("throws on empty input", () => {
+    expect(() => parseCrewPick("", stats)).toThrow(/Invalid selection/);
+  });
+});
+
 // ─── diff command action (integration, mocked seams) ──────────────────────
 
 const loadConfig = vi.hoisted(() => vi.fn());
@@ -94,23 +230,36 @@ const squadrantdCall = vi.hoisted(() => vi.fn());
 vi.mock("../crew-control.js", () => ({ squadrantdCall }));
 
 const showDiff = vi.hoisted(() => vi.fn());
+const showPatch = vi.hoisted(() => vi.fn());
 const resolveCaptainWorkspace = vi.hoisted(() => vi.fn());
 vi.mock("@squadrant/workspaces", () => ({ resolveCaptainWorkspace }));
 
 const execFileSync = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execFileSync }));
 
+const readlineQuestion = vi.hoisted(() => vi.fn());
+vi.mock("node:readline", () => ({
+  default: {
+    createInterface: () => ({
+      question: (_q: string, cb: (a: string) => void) => cb(readlineQuestion()),
+      close: vi.fn(),
+    }),
+  },
+}));
+
 describe("diffCommand action", () => {
   beforeEach(() => {
     loadConfig.mockReset();
     squadrantdCall.mockReset();
     showDiff.mockReset();
+    showPatch.mockReset();
     resolveCaptainWorkspace.mockReset();
     execFileSync.mockReset();
-    resolveCaptainWorkspace.mockResolvedValue({ runtime: { name: "cmux", showDiff }, workspaceId: "workspace:1" });
+    readlineQuestion.mockReset();
+    resolveCaptainWorkspace.mockResolvedValue({ runtime: { name: "cmux", showDiff, showPatch }, workspaceId: "workspace:1" });
   });
 
-  async function runAction(project: string, crew: string, opts: Partial<DiffOptions> = {}) {
+  async function runAction(project: string, crew: string | undefined, opts: Partial<DiffOptions> = {}) {
     const { runDiff } = await import("../diff.js");
     await runDiff(project, crew, { layout: "split", focus: true, ...opts });
   }
@@ -247,5 +396,158 @@ describe("diffCommand action", () => {
     expect(logSpy).toHaveBeenCalledWith("No staged changes on crew/fix-579.");
     expect(showDiff).not.toHaveBeenCalled();
     logSpy.mockRestore();
+  });
+
+  // ── #604 mode 1: --pr <N> ──────────────────────────────────────────────
+
+  describe("--pr <N> (#604)", () => {
+    beforeEach(() => {
+      loadConfig.mockReturnValue({ projects: { brove: { path: "/repo", captainName: "brove-captain" } } });
+    });
+
+    it("runs `gh pr diff <n>` from the project path and feeds the patch to showPatch", async () => {
+      execFileSync.mockReturnValue("diff --git a/x b/x\n+hi\n");
+      await runAction("brove", undefined, { pr: "603" });
+      expect(execFileSync).toHaveBeenCalledWith("gh", ["pr", "diff", "603"], { cwd: "/repo", encoding: "utf-8" });
+      expect(showPatch).toHaveBeenCalledWith({
+        workspaceId: "workspace:1",
+        patch: "diff --git a/x b/x\n+hi\n",
+        title: "PR #603",
+        layout: "split",
+        focus: true,
+      });
+      expect(showDiff).not.toHaveBeenCalled();
+    });
+
+    it("prints a no-changes message and never opens the viewer when the PR patch is empty", async () => {
+      execFileSync.mockReturnValue("");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      await runAction("brove", undefined, { pr: "603" });
+      expect(logSpy).toHaveBeenCalledWith("No changes in PR #603.");
+      expect(showPatch).not.toHaveBeenCalled();
+      logSpy.mockRestore();
+    });
+
+    it("throws a clear error when `gh pr diff` fails (unknown PR)", async () => {
+      execFileSync.mockImplementation(() => {
+        throw new Error("no pull requests found for branch");
+      });
+      await expect(runAction("brove", undefined, { pr: "9999" })).rejects.toThrow(
+        /Could not fetch PR #9999 diff/,
+      );
+      expect(showPatch).not.toHaveBeenCalled();
+    });
+
+    it("throws mutually-exclusive error when combined with a crew arg", async () => {
+      await expect(runAction("brove", "fix-579", { pr: "603" })).rejects.toThrow(/mutually exclusive/);
+      expect(squadrantdCall).not.toHaveBeenCalled();
+    });
+
+    it("errors clearly when the runtime has no showPatch capability", async () => {
+      resolveCaptainWorkspace.mockResolvedValue({ runtime: { name: "tmux" }, workspaceId: "workspace:1" });
+      await expect(runAction("brove", undefined, { pr: "603" })).rejects.toThrow(
+        "Runtime 'tmux' has no native patch viewer yet — Phase 1 supports cmux only.",
+      );
+    });
+  });
+
+  // ── #604 mode 2: --base/--head, --against alias ────────────────────────
+
+  describe("--base/--head and --against (#604)", () => {
+    beforeEach(() => {
+      loadConfig.mockReturnValue({ projects: { brove: { path: "/repo", captainName: "brove-captain" } } });
+    });
+
+    it("runs `git diff <base>...<head>` (merge-base form) and feeds the patch to showPatch", async () => {
+      execFileSync.mockReturnValue("diff --git a/y b/y\n+yo\n");
+      await runAction("brove", undefined, { base: "develop", head: "some/branch" });
+      expect(execFileSync).toHaveBeenCalledWith(
+        "git", ["-C", "/repo", "diff", "develop...some/branch"], { encoding: "utf-8" },
+      );
+      expect(showPatch).toHaveBeenCalledWith({
+        workspaceId: "workspace:1",
+        patch: "diff --git a/y b/y\n+yo\n",
+        title: "develop...some/branch",
+        layout: "split",
+        focus: true,
+      });
+    });
+
+    it("--against <ref> diffs <ref>...HEAD without needing --head", async () => {
+      execFileSync.mockReturnValue("diff --git a/z b/z\n+z\n");
+      await runAction("brove", undefined, { against: "develop" });
+      expect(execFileSync).toHaveBeenCalledWith(
+        "git", ["-C", "/repo", "diff", "develop...HEAD"], { encoding: "utf-8" },
+      );
+      expect(showPatch).toHaveBeenCalledWith(expect.objectContaining({ title: "develop...HEAD" }));
+    });
+
+    it("prints a no-changes message and never opens the viewer when the ref diff is empty", async () => {
+      execFileSync.mockReturnValue("");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      await runAction("brove", undefined, { base: "develop", head: "develop" });
+      expect(logSpy).toHaveBeenCalledWith("No changes in develop...develop.");
+      expect(showPatch).not.toHaveBeenCalled();
+      logSpy.mockRestore();
+    });
+
+    it("throws a clear error on a bad ref", async () => {
+      execFileSync.mockImplementation(() => {
+        throw new Error("unknown revision or path not in the working tree");
+      });
+      await expect(runAction("brove", undefined, { base: "ghost-ref", head: "develop" })).rejects.toThrow(
+        /Could not diff ghost-ref\.\.\.develop/,
+      );
+    });
+
+    it("throws when --base is given without --head", async () => {
+      await expect(runAction("brove", undefined, { base: "develop" })).rejects.toThrow(/--base and --head/);
+      expect(squadrantdCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── #604 mode 3: no crew, no flags → list + pick ────────────────────────
+
+  describe("no crew, no flags — list + pick (#604 Phase 2 of #596)", () => {
+    beforeEach(() => {
+      loadConfig.mockReturnValue({ projects: { brove: { path: "/repo", captainName: "brove-captain" } } });
+    });
+
+    it("lists live crews with a diffstat, prompts, and opens the picked crew's diff", async () => {
+      squadrantdCall.mockResolvedValue([
+        { id: "t1", name: "fix-579", cwd: "/repo/.worktrees/fix-579", createdAt: 1, state: "working" },
+        { id: "t2", name: "fix-580", cwd: "/repo/.worktrees/fix-580", createdAt: 2, state: "working" },
+      ]);
+      execFileSync.mockImplementation((_bin: string, args: string[]) => {
+        if (args.includes("--stat")) {
+          return args.includes("/repo/.worktrees/fix-580") ? "2 files changed" : "1 file changed";
+        }
+        return "";
+      });
+      readlineQuestion.mockReturnValue("2");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      await runAction("brove", undefined, {});
+      expect(logSpy).toHaveBeenCalledWith("Live crews for brove (vs develop):");
+      expect(showDiff).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/repo/.worktrees/fix-580", title: "crew/fix-580 vs develop" }));
+      logSpy.mockRestore();
+    });
+
+    it("throws a clear error when there are no live crews", async () => {
+      squadrantdCall.mockResolvedValue([
+        { id: "t1", name: "done-crew", cwd: "/repo/.worktrees/done-crew", createdAt: 1, state: "done" },
+      ]);
+      await expect(runAction("brove", undefined, {})).rejects.toThrow(/No live crews for brove/);
+      expect(showDiff).not.toHaveBeenCalled();
+    });
+
+    it("throws a clear error on an invalid pick", async () => {
+      squadrantdCall.mockResolvedValue([
+        { id: "t1", name: "fix-579", cwd: "/repo/.worktrees/fix-579", createdAt: 1, state: "working" },
+      ]);
+      execFileSync.mockReturnValue("1 file changed");
+      readlineQuestion.mockReturnValue("99");
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      await expect(runAction("brove", undefined, {})).rejects.toThrow(/Invalid selection/);
+    });
   });
 });
