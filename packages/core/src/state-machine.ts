@@ -102,6 +102,17 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // or `crew approve` (task.done) are the only ways out.
       return { ...base, state: "review", reviewNote: ev.message, pendingTool: undefined };
     case "task.done":
+      // #605: the review gate must be ENFORCING, not advisory. A crew's normal
+      // completion protocol always signals done at turn end — if that alone
+      // could terminalize a task sitting in 'review', the gate is bypassed by
+      // crew habit and `crew approve` becomes unreachable (state is already
+      // 'done'). Per #492: gate at the transition, not on crew discipline.
+      // Only `squadrant crew approve`'s task.done (source: 'approve') is a
+      // distinct terminal channel the veto does not block; any other task.done
+      // while in review is liveness-only and the record stays in review.
+      if (rec.state === "review" && ev.source !== "approve") {
+        return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      }
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };

@@ -112,7 +112,12 @@ export type ControlEvent =
   // before it is pushed/PR'd. `message` is an optional crew summary (parity
   // with task.done's optional message).
   | { type: "task.review"; id: string; message?: string }
-  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean }
+  // #605: `source: 'approve'` is the review-gate's distinct terminal channel —
+  // stamped only by `squadrant crew approve` (runCrewApprove). reduce() vetoes
+  // any OTHER task.done while state === 'review' (a crew's own completion
+  // protocol), so the gate can't be bypassed by crew habit; approve's stamped
+  // done is the one path the veto lets through.
+  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean; source?: "approve" }
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }

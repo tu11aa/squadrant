@@ -792,15 +792,28 @@ describe("daemon – blocked crew resume path (#183)", () => {
       expect(calls[0].message).toContain("addressed feedback");
     });
 
-    it("approve path: task.done from 'review' terminalizes to done and fires CREW DONE, not CREW REVIEW", async () => {
+    it("approve path: task.done with source:'approve' from 'review' terminalizes to done and fires CREW DONE, not CREW REVIEW", async () => {
       const store = createStore(dir);
       store.put(rec("t-rv4", { state: "review", reviewNote: "ready" }));
       const calls: any[] = [];
       const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
-      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-rv4", resultRef: "", message: "Approved — PR opened: https://x/1" } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-rv4", resultRef: "", message: "Approved — PR opened: https://x/1", source: "approve" } });
       expect(store.get("p", "t-rv4")?.state).toBe("done");
       expect(calls).toHaveLength(1);
       expect(calls[0].message).toContain("CREW DONE");
+    });
+
+    // #605: the review gate must be ENFORCING — a crew's own completion-protocol
+    // task.done (no provenance) must not bypass 'review', or `crew approve`
+    // becomes unreachable (state already 'done').
+    it("crew-originated task.done (no source) from 'review' is vetoed — stays review, no CREW DONE", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv6", { state: "review", reviewNote: "ready" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-rv6", resultRef: "" } });
+      expect(store.get("p", "t-rv6")?.state).toBe("review");
+      expect(calls).toHaveLength(0);
     });
 
     it("review is debounced the same as every other attention state EXCEPT awaiting-input — never suppressed near a captain turn", async () => {

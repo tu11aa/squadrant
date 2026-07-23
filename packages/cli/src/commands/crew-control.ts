@@ -292,7 +292,7 @@ export async function runCrewApprove(
   await deps.call({
     kind: "event",
     project,
-    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}` },
+    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}`, source: "approve" },
   });
 
   return prUrl;
