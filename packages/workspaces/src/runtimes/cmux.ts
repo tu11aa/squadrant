@@ -726,7 +726,10 @@ export function createCmuxDriver(): RuntimeDriver {
       }
       args.push("--cwd", opts.cwd, "--workspace", opts.workspaceId, "--layout", opts.layout ?? "split");
       if (opts.title) args.push("--title", opts.title);
-      args.push(opts.focus === false ? "--no-focus" : "--focus");
+      // cmux's diff subcommand defines --focus <true|false> (value required);
+      // only --no-focus is bare.
+      if (opts.focus === false) args.push("--no-focus");
+      else args.push("--focus", "true");
       await cmux(args);
     },
 
