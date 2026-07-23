@@ -13,6 +13,8 @@ export function formatLifecycle(project: string, ev: ControlEvent): string {
       return `✅ [${project}] CREW DONE · ${ev.id}` + (ev.message ? `\n${ev.message}` : "");
     case "task.blocked":
       return `🚧 [${project}] CREW BLOCKED · ${ev.id}\n${ev.question}`;
+    case "task.review":
+      return `👀 [${project}] CREW REVIEW · ${ev.id}` + (ev.message ? `\n${ev.message}` : "");
     case "task.idle":
       return `💤 [${project}] CREW IDLE · ${ev.id}`;
     case "task.failed":

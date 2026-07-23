@@ -423,6 +423,14 @@ describe("daemon handler", () => {
     expect(store.get("p", "g3")?.state).toBe("cancelled");
   });
 
+  it("sweep: interactive REVIEW record with a gone surface → cancelled, not left awaiting an approval that never comes (#599)", async () => {
+    const store = createStore(dir);
+    store.put(rec("g4", { mode: "interactive", state: "review", reviewNote: "ready", lastHeartbeat: 990, heartbeatBudgetMs: 86_400_000 }));
+    const d = createDaemon({ store, now: () => 1000, isSurfaceAlive: async () => "gone" });
+    await d.sweep();
+    expect(store.get("p", "g4")?.state).toBe("cancelled");
+  });
+
   // The critical non-regression: a LEGITIMATELY-IDLE live crew (surface alive)
   // that is over its heartbeat budget must NEVER be reaped. Post-#354 a quiet
   // thinking crew stays `working` (CREW QUIET, not awaiting-input); the point of
@@ -745,6 +753,87 @@ describe("daemon – blocked crew resume path (#183)", () => {
     const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
     await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-ds", resultRef: "/r" } });
     expect(calls[0].message).toBe("CREW DONE [claude/t-ds]: implement the thing");
+  });
+
+  // ── #599: review-gate checkpoint ───────────────────────────────────────────
+  describe("CREW REVIEW (#599)", () => {
+    it("working + task.review → state 'review' (NOT terminal) and fires CREW REVIEW with the crew's summary", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv", { state: "working", project: "p", name: "review-1" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.review", id: "t-rv", message: "added the CLI flag, tests green" } });
+      expect(store.get("p", "t-rv")?.state).toBe("review");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].message).toContain("CREW REVIEW");
+      expect(calls[0].message).toContain("added the CLI flag, tests green");
+    });
+
+    it("task.review is NOT in TERMINAL_STATES — the task stays alive, unlike done/failed/cancelled", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv2", { state: "working" }));
+      const d = createDaemon({ store, now: () => 2000 });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.review", id: "t-rv2" } });
+      // A terminal task would silently absorb a further event; 'review' must not.
+      const next = await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-rv2", note: "posttooluse" } });
+      expect((next as TaskRecord).lastEvent).toBe("task.progress");
+    });
+
+    it("captain feedback (task.started, the crew-send reject path) clears review → working, then a re-signal fires CREW REVIEW again", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv3", { state: "review", reviewNote: "first pass" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-rv3" } });
+      expect(store.get("p", "t-rv3")?.state).toBe("working");
+      await d.handle({ kind: "event", project: "p", event: { type: "task.review", id: "t-rv3", message: "addressed feedback" } });
+      expect(calls).toHaveLength(1); // task.started is not an attention state — only the re-review notifies
+      expect(calls[0].message).toContain("CREW REVIEW");
+      expect(calls[0].message).toContain("addressed feedback");
+    });
+
+    it("approve path: task.done with source:'approve' from 'review' terminalizes to done and fires CREW DONE, not CREW REVIEW", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv4", { state: "review", reviewNote: "ready" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-rv4", resultRef: "", message: "Approved — PR opened: https://x/1", source: "approve" } });
+      expect(store.get("p", "t-rv4")?.state).toBe("done");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].message).toContain("CREW DONE");
+    });
+
+    // #605: the review gate must be ENFORCING — a crew's own completion-protocol
+    // task.done (no provenance) must not bypass 'review', or `crew approve`
+    // becomes unreachable (state already 'done').
+    it("crew-originated task.done (no source) from 'review' is vetoed — stays review, no CREW DONE", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv6", { state: "review", reviewNote: "ready" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-rv6", resultRef: "" } });
+      expect(store.get("p", "t-rv6")?.state).toBe("review");
+      expect(calls).toHaveLength(0);
+    });
+
+    it("review is debounced the same as every other attention state EXCEPT awaiting-input — never suppressed near a captain turn", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv5", { state: "working" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 1000, notify: async (a) => { calls.push(a); } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-rv5" } }); // captain turn @1000
+      await d.handle({ kind: "event", project: "p", event: { type: "task.review", id: "t-rv5" } }); // @1000, same tick
+      expect(calls.filter((c) => c.message.includes("CREW REVIEW"))).toHaveLength(1);
+    });
+
+    it("unknown event type 'task.review' would be rejected before this feature — sanity: it is now a KNOWN_EVENT_TYPE", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-rv6", { state: "working" }));
+      const d = createDaemon({ store, now: () => 2000 });
+      await expect(
+        d.handle({ kind: "event", project: "p", event: { type: "task.review", id: "t-rv6" } }),
+      ).resolves.toBeTruthy();
+    });
   });
 
   // ── #210: CREW IDLE debounce ──────────────────────────────────────────────

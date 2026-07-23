@@ -17,7 +17,20 @@ describe("parseCommand", () => {
 
   it("requires a project for /launch", () => {
     expect(parseCommand("/launch").kind).toBe("usage");
-    expect(parseCommand("/launch brove")).toEqual({ kind: "ok", name: "launch", argv: ["launch", "brove"] });
+    expect(parseCommand("/launch brove")).toEqual({
+      kind: "ok",
+      name: "launch",
+      argv: ["launch", "brove", "--headless"],
+    });
+  });
+
+  // #586: runCommand execs this argv from the daemon, which has no
+  // CMUX_WORKSPACE_ID and no terminal — without --headless, ensureCmuxReady
+  // opens cmux.app and exits 0 before the workspace is ever launched.
+  it("passes --headless on /launch so the daemon can boot without a terminal", () => {
+    const parsed = parseCommand("/launch brove");
+    expect(parsed.kind).toBe("ok");
+    expect((parsed as { argv: string[] }).argv).toContain("--headless");
   });
 
   it("reads and sets the effort dial", () => {

@@ -6,6 +6,11 @@ export type TaskState =
   | "submitted"
   | "working"
   | "blocked"
+  // #599: crew has committed to crew/<name> and is paused awaiting the
+  // captain's review verdict (approve → push+PR+done, or feedback → crew
+  // send reopens to 'working'). NOT terminal — mirrors 'blocked', but the
+  // crew is waiting on a review decision rather than an answer to a question.
+  | "review"
   | "done"
   | "failed"
   | "stalled"
@@ -49,6 +54,9 @@ export interface TaskRecord {
   cwd?: string;            // working dir for the spawned headless child (project/worktree); unset → daemon cwd
   pid?: number;            // headless child pid (daemon-owned)
   question?: string;       // populated when state === "blocked"
+  /** #599: the crew's own summary carried on `signal review`; populated when
+   *  state === "review". Surfaced in the CREW REVIEW notification. */
+  reviewNote?: string;
   error?: string;          // populated when state === "failed"
   exitCode?: number;
   resultRef?: string;      // filesystem path to captured output/artifact
@@ -98,7 +106,18 @@ export type ControlEvent =
   | { type: "task.progress"; id: string; note?: string; tool?: string }
   | { type: "heartbeat"; id: string }
   | { type: "task.blocked"; id: string; reason: string; question: string }
-  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean }
+  // #599: explicit review-gate checkpoint — parallel to task.blocked/task.done
+  // but NOT terminal. Emitted by `squadrant crew signal review` once the crew
+  // has committed to crew/<name> and wants the captain to inspect the diff
+  // before it is pushed/PR'd. `message` is an optional crew summary (parity
+  // with task.done's optional message).
+  | { type: "task.review"; id: string; message?: string }
+  // #605: `source: 'approve'` is the review-gate's distinct terminal channel —
+  // stamped only by `squadrant crew approve` (runCrewApprove). reduce() vetoes
+  // any OTHER task.done while state === 'review' (a crew's own completion
+  // protocol), so the gate can't be bypassed by crew habit; approve's stamped
+  // done is the one path the veto lets through.
+  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean; source?: "approve" }
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }

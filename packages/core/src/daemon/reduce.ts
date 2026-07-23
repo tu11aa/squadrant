@@ -107,13 +107,17 @@ export const TERMINAL_RECORD_KEEP_PER_PROJECT = 20;
 // 'awaiting-input' is an attention state: entering it (idle watchdog OR a
 // Stop-hook turn boundary) fires exactly one accurate CREW IDLE push. The
 // firePush prev===next guard keeps it from re-firing while the task sits idle.
-const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "failed", "stalled", "awaiting-input"]);
+// #599: 'review' joins the attention states — a CREW REVIEW push fires exactly
+// like CREW DONE/BLOCKED, just without terminalizing the task.
+const ATTENTION_STATES: ReadonlySet<TaskState> = new Set(["done", "blocked", "review", "failed", "stalled", "awaiting-input"]);
 
 // #139: non-terminal, post-launch states an interactive crew can be sitting in
 // while its session has actually died. Any of these with a provably-gone surface
 // is a zombie → reap to 'cancelled'. 'submitted' is excluded: it is pre-launch
 // (no surface yet), so reaping it would race the spawn.
-const REAPABLE_SURFACE_STATES: ReadonlySet<TaskState> = new Set(["working", "stalled", "awaiting-input", "blocked"]);
+// #599: 'review' included — a crew that signaled review then crashed/closed
+// must not linger forever awaiting an approval that will never come.
+const REAPABLE_SURFACE_STATES: ReadonlySet<TaskState> = new Set(["working", "stalled", "awaiting-input", "blocked", "review"]);
 
 // #210: CREW IDLE (awaiting-input) is debounced — suppressed when the turn-end
 // lands within this window of the captain's own last turn to the crew (a
@@ -158,6 +162,11 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
     }
     case "blocked":
       return `CREW BLOCKED ${tag}: ${(rec.question ?? "(no question)").trim()}`;
+    case "review": {
+      // #599: crew has committed and is awaiting the captain's review verdict.
+      const note = (rec.reviewNote ?? "").trim();
+      return `CREW REVIEW ${tag}: ${note || "ready for review"} — run 'squadrant diff ${rec.project} ${rec.name ?? rec.id}' then 'squadrant crew approve' or send feedback.`;
+    }
     case "failed":
       return `CREW FAILED ${tag}: ${(rec.error ?? "(no error)").trim()}`;
     case "stalled": {
@@ -269,7 +278,7 @@ type Req =
 // a clean structured error before it can reach reduce() or the store.
 const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.started", "task.progress", "heartbeat",
-  "task.blocked", "task.done", "task.failed",
+  "task.blocked", "task.review", "task.done", "task.failed",
   "task.session", "task.turn.started", "task.turn.completed",
   "task.delta", "task.input.requested", "task.approval.requested",
   "task.reattached", "task.reopened",

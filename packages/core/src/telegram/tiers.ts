@@ -6,6 +6,7 @@ const DONE_ONLY = new Set(["task.done", "task.failed"]);
 const ALERTS = new Set([
   ...DONE_ONLY,
   "task.blocked",
+  "task.review",
   "task.approval.requested",
   "task.input.requested",
   "task.timeout",

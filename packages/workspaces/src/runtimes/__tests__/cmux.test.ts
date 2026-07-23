@@ -5,9 +5,15 @@ import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOp
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
+// showPatch (#604) pipes its patch to the child's stdin instead of an argv
+// entry — captured here so tests can assert the patch text was actually
+// written, not just that some args were passed.
+const stdinEndMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({
   // Bridge: execFileMock is kept synchronous so assertions on mock.calls stay
   // unchanged; this wrapper adapts it to the callback-based execFile signature.
+  // Returns a fake ChildProcess (stdin.end only) — real execFile's async
+  // return value is the child process, and showPatch writes to its stdin.
   execFile: (bin: string, args: string[], opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
     try {
       const result = execFileMock(bin, args, opts);
@@ -15,6 +21,7 @@ vi.mock("node:child_process", () => ({
     } catch (err) {
       cb(err as Error, "");
     }
+    return { stdin: { end: stdinEndMock } };
   },
 }));
 
@@ -645,6 +652,107 @@ describe("cmux driver", () => {
       return "";
     });
     expect(await driver.listSurfaces("workspace:10")).toEqual([]);
+  });
+
+  describe("showDiff (#596)", () => {
+    // cmux's `diff` subcommand defines --focus <true|false> (value required);
+    // only --no-focus is a bare flag. A prior version of this assertion expected
+    // a bare "--focus", which passed here (execFile is mocked, so the args array
+    // is never handed to real cmux) but broke the actual CLI with
+    // "Error: --focus requires a value". Assert the value explicitly so this
+    // mock can't drift from cmux's real flag contract again.
+    it("calls cmux diff --branch with base/cwd/workspace and defaults layout=split, focused", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      const cmd = cmdOf(execFileMock.mock.calls[0]);
+      expect(cmd).toBe(
+        "diff --branch --base develop --cwd /repo/wt --workspace workspace:10 --layout split --focus true",
+      );
+    });
+
+    it("passes --layout unified when requested", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", layout: "unified" });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("unified");
+      expect(args).not.toContain("split");
+    });
+
+    it("passes --no-focus when focus:false", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", focus: false });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("--no-focus");
+      expect(args).not.toContain("--focus");
+    });
+
+    it("includes --title only when a title is given (no literal 'undefined' arg)", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--title");
+
+      execFileMock.mockReset();
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", title: "crew/fix vs develop" });
+      const args = argvOf(execFileMock.mock.calls[0]);
+      expect(args).toContain("--title");
+      expect(args).toContain("crew/fix vs develop");
+    });
+
+    it("appends --last-turn only when lastTurn:true", async () => {
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop", lastTurn: true });
+      expect(argvOf(execFileMock.mock.calls[0])).toContain("--last-turn");
+
+      execFileMock.mockReset();
+      execFileMock.mockReturnValue("");
+      await driver.showDiff!({ workspaceId: "workspace:10", cwd: "/repo/wt", base: "develop" });
+      expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--last-turn");
+    });
+  });
+});
+
+describe("showPatch (#604)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    stdinEndMock.mockReset();
+    execFileMock.mockReturnValue("");
+  });
+
+  it("pipes the patch to `cmux diff -` via stdin — not as an argv entry", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "diff --git a/x b/x\n+hi\n" });
+    expect(cmdOf(execFileMock.mock.calls[0])).toBe(
+      "diff - --workspace workspace:10 --layout split --focus true",
+    );
+    expect(stdinEndMock).toHaveBeenCalledWith("diff --git a/x b/x\n+hi\n");
+  });
+
+  it("passes --layout unified when requested", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", layout: "unified" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("unified");
+    expect(args).not.toContain("split");
+  });
+
+  it("passes --no-focus when focus:false", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", focus: false });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--no-focus");
+    expect(args).not.toContain("--focus");
+  });
+
+  it("includes --title only when a title is given (no literal 'undefined' arg)", async () => {
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p" });
+    expect(argvOf(execFileMock.mock.calls[0])).not.toContain("--title");
+
+    execFileMock.mockReset();
+    execFileMock.mockReturnValue("");
+    await driver.showPatch!({ workspaceId: "workspace:10", patch: "p", title: "PR #603" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--title");
+    expect(args).toContain("PR #603");
   });
 });
 
@@ -1623,5 +1731,56 @@ describe("classifyDraftLiveness (#258 probe false-negative detection)", () => {
     // Current logic: before.slice(0,-1) = "hello \uD83D" (broken surrogate) ≠ "hello" → 'no-draft' → CLOBBER.
     // Desired: 'real-draft' (grapheme-aware detection: drop last grapheme "😀" → "hello " → trim → "hello").
     expect(classifyDraftLiveness("hello 😀", "hello")).toBe("real-draft");
+  });
+});
+
+// #599 Phase A: showDiff's `source` opt selects which cmux diff flags are
+// emitted. 'branch' (default/omitted) is the existing #596 behavior;
+// 'staged'/'unstaged' open the crew's uncommitted working-tree changes and
+// drop --base/--last-turn, which have no meaning for those sources.
+describe("showDiff source mapping (#599)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(() => "");
+  });
+
+  it("defaults to --branch --base when source is omitted (#596 back-compat)", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toEqual(
+      expect.arrayContaining(["diff", "--branch", "--base", "develop", "--cwd", "/repo", "--workspace", "workspace:1"]),
+    );
+    expect(args).not.toContain("--staged");
+    expect(args).not.toContain("--unstaged");
+  });
+
+  it("source: 'staged' emits --staged and omits --branch/--base", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "staged" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--staged");
+    expect(args).not.toContain("--branch");
+    expect(args).not.toContain("--base");
+  });
+
+  it("source: 'unstaged' emits --unstaged and omits --branch/--base", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "unstaged" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--unstaged");
+    expect(args).not.toContain("--branch");
+    expect(args).not.toContain("--base");
+  });
+
+  it("--last-turn is dropped for staged/unstaged sources (meaningless there)", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "staged", lastTurn: true });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).not.toContain("--last-turn");
+  });
+
+  it("--last-turn still applies to the default branch source", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", lastTurn: true });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--last-turn");
   });
 });
