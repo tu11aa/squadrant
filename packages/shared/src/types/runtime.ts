@@ -84,4 +84,19 @@ export interface RuntimeDriver {
   // draft is present (protects a real draft, never materializes a ghost). Without
   // it, any draft defers (#258/#268 deliver-when-empty).
   sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void>;
+
+  // Render a review diff of a branch/worktree in the runtime's native diff
+  // surface (#596). cmux: `cmux diff --branch --base <base> --cwd <cwd>
+  // --workspace <id> [--layout ...]` — renders in a browser split, no
+  // terminal command needed. Optional: runtimes without a native diff viewer
+  // simply omit it; the CLI falls back to a `git diff | less` pane (Phase 3).
+  showDiff?(opts: {
+    workspaceId: string;
+    cwd: string;          // repo or worktree to diff
+    base: string;         // base ref for the merge-base diff
+    title?: string;
+    layout?: "split" | "unified";
+    focus?: boolean;
+    lastTurn?: boolean;   // maps to cmux --last-turn
+  }): Promise<void>;
 }
