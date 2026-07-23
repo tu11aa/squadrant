@@ -88,7 +88,7 @@ describe("runCrewApprove (#599)", () => {
     );
   });
 
-  it("pushes the branch, opens the PR, then emits task.done to terminalize", async () => {
+  it("pushes the branch, opens the PR, then emits task.done with source:'approve' to terminalize (#605)", async () => {
     const call = vi.fn()
       .mockResolvedValueOnce([
         { id: "t1", name: "fix-579", state: "review", cwd: "/repo/.worktrees/brove-fix-579", task: "add the flag", reviewNote: "done, tests green", createdAt: 1 },
@@ -109,7 +109,7 @@ describe("runCrewApprove (#599)", () => {
     expect(call).toHaveBeenLastCalledWith({
       kind: "event",
       project: "brove",
-      event: { type: "task.done", id: "t1", resultRef: "", message: "Approved — PR opened: https://github.com/x/y/pull/42" },
+      event: { type: "task.done", id: "t1", resultRef: "", message: "Approved — PR opened: https://github.com/x/y/pull/42", source: "approve" },
     });
     expect(prUrl).toBe("https://github.com/x/y/pull/42");
   });

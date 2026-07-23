@@ -104,10 +104,24 @@ describe("state-machine reduce", () => {
     expect(next.state).toBe("working");
   });
 
-  it("review + task.done (captain approve path) → done", () => {
+  // #605: the review gate must be ENFORCING, not advisory. A crew's own
+  // completion-protocol task.done (no provenance) must not bypass review —
+  // only `squadrant crew approve`'s task.done (source: 'approve') terminalizes.
+  it("review + crew-originated task.done (no source) → stays review, vetoed (#605)", () => {
     const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "task.done", id: "t1", resultRef: "/r" }, 5200);
+    expect(next.state).toBe("review");
+    expect(next.reviewNote).toBe("ready");
+  });
+
+  it("review + task.done with source: 'approve' (captain approve path) → done", () => {
+    const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "task.done", id: "t1", resultRef: "/r", source: "approve" }, 5200);
     expect(next.state).toBe("done");
     expect(next.resultRef).toBe("/r");
+  });
+
+  it("review + task.turn.started (crew resumes after feedback) → working (#605)", () => {
+    const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "task.turn.started", id: "t1", turnId: "ses_x" }, 5300);
+    expect(next.state).toBe("working");
   });
 
   it("review clears pendingTool (mirrors task.blocked's turn-boundary reset)", () => {
