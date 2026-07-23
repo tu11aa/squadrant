@@ -13,3 +13,5 @@ This closes the gap left by #605, where `review` was only protected in the
 shared `isStickyAttention(state)` check applied at every transition site.
 The only ways out of `review` are `squadrant crew approve` or explicit
 captain feedback.
+
+例: squadrant crew approve <project> <crew>
