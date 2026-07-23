@@ -124,6 +124,36 @@ describe("state-machine reduce", () => {
     expect(next.state).toBe("working");
   });
 
+  // #608: review must be as sticky as blocked against every non-terminal
+  // turn-boundary/heartbeat event, not just task.done (#605 only closed
+  // that one path). A crew's normal turn-end (task.turn.completed) always
+  // fires after signalling review — if that knocked the record out of
+  // review, `crew approve` becomes unreachable (state already moved on).
+  it("review + task.turn.completed does NOT auto-exit review (#608)", () => {
+    const next = reduce(
+      rec({ state: "review", reviewNote: "ready" }),
+      { type: "task.turn.completed", id: "t1", turnId: "ses_x" },
+      5400,
+    );
+    expect(next.state).toBe("review");
+    expect(next.reviewNote).toBe("ready");
+    expect(next.lastHeartbeat).toBe(5400); // liveness still updates
+  });
+
+  it("review + heartbeat does NOT auto-exit review (#608)", () => {
+    const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "heartbeat", id: "t1" }, 5500);
+    expect(next.state).toBe("review");
+    expect(next.reviewNote).toBe("ready");
+    expect(next.lastHeartbeat).toBe(5500);
+  });
+
+  it("review + task.progress does NOT auto-exit review (#608)", () => {
+    const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "task.progress", id: "t1" }, 5600);
+    expect(next.state).toBe("review");
+    expect(next.reviewNote).toBe("ready");
+    expect(next.lastHeartbeat).toBe(5600);
+  });
+
   it("review clears pendingTool (mirrors task.blocked's turn-boundary reset)", () => {
     const next = reduce(rec({ state: "working", pendingTool: { name: "Bash", since: 100 } }), { type: "task.review", id: "t1" }, 5000);
     expect(next.pendingTool).toBeUndefined();
