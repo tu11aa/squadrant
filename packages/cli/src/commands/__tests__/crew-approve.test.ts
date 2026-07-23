@@ -63,6 +63,7 @@ describe("runCrewApprove (#599)", () => {
       call: vi.fn().mockResolvedValue(undefined),
       pushBranch: vi.fn(),
       createPr: vi.fn().mockReturnValue("https://github.com/x/y/pull/1"),
+      getCommitSubject: vi.fn().mockReturnValue(""),
       ...deps,
     });
   }
@@ -103,7 +104,7 @@ describe("runCrewApprove (#599)", () => {
     expect(createPr).toHaveBeenCalledWith("/repo/.worktrees/brove-fix-579", {
       base: "develop",
       branch: "crew/fix-579",
-      title: "add the flag",
+      title: "done, tests green",
       body: "done, tests green",
     });
     expect(call).toHaveBeenLastCalledWith({
@@ -132,6 +133,46 @@ describe("runCrewApprove (#599)", () => {
     const pushBranch = vi.fn();
     await runAction("brove", "quick-fix", { call, pushBranch });
     expect(pushBranch).toHaveBeenCalledWith("/repo", "crew/quick-fix");
+  });
+
+  it("prefers the branch's last commit subject as the PR title (#611)", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "t1", name: "fix-579", state: "review", cwd: "/repo/.worktrees/brove-fix-579", task: "REVIEW-GATE DEMO — long noisy task prompt", reviewNote: "done, tests green", createdAt: 1 },
+      ])
+      .mockResolvedValueOnce(undefined);
+    const createPr = vi.fn().mockReturnValue("https://x/1");
+    const getCommitSubject = vi.fn().mockReturnValue("fix: make review state sticky (#608)");
+
+    await runAction("brove", "fix-579", { call, createPr, getCommitSubject });
+
+    expect(getCommitSubject).toHaveBeenCalledWith("/repo/.worktrees/brove-fix-579");
+    expect(createPr).toHaveBeenCalledWith(
+      "/repo/.worktrees/brove-fix-579",
+      expect.objectContaining({ title: "fix: make review state sticky (#608)" }),
+    );
+  });
+
+  it("falls back to reviewNote when there is no commit subject", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "t1", name: "fix-579", state: "review", cwd: "/repo", task: "long noisy task prompt", reviewNote: "done, tests green", createdAt: 1 },
+      ])
+      .mockResolvedValueOnce(undefined);
+    const createPr = vi.fn().mockReturnValue("https://x/1");
+    await runAction("brove", "fix-579", { call, createPr, getCommitSubject: vi.fn().mockReturnValue("") });
+    expect(createPr).toHaveBeenCalledWith("/repo", expect.objectContaining({ title: "done, tests green" }));
+  });
+
+  it("falls back to the task-prompt first line only as a last resort", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "t1", name: "fix-579", state: "review", cwd: "/repo", task: "add the flag\nmore detail", createdAt: 1 },
+      ])
+      .mockResolvedValueOnce(undefined);
+    const createPr = vi.fn().mockReturnValue("https://x/1");
+    await runAction("brove", "fix-579", { call, createPr, getCommitSubject: vi.fn().mockReturnValue("") });
+    expect(createPr).toHaveBeenCalledWith("/repo", expect.objectContaining({ title: "add the flag" }));
   });
 
   it("never emits task.done when pushBranch throws (push failure aborts before terminalizing)", async () => {

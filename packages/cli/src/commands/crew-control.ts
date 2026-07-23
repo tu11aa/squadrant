@@ -248,6 +248,18 @@ function defaultCreatePr(cwd: string, o: { base: string; branch: string; title: 
   ).trim();
 }
 
+/** Default commit-subject lookup: the crew worktree's last commit subject, or "" if unavailable. */
+function defaultGetCommitSubject(cwd: string): string {
+  try {
+    return execFileSync("git", ["-C", cwd, "log", "-1", "--format=%s"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
 /**
  * `squadrant crew approve` — the accept side of the #599 review gate. Only
  * valid on a task in 'review' state (set by `squadrant crew signal review`):
@@ -263,6 +275,7 @@ export async function runCrewApprove(
     call: (req: unknown) => Promise<unknown>;
     pushBranch?: (cwd: string, branch: string) => void;
     createPr?: (cwd: string, o: { base: string; branch: string; title: string; body: string }) => string;
+    getCommitSubject?: (cwd: string) => string;
   },
 ): Promise<string> {
   const config = loadConfig();
@@ -281,8 +294,13 @@ export async function runCrewApprove(
   const cwd = task.cwd ?? proj.path;
   const base = resolveWorktreeBase(proj.path);
   const branch = crewBranch(crew);
-  const title = (task.task ?? branch).split(/\r?\n/)[0].trim().slice(0, 100);
   const body = (task.reviewNote ?? task.task ?? "").trim();
+
+  const getCommitSubject = deps.getCommitSubject ?? defaultGetCommitSubject;
+  const commitSubject = getCommitSubject(cwd).trim();
+  const reviewNoteFirstLine = (task.reviewNote ?? "").split(/\r?\n/)[0].trim();
+  const taskFirstLine = (task.task ?? branch).split(/\r?\n/)[0].trim();
+  const title = (commitSubject || reviewNoteFirstLine || taskFirstLine).slice(0, 100);
 
   const pushBranch = deps.pushBranch ?? defaultPushBranch;
   const createPr = deps.createPr ?? defaultCreatePr;
