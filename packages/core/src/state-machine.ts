@@ -19,6 +19,17 @@ function stampAttempt(
 }
 
 /**
+ * #608: 'blocked' and 'review' are both attention states that pause a crew
+ * pending a human decision — neither may be knocked out by a liveness or
+ * turn-boundary event, only by their own explicit exits (reply/feedback or
+ * approve). Every stickiness guard below must treat them identically, or a
+ * future attention state repeats this bug a fourth time (#492 → #605 → #608).
+ */
+function isStickyAttention(state: TaskRecord["state"]): boolean {
+  return state === "blocked" || state === "review";
+}
+
+/**
  * #354: compute the next pendingTool marker for a task.progress liveness signal.
  * A PreToolUse (carried from the cmux events-bridge, with the tool name) opens a
  * tool-in-flight window; a PostToolUse or a new UserPromptSubmit closes it. Other
@@ -75,7 +86,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // From awaiting-input OR stalled: resume to working — the next real activity
       // (e.g. the matching PostToolUse) auto-clears a hung-tool warn instantly.
       const pendingTool = nextPendingTool(rec.pendingTool, ev, now);
-      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type, pendingTool };
+      if (isStickyAttention(rec.state)) return { ...rec, lastHeartbeat: now, lastEvent: ev.type, pendingTool };
       const b = { ...base, pendingTool };
       if (rec.state === "awaiting-input" || rec.state === "stalled") return { ...stampAttempt(b, {}, now), state: "working" };
       return stampAttempt(b, {}, now);
@@ -84,7 +95,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // Raw liveness ping — intentionally does NOT stamp the attempt so a late
       // heartbeat from a dead dispatch cannot mask stalls on the new one (#89).
       // From awaiting-input: resume to working (mirrors task.progress).
-      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      if (isStickyAttention(rec.state)) return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       if (rec.state === "awaiting-input") return { ...base, state: "working" };
       return base;
     case "task.blocked":
@@ -133,7 +144,10 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // (task.started via `crew send`) clears blocked. Mirrors task.progress: the
       // opencode SSE bridge emits task.turn.completed right after an explicit
       // `signal blocked`, and that trailing turn-end must not drop the question.
-      if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+      // #608: 'review' needs the identical guard — a crew's normal turn-end always
+      // fires right after `signal review`, and without this it fell through to
+      // 'awaiting-input' below, making `crew approve` unreachable.
+      if (isStickyAttention(rec.state)) return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       // #492: several parallel lifecycle sources (cmux store-file watch, native
       // claude hooks, cmux's forwarded event stream) each independently report
       // turn-end for the same crew. A stale/heuristic report can assert
