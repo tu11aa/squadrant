@@ -21,7 +21,9 @@ export interface ReadStatusDeps {
 }
 
 function deriveState(tasks: TaskRecord[]): DashboardState {
-  if (tasks.some(t => t.state === "blocked" || t.state === "awaiting-input")) return "blocked";
+  // #599: a crew awaiting review needs the captain's attention exactly like
+  // blocked/awaiting-input — group it into the same dashboard bucket.
+  if (tasks.some(t => t.state === "blocked" || t.state === "awaiting-input" || t.state === "review")) return "blocked";
   if (tasks.some(t => t.state === "failed" || t.state === "stalled")) return "errored";
   if (tasks.some(t => t.state === "working")) return "busy";
   return "idle";
@@ -36,14 +38,14 @@ export function deriveRowState(tasks: TaskRecord[], captainState: HealthState): 
 
 function buildExcerpt(tasks: TaskRecord[]): string {
   const working = tasks.filter(t => t.state === "working").length;
-  const blocked = tasks.filter(t => t.state === "blocked" || t.state === "awaiting-input").length;
+  const blocked = tasks.filter(t => t.state === "blocked" || t.state === "awaiting-input" || t.state === "review").length;
   const parts: string[] = [];
   if (working > 0) parts.push(`${working} working`);
   if (blocked > 0) parts.push(`${blocked} blocked`);
   const summary = parts.length > 0 ? parts.join(", ") : "idle";
 
   const active = tasks.filter(t =>
-    ["working", "blocked", "awaiting-input", "submitted"].includes(t.state)
+    ["working", "blocked", "awaiting-input", "review", "submitted"].includes(t.state)
   );
   const titles = active.slice(0, 3).map(t => {
     const firstLine = t.task ? t.task.split("\n")[0] : "";

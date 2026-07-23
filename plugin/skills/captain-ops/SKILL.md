@@ -228,6 +228,23 @@ This is the captain-side backstop: even if the completion-protocol imperative is
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
+### Handling CREW REVIEW (#599 review gate)
+
+CREW REVIEW is **unambiguous** — a crew ran `squadrant crew signal review` after committing its work to `crew/<name>`. Unlike CREW IDLE, this is never a stray heartbeat miss: the crew has explicitly paused and is waiting for your verdict. The task is **NOT terminal** — don't treat it like CREW DONE.
+
+On CREW REVIEW:
+
+1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base; the default is exactly the review surface). Use `--staged`/`--unstaged`/`--working` if you also want to peek at anything left uncommitted.
+2. **Classify:**
+
+| Diff looks | Captain action |
+|-----------|-----------------|
+| Good — matches the task, tests pass, no scope creep | `squadrant crew approve <project> <crew>` — pushes `crew/<name>` to origin, opens the PR, terminalizes DONE. |
+| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates, re-commits, and re-signals `review`. Loop until approved. |
+
+3. **Never auto-terminalize a CREW REVIEW yourself** by emitting `task.done` directly — always go through `squadrant crew approve` so the push+PR actually happens before the task closes.
+4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+
 ## When Crew Finishes
 
 After a crew task completes:

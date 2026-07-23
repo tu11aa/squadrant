@@ -24,6 +24,16 @@ describe("formatLifecycle", () => {
     expect(formatLifecycle("squadrant", ev)).toBe("🚧 [squadrant] CREW BLOCKED · def456\nWhich DB?");
   });
 
+  it("renders a task.review event with its message (#599)", () => {
+    const ev: ControlEvent = { type: "task.review", id: "rev1", message: "ready for review" };
+    expect(formatLifecycle("squadrant", ev)).toBe("👀 [squadrant] CREW REVIEW · rev1\nready for review");
+  });
+
+  it("renders a task.review event without a message", () => {
+    const ev: ControlEvent = { type: "task.review", id: "rev2" };
+    expect(formatLifecycle("squadrant", ev)).toBe("👀 [squadrant] CREW REVIEW · rev2");
+  });
+
   it("renders a task.idle event", () => {
     const ev: ControlEvent = { type: "task.idle", id: "ghi789", heartbeatBudgetMs: 60000 };
     expect(formatLifecycle("squadrant", ev)).toBe("💤 [squadrant] CREW IDLE · ghi789");

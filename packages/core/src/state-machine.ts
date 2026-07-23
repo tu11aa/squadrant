@@ -97,6 +97,10 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // BLOCKED fires. Terminal states are already absorbed above.
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       return { ...base, state: "blocked", question: ev.question, pendingTool: undefined };
+    case "task.review":
+      // #599: review-gate checkpoint. Not terminal — `crew send` (feedback)
+      // or `crew approve` (task.done) are the only ways out.
+      return { ...base, state: "review", reviewNote: ev.message, pendingTool: undefined };
     case "task.done":
       return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
     case "task.failed":

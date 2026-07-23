@@ -2,13 +2,14 @@
 import { Command } from "commander";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
-import { TERMINAL_STATES } from "@squadrant/shared";
+import { TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
@@ -127,7 +128,7 @@ export async function squadrantdCall(req: unknown): Promise<unknown> {
  * has *intentionally* declared terminal state after its own settle-check.
  */
 export function buildSignalRequest(
-  signal: "done" | "blocked" | "failed",
+  signal: "done" | "blocked" | "failed" | "review",
   o: {
     message?: string;
     question?: string;
@@ -157,6 +158,10 @@ export function buildSignalRequest(
     };
   } else if (signal === "blocked") {
     event = { type: "task.blocked", id: taskId, reason: "crew signaled blocked", question: o.question ?? "" };
+  } else if (signal === "review") {
+    // #599: review-gate checkpoint — crew has committed to crew/<name> and
+    // wants the captain to inspect the diff before push+PR. Not terminal.
+    event = { type: "task.review", id: taskId, ...(o.message !== undefined ? { message: o.message } : {}) };
   } else {
     event = { type: "task.failed", id: taskId, error: o.error ?? "crew signaled failed" };
   }
@@ -184,7 +189,7 @@ function defaultWriteResult(id: string, payload: string): string {
  * so the CLI throws instead of emitting an event doomed to be ignored.
  */
 export async function runCrewSignal(
-  signal: "done" | "blocked" | "failed",
+  signal: "done" | "blocked" | "failed" | "review",
   o: {
     message?: string;
     question?: string;
@@ -217,6 +222,80 @@ export async function runCrewSignal(
   }
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
   await deps.call(req);
+}
+
+/**
+ * Pure. Resolve a crew name to its most-recent task record (#574 tie-break —
+ * same rule as diff.ts's resolveDiffTarget / crew-spawn.ts's pickMostRecentTask).
+ * Approve needs the full record (id + state), not just the worktree cwd.
+ */
+export function resolveApproveTarget(tasks: TaskRecord[], crew: string): TaskRecord | null {
+  const matches = tasks.filter((t) => t.name === crew);
+  if (matches.length === 0) return null;
+  return matches.reduce((a, b) => ((b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a));
+}
+
+/** Default push: `git push -u origin <branch>` from the crew's worktree. */
+function defaultPushBranch(cwd: string, branch: string): void {
+  execFileSync("git", ["-C", cwd, "push", "-u", "origin", branch], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** Default PR creation via `gh pr create`; returns the created PR's URL (gh's stdout). */
+function defaultCreatePr(cwd: string, o: { base: string; branch: string; title: string; body: string }): string {
+  return execFileSync(
+    "gh", ["pr", "create", "--base", o.base, "--head", o.branch, "--title", o.title, "--body", o.body],
+    { cwd, encoding: "utf-8" },
+  ).trim();
+}
+
+/**
+ * `squadrant crew approve` — the accept side of the #599 review gate. Only
+ * valid on a task in 'review' state (set by `squadrant crew signal review`):
+ * pushes crew/<name> to origin, opens the PR via `gh pr create`, then emits
+ * task.done to terminalize. The reject path is the EXISTING `crew send`
+ * feedback loop — no new machinery there (runCrewSend already clears
+ * 'review' back to 'working' before delivering the captain's message).
+ */
+export async function runCrewApprove(
+  project: string,
+  crew: string,
+  deps: {
+    call: (req: unknown) => Promise<unknown>;
+    pushBranch?: (cwd: string, branch: string) => void;
+    createPr?: (cwd: string, o: { base: string; branch: string; title: string; body: string }) => string;
+  },
+): Promise<string> {
+  const config = loadConfig();
+  const proj = config.projects[project];
+  if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
+
+  const tasks = (await deps.call({ kind: "list", project })) as TaskRecord[];
+  const task = resolveApproveTarget(tasks, crew);
+  if (!task) throw new Error(`Crew '${crew}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
+  if (task.state !== "review") {
+    throw new Error(
+      `Crew '${crew}' is not awaiting review (state=${task.state}). Only a crew that signaled 'review' can be approved.`,
+    );
+  }
+
+  const cwd = task.cwd ?? proj.path;
+  const base = resolveWorktreeBase(proj.path);
+  const branch = crewBranch(crew);
+  const title = (task.task ?? branch).split(/\r?\n/)[0].trim().slice(0, 100);
+  const body = (task.reviewNote ?? task.task ?? "").trim();
+
+  const pushBranch = deps.pushBranch ?? defaultPushBranch;
+  const createPr = deps.createPr ?? defaultCreatePr;
+  pushBranch(cwd, branch);
+  const prUrl = createPr(cwd, { base, branch, title, body });
+
+  await deps.call({
+    kind: "event",
+    project,
+    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}` },
+  });
+
+  return prUrl;
 }
 
 /**
@@ -342,19 +421,19 @@ export function addControlPlaneCrewCommands(crew: Command): void {
   // (git status clean, etc.) to declare terminal state to the captain.
   crew
     .command("signal <state>")
-    .description("Emit explicit terminal signal from a crew session: done|blocked|failed (reads SQUADRANT_CREW_* env, or --task-id/--project for codex)")
-    .option("--message <m>", "Summary written to resultRef (done)")
+    .description("Emit explicit terminal/review signal from a crew session: done|blocked|failed|review (reads SQUADRANT_CREW_* env, or --task-id/--project for codex)")
+    .option("--message <m>", "Summary written to resultRef (done), or review summary (review)")
     .option("--question <q>", "Question to surface to captain (blocked)")
     .option("--error <e>", "Error message (failed)")
     .option("--task-id <id>", "Explicit task id (codex; overrides SQUADRANT_CREW_TASK_ID env)")
     .option("--project <p>", "Explicit project (codex; overrides SQUADRANT_CREW_PROJECT env)")
     .action(async (state: string, opts: { message?: string; question?: string; error?: string; taskId?: string; project?: string }) => {
-      if (state !== "done" && state !== "blocked" && state !== "failed") {
-        process.stderr.write(`unknown signal '${state}' (expected: done|blocked|failed)\n`);
+      if (state !== "done" && state !== "blocked" && state !== "failed" && state !== "review") {
+        process.stderr.write(`unknown signal '${state}' (expected: done|blocked|failed|review)\n`);
         process.exit(2);
       }
       try {
-        await runCrewSignal(state as "done" | "blocked" | "failed", {
+        await runCrewSignal(state as "done" | "blocked" | "failed" | "review", {
           ...(opts.message !== undefined ? { message: opts.message } : {}),
           ...(opts.question !== undefined ? { question: opts.question } : {}),
           ...(opts.error !== undefined ? { error: opts.error } : {}),
@@ -363,6 +442,22 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           writeResult: defaultWriteResult,
         }, { call: squadrantdCall });
         process.exit(0);
+      } catch (e) {
+        process.stderr.write(`${(e as Error).message}\n`);
+        process.exit(1);
+      }
+    });
+
+  // #599: accept side of the review gate. `squadrant crew signal review` puts
+  // the task in 'review'; this command is the only path out besides `crew send`
+  // (reject/feedback) — push + open the PR, then terminalize DONE.
+  crew
+    .command("approve <project> <crew>")
+    .description("Approve a crew's reviewed work: push crew/<name> + open a PR, then terminalize DONE (#599)")
+    .action(async (project: string, crewName: string) => {
+      try {
+        const prUrl = await runCrewApprove(project, crewName, { call: squadrantdCall });
+        process.stdout.write(`✔ Approved ${crewBranch(crewName)} — pushed + PR opened: ${prUrl}\n`);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
         process.exit(1);
