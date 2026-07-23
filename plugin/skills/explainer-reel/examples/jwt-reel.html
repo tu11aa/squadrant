@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<!--
+  Golden reference reproduction — JWT auth flow (explainer-reel style-pack, dark-neon theme).
+  Technique/style reproduced from @duchminh_nguyen's reel series per docs/specs/2026-07-23-
+  animated-system-graph-skill.md §0 (issue #598). Handle chrome below is a placeholder — swap
+  "@your_handle" for your own; do not reuse the original creator's exact branding.
+
+  Self-contained: no build step. Open directly, or seek a frame via ?t=N (seconds).
+  Verify loop: scripts/seek-shot.sh + scripts/contact-sheet.sh (see ../scripts/README.md).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>explainer-reel — JWT (golden reference)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* ---- theme.css tokens, inlined (see ../assets/theme.css) ---- */
+  :root {
+    --er-bg: #060608;
+    --er-vignette: radial-gradient(ellipse at 50% 45%, #1a0f18 0%, #060608 65%);
+    --er-client: #d9b843;
+    --er-server: #d454e0;
+    --er-ok: #3ddc84;
+    --er-cache: #8b6bff;
+    --er-danger: #ff5a3c;
+    --er-line: #aeb4bd;
+    --er-line-dim: #4a4e56;
+    --er-stroke-w: 1.5;
+    --er-font-title: 'Barlow Condensed', 'Oswald', 'Arial Narrow', sans-serif;
+    --er-font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  html, body { margin: 0; background: var(--er-bg); }
+  .er-stage {
+    width: 400px; height: 640px; position: relative; overflow: hidden;
+    background: var(--er-bg); background-image: var(--er-vignette);
+    color: var(--er-line); font-family: var(--er-font-mono);
+  }
+  .er-handle { text-align: center; font-size: 11px; letter-spacing: 0.15em; color: var(--er-line-dim); padding-top: 18px; }
+  .er-title {
+    text-align: center; font-family: var(--er-font-title); font-weight: 800; font-size: 34px;
+    letter-spacing: 0.02em; color: var(--er-danger);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--er-danger) 55%, transparent);
+    margin: 2px 0 10px;
+  }
+  .er-title-rule { border: none; border-top: 1px solid var(--er-line-dim); opacity: 0.4; margin: 0 18px 6px; }
+  .er-footer {
+    position: absolute; left: 0; right: 0; bottom: 22px; text-align: center;
+    font-size: 11px; letter-spacing: 0.12em; color: var(--er-line-dim); text-transform: uppercase;
+  }
+  svg { display: block; }
+  .er-mono { fill: none; stroke: var(--er-line); stroke-width: var(--er-stroke-w); }
+  .er-panel-rect { fill: #0b0c10; stroke-width: var(--er-stroke-w); rx: 6; }
+  .er-panel-title { font-size: 10px; letter-spacing: 0.08em; font-family: var(--er-font-mono); }
+  .er-panel-line { stroke: var(--er-line-dim); stroke-width: 3; stroke-linecap: round; opacity: 0.6; }
+  .er-pill-rect { fill: #0b0c10; stroke-width: var(--er-stroke-w); }
+  .er-pill-text { font-size: 9px; font-family: var(--er-font-mono); }
+  .er-badge-hex { fill: none; stroke-width: var(--er-stroke-w); }
+  .er-badge-label { font-size: 10px; letter-spacing: 0.1em; font-family: var(--er-font-mono); }
+  .er-glow { filter: url(#er-glow); }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* handled in JS: timeline seeks to final frame and does not loop */
+  }
+</style>
+</head>
+<body>
+  <div class="er-stage">
+    <div class="er-handle">@your_handle</div>
+    <div class="er-title">JWT</div>
+    <hr class="er-title-rule">
+    <svg id="stage" width="400" height="520" viewBox="0 0 400 520"></svg>
+    <div class="er-footer">STATELESS &middot; NO SESSION STORE</div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+function elx(tag, attrs = {}, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+const svg = document.getElementById('stage');
+
+// glow filter (reused by badges)
+const defs = elx('defs', {}, svg);
+const glow = elx('filter', { id: 'er-glow', x: '-60%', y: '-60%', width: '220%', height: '220%' }, defs);
+elx('feGaussianBlur', { stdDeviation: 4, result: 'blur' }, glow);
+const merge = elx('feMerge', {}, glow);
+elx('feMergeNode', { in: 'blur' }, merge);
+elx('feMergeNode', { in: 'SourceGraphic' }, merge);
+
+// ---- nodes ----
+function createFunnel(x, y, w, h) {
+  return elx('path', { class: 'er-mono', d: `M ${x - w / 2} ${y} L ${x} ${y + h} L ${x + w / 2} ${y}` }, svg);
+}
+function createPanel(x, y, w, h, label, accent, lines = 4) {
+  const g = elx('g', { class: 'er-panel', 'data-id': label }, svg);
+  elx('rect', { class: 'er-panel-rect', x, y, width: w, height: h, stroke: accent }, g);
+  [12, 20, 28].forEach(dx => elx('circle', { cx: x + dx, cy: y + 14, r: 2, fill: accent }, g));
+  elx('text', { class: 'er-panel-title', x: x + 38, y: y + 18, fill: accent }, g).textContent = `>>> ${label}`;
+  const lineH = (h - 30) / lines;
+  for (let i = 0; i < lines; i++) {
+    const ly = y + 30 + i * lineH + lineH / 2;
+    elx('line', { class: 'er-panel-line', x1: x + 12, y1: ly, x2: x + w - 24, y2: ly }, g);
+    elx('circle', { cx: x + w - 12, cy: ly, r: 2.5, fill: i === 0 ? accent : 'var(--er-line-dim)' }, g);
+  }
+  return g;
+}
+function createPacket(x, y) {
+  const g = elx('g', { class: 'er-packet', transform: `translate(${x},${y})` }, svg);
+  const leftBox = elx('rect', { class: 'er-pill-rect', x: -14, y: -12, width: 26, height: 24, stroke: 'var(--er-line)' }, g);
+  [-6, 0, 6].forEach(dy => elx('circle', { cx: -14, cy: dy, r: 1.2, fill: 'var(--er-line)' }, g));
+  const body = elx('rect', { class: 'er-pill-rect', x: 12, y: -12, width: 64, height: 24, stroke: 'var(--er-line)' }, g);
+  const label = elx('text', { class: 'er-pill-text', x: 44, y: -1, 'text-anchor': 'middle', fill: 'var(--er-line)' }, g);
+  label.textContent = 'role:user';
+  const sub = elx('text', { class: 'er-pill-text', x: 44, y: 9, 'text-anchor': 'middle', fill: 'var(--er-line-dim)', style: 'font-size:6px' }, g);
+  sub.textContent = 'exp:2h';
+  const rightBox = elx('rect', { class: 'er-pill-rect', x: 76, y: -12, width: 20, height: 24, stroke: 'var(--er-line)' }, g);
+  const bars = [];
+  for (let i = 0; i < 4; i++) {
+    bars.push(elx('rect', { x: 80 + i * 4, y: 2 - i * 2, width: 2, height: 6 + i * 2, fill: 'var(--er-line)' }, g));
+  }
+  return { group: g, leftBox, body, rightBox, bars, label, sub };
+}
+function magnifier(x, y) {
+  const g = elx('g', { transform: `translate(${x},${y})`, opacity: 0 }, svg);
+  elx('circle', { class: 'er-mono', cx: -2, cy: -2, r: 7 }, g);
+  elx('line', { class: 'er-mono', x1: 3, y1: 3, x2: 8, y2: 8 }, g);
+  return g;
+}
+function badgeCheck(x, y) {
+  const g = elx('g', { class: 'er-glow', transform: `translate(${x},${y}) scale(0.5)`, opacity: 0 }, svg);
+  elx('circle', { class: 'er-badge-hex', r: 10, stroke: 'var(--er-ok)' }, g);
+  elx('path', { d: 'M -4 0 L -1 4 L 5 -5', class: 'er-mono', stroke: 'var(--er-ok)', 'stroke-width': 2 }, g);
+  return g;
+}
+function badgeHacker(x, y) {
+  const g = elx('g', { class: 'er-glow', transform: `translate(${x},${y}) scale(0.5)`, opacity: 0 }, svg);
+  const pts = [[0, -14], [12, -7], [12, 7], [0, 14], [-12, 7], [-12, -7]].map(p => p.join(',')).join(' ');
+  elx('polygon', { points: pts, class: 'er-badge-hex', stroke: 'var(--er-danger)' }, g);
+  elx('circle', { r: 7, class: 'er-badge-hex', stroke: 'var(--er-danger)' }, g);
+  elx('line', { x1: -5, y1: -5, x2: 5, y2: 5, stroke: 'var(--er-danger)', 'stroke-width': 1.5 }, g);
+  elx('text', { class: 'er-badge-label', x: 0, y: 30, 'text-anchor': 'middle', fill: 'var(--er-danger)' }, g).textContent = 'HACKER';
+  return g;
+}
+function dimOthers(tl, activeId, at) {
+  tl.to(svg.querySelectorAll(`.er-panel:not([data-id="${activeId}"])`), { opacity: 0.35, duration: 0.3 }, at);
+  tl.to(svg.querySelector(`.er-panel[data-id="${activeId}"]`), { opacity: 1, duration: 0.3 }, at);
+}
+
+// ---- layout ----
+const MINT = { x: 200, y: 30 };
+createFunnel(MINT.x, MINT.y, 50, 44);
+const CLIENT = { x: 40, y: 230, w: 150, h: 100 };
+const SERVER = { x: 210, y: 230, w: 150, h: 100 };
+createPanel(CLIENT.x, CLIENT.y, CLIENT.w, CLIENT.h, 'CLIENT', 'var(--er-client)');
+createPanel(SERVER.x, SERVER.y, SERVER.w, SERVER.h, 'SERVER', 'var(--er-server)');
+
+const PT_MINT = { x: MINT.x, y: MINT.y + 50 };
+const PT_CLIENT = { x: CLIENT.x + CLIENT.w / 2, y: CLIENT.y - 20 };
+const PT_SERVER = { x: SERVER.x + SERVER.w / 2, y: SERVER.y - 20 };
+const MAGNIFIER_PT = { x: SERVER.x - 30, y: SERVER.y - 20 };
+const CHECK_PT = { x: SERVER.x + SERVER.w + 20, y: SERVER.y - 20 };
+const HACKER_PT = { x: SERVER.x + SERVER.w / 2, y: SERVER.y + SERVER.h + 60 };
+
+const packet = createPacket(PT_MINT.x, PT_MINT.y);
+packet.group.setAttribute('opacity', 0);
+const mag = magnifier(MAGNIFIER_PT.x, MAGNIFIER_PT.y);
+const check = badgeCheck(CHECK_PT.x, CHECK_PT.y);
+const hacker = badgeHacker(HACKER_PT.x, HACKER_PT.y);
+
+function tint(accent) {
+  [packet.leftBox, packet.body, packet.rightBox].forEach(n => n.setAttribute('stroke', accent));
+  packet.label.setAttribute('fill', accent);
+  packet.bars.forEach(b => b.setAttribute('fill', accent));
+}
+
+// ---- master timeline ----
+const tl = gsap.timeline({ repeat: -1, repeatDelay: 1, defaults: { ease: 'power1.inOut' } });
+
+// beat: mint
+tl.set(packet.group, { x: PT_MINT.x, y: PT_MINT.y, opacity: 0 }, 0)
+  .call(() => { tint('var(--er-line)'); packet.label.textContent = 'role:user'; packet.sub.textContent = 'exp:2h'; }, null, 0)
+  .to(packet.group, { opacity: 1, duration: 0.4 }, 0.2);
+
+// beat: travel to client
+tl.to(packet.group, { x: PT_CLIENT.x, y: PT_CLIENT.y, duration: 1.2 }, 0.8);
+dimOthers(tl, 'CLIENT', 0.8);
+
+// beat: travel to server
+tl.to(packet.group, { x: PT_SERVER.x, y: PT_SERVER.y, duration: 1.2 }, 2.6);
+dimOthers(tl, 'SERVER', 2.6);
+
+// beat: verify -> ok
+tl.to(mag, { opacity: 1, duration: 0.3 }, 4.0)
+  .to(mag, { opacity: 0, duration: 0.3 }, 4.6)
+  .to(check, { opacity: 1, scale: 1, duration: 0.4, ease: 'back.out(1.7)' }, 4.6)
+  .to(check, { opacity: 0, duration: 0.3 }, 6.0)
+  .to(packet.group, { opacity: 0, duration: 0.3 }, 6.0);
+
+// beat: tamper -> re-mint at server as role:admin (danger)
+tl.set(packet.group, { x: PT_SERVER.x, y: PT_SERVER.y }, 6.4)
+  .call(() => { tint('var(--er-danger)'); packet.label.textContent = 'role:admin'; packet.sub.textContent = 'exp:2h'; }, null, 6.4)
+  .to(packet.group, { opacity: 1, duration: 0.4 }, 6.4);
+
+// beat: verify -> fail -> hacker badge
+tl.to(mag, { opacity: 1, duration: 0.3 }, 7.4)
+  .to(mag, { opacity: 0, duration: 0.3 }, 8.0)
+  .to(hacker, { opacity: 1, scale: 1, duration: 0.4, ease: 'back.out(1.7)' }, 8.0);
+
+// hold, then fade whole scene for the loop seam
+tl.to([packet.group, hacker], { opacity: 0, duration: 0.5 }, 10.5)
+  .to(svg.querySelectorAll('.er-panel'), { opacity: 1, duration: 0.01 }, 10.5); // reset dim for next loop
+
+// ---- ?t=N seek harness + reduced-motion + ready signal ----
+const params = new URLSearchParams(location.search);
+const t = params.get('t');
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (reduced) {
+  tl.repeat(0);
+  tl.progress(1);
+} else if (t !== null) {
+  tl.pause();
+  tl.seek(parseFloat(t));
+}
+window.__ready = true;
+console.log('duration', tl.duration());
+</script>
+</body>
+</html>
