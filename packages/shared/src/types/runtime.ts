@@ -98,5 +98,10 @@ export interface RuntimeDriver {
     layout?: "split" | "unified";
     focus?: boolean;
     lastTurn?: boolean;   // maps to cmux --last-turn
+    // #599: which diff source to render. 'branch' (default) is the existing
+    // branch-vs-base review surface; 'staged'/'unstaged' peek at a crew's
+    // uncommitted working tree (VSCode's "Staged Changes"/"Changes" panels)
+    // mid-task, before it has committed anything to review.
+    source?: "branch" | "staged" | "unstaged";
   }): Promise<void>;
 }

@@ -101,6 +101,16 @@ describe("readAllStatuses", () => {
     expect(rows[0].state).toBe("blocked");
   });
 
+  it("maps state to blocked when any task is awaiting review (#599)", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      call: makeAliveCall(),
+      listTasks: async () => [mkTask({ state: "review" })],
+    });
+
+    expect(rows[0].state).toBe("blocked");
+  });
+
   it("maps state to errored when any task has failed", async () => {
     const rows = await readAllStatuses({
       config: makeConfig(),
@@ -188,6 +198,17 @@ describe("readAllStatuses", () => {
     expect(rows[0].excerpt).toContain("1 blocked");
     expect(rows[0].excerpt).toContain("feat-x");
     expect(rows[0].excerpt).toContain("fix-y");
+  });
+
+  it("counts a 'review' task into the blocked bucket and its title into the excerpt (#599)", async () => {
+    const rows = await readAllStatuses({
+      config: makeConfig(),
+      call: makeAliveCall(),
+      listTasks: async () => [mkTask({ state: "review", name: "fix-579", task: "add the flag" })],
+    });
+
+    expect(rows[0].excerpt).toContain("1 blocked");
+    expect(rows[0].excerpt).toContain("fix-579");
   });
 
   it("builds summary-only excerpt when no active tasks", async () => {

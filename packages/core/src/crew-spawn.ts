@@ -512,7 +512,9 @@ export async function runCrewSend(
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
-      } else if (task.state === "blocked" || task.state === "awaiting-input") {
+      } else if (task.state === "blocked" || task.state === "awaiting-input" || task.state === "review") {
+        // #599: feedback on a 'review' task is the reject path — clear it back
+        // to working the same way an answer clears 'blocked'.
         await deps.emitEvent(project, { type: "task.started", id: task.id });
       }
     }

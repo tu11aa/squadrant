@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TaskRecord } from "@squadrant/shared";
-import { resolveDiffTarget } from "../diff.js";
+import { resolveDiffTarget, resolveDiffSources } from "../diff.js";
 import type { DiffOptions } from "../diff.js";
 
 // ─── resolveDiffTarget (pure) ──────────────────────────────────────────────
@@ -55,6 +55,30 @@ describe("resolveDiffTarget (#596)", () => {
   it("falls back to projectPath when a matched task has no cwd recorded", () => {
     const tasks = [makeTask({ name: "headless-crew", cwd: undefined })];
     expect(resolveDiffTarget(tasks, "headless-crew", "/repo")).toEqual({ cwd: "/repo", isShared: true });
+  });
+});
+
+describe("resolveDiffSources (#599)", () => {
+  const base: DiffOptions = { layout: "split", focus: true };
+
+  it("no working-tree flag → empty array (falls back to branch-vs-base)", () => {
+    expect(resolveDiffSources(base)).toEqual([]);
+  });
+
+  it("--staged → ['staged']", () => {
+    expect(resolveDiffSources({ ...base, staged: true })).toEqual(["staged"]);
+  });
+
+  it("--unstaged → ['unstaged']", () => {
+    expect(resolveDiffSources({ ...base, unstaged: true })).toEqual(["unstaged"]);
+  });
+
+  it("--working → both, unstaged first (VSCode 'Changes' before 'Staged Changes')", () => {
+    expect(resolveDiffSources({ ...base, working: true })).toEqual(["unstaged", "staged"]);
+  });
+
+  it("--working wins when combined with --staged/--unstaged", () => {
+    expect(resolveDiffSources({ ...base, working: true, staged: true, unstaged: true })).toEqual(["unstaged", "staged"]);
   });
 });
 
@@ -134,6 +158,7 @@ describe("diffCommand action", () => {
       layout: "unified",
       focus: false,
       lastTurn: true,
+      source: "branch",
     });
   });
 
@@ -158,5 +183,69 @@ describe("diffCommand action", () => {
     await expect(runAction("brove", "fix-579")).rejects.toThrow(
       "Runtime 'tmux' has no native diff viewer yet — Phase 1 supports cmux only.",
     );
+  });
+
+  // ── #599 Phase A: --staged/--unstaged/--working working-tree peek ──────
+
+  beforeEach(() => {
+    loadConfig.mockReturnValue({ projects: { brove: { path: "/repo", captainName: "brove-captain" } } });
+    squadrantdCall.mockResolvedValue([
+      { id: "t1", name: "fix-579", cwd: "/repo/.worktrees/brove-fix-579", createdAt: 1 },
+    ]);
+  });
+
+  it("--staged opens a single 'staged' diff gated on `git diff --cached --stat`", async () => {
+    execFileSync.mockReturnValue(" 1 file changed, 1 insertion(+)\n");
+    await runAction("brove", "fix-579", { staged: true });
+    expect(execFileSync).toHaveBeenCalledWith(
+      "git", ["-C", "/repo/.worktrees/brove-fix-579", "diff", "--stat", "--cached"], expect.any(Object),
+    );
+    expect(showDiff).toHaveBeenCalledWith(expect.objectContaining({ source: "staged", cwd: "/repo/.worktrees/brove-fix-579" }));
+    expect(showDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("--unstaged opens a single 'unstaged' diff gated on `git diff --stat`", async () => {
+    execFileSync.mockReturnValue(" 1 file changed, 1 insertion(+)\n");
+    await runAction("brove", "fix-579", { unstaged: true });
+    expect(execFileSync).toHaveBeenCalledWith(
+      "git", ["-C", "/repo/.worktrees/brove-fix-579", "diff", "--stat"], expect.any(Object),
+    );
+    expect(showDiff).toHaveBeenCalledWith(expect.objectContaining({ source: "unstaged" }));
+    expect(showDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it("--working opens BOTH unstaged and staged diffs when both have changes", async () => {
+    execFileSync.mockReturnValue(" 1 file changed\n");
+    await runAction("brove", "fix-579", { working: true });
+    expect(showDiff).toHaveBeenCalledTimes(2);
+    expect(showDiff).toHaveBeenNthCalledWith(1, expect.objectContaining({ source: "unstaged" }));
+    expect(showDiff).toHaveBeenNthCalledWith(2, expect.objectContaining({ source: "staged" }));
+  });
+
+  it("--working skips a source with no changes and still opens the other", async () => {
+    execFileSync.mockImplementation((_bin: string, args: string[]) =>
+      args.includes("--cached") ? "" : " 1 file changed\n",
+    );
+    await runAction("brove", "fix-579", { working: true });
+    expect(showDiff).toHaveBeenCalledTimes(1);
+    expect(showDiff).toHaveBeenCalledWith(expect.objectContaining({ source: "unstaged" }));
+  });
+
+  it("--working prints a no-changes message and never opens the viewer when both sources are empty", async () => {
+    execFileSync.mockReturnValue("");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runAction("brove", "fix-579", { working: true });
+    expect(logSpy).toHaveBeenCalledWith("No staged or unstaged changes on crew/fix-579.");
+    expect(showDiff).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it("--staged prints a source-specific no-changes message when empty", async () => {
+    execFileSync.mockReturnValue("");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runAction("brove", "fix-579", { staged: true });
+    expect(logSpy).toHaveBeenCalledWith("No staged changes on crew/fix-579.");
+    expect(showDiff).not.toHaveBeenCalled();
+    logSpy.mockRestore();
   });
 });

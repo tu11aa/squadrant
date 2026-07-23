@@ -21,6 +21,11 @@ describe("tierIncludes", () => {
     expect(tierIncludes("alert_only", "task.progress")).toBe(false);
     expect(tierIncludes("alert_only", "task.idle")).toBe(false);
   });
+  it("task.review (#599) is an alert like task.blocked — needs a captain decision, excluded from done_only", () => {
+    expect(tierIncludes("alert_only", "task.review")).toBe(true);
+    expect(tierIncludes("done_only", "task.review")).toBe(false);
+    expect(tierIncludes("none", "task.review")).toBe(false);
+  });
   it("all lets everything through", () => {
     expect(tierIncludes("all", "task.progress")).toBe(true);
     expect(tierIncludes("all", "heartbeat")).toBe(true);

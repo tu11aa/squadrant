@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { buildSignalRequest } from "../crew-control.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { buildSignalRequest, runCrewSignal } from "../crew-control.js";
 
 describe("buildSignalRequest", () => {
   const SAVED = { ...process.env };
@@ -57,6 +57,17 @@ describe("buildSignalRequest", () => {
     expect(req.event).toEqual({ type: "task.failed", id: "task-xyz", error: "build broke" });
   });
 
+  // #599: review-gate checkpoint — parallel to done/blocked, not terminal.
+  it("review + message → task.review event carrying the crew's summary", () => {
+    const req = buildSignalRequest("review", { message: "added the flag, tests green" });
+    expect(req.event).toEqual({ type: "task.review", id: "task-xyz", message: "added the flag, tests green" });
+  });
+
+  it("review without message → task.review event with no message field", () => {
+    const req = buildSignalRequest("review", {});
+    expect(req.event).toEqual({ type: "task.review", id: "task-xyz" });
+  });
+
   it("blocked without question → empty question string", () => {
     const req = buildSignalRequest("blocked", {});
     expect((req.event as { type: string; question: string }).question).toBe("");
@@ -99,5 +110,37 @@ describe("buildSignalRequest", () => {
     const req = buildSignalRequest("done", { taskId: "flag-id", project: "flag-proj" });
     expect(req.project).toBe("flag-proj");
     expect((req.event as { id: string }).id).toBe("flag-id");
+  });
+});
+
+describe("runCrewSignal('review') (#599)", () => {
+  const SAVED = { ...process.env };
+  beforeEach(() => {
+    process.env.SQUADRANT_CREW_TASK_ID = "task-xyz";
+    process.env.SQUADRANT_CREW_PROJECT = "alpha";
+  });
+  afterEach(() => { process.env = { ...SAVED }; });
+
+  it("status check passes (like blocked) — 'review' is not a terminal state, so the signal always emits", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce({ state: "working" }) // status check
+      .mockResolvedValueOnce(undefined); // the emitted event
+    await runCrewSignal("review", { message: "ready" }, { call });
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(call).toHaveBeenLastCalledWith({
+      kind: "event", project: "alpha", event: { type: "task.review", id: "task-xyz", message: "ready" },
+    });
+  });
+
+  it("re-signaling review from an already-'review' task is allowed (not terminal, re-request after feedback)", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce({ state: "review" })
+      .mockResolvedValueOnce(undefined);
+    await expect(runCrewSignal("review", { message: "addressed feedback" }, { call })).resolves.toBeUndefined();
+  });
+
+  it("throws if the task is already terminal (mirrors done/blocked/failed behavior)", async () => {
+    const call = vi.fn().mockResolvedValueOnce({ state: "done" });
+    await expect(runCrewSignal("review", {}, { call })).rejects.toThrow(/already terminal/);
   });
 });

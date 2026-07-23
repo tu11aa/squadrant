@@ -647,6 +647,22 @@ describe("runCrewSend", () => {
     expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
   });
 
+  // #599: feedback on a crew awaiting review is the reject path — must clear
+  // 'review' back to 'working' the same way an answer clears 'blocked', so the
+  // crew's next hook doesn't leave a stale 'review' record lying around.
+  it("emits task.started for a 'review' task before sending (reject/feedback path, #599)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    const task = { id: "t1", name: "crew-1", state: "review" } as Partial<TaskRecord>;
+    await runCrewSend(PROJECT, "crew-1", "please also add a test", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent,
+    });
+    expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "please also add a test");
+  });
+
   it("swallows daemon errors and still delivers the message", async () => {
     const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime("workspace:1", [existing]);

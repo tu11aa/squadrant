@@ -30,6 +30,23 @@ export interface DiffOptions {
   layout: "split" | "unified";
   lastTurn?: boolean;
   focus: boolean;
+  // #599 Phase A: peek at a crew's uncommitted working tree mid-task, instead
+  // of the default branch-vs-base review surface. --working shows both panels
+  // (VSCode's "Changes" + "Staged Changes" split); --staged/--unstaged show
+  // just one. Mutually exclusive; --working wins if more than one is passed.
+  staged?: boolean;
+  unstaged?: boolean;
+  working?: boolean;
+}
+
+// Pure. Which working-tree sources to open for the given flags, in display
+// order. Empty array means "no working-tree flag was passed" — the caller
+// falls back to the default branch-vs-base behavior.
+export function resolveDiffSources(opts: DiffOptions): Array<"staged" | "unstaged"> {
+  if (opts.working) return ["unstaged", "staged"];
+  if (opts.staged) return ["staged"];
+  if (opts.unstaged) return ["unstaged"];
+  return [];
 }
 
 export async function runDiff(project: string, crew: string, opts: DiffOptions): Promise<void> {
@@ -48,6 +65,40 @@ export async function runDiff(project: string, crew: string, opts: DiffOptions):
   const base = resolveWorktreeBase(proj.path);
   const branchLabel = crewBranch(crew);
 
+  const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
+  if (!runtime.showDiff) {
+    throw new Error(`Runtime '${runtime.name}' has no native diff viewer yet — Phase 1 supports cmux only.`);
+  }
+
+  const sources = resolveDiffSources(opts);
+  if (sources.length > 0) {
+    // Working-tree peek (#599): each source is gated on its OWN emptiness —
+    // there is no single base...HEAD comparison for uncommitted changes.
+    let opened = 0;
+    for (const source of sources) {
+      const statArgs = source === "staged" ? ["diff", "--stat", "--cached"] : ["diff", "--stat"];
+      const stat = execFileSync("git", ["-C", target.cwd, ...statArgs], { encoding: "utf-8" }).trim();
+      if (!stat) continue;
+      await runtime.showDiff({
+        workspaceId,
+        cwd: target.cwd,
+        base,
+        title: `${branchLabel} — ${source}`,
+        layout: opts.layout,
+        focus: opts.focus,
+        source,
+      });
+      opened++;
+    }
+    if (opened === 0) {
+      const label = sources.length > 1 ? "staged or unstaged" : sources[0];
+      console.log(`No ${label} changes on ${branchLabel}.`);
+    } else {
+      console.log(chalk.dim(`Opened ${opened} working-tree diff(s) (${sources.join(", ")}) for ${branchLabel}.`));
+    }
+    return;
+  }
+
   // Empty-diff guard (#596): a crew that made no changes yet shouldn't pop a
   // diff viewer with nothing in it. `target.cwd` is already checked out on
   // the right ref for both cases — the crew's own branch in an isolated
@@ -61,10 +112,6 @@ export async function runDiff(project: string, crew: string, opts: DiffOptions):
     return;
   }
 
-  const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
-  if (!runtime.showDiff) {
-    throw new Error(`Runtime '${runtime.name}' has no native diff viewer yet — Phase 1 supports cmux only.`);
-  }
   await runtime.showDiff({
     workspaceId,
     cwd: target.cwd,
@@ -73,6 +120,7 @@ export async function runDiff(project: string, crew: string, opts: DiffOptions):
     layout: opts.layout,
     focus: opts.focus,
     lastTurn: opts.lastTurn,
+    source: "branch",
   });
   console.log(chalk.dim(`Opened ${branchLabel} vs ${base} in cmux diff.`));
 }
@@ -84,4 +132,7 @@ export const diffCommand = new Command("diff")
   .option("--layout <mode>", "split (default) or unified", "split")
   .option("--last-turn", "diff only changes since the crew's last agent turn", false)
   .option("--no-focus", "open the diff pane without stealing focus")
+  .option("--staged", "show only staged (index) changes — VSCode's 'Staged Changes' panel (#599)", false)
+  .option("--unstaged", "show only unstaged working-tree changes — VSCode's 'Changes' panel (#599)", false)
+  .option("--working", "show both staged and unstaged changes (mid-task working-tree review, #599)", false)
   .action(runDiff);
