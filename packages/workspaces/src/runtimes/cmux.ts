@@ -710,16 +710,22 @@ export function createCmuxDriver(): RuntimeDriver {
       layout?: "split" | "unified";
       focus?: boolean;
       lastTurn?: boolean;
+      source?: "branch" | "staged" | "unstaged";
     }): Promise<void> {
-      const args = [
-        "diff", "--branch",
-        "--base", opts.base,
-        "--cwd", opts.cwd,
-        "--workspace", opts.workspaceId,
-        "--layout", opts.layout ?? "split",
-      ];
+      const source = opts.source ?? "branch";
+      const args = ["diff"];
+      if (source === "staged") {
+        args.push("--staged");
+      } else if (source === "unstaged") {
+        args.push("--unstaged");
+      } else {
+        args.push("--branch", "--base", opts.base);
+        // --last-turn refines the branch-vs-base surface (#596); it has no
+        // meaning against the staged/unstaged working-tree sources.
+        if (opts.lastTurn) args.push("--last-turn");
+      }
+      args.push("--cwd", opts.cwd, "--workspace", opts.workspaceId, "--layout", opts.layout ?? "split");
       if (opts.title) args.push("--title", opts.title);
-      if (opts.lastTurn) args.push("--last-turn");
       args.push(opts.focus === false ? "--no-focus" : "--focus");
       await cmux(args);
     },

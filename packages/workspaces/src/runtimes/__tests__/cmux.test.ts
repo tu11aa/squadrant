@@ -1674,3 +1674,54 @@ describe("classifyDraftLiveness (#258 probe false-negative detection)", () => {
     expect(classifyDraftLiveness("hello 😀", "hello")).toBe("real-draft");
   });
 });
+
+// #599 Phase A: showDiff's `source` opt selects which cmux diff flags are
+// emitted. 'branch' (default/omitted) is the existing #596 behavior;
+// 'staged'/'unstaged' open the crew's uncommitted working-tree changes and
+// drop --base/--last-turn, which have no meaning for those sources.
+describe("showDiff source mapping (#599)", () => {
+  const driver = createCmuxDriver();
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(() => "");
+  });
+
+  it("defaults to --branch --base when source is omitted (#596 back-compat)", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toEqual(
+      expect.arrayContaining(["diff", "--branch", "--base", "develop", "--cwd", "/repo", "--workspace", "workspace:1"]),
+    );
+    expect(args).not.toContain("--staged");
+    expect(args).not.toContain("--unstaged");
+  });
+
+  it("source: 'staged' emits --staged and omits --branch/--base", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "staged" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--staged");
+    expect(args).not.toContain("--branch");
+    expect(args).not.toContain("--base");
+  });
+
+  it("source: 'unstaged' emits --unstaged and omits --branch/--base", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "unstaged" });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--unstaged");
+    expect(args).not.toContain("--branch");
+    expect(args).not.toContain("--base");
+  });
+
+  it("--last-turn is dropped for staged/unstaged sources (meaningless there)", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", source: "staged", lastTurn: true });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).not.toContain("--last-turn");
+  });
+
+  it("--last-turn still applies to the default branch source", async () => {
+    await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", lastTurn: true });
+    const args = argvOf(execFileMock.mock.calls[0]);
+    expect(args).toContain("--last-turn");
+  });
+});
