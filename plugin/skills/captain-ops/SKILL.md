@@ -232,15 +232,21 @@ When a crew sends you a status message via `squadrant runtime send <project> "<m
 
 CREW REVIEW is **unambiguous** — a crew ran `squadrant crew signal review` after committing its work to `crew/<name>`. Unlike CREW IDLE, this is never a stray heartbeat miss: the crew has explicitly paused and is waiting for your verdict. The task is **NOT terminal** — don't treat it like CREW DONE.
 
+**Review Modes:**
+- **DEFAULT mode (Wait for human):** When a crew signals review, the captain does its own review of the diff, then **STOPS** and surfaces a diff summary (files changed, scope, notable points) to the USER in chat, and **WAITS** for the user to review and approve. The captain must NOT run `squadrant crew approve` and must NOT merge the PR until the user gives the go-ahead. Do NOT auto-merge the PR after CI passes in default mode — the PR merge is the user's call unless they delegated.
+- **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates for that review (e.g. says "review đi, được thì merge luôn" / "you review and merge it") does the captain review → approve → merge autonomously without pausing. Delegation is per-request; it does not become the standing default.
+
+*Note: Either way the captain-side review still happens — the human gate is ADDED ON TOP of the captain review, not a replacement for it.*
+
 On CREW REVIEW:
 
 1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base; the default is exactly the review surface). Use `--staged`/`--unstaged`/`--working` if you also want to peek at anything left uncommitted.
-2. **Classify:**
+2. **Classify (Captain-side review):**
 
 | Diff looks | Captain action |
 |-----------|-----------------|
-| Good — matches the task, tests pass, no scope creep | `squadrant crew approve <project> <crew>` — pushes `crew/<name>` to origin, opens the PR, terminalizes DONE. |
-| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates, re-commits, and re-signals `review`. Loop until approved. |
+| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT for go-ahead. Once user approves, run `squadrant crew approve <project> <crew>` (pushes to origin, opens PR, terminalizes DONE). Wait for user to decide on merging.<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
+| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates, re-commits, and re-signals `review`. Loop until approved. (No user gate needed for rejecting back to crew). |
 
 3. **Never auto-terminalize a CREW REVIEW yourself** by emitting `task.done` directly — always go through `squadrant crew approve` so the push+PR actually happens before the task closes.
 4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
