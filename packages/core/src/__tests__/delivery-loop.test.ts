@@ -244,4 +244,94 @@ describe("delivery-loop", () => {
 
     vi.useRealTimers();
   });
+
+  // #617: the defer log line was `delivery seq=… kind=… outcome=deferred` —
+  // no project, no cause. Across a 57MB log with 8150 deferred lines there was
+  // no way to tell which project stalled or why. project= is already known in
+  // the loop; reason= is the classification sendToSurface already computed
+  // (DeferDelivery.reason) to decide to defer, not a new one.
+  it("logs project= and reason= on the defer outcome line (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "gitnexus";
+    const captainName = `${project}-captain`;
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    const logs: string[] = [];
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(null, "modal"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    const deferLine = logs.find((l) => l.includes("outcome=deferred"));
+    expect(deferLine).toBeDefined();
+    expect(deferLine).toContain(`project=${project}`);
+    expect(deferLine).toContain("reason=modal");
+  });
+
+  // Logging every 1s tick for the full ~300-tick (~30min) maxDefers window
+  // would flood the log for no forensic gain once the cause is known — only
+  // the onset (1st defer) and every 30th tick after should log.
+  it("throttles the defer log line to the onset + every 30th tick, not every tick (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "throttle-proj";
+    const captainName = `${project}-captain`;
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    let n = 0;
+    const logs: string[] = [];
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(`typing-${n++}`, "draft"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    for (let i = 0; i < 32; i++) await deliv.deliveryTick!();
+
+    const deferLines = logs.filter((l) => l.includes("outcome=deferred"));
+    // Tick 1 (onset) and tick 30 — not ticks 2-29 or 31-32.
+    expect(deferLines).toHaveLength(2);
+  });
 });
