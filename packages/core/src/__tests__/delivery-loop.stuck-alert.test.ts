@@ -291,4 +291,90 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     texts = await rawMailboxTexts(stateRoot, project);
     expect(texts.filter((t) => t.includes("DELIVERY STUCK"))).toHaveLength(2);
   });
+
+  // #617: the stuck message hardcoded "an in-progress draft (or ghost text)
+  // in your input box" even when the actual blocker was a modal (#484) — an
+  // open AskUserQuestion/permission picker, not the operator's input box.
+  // Pointing the operator at the wrong place is actively misleading.
+  it("reports 'a modal question is open' when the blocker classification is modal, not the input-box wording (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "zeta";
+    const captainName = `${project}-captain`;
+    mockConfig({ projects: { [project]: { captainName } } });
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(null, "modal"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    for (let i = 0; i < 6; i++) await deliv.deliveryTick!();
+
+    const texts = await rawMailboxTexts(stateRoot, project);
+    const alert = texts.find((t) => t.includes("DELIVERY STUCK"));
+    expect(alert).toContain("a modal question is open in your captain pane");
+    expect(alert).not.toContain("input box");
+  });
+
+  it("keeps the input-box wording when the blocker classification is draft/ghost (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "eta";
+    const captainName = `${project}-captain`;
+    mockConfig({ projects: { [project]: { captainName } } });
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    let n = 0;
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(`typing-${n++}`, "draft"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    for (let i = 0; i < 6; i++) await deliv.deliveryTick!();
+
+    const texts = await rawMailboxTexts(stateRoot, project);
+    const alert = texts.find((t) => t.includes("DELIVERY STUCK"));
+    expect(alert).toContain("an in-progress draft (or ghost text) in your input box");
+  });
 });

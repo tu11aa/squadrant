@@ -120,7 +120,7 @@ describe("CaptainDelivery.stats (B1 — read-only deferral visibility)", () => {
     await d.deliver({ seq: 1, message: "a" }, send);
     await d.deliver({ seq: 1, message: "a" }, send);
     await d.deliver({ seq: 2, message: "b" }, send);
-    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: false });
+    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: false, reason: "draft" });
   });
 
   it("flags stuck once the max in-flight defer count reaches maxDefers", async () => {
@@ -128,7 +128,7 @@ describe("CaptainDelivery.stats (B1 — read-only deferral visibility)", () => {
     const send = async () => { throw new DeferDelivery("draft"); };
     await d.deliver({ seq: 1, message: "a" }, send);
     await d.deliver({ seq: 1, message: "a" }, send);
-    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: true });
+    expect(d.stats()).toEqual({ maxDeferCount: 2, stuck: true, reason: "draft" });
   });
 
   it("clears a seq's defer count once it delivers", async () => {
@@ -139,5 +139,53 @@ describe("CaptainDelivery.stats (B1 — read-only deferral visibility)", () => {
     fail = false;
     await d.deliver({ seq: 1, message: "a" }, send);
     expect(d.stats()).toEqual({ maxDeferCount: 0, stuck: false });
+  });
+});
+
+// #617: defer/stuck delivery must be diagnosable — the daemon already decides
+// WHY a send deferred (modal per #484 / no-box per #268 / draft / stable-hold
+// per #302); deliver()/stats() must surface that existing classification
+// rather than the caller having to re-derive it.
+describe("CaptainDelivery deferral reason classification (#617)", () => {
+  it("surfaces the DeferDelivery reason verbatim for modal", async () => {
+    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 3 });
+    const send = async () => { throw new DeferDelivery(null, "modal"); };
+    const result = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(result).toEqual({ deferred: true, reason: "modal" });
+    expect(d.stats().reason).toBe("modal");
+  });
+
+  it("surfaces the DeferDelivery reason verbatim for no-box", async () => {
+    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 3 });
+    const send = async () => { throw new DeferDelivery(null, "no-box"); };
+    const result = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(result).toEqual({ deferred: true, reason: "no-box" });
+  });
+
+  it("classifies a fresh/changing draft as \"draft\" before it stabilizes", async () => {
+    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 2 });
+    const send = async () => { throw new DeferDelivery("typing", "draft"); };
+    const result = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(result).toEqual({ deferred: true, reason: "draft" });
+  });
+
+  it("upgrades \"draft\" to \"stable\" once content holds byte-identical for stableProbePolls polls (#302 signal, not a new classifier)", async () => {
+    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 2 });
+    const send = async () => { throw new DeferDelivery("held-content", "draft"); };
+    const r1 = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(r1).toEqual({ deferred: true, reason: "draft" });
+    const r2 = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(r2).toEqual({ deferred: true, reason: "draft" }); // stableCount=1 < stableProbePolls=2
+    const r3 = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(r3).toEqual({ deferred: true, reason: "stable" }); // stableCount=2 >= 2
+    expect(d.stats().reason).toBe("stable");
+  });
+
+  it("does not let a stable-content streak override modal — modal always wins regardless of content history", async () => {
+    const d = new CaptainDelivery({ maxDefers: 300, stableProbePolls: 1 });
+    const send = async () => { throw new DeferDelivery(null, "modal"); };
+    await d.deliver({ seq: 1, message: "a" }, send);
+    const result = await d.deliver({ seq: 1, message: "a" }, send);
+    expect(result).toEqual({ deferred: true, reason: "modal" });
   });
 });
