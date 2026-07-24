@@ -230,6 +230,109 @@ describe("installClaudeHooks — non-clobbering (D4: preserves existing hooks)",
   });
 });
 
+// ── installClaudeHooks — #615 always verify + repair ──────────────────────────
+
+describe("installClaudeHooks — #615 drift repair on an existing settings file", () => {
+  it("repairs a squadrant hook missing from an existing settings file and logs a warning", () => {
+    // Baseline: a full install, then simulate drift by dropping the
+    // AskUserQuestion hook entry (#560 — the one that makes blocked-signalling work).
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    const drifted = JSON.parse(written[0].content);
+    drifted.hooks.PreToolUse = (drifted.hooks.PreToolUse as Array<Record<string, unknown>>).filter(
+      (e) => e.matcher !== "AskUserQuestion",
+    );
+
+    const log = vi.fn();
+    const { opts: opts2, written: written2 } = makeInstallOpts({ existingSettings: drifted });
+    opts2.log = log;
+    installClaudeHooks(opts2);
+
+    expect(written2).toHaveLength(1);
+    const result = JSON.parse(written2[0].content);
+    const hasAskQuestion = (result.hooks.PreToolUse as Array<Record<string, unknown>>).some(
+      (e) => e.matcher === "AskUserQuestion",
+    );
+    expect(hasAskQuestion).toBe(true);
+    expect(log).toHaveBeenCalled();
+    expect(log.mock.calls.some(([msg]) => /repaired/i.test(msg) && /warning/i.test(msg))).toBe(true);
+  });
+
+  it("does not log a repair warning on a fresh install (no prior settings file)", () => {
+    const log = vi.fn();
+    const { opts } = makeInstallOpts();
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    expect(log.mock.calls.some(([msg]) => /repaired/i.test(msg))).toBe(false);
+  });
+});
+
+// ── installClaudeHooks — #615 opt-in claudeEnv overlay ─────────────────────────
+
+describe("installClaudeHooks — #615 opt-in claudeEnv overlay", () => {
+  it("deep-merges claudeEnv into settings.json env when configured", () => {
+    const { opts, written } = makeInstallOpts();
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env).toEqual({ CLAUDE_AFK_TIMEOUT_MS: "240000" });
+  });
+
+  it("writes nothing to env when claudeEnv is absent", () => {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env).toBeUndefined();
+  });
+
+  it("does not overwrite an existing conflicting user env key, and logs a warning", () => {
+    const log = vi.fn();
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { env: { CLAUDE_AFK_TIMEOUT_MS: "60000" } },
+    });
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env.CLAUDE_AFK_TIMEOUT_MS).toBe("60000");
+    expect(log.mock.calls.some(([msg]) => /CLAUDE_AFK_TIMEOUT_MS/.test(msg))).toBe(true);
+  });
+
+  it("preserves an existing user env key that matches the claudeEnv value (no clobber, no warning)", () => {
+    // Baseline: install hooks first so the second call has nothing left to repair —
+    // isolates the assertion to env-only behavior.
+    const { opts: baseline, written: baselineWritten } = makeInstallOpts();
+    installClaudeHooks(baseline);
+    const settled = JSON.parse(baselineWritten[0].content);
+    settled.env = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+
+    const log = vi.fn();
+    const { opts, written } = makeInstallOpts({ existingSettings: settled });
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    // No hook drift and no env change ⇒ nothing to write.
+    expect(written).toHaveLength(0);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("adds new claudeEnv keys alongside preserved unrelated user env keys", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { env: { SOME_OTHER_VAR: "keep-me" } },
+    });
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env).toEqual({ SOME_OTHER_VAR: "keep-me", CLAUDE_AFK_TIMEOUT_MS: "240000" });
+  });
+});
+
 // ── mapSubToLifecycle ─────────────────────────────────────────────────────────
 
 describe("mapSubToLifecycle — pure mapping", () => {
@@ -504,6 +607,23 @@ describe("NativeHookSource — install()", () => {
 
     expect(returned).toBe(SETTINGS_PATH);
     expect(written).toHaveLength(1);
+  });
+
+  it("#615: forwards the source-level log into installClaudeHooks when hookInstall.log is unset", () => {
+    const log = vi.fn();
+    const written: Array<{ path: string; content: string }> = [];
+    const src = new NativeHookSource({
+      log,
+      hookInstall: {
+        settingsPath: SETTINGS_PATH,
+        hookCmd: HOOK_CMD,
+        readFile: () => "not-valid-json{{",
+        writeFile: (p, c) => written.push({ path: p, content: c }),
+      },
+    });
+    src.install();
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("failed to parse"));
   });
 
   it("install() is idempotent when called twice", () => {

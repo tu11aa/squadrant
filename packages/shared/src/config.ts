@@ -125,6 +125,10 @@ export interface SquadrantConfig {
     /** #536 startup npm-registry update check. Default true (absent ⇒ enabled);
      *  set false to opt out. NO_UPDATE_NOTIFIER env var also opts out. */
     updateCheck?: boolean;
+    /** #615 opt-in: env vars deep-merged into ~/.claude/settings.json's 'env' block by
+     *  installClaudeHooks, non-clobbering (a key the user already set is never overwritten).
+     *  Absent ⇒ nothing written. e.g. { CLAUDE_AFK_TIMEOUT_MS: "240000" } for Claude's AFK mode. */
+    claudeEnv?: Record<string, string>;
   };
   metrics: {
     enabled: boolean;

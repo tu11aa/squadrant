@@ -47,6 +47,13 @@ export interface ClaudeHooksInstallOpts {
   /** Injectable: write file (caller responsible for creating parent dirs). */
   writeFile?: (path: string, content: string) => void;
   log?: (msg: string) => void;
+  /**
+   * #615 opt-in: deep-merged into settings.json's 'env' block, non-clobbering —
+   * a key already present in the user's settings is never overwritten (logged
+   * instead). Absent or empty ⇒ nothing written to env. Sourced from
+   * squadrant config's defaults.claudeEnv.
+   */
+  claudeEnv?: Record<string, string>;
 }
 
 /**
@@ -67,6 +74,7 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   // Parse existing settings (start fresh if absent or malformed).
   let settings: Record<string, unknown> = {};
   const raw = readFile(settingsPath);
+  const hadExistingSettings = raw !== undefined;
   if (raw) {
     try {
       settings = JSON.parse(raw) as Record<string, unknown>;
@@ -82,6 +90,7 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   const hooks = settings.hooks as Record<string, unknown>;
 
   let changed = false;
+  const repaired: string[] = [];
   for (const [eventName, sub, matcher] of CLAUDE_HOOK_EVENTS) {
     if (!Array.isArray(hooks[eventName])) {
       hooks[eventName] = [];
@@ -102,6 +111,37 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
     );
     if (!alreadyPresent) {
       entries.push({ matcher: hookMatcher, hooks: [{ type: "command", command, timeout: 10 }] });
+      changed = true;
+      repaired.push(`${eventName}/${sub}`);
+    }
+  }
+
+  // #615: a hook missing from an already-existing settings file is drift (e.g. the
+  // file was hand-edited or clobbered) — surface it, since a missing AskUserQuestion
+  // hook silently kills crew-blocked signalling (#560). A fresh install where nothing
+  // existed yet is not drift, so it stays quiet.
+  if (repaired.length > 0 && hadExistingSettings) {
+    log(
+      `native-hook: repaired ${repaired.length} missing squadrant hook(s) in ${settingsPath} [${repaired.join(", ")}] — WARNING: blocked-signalling or lifecycle tracking may have been broken until this run`,
+    );
+  }
+
+  // #615 opt-in: deep-merge defaults.claudeEnv into settings.json 'env', non-clobbering.
+  if (opts.claudeEnv && Object.keys(opts.claudeEnv).length > 0) {
+    if (typeof settings.env !== "object" || settings.env === null || Array.isArray(settings.env)) {
+      settings.env = {};
+    }
+    const env = settings.env as Record<string, unknown>;
+    for (const [key, value] of Object.entries(opts.claudeEnv)) {
+      if (key in env) {
+        if (env[key] !== value) {
+          log(
+            `native-hook: claudeEnv key '${key}' already set to '${String(env[key])}' in ${settingsPath} — not overwriting with '${value}'`,
+          );
+        }
+        continue;
+      }
+      env[key] = value;
       changed = true;
     }
   }
@@ -167,8 +207,10 @@ export class NativeHookSource implements LifecycleSource {
   private active = false;
 
   constructor(opts: NativeHookSourceOpts = {}) {
-    this.hookInstall = opts.hookInstall ?? {};
     this.log = opts.log ?? (() => {});
+    // Forward the source-level log into installClaudeHooks by default so #615
+    // repair/non-clobber warnings surface — an explicit hookInstall.log still wins.
+    this.hookInstall = { log: this.log, ...opts.hookInstall };
   }
 
   start(deps: LifecycleSourceDeps): void {

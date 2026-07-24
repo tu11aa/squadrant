@@ -75,6 +75,19 @@ Two-way Telegram lives in `@squadrant/core` (`src/telegram/*`: `client`/`format`
 
 **⚠️ Security gap (v1):** chat membership implies captain control — anyone who can post in the linked supergroup can steer the captain. Inbound is filtered only by a `chat_id` allowlist; a per-user-id allowlist is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always data (a captain message), never an executed command.
 
+## Managed `~/.claude/settings.json` (#615)
+
+squadrant owns and reconciles `~/.claude/settings.json` via `installClaudeHooks` (`packages/workspaces/src/native-hooks/native-hook-source.ts`), called by `NativeHookSource.install()` on every daemon boot. It is idempotent and non-clobbering — unrelated top-level fields and non-squadrant hook entries (yours, cmux's, etc.) are always preserved.
+
+- **Hooks — always verified + repaired, unconditional.** The full squadrant-owned hook set (`SessionStart` / `UserPromptSubmit` / `PreToolUse` incl. the `AskUserQuestion` tool matcher / `Stop` / `Notification` / `SessionEnd`) is checked on every run. A missing hook is repaired and a one-line warning is logged. The `AskUserQuestion` → `squadrant hooks claude ask-question` mapping is what makes crew-blocked signalling work (#560); a machine that never had it — or had it clobbered — used to lose blocked-signalling silently. It no longer does.
+- **`env` overlay — opt-in only, `defaults.claudeEnv`.** Set `defaults.claudeEnv` in `~/.config/squadrant/config.json` to deep-merge extra keys into settings.json's `env` block. Absent ⇒ nothing is written to `env`. The merge is non-clobbering: a key already present with a different value is never overwritten, just logged.
+
+  ```json
+  { "defaults": { "claudeEnv": { "CLAUDE_AFK_TIMEOUT_MS": "240000", "CLAUDE_AFK_COUNTDOWN_MS": "30000" } } }
+  ```
+
+  Motivating example: Claude Code's AFK auto-continue mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves prompts after an idle timeout — the same risk class as auto-answering approval prompts while unattended (#484/#516). squadrant does **not** enable this by default for anyone; it's opt-in per machine only, via `claudeEnv`.
+
 ## Coding Discipline: Karpathy Principles
 
 Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL.md`](plugin/skills/karpathy-principles/SKILL.md):
