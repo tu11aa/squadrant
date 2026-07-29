@@ -319,6 +319,65 @@ describe("state-machine reduce", () => {
     expect(ended.pendingTool).toBeUndefined();
   });
 
+  // ── #594a: CREW IDLE flood — turn.completed while a registered background ──
+  // Monitor is still armed. Calling the `Monitor` tool arms a background watch
+  // and returns almost immediately (its own PreToolUse/PostToolUse close fast),
+  // but the watch itself keeps running and delivers async notifications later —
+  // during that gap the crew's own turn genuinely ends (Stop hook fires) with NO
+  // tool in flight. Squadrant must not read that as "awaiting the captain": the
+  // crew will self-resume on its own Monitor notification. Live evidence: a real
+  // brove-mobile crew (task 2506214d) fired CREW IDLE 3x for the SAME turnId
+  // while polling in a Stop→(auto-resume)→Stop loop, 23s and 76s apart.
+  it("task.progress PreToolUse for Monitor opens a pendingMonitor window", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    expect(next.pendingMonitor).toEqual({ since: 7000 });
+  });
+
+  it("Monitor's own PostToolUse does NOT close the pendingMonitor window (unlike pendingTool)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    const afterPost = reduce(open, { type: "task.progress", id: "t1", note: "posttooluse" }, 7100);
+    expect(afterPost.pendingMonitor).toEqual({ since: 7000 }); // still armed
+    expect(afterPost.pendingTool).toBeUndefined(); // ordinary tool tracking closes as usual
+  });
+
+  it("task.turn.completed while a Monitor is armed is NOT trusted as a turn boundary (#594a)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "posttooluse" }, 7100); // Monitor's own quick PostToolUse
+    const stillOpen = reduce(closed, { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
+    expect(stillOpen.state).toBe("working"); // never flips to awaiting-input
+    expect(stillOpen.pendingMonitor).toEqual({ since: 7000 }); // watch window untouched
+    expect(stillOpen.lastHeartbeat).toBe(8000); // still counts as liveness
+  });
+
+  it("repeated contradicted task.turn.completed reports while Monitor is armed never re-enter awaiting-input (flood guard)", () => {
+    const armed = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    let cur = reduce(armed, { type: "task.progress", id: "t1", note: "posttooluse" }, 7100);
+    for (const t of [8000, 8023000 - 8000000, 9000, 10000]) {
+      cur = reduce(cur, { type: "task.turn.completed", id: "t1", turnId: "x" }, t);
+      expect(cur.state).toBe("working");
+    }
+  });
+
+  it("a genuine turn boundary clears pendingMonitor on task.started", () => {
+    const armed = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    const started = reduce(armed, { type: "task.started", id: "t1" }, 9000);
+    expect(started.pendingMonitor).toBeUndefined();
+  });
+
+  it("task.blocked and task.review clear pendingMonitor (mirrors pendingTool's turn-boundary reset)", () => {
+    const armed = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Monitor" }, 7000);
+    const blocked = reduce(armed, { type: "task.blocked", id: "t1", reason: "r", question: "q?" }, 8000);
+    expect(blocked.pendingMonitor).toBeUndefined();
+    const reviewed = reduce(armed, { type: "task.review", id: "t1", message: "done" }, 8000);
+    expect(reviewed.pendingMonitor).toBeUndefined();
+  });
+
+  it("once no Monitor is armed, a real task.turn.completed IS a real boundary", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.turn.completed", id: "t1", turnId: "x" }, 8000);
+    expect(next.state).toBe("awaiting-input");
+    expect(next.pendingMonitor).toBeUndefined();
+  });
+
   it("stalled + task.progress (matching PostToolUse) recovers to working AND clears pendingTool (#354 auto-clear)", () => {
     const stalledHung = rec({ state: "stalled", pendingTool: { name: "Bash", since: 1000 } });
     const recovered = reduce(stalledHung, { type: "task.progress", id: "t1", note: "posttooluse" }, 9000);
