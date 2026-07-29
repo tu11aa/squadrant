@@ -19,7 +19,7 @@ import {
   mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync,
   rmSync, statSync,
 } from "node:fs";
-import type { WorkItem, WorkState } from "@squadrant/shared";
+import { TERMINAL_WORK_STATES, type WorkItem, type WorkState } from "@squadrant/shared";
 
 /** done/cancelled items are deleted 30 days after closedAt (spec §4.4). */
 export const WORK_ITEM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -165,6 +165,13 @@ export function createWorkItem(store: WorkStore, opts: CreateWorkItemOpts): Work
  *  --project for these). */
 export function findWorkItemById(store: WorkStore, id: string): WorkItem | undefined {
   return store.listAll().find((i) => i.id === id);
+}
+
+/** Direct children of `id` still in a non-terminal state — used by the CLI
+ *  to warn (never refuse; enforcement is out of scope) when `work done` is
+ *  run on a parent that still has open work underneath it. */
+export function findOpenChildren(store: WorkStore, id: string): WorkItem[] {
+  return store.listAll().filter((i) => i.parent === id && !TERMINAL_WORK_STATES.has(i.state));
 }
 
 export type TerminalWorkState = Extract<WorkState, "done" | "cancelled">;

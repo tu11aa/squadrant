@@ -7,6 +7,7 @@ import {
   createWorkItem,
   closeWorkItem,
   findWorkItemById,
+  findOpenChildren,
   purgeExpiredWorkItems,
   type TerminalWorkState,
 } from "@squadrant/core";
@@ -42,6 +43,29 @@ export function groupByParent(items: WorkItem[]): { roots: WorkItem[]; childrenO
   return { roots, childrenOf };
 }
 
+/** Pure. The default (non `--include-done`) view hides terminal items — but
+ *  hiding a done/cancelled item that still has an unfinished descendant
+ *  would orphan that descendant: it'd render as a parentless root with no
+ *  sign it belonged to a wave. That defeats the exact scenario --parent
+ *  exists for ("wave finished out of order, what's left?"), so a terminal
+ *  item stays visible whenever any descendant, at any depth, is still open.
+ *  Parent links are resolved from the full (unfiltered) item set so
+ *  multi-level chains work. */
+export function visibleItems(items: WorkItem[], includeDone: boolean): WorkItem[] {
+  if (includeDone) return items;
+  const { childrenOf } = groupByParent(items);
+  const memo = new Map<string, boolean>();
+  const keep = (item: WorkItem): boolean => {
+    const cached = memo.get(item.id);
+    if (cached !== undefined) return cached;
+    memo.set(item.id, false); // cycle guard: a malformed parent chain can't infinite-loop
+    const result = !TERMINAL_WORK_STATES.has(item.state) || (childrenOf.get(item.id) ?? []).some(keep);
+    memo.set(item.id, result);
+    return result;
+  };
+  return items.filter(keep);
+}
+
 function stateColor(state: WorkItem["state"]): (s: string) => string {
   switch (state) {
     case "done": return chalk.green;
@@ -54,11 +78,14 @@ function stateColor(state: WorkItem["state"]): (s: string) => string {
 
 function printItem(item: WorkItem, indent: number): void {
   const color = stateColor(item.state);
-  console.log(
+  const line =
     "  ".repeat(indent) +
-      `${chalk.dim(item.id)}  ${item.title}  ${color(`[${item.state}]`)}` +
-      (indent === 0 ? chalk.dim(`  (${item.project})`) : ""),
-  );
+    `${chalk.dim(item.id)}  ${item.title}  ${color(`[${item.state}]`)}` +
+    (indent === 0 ? chalk.dim(`  (${item.project})`) : "");
+  // A terminal item only survives the default (non --include-done) view when
+  // it still has an open descendant (see visibleItems) — dim it so it reads
+  // as "closed, kept for context" rather than an active item.
+  console.log(TERMINAL_WORK_STATES.has(item.state) ? chalk.dim(line) : line);
 }
 
 function printTree(items: WorkItem[]): void {
@@ -125,7 +152,7 @@ const listCmd = new Command("list")
       items = store.list(project);
     }
 
-    if (!opts.includeDone) items = items.filter((i) => !TERMINAL_WORK_STATES.has(i.state));
+    items = visibleItems(items, opts.includeDone ?? false);
 
     if (items.length === 0) {
       console.log(chalk.dim("\nNo work items.\n"));
@@ -153,6 +180,16 @@ function closeCommand(name: string, state: TerminalWorkState, flag: string, key:
         process.exit(1);
       }
       console.log(chalk.green(`✓ ${item.id}`) + `  ${item.title}  ${chalk.dim(`[${item.state}]`)}`);
+
+      // Warn, don't refuse (enforcement is out of scope) — but "done" without
+      // this would silently orphan open children in the default list view.
+      if (state === "done") {
+        const openChildren = findOpenChildren(store, item.id);
+        if (openChildren.length > 0) {
+          const names = openChildren.map((c) => `${c.id} [${c.state}]`).join(", ");
+          console.log(chalk.yellow(`⚠ still has ${openChildren.length} unfinished child item(s): ${names}`));
+        }
+      }
     });
 }
 

@@ -7,6 +7,7 @@ import {
   createWorkStore,
   createWorkItem,
   findWorkItemById,
+  findOpenChildren,
   closeWorkItem,
   purgeExpiredWorkItems,
   WORK_ITEM_TTL_MS,
@@ -17,7 +18,7 @@ describe("work-store", () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-work-store-")); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it("createWorkItem then get round-trips through the generic Store<WorkItem>", () => {
+  it("createWorkItem then get round-trips through the WorkStore", () => {
     const store = createWorkStore(dir);
     const item = createWorkItem(store, { project: "proj", title: "Wave 3", now: 1000 });
     expect(item.state).toBe("working");
@@ -44,6 +45,29 @@ describe("work-store", () => {
     const item = createWorkItem(store, { project: "friendslop-factory", title: "incident", now: 1000 });
     expect(findWorkItemById(store, item.id)?.project).toBe("friendslop-factory");
     expect(findWorkItemById(store, "w_nope")).toBeUndefined();
+  });
+
+  describe("findOpenChildren", () => {
+    it("returns only direct children still in a non-terminal state", () => {
+      const store = createWorkStore(dir);
+      const wave = createWorkItem(store, { project: "proj", title: "wave", now: 0 });
+      const openChild = createWorkItem(store, { project: "proj", title: "a", parent: wave.id, now: 1 });
+      const closedChild = createWorkItem(store, { project: "proj", title: "b", parent: wave.id, now: 2 });
+      closeWorkItem(store, closedChild.id, "done", { now: 3 });
+
+      const open = findOpenChildren(store, wave.id);
+      expect(open.map((i) => i.id)).toEqual([openChild.id]);
+    });
+
+    it("returns an empty array when a parent has no children or all are terminal", () => {
+      const store = createWorkStore(dir);
+      const wave = createWorkItem(store, { project: "proj", title: "wave", now: 0 });
+      expect(findOpenChildren(store, wave.id)).toEqual([]);
+
+      const child = createWorkItem(store, { project: "proj", title: "a", parent: wave.id, now: 1 });
+      closeWorkItem(store, child.id, "cancelled", { now: 2 });
+      expect(findOpenChildren(store, wave.id)).toEqual([]);
+    });
   });
 
   describe("closeWorkItem", () => {

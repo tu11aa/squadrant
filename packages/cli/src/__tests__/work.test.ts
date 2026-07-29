@@ -1,6 +1,6 @@
 // packages/cli/src/__tests__/work.test.ts
 import { describe, it, expect } from "vitest";
-import { detectCurrentProject, groupByParent } from "../commands/work.js";
+import { detectCurrentProject, groupByParent, visibleItems } from "../commands/work.js";
 import type { SquadrantConfig, WorkItem } from "@squadrant/shared";
 
 function item(overrides: Partial<WorkItem>): WorkItem {
@@ -63,5 +63,46 @@ describe("groupByParent — out-of-order wave completion is the point of the des
     const childOf1 = item({ id: "c1", parent: "w1" });
     const { roots } = groupByParent([wave2, wave1, childOf1]);
     expect(roots.map((r) => r.id).sort()).toEqual(["w1", "w2"]);
+  });
+});
+
+describe("visibleItems — a done parent must not orphan an unfinished child", () => {
+  it("keeps a done parent visible when a direct child is still open", () => {
+    const wave = item({ id: "wave", state: "done" });
+    const child = item({ id: "child", parent: "wave", state: "working" });
+    const kept = visibleItems([wave, child], false);
+    expect(kept.map((i) => i.id).sort()).toEqual(["child", "wave"]);
+  });
+
+  it("hides a done parent whose children are all terminal too", () => {
+    const wave = item({ id: "wave", state: "done" });
+    const child = item({ id: "child", parent: "wave", state: "cancelled" });
+    const kept = visibleItems([wave, child], false);
+    expect(kept).toEqual([]);
+  });
+
+  it("hides a standalone done item with no children, same as before the fix", () => {
+    const done = item({ id: "done-1", state: "done" });
+    expect(visibleItems([done], false)).toEqual([]);
+  });
+
+  it("keeps every ancestor in a multi-level chain when the leaf is still open", () => {
+    const grandparent = item({ id: "gp", state: "done" });
+    const parent = item({ id: "p", parent: "gp", state: "done" });
+    const leaf = item({ id: "leaf", parent: "p", state: "blocked" });
+    const kept = visibleItems([grandparent, parent, leaf], false);
+    expect(kept.map((i) => i.id).sort()).toEqual(["gp", "leaf", "p"]);
+  });
+
+  it("a parentless incident (not a wave) is unaffected — normal non-terminal visibility", () => {
+    const incident = item({ id: "incident", parent: null, state: "working" });
+    expect(visibleItems([incident], false)).toEqual([incident]);
+  });
+
+  it("--include-done bypasses pruning entirely, including all-terminal subtrees", () => {
+    const wave = item({ id: "wave", state: "done" });
+    const child = item({ id: "child", parent: "wave", state: "cancelled" });
+    const kept = visibleItems([wave, child], true);
+    expect(kept.map((i) => i.id).sort()).toEqual(["child", "wave"]);
   });
 });
