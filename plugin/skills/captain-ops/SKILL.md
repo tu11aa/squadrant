@@ -30,8 +30,6 @@ The handoff file is auto-deleted after reading. Use this as your primary context
 If relevant pages exist, read them for context before starting work.
 8. Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
 
-9. (Opt-in) Status writes are not required on every event. Only run `~/.config/squadrant/scripts/write-status.sh` when you have a meaningful note worth recording (a blocker, a deliberate "starting work on X", etc.) — not on a schedule.
-
 ## Crew Setup
 
 You do NOT create an Agent Team. You spawn each crew session on demand as a **new tab** in your workspace via `squadrant crew spawn` (use `--direction right|down|...` to split into a pane instead). The surface is a fresh CLI session with the crew template loaded as system prompt — disposable, restartable, runtime-agnostic.
@@ -261,8 +259,6 @@ After a crew task completes:
 4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
 5. Record learnings if any (see "Recording Learnings" below).
 6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
-
-Status writes (`write-status.sh`) are opt-in; you don't need to write status after every event.
 
 ## Status Board (show after substantive turns)
 

@@ -1,44 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import matter from "gray-matter";
 import { loadConfig } from "@squadrant/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 import type { ComponentHealth } from "@squadrant/core";
-
-interface StatusFrontmatter {
-  project?: string;
-  last_updated?: string;
-  active_crew?: number;
-  tasks_total?: number;
-  tasks_completed?: number;
-  tasks_in_progress?: number;
-  tasks_pending?: number;
-}
-
-function timeAgo(dateStr: string | undefined): string {
-  if (!dateStr) return chalk.dim("—");
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return chalk.dim("—");
-
-  const diff = Date.now() - date.getTime();
-  const mins = Math.floor(diff / 60_000);
-  const hours = Math.floor(diff / 3_600_000);
-  const days = Math.floor(diff / 86_400_000);
-
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
-}
-
-function progressBar(completed: number, total: number): string {
-  if (total === 0) return chalk.dim("no tasks");
-  const pct = Math.round((completed / total) * 100);
-  const filled = Math.round(pct / 10);
-  const bar = "█".repeat(filled) + "░".repeat(10 - filled);
-  return `${bar} ${pct}%`;
-}
 
 /**
  * Pure. Render the captain liveness indicator from the daemon's registry-derived
@@ -60,45 +24,28 @@ export function captainIndicator(state: ComponentHealth["state"] | undefined): s
   return chalk.dim("○");
 }
 
-/** Result of attempting to read a project's status.md — "ok" only when it
- *  exists and parsed cleanly; "missing" and "unreadable" must render
- *  distinctly so a corrupt file is never silently mistaken for an absent one. */
-export type StatusMdState = "ok" | "missing" | "unreadable";
-
 /**
- * Pure. Render one project's status row. status.md is an optional human note
- * layered on top of daemon-derived captain liveness (#549) — a project with
- * no status.md, or an unreadable one, still renders with its real captain
- * state, rather than being dropped from the table entirely.
+ * Pure. Render one project's status row — captain liveness only. Task/crew
+ * counts used to come from status.md, but nothing writes that file (the
+ * write-status.sh it depended on doesn't exist) — rather than render stale
+ * or fabricated numbers, this command doesn't claim to have them (#630).
  */
 export function formatProjectRow(
   name: string,
   captainName: string,
-  fm: StatusFrontmatter,
-  statusMdState: StatusMdState,
   captainState: ComponentHealth["state"] | undefined,
 ): string {
   const sessionIndicator = captainIndicator(captainState);
   const captainDisplay = `${captainName.padEnd(11)} ${sessionIndicator}`;
-  const crew = statusMdState === "ok" ? String(fm.active_crew ?? 0).padEnd(6) : chalk.dim("?").padEnd(6);
-  const progress =
-    statusMdState === "ok"
-      ? progressBar(fm.tasks_completed ?? 0, fm.tasks_total ?? 0).padEnd(25)
-      : statusMdState === "unreadable"
-        ? chalk.red("status.md unreadable").padEnd(25)
-        : chalk.dim("no notes").padEnd(25);
-  const updated = statusMdState === "ok" ? timeAgo(fm.last_updated) : chalk.dim("—");
-
-  return `  ${name.padEnd(18)} ${captainDisplay}  ${crew} ${progress} ${updated}`;
+  return `  ${name.padEnd(18)} ${captainDisplay}`;
 }
 
 export const statusCommand = new Command("status")
-  .description("Show status of all projects from spoke vault status files")
+  .description("Show captain liveness for all projects (task/crew counts have no data source — #630)")
   .option("--detailed", "also show live per-component service health from the daemon (#77)")
   .action(async (opts: { detailed?: boolean }) => {
     const config = loadConfig();
     const projects = Object.entries(config.projects);
-    const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
 
     if (projects.length === 0) {
       console.log(chalk.yellow("\nNo projects registered. Use: squadrant projects add <name> <path>\n"));
@@ -119,37 +66,14 @@ export const statusCommand = new Command("status")
     }
 
     console.log(chalk.bold("\nProject Status\n"));
-    console.log(
-      chalk.dim(
-        `  ${"PROJECT".padEnd(18)} ${"CAPTAIN".padEnd(12)} ${"CREW".padEnd(6)} ${"PROGRESS".padEnd(25)} LAST UPDATE`,
-      ),
-    );
-    console.log(chalk.dim("  " + "─".repeat(85)));
+    console.log(chalk.dim(`  ${"PROJECT".padEnd(18)} CAPTAIN`));
+    console.log(chalk.dim("  " + "─".repeat(35)));
 
     for (const [name, project] of projects) {
-      const workspace = registry.forProject(name, config);
-
-      let fm: StatusFrontmatter = {};
-      let statusMdState: StatusMdState = "missing";
-      if (await workspace.exists("status.md")) {
-        try {
-          const raw = await workspace.read("status.md");
-          fm = matter(raw).data as StatusFrontmatter;
-          statusMdState = "ok";
-        } catch {
-          // Corrupt/unreadable status.md — render distinctly from "missing"
-          // (formatProjectRow) so the operator doesn't lose the fact that the
-          // file is broken, while still showing live captain state (#549).
-          statusMdState = "unreadable";
-        }
-      }
-
-      console.log(
-        formatProjectRow(name, project.captainName, fm, statusMdState, captainStateByProject.get(name)),
-      );
+      console.log(formatProjectRow(name, project.captainName, captainStateByProject.get(name)));
     }
 
-    console.log("");
+    console.log(chalk.dim("\n  Task/crew counts: no data source yet — see squadrant/squadrant#630\n"));
 
     // #77: --detailed adds the live service-health view (relay/captain/crew/
     // command per-component last-seen + state) queried from the daemon.
