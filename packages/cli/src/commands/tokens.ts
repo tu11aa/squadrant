@@ -27,28 +27,50 @@ export interface AssistantUsage {
   cacheWrite: number;
 }
 
-/** Pure. Parse one raw JSONL transcript line into usage numbers, or null if
- *  the line isn't a valid assistant message with a usage block (user turns,
- *  tool-result lines, and unparsable lines all return null). */
-export function parseAssistantUsage(rawLine: string): AssistantUsage | null {
+export interface ParsedTranscriptLine {
+  /** Raw ISO timestamp string from the line, if present — every line type
+   *  (user, assistant, attachment, ...) carries one; only a handful of
+   *  metadata-only line types (e.g. "mode", "queue-operation") omit it. */
+  timestamp: string | null;
+  usage: AssistantUsage | null;
+}
+
+/** Pure. Parse one raw JSONL transcript line into its timestamp and (if it's
+ *  an assistant message with a usage block) usage numbers. User turns,
+ *  tool-result lines, and unparsable lines get usage: null. */
+export function parseTranscriptLine(rawLine: string): ParsedTranscriptLine {
   const line = rawLine.trim();
-  if (!line) return null;
+  if (!line) return { timestamp: null, usage: null };
   let obj: unknown;
   try {
     obj = JSON.parse(line);
   } catch {
-    return null;
+    return { timestamp: null, usage: null };
   }
-  const entry = obj as { type?: string; message?: { role?: string; usage?: Record<string, number> } };
-  if (entry?.type !== "assistant" || entry.message?.role !== "assistant") return null;
-  const usage = entry.message?.usage;
-  if (!usage) return null;
-  return {
-    input: usage.input_tokens ?? 0,
-    output: usage.output_tokens ?? 0,
-    cacheRead: usage.cache_read_input_tokens ?? 0,
-    cacheWrite: usage.cache_creation_input_tokens ?? 0,
+  const entry = obj as {
+    type?: string;
+    timestamp?: string;
+    message?: { role?: string; usage?: Record<string, number> };
   };
+  const timestamp = typeof entry?.timestamp === "string" ? entry.timestamp : null;
+  if (entry?.type !== "assistant" || entry.message?.role !== "assistant") return { timestamp, usage: null };
+  const usage = entry.message?.usage;
+  if (!usage) return { timestamp, usage: null };
+  return {
+    timestamp,
+    usage: {
+      input: usage.input_tokens ?? 0,
+      output: usage.output_tokens ?? 0,
+      cacheRead: usage.cache_read_input_tokens ?? 0,
+      cacheWrite: usage.cache_creation_input_tokens ?? 0,
+    },
+  };
+}
+
+/** Pure. Convenience wrapper over `parseTranscriptLine` for callers that only
+ *  need the usage numbers (e.g. unit tests). */
+export function parseAssistantUsage(rawLine: string): AssistantUsage | null {
+  return parseTranscriptLine(rawLine).usage;
 }
 
 export interface Turn {
@@ -68,21 +90,41 @@ export interface SessionAggregate {
    *  (confirmed against a real transcript: turn-2 cache_read reproduces
    *  turn-1's total exactly once retries are collapsed). */
   turns: Turn[];
+  /** Earliest/latest timestamp seen in the file (any line type, not just
+   *  assistant turns) — the actual date range this session's data covers. */
+  earliest: string | null;
+  latest: string | null;
 }
 
 export function emptySessionAggregate(): SessionAggregate {
-  return { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: [] };
+  return { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: [], earliest: null, latest: null };
+}
+
+/** Pure. Widens [earliest, latest] with one more (possibly null) timestamp. */
+export function extendRange(
+  range: { earliest: string | null; latest: string | null },
+  timestamp: string | null,
+): void {
+  if (!timestamp) return;
+  if (range.earliest === null || timestamp < range.earliest) range.earliest = timestamp;
+  if (range.latest === null || timestamp > range.latest) range.latest = timestamp;
 }
 
 /** Mutates `agg` with one raw transcript line. `state.lastCacheRead` tracks
  *  the previous call's cache_read across the whole session so consecutive
- *  retries collapse into a single turn. */
-export function foldAssistantLine(
+ *  retries collapse into a single turn. Every line (not just assistant
+ *  turns) widens the session's date range — a transcript's true coverage
+ *  includes user turns too, and this is what makes the rolling-window
+ *  disclosure honest (#626 follow-up: a shrinking file count from Claude
+ *  Code's own transcript retention must never look like a silent all-time
+ *  total — cf. the #630 zombie-status-reader class of bug). */
+export function foldTranscriptLine(
   agg: SessionAggregate,
   rawLine: string,
   state: { lastCacheRead: number | null },
 ): void {
-  const usage = parseAssistantUsage(rawLine);
+  const { timestamp, usage } = parseTranscriptLine(rawLine);
+  extendRange(agg, timestamp);
   if (!usage) return;
   agg.calls++;
   agg.input += usage.input;
@@ -102,7 +144,7 @@ export function foldAssistantLine(
 export function aggregateLines(lines: Iterable<string>): SessionAggregate {
   const agg = emptySessionAggregate();
   const state = { lastCacheRead: null as number | null };
-  for (const line of lines) foldAssistantLine(agg, line, state);
+  for (const line of lines) foldTranscriptLine(agg, line, state);
   return agg;
 }
 
@@ -113,7 +155,7 @@ export async function aggregateTranscriptFile(filePath: string): Promise<Session
   const state = { lastCacheRead: null as number | null };
   const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity });
   for await (const line of rl) {
-    foldAssistantLine(agg, line, state);
+    foldTranscriptLine(agg, line, state);
   }
   return agg;
 }
@@ -153,6 +195,27 @@ export interface RoleReport {
    *  confirming the boot-prefix reading (see captain-context-budget.md §3). */
   bootConfirmedSessions: number;
   bootSampledSessions: number;
+  /** Actual date range covered by the transcripts that produced this report —
+   *  NOT all-time. Claude Code prunes transcripts past `cleanupPeriodDays`
+   *  (default 30d), so this range — and every count above it — narrows over
+   *  time purely from retention, independent of real usage. Always read
+   *  alongside this range; a smaller total next month can mean "less data
+   *  survived", not "less was spent". */
+  earliest: string | null;
+  latest: string | null;
+}
+
+/** Pure. Widens [earliest, latest] across a list of ranges — used to roll
+ *  session-level ranges up to a role, and role-level ranges up to a total. */
+export function mergeRanges(
+  ranges: Array<{ earliest: string | null; latest: string | null }>,
+): { earliest: string | null; latest: string | null } {
+  const merged: { earliest: string | null; latest: string | null } = { earliest: null, latest: null };
+  for (const r of ranges) {
+    extendRange(merged, r.earliest);
+    extendRange(merged, r.latest);
+  }
+  return merged;
 }
 
 /** Pure. Rolls per-session aggregates into one role-level report (captain or
@@ -188,6 +251,7 @@ export function buildRoleReport(role: RoleReport["role"], sessions: SessionAggre
   const accumulated = meanCacheReadPerCall !== null && meanBoot !== null ? meanCacheReadPerCall - meanBoot : null;
   const accumulatedPct =
     accumulated !== null && meanCacheReadPerCall ? accumulated / meanCacheReadPerCall : null;
+  const { earliest, latest } = mergeRanges(sessions);
 
   return {
     role,
@@ -203,6 +267,8 @@ export function buildRoleReport(role: RoleReport["role"], sessions: SessionAggre
     accumulatedPct,
     bootConfirmedSessions,
     bootSampledSessions: boots.length,
+    earliest,
+    latest,
   };
 }
 
@@ -294,7 +360,8 @@ function printRoleRow(label: string, r: RoleReport): void {
     `  ${label.padEnd(10)} ${String(r.sessionFiles).padStart(6)} ${String(r.calls).padStart(8)} ` +
       `${formatTokens(r.input).padStart(8)} ${formatTokens(r.output).padStart(8)} ` +
       `${formatTokens(r.cacheRead).padStart(10)} ${formatTokens(r.cacheWrite).padStart(10)} ` +
-      `${formatTokens(totalVolume).padStart(10)}`,
+      `${formatTokens(totalVolume).padStart(10)} ` +
+      chalk.dim(formatRange(r)),
   );
 }
 
@@ -325,6 +392,7 @@ function sumRoleReports(role: RoleReport["role"], reports: RoleReport[]): RoleRe
   const accumulated = meanCacheReadPerCall !== null && meanBoot !== null ? meanCacheReadPerCall - meanBoot : null;
   const accumulatedPct =
     accumulated !== null && meanCacheReadPerCall ? accumulated / meanCacheReadPerCall : null;
+  const { earliest, latest } = mergeRanges(reports);
 
   return {
     role,
@@ -340,7 +408,25 @@ function sumRoleReports(role: RoleReport["role"], reports: RoleReport[]): RoleRe
     accumulatedPct,
     bootConfirmedSessions: reports.reduce((a, r) => a + r.bootConfirmedSessions, 0),
     bootSampledSessions,
+    earliest,
+    latest,
   };
+}
+
+const ROLLING_WINDOW_NOTE =
+  "Rolling window, not all-time: Claude Code prunes transcripts older than " +
+  "`cleanupPeriodDays` (default 30 days). Totals shrink over time purely from " +
+  "retention as old sessions age out — that is NOT the same as spend going down.";
+
+/** Pure. "2026-06-29" from an ISO timestamp, or "?" if absent. */
+function formatDate(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : "?";
+}
+
+/** Pure. "2026-06-29 → 2026-07-29", or a plain marker if there's no dated data. */
+export function formatRange(r: { earliest: string | null; latest: string | null }): string {
+  if (!r.earliest && !r.latest) return "no dated turns";
+  return `${formatDate(r.earliest)} → ${formatDate(r.latest)}`;
 }
 
 export const tokensCommand = new Command("tokens")
@@ -369,9 +455,10 @@ export const tokensCommand = new Command("tokens")
 
     const active = reports.filter((r) => r.captain.calls > 0 || r.crews.calls > 0);
     const skipped = reports.length - active.length;
+    const dataWindow = mergeRanges(active.flatMap((r) => [r.captain, r.crews]));
 
     if (opts.json) {
-      console.log(JSON.stringify({ projects: active }, null, 2));
+      console.log(JSON.stringify({ dataWindow, rollingWindowNote: ROLLING_WINDOW_NOTE, projects: active }, null, 2));
       return;
     }
 
@@ -381,8 +468,10 @@ export const tokensCommand = new Command("tokens")
     }
 
     console.log(chalk.bold("\nToken spend by project (Claude Code transcripts only)\n"));
+    console.log(chalk.yellow(`  Data window: ${formatRange(dataWindow)}`));
+    console.log(chalk.dim(`  ${ROLLING_WINDOW_NOTE}\n`));
     console.log(chalk.dim(`  ${"PROJECT/ROLE".padEnd(10)} ${"FILES".padStart(6)} ${"CALLS".padStart(8)} ` +
-      `${"INPUT".padStart(8)} ${"OUTPUT".padStart(8)} ${"CACHE_READ".padStart(10)} ${"CACHE_WRITE".padStart(10)} ${"TOTAL".padStart(10)}`));
+      `${"INPUT".padStart(8)} ${"OUTPUT".padStart(8)} ${"CACHE_READ".padStart(10)} ${"CACHE_WRITE".padStart(10)} ${"TOTAL".padStart(10)} WINDOW`));
     console.log(chalk.dim("  " + "─".repeat(78)));
 
     for (const r of active) {

@@ -1,21 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
   parseAssistantUsage,
+  parseTranscriptLine,
   aggregateLines,
   buildRoleReport,
   escapeClaudeProjectPath,
   isCrewDirName,
   formatTokens,
+  formatRange,
+  mergeRanges,
 } from "../tokens.js";
 
-function assistantLine(usage: Partial<{
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens: number;
-  cache_creation_input_tokens: number;
-}>): string {
+function assistantLine(
+  usage: Partial<{
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  }>,
+  timestamp?: string,
+): string {
   return JSON.stringify({
     type: "assistant",
+    timestamp,
     message: {
       role: "assistant",
       usage: {
@@ -96,6 +103,66 @@ describe("aggregateLines", () => {
   });
 });
 
+describe("parseTranscriptLine — timestamp extraction", () => {
+  it("extracts the timestamp from an assistant line alongside usage", () => {
+    const parsed = parseTranscriptLine(assistantLine({ input_tokens: 1 }, "2026-07-28T10:12:23.705Z"));
+    expect(parsed.timestamp).toBe("2026-07-28T10:12:23.705Z");
+    expect(parsed.usage).not.toBeNull();
+  });
+
+  it("extracts the timestamp from a non-assistant line even though usage is null", () => {
+    const line = JSON.stringify({ type: "user", timestamp: "2026-06-29T00:00:00.000Z", message: { role: "user" } });
+    const parsed = parseTranscriptLine(line);
+    expect(parsed.timestamp).toBe("2026-06-29T00:00:00.000Z");
+    expect(parsed.usage).toBeNull();
+  });
+
+  it("returns a null timestamp for line types that omit it (e.g. queue-operation)", () => {
+    const line = JSON.stringify({ type: "queue-operation" });
+    expect(parseTranscriptLine(line).timestamp).toBeNull();
+  });
+});
+
+describe("aggregateLines — date range", () => {
+  it("widens the session's [earliest, latest] from every line, not just assistant turns", () => {
+    const lines = [
+      JSON.stringify({ type: "user", timestamp: "2026-06-29T00:00:00.000Z", message: { role: "user" } }),
+      assistantLine({ input_tokens: 1 }, "2026-06-29T00:05:00.000Z"),
+      assistantLine({ input_tokens: 1 }, "2026-07-29T12:00:00.000Z"),
+    ];
+    const agg = aggregateLines(lines);
+    expect(agg.earliest).toBe("2026-06-29T00:00:00.000Z");
+    expect(agg.latest).toBe("2026-07-29T12:00:00.000Z");
+  });
+
+  it("leaves the range null when no line has a timestamp", () => {
+    const agg = aggregateLines([JSON.stringify({ type: "queue-operation" })]);
+    expect(agg.earliest).toBeNull();
+    expect(agg.latest).toBeNull();
+  });
+});
+
+describe("mergeRanges / formatRange", () => {
+  it("merges the widest earliest and latest across several ranges", () => {
+    const merged = mergeRanges([
+      { earliest: "2026-07-01T00:00:00.000Z", latest: "2026-07-10T00:00:00.000Z" },
+      { earliest: "2026-06-29T00:00:00.000Z", latest: "2026-07-05T00:00:00.000Z" },
+    ]);
+    expect(merged.earliest).toBe("2026-06-29T00:00:00.000Z");
+    expect(merged.latest).toBe("2026-07-10T00:00:00.000Z");
+  });
+
+  it("formats a range as YYYY-MM-DD → YYYY-MM-DD", () => {
+    expect(
+      formatRange({ earliest: "2026-06-29T00:00:00.000Z", latest: "2026-07-29T17:33:00.000Z" }),
+    ).toBe("2026-06-29 → 2026-07-29");
+  });
+
+  it("reports 'no dated turns' rather than a misleading range when nothing has a timestamp", () => {
+    expect(formatRange({ earliest: null, latest: null })).toBe("no dated turns");
+  });
+});
+
 describe("escapeClaudeProjectPath / isCrewDirName", () => {
   it("replaces every non-alphanumeric character with '-'", () => {
     expect(escapeClaudeProjectPath("/Users/q3labsadmin/me/squadrant")).toBe("-Users-q3labsadmin-me-squadrant");
@@ -150,6 +217,14 @@ describe("buildRoleReport", () => {
     expect(report.meanCacheReadPerCall).toBeNull();
     expect(report.accumulated).toBeNull();
     expect(report.accumulatedPct).toBeNull();
+  });
+
+  it("rolls the date range up from sessions — this is what makes the rolling-window disclosure honest", () => {
+    const sessionA = aggregateLines([assistantLine({ input_tokens: 1 }, "2026-06-29T00:00:00.000Z")]);
+    const sessionB = aggregateLines([assistantLine({ input_tokens: 1 }, "2026-07-29T12:00:00.000Z")]);
+    const report = buildRoleReport("captain", [sessionA, sessionB]);
+    expect(report.earliest).toBe("2026-06-29T00:00:00.000Z");
+    expect(report.latest).toBe("2026-07-29T12:00:00.000Z");
   });
 });
 
