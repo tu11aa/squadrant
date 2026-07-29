@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { createDelivery } from "../daemon/delivery-loop.js";
 import { createStore } from "../store.js";
 import { LivenessRegistry } from "../daemon/liveness-registry.js";
-import { appendCaptainMessage, appendToMailbox, readCursor } from "../mailbox.js";
+import { appendCaptainMessage, appendToMailbox, readCursor, mailboxStats } from "../mailbox.js";
 import { STALE_THRESHOLD_MS } from "../daemon/interactive-probe.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
+import type { TaskRecord } from "@squadrant/shared";
 
 function freshState(): string {
   return mkdtempSync(join(tmpdir(), "deliv-"));
@@ -243,5 +244,204 @@ describe("delivery-loop", () => {
     expect(sent).not.toContain("daemon message");
 
     vi.useRealTimers();
+  });
+
+  // #617: the defer log line was `delivery seq=… kind=… outcome=deferred` —
+  // no project, no cause. Across a 57MB log with 8150 deferred lines there was
+  // no way to tell which project stalled or why. project= is already known in
+  // the loop; reason= is the classification sendToSurface already computed
+  // (DeferDelivery.reason) to decide to defer, not a new one.
+  it("logs project= and reason= on the defer outcome line (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "gitnexus";
+    const captainName = `${project}-captain`;
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    const logs: string[] = [];
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(null, "modal"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    const deferLine = logs.find((l) => l.includes("outcome=deferred"));
+    expect(deferLine).toBeDefined();
+    expect(deferLine).toContain(`project=${project}`);
+    expect(deferLine).toContain("reason=modal");
+  });
+
+  // Logging every 1s tick for the full ~300-tick (~30min) maxDefers window
+  // would flood the log for no forensic gain once the cause is known — only
+  // the onset (1st defer) and every 30th tick after should log.
+  it("throttles the defer log line to the onset + every 30th tick, not every tick (#617)", async () => {
+    const stateRoot = freshState();
+    const project = "throttle-proj";
+    const captainName = `${project}-captain`;
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+
+    let n = 0;
+    const logs: string[] = [];
+    const cmux = {
+      listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
+      findWorkspaceId: async () => "w1",
+      readScreen: async () => `${captainName}> `,
+      send: async () => { throw new DeferDelivery(`typing-${n++}`, "draft"); },
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+    } as any, cmux as any);
+
+    for (let i = 0; i < 32; i++) await deliv.deliveryTick!();
+
+    const deferLines = logs.filter((l) => l.includes("outcome=deferred"));
+    // Tick 1 (onset) and tick 30 — not ticks 2-29 or 31-32.
+    expect(deferLines).toHaveLength(2);
+  });
+});
+
+// ── #594b: CREW IDLE (or any attention-state push) arriving for a task that ──
+// has already been closed. `firePush` decides to notify synchronously off a
+// TaskRecord snapshot, but `defaultNotify`'s mailbox write is awaited I/O — a
+// concurrent `crew close` (task.cancelled) can land on the daemon's store in
+// that gap, terminalizing the record. The already-in-flight notify has no way
+// to know that by the time it actually executes. Fix: re-check the daemon's
+// own CURRENT record right before writing to the mailbox, and drop a
+// notification that the authoritative state has since superseded — the same
+// "gate on the daemon's own evidence" shape as #492's pendingTool veto, applied
+// at the delivery chokepoint instead of the state-transition chokepoint (this
+// specific race survives the state machine's terminal-absorb guard because the
+// notify was already decided BEFORE the close event was even applied).
+describe("defaultNotify staleness guard (#594b)", () => {
+  function record(overrides: Partial<TaskRecord> = {}): TaskRecord {
+    return {
+      id: "t1", project: "demo", provider: "claude", mode: "interactive",
+      state: "awaiting-input", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "task.turn.completed", heartbeatBudgetMs: 1000, attempts: [],
+      ...overrides,
+    };
+  }
+
+  it("drops a CREW IDLE notify for a task that was closed in the gap before delivery", async () => {
+    const stateRoot = freshState();
+    const store = createStore(stateRoot);
+    const snapshot = record(); // what firePush decided to announce (awaiting-input)
+    // By the time defaultNotify actually runs, `crew close` has already
+    // terminalized the SAME task in the daemon's store.
+    store.put({ ...snapshot, state: "cancelled", lastEvent: "task.cancelled" });
+
+    const { defaultNotify } = createDelivery(
+      { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: {} } as any,
+      undefined,
+    );
+    await defaultNotify({
+      project: "demo",
+      message: "CREW IDLE [claude/t1]: turn ended, awaiting your reply.",
+      record: snapshot,
+      event: { type: "task.turn.completed", id: "t1", turnId: "x" },
+    });
+
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.maxSeq).toBe(0); // nothing was ever written to the inbox
+  });
+
+  it("still delivers a genuine notification when the task's current state matches the snapshot", async () => {
+    const stateRoot = freshState();
+    const store = createStore(stateRoot);
+    const snapshot = record();
+    store.put(snapshot); // no race — the store agrees with what we're announcing
+
+    const { defaultNotify } = createDelivery(
+      { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: {} } as any,
+      undefined,
+    );
+    await defaultNotify({
+      project: "demo",
+      message: "CREW IDLE [claude/t1]: turn ended, awaiting your reply.",
+      record: snapshot,
+      event: { type: "task.turn.completed", id: "t1", turnId: "x" },
+    });
+
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.maxSeq).toBe(1);
+  });
+
+  it("still delivers a genuine terminal notification (e.g. CREW DONE) even though the state IS terminal", async () => {
+    const stateRoot = freshState();
+    const store = createStore(stateRoot);
+    const snapshot = record({ state: "done", resultRef: "/r" });
+    store.put(snapshot); // the store agrees: this IS the done transition
+
+    const { defaultNotify } = createDelivery(
+      { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: {} } as any,
+      undefined,
+    );
+    await defaultNotify({
+      project: "demo",
+      message: "CREW DONE [claude/t1]: finished.",
+      record: snapshot,
+      event: { type: "task.done", id: "t1", resultRef: "/r" },
+    });
+
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.maxSeq).toBe(1);
+  });
+
+  it("delivers when the store has no record at all (e.g. purged) — fails open rather than silently dropping", async () => {
+    const stateRoot = freshState();
+    const store = createStore(stateRoot);
+    const snapshot = record();
+    // No store.put — the record is absent entirely.
+
+    const { defaultNotify } = createDelivery(
+      { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: {} } as any,
+      undefined,
+    );
+    await defaultNotify({
+      project: "demo",
+      message: "CREW IDLE [claude/t1]: turn ended, awaiting your reply.",
+      record: snapshot,
+      event: { type: "task.turn.completed", id: "t1", turnId: "x" },
+    });
+
+    const stats = await mailboxStats(stateRoot, "demo");
+    expect(stats.maxSeq).toBe(1);
   });
 });

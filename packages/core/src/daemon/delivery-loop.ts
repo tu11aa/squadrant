@@ -170,6 +170,22 @@ export function createDelivery(
     record: TaskRecord;
     event: ControlEvent;
   }): Promise<void> => {
+    // #594b: firePush decides to notify off a TaskRecord snapshot captured
+    // synchronously at the state transition, but this mailbox write is
+    // awaited I/O — a concurrent `crew close` (task.cancelled) can land on the
+    // daemon's store in that gap and terminalize the SAME task. The reducer's
+    // own terminal-absorb guard can't help here (the close is a separate,
+    // later applyEvent call; this notify was already decided before it ran).
+    // Re-check the daemon's own CURRENT record right before writing: if the
+    // crew has since reached a terminal state different from what we're about
+    // to announce, the notification is stale — the crew is gone — so drop it
+    // rather than deliver e.g. "CREW IDLE" for a task that's already closed.
+    // A terminal notification (CREW DONE/FAILED) always matches its own fresh
+    // state and is unaffected; a missing record (e.g. purged) fails open.
+    const fresh = store.get(args.project, args.record.id);
+    if (fresh && TERMINAL_STATES.has(fresh.state) && fresh.state !== args.record.state) {
+      return;
+    }
     try {
       await appendToMailbox({
         stateRoot,
@@ -296,7 +312,17 @@ export function createDelivery(
           log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=delivered`);
           await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
         } else {
-          log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred`);
+          // #617: project+reason make a defer episode attributable after the
+          // fact (previously: no project, no cause — see issue). Logging every
+          // 1s tick for up to maxDefers (~300, ~30min) would flood the log for
+          // no forensic gain once the cause is known, so we log the onset
+          // (first defer of this seq) and then every 30th tick (~30s cadence)
+          // — enough resolution to correlate a later stuck/SIGTERM event
+          // without adding meaningful volume.
+          const { maxDeferCount } = d.stats();
+          if (maxDeferCount === 1 || maxDeferCount % 30 === 0) {
+            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred project=${project} reason=${result.reason}`);
+          }
           break;
         }
       }
@@ -327,9 +353,14 @@ export function createDelivery(
       const stuck = d.stats().stuck;
       if (stuck && !stuckNotified.has(project)) {
         stuckNotified.add(project);
-        const { maxDeferCount } = d.stats();
-        log(`delivery stuck project=${project} deferCount=${maxDeferCount}`);
-        const text = `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
+        const { maxDeferCount, reason } = d.stats();
+        log(`delivery stuck project=${project} deferCount=${maxDeferCount} reason=${reason ?? "unknown"}`);
+        // #617: report the actual blocker instead of always blaming the input
+        // box — a modal (#484) isn't a draft/ghost and pointing the operator at
+        // their input box is actively misleading when a question is open.
+        const text = reason === "modal"
+          ? `⚠️ DELIVERY STUCK: a modal question is open in your captain pane and has blocked pending notification(s) for ${maxDeferCount}+ retries. This keeps retrying safely and will deliver automatically once you answer or dismiss it.`
+          : `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
         appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
           .catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
         Promise.resolve(notifyFault(project, text))

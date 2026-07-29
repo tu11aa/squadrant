@@ -93,6 +93,18 @@ export interface TaskRecord {
    *  (no pendingTool → CREW QUIET). Auto-clears: the next PostToolUse recovers
    *  the record to `working` (state-machine + recoverStall). */
   pendingTool?: { name: string; since: number };
+  /** #594a: a registered background Monitor watch, if any. Set when a PreToolUse
+   *  liveness signal names the `Monitor` tool. Unlike pendingTool, this is NOT
+   *  cleared by that call's own PostToolUse — Monitor's tool call returns almost
+   *  immediately after arming the watch, but the watch itself (and its async
+   *  notifications) keeps running well past that. A crew whose turn genuinely
+   *  ends (Stop hook) while a Monitor is still armed is not awaiting the
+   *  captain — it will self-resume on its own notification — so the
+   *  turn.completed veto treats pendingMonitor the same as pendingTool. Cleared
+   *  only by a genuine new turn boundary (task.started/blocked/review/
+   *  turn.started/input-approval-requested), or by the watchdog once it has been
+   *  outstanding past MONITOR_STALL_BUDGET_MS (treated as abandoned). */
+  pendingMonitor?: { since: number };
   /** #466: epoch ms when the spawn path positively confirmed the first turn was
    *  delivered (paste rendered in the box → box emptied = submitted). Unset means
    *  either the crew was spawned before this field existed, OR delivery was never

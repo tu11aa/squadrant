@@ -23,9 +23,11 @@ function stampAttempt(
  * pending a human decision — neither may be knocked out by a liveness or
  * turn-boundary event, only by their own explicit exits (reply/feedback or
  * approve). Every stickiness guard below must treat them identically, or a
- * future attention state repeats this bug a fourth time (#492 → #605 → #608).
+ * future attention state repeats this bug a fourth time (#492 → #605 → #608
+ * → #629, which reused this exact predicate to also exempt the sweep's
+ * wall-clock task-timeout ceiling — see reduce.ts).
  */
-function isStickyAttention(state: TaskRecord["state"]): boolean {
+export function isStickyAttention(state: TaskRecord["state"]): boolean {
   return state === "blocked" || state === "review";
 }
 
@@ -45,6 +47,26 @@ function nextPendingTool(
 ): TaskRecord["pendingTool"] {
   if (ev.note === "agent.hook.PreToolUse") return { name: ev.tool ?? "tool", since: now };
   if (ev.note === "posttooluse" || ev.note === "agent.hook.UserPromptSubmit") return undefined;
+  return current;
+}
+
+/**
+ * #594a: compute the next pendingMonitor marker. A PreToolUse naming the
+ * `Monitor` tool arms a background watch. Unlike pendingTool, this is
+ * deliberately NOT closed by that same call's own PostToolUse: Monitor's tool
+ * call returns almost immediately after arming (it doesn't block), but the
+ * watch — and its async notifications — keeps running well past that. Only a
+ * genuine new turn boundary (handled by the reduce() cases that clear it
+ * explicitly, mirroring pendingTool) or the watchdog's own stall budget ends
+ * the exemption, so a crew whose turn ends while a Monitor is still armed is
+ * not misread as "awaiting the captain".
+ */
+function nextPendingMonitor(
+  current: TaskRecord["pendingMonitor"],
+  ev: Extract<ControlEvent, { type: "task.progress" }>,
+  now: number,
+): TaskRecord["pendingMonitor"] {
+  if (ev.note === "agent.hook.PreToolUse" && ev.tool === "Monitor") return { since: now };
   return current;
 }
 
@@ -74,6 +96,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
         sessionId: ev.sessionId ?? rec.sessionId,
         question: undefined, // resuming after a blocked→reply clears the question
         pendingTool: undefined, // #354: a new turn closes any prior tool window
+        pendingMonitor: undefined, // #594a: same reset — a new turn moots any prior watch
       };
     case "task.progress": {
       // task.progress is a real-activity signal (stdout chunk for headless,
@@ -82,12 +105,15 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // (#89) can key off it without false-stalling long-running headless tasks.
       // #354: also track the in-flight tool (PreToolUse opens, PostToolUse closes)
       // so a hung tool call is distinguishable from a quiet thinking turn.
+      // #594a: also track a registered background Monitor watch (PreToolUse
+      // opens, but — unlike pendingTool — its own PostToolUse does NOT close it).
       // From blocked: liveness only — do not auto-unblock (explicit reply required).
       // From awaiting-input OR stalled: resume to working — the next real activity
       // (e.g. the matching PostToolUse) auto-clears a hung-tool warn instantly.
       const pendingTool = nextPendingTool(rec.pendingTool, ev, now);
-      if (isStickyAttention(rec.state)) return { ...rec, lastHeartbeat: now, lastEvent: ev.type, pendingTool };
-      const b = { ...base, pendingTool };
+      const pendingMonitor = nextPendingMonitor(rec.pendingMonitor, ev, now);
+      if (isStickyAttention(rec.state)) return { ...rec, lastHeartbeat: now, lastEvent: ev.type, pendingTool, pendingMonitor };
+      const b = { ...base, pendingTool, pendingMonitor };
       if (rec.state === "awaiting-input" || rec.state === "stalled") return { ...stampAttempt(b, {}, now), state: "working" };
       return stampAttempt(b, {}, now);
     }
@@ -107,11 +133,11 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // no-op so the FIRST (explicit) question wins and no duplicate CREW
       // BLOCKED fires. Terminal states are already absorbed above.
       if (rec.state === "blocked") return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
-      return { ...base, state: "blocked", question: ev.question, pendingTool: undefined };
+      return { ...base, state: "blocked", question: ev.question, pendingTool: undefined, pendingMonitor: undefined };
     case "task.review":
       // #599: review-gate checkpoint. Not terminal — `crew send` (feedback)
       // or `crew approve` (task.done) are the only ways out.
-      return { ...base, state: "review", reviewNote: ev.message, pendingTool: undefined };
+      return { ...base, state: "review", reviewNote: ev.message, pendingTool: undefined, pendingMonitor: undefined };
     case "task.done":
       // #605: the review gate must be ENFORCING, not advisory. A crew's normal
       // completion protocol always signals done at turn end — if that alone
@@ -137,7 +163,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.session":
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":
-      return { ...stampAttempt(base, {}, now), state: "working", pendingTool: undefined };
+      return { ...stampAttempt(base, {}, now), state: "working", pendingTool: undefined, pendingMonitor: undefined };
     case "task.turn.completed":
       // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
       // A turn ending while blocked must NOT unblock — only the captain's answer
@@ -156,13 +182,20 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       // evidence (no matching PostToolUse yet), so it is not a genuine turn
       // boundary. Treat it as liveness only; the real turn-end arrives once the
       // tool actually returns and pendingTool clears.
-      if (rec.pendingTool) return stampAttempt(base, {}, now);
-      return { ...stampAttempt(base, {}, now), state: "awaiting-input", pendingTool: undefined };
+      // #594a: a registered background Monitor (pendingMonitor) gets the same
+      // veto. Its own tool call closes almost immediately (pendingTool clears
+      // fast), but the watch it armed keeps running — a Stop hook firing while
+      // it's still outstanding means the crew is asleep awaiting its OWN
+      // notification, not the captain's. Without this, that turn-end reads as
+      // genuine and floods CREW IDLE on every self-resume (live evidence: task
+      // 2506214d fired CREW IDLE 3x for the same turnId, 23s/76s apart).
+      if (rec.pendingTool || rec.pendingMonitor) return stampAttempt(base, {}, now);
+      return { ...stampAttempt(base, {}, now), state: "awaiting-input", pendingTool: undefined, pendingMonitor: undefined };
     case "task.delta":
       return stampAttempt(base, {}, now);  // heartbeat-only
     case "task.input.requested":
     case "task.approval.requested":
-      return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question, pendingTool: undefined };
+      return { ...stampAttempt(base, {}, now), state: "blocked", question: ev.question, pendingTool: undefined, pendingMonitor: undefined };
     case "task.reattached":
       return stampAttempt(base, {}, now);
     case "task.first-turn.confirmed":

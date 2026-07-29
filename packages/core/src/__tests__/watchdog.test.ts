@@ -55,6 +55,27 @@ describe("evaluateStall", () => {
     expect(evaluateStall(rec({ state: "blocked" }), 999999)).toBeNull();
     expect(evaluateStall(rec({ state: "done" }), 999999)).toBeNull();
   });
+
+  // ── #594a: pendingMonitor stall budget (backstop against permanent suppression) ──
+  it("working INTERACTIVE with a Monitor armed WITHIN the monitor-stall budget → null (legit long watch)", () => {
+    const out = evaluateStall(rec({ mode: "interactive", pendingMonitor: { since: 0 } }), 30 * 60_000);
+    expect(out).toBeNull();
+  });
+
+  it("working INTERACTIVE with a Monitor armed past the monitor-stall budget → stalled", () => {
+    const out = evaluateStall(rec({ mode: "interactive", pendingMonitor: { since: 0 } }), 61 * 60_000);
+    expect(out?.state).toBe("stalled");
+    expect(out?.lastEvent).toBe("watchdog.monitor-stall");
+  });
+
+  it("a hung pendingTool is checked before pendingMonitor (pendingTool budget applies when both are set)", () => {
+    const out = evaluateStall(
+      rec({ mode: "interactive", pendingTool: { name: "Bash", since: 0 }, pendingMonitor: { since: 0 } }),
+      11 * 60_000,
+    );
+    expect(out?.state).toBe("stalled");
+    expect(out?.lastEvent).toBe("watchdog.tool-stall");
+  });
 });
 
 describe("recoverStall", () => {
@@ -68,6 +89,12 @@ describe("recoverStall", () => {
 
   it("recoverStall: non-stalled → null", () => {
     expect(recoverStall(rec({ state: "working" }), 7000)).toBeNull();
+  });
+
+  it("recoverStall clears a stale pendingMonitor too (#594a)", () => {
+    const stalled = rec({ state: "stalled", pendingMonitor: { since: 0 } });
+    const out = recoverStall(stalled, 7000);
+    expect(out?.pendingMonitor).toBeUndefined();
   });
 });
 

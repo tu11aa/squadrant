@@ -654,7 +654,7 @@ export function createCmuxDriver(): RuntimeDriver {
       const draft = parseDraftFromScreen(screen);
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).
-      if (draft === null) throw new DeferDelivery(null);
+      if (draft === null) throw new DeferDelivery(null, "no-box");
 
       // #484: an AskUserQuestion / permission-approval SELECTION MODAL — never
       // deliver into it, regardless of what parseDraftFromScreen returned or
@@ -664,7 +664,7 @@ export function createCmuxDriver(): RuntimeDriver {
       // against both) and would otherwise call deliver(), typing the message
       // and pressing Enter into the picker — auto-confirming whichever option
       // is highlighted.
-      if (hasModalOptionList(screen)) throw new DeferDelivery(null);
+      if (hasModalOptionList(screen)) throw new DeferDelivery(null, "modal");
 
       // Empty input — nothing to protect, deliver directly.
       if (draft === "") { await deliver(); return; }
