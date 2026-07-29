@@ -34,6 +34,7 @@ import { pingCommand } from "./commands/ping.js";
 import { dispatchCommand } from "./commands/dispatch.js";
 import { cmuxCommand } from "./commands/cmux.js";
 import { effortCommand } from "./commands/effort.js";
+import { tokensCommand } from "./commands/tokens.js";
 import { telegramCommand } from "./commands/telegram.js";
 import { hooksCommand } from "./commands/hooks.js";
 import { detectDrift } from "@squadrant/shared";
@@ -131,6 +132,7 @@ program.addCommand(pingCommand);
 program.addCommand(dispatchCommand);
 program.addCommand(cmuxCommand);
 program.addCommand(effortCommand);
+program.addCommand(tokensCommand);
 program.addCommand(telegramCommand);
 program.addCommand(hooksCommand());
 
