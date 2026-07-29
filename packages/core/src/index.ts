@@ -6,6 +6,7 @@ export * from "./state-machine.js";
 export * from "./liveness.js";
 export * from "./watchdog.js";
 export * from "./store.js";
+export * from "./work-store.js";
 export * from "./snapshot.js";
 export * from "./launchd.js";
 export * from "./crew-pane-reader.js";

@@ -5,6 +5,7 @@ export * from "./effort.js";
 export * from "./types/runtime.js";
 export * from "./types/liveness.js";
 export * from "./types/control.js";
+export * from "./types/work.js";
 export * from "./types/projection.js";
 export * from "./types/workspaces.js";
 export * from "./lib/cmux-autoconfig.js";
