@@ -170,6 +170,22 @@ export function createDelivery(
     record: TaskRecord;
     event: ControlEvent;
   }): Promise<void> => {
+    // #594b: firePush decides to notify off a TaskRecord snapshot captured
+    // synchronously at the state transition, but this mailbox write is
+    // awaited I/O — a concurrent `crew close` (task.cancelled) can land on the
+    // daemon's store in that gap and terminalize the SAME task. The reducer's
+    // own terminal-absorb guard can't help here (the close is a separate,
+    // later applyEvent call; this notify was already decided before it ran).
+    // Re-check the daemon's own CURRENT record right before writing: if the
+    // crew has since reached a terminal state different from what we're about
+    // to announce, the notification is stale — the crew is gone — so drop it
+    // rather than deliver e.g. "CREW IDLE" for a task that's already closed.
+    // A terminal notification (CREW DONE/FAILED) always matches its own fresh
+    // state and is unaffected; a missing record (e.g. purged) fails open.
+    const fresh = store.get(args.project, args.record.id);
+    if (fresh && TERMINAL_STATES.has(fresh.state) && fresh.state !== args.record.state) {
+      return;
+    }
     try {
       await appendToMailbox({
         stateRoot,

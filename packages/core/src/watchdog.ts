@@ -13,6 +13,17 @@ import type { TaskRecord } from "@squadrant/shared";
 export const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
 
 /**
+ * #594a: how long a registered background Monitor watch may sit outstanding
+ * before the daemon gives up on the exemption and treats it as abandoned.
+ * Deliberately generous — well above Monitor's own documented max timeout_ms
+ * (1h) for a non-persistent watch — so a legitimate long CI/deploy poll is
+ * never false-stalled mid-watch. This is a backstop, not the primary fix: it
+ * exists only so a crew that armed a Monitor once and then went genuinely
+ * silent forever doesn't suppress real idle detection permanently.
+ */
+export const MONITOR_STALL_BUDGET_MS = 60 * 60 * 1000;
+
+/**
  * Pure. Returns a stalled-transitioned record if a `working` task is genuinely
  * stuck at time `now` (epoch ms), else null. No I/O, no clock. #354 splits the
  * old single wall-clock timeout by what we can actually prove:
@@ -23,7 +34,10 @@ export const TOOL_STALL_BUDGET_MS = 10 * 60 * 1000;
  *    has been outstanding past `toolStallMs`. A PreToolUse with no matching
  *    PostToolUse is a hung tool call (we know which tool). Recoverable: the next
  *    PostToolUse recovers it to `working` (state-machine / recoverStall).
- *  - interactive with NO tool in flight → null. A quiet thinking turn is alive,
+ *  - interactive with NO tool in flight but a Monitor armed (pendingMonitor) →
+ *    'stalled' once that watch has been outstanding past `monitorStallMs`
+ *    (#594a backstop against permanent suppression — see MONITOR_STALL_BUDGET_MS).
+ *  - interactive with neither in flight → null. A quiet thinking turn is alive,
  *    not stalled and NOT awaiting-input (the turn never ended — real CREW IDLE
  *    comes only from the Stop hook). The daemon sweep surfaces this as a
  *    distinct, non-alarming CREW QUIET notify instead (#354), keeping the crew
@@ -36,14 +50,22 @@ export function evaluateStall(
   rec: TaskRecord,
   now: number,
   toolStallMs: number = TOOL_STALL_BUDGET_MS,
+  monitorStallMs: number = MONITOR_STALL_BUDGET_MS,
 ): TaskRecord | null {
   if (rec.state !== "working") return null;
   if (rec.mode === "interactive") {
-    // Only a hung tool call is a stall for an interactive crew; a quiet thinking
-    // turn (no pendingTool) is alive and handled by the sweep's CREW QUIET path.
-    if (!rec.pendingTool) return null;
-    if (now - rec.pendingTool.since <= toolStallMs) return null;
-    return { ...rec, state: "stalled", lastEvent: "watchdog.tool-stall" };
+    // A hung tool call takes priority over a registered Monitor watch.
+    if (rec.pendingTool) {
+      if (now - rec.pendingTool.since <= toolStallMs) return null;
+      return { ...rec, state: "stalled", lastEvent: "watchdog.tool-stall" };
+    }
+    if (rec.pendingMonitor) {
+      if (now - rec.pendingMonitor.since <= monitorStallMs) return null;
+      return { ...rec, state: "stalled", lastEvent: "watchdog.monitor-stall" };
+    }
+    // Neither a hung tool nor a Monitor watch — a quiet thinking turn is alive
+    // and handled by the sweep's CREW QUIET path.
+    return null;
   }
   // headless: key off the latest attempt's lastHeartbeatAt so a stale event from
   // a dead prior attempt cannot refresh the liveness clock of the new dispatch (#89).
@@ -62,7 +84,7 @@ export function evaluateStall(
  */
 export function recoverStall(rec: TaskRecord, now: number): TaskRecord | null {
   if (rec.state !== "stalled") return null;
-  // #354: clear any hung-tool marker on recovery so a recovered crew never
-  // carries a stale pendingTool into its next quiet window.
-  return { ...rec, state: "working", lastHeartbeat: now, lastEvent: "watchdog.recover", pendingTool: undefined };
+  // #354/#594a: clear any hung-tool or stale-Monitor marker on recovery so a
+  // recovered crew never carries either into its next quiet window.
+  return { ...rec, state: "working", lastHeartbeat: now, lastEvent: "watchdog.recover", pendingTool: undefined, pendingMonitor: undefined };
 }

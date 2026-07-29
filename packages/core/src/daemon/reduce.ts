@@ -2,7 +2,7 @@
 import type { Store } from "../store.js";
 import type { ControlEvent, TaskRecord, TaskState } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
-import { reduce } from "../state-machine.js";
+import { reduce, isStickyAttention } from "../state-machine.js";
 import { evaluateStall, recoverStall } from "../watchdog.js";
 export interface DaemonDeps {
   store: Store;
@@ -501,7 +501,14 @@ export function createDaemon(deps: DaemonDeps) {
         // ceiling. Terminalization is the persistent dedup — a daemon restart sees
         // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
         // The volatile firedTimeout Set is removed; terminal state replaces it.
-        if (!TERMINAL_STATES.has(r.state)) {
+        // #629: 'blocked'/'review' (isStickyAttention) are exempt — they pause a
+        // crew pending a human decision with no natural time bound (the captain
+        // might not look for hours). The ceiling exists to catch a crew stuck
+        // actually WORKING; applying it here cancelled a crew that had already
+        // finished and was correctly waiting on `crew approve`, permanently
+        // closing that path. A still-live surface keeps waiting indefinitely;
+        // a dead one is still caught by the surface-gone reap right below.
+        if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state)) {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           if (t - r.createdAt > ceiling) {
             const prevState = r.state; // capture BEFORE terminalization (shown in message)
@@ -569,10 +576,14 @@ export function createDaemon(deps: DaemonDeps) {
         if (idle) {
           store.put(idle);
           // The synth event only carries the notify payload; the reducer treats
-          // it as a no-op (state already updated above). A hung-tool stall carries
-          // the tool name + elapsed so the notifier renders the accurate message.
+          // it as a no-op (state already updated above). A hung-tool or expired-
+          // Monitor stall carries the tool name + elapsed so the notifier renders
+          // the accurate message (#594a: idle.pendingTool is already cleared by
+          // the time a Monitor-only stall fires, so the two branches don't overlap).
           const synthEvent: ControlEvent = idle.pendingTool
             ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: idle.pendingTool.name, elapsedMs: t - idle.pendingTool.since }
+            : idle.pendingMonitor
+            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: "Monitor", elapsedMs: t - idle.pendingMonitor.since }
             : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
           firePush(deps, r.project, r.state, idle, synthEvent, lastCaptainTurnAt.get(r.id));
           continue;

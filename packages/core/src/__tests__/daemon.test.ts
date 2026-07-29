@@ -938,6 +938,39 @@ describe("daemon – blocked crew resume path (#183)", () => {
       expect(store.get("p", "t-flood")?.state).toBe("awaiting-input");
       expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(1);
     });
+
+    // #594a: a crew that armed a background Monitor watch and then genuinely
+    // ends its turn (Stop hook, no tool in flight) is not "awaiting the
+    // captain" — it will self-resume on its own Monitor notification. Live
+    // evidence: real crew task 2506214d fired CREW IDLE 3x for the SAME turnId
+    // in a Stop→(auto-resume)→Stop poll loop, 23s and 76s apart, while polling
+    // for a background result — exactly this shape end-to-end.
+    it("a registered background Monitor absorbs a turn-end with ZERO CREW IDLE fires, and repeated Stop reports never flood (#594a)", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-monitor", { state: "working" }));
+      const calls: any[] = [];
+      let nowMs = 100_000;
+      const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });
+      // Monitor is armed — its own PreToolUse/PostToolUse close almost
+      // immediately (unlike a hung tool), but the watch stays outstanding.
+      await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-monitor", note: "agent.hook.PreToolUse", tool: "Monitor" } });
+      await d.handle({ kind: "event", project: "p", event: { type: "task.progress", id: "t-monitor", note: "posttooluse" } });
+      expect(store.get("p", "t-monitor")?.pendingMonitor).toBeDefined();
+      // Real, repeated Stop→auto-resume cycles land as separate turn.completed
+      // reports while the Monitor is still armed.
+      for (const t of [123_000, 199_000, 275_000]) {
+        nowMs = t;
+        await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-monitor", turnId: "poll-loop" } });
+      }
+      expect(store.get("p", "t-monitor")?.state).toBe("working");
+      expect(calls.filter((c) => c.message.includes("CREW IDLE"))).toHaveLength(0);
+
+      // Once the crew explicitly signals done, the Monitor exemption does not
+      // block real completion.
+      nowMs = 300_000;
+      await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-monitor", resultRef: "/r" } });
+      expect(store.get("p", "t-monitor")?.state).toBe("done");
+    });
   });
 
   it("awaiting-input + task.started → working + subsequent task.blocked fires CREW BLOCKED (#183)", async () => {
@@ -1155,6 +1188,71 @@ describe("sweep: task-timeout (#225)", () => {
     const timeoutCalls = calls.filter((c) => c.message.includes("CREW TIMEOUT")).length;
     expect(timeoutCalls).toBe(1);
     expect(store.get("p", "t378b")?.state).toBe("cancelled");
+  });
+
+  // ── #629: task-timeout must not cancel a crew awaiting captain review ────────
+  // Live evidence: task ce3113f0 (ctx-budget crew) entered 'review' at
+  // 2026-07-28T16:41:48Z, still correctly idle awaiting `crew approve`, and was
+  // cancelled by this exact ceiling at 2026-07-29T01:56:02Z ("CREW TIMEOUT ...
+  // wall-clock exceeded 8h ... state: review") — permanently closing the
+  // approve path (no push, no PR, no terminal DONE). 'review' (like 'blocked')
+  // is a sticky attention state awaiting a human decision with no natural time
+  // bound; the wall-clock ceiling exists to catch a crew stuck actually
+  // WORKING, not one that already finished and is correctly waiting.
+  it("does NOT cancel a task sitting in 'review' past the ceiling (#629)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t629a", {
+      state: "review", reviewNote: "ready for review", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    const r = store.get("p", "t629a");
+    expect(r?.state).toBe("review");
+    expect(r?.lastEvent).not.toBe("sweep.task-timeout");
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+  });
+
+  it("does NOT cancel a task sitting in 'blocked' past the ceiling (same sticky-attention family as #629)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t629b", {
+      state: "blocked", question: "which env?", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000 });
+    await d.sweep();
+    expect(store.get("p", "t629b")?.state).toBe("blocked");
+  });
+
+  it("still cancels a task genuinely stuck 'working' past the ceiling (#629 does not regress #225)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("t629c", {
+      state: "working", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    const r = store.get("p", "t629c");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.task-timeout");
+  });
+
+  it("a 'review' task with a gone surface is still reaped (#599 liveness reap is unaffected by the #629 ceiling exemption)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t629d", {
+      state: "review", mode: "interactive", reviewNote: "n", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "gone" as const,
+    });
+    await d.sweep();
+    const r = store.get("p", "t629d");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.surface-gone");
   });
 });
 
