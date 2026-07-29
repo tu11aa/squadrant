@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mirrorDir, mirrorFlat, ensureRuntimeSynced } from "../runtime-sync.js";
+import { mirrorDir, mirrorFlat, ensureRuntimeSynced, CREW_SKILLS } from "../runtime-sync.js";
 
 let tmp: string;
 
@@ -148,6 +148,7 @@ describe("ensureRuntimeSynced", () => {
     const runtimeRoot = path.join(tmp, "rt-root");
     // plugin: tree target
     write(path.join(sourceRoot, "plugin", "skills", "captain-ops", "SKILL.md"), "captain");
+    write(path.join(sourceRoot, "plugin", "skills", "karpathy-principles", "SKILL.md"), "karpathy");
     write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"squadrant"}');
     // templates: flat target sourced from templates/, filtered by extension
     write(path.join(sourceRoot, "templates", "captain.claude.md"), "tmpl");
@@ -240,5 +241,30 @@ describe("ensureRuntimeSynced", () => {
     const { sourceRoot, runtimeRoot } = setupSource();
     ensureRuntimeSynced({ sourceRoot, runtimeRoot });
     expect(fs.existsSync(path.join(runtimeRoot, ".sync-state.json"))).toBe(false);
+  });
+
+  it("syncs plugin-crew as a strict subset of plugin (only CREW_SKILLS)", () => {
+    const { sourceRoot, runtimeRoot } = setupSource();
+
+    ensureRuntimeSynced({ sourceRoot, runtimeRoot });
+
+    for (const skill of CREW_SKILLS) {
+      expect(fs.existsSync(path.join(runtimeRoot, "plugin-crew", "skills", skill, "SKILL.md"))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(runtimeRoot, "plugin-crew", "skills", "captain-ops"))).toBe(false);
+    expect(
+      fs.readFileSync(path.join(runtimeRoot, "plugin-crew", ".claude-plugin", "plugin.json"), "utf-8"),
+    ).toBe('{"name":"squadrant"}');
+  });
+
+  it("prunes a stale plugin-crew skill dir if CREW_SKILLS shrinks", () => {
+    const { sourceRoot, runtimeRoot } = setupSource();
+    ensureRuntimeSynced({ sourceRoot, runtimeRoot });
+    // simulate a previously-synced skill that's no longer in the allowlist
+    write(path.join(runtimeRoot, "plugin-crew", "skills", "stale-skill", "SKILL.md"), "old");
+
+    ensureRuntimeSynced({ sourceRoot, runtimeRoot });
+
+    expect(fs.existsSync(path.join(runtimeRoot, "plugin-crew", "skills", "stale-skill"))).toBe(false);
   });
 });
