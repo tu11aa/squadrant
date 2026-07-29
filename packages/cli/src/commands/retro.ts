@@ -1,9 +1,6 @@
 import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
 import chalk from "chalk";
-import matter from "gray-matter";
-import { loadConfig, resolveHome, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
   readDailyLog,
   parseSection,
@@ -15,12 +12,6 @@ import {
 } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 
-interface StatusFrontmatter {
-  tasks_total?: number;
-  tasks_completed?: number;
-  tasks_in_progress?: number;
-}
-
 interface ProjectRetro {
   name: string;
   shipped: string[];
@@ -29,19 +20,6 @@ interface ProjectRetro {
   decisions: string[];
   commits: string[];
   mergedPRs: string[];
-  tasksCompletedNow: number;
-  tasksInProgressNow: number;
-}
-
-// TODO(workspace): status.md still read via raw fs — migrate to workspace driver (see #24)
-function readStatus(spokeVault: string): StatusFrontmatter {
-  const statusFile = path.join(spokeVault, "status.md");
-  if (!fs.existsSync(statusFile)) return {};
-  try {
-    return matter(fs.readFileSync(statusFile, "utf-8")).data as StatusFrontmatter;
-  } catch {
-    return {};
-  }
 }
 
 function dedupe(items: string[]): string[] {
@@ -66,8 +44,6 @@ async function getProjectRetro(
   config: SquadrantConfig,
 ): Promise<ProjectRetro> {
   const workspace = registry.forProject(name, config);
-  const spokeVault = resolveHome(project.spokeVault);
-  const status = readStatus(spokeVault);
 
   const shipped: string[] = [];
   const inProgress: string[] = [];
@@ -102,8 +78,6 @@ async function getProjectRetro(
     decisions: dedupe(decisions),
     commits,
     mergedPRs,
-    tasksCompletedNow: status.tasks_completed ?? 0,
-    tasksInProgressNow: status.tasks_in_progress ?? 0,
   };
 }
 

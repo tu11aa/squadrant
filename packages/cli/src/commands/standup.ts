@@ -1,26 +1,11 @@
 import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
 import chalk from "chalk";
-import matter from "gray-matter";
-import { loadConfig, resolveHome, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
 import { readDailyLog, getGitCommits, iso, daysAgo } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 
-interface StatusFrontmatter {
-  project?: string;
-  captain_session?: string;
-  last_updated?: string;
-  active_crew?: number;
-  tasks_total?: number;
-  tasks_completed?: number;
-  tasks_in_progress?: number;
-  tasks_pending?: number;
-}
-
 interface ProjectStandup {
   name: string;
-  status: StatusFrontmatter;
   dailyLog: string | null;
   gitCommits: string[];
   blockers: string[];
@@ -38,23 +23,11 @@ async function getProjectStandup(
   config: SquadrantConfig,
 ): Promise<ProjectStandup> {
   const workspace = registry.forProject(name, config);
-  // TODO(workspace): status.md still read via raw fs — migrate to workspace driver (see #24)
-  const spokeVault = resolveHome(project.spokeVault);
-  const statusFile = path.join(spokeVault, "status.md");
-
-  let status: StatusFrontmatter = {};
-  if (fs.existsSync(statusFile)) {
-    try {
-      status = matter(fs.readFileSync(statusFile, "utf-8")).data as StatusFrontmatter;
-    } catch { /* empty */ }
-  }
-
   const log = await readDailyLog(workspace, dateStr);
   const gitCommits = getGitCommits(project.path, dateStr);
 
   return {
     name,
-    status,
     dailyLog: log?.content ?? null,
     gitCommits,
     blockers: log?.blockers ?? [],
@@ -74,10 +47,6 @@ function formatStandup(standups: ProjectStandup[], dateStr: string, raw: boolean
   let hasBlockers = false;
 
   for (const s of standups) {
-    const tasksDone = s.status.tasks_completed ?? 0;
-    const tasksTotal = s.status.tasks_total ?? 0;
-    const tasksInProgress = s.status.tasks_in_progress ?? 0;
-
     if (!raw) {
       lines.push(chalk.cyan.bold(`## ${s.name}`));
     } else {
@@ -85,20 +54,11 @@ function formatStandup(standups: ProjectStandup[], dateStr: string, raw: boolean
     }
 
     // What was done
-    if (s.gitCommits.length > 0 || tasksDone > 0) {
+    if (s.gitCommits.length > 0) {
       lines.push(!raw ? chalk.green("Done:") : "**Done:**");
       for (const commit of s.gitCommits) {
         lines.push(`  - ${commit}`);
       }
-      if (tasksDone > 0 && s.gitCommits.length === 0) {
-        lines.push(`  - ${tasksDone}/${tasksTotal} tasks completed`);
-      }
-    }
-
-    // In progress
-    if (tasksInProgress > 0) {
-      lines.push(!raw ? chalk.yellow("In Progress:") : "**In Progress:**");
-      lines.push(`  - ${tasksInProgress} task(s) active`);
     }
 
     // Extract sections from daily log
@@ -126,21 +86,21 @@ function formatStandup(standups: ProjectStandup[], dateStr: string, raw: boolean
     }
 
     // No activity
-    if (s.gitCommits.length === 0 && tasksDone === 0 && !s.dailyLog) {
+    if (s.gitCommits.length === 0 && !s.dailyLog) {
       lines.push(!raw ? chalk.dim("  (no activity)") : "  (no activity)");
     }
 
     lines.push("");
   }
 
-  // Summary line
+  // Summary line. Task counts have no data source yet (#630) — say so plainly
+  // instead of reporting a silent, always-zero count.
   const totalCommits = standups.reduce((sum, s) => sum + s.gitCommits.length, 0);
-  const totalDone = standups.reduce((sum, s) => sum + (s.status.tasks_completed ?? 0), 0);
 
   if (!raw) {
-    lines.push(chalk.dim(`--- ${totalCommits} commits, ${totalDone} tasks done${hasBlockers ? ", HAS BLOCKERS" : ""} ---\n`));
+    lines.push(chalk.dim(`--- ${totalCommits} commits${hasBlockers ? ", HAS BLOCKERS" : ""} (task tracking: no data source — #630) ---\n`));
   } else {
-    lines.push(`---\n*${totalCommits} commits, ${totalDone} tasks done${hasBlockers ? ", HAS BLOCKERS" : ""}*\n`);
+    lines.push(`---\n*${totalCommits} commits${hasBlockers ? ", HAS BLOCKERS" : ""} (task tracking: no data source — #630)*\n`);
   }
 
   return lines.join("\n");
