@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { queryHealth } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
-import { restartDaemonIfRunning } from "@squadrant/core";
+import { reregisterDaemon } from "@squadrant/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 
@@ -150,10 +150,10 @@ export const healCommand = new Command("heal")
   )
   .addCommand(
     new Command("daemon")
-      .description("Restart squadrantd via the idempotent launchd kickstart path")
+      .description("Explicitly reconcile + restart squadrantd (#636 operator opt-in — reads current PATH/entry drift and applies it, regardless of role)")
       .action(async () => {
         const code = await runHealDaemon({
-          ensureDaemon: () => restartDaemonIfRunning({ reason: "heal", isRunning: () => true }),
+          ensureDaemon: () => reregisterDaemon(),
           stdout: process.stdout,
           stderr: process.stderr,
         });
