@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -90,6 +90,34 @@ describe("launchd plist", () => {
   it("programArgsBlock matches the actual array emitted by renderPlist", () => {
     const xml = renderPlist("/nvm/v24/bin/node", "/dist/squadrantd.js");
     expect(xml).toContain(programArgsBlock("/nvm/v24/bin/node", "/dist/squadrantd.js"));
+  });
+});
+
+// #636: cold-start / post-upgrade escape hatch — a human explicitly typing
+// `squadrant launch` or `squadrant init` is authorized the same as a captain
+// marker, even with no SQUADRANT_ROLE set. Everything else stays unauthorized.
+describe("isOperatorInitiatedCommand (#636)", () => {
+  it("authorizes 'launch' and 'init'", () => {
+    expect(isOperatorInitiatedCommand("launch")).toBe(true);
+    expect(isOperatorInitiatedCommand("init")).toBe(true);
+  });
+
+  it("does NOT authorize 'heal' — heal daemon bypasses this gate entirely via reregisterDaemon", () => {
+    expect(isOperatorInitiatedCommand("heal")).toBe(false);
+  });
+
+  it("does NOT authorize crew, status, or any other subcommand", () => {
+    expect(isOperatorInitiatedCommand("crew")).toBe(false);
+    expect(isOperatorInitiatedCommand("status")).toBe(false);
+    expect(isOperatorInitiatedCommand("dashboard")).toBe(false);
+  });
+
+  it("does NOT authorize a missing/undefined argv[2] (bare `squadrant` invocation)", () => {
+    expect(isOperatorInitiatedCommand(undefined)).toBe(false);
+  });
+
+  it("OPERATOR_INITIATED_COMMANDS is exactly {launch, init} — deliberately small", () => {
+    expect([...OPERATOR_INITIATED_COMMANDS].sort()).toEqual(["init", "launch"]);
   });
 });
 

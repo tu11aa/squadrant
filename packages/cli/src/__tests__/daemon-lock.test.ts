@@ -13,7 +13,7 @@ vi.mock("node:fs", () => ({
   constants: { O_EXCL: 2048, O_CREAT: 512, O_WRONLY: 1 },
 }));
 
-import { existsSync, readFileSync, openSync, writeSync, closeSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, openSync, writeSync, closeSync, unlinkSync, writeFileSync } from "node:fs";
 import {
   tryAcquireDaemonLock,
   releaseDaemonLock,
@@ -173,5 +173,107 @@ describe("in-process restartInFlight dedup", () => {
     expect(acquireCalls.length).toBe(firstAcquireCount);
 
     reset(); // clean up for other tests
+  });
+});
+
+describe("ensureDaemon — fail-closed captain gate (#636)", () => {
+  // Fail-CLOSED, not fail-open: absence of any marker must mean "don't touch
+  // the daemon", never "go ahead". The gate checks POSITIVELY for
+  // SQUADRANT_ROLE=captain (set at exactly one place — the captain-launch
+  // choke point) rather than negatively for a crew marker, so it can't be
+  // bypassed by an unmarked invocation of any kind.
+  const ROLE_ENV_VARS = ["SQUADRANT_ROLE", "SQUADRANT_CREW_TASK_ID", "SQUADRANT_CREW_PROJECT"] as const;
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = {};
+    for (const k of ROLE_ENV_VARS) savedEnv[k] = process.env[k];
+  });
+
+  afterEach(() => {
+    for (const k of ROLE_ENV_VARS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+  });
+
+  async function callEnsureDaemon(opts?: { operatorInitiated?: boolean }): Promise<void> {
+    const { ensureDaemon, _resetRestartInFlightForTest: reset } = await import("@squadrant/core");
+    reset();
+    ensureDaemon(undefined, opts);
+    reset();
+  }
+
+  // Note: daemonEntryPath() does one harmless existsSync check of its own
+  // (looking for the compiled squadrantd.js) regardless of role — that's not
+  // a mutation. openSync/writeFileSync only ever happen via tryAcquireDaemonLock
+  // + applyDaemonDrift, which live exclusively behind the captain gate, so
+  // they're the real discriminator between "detected drift" and "acted on it".
+
+  it("no-ops for a claude-shaped crew process (SQUADRANT_CREW_TASK_ID set, no captain marker) — never acquires the lock or writes the plist", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(8 as unknown as number);
+
+    delete process.env.SQUADRANT_ROLE;
+    process.env.SQUADRANT_CREW_TASK_ID = "task-123";
+    await callEnsureDaemon();
+
+    expect(openSync).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("no-ops for a codex-shaped crew process (NO env marker at all — codex crews don't get SQUADRANT_CREW_TASK_ID, see crew-control.ts buildSignalRequest) — never acquires the lock or writes the plist", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(9 as unknown as number);
+
+    delete process.env.SQUADRANT_ROLE;
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    delete process.env.SQUADRANT_CREW_PROJECT;
+    await callEnsureDaemon();
+
+    // No positive captain marker → the default is "do not mutate", exactly
+    // like the claude-shaped crew case above. This is the case the original
+    // #636 fix missed: a codex crew has no SQUADRANT_CREW_TASK_ID to key off,
+    // so a negative (crew-marker) guard silently failed open for it.
+    expect(openSync).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("attempts the daemon lock for a positively-identified captain invocation (SQUADRANT_ROLE=captain)", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(10 as unknown as number);
+
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    process.env.SQUADRANT_ROLE = "captain";
+    await callEnsureDaemon();
+
+    // Only a captain-marked invocation reaches the mutating branch and
+    // attempts lock acquisition — it then fails at daemonEntryPath() (no
+    // compiled dist under vitest) and is caught/warned, same as #259.
+    expect(openSync).toHaveBeenCalled();
+  });
+
+  it("attempts the daemon lock for an operator-initiated invocation with NO captain marker (bare-terminal `squadrant launch`, #636 cold-start fix)", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(11 as unknown as number);
+
+    delete process.env.SQUADRANT_ROLE;
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    // index.ts resolves this from process.argv[2] via isOperatorInitiatedCommand;
+    // here we exercise ensureDaemon's own gate directly with that resolved value.
+    await callEnsureDaemon({ operatorInitiated: true });
+
+    expect(openSync).toHaveBeenCalled();
+  });
+
+  it("does NOT authorize an arbitrary subcommand just because operatorInitiated is computed wrong upstream — still requires the flag to actually be true", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(12 as unknown as number);
+
+    delete process.env.SQUADRANT_ROLE;
+    delete process.env.SQUADRANT_CREW_TASK_ID;
+    await callEnsureDaemon({ operatorInitiated: false });
+
+    expect(openSync).not.toHaveBeenCalled();
   });
 });

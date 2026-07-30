@@ -93,3 +93,43 @@ describe("launchOneWorkspace --keep (#534)", () => {
     expect(onFreshReason).toHaveBeenCalledWith("first launch");
   });
 });
+
+describe("launchOneWorkspace — captain marker (#636)", () => {
+  // ensureDaemon's fail-closed captain gate (launchd.ts) only mutates the
+  // shared daemon's registration when SQUADRANT_ROLE=captain is present in
+  // the inherited env. This is the ONLY place that marker is set, so it must
+  // land on the captain role and must NOT leak onto any other role.
+  it("prefixes the spawned command with SQUADRANT_ROLE=captain for role='captain'", async () => {
+    const runtime = makeRuntime();
+    await launchOneWorkspace({
+      workspaceName: "ws-captain",
+      role: "captain",
+      cwd: tmpDir,
+      sessionsPath,
+      templatesDir,
+      agentCmdFactory: () => "claude --permission-mode auto",
+      runtime,
+    });
+
+    expect(runtime.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "SQUADRANT_ROLE=captain claude --permission-mode auto" }),
+    );
+  });
+
+  it("does not add a role marker for role='command'", async () => {
+    const runtime = makeRuntime();
+    await launchOneWorkspace({
+      workspaceName: "ws-command",
+      role: "command",
+      cwd: tmpDir,
+      sessionsPath,
+      templatesDir,
+      agentCmdFactory: () => "claude --permission-mode auto",
+      runtime,
+    });
+
+    expect(runtime.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "claude --permission-mode auto" }),
+    );
+  });
+});
