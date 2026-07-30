@@ -272,42 +272,82 @@ function applyDaemonDrift(drift: DaemonDrift): void {
 }
 
 /**
+ * #636: commands where a human's own act of typing them is itself the
+ * authorization to reconcile/start the daemon — distinct from a captain
+ * marker, but equally deliberate (never inferred, never incidental):
+ *   - `launch`: boots a captain from a bare terminal. It never touches the
+ *     daemon socket itself (cmux only), so without this the daemon would
+ *     only get registered "one hop later" once the freshly-launched captain
+ *     (now SQUADRANT_ROLE=captain-marked) runs its own first command — fine
+ *     once a captain exists, but a needless extra step on a fresh install.
+ *   - `init`: first-run scaffolding. Doesn't touch the daemon itself either,
+ *     but authorizing it means the daemon can be registered as early as the
+ *     very first `squadrant` invocation on a new machine.
+ * `heal daemon` is deliberately NOT here: it calls reregisterDaemon()
+ * directly (see heal.ts), bypassing this gate entirely, so it needs no
+ * allowlist entry and works even for an unmarked/pre-upgrade process.
+ * Nothing else is on this list on purpose — a crew, a side-session, the
+ * dashboard, or cron are incidental, not operator-initiated, and must stay
+ * fail-closed even though they too are "a human's system doing something".
+ */
+export const OPERATOR_INITIATED_COMMANDS = new Set(["launch", "init"]);
+
+/** Pure: was this process's top-level subcommand one of the operator-initiated ones above? */
+export function isOperatorInitiatedCommand(topLevelArg: string | undefined): boolean {
+  return topLevelArg !== undefined && OPERATOR_INITIATED_COMMANDS.has(topLevelArg);
+}
+
+/**
  * Idempotent & cheap. Never throws fatally. Writes/reloads the plist ONLY when
- * its content actually changed, and ONLY from a positively-identified captain
- * invocation.
+ * its content actually changed, and ONLY when authorized (see below).
  *
- * #636: fail-CLOSED, not fail-open. Absence of a marker must never grant
+ * #636: fail-CLOSED, not fail-open. Absence of authorization must never grant
  * permission to mutate a daemon shared by 26 projects — that was the shape of
  * the original bug (crew-marker absent → act), and it's the same class as
- * #499 (marker-absence treated as a positive signal). So the gate checks for
- * captain, not against crew: SQUADRANT_ROLE=captain is set at exactly one
- * place (the captain-launch choke point in launch-workspace.ts) and nowhere
- * else. Any invocation without it — a claude or codex-shaped crew (codex
- * crews never get SQUADRANT_CREW_TASK_ID either, see crew-control.ts's
- * buildSignalRequest), a side-session, the dashboard, cron, or a bare
- * terminal — defaults to "do not touch the daemon", not "go ahead". Drift is
- * still detected and surfaced (stderr note) from every role; only the apply
- * step requires the captain marker. Real drift stays fixable on purpose via
- * the explicit `squadrant heal daemon` path (reregisterDaemon below).
+ * #499 (marker-absence treated as a positive signal). So the gate checks
+ * POSITIVELY for one of two deliberate signals:
+ *   - SQUADRANT_ROLE=captain, set at exactly one place (the captain-launch
+ *     choke point in launch-workspace.ts) and nowhere else; or
+ *   - opts.operatorInitiated, true only when index.ts resolves the running
+ *     subcommand against isOperatorInitiatedCommand (a human explicitly typed
+ *     `squadrant launch` or `squadrant init` at a terminal).
+ * Any invocation with neither — a claude or codex-shaped crew (codex crews
+ * never get SQUADRANT_CREW_TASK_ID either, see crew-control.ts's
+ * buildSignalRequest), a side-session, the dashboard, cron, or any other bare
+ * CLI subcommand — defaults to "do not touch the daemon", not "go ahead".
+ * Drift is still detected and surfaced (stderr note) from every unauthorized
+ * call; only the apply step is gated. Real drift stays fixable on purpose via
+ * the explicit `squadrant heal daemon` path (reregisterDaemon below), which
+ * works regardless of role or authorization.
  *
  * Concurrency guards:
- *   - restartInFlight flag: prevents sequential re-calls within this process.
+ *   - restartInFlight flag: prevents sequential re-calls within this process
+ *     from doing repeat work — including a repeat diagnostic print, since
+ *     index.ts's unconditional call and crew-control.ts's on-failure fallback
+ *     call can both fire in one process; a second identical stderr note adds
+ *     no information, so the flag intentionally covers both the apply path
+ *     and the warn-only path, not just the apply path.
  *   - tryAcquireDaemonLock: serialises concurrent SEPARATE squadrant processes
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
-export function ensureDaemon(nodeBin: string = process.execPath): void {
+export function ensureDaemon(nodeBin: string = process.execPath, opts: { operatorInitiated?: boolean } = {}): void {
   if (restartInFlight) return;
   restartInFlight = true;
 
-  if (process.env.SQUADRANT_ROLE !== "captain") {
+  const authorized = process.env.SQUADRANT_ROLE === "captain" || opts.operatorInitiated === true;
+
+  if (!authorized) {
     // Read-only diagnostic path: never acquires the lock, never writes,
     // never calls launchctl — just tells a human real drift exists.
     try {
       if (computeDaemonDrift(nodeBin).changed) {
         process.stderr.write(
-          "[squadrant] note: daemon registration drift detected but NOT applied " +
-          "(this invocation is not a captain) — run `squadrant heal daemon` to " +
-          "re-register intentionally.\n",
+          "[squadrant] note: this machine's registered squadrant daemon config is out " +
+          "of date for the version/PATH running right now (common right after an `npm " +
+          "update -g squadrant`) — NOT applying it automatically because this command " +
+          "isn't the captain and isn't `launch`/`init`. This is usually harmless: the " +
+          "next captain command reconciles it on its own. If something looks stale or " +
+          "broken right now, run `squadrant heal daemon` to fix it immediately.\n",
         );
       }
     } catch { /* best-effort diagnostic only */ }
