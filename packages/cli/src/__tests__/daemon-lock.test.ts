@@ -175,3 +175,28 @@ describe("in-process restartInFlight dedup", () => {
     reset(); // clean up for other tests
   });
 });
+
+describe("ensureDaemon — crew guard (#636)", () => {
+  it("no-ops for a crew process (SQUADRANT_CREW_TASK_ID set) — never re-registers/kickstarts the shared daemon", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(openSync).mockReturnValue(8 as unknown as number);
+
+    const { ensureDaemon, _resetRestartInFlightForTest: reset } = await import("@squadrant/core");
+    reset();
+
+    const prevTaskId = process.env.SQUADRANT_CREW_TASK_ID;
+    process.env.SQUADRANT_CREW_TASK_ID = "task-123";
+    try {
+      ensureDaemon();
+    } finally {
+      if (prevTaskId === undefined) delete process.env.SQUADRANT_CREW_TASK_ID;
+      else process.env.SQUADRANT_CREW_TASK_ID = prevTaskId;
+    }
+
+    // Guard returns before any lock acquisition or plist/fs work happens.
+    expect(existsSync).not.toHaveBeenCalled();
+    expect(openSync).not.toHaveBeenCalled();
+
+    reset(); // clean up for other tests
+  });
+});

@@ -223,6 +223,16 @@ export function releaseDaemonLock(): void {
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
 export function ensureDaemon(nodeBin: string = process.execPath): void {
+  // #636: never let a crew process re-register/kickstart the shared daemon.
+  // A crew inherits SQUADRANT_CREW_TASK_ID (see crew-spawn.ts) and typically
+  // runs with a different PATH/build than the captain (worktree, different
+  // node/pnpm resolution), so its view of "did the plist drift" is unreliable
+  // — a false-positive bounce hits every in-flight task on all 26 registered
+  // projects, not just the crew's own. Re-registration stays an implicit
+  // self-heal for the captain's own invocations only; a crew that can't reach
+  // the daemon fails loud instead (see squadrantdCall's retry-then-throw).
+  if (process.env.SQUADRANT_CREW_TASK_ID) return;
+
   if (restartInFlight) return;
   restartInFlight = true;
 
