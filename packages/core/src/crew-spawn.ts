@@ -147,6 +147,12 @@ export interface CrewSpawnDeps {
   sendCodexFirstTurn(taskId: string, task: string): Promise<void>;
   /** Optional: called after routing to log the selected route (e.g. chalk.dim(...)). */
   onRouted?(route: CrewRouteResult): void;
+  /** #627 item B: called once agent/model resolution is final for a non-claude
+   *  spawn, before the agent CLI command is built. Lets the CLI edge warn when
+   *  a fallback agent silently resolves to an Anthropic model — `model` is
+   *  undefined when nothing resolved one (e.g. opencode falling through to its
+   *  own global config default), not just when an explicit flag was anthropic. */
+  onModelResolved?(o: { agentName: string; model: string | undefined }): void;
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
@@ -336,6 +342,10 @@ export async function runCrewSpawn(
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
   const crewModel = input.model ?? route?.model ?? configModel;
+
+  if (agentName !== "claude") {
+    deps.onModelResolved?.({ agentName, model: crewModel });
+  }
 
   // Claude crews route through the control-plane daemon (PR #85) so the captain
   // learns terminal state via `squadrant crew status`. The cmux tab still does

@@ -22,6 +22,9 @@ import {
 import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
+import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
+import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
+import { readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 
 // Re-export for test-import stability (launch.test.ts imports from ../launch.js).
 export { deliverStartupPrompt } from "@squadrant/core";
@@ -64,7 +67,9 @@ export const launchCommand = new Command("launch")
   .option("--keep", "Resume the latest session even on a new day / after a template change")
   .option("--all", "Launch all captain workspaces")
   .option("--headless", "Skip the interactive cmux-app requirement (used by the daemon to boot captains without a terminal)")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean }) => {
+  .option("--agent <name>", "Override captain agent for this launch (claude|codex|gemini|opencode); takes precedence over defaults.roles.captain.agent")
+  .option("--model <name>", "Override captain model for this launch; takes precedence over defaults.roles.captain.model")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string }) => {
     if (opts.fresh && opts.keep) {
       console.error(chalk.red("\n  ✘ --fresh and --keep are mutually exclusive\n"));
       process.exit(1);
@@ -94,11 +99,34 @@ export const launchCommand = new Command("launch")
       pinToTop = false,
       projectName?: string,
     ): Promise<void> {
-      ensureCmuxReady(!!opts.headless);
-
       const roleConfig = config.defaults.roles?.[role as keyof NonNullable<typeof config.defaults.roles>];
-      const agentName = roleConfig?.agent || "claude";
-      const model = roleConfig?.model || config.defaults.models?.[role as keyof ModelRoutingConfig];
+      const { agentName, model } = resolveLaunchAgent(
+        { agent: opts.agent, model: opts.model },
+        roleConfig,
+        config.defaults.models?.[role as keyof ModelRoutingConfig],
+      );
+
+      // #627 item B: refuse to boot a fallback captain that silently depends on
+      // the provider it's meant to survive losing. For opencode, an omitted
+      // --model doesn't mean "no model" — it falls through to opencode's own
+      // global config, which defaults to an Anthropic model (ensureGlobalOpencodeConfig).
+      // Refuse (not warn) for the captain role: the whole point of manual mode is
+      // surviving an Anthropic outage, so a silent Anthropic dependency here is
+      // the exact trap this command exists to close.
+      {
+        const effectiveModel = model ?? (agentName === "opencode" ? readGlobalOpencodeModel() : undefined);
+        if (isBlockedFallback(agentName, effectiveModel)) {
+          console.error(
+            chalk.red(
+              `\n  ✘ Refusing to launch ${role} '${workspaceName}' on ${agentName}: ${anthropicFallbackMessage(agentName, effectiveModel!)}\n`,
+            ),
+          );
+          hadFailure = true;
+          return;
+        }
+      }
+
+      ensureCmuxReady(!!opts.headless);
 
       let initialPrompt: string | undefined;
       if (role === "captain") {
