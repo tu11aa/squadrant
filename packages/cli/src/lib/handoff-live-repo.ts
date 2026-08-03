@@ -22,6 +22,7 @@ import path from "node:path";
 import { TERMINAL_STATES } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-facts.js";
+import { gatherBranchState } from "./handoff-branch-state.js";
 
 export const RECENT_COMMITS_LIMIT = 15;
 export const OPEN_PR_LIMIT = 20;
@@ -130,6 +131,9 @@ function readFetchAgeMs(projectPath: string, now: number): number | null {
  * Gather the live-repo tier. `tasks` is the caller's already-fetched
  * crew-task list (a daemon round-trip, so it isn't gathered here).
  * `fallbackBaseBranch` is used only when gh is unavailable — never invented.
+ * `fetch` opts into a single `git fetch origin` before computing
+ * branchState — default false, preserving the read-only/side-effect-free
+ * contract for every other caller.
  */
 export function gatherLiveRepoState(
   projectPath: string,
@@ -137,6 +141,7 @@ export function gatherLiveRepoState(
   tasks: TaskRecord[],
   runner: CommandRunner = defaultCommandRunner,
   now: number = Date.now(),
+  fetch: boolean = false,
 ): LiveRepoState {
   const branch = (tryRun(runner, "git", ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"], projectPath) ?? "").trim();
   const detached = branch === "HEAD";
@@ -194,5 +199,6 @@ export function gatherLiveRepoState(
     openPRs: gatherOpenPRs(runner, projectPath),
     liveCrews: gatherLiveCrews(tasks),
     conflicts,
+    branchState: gatherBranchState(runner, projectPath, branch, baseBranch, detached, fetch),
   };
 }

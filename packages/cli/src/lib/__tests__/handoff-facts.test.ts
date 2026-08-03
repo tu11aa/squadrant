@@ -25,6 +25,15 @@ function live(overrides: Partial<LiveRepoState> = {}): LiveRepoState {
     openPRs: [],
     liveCrews: [],
     conflicts: [],
+    branchState: {
+      upstreamStatus: "up-to-date",
+      aheadOfUpstream: 0,
+      behindUpstream: 0,
+      mergedIntoBase: false,
+      dirtyWorkingTree: false,
+      onUnexpectedBranch: false,
+      fetchPerformed: false,
+    },
     ...overrides,
   };
 }

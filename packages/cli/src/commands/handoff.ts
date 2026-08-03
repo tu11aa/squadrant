@@ -7,12 +7,18 @@
 // was written) and the GAP (captain sessions that started after it,
 // attributed via the registry rather than guessed from file mtimes or
 // content-sniffed for role — that's the work no handoff covers, and the
-// only transcripts actually read). Emits everything grouped by source with
-// provenance. Does NOT author a handoff: no currentState/nextSteps/
-// decisions synthesis. Composing the actual handoff from these facts is
-// judgment and belongs to whoever reads them (the captain). Read-only and
-// side-effect-free — safe for #641's `squadrant brief` to call as one
-// source among several, and safe to call repeatedly.
+// only transcripts actually read). Also verifies liveRepo.branchState as
+// explicit enum flags (upstream ahead/behind/diverged/gone/no-upstream,
+// merged-into-base, dirty working tree, sitting on an unexpected branch) —
+// a cheap model can act on these without interpreting prose. Emits
+// everything grouped by source with provenance. Does NOT author a handoff:
+// no currentState/nextSteps/decisions synthesis. Composing the actual
+// handoff from these facts is judgment and belongs to whoever reads them
+// (the captain). Read-only and side-effect-free by default — safe for
+// #641's `squadrant brief` to call as one source among several, and safe
+// to call repeatedly. The one opt-in exception is `--fetch`, which runs a
+// single `git fetch origin` before computing branchState; without it,
+// branchState is only ever as fresh as the last fetch (see fetchAgeMs).
 import { Command } from "commander";
 import path from "node:path";
 import os from "node:os";
@@ -42,6 +48,8 @@ export interface HandoffFactsDeps {
   currentSessionId?: string | null;
   fetchTasks?: (project: string) => Promise<TaskRecord[]>;
   runner?: CommandRunner;
+  /** Opt-in: runs `git fetch origin` before computing branchState. Default false — this command stays read-only/side-effect-free unless the caller explicitly asks. */
+  fetch?: boolean;
 }
 
 export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = {}): Promise<HandoffFacts> {
@@ -68,7 +76,7 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
   const nowMs = Date.parse(nowIso);
   const fallbackWindowMs = deps.windowMs ?? SESSION_WINDOW_MS;
 
-  const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs);
+  const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs, deps.fetch ?? false);
   const claudeMem = queryClaudeMem(deps.claudeMemDbPath ?? CLAUDE_MEM_DB_PATH, project);
 
   const checkpoint = readNewestArchivedHandoff(proj.spokeVault, nowMs);
@@ -111,7 +119,8 @@ handoffCommand
   .description(
     "Gather structured facts (gh API > local git > claude-mem > registry-attributed session window) — NOT a handoff. Read-only, pre-rendered JSON on stdout; the caller synthesizes.",
   )
-  .action(async (project: string) => {
-    const out = await runHandoffFacts(project);
+  .option("--fetch", "update remote-tracking refs (git fetch origin) before computing branch state — the only opt-in exception to this command's read-only contract", false)
+  .action(async (project: string, opts: { fetch: boolean }) => {
+    const out = await runHandoffFacts(project, { fetch: opts.fetch });
     console.log(JSON.stringify(out, null, 2));
   });

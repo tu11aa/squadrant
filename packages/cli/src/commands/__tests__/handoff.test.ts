@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import type { TaskRecord } from "@squadrant/shared";
 import { appendCaptainSession } from "../../lib/captain-session-registry.js";
 import type { CaptainSessionRecord } from "../../lib/handoff-facts.js";
+import type { CommandRunner } from "../../lib/handoff-live-repo.js";
 
 const loadConfig = vi.hoisted(() => vi.fn());
 vi.mock("@squadrant/shared", async () => {
@@ -222,5 +223,51 @@ describe("runHandoffFacts", () => {
     });
 
     expect(out.meta.registryNote).toContain("no session registry");
+  });
+
+  it("never fetches by default — liveRepo.branchState.fetchPerformed is false", async () => {
+    const out = await runHandoffFacts("squadrant", {
+      claudeMemDbPath: path.join(tmp, "no-such.db"),
+      currentSessionId: "current",
+      now: "2026-08-03T12:00:00.000Z",
+      fetchTasks: async () => [],
+    });
+
+    expect(out.liveRepo.branchState.fetchPerformed).toBe(false);
+  });
+
+  it("attempts a fetch only when explicitly opted in via the fetch dep — verified with an injected runner", async () => {
+    let fetchAttempted = false;
+    const runner: CommandRunner = {
+      run(cmd, args, cwd) {
+        if (cmd === "git" && args.includes("fetch")) {
+          fetchAttempted = true;
+          return "";
+        }
+        // Delegate everything else to a real, read-only execution so the
+        // rest of gatherLiveRepoState behaves normally against repoDir.
+        return execFileSync(cmd, args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      },
+    };
+
+    await runHandoffFacts("squadrant", {
+      claudeMemDbPath: path.join(tmp, "no-such.db"),
+      currentSessionId: "current",
+      now: "2026-08-03T12:00:00.000Z",
+      fetchTasks: async () => [],
+      runner,
+    });
+    expect(fetchAttempted).toBe(false);
+
+    fetchAttempted = false;
+    await runHandoffFacts("squadrant", {
+      claudeMemDbPath: path.join(tmp, "no-such.db"),
+      currentSessionId: "current",
+      now: "2026-08-03T12:00:00.000Z",
+      fetchTasks: async () => [],
+      runner,
+      fetch: true,
+    });
+    expect(fetchAttempted).toBe(true);
   });
 });

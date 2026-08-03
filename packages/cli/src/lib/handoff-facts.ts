@@ -90,6 +90,7 @@ export interface LiveRepoState {
   liveCrews: LiveCrewSummary[];
   /** Disagreements discovered while gathering (e.g. gh vs local base SHA). */
   conflicts: HandoffConflict[];
+  branchState: BranchState;
 }
 
 export interface ClaudeMemSessionSummary {

@@ -38,6 +38,22 @@ const NOW = Date.parse("2026-08-03T16:00:00.000Z");
 const REPO_VIEW = "gh repo view --json nameWithOwner,defaultBranchRef";
 const PR_LIST = "gh pr list --json number,title,headRefName --limit 20";
 
+// Neutral, "nothing interesting happening" answers for the branchState
+// sub-gather — most tests here are about the OTHER live-repo facts and
+// don't care about branchState specifics (that's handoff-branch-state.test.ts's
+// job); this just keeps them from throwing "unhandled command".
+function branchStateDefaults(branch: string, base: string): Record<string, string | (() => string)> {
+  return {
+    [`git -C REPO for-each-ref --format=%(upstream:short)|%(upstream:track) refs/heads/${branch}`]: "|\n",
+    [`git -C REPO rev-parse --verify origin/${base}`]: () => {
+      throw new Error("no origin remote-tracking ref");
+    },
+    [`git -C REPO rev-parse ${branch}`]: "branch-sha\n",
+    [`git -C REPO merge-base ${branch} ${base}`]: "different-sha\n",
+    "git -C REPO status --porcelain": "",
+  };
+}
+
 describe("gatherLiveRepoState", () => {
   let repoDir: string;
 
@@ -58,6 +74,7 @@ describe("gatherLiveRepoState", () => {
       "gh api repos/acme/squadrant/commits/develop --jq .sha": "sha-gh\n",
       "git -C REPO rev-parse origin/develop": "sha-gh\n",
       [PR_LIST]: JSON.stringify([{ number: 12, title: "Fix thing", headRefName: "fix/thing" }]),
+      ...branchStateDefaults("feature/x", "develop"),
     });
 
     const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
@@ -79,6 +96,9 @@ describe("gatherLiveRepoState", () => {
         if (key === "git -C REPO rev-parse --abbrev-ref HEAD") return "develop\n";
         if (key === "git -C REPO log -15 --oneline") return "";
         if (key === "git -C REPO rev-list --count origin/main..HEAD") return "7\n";
+        if (key === "git -C REPO status --porcelain") return "";
+        if (key === "git -C REPO rev-parse develop") return "sha1\n";
+        if (key === "git -C REPO merge-base develop main") return "sha0\n";
         // Everything gh-related fails — no auth / no network / gh missing.
         if (cmd === "gh") throw new Error("gh: command not found");
         throw new Error(`unhandled command: ${key}`);
@@ -104,6 +124,7 @@ describe("gatherLiveRepoState", () => {
       "gh api repos/acme/squadrant/commits/main --jq .sha": "9c67e0ce\n",
       "git -C REPO rev-parse origin/main": "24b07815\n", // stale — 4 days since last fetch
       [PR_LIST]: "[]",
+      ...branchStateDefaults("develop", "main"),
     });
 
     const state = gatherLiveRepoState("REPO", "develop", [], runner, NOW);
@@ -129,6 +150,7 @@ describe("gatherLiveRepoState", () => {
       "gh api repos/acme/squadrant/commits/main --jq .sha": "sameSha\n",
       "git -C REPO rev-parse origin/main": "sameSha\n",
       [PR_LIST]: "[]",
+      ...branchStateDefaults("develop", "main"),
     });
 
     const state = gatherLiveRepoState("REPO", "develop", [], runner, NOW);
@@ -147,6 +169,9 @@ describe("gatherLiveRepoState", () => {
       "git -C REPO rev-parse origin/main": "sha1\n",
       "git -C REPO rev-list --count origin/main..HEAD": "5\n",
       [PR_LIST]: "[]",
+      "git -C REPO status --porcelain": "",
+      // Deliberately no for-each-ref/merge-base handlers either — detached
+      // HEAD must skip those the same way it skips the gh compare.
     });
 
     const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
@@ -156,6 +181,7 @@ describe("gatherLiveRepoState", () => {
     // No gh compare for a detached HEAD — falls back to local git.
     expect(state.aheadOfBase).toBe(5);
     expect(state.aheadOfBaseSource).toBe("local-git");
+    expect(state.branchState.upstreamStatus).toBe("unknown");
   });
 
   it("computes fetchAgeMs from the real .git/FETCH_HEAD mtime", () => {
@@ -170,8 +196,11 @@ describe("gatherLiveRepoState", () => {
         const key = `${cmd} ${args.join(" ")}`;
         if (key === `git -C ${repoDir} rev-parse --abbrev-ref HEAD`) return "develop\n";
         if (key === `git -C ${repoDir} log -15 --oneline`) return "";
-        if (cmd === "gh") throw new Error("gh unavailable");
         if (key === `git -C ${repoDir} rev-list --count origin/main..HEAD`) return "0\n";
+        if (key === `git -C ${repoDir} status --porcelain`) return "";
+        if (key === `git -C ${repoDir} rev-parse develop`) return "sha1\n";
+        if (key === `git -C ${repoDir} merge-base develop main`) return "sha0\n";
+        if (cmd === "gh") throw new Error("gh unavailable");
         throw new Error(`unhandled command: ${key}`);
       },
     };
@@ -188,8 +217,11 @@ describe("gatherLiveRepoState", () => {
         const key = `${cmd} ${args.join(" ")}`;
         if (key === `git -C ${repoDir} rev-parse --abbrev-ref HEAD`) return "develop\n";
         if (key === `git -C ${repoDir} log -15 --oneline`) return "";
-        if (cmd === "gh") throw new Error("gh unavailable");
         if (key === `git -C ${repoDir} rev-list --count origin/main..HEAD`) return "0\n";
+        if (key === `git -C ${repoDir} status --porcelain`) return "";
+        if (key === `git -C ${repoDir} rev-parse develop`) return "sha1\n";
+        if (key === `git -C ${repoDir} merge-base develop main`) return "sha0\n";
+        if (cmd === "gh") throw new Error("gh unavailable");
         throw new Error(`unhandled command: ${key}`);
       },
     };
@@ -210,6 +242,7 @@ describe("gatherLiveRepoState", () => {
       [PR_LIST]: () => {
         throw new Error("gh unavailable");
       },
+      ...branchStateDefaults("develop", "main"),
     });
     const tasks = [
       task({ name: "crew-1", state: "working", task: "fix bug" }),
@@ -246,6 +279,81 @@ describe("gatherLiveRepoState", () => {
       openPRs: [],
       liveCrews: [],
       conflicts: [],
+      branchState: {
+        upstreamStatus: "unknown",
+        aheadOfUpstream: null,
+        behindUpstream: null,
+        mergedIntoBase: null,
+        dirtyWorkingTree: null,
+        onUnexpectedBranch: false,
+        fetchPerformed: false,
+      },
     });
+  });
+
+  it("wires branchState from the branch-state gatherer", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "crew/fix-123\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: () => {
+        throw new Error("gh unavailable");
+      },
+      "git -C REPO rev-list --count origin/main..HEAD": "0\n",
+      [PR_LIST]: () => {
+        throw new Error("gh unavailable");
+      },
+      ...branchStateDefaults("crew/fix-123", "main"),
+    });
+
+    const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
+
+    expect(state.branchState.onUnexpectedBranch).toBe(true);
+    expect(state.branchState.upstreamStatus).toBe("no-upstream");
+  });
+
+  it("never fetches by default — fetch defaults to false", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: () => {
+        throw new Error("gh unavailable");
+      },
+      "git -C REPO rev-list --count origin/main..HEAD": "0\n",
+      [PR_LIST]: () => {
+        throw new Error("gh unavailable");
+      },
+      ...branchStateDefaults("develop", "main"),
+      // Deliberately no "fetch" handler — if gatherLiveRepoState defaulted
+      // fetch to true, fakeRunner would throw "unhandled command".
+    });
+
+    const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
+
+    expect(state.branchState.fetchPerformed).toBe(false);
+  });
+
+  it("fetches when explicitly opted in via the fetch parameter", () => {
+    let fetchCalled = false;
+    const runner = fakeRunner({
+      "git -C REPO fetch origin": () => {
+        fetchCalled = true;
+        return "";
+      },
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: () => {
+        throw new Error("gh unavailable");
+      },
+      "git -C REPO rev-list --count origin/main..HEAD": "0\n",
+      [PR_LIST]: () => {
+        throw new Error("gh unavailable");
+      },
+      ...branchStateDefaults("develop", "main"),
+    });
+
+    const state = gatherLiveRepoState("REPO", "main", [], runner, NOW, true);
+
+    expect(fetchCalled).toBe(true);
+    expect(state.branchState.fetchPerformed).toBe(true);
   });
 });
