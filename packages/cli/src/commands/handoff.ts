@@ -1,10 +1,11 @@
 // handoff.ts — `squadrant handoff reconstruct <project>` (#650 Phase 2).
 //
 // Rebuilds a handoff when read-handoff.sh reports {"exists": false}, from
-// three trust-ordered sources: live repo state (git/gh/live crews, exact and
-// current) > claude-mem (distilled, can be stale) > transcript (inference).
-// Read-only and side-effect-free — safe for #641's `squadrant brief` to call
-// as one source among several, and safe to call repeatedly.
+// trust-ordered sources: gh API (always fresh) > local git (marked with
+// fetch age — only as fresh as the last fetch) > claude-mem (distilled, can
+// be stale) > transcript (inference). Read-only and side-effect-free — safe
+// for #641's `squadrant brief` to call as one source among several, and safe
+// to call repeatedly.
 import { Command } from "commander";
 import path from "node:path";
 import os from "node:os";
@@ -48,7 +49,9 @@ export async function runHandoffReconstruct(
     throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
   }
 
-  const baseBranch = resolveWorktreeBase(proj.path);
+  // Only used when gh is entirely unavailable — gatherLiveRepoState prefers
+  // the gh API's default-branch answer (always fresh, no fetch needed).
+  const fallbackBaseBranch = resolveWorktreeBase(proj.path);
 
   let tasks: TaskRecord[];
   try {
@@ -59,12 +62,15 @@ export async function runHandoffReconstruct(
     tasks = [];
   }
 
-  const live = gatherLiveRepoState(proj.path, baseBranch, tasks, deps.runner ?? defaultCommandRunner);
+  const nowIso = deps.now ?? new Date().toISOString();
+  const nowMs = deps.now ? Date.parse(deps.now) : Date.now();
+
+  const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs);
   const claudeMem = queryClaudeMem(deps.claudeMemDbPath ?? CLAUDE_MEM_DB_PATH, project);
   const transcriptDir = path.join(deps.claudeProjectsDir ?? CLAUDE_PROJECTS_DIR, slugForCwd(proj.path));
   const transcript = readNewestTranscriptTail(transcriptDir);
 
-  return reconstructHandoff(live, claudeMem, transcript, deps.now ?? new Date().toISOString());
+  return reconstructHandoff(live, claudeMem, transcript, nowIso);
 }
 
 export const handoffCommand = new Command("handoff").description(
@@ -74,7 +80,7 @@ export const handoffCommand = new Command("handoff").description(
 handoffCommand
   .command("reconstruct <project>")
   .description(
-    "Reconstruct a handoff from live repo state > claude-mem > transcript (trust order). Read-only, pre-rendered JSON on stdout.",
+    "Reconstruct a handoff from gh API > local git > claude-mem > transcript (trust order). Read-only, pre-rendered JSON on stdout.",
   )
   .action(async (project: string) => {
     const out = await runHandoffReconstruct(project);

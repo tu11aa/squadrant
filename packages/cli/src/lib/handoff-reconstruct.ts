@@ -20,13 +20,24 @@ export interface LiveCrewSummary {
 }
 
 export interface LiveRepoState {
+  /** Raw `git rev-parse --abbrev-ref HEAD` output — literally "HEAD" when detached. */
   branch: string;
+  detached: boolean;
   baseBranch: string;
+  /** "gh-api" (always fresh) or "local-fallback" (gh unavailable). */
+  baseBranchSource: "gh-api" | "local-fallback";
   recentCommits: string[];
   /** Commits on `branch` not yet on `baseBranch`. */
   aheadOfBase: number;
+  /** "gh-api" (fresh, no fetch needed), "local-git" (only as fresh as the
+   *  last fetch — see fetchAgeMs), or "unknown" (neither source available). */
+  aheadOfBaseSource: "gh-api" | "local-git" | "unknown";
+  /** Age of .git/FETCH_HEAD in ms; null when unknown (never fetched / unreadable). */
+  fetchAgeMs: number | null;
   openPRs: LiveOpenPR[];
   liveCrews: LiveCrewSummary[];
+  /** Disagreements discovered while gathering (e.g. gh vs local base SHA). */
+  conflicts: HandoffConflict[];
 }
 
 export interface ClaudeMemSessionSummary {
@@ -58,10 +69,15 @@ export interface TranscriptTail {
 
 export interface HandoffConflict {
   field: string;
-  claudeMemClaim: string;
-  liveRepoFact: string;
+  /** The lower-trust tier's claim (claude-mem narrative, or a stale local git ref). */
+  claim: string;
+  /** The higher-trust tier's actual fact (live repo state, or the gh API). */
+  fact: string;
   resolution: string;
 }
+
+/** Past this age, a local-git-sourced number gets an explicit staleness warning. */
+export const STALE_FETCH_WARNING_MS = 24 * 60 * 60 * 1000;
 
 export interface ReconstructedHandoffSession {
   currentState: string;
@@ -77,7 +93,12 @@ export interface ReconstructedHandoff {
   reconstructed: true;
   sources: string[];
   timeWindow: { from: string | null; to: string };
+  /** Where aheadOfBase came from — see LiveRepoState.aheadOfBaseSource. First-class, not buried in `warnings`. */
+  aheadOfBaseSource: LiveRepoState["aheadOfBaseSource"];
+  /** Age of the local git fetch aheadOfBase relied on, if it came from local-git. */
+  fetchAgeMs: number | null;
   conflicts: HandoffConflict[];
+  warnings: string[];
   session: ReconstructedHandoffSession;
 }
 
@@ -96,11 +117,31 @@ function summarizeActiveTasks(crews: LiveCrewSummary[]): string {
 
 function buildOpenBranches(live: LiveRepoState): string[] {
   const branches = live.openPRs.map((pr) => `#${pr.number} ${pr.title} (${pr.headRefName})`);
+  // A detached HEAD isn't a branch — don't let it silently masquerade as one.
+  if (live.detached) return branches;
   const branchHasPr = live.openPRs.some((pr) => pr.headRefName === live.branch);
   if (live.aheadOfBase > 0 && !branchHasPr) {
     branches.push(`${live.branch} — ${live.aheadOfBase} commit(s) ahead of ${live.baseBranch}, no open PR`);
   }
   return branches;
+}
+
+function buildWarnings(live: LiveRepoState): string[] {
+  const warnings: string[] = [];
+  if (live.detached) {
+    warnings.push(
+      "captain checkout is on a detached HEAD (not a branch) — branch-derived fields may not reflect meaningful work",
+    );
+  }
+  if (live.aheadOfBaseSource === "local-git") {
+    if (live.fetchAgeMs === null) {
+      warnings.push("aheadOfBase came from local git with no known last-fetch time — treat as possibly stale");
+    } else if (live.fetchAgeMs > STALE_FETCH_WARNING_MS) {
+      const hours = Math.round(live.fetchAgeMs / 3_600_000);
+      warnings.push(`aheadOfBase came from local git, last fetched ${hours}h ago — may be stale`);
+    }
+  }
+  return warnings;
 }
 
 // Bounded, literal heuristic for the one concrete failure case reconstruction
@@ -122,8 +163,8 @@ function detectConflicts(live: LiveRepoState, claudeMem: ClaudeMemSummary | null
     if (hit) {
       conflicts.push({
         field: "openBranches",
-        claudeMemClaim: hit.trim(),
-        liveRepoFact: `PR #${pr.number} (${pr.headRefName}) is still open`,
+        claim: hit.trim(),
+        fact: `PR #${pr.number} (${pr.headRefName}) is still open`,
         resolution: "live repo state wins — kept in openBranches",
       });
     }
@@ -172,7 +213,10 @@ export function reconstructHandoff(
     reconstructed: true,
     sources,
     timeWindow: { from: claudeMem?.oldestCreatedAt ?? transcript?.mtimeIso ?? null, to: now },
-    conflicts: detectConflicts(live, claudeMem),
+    aheadOfBaseSource: live.aheadOfBaseSource,
+    fetchAgeMs: live.fetchAgeMs,
+    conflicts: [...live.conflicts, ...detectConflicts(live, claudeMem)],
+    warnings: buildWarnings(live),
     session: {
       currentState,
       openBranches: buildOpenBranches(live),

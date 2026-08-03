@@ -17,9 +17,18 @@ fi
 # Print the handoff content
 cat "$HANDOFF_FILE"
 
-# Archive (don't delete) unless --keep flag
+# Archive (don't delete) unless --keep flag. Multi-session days are the norm
+# (compacts, relaunches), so a same-day archive must never be clobbered by a
+# later read on the same day — uniquify with -2, -3, ... instead of overwriting.
 if [ "$KEEP" != "--keep" ]; then
   ARCHIVE_DIR="$VAULT/handoffs"
   mkdir -p "$ARCHIVE_DIR"
-  mv "$HANDOFF_FILE" "$ARCHIVE_DIR/$(date -u +%Y-%m-%d).json"
+  DATE=$(date -u +%Y-%m-%d)
+  DEST="$ARCHIVE_DIR/$DATE.json"
+  N=2
+  while [ -e "$DEST" ]; do
+    DEST="$ARCHIVE_DIR/$DATE-$N.json"
+    N=$((N + 1))
+  done
+  mv "$HANDOFF_FILE" "$DEST"
 fi

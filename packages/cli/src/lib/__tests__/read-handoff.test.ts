@@ -81,4 +81,26 @@ describe("read-handoff.sh", () => {
 
     expect(fs.existsSync(path.join(vault, "handoffs"))).toBe(true);
   });
+
+  // Multi-session days (compacts, relaunches) are the norm, not the
+  // exception — a second same-day read must never clobber the first
+  // archive. That would silently destroy exactly what #650 exists to
+  // preserve, just moved one layer down from read-handoff's old `rm`.
+  it("does not clobber a same-day archive on a second read — both survive", () => {
+    const first = '{"written_at": "2026-08-03T08:00:00+00:00", "session": {"a": 1}}';
+    fs.writeFileSync(path.join(vault, "handoff.json"), first);
+    run(vault);
+
+    const second = '{"written_at": "2026-08-03T16:00:00+00:00", "session": {"a": 2}}';
+    fs.writeFileSync(path.join(vault, "handoff.json"), second);
+    run(vault);
+
+    const archiveDir = path.join(vault, "handoffs");
+    const archived = fs.readdirSync(archiveDir);
+    expect(archived).toHaveLength(2);
+    const contents = archived
+      .map((f) => fs.readFileSync(path.join(archiveDir, f), "utf8"))
+      .sort();
+    expect(contents).toEqual([first, second].sort());
+  });
 });
