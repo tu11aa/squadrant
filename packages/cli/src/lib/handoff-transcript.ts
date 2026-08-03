@@ -5,7 +5,7 @@
 // single newest file (never globs/replays all of them).
 import fs from "node:fs";
 import path from "node:path";
-import type { TranscriptTail } from "./handoff-reconstruct.js";
+import type { TranscriptTail } from "./handoff-facts.js";
 
 export const TRANSCRIPT_BYTE_CAP = 200_000;
 

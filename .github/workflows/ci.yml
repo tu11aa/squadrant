@@ -36,12 +36,12 @@ jobs:
         run: |
           node dist/index.js --help
           node dist/index.js crew --help
-          # #650: exercises the handoff-reconstruct module chain, which loads
+          # #650: exercises the handoff-facts module chain, which loads
           # node:sqlite — esbuild has silently stripped that prefix before
           # (no bare "sqlite" alias exists), throwing ERR_MODULE_NOT_FOUND at
           # runtime while staying invisible to vitest (which never touches
           # the bundled dist/). --help needs no registered project.
-          node dist/index.js handoff reconstruct --help
+          node dist/index.js handoff facts --help
           node dist/squadrantd.js --help
 
       - name: Test

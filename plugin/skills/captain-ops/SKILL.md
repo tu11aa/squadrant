@@ -20,11 +20,13 @@ If a handoff exists (`"exists"` is not false), read the context carefully:
 - `decisions` — important decisions already made (don't re-decide)
 The handoff file is archived to `{spokeVault}/handoffs/<date>.json` after reading (not deleted) — use it as your primary context source.
 
-If `"exists"` is false, don't cold-start blind — reconstruct instead:
+If `"exists"` is false, don't cold-start blind — gather facts instead:
 ```bash
-squadrant handoff reconstruct {project}
+squadrant handoff facts {project}
 ```
-This assembles the same shape from live repo state (open PRs, branch-vs-base, live crews) > claude-mem > your most recent session transcript, in that trust order. It's read-only and safe to re-run. The output is marked `reconstructed: true` with `sources` and `timeWindow` fields — treat it as your primary context source same as a real handoff, but remember it's inferred, not what the previous session actually wrote.
+This is **not** a handoff — it does not guess at what happened. It gathers verified facts, grouped by source with provenance: `liveRepo` (open PRs, branch-vs-base, live crews — from the gh API where possible, local git only as a fallback, marked with fetch age), `claudeMem` (your project's raw recent session summary and decisions), `transcript` (your most recent session's last user/assistant messages), and `meta` (which sources were actually available). It's read-only and safe to re-run.
+
+**You do the synthesizing, not the command.** Read the facts, then compose your own understanding of `currentState`/`openBranches`/`nextSteps`/`blockedItems`/`decisions` the way you would from any other evidence — cross-referencing `liveRepo` (exact, current) against `claudeMem` (distilled, can be stale) and `transcript` (inference) yourself. State plainly in-session that this context is reconstructed and therefore inferred, not what the previous session actually wrote.
 3. Search **claude-mem** (`mem-search` skill) for your project name to get additional continuity.
 4. Check `{spokeVault}/daily-logs/` — read the most recent log if one exists.
 5. Check `{spokeVault}/learnings/` — **selectively** load relevant learnings (see "Selective Loading" section below). Do NOT read all files — grep by task keywords and tags.

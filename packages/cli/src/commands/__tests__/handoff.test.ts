@@ -11,7 +11,7 @@ vi.mock("@squadrant/shared", async () => {
   return { ...actual, loadConfig };
 });
 
-import { runHandoffReconstruct } from "../handoff.js";
+import { runHandoffFacts } from "../handoff.js";
 
 function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   return {
@@ -30,7 +30,7 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   };
 }
 
-describe("runHandoffReconstruct", () => {
+describe("runHandoffFacts", () => {
   let tmp: string;
   let repoDir: string;
 
@@ -56,24 +56,28 @@ describe("runHandoffReconstruct", () => {
 
   it("throws a clear error for an unregistered project", async () => {
     loadConfig.mockReturnValue({ projects: {} });
-    await expect(runHandoffReconstruct("nope")).rejects.toThrow(/not found/i);
+    await expect(runHandoffFacts("nope")).rejects.toThrow(/not found/i);
   });
 
-  it("wires all three tiers together into a reconstructed handoff, stamped with the injected `now`", async () => {
-    const out = await runHandoffReconstruct("squadrant", {
+  it("wires all sources together into a facts object, stamped with the injected `now` — no authored fields", async () => {
+    const out = (await runHandoffFacts("squadrant", {
       claudeMemDbPath: path.join(tmp, "no-such.db"),
       claudeProjectsDir: path.join(tmp, "no-such-transcripts"),
       now: "2026-08-03T00:00:00.000Z",
       fetchTasks: async () => [makeTask({ name: "crew-1", state: "blocked", question: "which way?" })],
-    });
+    })) as unknown as Record<string, unknown>;
 
-    expect(out.reconstructed).toBe(true);
-    expect(out.written_at).toBe("2026-08-03T00:00:00.000Z");
-    expect(out.session.blockedItems).toEqual(["crew-1: which way?"]);
+    expect(out.meta).toMatchObject({ generatedAt: "2026-08-03T00:00:00.000Z" });
+    expect((out.liveRepo as { liveCrews: unknown[] }).liveCrews).toEqual([
+      { name: "crew-1", state: "blocked", task: "do the thing", question: "which way?" },
+    ]);
+    // The old authored shape must not leak back in.
+    expect(out).not.toHaveProperty("session");
+    expect(out).not.toHaveProperty("reconstructed");
   });
 
   it("degrades gracefully (no crash) when fetchTasks throws, e.g. daemon unreachable", async () => {
-    const out = await runHandoffReconstruct("squadrant", {
+    const out = await runHandoffFacts("squadrant", {
       claudeMemDbPath: path.join(tmp, "no-such.db"),
       claudeProjectsDir: path.join(tmp, "no-such-transcripts"),
       now: "2026-08-03T00:00:00.000Z",
@@ -82,14 +86,13 @@ describe("runHandoffReconstruct", () => {
       },
     });
 
-    expect(out.session.activeTasks).toBe("");
-    expect(out.session.blockedItems).toEqual([]);
+    expect(out.liveRepo.liveCrews).toEqual([]);
   });
 
   it("is side-effect free — the project checkout is untouched", async () => {
     const before = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir, encoding: "utf-8" });
 
-    await runHandoffReconstruct("squadrant", {
+    await runHandoffFacts("squadrant", {
       claudeMemDbPath: path.join(tmp, "no-such.db"),
       claudeProjectsDir: path.join(tmp, "no-such-transcripts"),
       now: "2026-08-03T00:00:00.000Z",

@@ -9,7 +9,7 @@
 // through createRequire sidesteps static-import rewriting entirely.
 import { createRequire } from "node:module";
 import fs from "node:fs";
-import type { ClaudeMemSummary } from "./handoff-reconstruct.js";
+import type { ClaudeMemSummary } from "./handoff-facts.js";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");

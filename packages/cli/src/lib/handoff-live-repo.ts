@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TERMINAL_STATES } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
-import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-reconstruct.js";
+import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-facts.js";
 
 export const RECENT_COMMITS_LIMIT = 15;
 export const OPEN_PR_LIMIT = 20;
