@@ -98,6 +98,30 @@ describe("gatherBranchState (impure)", () => {
     expect(state.mergedIntoBase).toBe(false);
   });
 
+  // Real bug, live on squadrant itself: when the captain is standing ON the
+  // project's base branch (branch === baseBranch, e.g. both "develop"),
+  // comparing the branch against itself trivially reports mergedIntoBase:
+  // true and aheadOfBase: 0 — read literally, "merged, safe to delete" on
+  // the branch you're standing on. SKILL.md tells the captain to ACT on
+  // these flags, so a cheap model could try to delete develop. Must be
+  // null/n-a, never a real-looking true/0, and no git calls should even be
+  // attempted for a comparison that's definitionally meaningless.
+  it("reports mergedIntoBase: null (not true) when branch === baseBranch — a self-comparison, not a real answer", () => {
+    // These handlers are what a REAL self-comparison would actually return
+    // (rev-parse and merge-base on the same ref trivially agree) — if the
+    // guard were missing, this would silently produce `true`, exactly the
+    // live bug. The guard must short-circuit before these are even called.
+    const runner = fakeRunner({
+      [STATUS]: "",
+      "git -C REPO for-each-ref --format=%(upstream:short)|%(upstream:track) refs/heads/develop": "origin/develop|\n",
+      "git -C REPO rev-parse --verify origin/develop": "sha1\n",
+      "git -C REPO rev-parse develop": "sha1\n",
+      "git -C REPO merge-base develop origin/develop": "sha1\n",
+    });
+    const state = gatherBranchState(runner, "REPO", "develop", "develop", false, false);
+    expect(state.mergedIntoBase).toBeNull();
+  });
+
   it("prefers origin/<base> over the local base branch for merge-base freshness", () => {
     const runner = fakeRunner({
       [TRACK_CMD]: "origin/develop|\n",

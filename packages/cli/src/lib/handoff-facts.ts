@@ -79,11 +79,12 @@ export interface LiveRepoState {
   /** "gh-api" (always fresh) or "local-fallback" (gh unavailable). */
   baseBranchSource: "gh-api" | "local-fallback";
   recentCommits: string[];
-  /** Commits on `branch` not yet on `baseBranch`. */
-  aheadOfBase: number;
+  /** Commits on `branch` not yet on `baseBranch`. Null when branch === baseBranch — a self-comparison, not a real answer (see aheadOfBaseSource "n-a"). */
+  aheadOfBase: number | null;
   /** "gh-api" (fresh, no fetch needed), "local-git" (only as fresh as the
-   *  last fetch — see fetchAgeMs), or "unknown" (neither source available). */
-  aheadOfBaseSource: "gh-api" | "local-git" | "unknown";
+   *  last fetch — see fetchAgeMs), "n-a" (branch === baseBranch, nothing to
+   *  compare), or "unknown" (neither source available). */
+  aheadOfBaseSource: "gh-api" | "local-git" | "n-a" | "unknown";
   /** Age of .git/FETCH_HEAD in ms; null when unknown (never fetched / unreadable). */
   fetchAgeMs: number | null;
   openPRs: LiveOpenPR[];
@@ -91,6 +92,8 @@ export interface LiveRepoState {
   /** Disagreements discovered while gathering (e.g. gh vs local base SHA). */
   conflicts: HandoffConflict[];
   branchState: BranchState;
+  /** Commits baseBranch is ahead of the release branch (main) — the "unreleased" delta. The comparison that's actually meaningful when standing ON baseBranch, where aheadOfBase is "n-a". Null when baseBranch IS the release branch, or gh is unavailable. */
+  unreleasedAheadOfReleaseBranch: number | null;
 }
 
 export interface ClaudeMemSessionSummary {

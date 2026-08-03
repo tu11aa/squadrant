@@ -47,6 +47,12 @@ export function parseUpstreamTrack(raw: string | null): {
 
 /** Compares merge-base(branch, target) against branch's own tip — equal means branch is fully contained in target (merged). Avoids relying on exit-code differentiation from `--is-ancestor`. */
 function gatherMergedIntoBase(runner: CommandRunner, projectPath: string, branch: string, baseBranch: string): boolean | null {
+  // branch === baseBranch (e.g. standing on "develop" when develop is also
+  // the project's base) is a self-comparison — it would trivially report
+  // `true`, read by SKILL.md's own guidance as "merged, safe to delete" on
+  // the very branch you're standing on. Never answer a meaningless question.
+  if (branch === baseBranch) return null;
+
   const originBase = `origin/${baseBranch}`;
   const originResolved = tryRun(runner, "git", ["-C", projectPath, "rev-parse", "--verify", originBase], projectPath) !== null;
   const target = originResolved ? originBase : baseBranch;

@@ -288,6 +288,7 @@ describe("gatherLiveRepoState", () => {
         onUnexpectedBranch: false,
         fetchPerformed: false,
       },
+      unreleasedAheadOfReleaseBranch: null,
     });
   });
 
@@ -355,5 +356,84 @@ describe("gatherLiveRepoState", () => {
 
     expect(fetchCalled).toBe(true);
     expect(state.branchState.fetchPerformed).toBe(true);
+  });
+
+  // Real bug, live on squadrant itself: branch=develop, baseBranch=develop —
+  // comparing develop against itself trivially reported aheadOfBase: 0,
+  // read as a real (if boring) number rather than the meaningless
+  // self-comparison it actually is. Must be null/"n-a", and no gh
+  // compare / local rev-list should even be attempted.
+  it("reports aheadOfBase: null and aheadOfBaseSource: n-a when branch === baseBranch — never a real-looking number", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: JSON.stringify({ nameWithOwner: "acme/squadrant", defaultBranchRef: { name: "develop" } }),
+      [PR_LIST]: "[]",
+      "gh api repos/acme/squadrant/commits/develop --jq .sha": "sha1\n",
+      "git -C REPO rev-parse origin/develop": "sha1\n",
+      "gh api repos/acme/squadrant/compare/main...develop --jq .ahead_by": "24\n", // for unreleasedAheadOfReleaseBranch
+      ...branchStateDefaults("develop", "develop"),
+      // Deliberately no handler for "compare/develop...develop" or
+      // "rev-list --count origin/develop..HEAD" — if the implementation
+      // attempted either self-comparison, fakeRunner would throw.
+    });
+
+    const state = gatherLiveRepoState("REPO", "develop", [], runner, NOW);
+
+    expect(state.aheadOfBase).toBeNull();
+    expect(state.aheadOfBaseSource).toBe("n-a");
+  });
+
+  it("computes unreleasedAheadOfReleaseBranch (baseBranch vs main) via the gh API", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: JSON.stringify({ nameWithOwner: "acme/squadrant", defaultBranchRef: { name: "develop" } }),
+      [PR_LIST]: "[]",
+      "gh api repos/acme/squadrant/commits/develop --jq .sha": "sha1\n",
+      "git -C REPO rev-parse origin/develop": "sha1\n",
+      "gh api repos/acme/squadrant/compare/main...develop --jq .ahead_by": "24\n",
+      ...branchStateDefaults("develop", "develop"),
+    });
+
+    const state = gatherLiveRepoState("REPO", "develop", [], runner, NOW);
+
+    expect(state.unreleasedAheadOfReleaseBranch).toBe(24);
+  });
+
+  it("reports unreleasedAheadOfReleaseBranch: null when baseBranch IS the release branch (no self-compare)", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "main\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: JSON.stringify({ nameWithOwner: "acme/squadrant", defaultBranchRef: { name: "main" } }),
+      [PR_LIST]: "[]",
+      "gh api repos/acme/squadrant/commits/main --jq .sha": "sha1\n",
+      "git -C REPO rev-parse origin/main": "sha1\n",
+      ...branchStateDefaults("main", "main"),
+      // Deliberately no "compare/main...main" handler — if attempted, fakeRunner throws.
+    });
+
+    const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
+
+    expect(state.unreleasedAheadOfReleaseBranch).toBeNull();
+  });
+
+  it("reports unreleasedAheadOfReleaseBranch: null when gh is unavailable", () => {
+    const runner = fakeRunner({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: () => {
+        throw new Error("gh unavailable");
+      },
+      "git -C REPO rev-list --count origin/main..HEAD": "0\n",
+      [PR_LIST]: () => {
+        throw new Error("gh unavailable");
+      },
+      ...branchStateDefaults("develop", "main"),
+    });
+
+    const state = gatherLiveRepoState("REPO", "main", [], runner, NOW);
+
+    expect(state.unreleasedAheadOfReleaseBranch).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ function live(overrides: Partial<LiveRepoState> = {}): LiveRepoState {
       onUnexpectedBranch: false,
       fetchPerformed: false,
     },
+    unreleasedAheadOfReleaseBranch: null,
     ...overrides,
   };
 }

@@ -26,6 +26,8 @@ import { gatherBranchState } from "./handoff-branch-state.js";
 
 export const RECENT_COMMITS_LIMIT = 15;
 export const OPEN_PR_LIMIT = 20;
+/** squadrant's GitFlow convention: develop is the default/integration branch, main is where releases cut from. */
+export const RELEASE_BRANCH = "main";
 
 export interface CommandRunner {
   run(cmd: string, args: string[], cwd: string): string;
@@ -155,22 +157,39 @@ export function gatherLiveRepoState(
 
   const fetchAgeMs = readFetchAgeMs(projectPath, now);
 
-  let aheadOfBase = 0;
+  let aheadOfBase: number | null = 0;
   let aheadOfBaseSource: LiveRepoState["aheadOfBaseSource"] = "unknown";
-  if (ghInfo && !detached) {
-    const ghAhead = ghAheadOfBase(runner, projectPath, ghInfo.nameWithOwner, baseBranch, branch);
-    if (ghAhead !== null) {
-      aheadOfBase = ghAhead;
-      aheadOfBaseSource = "gh-api";
+  if (branch === baseBranch) {
+    // Standing ON the base branch — comparing it against itself is
+    // meaningless (and would trivially read "0 ahead", masking that this
+    // isn't a real answer). unreleasedAheadOfReleaseBranch below is the
+    // comparison that's actually meaningful in this position.
+    aheadOfBase = null;
+    aheadOfBaseSource = "n-a";
+  } else {
+    if (ghInfo && !detached) {
+      const ghAhead = ghAheadOfBase(runner, projectPath, ghInfo.nameWithOwner, baseBranch, branch);
+      if (ghAhead !== null) {
+        aheadOfBase = ghAhead;
+        aheadOfBaseSource = "gh-api";
+      }
+    }
+    if (aheadOfBaseSource === "unknown") {
+      const localAhead = localAheadOfBase(runner, projectPath, baseBranch);
+      if (localAhead !== null) {
+        aheadOfBase = localAhead;
+        aheadOfBaseSource = "local-git";
+      }
     }
   }
-  if (aheadOfBaseSource === "unknown") {
-    const localAhead = localAheadOfBase(runner, projectPath, baseBranch);
-    if (localAhead !== null) {
-      aheadOfBase = localAhead;
-      aheadOfBaseSource = "local-git";
-    }
-  }
+
+  // The comparison that matters when standing on baseBranch itself: how far
+  // is it ahead of the release branch (the "unreleased" delta) — not
+  // baseBranch vs baseBranch. gh-api only, like ghAheadOfBase's other numbers.
+  const unreleasedAheadOfReleaseBranch =
+    ghInfo && baseBranch !== RELEASE_BRANCH
+      ? ghAheadOfBase(runner, projectPath, ghInfo.nameWithOwner, RELEASE_BRANCH, baseBranch)
+      : null;
 
   const conflicts: HandoffConflict[] = [];
   if (ghInfo) {
@@ -200,5 +219,6 @@ export function gatherLiveRepoState(
     liveCrews: gatherLiveCrews(tasks),
     conflicts,
     branchState: gatherBranchState(runner, projectPath, branch, baseBranch, detached, fetch),
+    unreleasedAheadOfReleaseBranch,
   };
 }
