@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readNewestTranscriptTail } from "../handoff-transcript.js";
+import { extractTranscriptTail } from "../handoff-transcript.js";
 
 function userLine(text: string): string {
   return JSON.stringify({ type: "user", message: { role: "user", content: text }, timestamp: "2026-08-03T00:00:00.000Z" });
@@ -16,39 +16,23 @@ function assistantLine(text: string): string {
   });
 }
 
-describe("readNewestTranscriptTail", () => {
+// #651: which file to read is resolved by the captain-session registry
+// (ground truth, recorded at SessionStart) — never guessed by mtime, never
+// content-sniffed for role. This module's only job now is extracting the
+// tail of a KNOWN transcript path.
+describe("extractTranscriptTail", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-transcripts-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-transcript-"));
   });
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("returns null when the directory does not exist", () => {
-    expect(readNewestTranscriptTail(path.join(dir, "missing"))).toBeNull();
-  });
-
-  it("returns null when there are no .jsonl files", () => {
-    fs.writeFileSync(path.join(dir, "notes.txt"), "hello");
-    expect(readNewestTranscriptTail(dir)).toBeNull();
-  });
-
-  it("picks the newest .jsonl file by mtime, not by name", () => {
-    const older = path.join(dir, "aaa-newer-name-but-older-mtime.jsonl");
-    const newer = path.join(dir, "zzz.jsonl");
-    fs.writeFileSync(older, userLine("from older file"));
-    fs.writeFileSync(newer, userLine("from newer file"));
-    const now = Date.now();
-    fs.utimesSync(older, new Date(now - 10_000), new Date(now - 10_000));
-    fs.utimesSync(newer, new Date(now), new Date(now));
-
-    const result = readNewestTranscriptTail(dir);
-
-    expect(result?.path).toBe(newer);
-    expect(result?.lastUserMessage).toBe("from newer file");
+  it("returns null when the given path does not exist", () => {
+    expect(extractTranscriptTail(path.join(dir, "missing.jsonl"))).toBeNull();
   });
 
   it("extracts the last user message and last assistant text", () => {
@@ -58,8 +42,9 @@ describe("readNewestTranscriptTail", () => {
       [userLine("first question"), assistantLine("first answer"), userLine("second question"), assistantLine("second answer")].join("\n") + "\n",
     );
 
-    const result = readNewestTranscriptTail(dir);
+    const result = extractTranscriptTail(file);
 
+    expect(result?.path).toBe(file);
     expect(result?.lastUserMessage).toBe("second question");
     expect(result?.lastAssistantText).toBe("second answer");
   });
@@ -68,7 +53,7 @@ describe("readNewestTranscriptTail", () => {
     const file = path.join(dir, "session.jsonl");
     fs.writeFileSync(file, ["not json at all", userLine("a real message")].join("\n") + "\n");
 
-    const result = readNewestTranscriptTail(dir);
+    const result = extractTranscriptTail(file);
 
     expect(result?.lastUserMessage).toBe("a real message");
   });
@@ -83,7 +68,7 @@ describe("readNewestTranscriptTail", () => {
     // Cap smaller than the old line's length but larger than the new line —
     // the tail read must land inside oldLine (dropped as a partial first
     // line) followed by the FULL newLine, never seeing "OLD".
-    const result = readNewestTranscriptTail(dir, 200);
+    const result = extractTranscriptTail(file, 200);
 
     expect(result?.lastUserMessage).toBe("NEW");
   });
@@ -94,7 +79,7 @@ describe("readNewestTranscriptTail", () => {
     const mtime = new Date("2026-08-01T12:00:00.000Z");
     fs.utimesSync(file, mtime, mtime);
 
-    const result = readNewestTranscriptTail(dir);
+    const result = extractTranscriptTail(file);
 
     expect(result?.mtimeIso).toBe(mtime.toISOString());
   });

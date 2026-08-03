@@ -1,13 +1,28 @@
-// handoff-facts.ts — #650: gather verified facts, grouped by source with
-// provenance. This does NOT author a handoff — no currentState/nextSteps/
-// decisions/blockedItems synthesis, no narrative composition, no guessing
-// at prose. Field-copying a claude-mem summary into "currentState" isn't
-// synthesis, it's pretending to reason. Composing the actual handoff from
-// these facts is judgment, and belongs to whoever reads them (the captain).
+// handoff-facts.ts — #650/#651: gather verified facts, grouped by source
+// with provenance. This does NOT author a handoff — no currentState/
+// nextSteps/decisions/blockedItems synthesis, no narrative composition, no
+// guessing at prose. Field-copying a claude-mem summary into "currentState"
+// isn't synthesis, it's pretending to reason. Composing the actual handoff
+// from these facts is judgment, and belongs to whoever reads them (the
+// captain).
 //
-// The one exception: a gh-vs-local base SHA mismatch is kept as a conflict
-// (see LiveRepoState.conflicts) — that's verifying two hard facts against
-// each other, not guessing at the meaning of prose.
+// Two things this file does NOT do, both learned the hard way:
+// - It does NOT pick "the" transcript by mtime or content-sniff it for role.
+//   Session identity comes from the captain-session-registry (#651) —
+//   ground truth recorded at the source (SessionStart hook), not inferred.
+// - It does NOT read every archived handoff or every session transcript.
+//   The newest archived handoff is a CHECKPOINT — it already covers history
+//   up to the moment it was written, so it's read in full and nothing
+//   older is re-read. Only sessions that started AFTER the checkpoint (the
+//   GAP — work no handoff covers) get their transcripts read. With no
+//   checkpoint at all, this falls back to a bounded recency window.
+//
+// The one exception to "no judgment": a gh-vs-local base SHA mismatch is
+// kept as a conflict (LiveRepoState.conflicts) — verifying two hard facts
+// against each other, not guessing at the meaning of prose. Similarly, "is
+// this session's startedAt after the checkpoint's timestamp" is arithmetic,
+// not interpretation — by construction every gapSession therefore has no
+// handoff of its own (if it had written one, THAT would be the checkpoint).
 
 export interface LiveOpenPR {
   number: number;
@@ -29,6 +44,31 @@ export interface HandoffConflict {
   /** The higher-trust tier's actual fact (the gh API). */
   fact: string;
   resolution: string;
+}
+
+/**
+ * Status of the current branch against its upstream tracking branch —
+ * distinct from aheadOfBase, which compares against the PROJECT's base
+ * branch (e.g. develop). Computed locally from git's own tracking data
+ * (never a network call unless --fetch was passed) via
+ * `git for-each-ref --format=%(upstream:track)`, which is how "gone" is
+ * detected without needing a live query: if the last fetch/prune already
+ * recorded the remote branch as deleted, git knows locally.
+ */
+export type UpstreamStatus = "up-to-date" | "behind" | "ahead" | "diverged" | "no-upstream" | "upstream-gone" | "unknown";
+
+export interface BranchState {
+  upstreamStatus: UpstreamStatus;
+  aheadOfUpstream: number | null;
+  behindUpstream: number | null;
+  /** Whether the branch's tip is already reachable from origin/<base> (or local <base> as fallback) — null if undeterminable. */
+  mergedIntoBase: boolean | null;
+  /** Uncommitted changes (staged or unstaged) — null if undeterminable. */
+  dirtyWorkingTree: boolean | null;
+  /** True when sitting on a crew/* worktree branch — a captain checkout normally shouldn't be. */
+  onUnexpectedBranch: boolean;
+  /** Whether `git fetch origin` actually ran and succeeded (only possible when the caller opted in). */
+  fetchPerformed: boolean;
 }
 
 export interface LiveRepoState {
@@ -68,7 +108,7 @@ export interface ClaudeMemDecision {
 export interface ClaudeMemSummary {
   latestSessionSummary: ClaudeMemSessionSummary | null;
   recentDecisions: ClaudeMemDecision[];
-  /** Earliest created_at among the rows actually considered — feeds timeWindow.from. */
+  /** Earliest created_at among the rows actually considered. */
   oldestCreatedAt: string | null;
 }
 
@@ -79,8 +119,38 @@ export interface TranscriptTail {
   lastAssistantText: string | null;
 }
 
+/** A captain session recorded at the source (SessionStart hook) — ground
+ *  truth for "who ran when", never inferred from file mtimes. */
+export interface CaptainSessionRecord {
+  sessionId: string;
+  project: string;
+  agent: string;
+  startedAt: string;
+  cwd: string;
+  transcriptPath: string;
+}
+
+export interface SessionWithTranscript {
+  session: CaptainSessionRecord;
+  transcript: TranscriptTail | null;
+}
+
+/** A real handoff a prior session actually wrote, archived (not deleted) by
+ *  read-handoff.sh. Emitted raw — never merged into other tiers. */
+export interface ArchivedHandoff {
+  filename: string;
+  path: string;
+  ageMs: number;
+  content: unknown;
+}
+
 /** Past this age, a local-git-sourced aheadOfBase gets an explicit staleness warning. */
 export const STALE_FETCH_WARNING_MS = 24 * 60 * 60 * 1000;
+
+/** Fallback recency bound used ONLY when there is no checkpoint at all
+ *  (nothing has ever been archived) — otherwise the checkpoint itself is
+ *  the boundary, unbounded. Overridable per call. */
+export const SESSION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface HandoffFactsLiveRepo extends LiveRepoState {
   staleWarning: string | null;
@@ -89,13 +159,25 @@ export interface HandoffFactsLiveRepo extends LiveRepoState {
 export interface HandoffFacts {
   meta: {
     generatedAt: string;
-    timeWindow: { from: string | null; to: string };
+    /** Which checkpoint was used, or null if there was none (see usedFallbackWindow). */
+    checkpointFilename: string | null;
+    /** True when there was no checkpoint and selection fell back to a bounded recency window. */
+    usedFallbackWindow: boolean;
+    /** The fallback window actually used, only when usedFallbackWindow is true. */
+    fallbackWindowMs: number | null;
+    /** sessionId of every session in gapSessions — the boundary at a glance. */
+    gapSessionIds: string[];
     sourcesAvailable: string[];
     sourcesMissing: string[];
+    /** Non-null when the session registry itself couldn't be consulted (e.g. no file yet). */
+    registryNote: string | null;
   };
   liveRepo: HandoffFactsLiveRepo;
   claudeMem: ClaudeMemSummary | null;
-  transcript: TranscriptTail | null;
+  /** The newest archived handoff, read in full — the baseline everything before it is covered by. Null if none exists yet. */
+  checkpoint: ArchivedHandoff | null;
+  /** Captain sessions that started after the checkpoint (or, with no checkpoint, within the fallback window) — the work no handoff covers. Newest first. */
+  gapSessions: SessionWithTranscript[];
 }
 
 // Mechanical (age > threshold), not judgment — unlike guessing at what a
@@ -115,7 +197,8 @@ function staleWarning(live: LiveRepoState): string | null {
 function sourceAvailability(
   live: LiveRepoState,
   claudeMem: ClaudeMemSummary | null,
-  transcript: TranscriptTail | null,
+  checkpoint: ArchivedHandoff | null,
+  gapSessions: SessionWithTranscript[],
 ): { available: string[]; missing: string[] } {
   const available: string[] = [];
   const missing: string[] = [];
@@ -127,29 +210,47 @@ function sourceAvailability(
   const claudeMemHasData = !!claudeMem && (claudeMem.latestSessionSummary !== null || claudeMem.recentDecisions.length > 0);
   (claudeMemHasData ? available : missing).push("claudeMem");
 
-  (transcript ? available : missing).push("transcript");
+  (checkpoint ? available : missing).push("checkpoint");
+  (gapSessions.length > 0 ? available : missing).push("gapSessions");
 
   return { available, missing };
 }
 
-/** Pure. Wraps already-gathered facts into {meta, liveRepo, claudeMem, transcript} with provenance — no synthesis. */
+export interface AssembleHandoffFactsExtras {
+  /** Non-null when the session registry itself couldn't be consulted (e.g. no file yet). */
+  registryNote?: string | null;
+  /** True when there was no checkpoint and gapSessions selection fell back to a bounded recency window. */
+  usedFallbackWindow?: boolean;
+  /** The fallback window actually used, only meaningful when usedFallbackWindow is true. */
+  fallbackWindowMs?: number;
+}
+
+/** Pure. Wraps already-gathered facts into {meta, liveRepo, claudeMem, checkpoint, gapSessions} with provenance — no synthesis. */
 export function assembleHandoffFacts(
   live: LiveRepoState,
   claudeMem: ClaudeMemSummary | null,
-  transcript: TranscriptTail | null,
+  gapSessions: SessionWithTranscript[],
+  checkpoint: ArchivedHandoff | null,
   now: string,
+  extras: AssembleHandoffFactsExtras = {},
 ): HandoffFacts {
-  const { available, missing } = sourceAvailability(live, claudeMem, transcript);
+  const sortedGap = [...gapSessions].sort((a, b) => Date.parse(b.session.startedAt) - Date.parse(a.session.startedAt));
+  const { available, missing } = sourceAvailability(live, claudeMem, checkpoint, sortedGap);
 
   return {
     meta: {
       generatedAt: now,
-      timeWindow: { from: claudeMem?.oldestCreatedAt ?? transcript?.mtimeIso ?? null, to: now },
+      checkpointFilename: checkpoint?.filename ?? null,
+      usedFallbackWindow: extras.usedFallbackWindow ?? false,
+      fallbackWindowMs: extras.usedFallbackWindow ? (extras.fallbackWindowMs ?? SESSION_WINDOW_MS) : null,
+      gapSessionIds: sortedGap.map((s) => s.session.sessionId),
       sourcesAvailable: available,
       sourcesMissing: missing,
+      registryNote: extras.registryNote ?? null,
     },
     liveRepo: { ...live, staleWarning: staleWarning(live) },
     claudeMem,
-    transcript,
+    checkpoint,
+    gapSessions: sortedGap,
   };
 }
