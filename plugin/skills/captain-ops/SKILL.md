@@ -18,7 +18,13 @@ If a handoff exists (`"exists"` is not false), read the context carefully:
 - `nextSteps` — what the previous session planned to do next
 - `blockedItems` — unresolved blockers
 - `decisions` — important decisions already made (don't re-decide)
-The handoff file is auto-deleted after reading. Use this as your primary context source.
+The handoff file is archived to `{spokeVault}/handoffs/<date>.json` after reading (not deleted) — use it as your primary context source.
+
+If `"exists"` is false, don't cold-start blind — reconstruct instead:
+```bash
+squadrant handoff reconstruct {project}
+```
+This assembles the same shape from live repo state (open PRs, branch-vs-base, live crews) > claude-mem > your most recent session transcript, in that trust order. It's read-only and safe to re-run. The output is marked `reconstructed: true` with `sources` and `timeWindow` fields — treat it as your primary context source same as a real handoff, but remember it's inferred, not what the previous session actually wrote.
 3. Search **claude-mem** (`mem-search` skill) for your project name to get additional continuity.
 4. Check `{spokeVault}/daily-logs/` — read the most recent log if one exists.
 5. Check `{spokeVault}/learnings/` — **selectively** load relevant learnings (see "Selective Loading" section below). Do NOT read all files — grep by task keywords and tags.
