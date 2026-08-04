@@ -38,6 +38,7 @@ import { tokensCommand } from "./commands/tokens.js";
 import { telegramCommand } from "./commands/telegram.js";
 import { hooksCommand } from "./commands/hooks.js";
 import { workCommand } from "./commands/work.js";
+import { handoffCommand } from "./commands/handoff.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -142,6 +143,7 @@ program.addCommand(tokensCommand);
 program.addCommand(telegramCommand);
 program.addCommand(hooksCommand());
 program.addCommand(workCommand);
+program.addCommand(handoffCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

@@ -8,17 +8,40 @@ description: Complete captain playbook — session startup, crew spawning, statu
 ## Session Startup
 
 1. Read `~/.config/squadrant/config.json` — match your current working directory. Note your `spokeVault`, `group`, `groupRole`, and `maxCrew` (default: 5).
-2. **Check for handoff from previous session:**
+2. **Check for a handoff, and verify live repo state — every boot, not just when the handoff is missing:**
 ```bash
 ~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"
+squadrant handoff facts {project} --fetch
 ```
-If a handoff exists (`"exists"` is not false), read the context carefully:
+`read-handoff.sh` — if a handoff exists (`"exists"` is not false), read the context carefully:
 - `currentState` — what was happening when the last session ended
 - `openBranches` — branches with uncommitted/unmerged work
 - `nextSteps` — what the previous session planned to do next
 - `blockedItems` — unresolved blockers
 - `decisions` — important decisions already made (don't re-decide)
-The handoff file is auto-deleted after reading. Use this as your primary context source.
+The handoff file is archived to `{spokeVault}/handoffs/<date>.json` after reading (not deleted) — use it as your primary context source.
+
+`squadrant handoff facts {project} --fetch` — run this **every session start, unconditionally**, not only when the handoff is missing. `--fetch` is the one deliberate network call in your startup: it updates remote-tracking refs before reporting, so what follows is verified, not stale-and-silent. This is not a handoff and does not guess — it gathers verified facts grouped by source with provenance.
+
+**Check `liveRepo.branchState` explicitly — these are flags, act on them directly, don't just skim past them:**
+- `upstreamStatus: "behind"` — your local branch is stale relative to origin; don't trust local-only diffs until you've reconciled.
+- `upstreamStatus: "diverged"` — both sides moved; this needs a decision (rebase/merge), not silence.
+- `upstreamStatus: "upstream-gone"` — the remote branch was deleted; this local branch is likely done.
+- `upstreamStatus: "no-upstream"` — never pushed.
+- `dirtyWorkingTree: true` — uncommitted changes are sitting from a prior session; find out why before proceeding.
+- `onUnexpectedBranch: true` — you're sitting on a `crew/*` worktree branch; a captain's own checkout normally shouldn't be.
+- `mergedIntoBase: true` — this branch is fully merged into base already; safe to switch back to base / clean up.
+- (This is the direct fix for a real incident: local `main` was 164 commits behind origin with no signal anything was wrong, and got reported as "188 commits ahead" when the true count was 24. Don't let that happen silently again — these flags exist so you don't have to eyeball `git log`.)
+
+**Check tasks from the same call — `liveRepo.liveCrews`** lists every non-terminal crew task (name/state/task/question) for this project. A `state: "blocked"` entry with a `question` is waiting on you right now; don't miss it under everything else in the payload.
+
+If `read-handoff.sh` reported `"exists": false`, reconstruct from this SAME `handoff facts` call's output instead of cold-starting blind — no need to run it twice:
+- `checkpoint` — the newest archived handoff, if any, read in full (already covers history up to when it was written).
+- `gapSessions` — captain sessions after the checkpoint, each with its own transcript (the work no handoff covers — read `meta.gapSessionIds` to see the boundary at a glance).
+- `claudeMem` — your project's raw recent session summary and decisions.
+- `meta` — which sources were actually available (`sourcesAvailable`/`sourcesMissing`), and `registryNote`/`checkpointFilename`/`usedFallbackWindow` explaining how the gap was determined.
+
+**You do the synthesizing, not the command.** Compose your own understanding of `currentState`/`openBranches`/`nextSteps`/`blockedItems`/`decisions` from this evidence — cross-referencing `liveRepo` (exact, current) against `claudeMem` (distilled, can be stale) and each gap session's `transcript` (inference) yourself. State plainly in-session that this context is reconstructed and therefore inferred, not what the previous session actually wrote.
 3. Search **claude-mem** (`mem-search` skill) for your project name to get additional continuity.
 4. Check `{spokeVault}/daily-logs/` — read the most recent log if one exists.
 5. Check `{spokeVault}/learnings/` — **selectively** load relevant learnings (see "Selective Loading" section below). Do NOT read all files — grep by task keywords and tags.
