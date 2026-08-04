@@ -1,24 +1,26 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **squadrant** (5084 symbols, 7671 relationships, 177 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **squadrant** (5174 symbols, 7796 relationships, 174 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
+> **Known-broken gate (#638/#642):** `gitnexus_impact` has confirmed false negatives — it reports 0 callers / LOW risk for symbols that demonstrably have callers. A replacement is being evaluated in #642; until that lands, treat the guidance below as advisory, not a hard mandate.
+
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- Before modifying a function, class, or method, running `gitnexus_impact({target: "symbolName", direction: "upstream"})` is good practice and can surface real risk. Report the blast radius (direct callers, affected processes, risk level) to the user when you do.
+- A **LOW or 0-caller result carries no information** — it does not mean the change is safe. Cross-check with `grep`/an editor's find-references and a typecheck before editing, regardless of what `gitnexus_impact` reported.
+- **A HIGH or CRITICAL result is still meaningful — warn the user** and treat it as a real signal before proceeding with edits.
+- Run `gitnexus_detect_changes()` before committing as one useful check among others, not as the sole gate.
+- When exploring unfamiliar code, `gitnexus_query({query: "concept"})` can find execution flows faster than grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER treat a LOW-risk or 0-caller `gitnexus_impact` result as proof a change is safe — it is a known false negative (#638), not an all-clear.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis — those remain meaningful.
+- Prefer `gitnexus_rename` over find-and-replace for renames, but verify its result the same way — with grep and a typecheck — since it shares the same underlying gap.
 
 ## Resources
 

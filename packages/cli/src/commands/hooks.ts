@@ -11,9 +11,12 @@
 import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { sendRequest } from "@squadrant/core";
-import { mapClaudeHookToEvent } from "@squadrant/agents";
+import { sendRequest, resolveCurrentProject } from "@squadrant/core";
+import { mapClaudeHookToEvent, deriveTranscriptPath } from "@squadrant/agents";
+import { loadConfig } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
+import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
+import { appendCaptainSession } from "../lib/captain-session-registry.js";
 
 const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
@@ -54,6 +57,58 @@ export function mapHookSub(sub: string, payload: unknown, taskId: string): Contr
   }
 }
 
+/**
+ * Pure. Builds a captain-sessions.jsonl record from a raw SessionStart hook
+ * payload — #651's ground-truth attribution, recorded at the source instead
+ * of inferred later from file mtimes or transcript content. Prefers the
+ * documented `transcript_path` field when Claude provides it; falls back to
+ * deriving it from session_id+cwd (same layered approach already used for
+ * #174's last-assistant-text resolution). Returns null when there's no
+ * session_id to key the record on — nothing meaningful to record.
+ */
+export function buildCaptainSessionRecord(
+  payload: unknown,
+  project: string,
+  fallbackCwd: string,
+  now: string,
+): CaptainSessionRecord | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const p = payload as { session_id?: unknown; cwd?: unknown; transcript_path?: unknown };
+
+  const sessionId = typeof p.session_id === "string" && p.session_id ? p.session_id : null;
+  if (!sessionId) return null;
+
+  const cwd = typeof p.cwd === "string" && p.cwd ? p.cwd : fallbackCwd;
+  const transcriptPath =
+    (typeof p.transcript_path === "string" && p.transcript_path ? p.transcript_path : null) ??
+    deriveTranscriptPath(sessionId, cwd) ??
+    "";
+
+  return { sessionId, project, agent: "claude", startedAt: now, cwd, transcriptPath };
+}
+
+/**
+ * I/O: resolve the current project (cwd-based, same as `squadrant dispatch`)
+ * and append a session record to that project's registry. Best-effort —
+ * never throws, never blocks the hook contract (exit 0 either way).
+ */
+function recordCaptainSessionStart(payload: unknown): void {
+  try {
+    const config = loadConfig();
+    const project = resolveCurrentProject(config);
+    if (!project) return;
+    const proj = config.projects[project];
+    if (!proj) return;
+
+    const record = buildCaptainSessionRecord(payload, project, process.cwd(), new Date().toISOString());
+    if (!record) return;
+
+    appendCaptainSession(proj.spokeVault, record);
+  } catch {
+    // Best-effort — a registry-write failure must never block the session.
+  }
+}
+
 export function hooksCommand(): Command {
   const hooks = new Command("hooks")
     .description("(internal) receive lifecycle hook events from agent processes");
@@ -62,11 +117,8 @@ export function hooksCommand(): Command {
     .command("claude <sub>", { hidden: true })
     .description("internal: bridge a NativeHookSource claude hook to squadrantd")
     .action(async (sub: string) => {
-      const taskId = process.env.SQUADRANT_CREW_TASK_ID;
-      const project = process.env.SQUADRANT_CREW_PROJECT;
-      // Not a crew session — no-op (hook fires for all claude processes).
-      if (!taskId || !project) { process.exit(0); }
-
+      // Read stdin FIRST — it's needed by both the captain path below and
+      // the crew path further down, and a stream can only be drained once.
       let stdin = "";
       try {
         for await (const chunk of process.stdin) stdin += chunk as string;
@@ -75,6 +127,18 @@ export function hooksCommand(): Command {
       if (stdin.trim()) {
         try { payload = JSON.parse(stdin); } catch { /* ignore malformed */ }
       }
+
+      // #651: captain sessions have SQUADRANT_ROLE=captain but no crew env
+      // vars, so they'd otherwise no-op below without this. Best-effort,
+      // side-effect-only — falls through to the same exit-0 hook contract.
+      if (sub === "session-start" && process.env.SQUADRANT_ROLE === "captain") {
+        recordCaptainSessionStart(payload);
+      }
+
+      const taskId = process.env.SQUADRANT_CREW_TASK_ID;
+      const project = process.env.SQUADRANT_CREW_PROJECT;
+      // Not a crew session — no-op (hook fires for all claude processes).
+      if (!taskId || !project) { process.exit(0); }
 
       const ev = mapHookSub(sub, payload, taskId);
       if (!ev) { process.exit(0); }

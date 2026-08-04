@@ -227,7 +227,13 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
     }
   }
 
-  const agentCmd = opts.agentCmdFactory(forceFresh);
+  const builtCmd = opts.agentCmdFactory(forceFresh);
+  // #636: this is the ONLY place a captain session is spawned, so it's the
+  // one place we can positively mark a process tree as "captain" — inherited
+  // by the agent CLI and every `squadrant` subcommand later run from inside
+  // this pane. ensureDaemon() requires this marker before it will mutate the
+  // shared daemon's registration; every other role is deliberately unmarked.
+  const agentCmd = opts.role === "captain" ? `SQUADRANT_ROLE=captain ${builtCmd}` : builtCmd;
   recordSession(opts.workspaceName, opts.role, {
     sessionsPath: opts.sessionsPath,
     templatesDir: opts.templatesDir,

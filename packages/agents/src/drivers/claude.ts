@@ -48,8 +48,12 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --settings ${opts.settingsPath}`;
       }
 
-      // Load squadrant plugin for skills
-      const pluginDir = `${process.env.HOME}/.config/squadrant/plugin`;
+      // Load squadrant plugin for skills. Crews get a subset plugin dir
+      // (crew.generic.md/crew.claude.md only ever reference karpathy-principles)
+      // synced by ensureRuntimeSynced — the harness lists only skills that
+      // role actually needs, instead of all 16 squadrant ships.
+      const pluginSubdir = opts.role === "crew" ? "plugin-crew" : "plugin";
+      const pluginDir = `${process.env.HOME}/.config/squadrant/${pluginSubdir}`;
       cmd += ` --plugin-dir ${pluginDir}`;
 
       if (!opts.interactive) {

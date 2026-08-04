@@ -45,55 +45,25 @@ describe("captainIndicator — stopped vs gone (#549)", () => {
 
 // #549: a project without status.md used to be dropped from the table entirely
 // ("no status.md", no health marker), hiding a captain that was demonstrably
-// alive in the daemon's liveness registry. status.md is an opt-in human note,
-// not the source of truth for whether the row renders — captain liveness must
-// show regardless of whether status.md exists.
-describe("formatProjectRow (#549)", () => {
-  it("renders a live captain indicator even when status.md is missing", () => {
-    const row = formatProjectRow("friendslop-factory", "friendslop-factory-captain", {}, "missing", "alive");
+// alive in the daemon's liveness registry. Captain liveness must show
+// regardless of status.md.
+// #630: status.md/write-status.sh are dead (the script doesn't exist, nothing
+// writes the file) — formatProjectRow no longer reads it at all, so there's
+// no "ok"/"missing"/"unreadable" distinction left to render.
+describe("formatProjectRow (#549, #630)", () => {
+  it("renders a live captain indicator", () => {
+    const row = formatProjectRow("friendslop-factory", "friendslop-factory-captain", "alive");
     expect(row).toContain("friendslop-factory");
     expect(row).toContain("●");
-    expect(row).not.toContain("no status.md");
   });
 
-  it("renders a dead captain indicator when status.md is missing and captain is gone", () => {
-    const row = formatProjectRow("bet2fun-app", "bet2fun-app-captain", {}, "missing", "gone");
+  it("renders a dead captain indicator when captain is gone", () => {
+    const row = formatProjectRow("bet2fun-app", "bet2fun-app-captain", "gone");
     expect(row).toContain("○");
   });
 
-  it("still renders task/crew data from status.md when present", () => {
-    const row = formatProjectRow(
-      "squadrant",
-      "squadrant-captain",
-      { active_crew: 2, tasks_completed: 1, tasks_total: 4 },
-      "ok",
-      "alive",
-    );
-    expect(row).toContain("squadrant");
-    expect(row).toContain("2");
-  });
-});
-
-// #549 follow-up: an unreadable/corrupt status.md used to be swallowed by an
-// empty catch block that fell through to the same "missing" rendering as a
-// project that never had a status.md at all — the operator silently lost the
-// fact that their file was broken. A corrupt file must stay visibly distinct
-// from an absent one.
-describe("formatProjectRow — unreadable status.md must stay visible (#549)", () => {
-  it("renders distinctly from a missing status.md", () => {
-    const missingRow = formatProjectRow("p", "p-captain", {}, "missing", "alive");
-    const unreadableRow = formatProjectRow("p", "p-captain", {}, "unreadable", "alive");
-    expect(unreadableRow).not.toBe(missingRow);
-  });
-
-  it("flags the row as unreadable, not silently as 'no notes'", () => {
-    const row = formatProjectRow("p", "p-captain", {}, "unreadable", "alive");
-    expect(row).toContain("unreadable");
-    expect(row).not.toContain("no notes");
-  });
-
-  it("still shows live captain state on an unreadable status.md, not dropped", () => {
-    const row = formatProjectRow("p", "p-captain", {}, "unreadable", "alive");
-    expect(row).toContain("●");
+  it("renders the unknown-liveness glyph when the daemon has no entry", () => {
+    const row = formatProjectRow("p", "p-captain", undefined);
+    expect(row).toContain("?");
   });
 });

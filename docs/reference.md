@@ -199,7 +199,7 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
 
 ### Knowledge System (opt-in writes)
 
-- **Status (opt-in)** — captains record `{spokeVault}/status.md` via `write-status.sh` (also written by the captain session-end hook) when there's something worth noting (a blocker, "starting work on X"). Not on a schedule.
+- **Status** — `write-status.sh` does not exist and nothing else writes `status.md` today; existing files are left in place as history but are no longer read by `squadrant status`/`standup`/`retro` ([#630](https://github.com/tu11aa/squadrant/issues/630) tracks a real persisted work-tracking store).
 - **Dashboard** — `squadrant dashboard --pane` opens a refreshing sidebar pane in cmux that lists every project's live state, queried from the squadrant daemon's task records. `squadrant dashboard sync-hub` mirrors each spoke `status.md` into `{hubVault}/projects/` so the hub vault's `dashboard.md` Dataview query renders the same data inside Obsidian.
 - **Handoff files** — captain writes when in-flight work needs to survive into tomorrow; skipped on uneventful sessions.
 - **Daily logs** — captain writes when the day produced something worth a log; not on a schedule.

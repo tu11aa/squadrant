@@ -81,6 +81,30 @@ export function mirrorFlat(
 }
 
 /**
+ * Mirror a plugin dir's `.claude-plugin/` manifest verbatim, but only the
+ * allow-listed subdirectories of `skills/` — pruning any dest skill dir not
+ * in the list. Used to produce a role-scoped plugin dir (e.g. crew's) that
+ * is a strict subset of the full squadrant plugin, so the harness's
+ * `--plugin-dir` only ever lists skills that role actually needs.
+ */
+function mirrorPluginSubset(src: string, dest: string, skills: string[]): void {
+  fs.mkdirSync(dest, { recursive: true });
+  mirrorDir(path.join(src, ".claude-plugin"), path.join(dest, ".claude-plugin"));
+
+  const skillsDest = path.join(dest, "skills");
+  fs.mkdirSync(skillsDest, { recursive: true });
+  for (const name of skills) {
+    const skillSrc = path.join(src, "skills", name);
+    if (fs.existsSync(skillSrc)) mirrorDir(skillSrc, path.join(skillsDest, name));
+  }
+  for (const entry of fs.readdirSync(skillsDest, { withFileTypes: true })) {
+    if (!skills.includes(entry.name)) {
+      fs.rmSync(path.join(skillsDest, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+/**
  * A source-managed runtime dir. `name` is the dir under the runtime root;
  * `srcRel` is its source dir relative to the package root (note: the
  * runtime `templates/` is sourced from `templates/`).
@@ -93,10 +117,18 @@ export type ManagedTarget =
       mode: "flat";
       match: RegExp;
       chmod?: number;
-    };
+    }
+  | { name: string; srcRel: string; mode: "subset"; skills: string[] };
+
+// Crew CLAUDE.md templates only ever tell a crew to apply karpathy-principles
+// (see templates/crew.claude.md, templates/crew.generic.md) — captain-ops,
+// telegram, wiki-ops, etc. are captain/command-only. Keep this list in sync
+// with what the crew templates actually reference.
+export const CREW_SKILLS = ["karpathy-principles"];
 
 export const MANAGED_TARGETS: ManagedTarget[] = [
   { name: "plugin", srcRel: "plugin", mode: "tree" },
+  { name: "plugin-crew", srcRel: "plugin", mode: "subset", skills: CREW_SKILLS },
   { name: "scripts", srcRel: "scripts", mode: "flat", match: /\.sh$/, chmod: 0o755 },
   {
     name: "templates",
@@ -134,8 +166,10 @@ export function ensureRuntimeSynced(opts: EnsureRuntimeSyncedOptions): void {
       const destDir = path.join(opts.runtimeRoot, t.name);
       if (t.mode === "tree") {
         mirrorDir(srcDir, destDir);
-      } else {
+      } else if (t.mode === "flat") {
         mirrorFlat(srcDir, destDir, t.match, t.chmod);
+      } else {
+        mirrorPluginSubset(srcDir, destDir, t.skills);
       }
     } catch (err) {
       process.stderr.write(

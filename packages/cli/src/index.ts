@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced } from "@squadrant/shared";
-import { ensureDaemon } from "@squadrant/core";
+import { ensureDaemon, isOperatorInitiatedCommand } from "@squadrant/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -34,8 +34,11 @@ import { pingCommand } from "./commands/ping.js";
 import { dispatchCommand } from "./commands/dispatch.js";
 import { cmuxCommand } from "./commands/cmux.js";
 import { effortCommand } from "./commands/effort.js";
+import { tokensCommand } from "./commands/tokens.js";
 import { telegramCommand } from "./commands/telegram.js";
 import { hooksCommand } from "./commands/hooks.js";
+import { workCommand } from "./commands/work.js";
+import { handoffCommand } from "./commands/handoff.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -90,8 +93,13 @@ if (process.argv[2] !== "config") {
 // path is passed here so no call site can get it wrong.
 // SQUADRANT_DAEMON_SKIP short-circuits this for read-only / CI invocations that must
 // not attempt to boot the daemon (e.g. config-check tests on Linux without launchctl).
+// #636: `process.argv[2]` is the top-level subcommand the human actually typed
+// (e.g. "launch", "init", "crew") — passed through isOperatorInitiatedCommand
+// so ensureDaemon can authorize a first-run/cold-start self-heal for those two
+// commands specifically, without weakening the fail-closed default for anything
+// else (crew, side-session, dashboard, cron, or any other bare subcommand).
 if (!process.env.SQUADRANT_DAEMON_SKIP) {
-  ensureDaemon();
+  ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]) });
 }
 
 const program = new Command();
@@ -131,8 +139,11 @@ program.addCommand(pingCommand);
 program.addCommand(dispatchCommand);
 program.addCommand(cmuxCommand);
 program.addCommand(effortCommand);
+program.addCommand(tokensCommand);
 program.addCommand(telegramCommand);
 program.addCommand(hooksCommand());
+program.addCommand(workCommand);
+program.addCommand(handoffCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

@@ -22,13 +22,27 @@ it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
 // ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
 // because runtime-sync never mirrors compiled output there.
 it("no call site recomputes the daemon entry path", () => {
-  for (const f of ["index.ts", "commands/crew-control.ts"]) {
-    const src = read(f);
-    // ensureDaemon is called with no path argument (resolved internally)
-    expect(src).toMatch(/ensureDaemon\(\)/);
-    // and the buggy hardcoded path is absent
-    expect(src).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
-  }
+  // crew-control.ts's on-socket-failure fallback call is deliberately
+  // unchanged (#636): a socket-RPC retry is never operator-initiated, so no
+  // allowlist applies here — it stays gated to the captain marker alone.
+  const crewControlSrc = read("commands/crew-control.ts");
+  expect(crewControlSrc).toMatch(/ensureDaemon\(\)/);
+  expect(crewControlSrc).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
+
+  // index.ts (#636): nodeBin is still passed as `undefined` (resolved
+  // internally by ensureDaemon, never recomputed here) — only the second arg
+  // changed, to carry the operatorInitiated flag computed from real argv.
+  const idxSrc = read("index.ts");
+  expect(idxSrc).toMatch(/ensureDaemon\(undefined,\s*\{\s*operatorInitiated/);
+  expect(idxSrc).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
+});
+
+// #636: index.ts must resolve operatorInitiated from the actual subcommand
+// the human typed (argv[2]), not from a hardcoded true/false or an env var —
+// otherwise the allowlist gate is meaningless.
+it("index.ts derives operatorInitiated from process.argv[2] via isOperatorInitiatedCommand", () => {
+  const idx = read("index.ts");
+  expect(idx).toMatch(/isOperatorInitiatedCommand\(process\.argv\[2\]\)/);
 });
 
 // #259: in vitest context import.meta.url resolves to the src/ tree, so

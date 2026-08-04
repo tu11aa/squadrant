@@ -78,6 +78,25 @@ describe("claude driver", () => {
     expect(cmd).not.toContain("--permission-mode");
   });
 
+  it("points --plugin-dir at the crew-scoped subset for role crew", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+    });
+    expect(cmd).toContain("/.config/squadrant/plugin-crew");
+  });
+
+  it("points --plugin-dir at the full plugin dir for non-crew roles", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "command",
+    });
+    expect(cmd).toContain("/.config/squadrant/plugin");
+    expect(cmd).not.toContain("plugin-crew");
+  });
+
   it("adds --settings when settingsPath specified", () => {
     const cmd = driver.buildCommand({
       prompt: "do something",

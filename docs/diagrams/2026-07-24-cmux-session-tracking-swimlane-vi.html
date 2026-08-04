@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<!--
+  explainer-reel mode=interactive · swimlane preset — how cmux tracks agent sessions reliably.
+  Source of truth: cmux docs/agent-session-tracking-spec.md (v0.64.20). Verified surfaces on
+  installed cmux 0.64.17 (cmux rpc feed.list, cmux sessions list --json). Self-contained; open in a browser.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cmux session tracking — swimlane</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e1116; --surface:#161c24; --surface2:#1b2330; --border:#263041; --border2:#31405a;
+    --text:#e6edf3; --dim:#93a1b0; --faint:#5b6b7d;
+    --lane-a:#4aa3ff; --lane-a2:#0f2740;
+    --lane-b:#35c46b; --lane-b2:#0e2a1c;
+    --shared:#c6d0da; --shared2:#232c39;
+    --db:#c99bff; --db2:#241733;
+    --store:#e3b341; --device:#8aa0b6;
+    --gold:#e3b341; --crit:#ff5d5d; --crit2:#2c1416;
+    --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:radial-gradient(1200px 600px at 70% -10%,#141b26,transparent),var(--bg);
+    color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1340px;margin:0 auto;padding:26px 22px 80px}
+  header .k{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase}
+  h1{font-size:27px;margin:6px 0 4px;letter-spacing:-.02em;font-weight:700}
+  .lede{color:var(--dim);font-size:14px;max-width:860px;margin:0}
+  .lede b{color:var(--text)}
+
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 6px}
+  .tab{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--dim);background:var(--surface);
+    border:1px solid var(--border);border-radius:999px;padding:8px 15px;cursor:pointer;transition:.18s;display:flex;align-items:center;gap:8px}
+  .tab:hover{border-color:var(--border2);color:var(--text)}
+  .tab.on{color:#0e1116;background:linear-gradient(180deg,#f0d68a,var(--gold));border-color:var(--gold)}
+  .tab .n{font-family:var(--mono);font-size:11px;opacity:.7}
+
+  .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 4px;color:var(--dim);font-size:12.5px}
+  .btn{font-family:var(--sans);font-size:12.5px;font-weight:600;color:var(--text);background:var(--surface2);
+    border:1px solid var(--border2);border-radius:8px;padding:7px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s}
+  .btn:hover{background:#232d3d;border-color:#3d4f6d}
+  .btn.play{color:#0e1116;background:linear-gradient(180deg,#5ab0ff,var(--lane-a));border-color:var(--lane-a)}
+  .seg{display:inline-flex;border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+  .seg button{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--dim);background:var(--surface);border:0;padding:7px 13px;cursor:pointer;transition:.15s}
+  .seg button.on{color:#0e1116}
+  .seg button.on.a{background:var(--lane-a)} .seg button.on.b{background:var(--lane-b)}
+  .seg.hide{display:none}
+  .leg{display:flex;gap:13px;flex-wrap:wrap;margin-left:auto}
+  .leg span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  .flowtitle{font-size:15px;font-weight:600;margin:16px 2px 2px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .flowtitle .why{font-weight:400;color:var(--dim);font-size:13px}
+  .stagewrap{position:relative;margin-top:12px;border:1px solid var(--border);border-radius:16px;
+    background:linear-gradient(180deg,#12181f,#0f141b);overflow:hidden}
+  .stage{position:relative;padding:16px 18px}
+  .bands{position:absolute;inset:16px 18px;z-index:0;pointer-events:none}
+  .band{position:absolute;left:0;right:0;border-radius:10px;border:1px solid transparent}
+  .bandlabel{position:absolute;left:8px;top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;display:flex;align-items:center;gap:7px;color:var(--dim)}
+  .bandlabel .ic{font-size:13px}
+  svg.edges{position:absolute;inset:16px 18px;z-index:1;pointer-events:none;overflow:visible}
+  .grid{position:relative;display:grid;gap:30px 46px;z-index:2}
+
+  .node{position:relative;border-radius:12px;padding:11px 13px;border:1px solid var(--border2);
+    background:var(--surface);cursor:pointer;transition:transform .16s,box-shadow .16s,border-color .16s,opacity .16s;
+    min-width:0;align-self:center;max-width:230px}
+  .node:hover{transform:translateY(-2px)}
+  .node .lane{position:absolute;top:-1px;left:-1px;bottom:-1px;width:4px;border-radius:12px 0 0 12px}
+  .node .step{position:absolute;top:-9px;left:-9px;width:22px;height:22px;border-radius:50%;
+    font-family:var(--mono);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;
+    background:#0e1116;border:1px solid var(--border2);color:var(--dim);z-index:3}
+  .node .t{font-weight:600;font-size:12.5px;line-height:1.28;display:block}
+  .node .s{font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-top:3px;word-break:break-word;line-height:1.4}
+  .node .badge{position:absolute;top:8px;right:9px;font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:4px}
+  .node .svc{display:inline-block;font-family:var(--mono);font-size:9px;margin-top:6px;padding:1px 6px;border-radius:5px;
+    color:var(--store);background:color-mix(in srgb,var(--store) 14%,transparent);border:1px solid color-mix(in srgb,var(--store) 32%,transparent)}
+  .node.crit .svc{color:var(--crit);background:var(--crit2);border-color:#5c2a2a}
+  .node.a{--c:var(--lane-a)} .node.b{--c:var(--lane-b)} .node.shared{--c:var(--shared)} .node.db{--c:var(--db)} .node.crit{--c:var(--crit)} .node.store{--c:var(--store)}
+  .node .lane{background:var(--c)}
+  .node.on{border-color:var(--c);box-shadow:0 0 0 1px var(--c),0 10px 28px -12px var(--c)}
+  .node.dim{opacity:.3}
+  .node.crit{background:var(--crit2);border-color:#5c2a2a}
+  .node.crit .t{color:#ffd0d0}
+  .node.db{background:var(--db2);border-color:#3d2657}
+  .badge.a{background:var(--lane-a2);color:var(--lane-a)} .badge.b{background:var(--lane-b2);color:var(--lane-b)}
+  .badge.warn{background:var(--crit2);color:var(--crit)} .badge.ok{background:var(--lane-b2);color:var(--lane-b)}
+  .node.pulse .lane{animation:lane 1.6s ease-in-out infinite}
+  @keyframes lane{0%,100%{opacity:.5}50%{opacity:1}}
+
+  .pt{position:absolute;width:7px;height:7px;border-radius:50%;z-index:1;
+    filter:drop-shadow(0 0 5px currentColor);will-change:offset-distance}
+  @keyframes flow{from{offset-distance:0%}to{offset-distance:100%}}
+  .elabel{font-family:var(--mono);font-size:9.5px;fill:var(--dim)}
+  .elabbg{fill:#0f141b;opacity:.9}
+
+  .detail{margin-top:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);
+    padding:15px 17px;min-height:78px}
+  .detail.empty{color:var(--faint);font-size:13px;display:flex;align-items:center;gap:9px}
+  .detail .dh{display:flex;align-items:center;gap:10px;margin-bottom:7px;flex-wrap:wrap}
+  .detail .dh .dt{font-size:15px;font-weight:700}
+  .detail .sysbadge{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;border:1px solid currentColor}
+  .detail .path{font-family:var(--mono);font-size:11.5px;color:#a5d6ff;background:#0b1a2b;padding:2px 8px;border-radius:5px}
+  .detail p{margin:6px 0 0;font-size:13px;color:#cdd6e0;line-height:1.55}
+  .detail .writes{font-family:var(--mono);font-size:11px;color:var(--lane-b);margin-top:8px;display:block}
+  .detail .flag{margin-top:9px;font-size:12.5px;color:#ffc0c0;background:var(--crit2);border:1px solid #5c2a2a;border-radius:8px;padding:8px 11px}
+  .detail .flag b{color:var(--crit)}
+  .foot{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:20px;text-align:center}
+  @media (prefers-reduced-motion: reduce){.pt{display:none!important}.node.pulse .lane{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="k">cmux · theo dõi phiên agent · đã xác minh trên 0.64.17</div>
+    <h1>cmux theo dõi một phiên agent như thế nào — một cách đáng tin</h1>
+    <p class="lede">Mỗi hàng là một <b>hệ thống</b>: shell env của terminal, tiến trình agent, hook/socket của cmux, "authority" trên máy Mac, và một consumer (iOS GUI / squadrant).
+    Mũi tên <b>nhảy qua band là một hop</b>; nhãn cho biết cái gì đi qua. Toàn bộ thiết kế đặt trên một nguyên tắc — <b>bind bằng token ổn định, không bao giờ bằng title/mtime; pull là authoritative, push chỉ là gợi ý.</b> Đây đúng là bài học #567 của squadrant. Bấm vào bất kỳ node nào.</p>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="bar">
+    <button class="btn play" id="play">&#9654; Chạy luồng</button>
+    <button class="btn" id="reset">&#8634; Đặt lại</button>
+    <div class="seg hide" id="platseg"></div>
+    <div class="leg">
+      <span><i class="sw" style="background:var(--lane-a)"></i>Agent</span>
+      <span><i class="sw" style="background:var(--store)"></i>hook/socket cmux</span>
+      <span><i class="sw" style="background:var(--db)"></i>Authority (Mac)</span>
+      <span><i class="sw" style="background:var(--lane-b)"></i>Consumer / backstop</span>
+      <span><i class="sw" style="background:var(--crit)"></i>Heuristic đã xoá</span>
+    </div>
+  </div>
+
+  <div class="flowtitle" id="ftitle"></div>
+  <div class="stagewrap">
+    <div class="stage">
+      <div class="bands" id="bands"></div>
+      <svg class="edges" id="edges"></svg>
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+
+  <div class="detail empty" id="detail">&#9684; Bấm một node — panel sẽ cho biết hệ thống nào chạy nó và cái gì đi qua đường truyền.</div>
+
+  <div class="foot">squadrant · docs/specs/2026-07-24-cmux-changelog-review · squadrant có thể áp dụng: cmux rpc feed.list + cmux sessions list --json (không cần upgrade)</div>
+</div>
+
+<script>
+const BANDS=[
+  {id:'env',      label:'Shell env · do cmux sở hữu', ic:'🐚', col:'var(--device)'},
+  {id:'agent',    label:'Tiến trình agent',           ic:'🤖', col:'var(--lane-a)'},
+  {id:'cmux',     label:'cmux CLI · socket',           ic:'🔌', col:'var(--store)'},
+  {id:'authority',label:'Authority (Mac)',             ic:'🧠', col:'var(--db)'},
+  {id:'consumer', label:'Consumer · iOS / squadrant',  ic:'📡', col:'var(--lane-b)'}
+];
+const LANECOL={a:'var(--lane-a)',b:'var(--lane-b)',shared:'var(--shared)',db:'var(--db)',crit:'var(--crit)',store:'var(--store)'};
+function n(sys,lane,col,t,s,x={}){return Object.assign({sys,lane,col,t,s},x);}
+
+const FLOWS={
+  bind:{ title:"Bind + trạng thái", why:"một token, tạo một lần, mang theo khắp nơi — không đoán bằng title/mtime",
+    single:{ nodes:[
+      n('env','shared',1,'Chèn CMUX_SURFACE_ID','env key được bảo vệ lúc spawn',{id:'tok',svc:'ổn định · giữ lại khi restore',
+        detail:'cmux sở hữu env của mọi shell terminal và chèn CMUX_SURFACE_ID / WORKSPACE_ID / PANEL_ID / TAB_ID như các key ĐƯỢC BẢO VỆ lúc spawn. Surface id được tạo một lần, lưu bền, và (từ commit 44dc053e, 12/6/2026) được khôi phục nguyên vẹn khi restore. Đây CHÍNH LÀ khoá bind — workspace id thì hay đổi nên không bao giờ dùng làm khoá.'}),
+      n('agent','a',2,'claude / codex kế thừa token','kể cả gõ tay trong shell',{id:'ag',svc:'qua env + cây tiến trình',
+        detail:'Vì token nằm ở tầng shell/env, ngay cả `claude`/`codex` gõ tay cũng kế thừa nó. Không cần wrapper thì binding vẫn tồn tại.'}),
+      n('cmux','store',3,'Hook bắn qua socket','cmux hooks <agent> <event>',{id:'hk',path:'cmux hooks claude postToolUse',
+        detail:'Mỗi sự kiện của agent bắn một hook cmux mang theo surface token. cmux xác định surface theo thứ tự: (1) flag --workspace/--surface tường minh, (2) env token kế thừa, (3) tty → surface qua debug.terminals, (4) cây tiến trình: pid của agent nằm dưới một surface qua system.top. Tín hiệu 3 & 4 không cần env gì cả.'}),
+      n('authority','db',4,'AgentSession mỗi surface','máy trạng thái · version++',{id:'au',
+        writes:'sessionStart→idle · pre/postToolUse→working · askUserQuestion→needsInput · sessionEnd→ended',
+        detail:'Một bản ghi authoritative cho mỗi surface, khoá theo token ổn định. Trạng thái đến từ đúng một kênh — hook event có gắn token — nên không bao giờ có câu hỏi "session nào trong đám cùng cwd đây?". version tăng sau mỗi thay đổi; đó là khoá đối soát cho pull/push.'}),
+      n('consumer','b',5,'Backstop: tiến trình exit → ended','waitpid, không quét kill -0',{id:'bk',ok:true,
+        detail:'cmux đã spawn (hoặc nhận nuôi, qua env token) pid của agent, nên terminationHandler / waitpid của tiến trình con cho `ended` một cách tất định kể cả khi hook sessionEnd không bao giờ tới. Cái này thay cho vòng quét kill(pid,0) cũ. Backstop không bao giờ phụ thuộc vào việc hook có được giao hay không.'})
+    ], edges:[
+      ['tok','ag','a','kế thừa env'],
+      ['ag','hk','a','bắn event (gắn token)'],
+      ['hk','au','store','áp dụng → version++'],
+      ['ag','bk','b','sở hữu pid (backstop)']
+    ]}
+  },
+  reconcile:{ title:"Đối soát", why:"push chỉ là gợi ý; pull là authoritative — và heuristic mà cmux ĐÃ XOÁ",
+    single:{ nodes:[
+      n('authority','db',1,'Push: version = N','gợi ý, giao best-effort',{id:'push',
+        detail:'Sự kiện push Mac→consumer (đổi state/descriptor) đều mang version mới. Không bao giờ giả định là đã giao được — mất hay trùng một push đều không sao.'}),
+      n('consumer','b',2,'Phát hiện lệch version','nhận được ≠ lastSeen + 1',{id:'gap',
+        detail:'Consumer chỉ áp dụng một push nếu version lớn hơn version đã áp dụng lần cuối (đơn điệu → trùng/đảo thứ tự đều vô hại). Bất kỳ version nào không đối soát được sẽ kích hoạt một lần pull.'}),
+      n('consumer','b',3,'PULL snapshot','mobile.chat.sessions',{id:'pull',badge:['ok','authoritative'],path:'cmux sessions list --json',
+        detail:'Consumer lấy lại snapshot authoritative (state + version) bất cứ lúc nào: khi reconnect, foreground, resubscribe, phát hiện lệch, hoặc refresh thủ công. Với squadrant, tương đương không cần socket là `cmux sessions list --json` (đọc ~/.cmuxterm/*-hook-sessions.json). Giao lỗi thì chỉ "hơi cũ đến lần pull kế tiếp", không bao giờ "sai vĩnh viễn".'}),
+      n('authority','db',4,'Thực tại thắng','state cục bộ bị snapshot ghi đè',{id:'win',writes:'pull thay state + version cục bộ',
+        detail:'Khi pull, state cục bộ bị thay bằng snapshot. Đây chính là vòng đối soát mà squadrant #567 đang thiếu: liveness phải để thực tại quan sát được thắng lịch sử event của chính nó, chứ không phải ngược lại.'}),
+      n('cmux','crit',3,'Đoán: transcript mới nhất','title / mtime — ĐÃ XOÁ',{id:'bad',
+        flag:'Lớp heuristic cmux đã bỏ hoàn toàn: newestClaudeTranscript + khớp title + vòng quét kill -0 + hook-sessions.json dùng làm nguồn đọc. Nó có thể hiện SAI cuộc hội thoại giữa các session cùng cwd. Đây đúng là class đằng sau squadrant #499 (glyph drift) và #484 (bắn nhầm modal) — không bao giờ tin một phỏng đoán từ màn hình/tên hơn sự thật gắn-token.'})
+    ], edges:[
+      ['push','gap','b','mang version'],
+      ['gap','pull','b','lấy lại'],
+      ['pull','win','b','snapshot'],
+      ['bad','win','crit','bind sai (đã bỏ)']
+    ]}
+  }
+};
+
+const ORDER=[["bind","Bind + trạng thái"],["reconcile","Đối soát · pull"]];
+let cur="bind", plat="card";
+
+const tabs=document.getElementById('tabs');
+ORDER.forEach(([id,label],i)=>{
+  const b=document.createElement('button');
+  b.className='tab'+(id===cur?' on':''); b.dataset.id=id;
+  b.innerHTML=`<span class="n">${String.fromCharCode(65+i)}</span>${label}`;
+  b.onclick=()=>{cur=id;render();};
+  tabs.appendChild(b);
+});
+const platseg=document.getElementById('platseg');
+
+const grid=document.getElementById('grid'), svg=document.getElementById('edges'),
+      bandsEl=document.getElementById('bands'), detail=document.getElementById('detail'),
+      ftitle=document.getElementById('ftitle');
+
+function variant(){const f=FLOWS[cur];return f.plat?f[plat]:f.single;}
+
+function render(){
+  [...tabs.children].forEach(t=>t.classList.toggle('on',t.dataset.id===cur));
+  const f=FLOWS[cur];
+  platseg.classList.toggle('hide',!f.plat);
+  ftitle.innerHTML=`${f.title} <span class="why">— ${f.why}</span>`;
+  const v=variant();
+  const cols=[...new Set(v.nodes.map(n=>n.col))].sort((a,b)=>a-b);
+  const colMap={}; cols.forEach((c,i)=>colMap[c]=i+1);
+  const usedBands=[...new Set(v.nodes.map(n=>n.sys))];
+  const bandOrder=BANDS.filter(b=>usedBands.includes(b.id));
+  const rowMap={}; bandOrder.forEach((b,i)=>rowMap[b.id]=i+1);
+  grid.style.gridTemplateColumns=`repeat(${cols.length},minmax(150px,1fr))`;
+  grid.style.gridTemplateRows=`repeat(${bandOrder.length},minmax(74px,auto))`;
+  grid.innerHTML='';
+  v.nodes.forEach(nd=>{
+    const el=document.createElement('div');
+    el.className='node '+nd.lane+(nd.flag?' pulse':'');
+    el.style.gridColumn=colMap[nd.col]; el.style.gridRow=rowMap[nd.sys];
+    el.dataset.id=nd.id;
+    const badge=nd.badge?`<span class="badge ${nd.badge[0]}">${nd.badge[1]}</span>`
+      :(nd.ok?`<span class="badge ok">ok</span>`:(nd.flag?`<span class="badge warn">!</span>`:''));
+    const st=stepIndex(v,nd.id);
+    el.innerHTML=`<span class="lane"></span>${st!==''?`<span class="step">${st}</span>`:''}${badge}
+      <span class="t">${nd.t}</span><span class="s">${nd.s}</span>${nd.svc?`<span class="svc">${nd.svc}</span>`:''}`;
+    el.onclick=()=>select(nd.id);
+    grid.appendChild(el);
+  });
+  requestAnimationFrame(()=>{drawBands(bandOrder);drawEdges(v);});
+  detail.className='detail empty';
+  detail.innerHTML='&#9684; Bấm một node — panel sẽ cho biết hệ thống nào chạy nó và cái gì đi qua đường truyền.';
+}
+
+function drawBands(bandOrder){
+  bandsEl.innerHTML='';
+  const host=bandsEl.getBoundingClientRect();
+  const rows={};
+  [...grid.children].forEach(el=>{
+    const r=el.style.gridRow, rr=el.getBoundingClientRect();
+    (rows[r]=rows[r]||[]).push(rr);
+  });
+  Object.keys(rows).forEach(r=>{
+    const rr=rows[r]; const top=Math.min(...rr.map(x=>x.top))-host.top-8;
+    const bot=Math.max(...rr.map(x=>x.bottom))-host.top+8;
+    const b=bandOrder[+r-1];
+    const div=document.createElement('div'); div.className='band';
+    div.style.top=top+'px'; div.style.height=(bot-top)+'px';
+    div.style.background=`color-mix(in srgb, ${b.col} 7%, transparent)`;
+    div.style.borderColor=`color-mix(in srgb, ${b.col} 22%, transparent)`;
+    const lbl=document.createElement('div'); lbl.className='bandlabel';
+    lbl.style.color=b.col; lbl.innerHTML=`<span class="ic">${b.ic}</span>${b.label}`;
+    div.appendChild(lbl); bandsEl.appendChild(div);
+  });
+}
+
+function stepIndex(v,id){
+  const seen=new Set(),order=[];
+  const starts=v.nodes.filter(n=>!v.edges.some(e=>e[1]===n.id)).map(n=>n.id);
+  const adj={}; v.edges.forEach(([a,b])=>{(adj[a]=adj[a]||[]).push(b);});
+  starts.forEach(s=>{let q=[s];while(q.length){const x=q.shift();if(seen.has(x))continue;seen.add(x);order.push(x);(adj[x]||[]).forEach(y=>q.push(y));}});
+  const i=order.indexOf(id);return i<0?'':i+1;
+}
+
+function anchor(el,side){
+  const host=svg.getBoundingClientRect(), r=el.getBoundingClientRect();
+  return {x:(side==='r'?r.right:r.left)-host.left, y:r.top-host.top+r.height/2,
+          t:r.top-host.top, b:r.bottom-host.top, cx:r.left-host.left+r.width/2};
+}
+let particles=[];
+function clearParticles(){particles.forEach(p=>p.remove());particles=[];}
+function drawEdges(v){
+  svg.removeAttribute('viewBox');
+  svg.innerHTML=''; clearParticles();
+  v.edges.forEach(([a,b,style,label],idx)=>{
+    const ea=grid.querySelector(`[data-id="${a}"]`), eb=grid.querySelector(`[data-id="${b}"]`);
+    if(!ea||!eb)return;
+    const ra=ea.getBoundingClientRect(), rb=eb.getBoundingClientRect();
+    let p1,p2,d;
+    if(rb.left>=ra.right-4){
+      p1=anchor(ea,'r'); p2=anchor(eb,'l');
+      const dx=Math.max(34,(p2.x-p1.x)*0.5);
+      d=`M ${p1.x} ${p1.y} C ${p1.x+dx} ${p1.y}, ${p2.x-dx} ${p2.y}, ${p2.x} ${p2.y}`;
+    } else {
+      const A=anchor(ea,'r'),B=anchor(eb,'r');
+      const x=A.cx; const y1=(A.b<B.t)?A.b:A.t, y2=(A.b<B.t)?B.t:B.b;
+      d=`M ${x} ${y1} C ${x} ${(y1+y2)/2}, ${x} ${(y1+y2)/2}, ${x} ${y2}`;
+      p1={x,y:y1};p2={x,y:y2};
+    }
+    const col=LANECOL[style];
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',d);path.setAttribute('fill','none');path.setAttribute('stroke',col);
+    path.setAttribute('stroke-width','2');path.setAttribute('stroke-opacity','.5');path.setAttribute('data-edge',a+'>'+b);
+    if(style==='crit')path.setAttribute('stroke-dasharray','6 5');
+    svg.appendChild(path);
+    const ah=document.createElementNS('http://www.w3.org/2000/svg','path');
+    ah.setAttribute('d',`M ${p2.x-8} ${p2.y-4} L ${p2.x} ${p2.y} L ${p2.x-8} ${p2.y+4}`);
+    ah.setAttribute('fill','none');ah.setAttribute('stroke',col);ah.setAttribute('stroke-width','2');ah.setAttribute('stroke-opacity','.75');
+    svg.appendChild(ah);
+    if(label){
+      const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+      const tw=label.length*5.6+8;
+      const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+      bg.setAttribute('x',mx-tw/2);bg.setAttribute('y',my-9);bg.setAttribute('width',tw);bg.setAttribute('height',15);
+      bg.setAttribute('rx',4);bg.setAttribute('class','elabbg');svg.appendChild(bg);
+      const tx=document.createElementNS('http://www.w3.org/2000/svg','text');
+      tx.setAttribute('x',mx);tx.setAttribute('y',my+2);tx.setAttribute('text-anchor','middle');
+      tx.setAttribute('class','elabel');tx.textContent=label;svg.appendChild(tx);
+    }
+    spawnParticles(d,col,idx,style);
+  });
+}
+function spawnParticles(d,col,idx,style){
+  const stage=svg.parentElement, N=style==='crit'?1:2;
+  for(let k=0;k<N;k++){
+    const dot=document.createElement('div');dot.className='pt';dot.style.color=col;dot.style.background=col;
+    dot.style.offsetPath=`path('${d}')`;
+    dot.style.animation=`flow ${2.6+(idx%3)*0.3}s linear ${(idx*0.3)+(k*1.2)}s infinite`;
+    if(style==='crit')dot.style.opacity='.65';
+    stage.appendChild(dot);particles.push(dot);
+  }
+}
+
+function select(id){
+  const v=variant(); const nd=v.nodes.find(x=>x.id===id); if(!nd)return;
+  [...grid.children].forEach(el=>{
+    const nid=el.dataset.id;
+    const connected=nid===id||v.edges.some(e=>(e[0]===id&&e[1]===nid)||(e[1]===id&&e[0]===nid));
+    el.classList.toggle('on',nid===id); el.classList.toggle('dim',!connected);
+  });
+  svg.querySelectorAll('path[data-edge]').forEach(p=>{
+    const [a,b]=p.getAttribute('data-edge').split('>');
+    p.setAttribute('stroke-opacity',(a===id||b===id)?'1':'.14');
+  });
+  const band=BANDS.find(b=>b.id===nd.sys);
+  detail.className='detail'; detail.style.borderColor=LANECOL[nd.lane];
+  detail.innerHTML=`<div class="dh"><span class="dt">${nd.t}</span>
+    <span class="sysbadge" style="color:${band.col}">${band.ic} ${band.label}</span>
+    ${nd.path?`<span class="path">${nd.path}</span>`:''}</div>
+    <p>${nd.detail||nd.s}</p>
+    ${nd.writes?`<span class="writes">&#9656; ${nd.writes}</span>`:''}
+    ${nd.flag?`<div class="flag">&#9888; ${nd.flag}</div>`:''}`;
+}
+
+let playTimer=null;
+function play(){
+  reset(); const v=variant();
+  const ordered=[...v.nodes].map(n=>({n,i:stepIndex(v,n.id)})).filter(o=>o.i!=='').sort((a,b)=>a.i-b.i);
+  let k=0; document.getElementById('play').textContent='● Playing…';
+  playTimer=setInterval(()=>{
+    if(k>=ordered.length){clearInterval(playTimer);document.getElementById('play').textContent='▶ Animate flow';return;}
+    select(ordered[k].n.id);k++;
+  },900);
+}
+function reset(){
+  if(playTimer)clearInterval(playTimer);
+  document.getElementById('play').textContent='▶ Animate flow';
+  [...grid.children].forEach(el=>el.classList.remove('on','dim'));
+  svg.querySelectorAll('path[data-edge]').forEach(p=>p.setAttribute('stroke-opacity','.5'));
+  detail.className='detail empty';detail.style.borderColor='';
+  detail.innerHTML='&#9684; Bấm một node — panel sẽ cho biết hệ thống nào chạy nó và cái gì đi qua đường truyền.';
+}
+document.getElementById('play').onclick=play;
+document.getElementById('reset').onclick=reset;
+function redraw(){const v=variant();const bo=BANDS.filter(b=>[...new Set(v.nodes.map(n=>n.sys))].includes(b.id));drawBands(bo);drawEdges(v);}
+let rt;window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(redraw,120);});
+new ResizeObserver(()=>{clearTimeout(rt);rt=setTimeout(redraw,60);}).observe(grid);
+if(document.fonts&&document.fonts.ready){document.fonts.ready.then(redraw);}
+render();
+</script>
+</body>
+</html>
