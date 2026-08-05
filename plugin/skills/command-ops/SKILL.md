@@ -29,9 +29,8 @@ for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys
   cat "$vault/daily-logs/${YESTERDAY}.md" 2>/dev/null || echo "(no log)"
 done
 ```
-4. Read current status: `~/.config/squadrant/scripts/read-status.sh`
-5. Run quick standup for context: `squadrant standup --yesterday --raw`
-6. Present briefing, then save to `{hubVault}/daily-logs/YYYY-MM-DD.md`
+4. Run quick standup for context: `squadrant standup --yesterday --raw`
+5. Present briefing, then save to `{hubVault}/daily-logs/YYYY-MM-DD.md`
 
 ## Delegation Workflow
 
@@ -42,7 +41,7 @@ Match to `~/.config/squadrant/config.json`.
 
 ### 2. Check for captain workspace
 ```bash
-/Applications/cmux.app/Contents/Resources/bin/cmux list-workspaces
+squadrant runtime list
 ```
 **CRITICAL:** Match the EXACT `captainName` from config. `Brove` ≠ `⚓ brove-captain`.
 
@@ -56,7 +55,7 @@ LAST=$(python3 -c "import json; d=json.load(open('$HOME/.config/squadrant/sessio
 - `fresh` → reuse the existing workspace, proceed to step 5.
 - `stale` (or no entry) → close the existing workspace, then go to step 4 to respawn so `spawn-workspace.sh` runs its `↻ new day — starting fresh session` path:
   ```bash
-  /Applications/cmux.app/Contents/Resources/bin/cmux close-workspace --workspace "workspace:N"
+  squadrant runtime stop <project>
   ```
 
 Never skip this gate when a workspace was found by name — that's how stale captains get reused.
@@ -69,8 +68,7 @@ Wait a few seconds, then `list-workspaces` again to get its ref. Confirm the spa
 
 ### 5. Send the task
 ```bash
-/Applications/cmux.app/Contents/Resources/bin/cmux send --workspace "workspace:N" "Task description with all context"
-/Applications/cmux.app/Contents/Resources/bin/cmux send-key --workspace "workspace:N" Enter
+squadrant runtime send <project> "Task description with all context"
 ```
 
 ### 6. Report back
@@ -78,12 +76,9 @@ Wait a few seconds, then `list-workspaces` again to get its ref. Confirm the spa
 
 ## Checking Status
 
+Read a captain's screen:
 ```bash
-~/.config/squadrant/scripts/read-status.sh
-```
-Or read a captain's screen:
-```bash
-/Applications/cmux.app/Contents/Resources/bin/cmux read-screen --workspace "workspace:N"
+squadrant runtime read-screen <project>
 ```
 
 ## Registering Projects
@@ -107,13 +102,10 @@ Captains will send you reports via `cmux send` when tasks complete or blockers a
 3. If the captain reported a blocker — escalate to the user
 4. If all tasks for a project are done — inform the user
 
-You can also **proactively check** captain progress:
+You can also **proactively check** captain progress by reading their screens:
 ```bash
-# Read all captain statuses at once
-for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
-  echo "=== $(basename $vault) ==="
-  head -15 "$vault/status.md" 2>/dev/null || echo "(no status)"
-done
+# Read a specific captain's screen
+squadrant runtime read-screen <project>
 ```
 
 Do this when:
