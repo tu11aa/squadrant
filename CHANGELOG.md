@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-08-05
+
+### Fixed
+
+- **Read fetchAgeMs post-fetch to resolve false staleness (#654).** 'squadrant handoff facts --fetch' reported fetchAgeMs measured BEFORE the fetch, so a just-fetched repo could still trip the 24h stale warning. Age is now read after the fetch; test pins an exact post-fetch age.
+- **Human review gate embedded in templates and made signal-agnostic (#656).** It now covers CREW REVIEW, CREW DONE and CREW IDLE. Previously only REVIEW was gated, so a crew signalling done or going idle could get its work merged without operator sign-off. Contradicting 'merge if appropriate' wording removed.
+
+### Changed
+
+- **Captain startup rules moved to templates (#653).** Captain startup rules (fetch origin, check branchState flags, identify current task, read handoff) moved into templates/captain.claude.md and captain.generic.md. They previously lived only in plugin/skills/captain-ops/SKILL.md, which loads only on voluntary skill invocation and never for non-Claude captains. Dead status.md reference removed.
+- **Template and skill audit.** Audit of all 9 templates and 16 skills: replaced 5 hardcoded /Applications/cmux.app cmux invocations with squadrant runtime equivalents, removed dead read-status.sh and two further dead status.md references.
+
 ## [0.17.0] - 2026-08-04
 
 ### Added
