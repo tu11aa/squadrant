@@ -237,13 +237,15 @@ When a crew sends you a status message via `squadrant runtime send <project> "<m
 
 ### Handling CREW REVIEW or CREW DONE (Assessment Gate)
 
-CREW REVIEW and CREW DONE both mean the crew has paused and is waiting for your verdict (either explicitly asking for review, or claiming the work is done). The task is **NOT terminal** until you approve it.
+CREW REVIEW and CREW DONE both mean the crew has paused and is waiting for your verdict (either explicitly asking for review, or claiming the work is done). Treat neither as final until you have reviewed.
 
 **Follow the HUMAN REVIEW GATE contract from your system prompt.** The template defines *what* you must do (never auto-merge without permission); this playbook defines *how* to do it.
 
 **Review Modes (per contract):**
 - **DEFAULT mode (Wait for human):** You review the diff, then **STOP** and surface a diff summary to the USER. You **WAIT** for the user to approve. You do NOT run `squadrant crew approve` or merge until they say so.
 - **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates (e.g. "you review and merge it"). You review, run `squadrant crew approve`, and merge autonomously.
+
+*Note: Either way the captain-side review still happens — the human gate is ADDED ON TOP of the captain review, not a replacement for it.*
 
 On CREW REVIEW or CREW DONE:
 
@@ -252,18 +254,18 @@ On CREW REVIEW or CREW DONE:
 
 | Diff looks | Captain action |
 |-----------|-----------------|
-| Good — matches the task, tests pass | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
+| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
 | Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
 3. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-4. Do **not** re-send the original task or close the crew while it's awaiting review.
+4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 
 After a crew task is approved and optionally merged:
 
 1. Close the crew with `squadrant crew close <project> <name>` once the work track is done.
-2. VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers. Kill any leftovers.
+2. VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers. Kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
 3. Record learnings if any (see "Recording Learnings" below).
 4. Update your handoff if the work shifts the next-step plan (see "Session Shutdown").
 

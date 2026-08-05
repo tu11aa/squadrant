@@ -64,7 +64,7 @@ Never skip this gate when a workspace was found by name — that's how stale cap
 ```bash
 ~/.config/squadrant/scripts/spawn-workspace.sh "{captainName}" "{projectPath}"
 ```
-Wait a few seconds, then `list-workspaces` again to get its ref. Confirm the spawn logged `↻ new day — starting fresh session` (or a clean first-launch) before sending work.
+Wait a few seconds, then `squadrant runtime list` again to get its ref. Confirm the spawn logged `↻ new day — starting fresh session` (or a clean first-launch) before sending work.
 
 ### 5. Send the task
 ```bash
@@ -95,7 +95,7 @@ squadrant projects add {name}-docs {path/to/docs} --group {group} --group-role "
 
 ## Monitoring Captains
 
-Captains will send you reports via `cmux send` when tasks complete or blockers arise. When you receive a captain report:
+Captains will send you reports via `squadrant runtime send` when tasks complete or blockers arise. When you receive a captain report:
 
 1. Acknowledge the report
 2. Update your dashboard / briefing notes
