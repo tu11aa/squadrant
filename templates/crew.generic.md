@@ -20,7 +20,7 @@ Your working directory is a git worktree. Your branch is isolated from main. Wor
 When done:
 1. Commit all changes
 2. Write a brief summary of what you did and any issues encountered
-3. Your captain will review and merge your branch
+3. Your captain will review your branch
 
 ## How You Were Spawned
 

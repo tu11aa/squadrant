@@ -225,7 +225,7 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 
 | Spot-check shows | Captain action |
 |-----------------|----------------|
-| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review; if good, terminalize (`merge` + `crew close`). If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
+| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review, then follow the HUMAN REVIEW GATE contract: surface the diff and wait for operator go-ahead; never merge unprompted. If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
 | Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
 | Still mid-task / transient idle | Leave it; wait for the next daemon event. |
 
@@ -235,39 +235,39 @@ This is the captain-side backstop: even if the completion-protocol imperative is
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
-### Handling CREW REVIEW (#599 review gate)
+### Handling CREW REVIEW or CREW DONE (Assessment Gate)
 
-CREW REVIEW is **unambiguous** — a crew ran `squadrant crew signal review` after committing its work to `crew/<name>`. Unlike CREW IDLE, this is never a stray heartbeat miss: the crew has explicitly paused and is waiting for your verdict. The task is **NOT terminal** — don't treat it like CREW DONE.
+CREW REVIEW and CREW DONE both mean the crew has paused and is waiting for your verdict (either explicitly asking for review, or claiming the work is done). Treat neither as final until you have reviewed.
 
-**Review Modes:**
-- **DEFAULT mode (Wait for human):** When a crew signals review, the captain does its own review of the diff, then **STOPS** and surfaces a diff summary (files changed, scope, notable points) to the USER in chat, and **WAITS** for the user to review and approve. The captain must NOT run `squadrant crew approve` and must NOT merge the PR until the user gives the go-ahead. Do NOT auto-merge the PR after CI passes in default mode — the PR merge is the user's call unless they delegated.
-- **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates for that review (e.g. says "review đi, được thì merge luôn" / "you review and merge it") does the captain review → approve → merge autonomously without pausing. Delegation is per-request; it does not become the standing default.
+**Follow the HUMAN REVIEW GATE contract from your system prompt.** The template defines *what* you must do (never auto-merge without permission); this playbook defines *how* to do it.
+
+**Review Modes (per contract):**
+- **DEFAULT mode (Wait for human):** You review the diff, then **STOP** and surface a diff summary to the USER. You **WAIT** for the user to approve. You do NOT run `squadrant crew approve` or merge until they say so.
+- **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates (e.g. "you review and merge it"). You review, run `squadrant crew approve`, and merge autonomously.
 
 *Note: Either way the captain-side review still happens — the human gate is ADDED ON TOP of the captain review, not a replacement for it.*
 
-On CREW REVIEW:
+On CREW REVIEW or CREW DONE:
 
-1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base; the default is exactly the review surface). Use `--staged`/`--unstaged`/`--working` if you also want to peek at anything left uncommitted.
+1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base). Use `--staged`/`--unstaged`/`--working` if you want to peek at uncommitted work.
 2. **Classify (Captain-side review):**
 
 | Diff looks | Captain action |
 |-----------|-----------------|
-| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT for go-ahead. Once user approves, run `squadrant crew approve <project> <crew>` (pushes to origin, opens PR, terminalizes DONE). Wait for user to decide on merging.<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
-| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates, re-commits, and re-signals `review`. Loop until approved. (No user gate needed for rejecting back to crew). |
+| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
+| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
-3. **Never auto-terminalize a CREW REVIEW yourself** by emitting `task.done` directly — always go through `squadrant crew approve` so the push+PR actually happens before the task closes.
+3. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
 4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
-## When Crew Finishes
+## When Crew is Fully Finished (After Approval)
 
-After a crew task completes:
+After a crew task is approved and optionally merged:
 
-1. Review the work — read the diff, check the branch.
-2. Merge their branch if appropriate.
-3. Close the crew with `squadrant crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
-4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
-5. Record learnings if any (see "Recording Learnings" below).
-6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
+1. Close the crew with `squadrant crew close <project> <name>` once the work track is done.
+2. VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers. Kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
+3. Record learnings if any (see "Recording Learnings" below).
+4. Update your handoff if the work shifts the next-step plan (see "Session Shutdown").
 
 ## Status Board (show after substantive turns)
 
