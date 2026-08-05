@@ -225,7 +225,7 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 
 | Spot-check shows | Captain action |
 |-----------------|----------------|
-| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review; if good, terminalize (`merge` + `crew close`). If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
+| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review, then follow the HUMAN REVIEW GATE contract: surface the diff and wait for operator go-ahead; never merge unprompted. If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
 | Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
 | Still mid-task / transient idle | Leave it; wait for the next daemon event. |
 
