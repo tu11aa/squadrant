@@ -123,7 +123,7 @@ function localAheadOfBase(runner: CommandRunner, projectPath: string, base: stri
 function readFetchAgeMs(projectPath: string, now: number): number | null {
   try {
     const stat = fs.statSync(path.join(projectPath, ".git", "FETCH_HEAD"));
-    return now - stat.mtime.getTime();
+    return Math.max(0, now - stat.mtime.getTime());
   } catch {
     return null;
   }
@@ -155,6 +155,7 @@ export function gatherLiveRepoState(
   const baseBranch = ghInfo?.defaultBranch ?? fallbackBaseBranch;
   const baseBranchSource: LiveRepoState["baseBranchSource"] = ghInfo ? "gh-api" : "local-fallback";
 
+  const branchState = gatherBranchState(runner, projectPath, branch, baseBranch, detached, fetch);
   const fetchAgeMs = readFetchAgeMs(projectPath, now);
 
   let aheadOfBase: number | null = 0;
@@ -218,7 +219,7 @@ export function gatherLiveRepoState(
     openPRs: gatherOpenPRs(runner, projectPath),
     liveCrews: gatherLiveCrews(tasks),
     conflicts,
-    branchState: gatherBranchState(runner, projectPath, branch, baseBranch, detached, fetch),
+    branchState,
     unreleasedAheadOfReleaseBranch,
   };
 }
