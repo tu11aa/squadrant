@@ -184,6 +184,44 @@ describe("gatherLiveRepoState", () => {
     expect(state.branchState.upstreamStatus).toBe("unknown");
   });
 
+  it("reflects the post-fetch mtime when --fetch is passed", () => {
+    fs.mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+    const fetchHead = path.join(repoDir, ".git", "FETCH_HEAD");
+    fs.writeFileSync(fetchHead, "");
+    
+    // Pre-fetch state: 3 hours old
+    const preFetchTime = new Date(NOW - 3 * 60 * 60 * 1000); 
+    fs.utimesSync(fetchHead, preFetchTime, preFetchTime);
+
+    const runner: CommandRunner = {
+      run(cmd, args) {
+        const key = `${cmd} ${args.join(" ")}`;
+        if (key === `git -C ${repoDir} rev-parse --abbrev-ref HEAD`) return "develop\n";
+        if (key === `git -C ${repoDir} log -15 --oneline`) return "";
+        if (key === `git -C ${repoDir} fetch origin`) {
+          // Post-fetch state: 1 hour old (simulates the fetch taking place before we read it)
+          const postFetchTime = new Date(NOW - 1 * 60 * 60 * 1000);
+          fs.utimesSync(fetchHead, postFetchTime, postFetchTime);
+          return "";
+        }
+        if (key === `git -C ${repoDir} for-each-ref --format=%(upstream:short)|%(upstream:track) refs/heads/develop`) return "origin/develop|ahead 1\n";
+        if (key === `git -C ${repoDir} status --porcelain`) return "";
+        if (key === `git -C ${repoDir} rev-list --count origin/main..HEAD`) return "0\n";
+        if (key === `git -C ${repoDir} rev-parse develop`) return "sha1\n";
+        if (key === `git -C ${repoDir} merge-base develop origin/main`) return "sha0\n";
+        if (key === `git -C ${repoDir} rev-parse --verify origin/main`) return "sha\n";
+        if (cmd === "gh") throw new Error("gh unavailable");
+        throw new Error(`unhandled command: ${key}`);
+      },
+    };
+
+    const state = gatherLiveRepoState(repoDir, "main", [], runner, NOW, true);
+
+    expect(state.branchState.fetchPerformed).toBe(true);
+    // Must be the post-fetch time (1h), not the pre-fetch time (3h)
+    expect(state.fetchAgeMs).toBe(1 * 60 * 60 * 1000);
+  });
+
   it("computes fetchAgeMs from the real .git/FETCH_HEAD mtime", () => {
     fs.mkdirSync(path.join(repoDir, ".git"), { recursive: true });
     const fetchHead = path.join(repoDir, ".git", "FETCH_HEAD");
