@@ -7,51 +7,37 @@ description: Complete captain playbook — session startup, crew spawning, statu
 
 ## Session Startup
 
-1. Read `~/.config/squadrant/config.json` — match your current working directory. Note your `spokeVault`, `group`, `groupRole`, and `maxCrew` (default: 5).
-2. **Check for a handoff, and verify live repo state — every boot, not just when the handoff is missing:**
-```bash
-~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"
-squadrant handoff facts {project} --fetch
-```
-`read-handoff.sh` — if a handoff exists (`"exists"` is not false), read the context carefully:
-- `currentState` — what was happening when the last session ended
-- `openBranches` — branches with uncommitted/unmerged work
-- `nextSteps` — what the previous session planned to do next
-- `blockedItems` — unresolved blockers
-- `decisions` — important decisions already made (don't re-decide)
-The handoff file is archived to `{spokeVault}/handoffs/<date>.json` after reading (not deleted) — use it as your primary context source.
+Execute the 4-step startup contract defined in your system prompt.
 
-`squadrant handoff facts {project} --fetch` — run this **every session start, unconditionally**, not only when the handoff is missing. `--fetch` is the one deliberate network call in your startup: it updates remote-tracking refs before reporting, so what follows is verified, not stale-and-silent. This is not a handoff and does not guess — it gathers verified facts grouped by source with provenance.
+**How to execute the contract:**
 
-**Check `liveRepo.branchState` explicitly — these are flags, act on them directly, don't just skim past them:**
-- `upstreamStatus: "behind"` — your local branch is stale relative to origin; don't trust local-only diffs until you've reconciled.
-- `upstreamStatus: "diverged"` — both sides moved; this needs a decision (rebase/merge), not silence.
-- `upstreamStatus: "upstream-gone"` — the remote branch was deleted; this local branch is likely done.
-- `upstreamStatus: "no-upstream"` — never pushed.
-- `dirtyWorkingTree: true` — uncommitted changes are sitting from a prior session; find out why before proceeding.
-- `onUnexpectedBranch: true` — you're sitting on a `crew/*` worktree branch; a captain's own checkout normally shouldn't be.
-- `mergedIntoBase: true` — this branch is fully merged into base already; safe to switch back to base / clean up.
-- (This is the direct fix for a real incident: local `main` was 164 commits behind origin with no signal anything was wrong, and got reported as "188 commits ahead" when the true count was 24. Don't let that happen silently again — these flags exist so you don't have to eyeball `git log`.)
+1. **Fetch and gather facts:**
+   Run `squadrant handoff facts {project} --fetch` — this updates remote-tracking refs before reporting, so what follows is verified, not stale-and-silent. This is not a handoff and does not guess — it gathers verified facts grouped by source with provenance.
 
-**Check tasks from the same call — `liveRepo.liveCrews`** lists every non-terminal crew task (name/state/task/question) for this project. A `state: "blocked"` entry with a `question` is waiting on you right now; don't miss it under everything else in the payload.
+2. **Check `liveRepo.branchState` explicitly:**
+   These are flags; act on them directly, don't just skim past them:
+   - `upstreamStatus: "behind"` — your local branch is stale relative to origin; don't trust local-only diffs until you've reconciled.
+   - `upstreamStatus: "diverged"` — both sides moved; this needs a decision (rebase/merge), not silence.
+   - `upstreamStatus: "upstream-gone"` — the remote branch was deleted; this local branch is likely done.
+   - `upstreamStatus: "no-upstream"` — never pushed.
+   - `dirtyWorkingTree: true` — uncommitted changes are sitting from a prior session; find out why before proceeding.
+   - `onUnexpectedBranch: true` — you're sitting on a `crew/*` worktree branch; a captain's own checkout normally shouldn't be.
+   - `mergedIntoBase: true` — this branch is fully merged into base already; safe to switch back to base / clean up.
 
-If `read-handoff.sh` reported `"exists": false`, reconstruct from this SAME `handoff facts` call's output instead of cold-starting blind — no need to run it twice:
-- `checkpoint` — the newest archived handoff, if any, read in full (already covers history up to when it was written).
-- `gapSessions` — captain sessions after the checkpoint, each with its own transcript (the work no handoff covers — read `meta.gapSessionIds` to see the boundary at a glance).
-- `claudeMem` — your project's raw recent session summary and decisions.
-- `meta` — which sources were actually available (`sourcesAvailable`/`sourcesMissing`), and `registryNote`/`checkpointFilename`/`usedFallbackWindow` explaining how the gap was determined.
+3. **Identify current state:**
+   Check tasks from the same call — `liveRepo.liveCrews` lists every non-terminal crew task for this project. A `state: "blocked"` entry with a `question` is waiting on you right now.
 
-**You do the synthesizing, not the command.** Compose your own understanding of `currentState`/`openBranches`/`nextSteps`/`blockedItems`/`decisions` from this evidence — cross-referencing `liveRepo` (exact, current) against `claudeMem` (distilled, can be stale) and each gap session's `transcript` (inference) yourself. State plainly in-session that this context is reconstructed and therefore inferred, not what the previous session actually wrote.
-3. Search **claude-mem** (`mem-search` skill) for your project name to get additional continuity.
-4. Check `{spokeVault}/daily-logs/` — read the most recent log if one exists.
-5. Check `{spokeVault}/learnings/` — **selectively** load relevant learnings (see "Selective Loading" section below). Do NOT read all files — grep by task keywords and tags.
-6. Check `{spokeVault}/skills/` — if any captured skills match your current task, load them for crew reference.
-7. Check `{spokeVault}/wiki/` — query wiki for keywords related to your current task:
-```bash
-~/.config/squadrant/scripts/wiki-query.sh "{spokeVaultPath}" "{relevant-keyword}" --titles-only
-```
-If relevant pages exist, read them for context before starting work.
-8. Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
+4. **Read handoff:**
+   `~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"`
+   If a handoff exists, read the context carefully (`currentState`, `openBranches`, `nextSteps`, `blockedItems`, `decisions`). 
+   If it reported `"exists": false`, reconstruct from the `handoff facts` output instead of cold-starting blind (check `checkpoint`, `gapSessions`, `claudeMem`). You do the synthesizing.
+
+5. **Additional Context (opt-in):**
+   - Search **claude-mem** (`mem-search` skill) for your project name.
+   - Check `{spokeVault}/daily-logs/` for the most recent log.
+   - Check `{spokeVault}/learnings/` — selectively load relevant learnings.
+   - Check `{spokeVault}/skills/` and `{spokeVault}/wiki/`.
+   - Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
 
 ## Crew Setup
 
@@ -239,7 +225,7 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 
 | Spot-check shows | Captain action |
 |-----------------|----------------|
-| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review; if good, terminalize (`merge` + `crew close`). If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
+| Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review, then follow the HUMAN REVIEW GATE contract: surface the diff and wait for operator go-ahead; never merge unprompted. If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
 | Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
 | Still mid-task / transient idle | Leave it; wait for the next daemon event. |
 
@@ -249,39 +235,39 @@ This is the captain-side backstop: even if the completion-protocol imperative is
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
-### Handling CREW REVIEW (#599 review gate)
+### Handling CREW REVIEW or CREW DONE (Assessment Gate)
 
-CREW REVIEW is **unambiguous** — a crew ran `squadrant crew signal review` after committing its work to `crew/<name>`. Unlike CREW IDLE, this is never a stray heartbeat miss: the crew has explicitly paused and is waiting for your verdict. The task is **NOT terminal** — don't treat it like CREW DONE.
+CREW REVIEW and CREW DONE both mean the crew has paused and is waiting for your verdict (either explicitly asking for review, or claiming the work is done). Treat neither as final until you have reviewed.
 
-**Review Modes:**
-- **DEFAULT mode (Wait for human):** When a crew signals review, the captain does its own review of the diff, then **STOPS** and surfaces a diff summary (files changed, scope, notable points) to the USER in chat, and **WAITS** for the user to review and approve. The captain must NOT run `squadrant crew approve` and must NOT merge the PR until the user gives the go-ahead. Do NOT auto-merge the PR after CI passes in default mode — the PR merge is the user's call unless they delegated.
-- **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates for that review (e.g. says "review đi, được thì merge luôn" / "you review and merge it") does the captain review → approve → merge autonomously without pausing. Delegation is per-request; it does not become the standing default.
+**Follow the HUMAN REVIEW GATE contract from your system prompt.** The template defines *what* you must do (never auto-merge without permission); this playbook defines *how* to do it.
+
+**Review Modes (per contract):**
+- **DEFAULT mode (Wait for human):** You review the diff, then **STOP** and surface a diff summary to the USER. You **WAIT** for the user to approve. You do NOT run `squadrant crew approve` or merge until they say so.
+- **DELEGATED mode (Captain auto):** ONLY when the user explicitly delegates (e.g. "you review and merge it"). You review, run `squadrant crew approve`, and merge autonomously.
 
 *Note: Either way the captain-side review still happens — the human gate is ADDED ON TOP of the captain review, not a replacement for it.*
 
-On CREW REVIEW:
+On CREW REVIEW or CREW DONE:
 
-1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base; the default is exactly the review surface). Use `--staged`/`--unstaged`/`--working` if you also want to peek at anything left uncommitted.
+1. **Open the diff** — `squadrant diff <project> <crew>` (branch-vs-base). Use `--staged`/`--unstaged`/`--working` if you want to peek at uncommitted work.
 2. **Classify (Captain-side review):**
 
 | Diff looks | Captain action |
 |-----------|-----------------|
-| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT for go-ahead. Once user approves, run `squadrant crew approve <project> <crew>` (pushes to origin, opens PR, terminalizes DONE). Wait for user to decide on merging.<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
-| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates, re-commits, and re-signals `review`. Loop until approved. (No user gate needed for rejecting back to crew). |
+| Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
+| Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
-3. **Never auto-terminalize a CREW REVIEW yourself** by emitting `task.done` directly — always go through `squadrant crew approve` so the push+PR actually happens before the task closes.
+3. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
 4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
-## When Crew Finishes
+## When Crew is Fully Finished (After Approval)
 
-After a crew task completes:
+After a crew task is approved and optionally merged:
 
-1. Review the work — read the diff, check the branch.
-2. Merge their branch if appropriate.
-3. Close the crew with `squadrant crew close <project> <name>` once the work track is done. (Or let the crew exit itself — the tab closes when the CLI ends.)
-4. After closing a crew, VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers / node test workers; kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
-5. Record learnings if any (see "Recording Learnings" below).
-6. Update your handoff if the work shifts the next-step plan (see "Session Shutdown — Write Handoff" below).
+1. Close the crew with `squadrant crew close <project> <name>` once the work track is done.
+2. VERIFY no orphaned processes remain — e.g. `pgrep -fl vitest` and check for stray dev servers. Kill any leftovers. `pnpm test` is one-shot (`vitest run`, always exits) and machine-wide bounded via `scripts/heavy-lock.mjs` (#570), so concurrent crews queue instead of piling up — but still prefer one verification on the authoritative checkout rather than relying on the lock to save you.
+3. Record learnings if any (see "Recording Learnings" below).
+4. Update your handoff if the work shifts the next-step plan (see "Session Shutdown").
 
 ## Status Board (show after substantive turns)
 

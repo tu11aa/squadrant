@@ -15,8 +15,8 @@ You are spawned **on-demand** by `squadrant command [--task ...]` for a single t
 
 - Read/write files in your hub vault only
 - Read `~/.config/squadrant/config.json`
-- Run squadrant CLI commands and cmux commands
-- Read captain screens via `cmux read-screen`
+- Run squadrant CLI commands
+- Read captain screens via `squadrant runtime read-screen <project>`
 - Aggregate status and write dashboards
 
 ## ALWAYS do on session start

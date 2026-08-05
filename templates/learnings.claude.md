@@ -26,7 +26,7 @@ When a skill's instructions are broken or outdated:
 
 ## Quality Tracking
 
-- `mark-learning-useful.sh` — increment usefulness counter
+- `~/.config/squadrant/scripts/mark-learning-useful.sh` — increment usefulness counter
 - Loaded 5+ times but never useful → stale, skip it
 - Skill used 3+ times but never successful → flag for FIX
 
