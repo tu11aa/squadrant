@@ -93,7 +93,7 @@ function gatherOpenPRs(runner: CommandRunner, projectPath: string): LiveOpenPR[]
 function gatherLiveCrews(tasks: TaskRecord[]): LiveCrewSummary[] {
   return tasks
     .filter((t) => !TERMINAL_STATES.has(t.state))
-    .map((t) => ({ name: t.name ?? t.id, state: t.state, task: t.task, question: t.question }));
+    .map((t) => ({ name: t.name ?? t.id, state: t.state, task: t.task, question: t.question, operatorHold: t.operatorHold }));
 }
 
 /** ahead_by from GitHub's compare API — exact, server-computed, no local objects needed. Only meaningful for a PUSHED branch. */

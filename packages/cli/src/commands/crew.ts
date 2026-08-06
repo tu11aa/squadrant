@@ -14,7 +14,7 @@ import {
   type ResolvedAgent,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
-import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn } from "./crew-control.js";
+import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 
@@ -156,8 +156,35 @@ crewCommand
         console.log(chalk.yellow(`No live crew sessions for ${project}.`));
         return;
       }
+      
+      const tasks = await squadrantdCall({ kind: "list", project }).catch(() => []) as TaskRecord[];
+      const active: any[] = [];
+      const held: any[] = [];
+
       for (const c of crews) {
-        console.log(`  ${c.name}  (${c.surfaceId})`);
+        const task = tasks.find(t => t.name === c.name); // pickMostRecent?
+        const t = task ? resolveApproveTarget(tasks, c.name) : undefined;
+        if (t?.operatorHold) {
+          held.push({ c, t });
+        } else {
+          active.push({ c, t });
+        }
+      }
+
+      if (active.length > 0) {
+        console.log(`active (${active.length}):`);
+        for (const { c, t } of active) {
+          console.log(`  ${c.name.padEnd(10)} ${t ? t.state : "unknown"}  (${c.surfaceId})`);
+        }
+      }
+      if (held.length > 0) {
+        console.log(`HELD BY OPERATOR (${held.length}) — not counted toward maxCrew:`);
+        for (const { c, t } of held) {
+          const m = Math.round((Date.now() - t.operatorHold.since) / 60000);
+          const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
+          const note = t.operatorHold.note ? ` · "${t.operatorHold.note}"` : "";
+          console.log(`  ${c.name.padEnd(10)} ${t.state} · held ${hm}${note}  (${c.surfaceId})`);
+        }
       }
     } catch (err) {
       console.error(chalk.red((err as Error).message));

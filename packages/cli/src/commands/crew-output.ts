@@ -63,5 +63,23 @@ export function formatCompactTasks(
   if (opts.compact === false) {
     return JSON.stringify(records, null, 2);
   }
-  return records.map(formatTaskLine).join("\n");
+  const active = records.filter(r => !r.operatorHold);
+  const held = records.filter(r => r.operatorHold);
+  
+  let out = "";
+  if (active.length > 0) {
+    if (held.length > 0) out += `active (${active.length}):\n`;
+    out += active.map(r => (held.length > 0 ? "  " : "") + formatTaskLine(r)).join("\n");
+  }
+  if (held.length > 0) {
+    if (out) out += "\n";
+    out += `HELD BY OPERATOR (${held.length}) — not counted toward maxCrew:\n`;
+    out += held.map(r => {
+      const m = Math.round((Date.now() - r.operatorHold!.since) / 60000);
+      const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
+      const note = r.operatorHold!.note ? ` · "${r.operatorHold!.note}"` : "";
+      return `  ${formatTaskLine(r)} · held ${hm}${note}`;
+    }).join("\n");
+  }
+  return out;
 }
