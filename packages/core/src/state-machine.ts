@@ -82,6 +82,24 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     return { ...rec, state: "working", question: undefined, error: undefined, lastHeartbeat: now, lastEvent: ev.type };
   }
 
+  if (ev.type === "crew.takeover.started") {
+    // Idempotent: keep the original `since` so a repeat does not reset the
+    // clock the HELD-LONG nudge measures from.
+    if (rec.operatorHold) return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+    return {
+      ...rec,
+      operatorHold: { since: now, ...(ev.note !== undefined ? { note: ev.note } : {}) },
+      lastHeartbeat: now,
+      lastEvent: ev.type,
+    };
+  }
+
+  if (ev.type === "crew.takeover.ended") {
+    // Over-releasing must never be punished — a no-op, not an error.
+    const { operatorHold: _dropped, ...rest } = rec;
+    return { ...rest, lastHeartbeat: now, lastEvent: ev.type };
+  }
+
   // Terminal states are absorbing: ignore any late/duplicate event idempotently.
   if (TERMINAL_STATES.has(rec.state)) return rec;
 
