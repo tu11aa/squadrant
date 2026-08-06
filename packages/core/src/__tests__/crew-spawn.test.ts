@@ -602,6 +602,16 @@ describe("runCrewSpawn", () => {
 // ─── runCrewSend ─────────────────────────────────────────────────────────────
 
 describe("runCrewSend", () => {
+  it("refuses to send to a crew under operator takeover", async () => {
+    const held = { id: "t1", name: "c1", state: "working", operatorHold: { since: 1000 } } as TaskRecord;
+    await expect(
+      runCrewSend(PROJECT, "c1", "message", makeRuntime("ws:1", [{ workspaceId: "ws:1", surfaceId: "p:1", title: "🔧 myproj:c1", type: "pane" } as any]), "ws:1", {
+        listTasks: async () => [held],
+        emitEvent: vi.fn(),
+      }),
+    ).rejects.toThrow(/operator takeover/i);
+  });
+
   it("throws when crew pane not found", async () => {
     const runtime = makeRuntime("ws:1", []);
     await expect(
@@ -821,6 +831,39 @@ describe("runCrewList", () => {
 // ─── runCrewClose ────────────────────────────────────────────────────────────
 
 describe("runCrewClose", () => {
+  it("refuses to close a crew under operator takeover", async () => {
+    const held = { id: "t1", name: "c1", state: "done", operatorHold: { since: 1000 } } as TaskRecord;
+    await expect(
+      runCrewClose(PROJECT, "c1", makeRuntime("ws:1", [{ workspaceId: "ws:1", surfaceId: "p:1", title: "🔧 myproj:c1", type: "pane" } as any]), "ws:1", {
+        listTasks: async () => [held],
+        emitEvent: vi.fn(),
+        closeCodexThread: vi.fn(),
+      }),
+    ).rejects.toThrow(/operator takeover/i);
+  });
+
+  it("emits no event when it refuses to close", async () => {
+    const held = { id: "t1", name: "c1", state: "done", operatorHold: { since: 1000 } } as TaskRecord;
+    const emitted: ControlEvent[] = [];
+    await runCrewClose(PROJECT, "c1", makeRuntime("ws:1", [{ workspaceId: "ws:1", surfaceId: "p:1", title: "🔧 myproj:c1", type: "pane" } as any]), "ws:1", {
+      listTasks: async () => [held],
+      emitEvent: async (_p, e) => { emitted.push(e); },
+      closeCodexThread: vi.fn(),
+    }).catch(() => {});
+    expect(emitted).toEqual([]);   // must not terminalize then bail
+  });
+
+  it("closes a held crew when force is set", async () => {
+    const held = { id: "t1", name: "c1", state: "working", operatorHold: { since: 1000 }, cwd: "/tmp/foo" } as TaskRecord;
+    const emitted: ControlEvent[] = [];
+    await runCrewClose(PROJECT, "c1", makeRuntime("ws:1", [{ workspaceId: "ws:1", surfaceId: "p:1", title: "🔧 myproj:c1", type: "pane" } as any]), "ws:1", {
+      listTasks: async () => [held],
+      emitEvent: async (_p, e) => { emitted.push(e); },
+      closeCodexThread: vi.fn(),
+    }, { force: true });
+    expect(emitted).not.toEqual([]);
+  });
+
   it("throws when neither pane nor daemon task found", async () => {
     const runtime = makeRuntime("ws:1", []);
     await expect(

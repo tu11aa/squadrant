@@ -59,7 +59,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
   });
 }
 
-export async function runCrewSend(project: string, name: string, message: string): Promise<void> {
+export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<void> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   return coreRunCrewSend(project, name, message, runtime, workspaceId, {
     listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
@@ -69,7 +69,7 @@ export async function runCrewSend(project: string, name: string, message: string
     sendToPane: (pane, msg) => confirmedSendToPane(runtime, pane, msg),
     // #516: side-effect-free modal precheck, run before any daemon-state emit.
     isBlockedByModal: (pane) => paneHasOpenModal(runtime, pane),
-  });
+  }, opts);
 }
 
 export async function runCrewRead(project: string, name: string): Promise<string> {
@@ -77,13 +77,13 @@ export async function runCrewRead(project: string, name: string): Promise<string
   return coreRunCrewRead(project, name, runtime, workspaceId);
 }
 
-export async function runCrewClose(project: string, name: string): Promise<void> {
+export async function runCrewClose(project: string, name: string, opts?: { force?: boolean }): Promise<void> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   return coreRunCrewClose(project, name, runtime, workspaceId, {
     listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
     emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
     closeCodexThread: async (taskId) => { await squadrantdCall({ kind: "codex-close", taskId }); },
-  });
+  }, opts);
 }
 
 export async function runCrewList(project: string): Promise<Array<{ name: string; surfaceId: string }>> {
@@ -172,13 +172,14 @@ crewCommand
   .argument("<name>", "Crew name (e.g. crew-1)")
   .argument("[message]", "Message to send (omit with --message-file)")
   .option("--message-file <path>", "Read message from file instead of positional arg ('-' for stdin)")
-  .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string }) => {
+  .option("--force", "override an operator takeover (only when the operator told you to)", false)
+  .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
-      await runCrewSend(project, name, resolvedMessage);
+      await runCrewSend(project, name, resolvedMessage, opts);
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
-    } catch (err) {
-      console.error(chalk.red((err as Error).message));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
       process.exit(1);
     }
   });
@@ -206,9 +207,10 @@ crewCommand
   .description("Shutdown a crew session (closes its tab)")
   .argument("<project>", "Project name")
   .argument("<name>", "Crew name")
-  .action(async (project: string, name: string) => {
+  .option("--force", "override an operator takeover (only when the operator told you to)", false)
+  .action(async (project: string, name: string, opts: { force?: boolean }) => {
     try {
-      await runCrewClose(project, name);
+      await runCrewClose(project, name, opts);
       console.log(chalk.green(`✔ Closed ${project}:${name}`));
     } catch (err) {
       console.error(chalk.red((err as Error).message));

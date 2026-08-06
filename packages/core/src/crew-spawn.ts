@@ -492,6 +492,7 @@ export async function runCrewSend(
     // emit block must never run for a message that never reached the crew.
     isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
   },
+  opts?: { force?: boolean }
 ): Promise<void> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
@@ -502,13 +503,31 @@ export async function runCrewSend(
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }
+
+  let task: TaskRecord | undefined;
+  try {
+    const matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    task = matches.length > 0 ? pickMostRecentTask(matches) : undefined;
+  } catch {
+    // Swallow daemon errors so crews without a daemon or offline daemon
+    // still receive the sent message.
+  }
+
+  if (task && task.operatorHold && !opts?.force) {
+    const heldForMin = Math.round((Date.now() - task.operatorHold.since) / 60000);
+    throw new Error(
+      `Crew '${name}' is under operator takeover (held ${heldForMin}m` +
+        `${task.operatorHold.note ? `: ${task.operatorHold.note}` : ""}). ` +
+        `The operator is working in that tab — sending a message disrupts their conversation. ` +
+        `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+    );
+  }
+
   // Best-effort attention-state handling before delivering the captain's answer.
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
   // Blocked task: emit task.started to clear blocked→working so a subsequent real
   // permission prompt re-fires CREW BLOCKED (#182).
   try {
-    const matches = (await deps.listTasks(project)).filter((t) => t.name === name);
-    const task = matches.length > 0 ? pickMostRecentTask(matches) : undefined;
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
@@ -574,6 +593,7 @@ export async function runCrewClose(
     /** Injectable for tests; defaults to a real delay. */
     sleep?: (ms: number) => Promise<void>;
   },
+  opts?: { force?: boolean }
 ): Promise<void> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // resolveCaptainWorkspace already validated the project exists; reload for its
@@ -605,6 +625,15 @@ export async function runCrewClose(
       // a phantom CREW STALLED/IDLE later. Reap/worktree cleanup below anchors
       // on the most-recently-dispatched match — the one the live pane belongs to.
       const primary = pickMostRecentTask(matches);
+      if (primary.operatorHold && !opts?.force) {
+        const heldForMin = Math.round((Date.now() - primary.operatorHold.since) / 60000);
+        throw new Error(
+          `Crew '${name}' is under operator takeover (held ${heldForMin}m` +
+            `${primary.operatorHold.note ? `: ${primary.operatorHold.note}` : ""}). ` +
+            `The operator is working in that tab — closing it kills their session and prunes the worktree. ` +
+            `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+        );
+      }
       taskId = primary.id;
       if (primary.cwd && projRoot && primary.cwd !== projRoot) {
         worktreeCwd = primary.cwd;
@@ -621,7 +650,8 @@ export async function runCrewClose(
         }
       }
     }
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("operator takeover")) throw e;
     // Swallow daemon errors — a crew without a daemon must still close.
   }
   // Close the cmux pane if it still exists. A dead crew's pane is already gone —
