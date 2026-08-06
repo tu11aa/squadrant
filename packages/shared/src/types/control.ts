@@ -62,16 +62,6 @@ export interface TaskRecord {
   resultRef?: string;      // filesystem path to captured output/artifact
   parseWarning?: boolean;  // headless exit 0 but unparseable result
   createdAt: number;       // epoch ms
-
-  /** #649: set while the OPERATOR is driving this crew's tab directly rather
-   *  than the captain. Deliberately orthogonal to `state`, not a TaskState:
-   *  a takeover must be recordable on a terminal record (at prism-app the crew
-   *  was `done` when the operator adopted it), and modelling it as a state
-   *  would force a reopen on takeover plus prior-state restoration on handback.
-   *  While set, the CLI refuses `crew close` and `crew send` without --force,
-   *  and the daemon suppresses actionable captain pushes for this task. */
-  operatorHold?: { since: number; note?: string; lastNudgeAt?: number };
-
   lastHeartbeat: number;   // epoch ms
   lastEvent: string;       // last event type applied
   heartbeatBudgetMs: number; // per-task stall threshold
@@ -178,12 +168,6 @@ export type ControlEvent =
   // task to the absorbing 'cancelled' state. Silent: captain initiated the close
   // so no CREW CANCELLED push is fired (not in ATTENTION_STATES).
   | { type: "task.cancelled"; id: string; reason?: string }
-  // #649: the operator has taken over / handed back this crew's tab. Neither
-  // event mutates `state`, so both are valid on a terminal record — that is the
-  // whole point (see TaskRecord.operatorHold).
-  | { type: "crew.takeover.started"; id: string; note?: string }
-  | { type: "crew.takeover.ended"; id: string; note?: string };
-
   // #466: emitted by runCrewSpawn after positively confirming the first turn was
   // delivered. Stamps firstTurnConfirmedAt on the record so the watchdog can
   // distinguish a quiet-thinking crew from one that never received its task.
