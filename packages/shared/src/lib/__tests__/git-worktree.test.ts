@@ -25,7 +25,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase } from "../git-worktree.js";
+import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase, worktreeDirtyFiles } from "../git-worktree.js";
 
 // #387: addWorktree() runs for every registered project, not just pnpm ones —
 // stub existsSync per project "kind" so installWorktreeDependencies sees the
@@ -347,6 +347,25 @@ describe("resolveWorktreeBase", () => {
   });
 });
 
+describe("worktreeDirtyFiles", () => {
+  beforeEach(() => execFileSyncMock.mockReset());
+
+  it("returns files from porcelain status", () => {
+    execFileSyncMock.mockReturnValue(Buffer.from(" M modified.txt\n?? untracked.js\n"));
+    expect(worktreeDirtyFiles("/tmp/wt")).toEqual(["modified.txt", "untracked.js"]);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/wt", "status", "--porcelain", "--untracked-files=all"],
+      expect.anything()
+    );
+  });
+
+  it("returns empty array when git fails", () => {
+    execFileSyncMock.mockReturnValue(undefined);
+    expect(worktreeDirtyFiles("/tmp/wt")).toEqual([]);
+  });
+});
+
 describe("removeWorktree", () => {
   beforeEach(() => execFileSyncMock.mockReset());
 
@@ -361,18 +380,11 @@ describe("removeWorktree", () => {
     );
   });
 
-  it("retries with --force when a plain remove fails (dirty/locked worktree)", () => {
-    let calls = 0;
-    execFileSyncMock.mockImplementation(() => {
-      calls++;
-      if (calls === 1) throw new Error("contains modified or untracked files");
-      return "";
-    });
+  it("runs with --force when opts.force is true", () => {
+    removeWorktree("/tmp/brove", "/tmp/brove/.worktrees/brove-crew-1", { force: true });
 
-    removeWorktree("/tmp/brove", "/tmp/brove/.worktrees/brove-crew-1");
-
-    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
-    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
       "git",
       ["-C", "/tmp/brove", "worktree", "remove", "--force", "/tmp/brove/.worktrees/brove-crew-1"],
       expect.objectContaining({ stdio: "pipe" }),

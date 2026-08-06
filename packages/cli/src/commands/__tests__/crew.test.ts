@@ -66,10 +66,11 @@ vi.mock("@squadrant/workspaces", () => ({
 const loadConfig = vi.hoisted(() => vi.fn());
 const addWorktree = vi.hoisted(() => vi.fn());
 const removeWorktree = vi.hoisted(() => vi.fn());
+const worktreeDirtyFiles = vi.hoisted(() => vi.fn().mockReturnValue([]));
 const resolveWorktreeBase = vi.hoisted(() => vi.fn().mockReturnValue("develop"));
 vi.mock("@squadrant/shared", async () => {
   const actual = await vi.importActual<typeof import("@squadrant/shared")>("@squadrant/shared");
-  return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree, removeWorktree, resolveWorktreeBase };
+  return { ...actual, loadConfig, resolveHome: (p: string) => p, addWorktree, removeWorktree, resolveWorktreeBase, worktreeDirtyFiles };
 });
 
 const claudeDriver = vi.hoisted(() => ({
@@ -969,7 +970,7 @@ describe("squadrant crew send/read/close/list", () => {
 
     await runCrewClose("brove", "crew-1");
 
-    expect(removeWorktree).toHaveBeenCalledWith("/tmp/brove", wtPath);
+    expect(removeWorktree).toHaveBeenCalledWith("/tmp/brove", wtPath, undefined);
     expect(closePane).toHaveBeenCalled();
   });
 

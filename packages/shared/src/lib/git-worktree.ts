@@ -198,15 +198,26 @@ function installWorktreeDependencies(wt: string): void {
   }
 }
 
-/**
- * Remove a crew's worktree (auto-clean on close). Tries a plain remove first;
- * a dirty/locked worktree makes git refuse, so we retry with --force. The
- * branch is left intact so the crew's commits survive the close.
- */
-export function removeWorktree(repoRoot: string, wtPath: string): void {
+/** #649: files that would be destroyed by removing this worktree. */
+export function worktreeDirtyFiles(wtPath: string): string[] {
   try {
-    execFileSync("git", ["-C", repoRoot, "worktree", "remove", wtPath], { stdio: "pipe" });
+    return execFileSync("git", ["-C", wtPath, "status", "--porcelain", "--untracked-files=all"],
+      { stdio: ["ignore", "pipe", "ignore"] })
+      .toString().split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
   } catch {
-    execFileSync("git", ["-C", repoRoot, "worktree", "remove", "--force", wtPath], { stdio: "pipe" });
+    return [];
   }
+}
+
+/**
+ * Remove a crew's worktree. The branch is left intact so commits survive.
+ *
+ * #649: this used to catch git's refusal and retry with --force. Git refuses to
+ * remove a dirty worktree precisely to protect uncommitted work; catching that
+ * and forcing past it destroyed an operator's uncommitted .env files at
+ * prism-app. The refusal now stands — callers pass force explicitly.
+ */
+export function removeWorktree(repoRoot: string, wtPath: string, opts?: { force?: boolean }): void {
+  const args = ["-C", repoRoot, "worktree", "remove", ...(opts?.force ? ["--force"] : []), wtPath];
+  execFileSync("git", args, { stdio: "pipe" });
 }

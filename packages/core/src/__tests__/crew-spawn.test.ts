@@ -15,6 +15,8 @@ const resolveWorktreeBaseMock = vi.hoisted(() => vi.fn().mockReturnValue("main")
 const removeWorktreeMock = vi.hoisted(() => vi.fn());
 const loadConfigMock = vi.hoisted(() => vi.fn());
 
+const worktreeDirtyFilesMock = vi.hoisted(() => vi.fn().mockReturnValue([]));
+
 vi.mock("@squadrant/shared", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@squadrant/shared")>();
   return {
@@ -22,6 +24,7 @@ vi.mock("@squadrant/shared", async (importOriginal) => {
     addWorktree: addWorktreeMock,
     resolveWorktreeBase: resolveWorktreeBaseMock,
     removeWorktree: removeWorktreeMock,
+    worktreeDirtyFiles: worktreeDirtyFilesMock,
     loadConfig: loadConfigMock,
   };
 });
@@ -1049,7 +1052,7 @@ describe("runCrewClose", () => {
       sleep: vi.fn().mockResolvedValue(undefined),
     });
 
-    expect(removeWorktreeMock).toHaveBeenCalledWith(PROJ_PATH, newWorktree);
-    expect(removeWorktreeMock).not.toHaveBeenCalledWith(PROJ_PATH, oldWorktree);
+    expect(removeWorktreeMock).toHaveBeenCalledWith(PROJ_PATH, newWorktree, undefined);
+    expect(removeWorktreeMock).not.toHaveBeenCalledWith(PROJ_PATH, oldWorktree, undefined);
   });
 });

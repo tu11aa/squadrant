@@ -19,6 +19,7 @@ import {
   addWorktree,
   resolveWorktreeBase,
   removeWorktree,
+  worktreeDirtyFiles,
   TERMINAL_STATES,
 } from "@squadrant/shared";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -607,9 +608,9 @@ export async function runCrewClose(
   // dangling forever. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
   // firePush stays silent — captain initiated the close.
   let taskId: string | undefined;
-  // Worktree to clean up after the pane closes — set only when this crew ran in
-  // its own worktree (cwd recorded by the daemon differs from the root checkout).
   let worktreeCwd: string | undefined;
+  let sessId: string | undefined;
+  let provider: string | undefined;
   try {
     let matches = (await deps.listTasks(project)).filter((t) => t.name === name);
     // #513: the record may not be registered yet (close raced spawn's own
@@ -635,6 +636,8 @@ export async function runCrewClose(
         );
       }
       taskId = primary.id;
+      sessId = primary.sessionId;
+      provider = primary.provider;
       if (primary.cwd && projRoot && primary.cwd !== projRoot) {
         worktreeCwd = primary.cwd;
       }
@@ -673,11 +676,30 @@ export async function runCrewClose(
   // yank a dir out from under a live shell. Best-effort: a failed removal must
   // not break close (the branch is preserved regardless).
   if (worktreeCwd && projRoot) {
+    const dirty = worktreeDirtyFiles(worktreeCwd);
+    if (dirty.length > 0 && !opts?.force) {
+      const transcriptStr = sessId && provider === "claude" 
+        ? `\ntranscript: ${path.join(os.homedir(), ".claude", "projects", worktreeCwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessId}.jsonl`)}\nresume:     claude --resume ${sessId}   (run from the worktree path above)\n` 
+        : "";
+      throw new Error(
+        `Worktree '${worktreeCwd}' has uncommitted files:\n${dirty.map(f => `  ${f}`).join("\n")}\n` +
+        `Why are they uncommitted? Commit them, or pass --force to destroy them.\n${transcriptStr}`
+      );
+    }
     try {
-      removeWorktree(projRoot, worktreeCwd);
+      removeWorktree(projRoot, worktreeCwd, opts);
     } catch (e) {
       process.stderr.write(`(worktree remove failed: ${(e as Error).message})\n`);
     }
+  }
+
+  if (sessId && provider === "claude" && worktreeCwd) {
+    const escaped = worktreeCwd.replace(/[^a-zA-Z0-9]/g, "-");
+    const transcriptPath = path.join(os.homedir(), ".claude", "projects", escaped, `${sessId}.jsonl`);
+    process.stdout.write(
+      `\ntranscript: ${transcriptPath}\n` +
+      `resume:     claude --resume ${sessId}   (run from the worktree path above)\n`
+    );
   }
 }
 
