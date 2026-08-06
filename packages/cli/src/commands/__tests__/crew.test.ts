@@ -963,7 +963,7 @@ describe("squadrant crew send/read/close/list", () => {
     squadrantdCall.mockImplementation(async (req: unknown) => {
       const r = req as { kind: string };
       if (r.kind === "list") {
-        return [{ id: "task-wt-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: wtPath, createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+        return [{ id: "task-wt-1", name: "crew-1", project: "brove", state: "working", provider: "claude", mode: "interactive", task: "task", cwd: wtPath, createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.started", heartbeatBudgetMs: 300000, attempts: [] }];
       }
       return undefined;
     });
@@ -972,7 +972,10 @@ describe("squadrant crew send/read/close/list", () => {
 
     await expect(runCrewClose("brove", "crew-1")).rejects.toThrow(/uncommitted files/i);
 
-    expect(squadrantdCall).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: { type: "task.cancelled", id: "task-wt-1" } }));
+    // Verify it NEVER emitted an event
+    expect(squadrantdCall).not.toHaveBeenCalledWith(expect.objectContaining({ 
+      kind: "event", 
+    }));
     expect(closePane).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
   });

@@ -592,13 +592,11 @@ const CLOSE_LOOKUP_RETRY_DELAY_MS = 150;
 
 function buildRecoveryHint(sessId: string | undefined, provider: string | undefined, worktreeCwd: string | undefined): string {
   if (!sessId || !worktreeCwd) return "";
-  // #649: opencode is a fork of Claude Code and shares the transcript layout
-  // (`~/.opencode/projects/...`) and the `--resume` CLI flag.
-  if (provider === "claude" || provider === "opencode") {
-    const baseDir = provider === "opencode" ? ".opencode" : ".claude";
+  // opencode keeps sessions in a sqlite db so there is no transcript file path to print.
+  if (provider === "claude") {
     const escaped = worktreeCwd.replace(/[^a-zA-Z0-9]/g, "-");
-    const transcriptPath = path.join(os.homedir(), baseDir, "projects", escaped, `${sessId}.jsonl`);
-    return `\ntranscript: ${transcriptPath}\nresume:     ${provider} --resume ${sessId}   (run from the worktree path above)\n`;
+    const transcriptPath = path.join(os.homedir(), ".claude", "projects", escaped, `${sessId}.jsonl`);
+    return `\ntranscript: ${transcriptPath}\nresume:     claude --resume ${sessId}   (run from the worktree path above)\n`;
   }
   return "";
 }

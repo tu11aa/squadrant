@@ -56,9 +56,6 @@ function ensureSpotlightExcluded(repoRoot: string, worktreeDir: string): void {
   }
 }
 
-// #359: derive the branch a new worktree should be based on. Reads origin/HEAD
-// so main-based repos work without a hand-created `develop`. Falls back to
-// `fallback` (default "develop") when origin/HEAD is unset.
 /**
  * #359: derive the branch a new worktree should be based on.
  * #661: prefer the captain's CHECKED-OUT branch. Reading origin/HEAD first meant
