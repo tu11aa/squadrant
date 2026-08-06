@@ -56,6 +56,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
           `routed: tier=${route.tier} → ${route.agent}${route.model ? `/${route.model}` : ""} (rule: "${route.matchedRule}")`,
         ),
       ),
+    onBaseResolved: (base) => console.log(chalk.dim(`base: ${base}`)),
   });
 }
 

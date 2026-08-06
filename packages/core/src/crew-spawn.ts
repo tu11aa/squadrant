@@ -133,6 +133,8 @@ export interface CrewSpawnDeps {
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
+  /** Optional: called when worktree base is resolved. */
+  onBaseResolved?(base: string): void;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -236,13 +238,19 @@ export async function runCrewSpawn(
   // Crews run in an isolated worktree+branch by default so multiple parallel
   // crews never collide on a shared HEAD (#296). Pass shared:true (CLI: --shared)
   // for small/one-off tasks that should run on the root checkout.
+  let base = "";
+  if (!input.shared) {
+    base = resolveWorktreeBase(proj.path);
+    deps.onBaseResolved?.(base);
+  }
+
   const spawnCwd = !input.shared
     ? addWorktree({
         repoRoot: proj.path,
         worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
         project: input.project,
         name,
-        base: resolveWorktreeBase(proj.path),
+        base,
       })
     : proj.path;
 

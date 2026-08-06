@@ -59,13 +59,25 @@ function ensureSpotlightExcluded(repoRoot: string, worktreeDir: string): void {
 // #359: derive the branch a new worktree should be based on. Reads origin/HEAD
 // so main-based repos work without a hand-created `develop`. Falls back to
 // `fallback` (default "develop") when origin/HEAD is unset.
+/**
+ * #359: derive the branch a new worktree should be based on.
+ * #661: prefer the captain's CHECKED-OUT branch. Reading origin/HEAD first meant
+ * every spawn on a repo whose integration branch is not the GitHub default
+ * branch started stale — 155 commits at prism-app — silently, with the damage
+ * only surfacing at PR time as a diff full of unrelated reverts.
+ * Order: checked-out branch → origin/HEAD → fallback.
+ */
 export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): string {
   try {
-    const ref = execFileSync(
-      "git",
-      ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    ).toString().trim();
+    const head = execFileSync("git", ["-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"],
+      { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (head && head !== "HEAD") return head;   // "HEAD" means detached
+  } catch {
+    // fall through to origin/HEAD
+  }
+  try {
+    const ref = execFileSync("git", ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
+      { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     const m = ref.match(/^refs\/remotes\/origin\/(.+)$/);
     if (m) return m[1];
   } catch {

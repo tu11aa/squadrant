@@ -318,31 +318,43 @@ describe("addWorktree — Spotlight exclusion (#387)", () => {
 describe("resolveWorktreeBase", () => {
   beforeEach(() => execFileSyncMock.mockReset());
 
-  it("returns the branch name from origin/HEAD when set", () => {
-    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/main\n"));
-    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  it("returns the checked-out branch if it is not detached", () => {
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("feature-branch\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("feature-branch");
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "git",
-      ["-C", "/tmp/repo", "symbolic-ref", "refs/remotes/origin/HEAD"],
+      ["-C", "/tmp/repo", "rev-parse", "--abbrev-ref", "HEAD"],
       expect.objectContaining({ stdio: ["ignore", "pipe", "ignore"] }),
     );
   });
 
+  it("falls back to origin/HEAD if HEAD is detached", () => {
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/main\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  });
+
+  it("returns the branch name from origin/HEAD when rev-parse fails", () => {
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("git error"); });
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/main\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  });
+
   it("returns a non-main default branch when origin/HEAD points to it", () => {
-    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/develop\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/develop\n"));
     expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
   });
 
   it("falls back to 'develop' when git returns undefined (no origin/HEAD)", () => {
-    // vitest v3 re-reports errors thrown from mockImplementation even when caught
-    // by production code. Instead, return undefined so .toString() throws a
-    // TypeError inside the try block — same branch, correctly caught by catch{}.
-    execFileSyncMock.mockReturnValue(undefined);
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(undefined);
     expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
   });
 
   it("uses a custom fallback when provided and git fails", () => {
-    execFileSyncMock.mockReturnValue(undefined);
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(undefined);
     expect(resolveWorktreeBase("/tmp/repo", "trunk")).toBe("trunk");
   });
 });
