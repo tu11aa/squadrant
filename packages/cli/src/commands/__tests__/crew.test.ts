@@ -955,6 +955,28 @@ describe("squadrant crew send/read/close/list", () => {
     });
   });
 
+  it("close refuses to close pane or emit event if the worktree is dirty, throwing instead", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    const wtPath = "/tmp/brove/.worktrees/brove-crew-1";
+    squadrantdCall.mockImplementation(async (req: unknown) => {
+      const r = req as { kind: string };
+      if (r.kind === "list") {
+        return [{ id: "task-wt-1", name: "crew-1", project: "brove", state: "done", provider: "claude", mode: "interactive", task: "task", cwd: wtPath, createdAt: 1000, lastHeartbeat: 1000, lastEvent: "task.done", heartbeatBudgetMs: 300000, attempts: [] }];
+      }
+      return undefined;
+    });
+
+    worktreeDirtyFiles.mockReturnValueOnce(["uncommitted.txt"]);
+
+    await expect(runCrewClose("brove", "crew-1")).rejects.toThrow(/uncommitted files/i);
+
+    expect(squadrantdCall).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: { type: "task.cancelled", id: "task-wt-1" } }));
+    expect(closePane).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
+  });
+
   it("close removes the crew's worktree when its task ran in one (cwd != root)", async () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
