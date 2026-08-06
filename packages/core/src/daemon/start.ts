@@ -59,7 +59,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     void ctx.d.handle({ kind: "event", project, event: e });
 
   const d = createDaemon({
-    store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs,
+    store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs, takeoverNudgeHours: ctx.takeoverNudgeHours,
     isSurfaceAlive: surfaceProbe,
     resendFirstTurn: ctx.resendFirstTurn,
     launchHeadless: opts.launchHeadless!,

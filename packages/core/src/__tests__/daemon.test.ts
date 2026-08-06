@@ -1531,6 +1531,70 @@ describe("sweep: terminal record overflow prune (#457)", () => {
 
 // ── Issue #457: suppress ghost CREW TIMEOUT when surface is gone ────────────
 
+describe("sweep: operatorHold nudge (#649)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-daemon-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("never auto-releases a takeover, however old", async () => {
+    const store = createStore(dir);
+    const ancient = rec("t1", { state: "done", operatorHold: { since: 0 } });
+    store.put(ancient);
+    const d = createDaemon({ store, now: () => 1000 * 60 * 60 * 24 * 6 }); // 6 days
+    await d.sweep();
+    const after = store.get("p", "t1")!;
+    expect(after.operatorHold).toBeDefined();
+    expect(after.operatorHold?.since).toBe(0);
+  });
+
+  it("nudges once past the threshold, stamps lastNudgeAt, and does not re-nudge before the interval", async () => {
+    const store = createStore(dir);
+    const held = rec("t1", { state: "done", operatorHold: { since: 1000 }, firstTurnConfirmedAt: 1000 });
+    store.put(held);
+    const calls: any[] = [];
+    const d = createDaemon({ 
+      store, 
+      now: () => 1000 + 7 * 3600000, // 7h (past 6h default threshold)
+      notify: async (a) => { calls.push(a); },
+      takeoverNudgeHours: 6
+    });
+
+    await d.sweep();
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW HELD-LONG.*held 7h/);
+
+    const afterFirst = store.get("p", "t1")!;
+    expect(afterFirst.operatorHold?.lastNudgeAt).toBe(1000 + 7 * 3600000);
+
+    // Second sweep before interval
+    const d2 = createDaemon({ 
+      store, 
+      now: () => 1000 + 10 * 3600000, // 10h (only 3h since last nudge)
+      notify: async (a) => { calls.push(a); },
+      takeoverNudgeHours: 6
+    });
+    await d2.sweep();
+    expect(calls.length).toBe(1); // No new nudges
+  });
+
+  it("re-nudges after the interval elapses again", async () => {
+    const store = createStore(dir);
+    const held = rec("t1", { state: "done", operatorHold: { since: 1000, lastNudgeAt: 1000 + 7 * 3600000 }, firstTurnConfirmedAt: 1000 });
+    store.put(held);
+    const calls: any[] = [];
+    const d = createDaemon({ 
+      store, 
+      now: () => 1000 + 14 * 3600000, // 14h (7h since last nudge)
+      notify: async (a) => { calls.push(a); },
+      takeoverNudgeHours: 6
+    });
+
+    await d.sweep();
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW HELD-LONG.*held 14h/);
+  });
+});
+
 describe("sweep: ghost CREW TIMEOUT suppression (#457)", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-ghost-")); });

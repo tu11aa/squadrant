@@ -72,6 +72,10 @@ export interface DaemonDeps {
    * tests, non-cmux deployments).
    */
   resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /**
+   * #649: Notify the captain when a crew has been held by the operator longer than this.
+   */
+  takeoverNudgeHours?: number;
   /** Override for testing; production default is DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS. */
   firstTurnUndeliveredBudgetMs?: number;
   /** Override for testing; production default is DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS. */
@@ -503,6 +507,29 @@ export function createDaemon(deps: DaemonDeps) {
           store.delete(r.project, r.id);
           continue;
         }
+
+        // #649: CREW HELD-LONG nudge. Never auto-releases.
+        if (r.operatorHold) {
+          const threshold = (deps.takeoverNudgeHours ?? 6) * 3600000;
+          const holdAge = t - r.operatorHold.since;
+          if (holdAge > threshold) {
+            const timeSinceLastNudge = t - (r.operatorHold.lastNudgeAt ?? 0);
+            if (timeSinceLastNudge > threshold) {
+              const hrs = Math.round(holdAge / 3600000);
+              const tag = crewTag(r);
+              const message = `CREW HELD-LONG ${tag} — held ${hrs}h. Ask the operator whether it is still in use. Do not release it yourself.`;
+              store.put({ ...r, operatorHold: { ...r.operatorHold, lastNudgeAt: t } });
+              if (deps.notify) {
+                try {
+                  const p = deps.notify({ project: r.project, message, record: r, event: { type: "task.progress", id: r.id } as any });
+                  if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+                } catch {}
+              }
+            }
+          }
+          // Fall through: a held crew can still be GC'd (if terminal) or timeout (if not).
+        }
+
         // #225 root-fix: terminate non-terminal tasks that exceeded the wall-clock
         // ceiling. Terminalization is the persistent dedup — a daemon restart sees
         // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
