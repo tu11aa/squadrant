@@ -225,6 +225,12 @@ function firePush(
   if (!deps.notify) return;
   if (prev === next.state) return;
   if (!ATTENTION_STATES.has(next.state)) return;
+
+  // #649: the operator is driving this tab. Any attention state now reflects
+  // THEIR work, not the captain's delegated task — pushing it invites the
+  // captain to act on a conversation it cannot see. Handback re-enables pushes.
+  if (next.operatorHold) return;
+
   // #210 idle debounce: a turn-end (awaiting-input) within IDLE_DEBOUNCE_MS of
   // the captain's last turn is part of an active back-and-forth — suppress the
   // CREW IDLE. All other attention states are never debounced.

@@ -755,6 +755,17 @@ describe("daemon – blocked crew resume path (#183)", () => {
     expect(calls[0].message).toBe("CREW DONE [claude/t-ds]: implement the thing");
   });
 
+  it("does not push CREW DONE for a crew under operator takeover (#649)", async () => {
+    // A held crew finishing the OPERATOR's ad-hoc work must not tell the captain
+    // the delegated task is done — that is the exact misleading signal from prism-app.
+    const store = createStore(dir);
+    store.put(rec("t-held", { state: "working", operatorHold: { since: 1000 } }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.done", id: "t-held", resultRef: "/r" } });
+    expect(calls).toEqual([]);
+  });
+
   // ── #599: review-gate checkpoint ───────────────────────────────────────────
   describe("CREW REVIEW (#599)", () => {
     it("working + task.review → state 'review' (NOT terminal) and fires CREW REVIEW with the crew's summary", async () => {
