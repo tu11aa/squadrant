@@ -1536,6 +1536,26 @@ describe("sweep: operatorHold nudge (#649)", () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-daemon-")); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
+  it("handles crew.takeover.started and crew.takeover.ended without throwing unknown event type", async () => {
+    const store = createStore(dir);
+    store.put(rec("t1", { state: "working" }));
+    const d = createDaemon({ store, now: () => 2000 });
+    
+    await expect(
+      d.handle({ kind: "event", project: "p", event: { type: "crew.takeover.started", id: "t1" } })
+    ).resolves.not.toThrow();
+
+    const afterStart = store.get("p", "t1")!;
+    expect(afterStart.operatorHold).toBeDefined();
+
+    await expect(
+      d.handle({ kind: "event", project: "p", event: { type: "crew.takeover.ended", id: "t1" } })
+    ).resolves.not.toThrow();
+
+    const afterEnd = store.get("p", "t1")!;
+    expect(afterEnd.operatorHold).toBeUndefined();
+  });
+
   it("never auto-releases a takeover, however old", async () => {
     const store = createStore(dir);
     const ancient = rec("t1", { state: "done", operatorHold: { since: 0 } });
