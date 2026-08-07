@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-07
+
+### Breaking
+
+- **`squadrant crew close` refuses dirty worktrees.** Previously, closing a crew would silently destroy its worktree even if it contained uncommitted files. It now REFUSES to close and requires an explicit `--force` flag. Anyone automating crew close will see a new failure if dirty files exist. (#649)
+
+### Added
+
+- **Operator Takeover Protocol (#649).** When the operator works directly inside a crew's tab, they can now record that fact so the captain knows to keep hands off. The crew keeps running normally; what changes is that the captain will not send to it, close it, or act on its lifecycle signals until handback. 
+  - Added CLI commands `squadrant crew takeover` and `squadrant crew handback`.
+  - Added in-terminal slash commands `/takeover` and `/handback`.
+  - Task records now track `operatorHold` status.
+  - Operator-held status surfaces in `list`, `tasks`, and `handoff facts`.
+  - The watchdog nudges operators on long-running takeovers.
+  - The daemon suppresses captain pushes and refuses `send`/`close` operations on held crews.
+
+### Changed
+
+- **Crew worktrees base on the captain's branch (#661).** Crew worktrees are now based on the captain's currently checked-out branch instead of the GitHub default branch, ensuring they branch off the correct contextual state.
+
+### Fixed
+
+- **Sweep ceiling measures current working stretch (#664).** The sweep ceiling now measures the current working stretch instead of the overall task age. Task records now track the start time of the current stretch on `task.started` and `task.reopened`.
+
 ## [0.17.1] - 2026-08-05
 
 ### Fixed

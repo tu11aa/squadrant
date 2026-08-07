@@ -107,6 +107,7 @@ export interface DaemonContext {
   /** Mutable box so sweep timer can update lastSweepAt without a closure rebind. */
   lastSweepAt: { value: number | null };
   taskTimeoutMs: number | undefined;
+  takeoverNudgeHours: number | undefined;
   isPidAlive: (pid: number) => boolean;
   spawn: typeof realSpawn;
   resultsDir: string;
@@ -166,7 +167,9 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
   const sockPath = opts.sockPath ?? join(homedir(), ".config", "squadrant", "squadrant.sock");
   const store = createStore(stateRoot);
   const bootedAt = Date.now();
-  const taskTimeoutMs = loadConfig().defaults.taskTimeoutMs;
+  const config = loadConfig();
+  const taskTimeoutMs = config.defaults.taskTimeoutMs;
+  const takeoverNudgeHours = config.defaults.takeoverNudgeHours;
   const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
   const spawn = opts.spawn ?? realSpawn;
   const resultsDir = join(stateRoot, "_results");
@@ -187,6 +190,7 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     bootedAt,
     lastSweepAt: { value: null },
     taskTimeoutMs,
+    takeoverNudgeHours,
     isPidAlive,
     spawn,
     resultsDir,

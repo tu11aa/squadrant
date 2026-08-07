@@ -149,6 +149,8 @@ describe("ensureRuntimeSynced", () => {
     // plugin: tree target
     write(path.join(sourceRoot, "plugin", "skills", "captain-ops", "SKILL.md"), "captain");
     write(path.join(sourceRoot, "plugin", "skills", "karpathy-principles", "SKILL.md"), "karpathy");
+    write(path.join(sourceRoot, "plugin", "skills", "takeover", "SKILL.md"), "takeover content");
+    write(path.join(sourceRoot, "plugin", "skills", "handback", "SKILL.md"), "handback content");
     write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"squadrant"}');
     // templates: flat target sourced from templates/, filtered by extension
     write(path.join(sourceRoot, "templates", "captain.claude.md"), "tmpl");

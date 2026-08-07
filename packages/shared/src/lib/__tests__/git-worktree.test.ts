@@ -25,7 +25,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
-import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase } from "../git-worktree.js";
+import { worktreePath, crewBranch, addWorktree, removeWorktree, resolveWorktreeBase, worktreeDirtyFiles } from "../git-worktree.js";
 
 // #387: addWorktree() runs for every registered project, not just pnpm ones —
 // stub existsSync per project "kind" so installWorktreeDependencies sees the
@@ -318,32 +318,63 @@ describe("addWorktree — Spotlight exclusion (#387)", () => {
 describe("resolveWorktreeBase", () => {
   beforeEach(() => execFileSyncMock.mockReset());
 
-  it("returns the branch name from origin/HEAD when set", () => {
-    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/main\n"));
-    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  it("returns the checked-out branch if it is not detached", () => {
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("feature-branch\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("feature-branch");
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "git",
-      ["-C", "/tmp/repo", "symbolic-ref", "refs/remotes/origin/HEAD"],
+      ["-C", "/tmp/repo", "rev-parse", "--abbrev-ref", "HEAD"],
       expect.objectContaining({ stdio: ["ignore", "pipe", "ignore"] }),
     );
   });
 
+  it("falls back to origin/HEAD if HEAD is detached", () => {
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/main\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  });
+
+  it("returns the branch name from origin/HEAD when rev-parse fails", () => {
+    execFileSyncMock.mockImplementationOnce(() => { throw new Error("git error"); });
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/main\n"));
+    expect(resolveWorktreeBase("/tmp/repo")).toBe("main");
+  });
+
   it("returns a non-main default branch when origin/HEAD points to it", () => {
-    execFileSyncMock.mockReturnValue(Buffer.from("refs/remotes/origin/develop\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("refs/remotes/origin/develop\n"));
     expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
   });
 
   it("falls back to 'develop' when git returns undefined (no origin/HEAD)", () => {
-    // vitest v3 re-reports errors thrown from mockImplementation even when caught
-    // by production code. Instead, return undefined so .toString() throws a
-    // TypeError inside the try block — same branch, correctly caught by catch{}.
-    execFileSyncMock.mockReturnValue(undefined);
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(undefined);
     expect(resolveWorktreeBase("/tmp/repo")).toBe("develop");
   });
 
   it("uses a custom fallback when provided and git fails", () => {
-    execFileSyncMock.mockReturnValue(undefined);
+    execFileSyncMock.mockReturnValueOnce(Buffer.from("HEAD\n"));
+    execFileSyncMock.mockReturnValueOnce(undefined);
     expect(resolveWorktreeBase("/tmp/repo", "trunk")).toBe("trunk");
+  });
+});
+
+describe("worktreeDirtyFiles", () => {
+  beforeEach(() => execFileSyncMock.mockReset());
+
+  it("returns files from porcelain status", () => {
+    execFileSyncMock.mockReturnValue(Buffer.from(" M modified.txt\n?? untracked.js\n"));
+    expect(worktreeDirtyFiles("/tmp/wt")).toEqual(["modified.txt", "untracked.js"]);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", "/tmp/wt", "status", "--porcelain", "--untracked-files=all"],
+      expect.anything()
+    );
+  });
+
+  it("returns empty array when git fails", () => {
+    execFileSyncMock.mockReturnValue(undefined);
+    expect(worktreeDirtyFiles("/tmp/wt")).toEqual([]);
   });
 });
 
@@ -361,18 +392,11 @@ describe("removeWorktree", () => {
     );
   });
 
-  it("retries with --force when a plain remove fails (dirty/locked worktree)", () => {
-    let calls = 0;
-    execFileSyncMock.mockImplementation(() => {
-      calls++;
-      if (calls === 1) throw new Error("contains modified or untracked files");
-      return "";
-    });
+  it("runs with --force when opts.force is true", () => {
+    removeWorktree("/tmp/brove", "/tmp/brove/.worktrees/brove-crew-1", { force: true });
 
-    removeWorktree("/tmp/brove", "/tmp/brove/.worktrees/brove-crew-1");
-
-    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
-    expect(execFileSyncMock).toHaveBeenLastCalledWith(
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(execFileSyncMock).toHaveBeenCalledWith(
       "git",
       ["-C", "/tmp/brove", "worktree", "remove", "--force", "/tmp/brove/.worktrees/brove-crew-1"],
       expect.objectContaining({ stdio: "pipe" }),

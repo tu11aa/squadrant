@@ -79,7 +79,25 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
   // From ANY state (done/failed/stalled/awaiting-input/working) → working.
   // Clears question and error so the revived task looks fresh.
   if (ev.type === "task.reopened") {
-    return { ...rec, state: "working", question: undefined, error: undefined, lastHeartbeat: now, lastEvent: ev.type };
+    return { ...rec, state: "working", question: undefined, error: undefined, lastHeartbeat: now, lastEvent: ev.type, workingStretchStartedAt: now };
+  }
+
+  if (ev.type === "crew.takeover.started") {
+    // Idempotent: keep the original `since` so a repeat does not reset the
+    // clock the HELD-LONG nudge measures from.
+    if (rec.operatorHold) return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
+    return {
+      ...rec,
+      operatorHold: { since: now, ...(ev.note !== undefined ? { note: ev.note } : {}) },
+      lastHeartbeat: now,
+      lastEvent: ev.type,
+    };
+  }
+
+  if (ev.type === "crew.takeover.ended") {
+    // Over-releasing must never be punished — a no-op, not an error.
+    const { operatorHold: _dropped, ...rest } = rec;
+    return { ...rest, lastHeartbeat: now, lastEvent: ev.type };
   }
 
   // Terminal states are absorbing: ignore any late/duplicate event idempotently.
@@ -97,6 +115,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
         question: undefined, // resuming after a blocked→reply clears the question
         pendingTool: undefined, // #354: a new turn closes any prior tool window
         pendingMonitor: undefined, // #594a: same reset — a new turn moots any prior watch
+        workingStretchStartedAt: now,
       };
     case "task.progress": {
       // task.progress is a real-activity signal (stdout chunk for headless,

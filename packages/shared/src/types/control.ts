@@ -62,6 +62,17 @@ export interface TaskRecord {
   resultRef?: string;      // filesystem path to captured output/artifact
   parseWarning?: boolean;  // headless exit 0 but unparseable result
   createdAt: number;       // epoch ms
+  workingStretchStartedAt?: number; // epoch ms (reset on task.started/reopened to measure ceiling)
+
+  /** #649: set while the OPERATOR is driving this crew's tab directly rather
+   *  than the captain. Deliberately orthogonal to `state`, not a TaskState:
+   *  a takeover must be recordable on a terminal record (at prism-app the crew
+   *  was `done` when the operator adopted it), and modelling it as a state
+   *  would force a reopen on takeover plus prior-state restoration on handback.
+   *  While set, the CLI refuses `crew close` and `crew send` without --force,
+   *  and the daemon suppresses actionable captain pushes for this task. */
+  operatorHold?: { since: number; note?: string; lastNudgeAt?: number };
+
   lastHeartbeat: number;   // epoch ms
   lastEvent: string;       // last event type applied
   heartbeatBudgetMs: number; // per-task stall threshold
@@ -177,7 +188,13 @@ export type ControlEvent =
   // session must NOT resume 'working' (nothing heartbeats → false CREW STALLED
   // ~budget later). Terminalizes the record to the absorbing 'cancelled' state.
   // Silent (not in ATTENTION_STATES), like task.cancelled.
-  | { type: "task.session.ended"; id: string };
+  | { type: "task.session.ended"; id: string }
+  // #649: the operator has taken over / handed back this crew's tab. Neither
+  // event mutates `state`, so both are valid on a terminal record — that is the
+  // whole point (see TaskRecord.operatorHold).
+  | { type: "crew.takeover.started"; id: string; note?: string }
+  | { type: "crew.takeover.ended"; id: string; note?: string };
+
 
 // 'stalled' is intentionally excluded — recoverable by the watchdog.
 // 'cancelled' is terminal and silent (captain-initiated close).

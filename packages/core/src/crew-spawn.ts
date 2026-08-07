@@ -19,6 +19,7 @@ import {
   addWorktree,
   resolveWorktreeBase,
   removeWorktree,
+  worktreeDirtyFiles,
   TERMINAL_STATES,
 } from "@squadrant/shared";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -132,6 +133,8 @@ export interface CrewSpawnDeps {
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
+  /** Optional: called when worktree base is resolved. */
+  onBaseResolved?(base: string): void;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -235,13 +238,19 @@ export async function runCrewSpawn(
   // Crews run in an isolated worktree+branch by default so multiple parallel
   // crews never collide on a shared HEAD (#296). Pass shared:true (CLI: --shared)
   // for small/one-off tasks that should run on the root checkout.
+  let base = "";
+  if (!input.shared) {
+    base = resolveWorktreeBase(proj.path);
+    deps.onBaseResolved?.(base);
+  }
+
   const spawnCwd = !input.shared
     ? addWorktree({
         repoRoot: proj.path,
         worktreeDir: config.defaults.worktreeDir ?? ".worktrees",
         project: input.project,
         name,
-        base: resolveWorktreeBase(proj.path),
+        base,
       })
     : proj.path;
 
@@ -492,6 +501,7 @@ export async function runCrewSend(
     // emit block must never run for a message that never reached the crew.
     isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
   },
+  opts?: { force?: boolean }
 ): Promise<void> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
@@ -502,13 +512,31 @@ export async function runCrewSend(
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }
+
+  let task: TaskRecord | undefined;
+  try {
+    const matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    task = matches.length > 0 ? pickMostRecentTask(matches) : undefined;
+  } catch {
+    // Swallow daemon errors so crews without a daemon or offline daemon
+    // still receive the sent message.
+  }
+
+  if (task && task.operatorHold && !opts?.force) {
+    const heldForMin = Math.round((Date.now() - task.operatorHold.since) / 60000);
+    throw new Error(
+      `Crew '${name}' is under operator takeover (held ${heldForMin}m` +
+        `${task.operatorHold.note ? `: ${task.operatorHold.note}` : ""}). ` +
+        `The operator is working in that tab — sending a message disrupts their conversation. ` +
+        `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+    );
+  }
+
   // Best-effort attention-state handling before delivering the captain's answer.
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
   // Blocked task: emit task.started to clear blocked→working so a subsequent real
   // permission prompt re-fires CREW BLOCKED (#182).
   try {
-    const matches = (await deps.listTasks(project)).filter((t) => t.name === name);
-    const task = matches.length > 0 ? pickMostRecentTask(matches) : undefined;
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
@@ -562,6 +590,17 @@ export async function runCrewRead(
 const CLOSE_LOOKUP_RETRIES = 3;
 const CLOSE_LOOKUP_RETRY_DELAY_MS = 150;
 
+function buildRecoveryHint(sessId: string | undefined, provider: string | undefined, worktreeCwd: string | undefined): string {
+  if (!sessId || !worktreeCwd) return "";
+  // opencode keeps sessions in a sqlite db so there is no transcript file path to print.
+  if (provider === "claude") {
+    const escaped = worktreeCwd.replace(/[^a-zA-Z0-9]/g, "-");
+    const transcriptPath = path.join(os.homedir(), ".claude", "projects", escaped, `${sessId}.jsonl`);
+    return `\ntranscript: ${transcriptPath}\nresume:     claude --resume ${sessId}   (run from the worktree path above)\n`;
+  }
+  return "";
+}
+
 export async function runCrewClose(
   project: string,
   name: string,
@@ -574,11 +613,68 @@ export async function runCrewClose(
     /** Injectable for tests; defaults to a real delay. */
     sleep?: (ms: number) => Promise<void>;
   },
+  opts?: { force?: boolean }
 ): Promise<void> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   // resolveCaptainWorkspace already validated the project exists; reload for its
   // root path so we can tell a worktree crew (cwd != root) from a root crew.
   const projRoot = loadConfig().projects[project]?.path;
+
+  let matches: TaskRecord[] = [];
+  try {
+    matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    // #513: the record may not be registered yet (close raced spawn's own
+    // dispatch). Retry briefly before concluding this crew has no daemon task.
+    for (let attempt = 0; attempt < CLOSE_LOOKUP_RETRIES && matches.length === 0; attempt++) {
+      await sleep(CLOSE_LOOKUP_RETRY_DELAY_MS);
+      matches = (await deps.listTasks(project)).filter((t) => t.name === name);
+    }
+  } catch {
+    // Swallow daemon errors — a crew without a daemon must still close.
+  }
+
+  let taskId: string | undefined;
+  let worktreeCwd: string | undefined;
+  let sessId: string | undefined;
+  let provider: string | undefined;
+
+  if (matches.length > 0) {
+    // #513: a name can match more than one record (e.g. an orphaned record
+    // left by a prior close that raced dispatch, followed by a same-name
+    // respawn). Terminalize every non-terminal match so none linger to fire
+    // a phantom CREW STALLED/IDLE later. Reap/worktree cleanup below anchors
+    // on the most-recently-dispatched match — the one the live pane belongs to.
+    const primary = pickMostRecentTask(matches);
+    taskId = primary.id;
+    sessId = primary.sessionId;
+    provider = primary.provider;
+    if (primary.cwd && projRoot && primary.cwd !== projRoot) {
+      worktreeCwd = primary.cwd;
+    }
+
+    if (primary.operatorHold && !opts?.force) {
+      const heldForMin = Math.round((Date.now() - primary.operatorHold.since) / 60000);
+      throw new Error(
+        `Crew '${name}' is under operator takeover (held ${heldForMin}m` +
+          `${primary.operatorHold.note ? `: ${primary.operatorHold.note}` : ""}). ` +
+          `The operator is working in that tab — closing it kills their session and prunes the worktree. ` +
+          `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+      );
+    }
+  }
+
+  // Pre-check dirty worktree before ANY mutation (#649)
+  if (worktreeCwd && projRoot) {
+    const dirty = worktreeDirtyFiles(worktreeCwd);
+    if (dirty.length > 0 && !opts?.force) {
+      const transcriptStr = buildRecoveryHint(sessId, provider, worktreeCwd);
+      throw new Error(
+        `Worktree '${worktreeCwd}' has uncommitted files:\n${dirty.map(f => `  ${f}`).join("\n")}\n` +
+        `Why are they uncommitted? Commit them, or pass --force to destroy them.\n${transcriptStr}`
+      );
+    }
+  }
+
   // Terminalize the daemon task FIRST — before (and independent of) finding the
   // cmux pane (#184, hardened for #139). Without this, non-terminal tasks
   // (blocked/working/awaiting-input) linger in the daemon ledger and keep firing
@@ -586,29 +682,8 @@ export async function runCrewClose(
   // so gating terminalization on findCrew (the old order) left zombie records
   // dangling forever. 'cancelled' is terminal but NOT in ATTENTION_STATES, so
   // firePush stays silent — captain initiated the close.
-  let taskId: string | undefined;
-  // Worktree to clean up after the pane closes — set only when this crew ran in
-  // its own worktree (cwd recorded by the daemon differs from the root checkout).
-  let worktreeCwd: string | undefined;
-  try {
-    let matches = (await deps.listTasks(project)).filter((t) => t.name === name);
-    // #513: the record may not be registered yet (close raced spawn's own
-    // dispatch). Retry briefly before concluding this crew has no daemon task.
-    for (let attempt = 0; attempt < CLOSE_LOOKUP_RETRIES && matches.length === 0; attempt++) {
-      await sleep(CLOSE_LOOKUP_RETRY_DELAY_MS);
-      matches = (await deps.listTasks(project)).filter((t) => t.name === name);
-    }
-    if (matches.length > 0) {
-      // #513: a name can match more than one record (e.g. an orphaned record
-      // left by a prior close that raced dispatch, followed by a same-name
-      // respawn). Terminalize every non-terminal match so none linger to fire
-      // a phantom CREW STALLED/IDLE later. Reap/worktree cleanup below anchors
-      // on the most-recently-dispatched match — the one the live pane belongs to.
-      const primary = pickMostRecentTask(matches);
-      taskId = primary.id;
-      if (primary.cwd && projRoot && primary.cwd !== projRoot) {
-        worktreeCwd = primary.cwd;
-      }
+  if (matches.length > 0) {
+    try {
       for (const task of matches) {
         if (!TERMINAL_STATES.has(task.state)) {
           await deps.emitEvent(project, { type: "task.cancelled", id: task.id, reason: "closed by captain" });
@@ -620,10 +695,11 @@ export async function runCrewClose(
           await deps.closeCodexThread(task.id);
         }
       }
+    } catch {
+      // Swallow daemon errors — a crew without a daemon must still close.
     }
-  } catch {
-    // Swallow daemon errors — a crew without a daemon must still close.
   }
+
   // Close the cmux pane if it still exists. A dead crew's pane is already gone —
   // that is not an error (the record is terminalized above); proceed to reap
   // children / clean the worktree. Only a genuine miss (no pane AND no daemon
@@ -634,20 +710,27 @@ export async function runCrewClose(
   } else if (taskId === undefined) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
+
   // Reap any surviving child processes (vitest workers, node subprocs, etc.)
   // that the cmux pane-close cascade may have missed.
   if (taskId !== undefined) {
     await reapCrewChildren(taskId);
   }
+
   // Auto-clean the crew's worktree AFTER its processes are gone, so we don't
   // yank a dir out from under a live shell. Best-effort: a failed removal must
   // not break close (the branch is preserved regardless).
   if (worktreeCwd && projRoot) {
     try {
-      removeWorktree(projRoot, worktreeCwd);
+      removeWorktree(projRoot, worktreeCwd, opts);
     } catch (e) {
       process.stderr.write(`(worktree remove failed: ${(e as Error).message})\n`);
     }
+  }
+
+  const hint = buildRecoveryHint(sessId, provider, worktreeCwd);
+  if (hint) {
+    process.stdout.write(hint);
   }
 }
 

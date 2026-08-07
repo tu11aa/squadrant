@@ -35,6 +35,7 @@ export interface LiveCrewSummary {
   state: string;
   task: string;
   question?: string;
+  operatorHold?: { since: number; note?: string; lastNudgeAt?: number };
 }
 
 export interface HandoffConflict {

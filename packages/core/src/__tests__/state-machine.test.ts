@@ -509,3 +509,42 @@ describe("reducer · resumeRef-on-every-transition", () => {
     expect(r.state).toBe("working");
   });
 });
+
+describe("operator takeover (#649)", () => {
+  const base = (over: Partial<TaskRecord> = {}): TaskRecord => ({
+    id: "t1", project: "p", provider: "claude", mode: "interactive",
+    state: "working", task: "x", createdAt: 0, lastHeartbeat: 0,
+    lastEvent: "task.started", heartbeatBudgetMs: 1000, attempts: [],
+    ...over,
+  });
+
+  it("records a takeover on a working task without changing state", () => {
+    const next = reduce(base(), { type: "crew.takeover.started", id: "t1", note: "local stack" }, 5000);
+    expect(next.state).toBe("working");
+    expect(next.operatorHold).toEqual({ since: 5000, note: "local stack" });
+  });
+
+  // THE load-bearing case: prism-app's crew was `done` when the operator adopted it.
+  it("records a takeover on a DONE (terminal) task", () => {
+    const next = reduce(base({ state: "done" }), { type: "crew.takeover.started", id: "t1" }, 5000);
+    expect(next.state).toBe("done");
+    expect(next.operatorHold?.since).toBe(5000);
+  });
+
+  it("handback clears the hold and leaves state untouched", () => {
+    const held = reduce(base({ state: "done" }), { type: "crew.takeover.started", id: "t1" }, 5000);
+    const next = reduce(held, { type: "crew.takeover.ended", id: "t1" }, 9000);
+    expect(next.state).toBe("done");
+    expect(next.operatorHold).toBeUndefined();
+  });
+
+  it("a second takeover is idempotent — `since` does not drift", () => {
+    const a = reduce(base(), { type: "crew.takeover.started", id: "t1" }, 5000);
+    const b = reduce(a, { type: "crew.takeover.started", id: "t1" }, 8000);
+    expect(b.operatorHold?.since).toBe(5000);
+  });
+
+  it("handback with no hold is a no-op, not a throw", () => {
+    expect(() => reduce(base(), { type: "crew.takeover.ended", id: "t1" }, 5000)).not.toThrow();
+  });
+});

@@ -72,6 +72,10 @@ export interface DaemonDeps {
    * tests, non-cmux deployments).
    */
   resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /**
+   * #649: Notify the captain when a crew has been held by the operator longer than this.
+   */
+  takeoverNudgeHours?: number;
   /** Override for testing; production default is DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS. */
   firstTurnUndeliveredBudgetMs?: number;
   /** Override for testing; production default is DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS. */
@@ -225,6 +229,12 @@ function firePush(
   if (!deps.notify) return;
   if (prev === next.state) return;
   if (!ATTENTION_STATES.has(next.state)) return;
+
+  // #649: the operator is driving this tab. Any attention state now reflects
+  // THEIR work, not the captain's delegated task — pushing it invites the
+  // captain to act on a conversation it cannot see. Handback re-enables pushes.
+  if (next.operatorHold) return;
+
   // #210 idle debounce: a turn-end (awaiting-input) within IDLE_DEBOUNCE_MS of
   // the captain's last turn is part of an active back-and-forth — suppress the
   // CREW IDLE. All other attention states are never debounced.
@@ -285,6 +295,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.stalled", "task.idle", "task.quiet", "task.timeout", "task.reconcile-failed",
   "task.cancelled", "task.session.ended",
   "task.first-turn.confirmed",  // #466: delivery confirmation
+  "crew.takeover.started", "crew.takeover.ended", // #649: operator takeover
 ]);
 
 export function createDaemon(deps: DaemonDeps) {
@@ -497,6 +508,29 @@ export function createDaemon(deps: DaemonDeps) {
           store.delete(r.project, r.id);
           continue;
         }
+
+        // #649: CREW HELD-LONG nudge. Never auto-releases.
+        if (r.operatorHold) {
+          const threshold = (deps.takeoverNudgeHours ?? 6) * 3600000;
+          const holdAge = t - r.operatorHold.since;
+          if (holdAge > threshold) {
+            const timeSinceLastNudge = t - (r.operatorHold.lastNudgeAt ?? 0);
+            if (timeSinceLastNudge > threshold) {
+              const hrs = Math.round(holdAge / 3600000);
+              const tag = crewTag(r);
+              const message = `CREW HELD-LONG ${tag} — held ${hrs}h. Ask the operator whether it is still in use. Do not release it yourself.`;
+              store.put({ ...r, operatorHold: { ...r.operatorHold, lastNudgeAt: t } });
+              if (deps.notify) {
+                try {
+                  const p = deps.notify({ project: r.project, message, record: r, event: { type: "task.progress", id: r.id } as any });
+                  if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+                } catch {}
+              }
+            }
+          }
+          // Fall through: a held crew can still be GC'd (if terminal) or timeout (if not).
+        }
+
         // #225 root-fix: terminate non-terminal tasks that exceeded the wall-clock
         // ceiling. Terminalization is the persistent dedup — a daemon restart sees
         // the cancelled record and the TERMINAL_STATES gate above blocks re-fire.
@@ -510,7 +544,8 @@ export function createDaemon(deps: DaemonDeps) {
         // a dead one is still caught by the surface-gone reap right below.
         if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state)) {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-          if (t - r.createdAt > ceiling) {
+          const refTime = r.workingStretchStartedAt ?? r.createdAt;
+          if (t - refTime > ceiling) {
             const prevState = r.state; // capture BEFORE terminalization (shown in message)
             const tag = crewTag(r);
             const hrs = Math.round(ceiling / 3_600_000);
