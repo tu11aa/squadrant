@@ -1025,6 +1025,42 @@ describe("sweep: task-timeout (#225)", () => {
     expect(calls[0].message).toMatch(/CREW TIMEOUT/);
   });
 
+  it("#664: a task 20h old whose working stretch just started is NOT cancelled", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const age20h = 20 * 3_600_000;
+    const now = age20h;
+    // createdAt is 0 (20h ago)
+    // ceiling is 8h (8 * 3_600_000)
+    // workingStretchStartedAt is now - 1h (just started 1h ago)
+    store.put(rec("t664a", {
+      state: "working", createdAt: 0, workingStretchStartedAt: now - 3_600_000,
+      lastHeartbeat: now - 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 8 * 3_600_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(0);
+    expect(store.get("p", "t664a")?.state).toBe("working");
+  });
+
+  it("#664: a task wedged past the ceiling in one stretch IS still cancelled", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    const age20h = 20 * 3_600_000;
+    const now = age20h;
+    // createdAt is 0 (20h ago)
+    // ceiling is 8h
+    // workingStretchStartedAt is now - 10h (stuck for 10h)
+    store.put(rec("t664b", {
+      state: "working", createdAt: 0, workingStretchStartedAt: now - 10 * 3_600_000,
+      lastHeartbeat: now - 1000, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({ store, now: () => now, taskTimeoutMs: 8 * 3_600_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    expect(calls.filter((c) => c.message.includes("CREW TIMEOUT"))).toHaveLength(1);
+    expect(store.get("p", "t664b")?.state).toBe("cancelled");
+  });
+
   it("escalation message names the crew and the full task id", async () => {
     const store = createStore(dir);
     const calls: any[] = [];

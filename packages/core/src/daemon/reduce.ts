@@ -544,7 +544,8 @@ export function createDaemon(deps: DaemonDeps) {
         // a dead one is still caught by the surface-gone reap right below.
         if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state)) {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-          if (t - r.createdAt > ceiling) {
+          const refTime = r.workingStretchStartedAt ?? r.createdAt;
+          if (t - refTime > ceiling) {
             const prevState = r.state; // capture BEFORE terminalization (shown in message)
             const tag = crewTag(r);
             const hrs = Math.round(ceiling / 3_600_000);

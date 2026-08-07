@@ -62,6 +62,7 @@ export interface TaskRecord {
   resultRef?: string;      // filesystem path to captured output/artifact
   parseWarning?: boolean;  // headless exit 0 but unparseable result
   createdAt: number;       // epoch ms
+  workingStretchStartedAt?: number; // epoch ms (reset on task.started/reopened to measure ceiling)
 
   /** #649: set while the OPERATOR is driving this crew's tab directly rather
    *  than the captain. Deliberately orthogonal to `state`, not a TaskState:
