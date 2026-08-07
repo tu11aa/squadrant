@@ -194,7 +194,7 @@ To change the effort dial: `squadrant effort <max|balance|low>` or use the `squa
 - **Close crews you're done with** (`squadrant crew close ...`) so they don't accumulate.
 - Crews run in **isolated worktrees by default** (parallel-safe, branch per crew). Pass `--shared` only for tiny/one-off tasks that don't need branch isolation. Never hand-run `git worktree add` — `squadrant crew spawn` handles it.
 - Do NOT edit source code yourself — always delegate to crew.
-- Respect `maxCrew` — don't exceed the configured concurrent crew count.
+- Respect `maxCrew` — don't exceed the configured concurrent crew count. Held crews do not count toward the limit, and at the limit you must ask the operator rather than choosing a crew to close.
 - **For complex multi-step tasks** (3+ steps, multiple files), tell the crew to use GSD inside the task prompt: *"This is a complex task. Use `/gsd:plan-phase` and `/gsd:execute-phase` for wave-based execution with fresh context per step."*
 - **For simple tasks**, don't mention GSD — the crew will handle it directly.
 

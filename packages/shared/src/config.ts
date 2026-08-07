@@ -103,6 +103,8 @@ export interface SquadrantConfig {
     roles?: RoleConfig;
     /** #225 hard crew task-timeout ceiling (ms). Default: 8h. */
     taskTimeoutMs?: number;
+    /** #649: notify the captain when a crew has been held by the operator longer than this. Default: 6h. */
+    takeoverNudgeHours?: number;
     /** #275 rule-based crew routing: keyword rules map task text to {agent, model}. Optional — absent = fall through to defaults.roles.crew. */
     crewRouting?: CrewRoutingConfig;
     /** B1: consume cmux's native event stream for crew turn-end (idle) detection

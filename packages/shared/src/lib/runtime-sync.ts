@@ -124,7 +124,7 @@ export type ManagedTarget =
 // (see templates/crew.claude.md, templates/crew.generic.md) — captain-ops,
 // telegram, wiki-ops, etc. are captain/command-only. Keep this list in sync
 // with what the crew templates actually reference.
-export const CREW_SKILLS = ["karpathy-principles"];
+export const CREW_SKILLS = ["karpathy-principles", "takeover", "handback"];
 
 export const MANAGED_TARGETS: ManagedTarget[] = [
   { name: "plugin", srcRel: "plugin", mode: "tree" },

@@ -297,7 +297,10 @@ describe("diffCommand action", () => {
     squadrantdCall.mockResolvedValue([
       { id: "t1", name: "fix-579", cwd: "/repo/.worktrees/brove-fix-579", createdAt: 1 },
     ]);
-    execFileSync.mockReturnValue(" 1 file changed, 2 insertions(+)\n");
+    execFileSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes("rev-parse")) return "develop\n";
+      return " 1 file changed, 2 insertions(+)\n";
+    });
     await runAction("brove", "fix-579", { layout: "unified", lastTurn: true, focus: false });
     expect(showDiff).toHaveBeenCalledWith({
       workspaceId: "workspace:1",
@@ -314,7 +317,10 @@ describe("diffCommand action", () => {
   it("diffs base...HEAD on the root checkout for a --shared crew", async () => {
     loadConfig.mockReturnValue({ projects: { brove: { path: "/repo", captainName: "brove-captain" } } });
     squadrantdCall.mockResolvedValue([{ id: "t1", name: "quick-fix", cwd: "/repo", createdAt: 1 }]);
-    execFileSync.mockReturnValue(" 1 file changed, 1 insertion(+)\n");
+    execFileSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes("rev-parse")) return "develop\n";
+      return " 1 file changed, 1 insertion(+)\n";
+    });
     await runAction("brove", "quick-fix");
     expect(execFileSync).toHaveBeenCalledWith(
       "git", ["-C", "/repo", "diff", "--stat", "develop...HEAD"], expect.any(Object),

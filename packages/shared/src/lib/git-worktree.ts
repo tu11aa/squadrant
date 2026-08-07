@@ -56,16 +56,25 @@ function ensureSpotlightExcluded(repoRoot: string, worktreeDir: string): void {
   }
 }
 
-// #359: derive the branch a new worktree should be based on. Reads origin/HEAD
-// so main-based repos work without a hand-created `develop`. Falls back to
-// `fallback` (default "develop") when origin/HEAD is unset.
+/**
+ * #359: derive the branch a new worktree should be based on.
+ * #661: prefer the captain's CHECKED-OUT branch. Reading origin/HEAD first meant
+ * every spawn on a repo whose integration branch is not the GitHub default
+ * branch started stale — 155 commits at prism-app — silently, with the damage
+ * only surfacing at PR time as a diff full of unrelated reverts.
+ * Order: checked-out branch → origin/HEAD → fallback.
+ */
 export function resolveWorktreeBase(repoRoot: string, fallback = "develop"): string {
   try {
-    const ref = execFileSync(
-      "git",
-      ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    ).toString().trim();
+    const head = execFileSync("git", ["-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD"],
+      { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (head && head !== "HEAD") return head;   // "HEAD" means detached
+  } catch {
+    // fall through to origin/HEAD
+  }
+  try {
+    const ref = execFileSync("git", ["-C", repoRoot, "symbolic-ref", "refs/remotes/origin/HEAD"],
+      { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     const m = ref.match(/^refs\/remotes\/origin\/(.+)$/);
     if (m) return m[1];
   } catch {
@@ -198,15 +207,26 @@ function installWorktreeDependencies(wt: string): void {
   }
 }
 
-/**
- * Remove a crew's worktree (auto-clean on close). Tries a plain remove first;
- * a dirty/locked worktree makes git refuse, so we retry with --force. The
- * branch is left intact so the crew's commits survive the close.
- */
-export function removeWorktree(repoRoot: string, wtPath: string): void {
+/** #649: files that would be destroyed by removing this worktree. */
+export function worktreeDirtyFiles(wtPath: string): string[] {
   try {
-    execFileSync("git", ["-C", repoRoot, "worktree", "remove", wtPath], { stdio: "pipe" });
+    return execFileSync("git", ["-C", wtPath, "status", "--porcelain", "--untracked-files=all"],
+      { stdio: ["ignore", "pipe", "ignore"] })
+      .toString().split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
   } catch {
-    execFileSync("git", ["-C", repoRoot, "worktree", "remove", "--force", wtPath], { stdio: "pipe" });
+    return [];
   }
+}
+
+/**
+ * Remove a crew's worktree. The branch is left intact so commits survive.
+ *
+ * #649: this used to catch git's refusal and retry with --force. Git refuses to
+ * remove a dirty worktree precisely to protect uncommitted work; catching that
+ * and forcing past it destroyed an operator's uncommitted .env files at
+ * prism-app. The refusal now stands — callers pass force explicitly.
+ */
+export function removeWorktree(repoRoot: string, wtPath: string, opts?: { force?: boolean }): void {
+  const args = ["-C", repoRoot, "worktree", "remove", ...(opts?.force ? ["--force"] : []), wtPath];
+  execFileSync("git", args, { stdio: "pipe" });
 }

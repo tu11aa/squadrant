@@ -91,6 +91,56 @@ export function buildGateResolveRequest(o: { project: string; gateId: string; me
   };
 }
 
+export async function runCrewTakeover(
+  mode: "start" | "end",
+  opts: { project?: string; crew?: string; taskId?: string; note?: string },
+  deps: {
+    listTasks: (project?: string) => Promise<TaskRecord[]>;
+    emitEvent: (project: string, event: ControlEvent) => Promise<void>;
+    runtimeSend: (project: string, message: string) => Promise<void>;
+    printError: (msg: string) => void;
+    printSuccess: (msg: string) => void;
+  }
+): Promise<TaskRecord> {
+  const taskId = opts.taskId ?? process.env.SQUADRANT_CREW_TASK_ID;
+  let project = opts.project ?? process.env.SQUADRANT_CREW_PROJECT;
+  let target: TaskRecord | undefined;
+
+  if (taskId) {
+    if (!project) {
+       // if we don't have project, list all tasks across all projects? No, `squadrant crew signal` requires both to be set from env or explicitly.
+       throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
+    }
+    const tasks = await deps.listTasks(project);
+    target = tasks.find(t => t.id === taskId);
+    if (!target) throw new Error(`Task '${taskId}' not found for project '${project}'`);
+  } else if (project && opts.crew) {
+    const tasks = await deps.listTasks(project);
+    target = resolveApproveTarget(tasks, opts.crew) || undefined;
+    if (!target) throw new Error(`Crew '${opts.crew}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
+  } else {
+    throw new Error("must provide either <project> <crew> or --task-id");
+  }
+
+  const nameDisp = (project && opts.crew) ? `${project}/${opts.crew}` : (target.name ? `${target.project}/${target.name}` : `${target.project}/${target.id}`);
+
+  if (mode === "start") {
+    const event: ControlEvent = { type: "crew.takeover.started", id: target.id, ...(opts.note !== undefined ? { note: opts.note } : {}) };
+    await deps.emitEvent(target.project, event);
+    const msg = `CREW TAKEOVER [${nameDisp}] — operator is driving this tab. Do not send, do not close, do not act on its signals until handback.`;
+    await deps.runtimeSend(target.project, msg);
+    deps.printSuccess(msg);
+  } else {
+    const event: ControlEvent = { type: "crew.takeover.ended", id: target.id };
+    await deps.emitEvent(target.project, event);
+    const msg = `CREW HANDBACK [${nameDisp}] — operator returned control. State: ${target.state}. Run 'squadrant crew read ${target.project} ${target.name || target.id}' before acting; the tab has history you did not see.`;
+    await deps.runtimeSend(target.project, msg);
+    deps.printSuccess(msg);
+  }
+
+  return target;
+}
+
 export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
@@ -476,6 +526,54 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       try {
         const prUrl = await runCrewApprove(project, crewName, { call: squadrantdCall });
         process.stdout.write(`✔ Approved ${crewBranch(crewName)} — pushed + PR opened: ${prUrl}\n`);
+      } catch (e) {
+        process.stderr.write(`${(e as Error).message}\n`);
+        process.exit(1);
+      }
+    });
+
+  // #649: operator takeover and handback
+  crew
+    .command("takeover [project] [crewName]")
+    .description("Take over a crew's tab explicitly, suppressing captain action until handback (#649)")
+    .option("--task-id <id>", "Explicit task id (overrides SQUADRANT_CREW_TASK_ID env)")
+    .option("--note <note>", "Optional note explaining the takeover")
+    .action(async (project: string | undefined, crewName: string | undefined, opts: { taskId?: string; note?: string }) => {
+      try {
+        await runCrewTakeover("start", { project, crew: crewName, taskId: opts.taskId, note: opts.note }, {
+          listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
+          emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
+          runtimeSend: async (p, msg) => {
+            const { runRuntimeSend } = await import("./runtime.js");
+            await runRuntimeSend(p, msg, {});
+          },
+          printError: (msg) => { process.stderr.write(`${msg}\n`); },
+          printSuccess: (msg) => { process.stdout.write(`✔ ${msg}\n`); }
+        });
+        process.exit(0);
+      } catch (e) {
+        process.stderr.write(`${(e as Error).message}\n`);
+        process.exit(1);
+      }
+    });
+
+  crew
+    .command("handback [project] [crewName]")
+    .description("Return control of a held crew tab to the captain (#649)")
+    .option("--task-id <id>", "Explicit task id (overrides SQUADRANT_CREW_TASK_ID env)")
+    .action(async (project: string | undefined, crewName: string | undefined, opts: { taskId?: string }) => {
+      try {
+        await runCrewTakeover("end", { project, crew: crewName, taskId: opts.taskId }, {
+          listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
+          emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
+          runtimeSend: async (p, msg) => {
+            const { runRuntimeSend } = await import("./runtime.js");
+            await runRuntimeSend(p, msg, {});
+          },
+          printError: (msg) => { process.stderr.write(`${msg}\n`); },
+          printSuccess: (msg) => { process.stdout.write(`✔ ${msg}\n`); }
+        });
+        process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
         process.exit(1);
