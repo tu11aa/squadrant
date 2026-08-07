@@ -79,7 +79,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
   // From ANY state (done/failed/stalled/awaiting-input/working) → working.
   // Clears question and error so the revived task looks fresh.
   if (ev.type === "task.reopened") {
-    return { ...rec, state: "working", question: undefined, error: undefined, lastHeartbeat: now, lastEvent: ev.type };
+    return { ...rec, state: "working", question: undefined, error: undefined, lastHeartbeat: now, lastEvent: ev.type, workingStretchStartedAt: now };
   }
 
   if (ev.type === "crew.takeover.started") {
@@ -115,6 +115,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
         question: undefined, // resuming after a blocked→reply clears the question
         pendingTool: undefined, // #354: a new turn closes any prior tool window
         pendingMonitor: undefined, // #594a: same reset — a new turn moots any prior watch
+        workingStretchStartedAt: now,
       };
     case "task.progress": {
       // task.progress is a real-activity signal (stdout chunk for headless,
