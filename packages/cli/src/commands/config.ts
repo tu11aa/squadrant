@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey } from "@squadrant/shared";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey, writeConfigFileSync } from "@squadrant/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
 import { withStamp } from "@squadrant/shared";
 import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
@@ -45,7 +45,7 @@ export function runConfigCheck(opts: ConfigCheckOptions): ConfigCheckResult {
   }
 
   if (opts.fix || opts.accept || stamped) {
-    fs.writeFileSync(opts.configPath, JSON.stringify(working, null, 2) + "\n");
+    writeConfigFileSync(opts.configPath, JSON.stringify(working, null, 2) + "\n");
   }
 
   return { items, applied, remaining, stamped };

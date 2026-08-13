@@ -2,6 +2,7 @@
 // These are exported for testing with injected dependencies.
 // getUpdates is single-consumer — setup runs before the daemon starts polling (#321).
 import fs from "node:fs";
+import { writeConfigFileSync } from "@squadrant/shared";
 import type { TelegramClient } from "./client.js";
 import { loadState } from "./state.js";
 import { BOT_COMMANDS } from "./bot-commands.js";
@@ -137,5 +138,5 @@ export function writeTelegramConfig(
   if (remoteControl !== undefined) next.remoteControl = remoteControl;
   config.telegram = next;
 
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  writeConfigFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 }

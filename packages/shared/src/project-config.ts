@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ModelRoutingConfig } from "./config.js";
+import { readConfigFileSync, writeConfigFileSync } from "./lib/config-io.js";
 
 export type CrewTier = "all" | "alert_only" | "done_only" | "none";
 
@@ -32,7 +33,7 @@ export function projectConfigPath(name: string, root = defaultRoot()): string {
 
 export function loadProjectOverride(name: string, root = defaultRoot()): ProjectOverrideConfig {
   try {
-    return JSON.parse(fs.readFileSync(projectConfigPath(name, root), "utf-8")) as ProjectOverrideConfig;
+    return JSON.parse(readConfigFileSync(projectConfigPath(name, root))) as ProjectOverrideConfig;
   } catch {
     return {};
   }
@@ -51,8 +52,7 @@ export function deepMerge<T>(base: T, patch: unknown): T {
 export function saveProjectOverride(name: string, patch: ProjectOverrideConfig, root = defaultRoot()): void {
   const merged = deepMerge(loadProjectOverride(name, root), patch);
   const file = projectConfigPath(name, root);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(merged, null, 2) + "\n");
+  writeConfigFileSync(file, JSON.stringify(merged, null, 2) + "\n");
 }
 
 export const DEFAULT_NOTIFY: NotifyConfig = { active: false, cap: true, crew: "alert_only" };

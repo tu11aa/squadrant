@@ -10,11 +10,12 @@
 // prompt); it does not print or log. The caller — the `squadrant cmux autoconfig`
 // CLI or the daemon-start re-check — renders the result. squadrant NEVER restarts
 // cmux for the user (that disrupts live sessions); we write config and prompt.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensureSocketAutomation } from "./cmux-config.js";
 import { probeCmuxDaemonDirect, type ProbeVerdict } from "./cmux-probe.js";
+import { readConfigFileSync, writeConfigFileSync } from "./config-io.js";
 
 /** One-time prompt marker, alongside the daemon state. */
 export function defaultStatePath(): string {
@@ -51,7 +52,7 @@ interface PromptState {
 
 function readState(path: string): PromptState {
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as PromptState;
+    return JSON.parse(readConfigFileSync(path)) as { promptedRestart?: boolean };
   } catch {
     return {};
   }
@@ -78,8 +79,7 @@ export async function ensureCmuxAutoConfig(opts: AutoConfigOpts = {}): Promise<A
   if (needsRestart) {
     const already = readState(statePath).promptedRestart === true;
     if (!already) {
-      mkdirSync(dirname(statePath), { recursive: true });
-      writeFileSync(statePath, JSON.stringify({ promptedRestart: true }));
+      writeConfigFileSync(statePath, JSON.stringify({ promptedRestart: true }));
       promptedThisRun = true;
     }
   } else if (verdict === "reachable") {

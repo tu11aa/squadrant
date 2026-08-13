@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { ensureRuntimeSynced } from "@squadrant/shared";
+import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 import { ensureDaemon, isOperatorInitiatedCommand } from "@squadrant/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
@@ -62,11 +62,11 @@ if (process.argv[2] !== "config") {
   try {
     const cfgPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(cfgPath)) {
-      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      const cfg = JSON.parse(readConfigFileSync(cfgPath));
       if (needsCheck(cfg, pkg.version)) {
         const items = detectDrift(cfg, getDefaultConfig());
         if (items.length === 0) {
-          writeFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
+          writeConfigFileSync(cfgPath, JSON.stringify(withStamp(cfg, pkg.version), null, 2) + "\n");
         } else {
           const from = cfg._squadrantVersion ?? "an earlier version";
           process.stderr.write(
