@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-08-13
+
+### Security
+
+- **Restricted permissions on configuration files and directories (#668).** Previously, `config.json` (which holds sensitive data like `telegram.botToken`) was world-readable (`0644`). Config files are now tightened to `0600`, the config and project directories to `0700`, and the daemon socket to `0600` after binding. A one-shot migration automatically secures existing paths on update. Additionally, `DEFAULT_CONFIG_PATH` and `CONFIG_DIR` now honor the `SQUADRANT_CONFIG` environment variable.
+
+### Fixed
+
+- **Daemon crash-loop due to duplicate global installs (#670).** Fixed an issue where having Squadrant installed globally multiple times (e.g., via `npm` and `pnpm` simultaneously) hijacked the `launchd` plist and caused a daemon crash-loop. 
+  - The update banner now prints the upgrade command for the install's specific package manager.
+  - `ensureDaemon` now refuses to seize a plist owned by a different, still-installed Squadrant binary.
+  - `squadrant doctor` warns operators of multiple installations.
+  - `squadrantd` refuses to bind the production socket from a monorepo or worktree checkout.
+- **False 'healthy' status when daemon is offline (#671).** `squadrant heal status` previously reported all components as healthy if the daemon was completely offline, treating an empty component list as vacuously healthy. It now proactively probes daemon liveness via a real socket connection before trusting component data.
+
 ## [0.18.0] - 2026-08-07
 
 ### Breaking
