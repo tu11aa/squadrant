@@ -412,8 +412,9 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     if (isMonorepoCheckout(process.argv[1])) {
       process.stderr.write(
         `[squadrantd] refusing to start: '${process.argv[1]}' is a monorepo/worktree checkout, not an ` +
-        "installed copy — it must never become the shared production daemon (#670). Pass an explicit " +
-        "sockPath for local testing instead of running this entry directly.\n",
+        "installed copy — it must never become the shared production daemon (#670). This entry takes " +
+        "no CLI flags/sockPath override; for local testing, import startSquadrantd({ sockPath, ... }) " +
+        "programmatically instead of running this entry directly, or run the test suite (`pnpm test`).\n",
       );
       process.exit(1);
     }
