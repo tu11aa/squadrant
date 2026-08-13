@@ -1,6 +1,6 @@
 // src/control/protocol.ts
 import { createServer, createConnection, type Server, type Socket } from "node:net";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, chmodSync } from "node:fs";
 
 // Bump this on any change to the request/reply wire shape.
 // v1 is the first versioned release. Clients treat an absent _v as compatible
@@ -171,6 +171,9 @@ export function startServer(
     });
   });
   server.on("error", onListenError); // never let a server error become uncaughtException
+  server.on("listening", () => {
+    try { chmodSync(sockPath, 0o600); } catch { /* ignore */ }
+  });
   server.listen(sockPath);
   return server;
 }

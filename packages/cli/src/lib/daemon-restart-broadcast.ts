@@ -6,7 +6,7 @@
 // (#529).
 import fs from "node:fs";
 import path from "node:path";
-import type { SquadrantConfig } from "@squadrant/shared";
+import { type SquadrantConfig, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 
 /** Minimal slice of RuntimeDriver used to resolve captain status. */
 export interface DaemonRestartNotifyDriver {
@@ -29,7 +29,7 @@ export function computeRestartSignature(version: string, buildMtimeMs: number): 
 
 export function readPersistedRestartSignature(stateRoot: string): string | null {
   try {
-    const raw = fs.readFileSync(statePath(stateRoot), "utf-8");
+    const raw = readConfigFileSync(statePath(stateRoot));
     const data = JSON.parse(raw) as { signature?: string };
     return typeof data.signature === "string" ? data.signature : null;
   } catch {
@@ -38,8 +38,7 @@ export function readPersistedRestartSignature(stateRoot: string): string | null 
 }
 
 export function writePersistedRestartSignature(stateRoot: string, signature: string): void {
-  fs.mkdirSync(stateRoot, { recursive: true });
-  fs.writeFileSync(statePath(stateRoot), JSON.stringify({ signature }, null, 2) + "\n");
+  writeConfigFileSync(statePath(stateRoot), JSON.stringify({ signature }, null, 2) + "\n");
 }
 
 function restartNotice(version: string, isDevRebuild: boolean): string {
