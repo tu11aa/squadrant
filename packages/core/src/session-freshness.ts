@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 
 export interface SessionRecord {
   lastLaunched: string; // YYYY-MM-DD
@@ -17,16 +18,14 @@ export interface SessionsFile {
 
 export function loadSessions(sessionsPath: string): SessionsFile {
   try {
-    return JSON.parse(fs.readFileSync(sessionsPath, "utf-8")) as SessionsFile;
+    return JSON.parse(readConfigFileSync(sessionsPath)) as SessionsFile;
   } catch {
     return { workspaces: {} };
   }
 }
 
 export function saveSessions(sessionsPath: string, sessions: SessionsFile): void {
-  const dir = path.dirname(sessionsPath);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(sessionsPath, JSON.stringify(sessions, null, 2) + "\n");
+  writeConfigFileSync(sessionsPath, JSON.stringify(sessions, null, 2) + "\n");
 }
 
 export function computeTemplateHash(role: string, templatesDir: string): string {

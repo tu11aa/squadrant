@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
+import { readConfigFileSync, writeConfigFileSync, migrateConfigPermsSync } from "./lib/config-io.js";
 
 export interface ProjectConfig {
   path: string;
@@ -138,8 +139,8 @@ export interface SquadrantConfig {
   };
 }
 
-const CONFIG_DIR = path.join(os.homedir(), ".config", "squadrant");
-export const DEFAULT_CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.homedir(), ".config", "squadrant", "config.json");
+export const CONFIG_DIR = path.dirname(DEFAULT_CONFIG_PATH);
 
 export function getDefaultConfig(): SquadrantConfig {
   return {
@@ -194,8 +195,9 @@ export function getDefaultConfig(): SquadrantConfig {
 }
 
 export function loadConfig(configPath = DEFAULT_CONFIG_PATH): SquadrantConfig {
+  migrateConfigPermsSync();
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
+    const raw = readConfigFileSync(configPath);
     const config = JSON.parse(raw) as SquadrantConfig;
 
     // Backward compat: migrate models → roles if roles not set
@@ -236,9 +238,7 @@ export function saveConfig(
   config: SquadrantConfig,
   configPath = DEFAULT_CONFIG_PATH,
 ): void {
-  const dir = path.dirname(configPath);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  writeConfigFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 }
 
 export function resolveHome(p: string): string {

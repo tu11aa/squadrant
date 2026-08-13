@@ -2,6 +2,7 @@
 // registry. Synchronous JSON in stateRoot/telegram-state.json.
 import fs from "node:fs";
 import path from "node:path";
+import { readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 
 export interface TelegramState {
   offset: number;
@@ -25,7 +26,7 @@ export function topicKey(project: string, scope = "project"): string {
 
 export function loadState(stateRoot: string): TelegramState {
   try {
-    const raw = fs.readFileSync(statePath(stateRoot), "utf-8");
+    const raw = readConfigFileSync(statePath(stateRoot));
     const data = JSON.parse(raw) as Partial<TelegramState>;
     const result: TelegramState = {
       offset: typeof data.offset === "number" ? data.offset : 0,
@@ -40,8 +41,7 @@ export function loadState(stateRoot: string): TelegramState {
 }
 
 export function saveState(stateRoot: string, s: TelegramState): void {
-  fs.mkdirSync(stateRoot, { recursive: true });
-  fs.writeFileSync(statePath(stateRoot), JSON.stringify(s, null, 2) + "\n");
+  writeConfigFileSync(statePath(stateRoot), JSON.stringify(s, null, 2) + "\n");
 }
 
 export function setTopic(

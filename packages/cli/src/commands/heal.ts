@@ -11,10 +11,10 @@
 // complex; explicitly out of MVP scope).
 import { Command } from "commander";
 import chalk from "chalk";
-import { queryHealth } from "./health-view.js";
+import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
-import { reregisterDaemon } from "@squadrant/core";
+import { reregisterDaemon, isDaemonSocketLive } from "@squadrant/core";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 
@@ -61,13 +61,37 @@ export interface HealStatusOpts {
   project: string | undefined;
   json: boolean;
   queryHealth: typeof queryHealth;
+  /** Ground-truth liveness probe (#671) — defaults to a real socket connect(). */
+  isDaemonAlive?: () => Promise<boolean>;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
 }
 
-/** Returns exit code: 0=all healthy, 1=error/daemon-unreachable, 2=unhealthy */
+/**
+ * Returns exit code: 0=all healthy, 1=error/daemon-unreachable, 2=unhealthy
+ *
+ * #671: an empty component list is only "healthy" when the daemon actually
+ * answered it — buildHealStatus([]) is vacuously true (empty.every() ===
+ * true), which is correct for a freshly-started daemon with no registered
+ * projects but was mistaken for "the daemon is up" during the #670 incident
+ * even with zero squadrantd processes running. isDaemonAlive is a direct
+ * ground-truth probe (socket connect()) checked BEFORE trusting any
+ * component data, so a dead daemon is never reported healthy no matter what
+ * queryHealth happens to return.
+ */
 export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
   const { project, json, stdout, stderr } = opts;
+  const isDaemonAlive = opts.isDaemonAlive ?? (() => isDaemonSocketLive(SOCK));
+
+  if (!(await isDaemonAlive())) {
+    if (json) {
+      stdout.write(JSON.stringify({ healthy: false, daemonUnreachable: true, components: [] }) + "\n");
+    } else {
+      stderr.write("daemon unreachable — start the daemon first (squadrant heal daemon)\n");
+    }
+    return 1;
+  }
+
   let rows: ComponentHealth[] | null;
   try {
     rows = await opts.queryHealth(project);
