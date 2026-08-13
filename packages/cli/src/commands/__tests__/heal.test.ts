@@ -97,6 +97,13 @@ describe("runHealStatus (integration, mocked I/O)", () => {
       project: undefined,
       json: false,
       queryHealth: queryHealthMock,
+      // #671: without this, runHealStatus falls back to a REAL socket connect()
+      // against ~/.config/squadrant/squadrant.sock — passing or failing this
+      // test depending on whether a daemon happens to be running on the
+      // machine it executes on (it was, locally; it wasn't, on CI). Stubbed
+      // so this test asserts the healthy path hermetically, independent of
+      // any real daemon state.
+      isDaemonAlive: async () => true,
       stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
       stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
     });
@@ -112,6 +119,10 @@ describe("runHealStatus (integration, mocked I/O)", () => {
       project: undefined,
       json: false,
       queryHealth: queryHealthMock,
+      // Daemon IS alive (probe true) — this test exercises the separate
+      // "queryHealth itself returned null" unreachable path, not the #671
+      // liveness gate, and must not depend on a real socket to do so.
+      isDaemonAlive: async () => true,
       stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
       stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
     });
