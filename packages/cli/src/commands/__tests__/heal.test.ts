@@ -97,6 +97,13 @@ describe("runHealStatus (integration, mocked I/O)", () => {
       project: undefined,
       json: false,
       queryHealth: queryHealthMock,
+      // #671: without this, runHealStatus falls back to a REAL socket connect()
+      // against ~/.config/squadrant/squadrant.sock — passing or failing this
+      // test depending on whether a daemon happens to be running on the
+      // machine it executes on (it was, locally; it wasn't, on CI). Stubbed
+      // so this test asserts the healthy path hermetically, independent of
+      // any real daemon state.
+      isDaemonAlive: async () => true,
       stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
       stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
     });
@@ -112,12 +119,69 @@ describe("runHealStatus (integration, mocked I/O)", () => {
       project: undefined,
       json: false,
       queryHealth: queryHealthMock,
+      // Daemon IS alive (probe true) — this test exercises the separate
+      // "queryHealth itself returned null" unreachable path, not the #671
+      // liveness gate, and must not depend on a real socket to do so.
+      isDaemonAlive: async () => true,
       stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
       stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
     });
     expect(code).toBe(1);
     const err = stderrLines.join("");
     expect(err).toContain("daemon unreachable");
+  });
+});
+
+// ── regression: ground-truth daemon liveness (#671) ───────────────────────────
+//
+// #671: during the #670 incident, `heal status` printed "✔ all components
+// healthy" while the daemon was booted out and zero squadrantd processes were
+// running. buildHealStatus([]) is vacuously "healthy" (empty.every() === true)
+// — legitimate for a freshly-started daemon with no registered projects, but
+// indistinguishable from "the daemon never actually answered". runHealStatus
+// must assert daemon liveness directly (connect() to the socket) rather than
+// inferring it from whether the component query happened to return rows.
+
+describe("runHealStatus — ground-truth daemon liveness (#671)", () => {
+  it("reports unhealthy when the daemon liveness probe fails, even though the component query returns an empty (not null) list — the exact false-green repro", async () => {
+    const queryHealthMock = vi.fn().mockResolvedValue([]); // the observed false-green condition
+    const isDaemonAlive = vi.fn().mockResolvedValue(false);
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const { runHealStatus } = await import("../heal.js");
+
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+
+    expect(isDaemonAlive).toHaveBeenCalled();
+    expect(code).toBe(1);
+    expect(stderrLines.join("")).toContain("daemon unreachable");
+    expect(stdoutLines.join("")).not.toContain("healthy");
+  });
+
+  it("still reports healthy when the daemon is genuinely alive with zero registered projects (legitimate fresh-install case)", async () => {
+    const queryHealthMock = vi.fn().mockResolvedValue([]);
+    const isDaemonAlive = vi.fn().mockResolvedValue(true);
+    const stdoutLines: string[] = [];
+    const { runHealStatus } = await import("../heal.js");
+
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: () => false } as unknown as NodeJS.WritableStream,
+    });
+
+    expect(code).toBe(0);
+    expect(stdoutLines.join("")).toContain("healthy");
   });
 });
 

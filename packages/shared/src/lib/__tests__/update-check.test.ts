@@ -7,7 +7,7 @@ vi.mock("node:https", () => ({
   get: (...args: unknown[]) => httpsGetMock(...args),
 }));
 
-const { isNewerVersion, isCacheStale, isUpdateCheckDisabled, formatUpdateNotice, fetchLatestVersion, checkForUpdate, notifyIfUpdateAvailable, UPDATE_CHECK_STATE_PATH } = await import(
+const { isNewerVersion, isCacheStale, isUpdateCheckDisabled, formatUpdateNotice, detectInstallManager, fetchLatestVersion, checkForUpdate, notifyIfUpdateAvailable, UPDATE_CHECK_STATE_PATH } = await import(
   "../update-check.js"
 );
 
@@ -45,10 +45,53 @@ describe("isNewerVersion", () => {
   });
 });
 
+describe("detectInstallManager", () => {
+  it("detects pnpm from a Library/pnpm/ install path", () => {
+    expect(detectInstallManager("file:///Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.18.0/node_modules/squadrant/dist/index.js")).toBe("pnpm");
+  });
+
+  it("detects pnpm from a linux-style /pnpm/ install path", () => {
+    expect(detectInstallManager("file:///home/me/.local/share/pnpm/global/5/.pnpm/squadrant@0.18.0/node_modules/squadrant/dist/index.js")).toBe("pnpm");
+  });
+
+  it("detects npm from a lib/node_modules install path", () => {
+    expect(detectInstallManager("file:///Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/index.js")).toBe("npm");
+  });
+
+  it("detects yarn from a yarn global install path", () => {
+    expect(detectInstallManager("file:///Users/me/.config/yarn/global/node_modules/squadrant/dist/index.js")).toBe("yarn");
+  });
+
+  it("falls back to npm for an unrecognized install path", () => {
+    expect(detectInstallManager("file:///Users/me/some/other/place/squadrant/dist/index.js")).toBe("npm");
+  });
+});
+
 describe("formatUpdateNotice", () => {
-  it("renders the one-line actionable notice", () => {
+  it("renders the one-line actionable notice, defaulting to npm when the install path is unknown", () => {
     expect(formatUpdateNotice("0.16.0", "0.15.0")).toBe(
       "⬆ squadrant 0.16.0 available (you have 0.15.0) — npm i -g squadrant@latest",
+    );
+  });
+
+  it("prints the pnpm upgrade command when squadrant is a pnpm global install", () => {
+    const pnpmPath = "file:///Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.18.0/node_modules/squadrant/dist/index.js";
+    expect(formatUpdateNotice("0.16.0", "0.15.0", pnpmPath)).toBe(
+      "⬆ squadrant 0.16.0 available (you have 0.15.0) — pnpm add -g squadrant@latest",
+    );
+  });
+
+  it("prints the npm upgrade command when squadrant is an npm global install", () => {
+    const npmPath = "file:///Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/index.js";
+    expect(formatUpdateNotice("0.16.0", "0.15.0", npmPath)).toBe(
+      "⬆ squadrant 0.16.0 available (you have 0.15.0) — npm i -g squadrant@latest",
+    );
+  });
+
+  it("prints the yarn upgrade command when squadrant is a yarn global install", () => {
+    const yarnPath = "file:///Users/me/.config/yarn/global/node_modules/squadrant/dist/index.js";
+    expect(formatUpdateNotice("0.16.0", "0.15.0", yarnPath)).toBe(
+      "⬆ squadrant 0.16.0 available (you have 0.15.0) — yarn global add squadrant@latest",
     );
   });
 });

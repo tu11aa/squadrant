@@ -33,6 +33,48 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function xmlUnescape(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+/**
+ * Extract the [nodeBin, daemonEntry] pair from a plist's ProgramArguments
+ * array (the exact shape renderPlist emits). Returns null for anything that
+ * doesn't match — a missing key, a hand-edited plist, or garbage.
+ */
+export function parseProgramArgs(plistXml: string): { nodeBin: string; daemonEntry: string } | null {
+  const m = plistXml.match(/<key>ProgramArguments<\/key>\s*<array><string>([^<]*)<\/string><string>([^<]*)<\/string><\/array>/);
+  if (!m) return null;
+  return { nodeBin: xmlUnescape(m[1]), daemonEntry: xmlUnescape(m[2]) };
+}
+
+export interface ForeignInstall {
+  /** The squadrantd.js path currently registered in the on-disk plist. */
+  registeredEntry: string;
+  /** This process's own daemonEntryPath(). */
+  thisEntry: string;
+}
+
+/**
+ * #670: two different squadrant installs (e.g. an accidental pnpm + npm
+ * duplicate) each resolve their OWN daemonEntryPath() and, absent this
+ * check, will happily overwrite each other's plist registration — the
+ * flip-flop that caused the production crash-loop. A registered entry only
+ * counts as "foreign" (unsafe to overwrite) when it differs from this
+ * install's own entry AND the file it points at still exists; a registered
+ * entry that's gone is stale and safe to reclaim (existing behavior).
+ */
+export function detectForeignInstall(
+  parsed: { daemonEntry: string } | null,
+  thisEntry: string,
+  registeredEntryExists: boolean,
+): ForeignInstall | null {
+  if (!parsed) return null;
+  if (parsed.daemonEntry === thisEntry) return null;
+  if (!registeredEntryExists) return null;
+  return { registeredEntry: parsed.daemonEntry, thisEntry };
+}
+
 /**
  * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
  * dedupe so the plist content is stable across squadrant invocations from
@@ -214,6 +256,7 @@ interface DaemonDrift {
   current: string | null;
   changed: boolean;
   programChanged: boolean;
+  foreignInstall: ForeignInstall | null;
 }
 
 /**
@@ -238,7 +281,14 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
   const programChanged = current !== null && changed
     && !current.includes(programArgsBlock(nodeBin, entry));
 
-  return { plistPath: p, target, desired, current, changed, programChanged };
+  const parsedCurrent = current !== null ? parseProgramArgs(current) : null;
+  const foreignInstall = detectForeignInstall(
+    parsedCurrent,
+    entry,
+    parsedCurrent !== null && existsSync(parsedCurrent.daemonEntry),
+  );
+
+  return { plistPath: p, target, desired, current, changed, programChanged, foreignInstall };
 }
 
 /**
@@ -361,13 +411,34 @@ export function ensureDaemon(nodeBin: string = process.execPath, opts: { operato
   }
 
   try {
-    applyDaemonDrift(computeDaemonDrift(nodeBin));
+    const drift = computeDaemonDrift(nodeBin);
+    if (drift.foreignInstall) {
+      // #670: the plist is owned by a DIFFERENT, still-installed squadrant.
+      // Seizing it is exactly what produced the production crash-loop
+      // (alternating versions flapping the socket). Leave it untouched and
+      // tell a human what to do instead.
+      process.stderr.write(printForeignInstallError(drift.foreignInstall));
+      return;
+    }
+    applyDaemonDrift(drift);
   } catch (e) {
     // daemon ensure is best-effort (still don't throw); CLI fails loud on socket miss
     process.stderr.write(`[squadrant] warn: ensureDaemon failed (${e instanceof Error ? e.message : e})\n`);
   } finally {
     releaseDaemonLock();
   }
+}
+
+/** Pure: the legible refuse-to-seize error message for a detected foreign install (#670). */
+export function printForeignInstallError(foreign: ForeignInstall): string {
+  return (
+    "[squadrant] refusing to restart the daemon: the registered launchd config belongs to a " +
+    "DIFFERENT squadrant install than this one.\n" +
+    `  registered install: ${foreign.registeredEntry}\n` +
+    `  this install:        ${foreign.thisEntry}\n` +
+    "  Two squadrant installs on this machine will keep fighting over the daemon (#670). " +
+    "Uninstall the one you don't use, then run `squadrant heal daemon` to reconcile.\n"
+  );
 }
 
 /**
