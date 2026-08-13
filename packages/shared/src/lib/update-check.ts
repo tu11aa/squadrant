@@ -89,8 +89,32 @@ export function isNewerVersion(latest: string, current: string): boolean {
   return lc > cc;
 }
 
-export function formatUpdateNotice(latest: string, current: string): string {
-  return `⬆ squadrant ${latest} available (you have ${current}) — npm i -g squadrant@latest`;
+export type InstallManager = "npm" | "pnpm" | "yarn";
+
+/**
+ * Which package manager installed the copy of squadrant currently running,
+ * inferred from the on-disk path of the running module (#670: the update
+ * banner used to hardcode `npm i -g`, which silently creates a SECOND,
+ * independent install when the real one is pnpm-managed — see the incident
+ * writeup on issue #670). Falls back to npm when the path doesn't match a
+ * known global-install layout.
+ */
+export function detectInstallManager(modulePath: string = import.meta.url): InstallManager {
+  if (modulePath.includes("Library/pnpm/") || modulePath.includes("/pnpm/")) return "pnpm";
+  if (modulePath.includes("/yarn/global/node_modules/")) return "yarn";
+  return "npm";
+}
+
+function upgradeCommandFor(manager: InstallManager): string {
+  switch (manager) {
+    case "pnpm": return "pnpm add -g squadrant@latest";
+    case "yarn": return "yarn global add squadrant@latest";
+    case "npm": return "npm i -g squadrant@latest";
+  }
+}
+
+export function formatUpdateNotice(latest: string, current: string, modulePath: string = import.meta.url): string {
+  return `⬆ squadrant ${latest} available (you have ${current}) — ${upgradeCommandFor(detectInstallManager(modulePath))}`;
 }
 
 /**
