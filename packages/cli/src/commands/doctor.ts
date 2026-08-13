@@ -84,6 +84,69 @@ function tryGetVersion(cmd: string): string {
   }
 }
 
+// #670-C: surface duplicate global installs (npm + pnpm + yarn each claim
+// their own daemon entry, and one flip-flops the other's launchd plist).
+
+export interface GlobalInstallCandidate {
+  manager: "npm" | "pnpm" | "yarn";
+  packageJsonPath: string;
+}
+
+/** Pure: turn resolved global-root paths into squadrant/package.json candidates. */
+export function candidateGlobalInstalls(roots: { npm?: string; pnpm?: string; yarn?: string }): GlobalInstallCandidate[] {
+  const out: GlobalInstallCandidate[] = [];
+  if (roots.npm) out.push({ manager: "npm", packageJsonPath: path.join(roots.npm, "squadrant", "package.json") });
+  if (roots.pnpm) out.push({ manager: "pnpm", packageJsonPath: path.join(roots.pnpm, "squadrant", "package.json") });
+  if (roots.yarn) out.push({ manager: "yarn", packageJsonPath: path.join(roots.yarn, "node_modules", "squadrant", "package.json") });
+  return out;
+}
+
+export interface DetectedInstall {
+  manager: string;
+  packageJsonPath: string;
+  version: string;
+}
+
+/** Pure: keep only candidates whose package.json actually resolves a version. */
+export function findInstalledSquadrants(
+  candidates: GlobalInstallCandidate[],
+  readVersion: (packageJsonPath: string) => string | null,
+): DetectedInstall[] {
+  const out: DetectedInstall[] = [];
+  for (const c of candidates) {
+    const version = readVersion(c.packageJsonPath);
+    if (version) out.push({ manager: c.manager, packageJsonPath: c.packageJsonPath, version });
+  }
+  return out;
+}
+
+/** Pure: null when there's nothing to warn about (0 or 1 install found). */
+export function formatDuplicateInstallWarning(installs: DetectedInstall[]): string | null {
+  if (installs.length <= 1) return null;
+  const lines = installs.map((i) => `    ${i.manager}: ${i.packageJsonPath} (v${i.version})`);
+  return (
+    `Multiple squadrant installs detected:\n${lines.join("\n")}\n` +
+    "    Two installs fight over the daemon plist (#670) — uninstall the one you don't use, then run `squadrant heal daemon`."
+  );
+}
+
+function readPackageVersion(packageJsonPath: string): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryGetGlobalRoot(cmd: string, args: string[]): string | undefined {
+  try {
+    return execSync(`${cmd} ${args.join(" ")}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Exported for unit testing. */
 export function check(label: string, pass: boolean, hint?: string): boolean {
   const icon = pass ? chalk.green("✔ PASS") : chalk.red("✘ FAIL");
@@ -229,6 +292,19 @@ export const doctorCommand = new Command("doctor")
     console.log(
       `\n${passed === total ? chalk.green("All checks passed") : chalk.yellow(`${passed}/${total} checks passed`)}\n`,
     );
+
+    // #670-C: warn (non-blocking) when more than one global install is found —
+    // whichever one runs a captain command will keep flip-flopping the other's
+    // launchd plist registration.
+    const installCandidates = candidateGlobalInstalls({
+      npm: tryGetGlobalRoot("npm", ["root", "-g"]),
+      pnpm: tryGetGlobalRoot("pnpm", ["root", "-g"]),
+      yarn: tryGetGlobalRoot("yarn", ["global", "dir"]),
+    });
+    const duplicateWarning = formatDuplicateInstallWarning(findInstalledSquadrants(installCandidates, readPackageVersion));
+    if (duplicateWarning) {
+      console.log(`\n${chalk.yellow("⚠ WARN")}  ${duplicateWarning}`);
+    }
 
     // #77 service-health: live per-component liveness from the daemon. Printed
     // before the prereq-fail exit so a degraded install still shows what is up.

@@ -160,15 +160,15 @@ describe("detectForeignInstall (#670)", () => {
   });
 
   it("returns null when the registered entry IS this install (no conflict)", () => {
-    expect(detectForeignInstall({ nodeBin: "/n", daemonEntry: thisEntry }, thisEntry, true)).toBeNull();
+    expect(detectForeignInstall({ daemonEntry: thisEntry }, thisEntry, true)).toBeNull();
   });
 
   it("returns null when the registered entry differs but no longer exists on disk (stale — safe to reclaim)", () => {
-    expect(detectForeignInstall({ nodeBin: "/n", daemonEntry: rivalEntry }, thisEntry, false)).toBeNull();
+    expect(detectForeignInstall({ daemonEntry: rivalEntry }, thisEntry, false)).toBeNull();
   });
 
   it("flags a foreign install when the registered entry differs AND still exists on disk", () => {
-    const result = detectForeignInstall({ nodeBin: "/n", daemonEntry: rivalEntry }, thisEntry, true);
+    const result = detectForeignInstall({ daemonEntry: rivalEntry }, thisEntry, true);
     expect(result).toEqual({ registeredEntry: rivalEntry, thisEntry });
   });
 });
