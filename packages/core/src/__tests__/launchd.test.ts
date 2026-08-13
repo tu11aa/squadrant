@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -118,6 +118,58 @@ describe("isOperatorInitiatedCommand (#636)", () => {
 
   it("OPERATOR_INITIATED_COMMANDS is exactly {launch, init} — deliberately small", () => {
     expect([...OPERATOR_INITIATED_COMMANDS].sort()).toEqual(["init", "launch"]);
+  });
+});
+
+// #670: ensureDaemon must never seize a plist that belongs to a DIFFERENT
+// squadrant install (e.g. a rival npm-global copy). parseProgramArgs reads
+// what's currently registered; detectForeignInstall decides whether it's
+// safe to overwrite.
+describe("parseProgramArgs", () => {
+  it("round-trips the nodeBin and daemonEntry rendered by renderPlist", () => {
+    const xml = renderPlist("/usr/local/bin/node", "/opt/squadrant/dist/squadrantd.js");
+    expect(parseProgramArgs(xml)).toEqual({
+      nodeBin: "/usr/local/bin/node",
+      daemonEntry: "/opt/squadrant/dist/squadrantd.js",
+    });
+  });
+
+  it("XML-unescapes special characters", () => {
+    const xml = renderPlist("/Users/O&M/bin/node", "/x/<y>/squadrantd.js");
+    expect(parseProgramArgs(xml)).toEqual({
+      nodeBin: "/Users/O&M/bin/node",
+      daemonEntry: "/x/<y>/squadrantd.js",
+    });
+  });
+
+  it("returns null when ProgramArguments is missing", () => {
+    expect(parseProgramArgs("<plist><dict></dict></plist>")).toBeNull();
+  });
+
+  it("returns null for garbage input", () => {
+    expect(parseProgramArgs("not xml at all")).toBeNull();
+  });
+});
+
+describe("detectForeignInstall (#670)", () => {
+  const thisEntry = "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.18.0/dist/squadrantd.js";
+  const rivalEntry = "/Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/squadrantd.js";
+
+  it("returns null when there is nothing currently registered (parsed=null)", () => {
+    expect(detectForeignInstall(null, thisEntry, true)).toBeNull();
+  });
+
+  it("returns null when the registered entry IS this install (no conflict)", () => {
+    expect(detectForeignInstall({ nodeBin: "/n", daemonEntry: thisEntry }, thisEntry, true)).toBeNull();
+  });
+
+  it("returns null when the registered entry differs but no longer exists on disk (stale — safe to reclaim)", () => {
+    expect(detectForeignInstall({ nodeBin: "/n", daemonEntry: rivalEntry }, thisEntry, false)).toBeNull();
+  });
+
+  it("flags a foreign install when the registered entry differs AND still exists on disk", () => {
+    const result = detectForeignInstall({ nodeBin: "/n", daemonEntry: rivalEntry }, thisEntry, true);
+    expect(result).toEqual({ registeredEntry: rivalEntry, thisEntry });
   });
 });
 
