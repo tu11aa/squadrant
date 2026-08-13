@@ -121,6 +121,59 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   });
 });
 
+// ── regression: ground-truth daemon liveness (#671) ───────────────────────────
+//
+// #671: during the #670 incident, `heal status` printed "✔ all components
+// healthy" while the daemon was booted out and zero squadrantd processes were
+// running. buildHealStatus([]) is vacuously "healthy" (empty.every() === true)
+// — legitimate for a freshly-started daemon with no registered projects, but
+// indistinguishable from "the daemon never actually answered". runHealStatus
+// must assert daemon liveness directly (connect() to the socket) rather than
+// inferring it from whether the component query happened to return rows.
+
+describe("runHealStatus — ground-truth daemon liveness (#671)", () => {
+  it("reports unhealthy when the daemon liveness probe fails, even though the component query returns an empty (not null) list — the exact false-green repro", async () => {
+    const queryHealthMock = vi.fn().mockResolvedValue([]); // the observed false-green condition
+    const isDaemonAlive = vi.fn().mockResolvedValue(false);
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const { runHealStatus } = await import("../heal.js");
+
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+
+    expect(isDaemonAlive).toHaveBeenCalled();
+    expect(code).toBe(1);
+    expect(stderrLines.join("")).toContain("daemon unreachable");
+    expect(stdoutLines.join("")).not.toContain("healthy");
+  });
+
+  it("still reports healthy when the daemon is genuinely alive with zero registered projects (legitimate fresh-install case)", async () => {
+    const queryHealthMock = vi.fn().mockResolvedValue([]);
+    const isDaemonAlive = vi.fn().mockResolvedValue(true);
+    const stdoutLines: string[] = [];
+    const { runHealStatus } = await import("../heal.js");
+
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: () => false } as unknown as NodeJS.WritableStream,
+    });
+
+    expect(code).toBe(0);
+    expect(stdoutLines.join("")).toContain("healthy");
+  });
+});
+
 // ── integration: runHealDaemon (mocked I/O) ───────────────────────────────────
 
 describe("runHealDaemon (integration, mocked I/O)", () => {
