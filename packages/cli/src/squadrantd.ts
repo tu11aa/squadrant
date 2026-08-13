@@ -4,7 +4,7 @@
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
@@ -376,6 +376,22 @@ function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: u
   process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${kind} pid=${process.pid} error=${message}\n`);
 }
 
+/**
+ * #670 (live incident): a git worktree/dev checkout must never bind the
+ * shared PRODUCTION socket, even when the real daemon is down — the #360
+ * isDaemonSocketLive check only stops seizing a socket that's currently
+ * live, and #670-B's plist-ownership guard lives in ensureDaemon, which a
+ * bare `node dist/squadrantd.js &` bypasses entirely. This checks repo
+ * STRUCTURE rather than a known install root: the published npm package's
+ * "files" are only dist/, plugin/, scripts/, templates/ (see root
+ * package.json) — never packages/ — so any monorepo checkout (a plain
+ * clone or any git worktree of it, which always carries the full working
+ * tree) is unambiguously distinguishable from an installed copy.
+ */
+export function isMonorepoCheckout(scriptPath: string, dirExists: (p: string) => boolean = existsSync): boolean {
+  return dirExists(join(dirname(scriptPath), "..", "packages"));
+}
+
 // Executed by launchd (ProgramArguments → this file's compiled .js).
 if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
   // Registered before any boot work so a crash during startup is still logged.
@@ -390,6 +406,16 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") {
       process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `squadrant` for commands.\n");
       process.exit(0);
+    }
+    // #670: refuse outright if this build is a monorepo/worktree checkout —
+    // regardless of whether anything else is currently live on the socket.
+    if (isMonorepoCheckout(process.argv[1])) {
+      process.stderr.write(
+        `[squadrantd] refusing to start: '${process.argv[1]}' is a monorepo/worktree checkout, not an ` +
+        "installed copy — it must never become the shared production daemon (#670). Pass an explicit " +
+        "sockPath for local testing instead of running this entry directly.\n",
+      );
+      process.exit(1);
     }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.
     // startServer does unlink-then-bind; without this guard a second invocation
