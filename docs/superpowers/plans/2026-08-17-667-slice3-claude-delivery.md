@@ -1225,7 +1225,7 @@ Expected: build clean, suite green. **A green local suite is NOT evidence** — 
 - [ ] **Step 5: Verify the runtime gate**
 
 ```bash
-node dist/index.js --help && node -e "import('./dist/squadrantd.js').then(()=>console.log('ok'))"
+node dist/index.js --help && node dist/squadrantd.js --help
 ```
 
 Expected: both succeed. This is the only check that catches a missing `.js` extension.
@@ -1268,7 +1268,7 @@ git commit -m "feat(#667): wire the claude peer channel into crew send + live sm
 ## Success Criteria
 
 1. `pnpm build` clean; `pnpm test` green; **CI green on the PR** (local green is not evidence).
-2. `node dist/index.js --help` and importing `dist/squadrantd.js` both succeed.
+2. `node dist/index.js --help` and `node dist/squadrantd.js --help` both succeed.
 3. With `defaults.controlChannel` absent, behaviour is byte-identical to `develop` today — same notifications, same pane path, same timing.
 4. With `claude: "on"`, a `crew send` to a live claude crew returns `accepted via claude-peer` and the receiving transcript shows the user turn.
 5. A `held` message returns the `held` branch with the real reason and is never retried or fallen back.
