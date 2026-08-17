@@ -71,6 +71,23 @@ export interface RoleAssignment {
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
+export type ControlChannelConfig = Partial<Record<string, ControlChannelMode>>;
+
+const CONTROL_CHANNEL_MODES: ReadonlySet<string> = new Set(["off", "shadow", "on"]);
+
+/**
+ * Resolve one agent's rollout position. Unset, unknown agent, or an invalid
+ * value all mean "off" — a config typo must never silently take the delivery
+ * path with it.
+ */
+export function resolveControlChannelMode(
+  cfg: ControlChannelConfig | undefined,
+  agent: string,
+): ControlChannelMode {
+  const v = cfg?.[agent];
+  return v && CONTROL_CHANNEL_MODES.has(v) ? v : "off";
+}
+
 /** #667 per-agent control-channel rollout position. Unset ⇒ "off". */
 export type ControlChannelMode = "off" | "shadow" | "on";
 
@@ -135,6 +152,14 @@ export interface SquadrantConfig {
      *  installClaudeHooks, non-clobbering (a key the user already set is never overwritten).
      *  Absent ⇒ nothing written. e.g. { CLAUDE_AFK_TIMEOUT_MS: "240000" } for Claude's AFK mode. */
     claudeEnv?: Record<string, string>;
+    /** #667 per-agent control-channel rollout. Absent ⇒ every agent "off".
+     *  Read per send, so flipping a position needs no daemon restart.
+     *    off     unchanged behaviour — the channel code path is not entered
+     *    shadow  pane still sends and still decides; the channel runs a
+     *            NON-MUTATING probe and squadrant logs any disagreement
+     *    on      channel leads; the pane becomes the fallback
+     *  Per-project override via projects/<name>.json (existing deep merge). */
+    controlChannel?: ControlChannelConfig;
   };
   metrics: {
     enabled: boolean;
