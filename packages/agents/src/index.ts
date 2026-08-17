@@ -13,3 +13,9 @@ export * from "./interactive/types.js";
 export * from "./headless/registry.js";
 export * from "./headless/types.js";
 export * from "./headless-launcher.js";
+
+export { ClaudePeerRegistrySource } from "./claude/peer-registry-source.js";
+export type { ClaudePeerRegistrySourceDeps } from "./claude/peer-registry-source.js";
+export { parseRegistryDir, toLifecycleSnapshot, CLAUDE_SESSIONS_DIR } from "./claude/registry.js";
+export type { ClaudeRegistryEntry } from "./claude/registry.js";
+export { OpencodeControlSource } from "./opencode/control-source.js";
