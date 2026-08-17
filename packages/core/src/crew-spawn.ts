@@ -26,6 +26,17 @@ import {
   TERMINAL_STATES,
 } from "@squadrant/shared";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+
+/**
+ * Where claude sessions' UDS inboxes live. Squadrant's own receipt listener MUST
+ * bind inside this same directory — the receiver refuses to send a receipt to a
+ * `from` address outside its own socket namespace (verified 2026-08-08).
+ *
+ * That makes this directory a trust boundary. Hardening its permissions is #675,
+ * which is live today and NOT addressed by this slice.
+ */
+export const CC_SOCKS_DIR = "/tmp/cc-socks";
+
 import {
   buildCompletionProtocol,
   shellQuote,

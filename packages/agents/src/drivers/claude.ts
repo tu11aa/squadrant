@@ -48,6 +48,10 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --settings ${opts.settingsPath}`;
       }
 
+      if (opts.messagingSocketPath) {
+        cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
+      }
+
       // Load squadrant plugin for skills. Crews get a subset plugin dir
       // (crew.generic.md/crew.claude.md only ever reference karpathy-principles)
       // synced by ensureRuntimeSynced — the harness lists only skills that

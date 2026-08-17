@@ -29,6 +29,10 @@ export function buildAgentCmd(
   permissionMode: string,
   model?: string,
   templatesDir?: string,
+  /** #667 slice 3: claude UDS inbox path. Captains must be addressable for the
+   *  ping/chat surface (slice 4) to reach them over the control channel. Last
+   *  parameter so every existing call site is unaffected. */
+  messagingSocketPath?: string,
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -41,6 +45,10 @@ export function buildAgentCmd(
       cmd += " --permission-mode auto";
     } else if (permissionMode === "bypassPermissions") {
       cmd += " --dangerously-skip-permissions";
+    }
+
+    if (messagingSocketPath) {
+      cmd += ` --messaging-socket-path ${messagingSocketPath}`;
     }
 
     if (model) {

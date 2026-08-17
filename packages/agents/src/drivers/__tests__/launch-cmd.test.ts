@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { CapabilityRegistry } from "../registry.js";
 import { buildAgentCmd } from "../launch-cmd.js";
+import { createClaudeDriver } from "../claude.js";
 import type { AgentDriver, AgentProbeResult } from "../types.js";
 
 function mockDriver(name: string, templateSuffix = name): AgentDriver {
@@ -140,5 +141,35 @@ describe("buildAgentCmd — non-claude driver", () => {
     buildAgentCmd("gemini", r, "captain", true, "auto", "gemini-2.0");
     const callArgs = (gemini.buildCommand as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(callArgs.model).toBe("gemini-2.0");
+  });
+});
+
+describe("claude --messaging-socket-path (#667 slice 3)", () => {
+  it("emits the flag when a socket path is supplied", () => {
+    const cmd = createClaudeDriver().buildCommand({
+      prompt: "", workdir: "/tmp/w", role: "crew", interactive: true,
+      messagingSocketPath: "/tmp/cc-socks/squadrant-t1.sock",
+    });
+    expect(cmd).toContain("--messaging-socket-path /tmp/cc-socks/squadrant-t1.sock");
+  });
+
+  it("omits the flag entirely when unset — no behaviour change by default", () => {
+    const cmd = createClaudeDriver().buildCommand({
+      prompt: "", workdir: "/tmp/w", role: "crew", interactive: true,
+    });
+    expect(cmd).not.toContain("--messaging-socket-path");
+  });
+  
+  it("captain path: buildAgentCmd emits the flag when a path is passed", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto", undefined, undefined,
+      "/tmp/cc-socks/squadrant-captain-demo.sock");
+    expect(cmd).toContain("--messaging-socket-path /tmp/cc-socks/squadrant-captain-demo.sock");
+  });
+
+  it("captain path: omits the flag when the arg is absent (every existing call site)", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto");
+    expect(cmd).not.toContain("--messaging-socket-path");
   });
 });
