@@ -376,9 +376,25 @@ is mid-migration from `/session/*` to `/api/session/*`. Neither is a promised-st
 
 | Unknown | How it is closed |
 |---|---|
-| opencode behaviour when the crew is **mid-turn** (queue or reject?) | `prompt_async` fired during a turn |
+| opencode behaviour when the crew is **mid-turn** (queue or reject?) | **CLOSED (2026-08-17):** Queues. `prompt_async` during a turn returns `204`, and the agent processes it after the turn finishes. |
 | the real shape of `GET /api/permission/request` | trigger a permission prompt, read it |
 | claude approve/deny of a `held` message (**never exercised**) | send a held message, approve it in the UI |
+
+### Smoke Test: opencode mid-turn behavior (2026-08-17)
+
+**Goal:** Determine if opencode rejects or queues `prompt_async` messages while the agent is busy running a tool.
+
+**Setup:**
+- Agent: `opencode` v1.18.18
+- Delivery via: squadrant CLI with config `defaults.controlChannel.opencode = "on"` (using `prompt_async` via HTTP channel).
+
+**Execution:**
+1. Spawned a crew and commanded it to sleep for a minute: `squadrant crew spawn smoke-test "Just wait for a minute." --agent opencode`
+2. While the crew was sleeping (mid-turn), fired `squadrant crew send smoke-test crew-1 "This is a mid-turn async message."`
+3. Result: CLI reported `crew send crew-1: accepted via opencode-http` (because HTTP returned 204).
+4. After `sleep 60` completed, the transcript showed the agent immediately received "This is a mid-turn async message." and responded.
+
+**Conclusion:** opencode safely queues `prompt_async` messages during a turn. Squadrant can confidently treat a `204` as a successful delivery (mapped to `accepted` or `queued`) without needing to back off or duplicate the send.
 
 ---
 
