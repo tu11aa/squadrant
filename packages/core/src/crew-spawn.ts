@@ -4,6 +4,9 @@
 // and core-internal modules. The algorithm is IDENTICAL to the prior crew.ts
 // implementation — zero behavior change.
 
+import { fallsBackToPane, describeOutcome } from "./control-channel.js";
+import type { ControlChannel, ControlChannelMode } from "./control-channel.js";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -500,6 +503,13 @@ export async function runCrewSend(
     // blockedByModal AFTER attempting delivery, which is too late here — the
     // emit block must never run for a message that never reached the crew.
     isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
+    // #667 slice 2: native control channel for this crew's agent. Absent ⇒ the
+    // pane path is used unchanged, exactly as before this slice.
+    controlChannel?: ControlChannel;
+    /** Per-agent rollout position. Absent ⇒ always "off". */
+    controlChannelMode?: (agent: string) => ControlChannelMode;
+    /** Where channel decisions and disagreements are recorded. */
+    onChannelLog?: (msg: string) => void;
   },
   opts?: { force?: boolean }
 ): Promise<void> {
@@ -552,20 +562,71 @@ export async function runCrewSend(
   }
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
+
+  // ── #667 slice 2: control channel ────────────────────────────────────────
+  // Three positions, resolved per send from the crew's own provider:
+  //   off     the block below is not entered at all
+  //   shadow  the pane still sends and still decides; the channel runs a
+  //           NON-MUTATING probe and any disagreement is logged. Deliberately
+  //           NOT a real channel send — that would deliver the message twice.
+  //   on      the channel leads; the pane becomes the fallback
+  const agent = task?.provider;
+  const mode: ControlChannelMode =
+    deps.controlChannel && agent && deps.controlChannelMode
+      ? deps.controlChannelMode(agent)
+      : "off";
+  const channelLog = deps.onChannelLog ?? (() => {});
+
+  if (mode === "on" && deps.controlChannel && task) {
+    const outcome = await deps.controlChannel.send(task.id, message);
+    channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
+    if (outcome.status === "held") {
+      // Never retried, never fallen back — the operator must act. Retrying a
+      // held message is how duplicates are manufactured.
+      throw new Error(
+        `Message to crew '${name}' is held: ${outcome.reason}. ` +
+          `Resolve it in the crew's session, then re-send.`,
+      );
+    }
+    if (!fallsBackToPane(outcome)) {
+      // accepted / queued: it reached the agent. Done — do NOT also use the pane.
+      return;
+    }
+    // gone / unsupported: fall back to the pane ONCE, already logged above.
+  }
+
+  if (mode === "shadow" && deps.controlChannel && task) {
+    // Probe FIRST so the comparison reflects the session's state at send time,
+    // and so a slow probe cannot delay a message that already went out.
+    const probe = await deps.controlChannel.probe(task.id);
+    const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, message);
+    const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
+    if (paneOk !== (probe.status === "reachable")) {
+      // The measurement this mode exists for: countable evidence for #514/#657.
+      channelLog(
+        `crew send ${name}: DISAGREEMENT — pane=${paneOk ? "delivered" : "not delivered"}, ` +
+          `channel=${channelWouldSay}`,
+      );
+    } else {
+      channelLog(`crew send ${name}: agree (pane=${paneOk}, channel=${channelWouldSay})`);
+    }
+    if (paneModal) throw new Error(blockedByModalMessage());
+    if (!paneOk) {
+      throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
+    }
+    return;
+  }
+
   const { delivered, blockedByModal } = await deliver(crew, message);
   // #516 backstop: covers the TOCTOU window between the precheck above and this
-  // delivery attempt, and callers that don't inject isBlockedByModal at all. By
-  // this point the emit block (if any) has already run — unavoidable without the
-  // precheck — but the send still fails loudly instead of reporting success.
+  // delivery attempt, and callers that don't inject isBlockedByModal at all.
   if (blockedByModal) {
     throw new Error(blockedByModalMessage());
   }
   if (!delivered) {
-    // #566: a follow-up send has no self-heal sweep behind it (unlike first-turn
-    // delivery, which the daemon retries via resendCrewFirstTurn) — a stderr-only
-    // warning here let the CLI's own catch block never fire, so it printed "✔ Sent"
-    // and exited 0 for a message that was never submitted. Throw so the caller
-    // fails loudly instead.
+    // #566: a follow-up send has no self-heal sweep behind it — a stderr-only
+    // warning let the CLI print "✔ Sent" and exit 0 for a message that was never
+    // submitted. Throw so the caller fails loudly instead.
     throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
 }
