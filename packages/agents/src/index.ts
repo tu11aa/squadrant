@@ -13,3 +13,5 @@ export * from "./interactive/types.js";
 export * from "./headless/registry.js";
 export * from "./headless/types.js";
 export * from "./headless-launcher.js";
+export { OpencodeHttpChannel } from "./opencode/http-channel.js";
+export type { OpencodeHttpChannelDeps } from "./opencode/http-channel.js";
