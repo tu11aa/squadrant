@@ -377,8 +377,8 @@ is mid-migration from `/session/*` to `/api/session/*`. Neither is a promised-st
 | Unknown | How it is closed |
 |---|---|
 | opencode behaviour when the crew is **mid-turn** (queue or reject?) | **CLOSED (2026-08-17):** Queues. `prompt_async` during a turn returns `204`, and the agent processes it after the turn finishes. |
-| the real shape of `GET /api/permission/request` | trigger a permission prompt, read it |
-| claude approve/deny of a `held` message (**never exercised**) | send a held message, approve it in the UI |
+| the real shape of `GET /api/permission/request` | **CLOSED, negatively (2026-08-17):** the endpoint exists and matches its documented schema, but it is fed by a v2 execution path that fails to run any tool in v1.18.18. squadrant must keep using the legacy `GET /permission` / `POST /session/{id}/permissions/{id}` pair, which are live-verified working. |
+| claude approve/deny of a `held` message (**never exercised**) | **CLOSED (2026-08-17):** approve and deny both exercised end-to-end against a live Claude Code 2.1.233 session; see below. |
 
 ### Smoke Test: opencode mid-turn behavior (2026-08-17)
 
@@ -395,6 +395,273 @@ is mid-migration from `/session/*` to `/api/session/*`. Neither is a promised-st
 4. After `sleep 60` completed, the transcript showed the agent immediately received "This is a mid-turn async message." and responded.
 
 **Conclusion:** opencode safely queues `prompt_async` messages during a turn. Squadrant can confidently treat a `204` as a successful delivery (mapped to `accepted` or `queued`) without needing to back off or duplicate the send.
+
+### Smoke Test: opencode `GET /api/permission/request` (2026-08-17)
+
+**Goal:** Record the real shape of `GET /api/permission/request` — status code and body both with
+and without a pending permission, and for a dead/unknown session — plus exercise
+`POST /api/session/{id}/permission/{reqId}/reply`, per the open-unknowns row this spec's table
+pointed at.
+
+**Setup:**
+- Agent: `opencode` v1.18.18, throwaway server: `opencode serve --port 0 --hostname 127.0.0.1`
+  in `/tmp/cc-probe-667/opencode-cwd`, `OPENCODE_CONFIG` pointed at a per-crew config replicating
+  `writePerCrewOpencodeConfig({ gateBash: true })` (`packages/cli/src/lib/per-crew-settings.ts`) —
+  i.e. `permission.bash: "ask"`, everything else `"allow"`. No `OPENCODE_SERVER_PASSWORD` set
+  (matches the already-established "server is unsecured" finding).
+- Session created via `POST /session` (legacy), model `google/gemini-3.1-pro-preview` (the
+  authenticated provider available in this environment).
+- Registered nowhere in squadrant — pure HTTP against the throwaway server. No `squadrant projects
+  add` was needed for this half of the probe since it never touched a crew/captain.
+
+**Finding 1 — the endpoint exists, is not deprecated, and matches its documented schema:**
+
+`GET /doc` (the server's own OpenAPI 3.1 document) confirms **two parallel permission systems**
+live side by side in v1.18.18:
+
+| | legacy | v2 |
+|---|---|---|
+| List pending | `GET /permission` | `GET /api/permission/request` |
+| Reply | `POST /session/{id}/permissions/{permissionID}` — **`"deprecated": true`** in the OpenAPI doc | `POST /api/session/{id}/permission/{requestID}/reply` |
+
+This confirms the spec's own note (§ "Probe for capability; never compare versions") that opencode
+is mid-migration — both halves are live in the same binary, and the OpenAPI doc itself flags which
+one is being phased out. **squadrant's merged code (`packages/agents/src/opencode/sse-bridge.ts`)
+uses the deprecated legacy endpoint,** not the one this spec's open-unknowns table named.
+
+**Finding 2 — nothing pending, live response:**
+
+```
+$ curl -s -w '\nHTTP:%{http_code}\n' http://127.0.0.1:4096/api/permission/request
+{"location":{"directory":"/private/tmp/cc-probe-667/opencode-cwd","project":{"id":"global","directory":"/"}},"data":[]}
+HTTP:200
+```
+
+Always `200`, never `404`, even with zero sessions or zero pending requests. `location` is
+auto-derived from the server's own cwd (the request needs no query params to get a sensible
+default). `data` is always an array — empty when nothing is pending. Schema (from `/doc`):
+`{ location: LocationInfo, data: PermissionV2Request[] }`, `PermissionV2Request` = `{ id, sessionID,
+action, resources, save?, metadata?, source? }` (`id`/`sessionID` pattern-anchored `^per`/`^ses`).
+
+**Finding 3 — a real pending permission does NOT appear in `/api/permission/request`:**
+
+Prompted the session (`POST /session/{id}/message`, the **legacy** send path — the same one
+squadrant's `http-channel.ts`/`sse-bridge.ts` actually drive) to run `echo probe667-marker`. Server
+log confirms the gate fired:
+
+```
+evaluated permission=bash pattern="echo probe667-marker" action.permission=bash action.action=ask action.pattern=*
+asking id=per_00f14a00e001UMArfQYwOHPJjf permission=bash patterns="[\"echo probe667-marker\"]"
+```
+
+While that request was genuinely pending (the `POST /session/{id}/message` call was blocked on it),
+polled both endpoints:
+
+```
+$ curl -s http://127.0.0.1:4096/permission
+[{"id":"per_00f14a00e001UMArfQYwOHPJjf","sessionID":"ses_ff0eb93a9ffeknKx13ud7V4sC9","permission":"bash","patterns":["echo probe667-marker"],"metadata":{"command":"echo probe667-marker"},"always":["echo *"],"tool":{"messageID":"msg_00f148eac001MpuAeh1dVO5igK","callID":"0FoDCySVwpXz0y8h"}}]
+
+$ curl -s http://127.0.0.1:4096/api/permission/request
+{"location":{"directory":"/private/tmp/cc-probe-667/opencode-cwd","project":{"id":"global","directory":"/"}},"data":[]}
+```
+
+**The legacy endpoint shows the pending permission with full detail. The v2 endpoint this spec
+named shows nothing — `data: []` — for the exact same live pending request.**
+
+**Finding 4 — root cause: the v2 execution path cannot complete a turn in this build.**
+
+Hypothesis: the two permission stores are fed by two different execution engines, and only the
+legacy one (driven by `POST /session/{id}/message`) is wired to the real bash-tool gate. Tested
+directly: created a prompt via the v2 send path, `POST /api/session/{id}/prompt`, which returns
+`200` immediately (`{"data":{"admittedSeq":…,"delivery":"steer",…}}`, async-admitted). Polled both
+permission endpoints for 20s — nothing pending anywhere. Server log explains why:
+
+```
+ERROR message="Failed to drain Session" cause="SessionRunnerModel.ModelUnavailableError: Model unavailable: google/gemini-3.1-pro-preview
+    at SessionRunner.runTurn ...
+```
+
+Set the model explicitly first via `POST /api/session/{id}/model` (204), retried — same error.
+Retried again against a second, unrelated provider (`deepseek/deepseek-chat`) — **same error,
+same stack**, ruling out a model-specific credential issue:
+
+```
+ERROR message="Failed to drain Session" cause="SessionRunnerModel.ModelUnavailableError: Model unavailable: deepseek/deepseek-chat
+```
+
+**Conclusion: `SessionRunner` (the v2 engine behind `/api/session/{id}/prompt`, and therefore
+behind `/api/permission/request`) cannot complete a turn against any tested provider in opencode
+v1.18.18 — it errors before it can ever reach a tool call, so it can never populate a permission
+request.** This is not a permission-API bug per se; it is the v2 session runner being broken (or at
+minimum, provider-incompatible) in this version, which happens to make the endpoint this spec named
+permanently empty in practice. Whether this is fixed in a later opencode release is unknown —
+re-verify on upgrade per the standing "re-run the smoke suite" rule.
+
+**Finding 5 — dead/unknown session and request-id shapes, both endpoints:**
+
+```
+# v2: reply against a session that never existed
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/api/session/ses_deadbeefdeadbeefdeadbeef/permission/per_deadbeefdeadbeefdeadbeef/reply -d '{"reply":"once"}'
+{"_tag":"SessionNotFoundError","sessionID":"ses_deadbeefdeadbeefdeadbeef","message":"Session not found: ses_deadbeefdeadbeefdeadbeef"}
+HTTP:404
+
+# v2: reply against a real (now-resolved) session/request — the request no longer exists
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/api/session/ses_ff0eb93a9ffeknKx13ud7V4sC9/permission/per_00f14a00e001UMArfQYwOHPJjf/reply -d '{"reply":"once"}'
+{"_tag":"PermissionNotFoundError","requestID":"per_00f14a00e001UMArfQYwOHPJjf","message":"Permission request not found: per_00f14a00e001UMArfQYwOHPJjf"}
+HTTP:404
+
+# legacy: reply against a session that never existed
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/session/ses_deadbeefdeadbeefdeadbeef/permissions/per_deadbeefdeadbeefdeadbeef -d '{"response":"once"}'
+{"name":"NotFoundError","data":{"message":"Session not found: ses_deadbeefdeadbeefdeadbeef"}}
+HTTP:404
+
+# legacy: approve a genuinely pending request (unblocks the earlier POST /session/{id}/message call)
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/session/ses_ff0eb93a9ffeknKx13ud7V4sC9/permissions/per_00f14a00e001UMArfQYwOHPJjf -d '{"response":"once"}'
+true
+HTTP:200
+```
+
+Approving via the legacy endpoint released the blocked turn; the transcript then showed
+`echo probe667-marker` executed and its output returned to the model.
+
+**Bottom line for #667:** the spec's open-unknowns table pointed at the wrong (but real, live,
+schema-matching) endpoint pair. `GET /api/permission/request` /
+`POST /api/session/{id}/permission/{reqId}/reply` exist, are well-formed, and 404 sensibly on
+unknown sessions/requests — but they are currently unreachable from a live bash-permission gate in
+v1.18.18 because their backing v2 `SessionRunner` cannot complete a turn at all. The legacy pair
+(`GET /permission`, `POST /session/{id}/permissions/{permissionID}`, `"deprecated": true` in `/doc`
+but functionally the only one that works) is what squadrant's merged slice-2 code already uses, and
+this smoke confirms that choice was correct. No code change is needed from this finding alone; it
+is a documentation correction plus a flag to re-check `/api/permission/request` on opencode
+upgrades in case the v2 runner is fixed upstream.
+
+### Smoke Test: claude approve/deny of a HELD peer message (2026-08-17)
+
+**Goal:** Exercise the never-before-observed approve and deny paths for a `held` cross-session
+message (`squadrant-hub/spokes/squadrant/findings/2026-08-08-cc-peer-messaging-protocol.md`, §7,
+first bullet: "Approve/deny of a held message was not exercised"). Determine what causes a hold,
+what each resolution looks like, and whether either yields a receipt.
+
+**Setup:**
+- Agent: Claude Code **2.1.233** (the 2026-08-08 spike was against 2.1.226 — a live version bump,
+  handled per the standing "capability probe, never a version comparison" rule).
+- Throwaway receiver sessions spawned under a pty (`pty.fork()`), one per trial, each in its own
+  `/tmp/cc-probe-667/cc-lab-{a,b,c,d}` cwd:
+  `claude --model haiku --permission-mode auto --messaging-socket-path /tmp/cc-probe-667/cc-socks/probe-{x}.sock`,
+  with `CLAUDE_CODE_HARBOR_KITE=1`.
+- An external Node "daemon" (adapted from the 2026-08-08 spike's `snippets.js` `daemon` command)
+  binds its own inbox socket in the same directory, attests `from-mode="bypass"` (the receiver is
+  `--permission-mode auto`, i.e. `prompting` class — attesting the mismatched mode is what the
+  spike identified as the hold trigger), and listens for receipts.
+
+**⚠️ Environmental trap found before the real probe could even start:** the first throwaway
+session registered its `.sock` and its inbox `.key` file under `~/.claude/sessions/`, but **never
+wrote its `<pid>.json` registry entry**, and its transcript banner read "Transcript saving is off
+— inherited `CLAUDE_CODE_CHILD_SESSION` marker." Cause: this probe itself runs *inside* a Claude
+Code crew session, and `nohup ... &` from that shell inherits the parent's own
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, etc. — the throwaway session came up believing it was a
+**child of the probing session**, not an independent process, and skipped its own registration.
+Fix: spawn with a sanitized environment — `env -i HOME=... PATH=... TERM=... CLAUDE_CODE_HARBOR_KITE=1 claude ...`
+— after which registration worked normally. **This matters beyond the probe:** squadrant's own
+daemon spawns crews from inside its own Node process, not a Claude Code session, so it is not
+directly exposed — but any code path that shells out to `claude` *from within* another Claude Code
+session (crew-spawns-crew, a hook, a plugin) will hit exactly this silently-broken registration
+unless it explicitly clears the inherited `CLAUDE_CODE_*` env first.
+
+**Finding 1 — what triggers `held`, reconfirmed on 2.1.233:**
+
+Posting a message with `from-mode="bypass"` to a `--permission-mode auto` receiver (class
+`prompting`) mismatches the permission-parity gate and holds, exactly as the 2026-08-08 spike
+found on 2.1.226:
+
+```
+09:52:40.429  RECEIPT {"type":"control","action":"peer_message_status","status":"held",
+  "reason":"Your message is held for the recipient user's approval before it reaches their Claude session (permission-mode parity).",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-c.sock","orig_msg_id":"9583f890-…","msgV":1,"msg_id":"e5d5fc48-…"}
+```
+
+The receiver's registry entry (`~/.claude/sessions/<pid>.json`) flips in lockstep:
+`status: "waiting", waitingFor: "permission prompt"` — confirming the 2026-08-08 finding that this
+is the only externally-observable signature of "blocked on an approval prompt."
+
+**Finding 2 — the live UI, never described before:**
+
+The receiving session's transcript gets a `type: "system", subtype: "informational"` notice, and
+the TUI renders an interactive two-item list:
+
+```
+Held message from another session
+Another Claude session sent a message:
+from uds:/tmp/cc-probe-667/cc-socks/probe-daemon-a.sock [verified pid 68495] (peer claims name: probe667-daemon)
+The sending session's permission mode class doesn't match this session's, so it wasn't delivered automatically.
+  Message body (this is what will be delivered):
+  «This is a HELD-probe message for #667 unknown (c). Please just acknowledge if you see this.»
+❯ Deny — drop it and tell the sender it was declined
+  Deliver this message to Claude
+```
+
+The sender's pid is independently verified (`[verified pid 68495]`) — the receiver isn't trusting
+the `from-name` attestation alone, it cross-checked `LOCAL_PEERCRED` against the claimed socket.
+**Default selection (no navigation) is `Deny`** — the fail-safe choice, consistent with §3's
+"hold" being a fail-closed branch.
+
+**Finding 3 — the confirm key is *not* plain `\r`/`\n`/Space/Tab/a digit:**
+
+This cost most of the probe's time. Standard `\r`, `\n`, Space, Tab+`\r`, `y`, and digit `2` were
+all sent (individually and combined with the arrow-down navigation) against two separate live
+sessions — none of them resolved the prompt; the registry stayed `waiting` and no receipt arrived,
+even though the arrow keys visibly moved the `❯` cursor (proof stdin *was* reaching the TUI in raw
+mode). What **did** work, on the first try once found: the **Kitty keyboard protocol CSI-u
+encoding for Return, `\x1b[13u`**. The TUI enables SGR extended mouse-tracking modes
+(`\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h`) around this same prompt, which was the tell that
+it expects a more modern terminal input protocol than a bare `\r`. **Anything that automates this
+prompt — a test harness, a future squadrant driver, an operator's own tmux/screen wrapper — must
+send `\x1b[13u`, not a plain carriage return, or the confirm silently does nothing.**
+
+**Finding 4 — deny, exercised and receipted:**
+
+Sent `held`, then immediately `\x1b[13u` with **no** navigation (confirming the default `Deny`):
+
+```
+09:51:10.343  RECEIPT {"type":"control","action":"peer_message_status","status":"denied",
+  "reason":"The recipient user declined your message; it was not delivered to their Claude session.",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-b.sock","orig_msg_id":"79b0a6e8-…","msgV":1,"msg_id":"17c2b111-…"}
+```
+
+Registry: `waiting` → `idle`. Receiver's transcript (`ddc93f73…`/`fcb79b07…` sessions confirmed the
+same on repeat): only the `system`/`informational` hold notice is present — **no `type:"user"`
+turn is ever added for a denied message.**
+
+**Finding 5 — approve, exercised and receipted:**
+
+Sent `held`, then `\x1b[B` (down-arrow, to select "Deliver this message to Claude") followed by
+`\x1b[13u`, sent as two separate writes with the highlighted state verified in between (a combined
+single write raced and fell back to the default `Deny` in two earlier trials — send them as
+discrete steps):
+
+```
+09:53:48.578  RECEIPT {"type":"control","action":"peer_message_status","status":"delivered",
+  "reason":"Your previously-held message was approved and released to the recipient's Claude session.",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-d.sock","orig_msg_id":"2c08e513-…","msgV":1,"msg_id":"c16914d6-…"}
+```
+
+Registry: `waiting` → `idle`. The receiver's transcript JSONL (`ddc93f73-04ec-477a-9b59-4af245a99a86`)
+shows the full chain: the `system`/`informational` hold notice, a `queue-operation`/`enqueue` entry
+for the cross-session content, and then a genuine `type:"user"` message —
+`"Another Claude session sent a message:\n<cross-session-message from=\"uds:…\" …>"` — landing in
+the transcript exactly as an ordinary accepted peer message would, confirming §4's "delivered after
+hold" row (previously `[source]`-only) is real.
+
+**Bottom line for #667:** both outcomes in the open-unknowns row are now `[verified]`, not
+`[source]`. `held`, `denied`, and `delivered`-after-hold all produce a `peer_message_status`
+receipt when the poster is addressable — `held` was already known; `denied` and `delivered` are new
+confirmations. No human/UI-click blocker turned out to be necessary — the actual blocker was purely
+mechanical (the correct confirm-key encoding), and it is now documented. Two follow-ups worth
+filing separately: (1) the `CLAUDE_CODE_*` env-leak-breaks-registration trap above, for anyone
+building tooling that shells out to `claude` from inside a Claude Code session; (2) if squadrant
+ever needs to *automate* resolving a held message (not just observe it), the driver must send
+`\x1b[13u`, and should not assume a bare `\r` works.
 
 ---
 
