@@ -35,7 +35,7 @@ function harness(opts: {
                               provider: "opencode", createdAt: 1, serverPort: 4096 }],
     emitEvent: async () => {},
     sendToPane,
-    controlChannel: opts.channel ?? makeChannel(),
+    controlChannels: [opts.channel ?? makeChannel()],
     controlChannelMode: () => opts.mode ?? "off",
     onChannelLog: (m: string) => logs.push(m),
   } as never;
@@ -153,5 +153,59 @@ describe("runCrewSend — mode resolution is per-agent", () => {
     (deps as { controlChannelMode: unknown }).controlChannelMode = modeFor;
     await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
     expect(modeFor).toHaveBeenCalledWith("opencode");
+  });
+});
+
+async function runSendWith(opts: { provider: string; mode: "on" | "off" | "shadow"; controlChannels: any[] }) {
+  const logs: string[] = [];
+  const paneSend = vi.fn(async () => ({ delivered: true }));
+  const runtime = {
+    listPanes: async () => [{ paneId: "p1", title: `🔧 proj:crew-1` }],
+    listSurfaces: async () => [{ id: "p1", title: `🔧 proj:crew-1`, command: "" }],
+    sendToPane: async () => {},
+    readPaneScreen: async () => "",
+  } as never;
+  const deps = {
+    listTasks: async () => [{ id: "t1", name: "crew-1", project: "proj", state: "working",
+                              provider: opts.provider, createdAt: 1, serverPort: 4096 }],
+    emitEvent: async () => {},
+    sendToPane: paneSend,
+    controlChannels: opts.controlChannels,
+    controlChannelMode: () => opts.mode,
+    onChannelLog: (m: string) => logs.push(m),
+  } as never;
+  await runCrewSend("proj", "crew-1", "hi", runtime, "ws", deps);
+  return { paneSend, logs };
+}
+
+describe("per-agent channel selection (#667 slice 3)", () => {
+  it("routes an opencode crew to the opencode channel and never the claude one", async () => {
+    const oc = { name: "opencode-http", agent: "opencode", send: vi.fn().mockResolvedValue({ status: "accepted", via: "opencode-http" }), probe: vi.fn() };
+    const cc = { name: "claude-peer", agent: "claude", send: vi.fn(), probe: vi.fn() };
+    await runSendWith({ provider: "opencode", mode: "on", controlChannels: [cc, oc] });
+    expect(oc.send).toHaveBeenCalledTimes(1);
+    expect(cc.send).not.toHaveBeenCalled();
+  });
+
+  it("routes a claude crew to the claude channel", async () => {
+    const oc = { name: "opencode-http", agent: "opencode", send: vi.fn(), probe: vi.fn() };
+    const cc = { name: "claude-peer", agent: "claude", send: vi.fn().mockResolvedValue({ status: "accepted", via: "claude-peer", confirmed: true }), probe: vi.fn() };
+    await runSendWith({ provider: "claude", mode: "on", controlChannels: [cc, oc] });
+    expect(cc.send).toHaveBeenCalledTimes(1);
+    expect(oc.send).not.toHaveBeenCalled();
+  });
+
+  it("falls to the pane path when no channel serves the provider", async () => {
+    const cc = { name: "claude-peer", agent: "claude", send: vi.fn(), probe: vi.fn() };
+    const { paneSend } = await runSendWith({ provider: "codex", mode: "on", controlChannels: [cc] });
+    expect(cc.send).not.toHaveBeenCalled();
+    expect(paneSend).toHaveBeenCalledTimes(1);   // unchanged legacy behaviour
+  });
+
+  it("logs an unconfirmed claude accept without falling back", async () => {
+    const cc = { name: "claude-peer", agent: "claude", send: vi.fn().mockResolvedValue({ status: "accepted", via: "claude-peer", confirmed: false }), probe: vi.fn() };
+    const { paneSend, logs } = await runSendWith({ provider: "claude", mode: "on", controlChannels: [cc] });
+    expect(paneSend).not.toHaveBeenCalled();
+    expect(logs.join("\n")).toContain("unconfirmed");
   });
 });
