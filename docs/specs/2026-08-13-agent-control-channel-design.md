@@ -377,8 +377,8 @@ is mid-migration from `/session/*` to `/api/session/*`. Neither is a promised-st
 | Unknown | How it is closed |
 |---|---|
 | opencode behaviour when the crew is **mid-turn** (queue or reject?) | **CLOSED (2026-08-17):** Queues. `prompt_async` during a turn returns `204`, and the agent processes it after the turn finishes. |
-| the real shape of `GET /api/permission/request` | trigger a permission prompt, read it |
-| claude approve/deny of a `held` message (**never exercised**) | send a held message, approve it in the UI |
+| the real shape of `GET /api/permission/request` | **CLOSED, negatively (2026-08-17):** the endpoint exists and matches its documented schema, but it is fed by a v2 execution path that fails to run any tool in v1.18.18. squadrant must keep using the legacy `GET /permission` / `POST /session/{id}/permissions/{id}` pair, which are live-verified working. |
+| claude approve/deny of a `held` message (**never exercised**) | **CLOSED (2026-08-17):** approve and deny both exercised end-to-end against a live Claude Code 2.1.233 session; see below. |
 
 ### Smoke Test: opencode mid-turn behavior (2026-08-17)
 
@@ -395,6 +395,145 @@ is mid-migration from `/session/*` to `/api/session/*`. Neither is a promised-st
 4. After `sleep 60` completed, the transcript showed the agent immediately received "This is a mid-turn async message." and responded.
 
 **Conclusion:** opencode safely queues `prompt_async` messages during a turn. Squadrant can confidently treat a `204` as a successful delivery (mapped to `accepted` or `queued`) without needing to back off or duplicate the send.
+
+### Smoke Test: opencode `GET /api/permission/request` (2026-08-17)
+
+**Goal:** Record the real shape of `GET /api/permission/request` — status code and body both with
+and without a pending permission, and for a dead/unknown session — plus exercise
+`POST /api/session/{id}/permission/{reqId}/reply`, per the open-unknowns row this spec's table
+pointed at.
+
+**Setup:**
+- Agent: `opencode` v1.18.18, throwaway server: `opencode serve --port 0 --hostname 127.0.0.1`
+  in `/tmp/cc-probe-667/opencode-cwd`, `OPENCODE_CONFIG` pointed at a per-crew config replicating
+  `writePerCrewOpencodeConfig({ gateBash: true })` (`packages/cli/src/lib/per-crew-settings.ts`) —
+  i.e. `permission.bash: "ask"`, everything else `"allow"`. No `OPENCODE_SERVER_PASSWORD` set
+  (matches the already-established "server is unsecured" finding).
+- Session created via `POST /session` (legacy), model `google/gemini-3.1-pro-preview` (the
+  authenticated provider available in this environment).
+- Registered nowhere in squadrant — pure HTTP against the throwaway server. No `squadrant projects
+  add` was needed for this half of the probe since it never touched a crew/captain.
+
+**Finding 1 — the endpoint exists, is not deprecated, and matches its documented schema:**
+
+`GET /doc` (the server's own OpenAPI 3.1 document) confirms **two parallel permission systems**
+live side by side in v1.18.18:
+
+| | legacy | v2 |
+|---|---|---|
+| List pending | `GET /permission` | `GET /api/permission/request` |
+| Reply | `POST /session/{id}/permissions/{permissionID}` — **`"deprecated": true`** in the OpenAPI doc | `POST /api/session/{id}/permission/{requestID}/reply` |
+
+This confirms the spec's own note (§ "Probe for capability; never compare versions") that opencode
+is mid-migration — both halves are live in the same binary, and the OpenAPI doc itself flags which
+one is being phased out. **squadrant's merged code (`packages/agents/src/opencode/sse-bridge.ts`)
+uses the deprecated legacy endpoint,** not the one this spec's open-unknowns table named.
+
+**Finding 2 — nothing pending, live response:**
+
+```
+$ curl -s -w '\nHTTP:%{http_code}\n' http://127.0.0.1:4096/api/permission/request
+{"location":{"directory":"/private/tmp/cc-probe-667/opencode-cwd","project":{"id":"global","directory":"/"}},"data":[]}
+HTTP:200
+```
+
+Always `200`, never `404`, even with zero sessions or zero pending requests. `location` is
+auto-derived from the server's own cwd (the request needs no query params to get a sensible
+default). `data` is always an array — empty when nothing is pending. Schema (from `/doc`):
+`{ location: LocationInfo, data: PermissionV2Request[] }`, `PermissionV2Request` = `{ id, sessionID,
+action, resources, save?, metadata?, source? }` (`id`/`sessionID` pattern-anchored `^per`/`^ses`).
+
+**Finding 3 — a real pending permission does NOT appear in `/api/permission/request`:**
+
+Prompted the session (`POST /session/{id}/message`, the **legacy** send path — the same one
+squadrant's `http-channel.ts`/`sse-bridge.ts` actually drive) to run `echo probe667-marker`. Server
+log confirms the gate fired:
+
+```
+evaluated permission=bash pattern="echo probe667-marker" action.permission=bash action.action=ask action.pattern=*
+asking id=per_00f14a00e001UMArfQYwOHPJjf permission=bash patterns="[\"echo probe667-marker\"]"
+```
+
+While that request was genuinely pending (the `POST /session/{id}/message` call was blocked on it),
+polled both endpoints:
+
+```
+$ curl -s http://127.0.0.1:4096/permission
+[{"id":"per_00f14a00e001UMArfQYwOHPJjf","sessionID":"ses_ff0eb93a9ffeknKx13ud7V4sC9","permission":"bash","patterns":["echo probe667-marker"],"metadata":{"command":"echo probe667-marker"},"always":["echo *"],"tool":{"messageID":"msg_00f148eac001MpuAeh1dVO5igK","callID":"0FoDCySVwpXz0y8h"}}]
+
+$ curl -s http://127.0.0.1:4096/api/permission/request
+{"location":{"directory":"/private/tmp/cc-probe-667/opencode-cwd","project":{"id":"global","directory":"/"}},"data":[]}
+```
+
+**The legacy endpoint shows the pending permission with full detail. The v2 endpoint this spec
+named shows nothing — `data: []` — for the exact same live pending request.**
+
+**Finding 4 — root cause: the v2 execution path cannot complete a turn in this build.**
+
+Hypothesis: the two permission stores are fed by two different execution engines, and only the
+legacy one (driven by `POST /session/{id}/message`) is wired to the real bash-tool gate. Tested
+directly: created a prompt via the v2 send path, `POST /api/session/{id}/prompt`, which returns
+`200` immediately (`{"data":{"admittedSeq":…,"delivery":"steer",…}}`, async-admitted). Polled both
+permission endpoints for 20s — nothing pending anywhere. Server log explains why:
+
+```
+ERROR message="Failed to drain Session" cause="SessionRunnerModel.ModelUnavailableError: Model unavailable: google/gemini-3.1-pro-preview
+    at SessionRunner.runTurn ...
+```
+
+Set the model explicitly first via `POST /api/session/{id}/model` (204), retried — same error.
+Retried again against a second, unrelated provider (`deepseek/deepseek-chat`) — **same error,
+same stack**, ruling out a model-specific credential issue:
+
+```
+ERROR message="Failed to drain Session" cause="SessionRunnerModel.ModelUnavailableError: Model unavailable: deepseek/deepseek-chat
+```
+
+**Conclusion: `SessionRunner` (the v2 engine behind `/api/session/{id}/prompt`, and therefore
+behind `/api/permission/request`) cannot complete a turn against any tested provider in opencode
+v1.18.18 — it errors before it can ever reach a tool call, so it can never populate a permission
+request.** This is not a permission-API bug per se; it is the v2 session runner being broken (or at
+minimum, provider-incompatible) in this version, which happens to make the endpoint this spec named
+permanently empty in practice. Whether this is fixed in a later opencode release is unknown —
+re-verify on upgrade per the standing "re-run the smoke suite" rule.
+
+**Finding 5 — dead/unknown session and request-id shapes, both endpoints:**
+
+```
+# v2: reply against a session that never existed
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/api/session/ses_deadbeefdeadbeefdeadbeef/permission/per_deadbeefdeadbeefdeadbeef/reply -d '{"reply":"once"}'
+{"_tag":"SessionNotFoundError","sessionID":"ses_deadbeefdeadbeefdeadbeef","message":"Session not found: ses_deadbeefdeadbeefdeadbeef"}
+HTTP:404
+
+# v2: reply against a real (now-resolved) session/request — the request no longer exists
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/api/session/ses_ff0eb93a9ffeknKx13ud7V4sC9/permission/per_00f14a00e001UMArfQYwOHPJjf/reply -d '{"reply":"once"}'
+{"_tag":"PermissionNotFoundError","requestID":"per_00f14a00e001UMArfQYwOHPJjf","message":"Permission request not found: per_00f14a00e001UMArfQYwOHPJjf"}
+HTTP:404
+
+# legacy: reply against a session that never existed
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/session/ses_deadbeefdeadbeefdeadbeef/permissions/per_deadbeefdeadbeefdeadbeef -d '{"response":"once"}'
+{"name":"NotFoundError","data":{"message":"Session not found: ses_deadbeefdeadbeefdeadbeef"}}
+HTTP:404
+
+# legacy: approve a genuinely pending request (unblocks the earlier POST /session/{id}/message call)
+$ curl -s -w '\nHTTP:%{http_code}\n' -X POST http://127.0.0.1:4096/session/ses_ff0eb93a9ffeknKx13ud7V4sC9/permissions/per_00f14a00e001UMArfQYwOHPJjf -d '{"response":"once"}'
+true
+HTTP:200
+```
+
+Approving via the legacy endpoint released the blocked turn; the transcript then showed
+`echo probe667-marker` executed and its output returned to the model.
+
+**Bottom line for #667:** the spec's open-unknowns table pointed at the wrong (but real, live,
+schema-matching) endpoint pair. `GET /api/permission/request` /
+`POST /api/session/{id}/permission/{reqId}/reply` exist, are well-formed, and 404 sensibly on
+unknown sessions/requests — but they are currently unreachable from a live bash-permission gate in
+v1.18.18 because their backing v2 `SessionRunner` cannot complete a turn at all. The legacy pair
+(`GET /permission`, `POST /session/{id}/permissions/{permissionID}`, `"deprecated": true` in `/doc`
+but functionally the only one that works) is what squadrant's merged slice-2 code already uses, and
+this smoke confirms that choice was correct. No code change is needed from this finding alone; it
+is a documentation correction plus a flag to re-check `/api/permission/request` on opencode
+upgrades in case the v2 runner is fixed upstream.
 
 ---
 
