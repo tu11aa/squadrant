@@ -198,3 +198,15 @@ This run corrected the checklist methodology after the captain identified that t
 - **CP4 (idle) = GAP (#210) for ALL agents.** The daemon correctly transitions `working → awaiting-input` via each agent's Type 1 mechanism (opencode SSE reliable, codex reliable, claude Stop hook flaky). But the captain receives **zero** idle/awaiting notification because the relay's `formatEntry` drops `task.turn.completed` / `task.idle` events before they reach the captain mailbox. This is a single infrastructure fix tracked as #210. Do NOT mark CP4 PASS until the relay delivers the idle ping.
 - **codex signal path verified intact.** PR #173's `--task-id` / `--project` injection in `developerInstructions` is working. The earlier apparent codex "failure" was a test error — a bare `squadrant crew signal done` (no `--task-id`) inside a codex crew, which correctly errors `SQUADRANT_CREW_TASK_ID unset`. The crew's self-signal via its own instructions works.
 - **Cross-reference issues:** #207 (relay as SPOF), #208 (captain polling defeats notification), #209 (cmux execFileSync hang), #210 (relay formatEntry drops idle events).
+
+## Agent upgrades (#667)
+
+Squadrant reads two agent-internal surfaces that are **not** promised-stable public
+contracts:
+
+- claude: `~/.claude/sessions/<pid>.json` (`status`, `waitingFor`, `statusUpdatedAt`)
+- opencode: the HTTP event bus and `/session/*` routes (mid-migration to `/api/session/*`)
+
+**Upgrading either agent requires re-running the live smoke in this checklist.**
+Probe for capability — does the file parse, does `connect()` succeed — and never
+compare version strings.

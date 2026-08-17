@@ -21,7 +21,8 @@ export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
-import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource } from "@squadrant/agents";
+import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
+         ClaudePeerRegistrySource, OpencodeControlSource } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
@@ -130,6 +131,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     },
   });
 
+  // #667 slice 1: opencode lifecycle behind the LifecycleSource port. The bridge
+  // keeps emitting exactly what it emits today; this source observes the same
+  // stream in parallel so opencode signals finally reach reduceLifecycle and the
+  // health board. Behaviour-neutral by construction.
+  const opencodeControlSource = new OpencodeControlSource();
+
   const opencodeBridge = opts.opencodeBridge ?? new OpencodeSseBridge({
     emit: (ev) => {
       const found = store.listAll().find((r) => r.id === ev.id);
@@ -137,6 +144,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       void ctx.d.handle({ kind: "event", project: found.project, event: ev });
       if (ev.type === "task.approval.requested")
         ctx.schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
+      opencodeControlSource.observe(ev);
     },
     log,
   });
@@ -165,10 +173,18 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
+
+  // #667 slice 1: claude's own session registry (~/.claude/sessions/<pid>.json).
+  // Polled, but origin:"agent" — see the note in registry.ts on why.
+  const claudePeerRegistrySource = new ClaudePeerRegistrySource({ log });
+
   // B4: register for per-source health aggregation in the snapshot. Registering
   // is inert (no I/O) — only start() below (VITEST-guarded) actually runs a
   // source, so health() correctly reports inactive until then.
-  ctx.lifecycleSources = [cmuxStoreSource, nativeHookSource, codexAppServerSource];
+  ctx.lifecycleSources = [
+    cmuxStoreSource, nativeHookSource, codexAppServerSource,
+    claudePeerRegistrySource, opencodeControlSource,
+  ];
 
   // ── Telegram bridge (opt-in #65) ──────────────────────────────────────────
   // Built only when config.telegram is present. Skipped under vitest because the
@@ -331,6 +347,32 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     };
     try { codexAppServerSource.start(codexSourceDeps); }
     catch (e) { log(`codex app-server source start failed: ${(e as Error).message}`); }
+
+    // #667 slice 1: start claude peer registry source
+    const claudeSourceDeps: LifecycleSourceDeps = {
+      resolve: (hint) => {
+        return store.listAll().find(
+          (r) => !TERMINAL_STATES.has(r.state) && (
+            (hint.taskId && r.id === hint.taskId) ||
+            (hint.sessionId && r.sessionId === hint.sessionId) ||
+            (hint.pid != null && r.pid === hint.pid)
+          )
+        );
+      },
+      report: () => {}, // read-only slice: caching is internal to the source
+      log,
+    };
+    try { claudePeerRegistrySource.start(claudeSourceDeps); }
+    catch (e) { log(`claude peer registry source start failed: ${(e as Error).message}`); }
+
+    // #667 slice 1: start opencode control source
+    const opencodeSourceDeps: LifecycleSourceDeps = {
+      resolve: () => undefined,
+      report: () => {}, // read-only slice: caching is internal to the source
+      log,
+    };
+    try { opencodeControlSource.start(opencodeSourceDeps); }
+    catch (e) { log(`opencode control source start failed: ${(e as Error).message}`); }
   }
 
   // Daemon-restart broadcast: notify every running captain that the daemon
@@ -362,6 +404,8 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     try { cmuxStoreSource.stop(); } catch { /* best-effort */ }
     try { nativeHookSource.stop(); } catch { /* best-effort */ }
     try { codexAppServerSource.stop(); } catch { /* best-effort */ }
+    try { claudePeerRegistrySource.stop(); } catch { /* best-effort */ }
+    try { opencodeControlSource.stop(); } catch { /* best-effort */ }
     return origStop(reason);
   };
 

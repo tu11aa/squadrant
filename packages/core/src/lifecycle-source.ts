@@ -1,14 +1,15 @@
 // packages/core/src/lifecycle-source.ts
 //
-// LifecycleSource port — phase 0 scaffold (issue #333).
+// LifecycleSource port (issue #333).
 //
 // Defines the abstraction for normalizing agent lifecycle events from
-// heterogeneous sources (cmux store file, native hooks, SSE, app-server)
-// into a single 4-state model. NO concrete implementation lives here; this is
-// the interface + types + pure reducer only.
+// heterogeneous sources (cmux store file, native hooks, SSE, app-server, the
+// claude session registry) into a single 4-state model. NO concrete
+// implementation lives here; this is the interface + types + pure reducer only.
 //
-// WIRING CONSTRAINT: nothing in this file is imported by the live daemon or
-// delivery path. It compiles and tests but remains unwired until Phase 1.
+// WIRING: live. Sources are constructed and registered in
+// packages/cli/src/squadrantd.ts (ctx.lifecycleSources) and health-aggregated
+// into the daemon snapshot at packages/core/src/daemon/start.ts.
 
 // ── normalized lifecycle vocabulary ─────────────────────────────────────────
 
