@@ -535,6 +535,134 @@ this smoke confirms that choice was correct. No code change is needed from this 
 is a documentation correction plus a flag to re-check `/api/permission/request` on opencode
 upgrades in case the v2 runner is fixed upstream.
 
+### Smoke Test: claude approve/deny of a HELD peer message (2026-08-17)
+
+**Goal:** Exercise the never-before-observed approve and deny paths for a `held` cross-session
+message (`squadrant-hub/spokes/squadrant/findings/2026-08-08-cc-peer-messaging-protocol.md`, §7,
+first bullet: "Approve/deny of a held message was not exercised"). Determine what causes a hold,
+what each resolution looks like, and whether either yields a receipt.
+
+**Setup:**
+- Agent: Claude Code **2.1.233** (the 2026-08-08 spike was against 2.1.226 — a live version bump,
+  handled per the standing "capability probe, never a version comparison" rule).
+- Throwaway receiver sessions spawned under a pty (`pty.fork()`), one per trial, each in its own
+  `/tmp/cc-probe-667/cc-lab-{a,b,c,d}` cwd:
+  `claude --model haiku --permission-mode auto --messaging-socket-path /tmp/cc-probe-667/cc-socks/probe-{x}.sock`,
+  with `CLAUDE_CODE_HARBOR_KITE=1`.
+- An external Node "daemon" (adapted from the 2026-08-08 spike's `snippets.js` `daemon` command)
+  binds its own inbox socket in the same directory, attests `from-mode="bypass"` (the receiver is
+  `--permission-mode auto`, i.e. `prompting` class — attesting the mismatched mode is what the
+  spike identified as the hold trigger), and listens for receipts.
+
+**⚠️ Environmental trap found before the real probe could even start:** the first throwaway
+session registered its `.sock` and its inbox `.key` file under `~/.claude/sessions/`, but **never
+wrote its `<pid>.json` registry entry**, and its transcript banner read "Transcript saving is off
+— inherited `CLAUDE_CODE_CHILD_SESSION` marker." Cause: this probe itself runs *inside* a Claude
+Code crew session, and `nohup ... &` from that shell inherits the parent's own
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, etc. — the throwaway session came up believing it was a
+**child of the probing session**, not an independent process, and skipped its own registration.
+Fix: spawn with a sanitized environment — `env -i HOME=... PATH=... TERM=... CLAUDE_CODE_HARBOR_KITE=1 claude ...`
+— after which registration worked normally. **This matters beyond the probe:** squadrant's own
+daemon spawns crews from inside its own Node process, not a Claude Code session, so it is not
+directly exposed — but any code path that shells out to `claude` *from within* another Claude Code
+session (crew-spawns-crew, a hook, a plugin) will hit exactly this silently-broken registration
+unless it explicitly clears the inherited `CLAUDE_CODE_*` env first.
+
+**Finding 1 — what triggers `held`, reconfirmed on 2.1.233:**
+
+Posting a message with `from-mode="bypass"` to a `--permission-mode auto` receiver (class
+`prompting`) mismatches the permission-parity gate and holds, exactly as the 2026-08-08 spike
+found on 2.1.226:
+
+```
+09:52:40.429  RECEIPT {"type":"control","action":"peer_message_status","status":"held",
+  "reason":"Your message is held for the recipient user's approval before it reaches their Claude session (permission-mode parity).",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-c.sock","orig_msg_id":"9583f890-…","msgV":1,"msg_id":"e5d5fc48-…"}
+```
+
+The receiver's registry entry (`~/.claude/sessions/<pid>.json`) flips in lockstep:
+`status: "waiting", waitingFor: "permission prompt"` — confirming the 2026-08-08 finding that this
+is the only externally-observable signature of "blocked on an approval prompt."
+
+**Finding 2 — the live UI, never described before:**
+
+The receiving session's transcript gets a `type: "system", subtype: "informational"` notice, and
+the TUI renders an interactive two-item list:
+
+```
+Held message from another session
+Another Claude session sent a message:
+from uds:/tmp/cc-probe-667/cc-socks/probe-daemon-a.sock [verified pid 68495] (peer claims name: probe667-daemon)
+The sending session's permission mode class doesn't match this session's, so it wasn't delivered automatically.
+  Message body (this is what will be delivered):
+  «This is a HELD-probe message for #667 unknown (c). Please just acknowledge if you see this.»
+❯ Deny — drop it and tell the sender it was declined
+  Deliver this message to Claude
+```
+
+The sender's pid is independently verified (`[verified pid 68495]`) — the receiver isn't trusting
+the `from-name` attestation alone, it cross-checked `LOCAL_PEERCRED` against the claimed socket.
+**Default selection (no navigation) is `Deny`** — the fail-safe choice, consistent with §3's
+"hold" being a fail-closed branch.
+
+**Finding 3 — the confirm key is *not* plain `\r`/`\n`/Space/Tab/a digit:**
+
+This cost most of the probe's time. Standard `\r`, `\n`, Space, Tab+`\r`, `y`, and digit `2` were
+all sent (individually and combined with the arrow-down navigation) against two separate live
+sessions — none of them resolved the prompt; the registry stayed `waiting` and no receipt arrived,
+even though the arrow keys visibly moved the `❯` cursor (proof stdin *was* reaching the TUI in raw
+mode). What **did** work, on the first try once found: the **Kitty keyboard protocol CSI-u
+encoding for Return, `\x1b[13u`**. The TUI enables SGR extended mouse-tracking modes
+(`\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h`) around this same prompt, which was the tell that
+it expects a more modern terminal input protocol than a bare `\r`. **Anything that automates this
+prompt — a test harness, a future squadrant driver, an operator's own tmux/screen wrapper — must
+send `\x1b[13u`, not a plain carriage return, or the confirm silently does nothing.**
+
+**Finding 4 — deny, exercised and receipted:**
+
+Sent `held`, then immediately `\x1b[13u` with **no** navigation (confirming the default `Deny`):
+
+```
+09:51:10.343  RECEIPT {"type":"control","action":"peer_message_status","status":"denied",
+  "reason":"The recipient user declined your message; it was not delivered to their Claude session.",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-b.sock","orig_msg_id":"79b0a6e8-…","msgV":1,"msg_id":"17c2b111-…"}
+```
+
+Registry: `waiting` → `idle`. Receiver's transcript (`ddc93f73…`/`fcb79b07…` sessions confirmed the
+same on repeat): only the `system`/`informational` hold notice is present — **no `type:"user"`
+turn is ever added for a denied message.**
+
+**Finding 5 — approve, exercised and receipted:**
+
+Sent `held`, then `\x1b[B` (down-arrow, to select "Deliver this message to Claude") followed by
+`\x1b[13u`, sent as two separate writes with the highlighted state verified in between (a combined
+single write raced and fell back to the default `Deny` in two earlier trials — send them as
+discrete steps):
+
+```
+09:53:48.578  RECEIPT {"type":"control","action":"peer_message_status","status":"delivered",
+  "reason":"Your previously-held message was approved and released to the recipient's Claude session.",
+  "from":"uds:/tmp/cc-probe-667/cc-socks/probe-d.sock","orig_msg_id":"2c08e513-…","msgV":1,"msg_id":"c16914d6-…"}
+```
+
+Registry: `waiting` → `idle`. The receiver's transcript JSONL (`ddc93f73-04ec-477a-9b59-4af245a99a86`)
+shows the full chain: the `system`/`informational` hold notice, a `queue-operation`/`enqueue` entry
+for the cross-session content, and then a genuine `type:"user"` message —
+`"Another Claude session sent a message:\n<cross-session-message from=\"uds:…\" …>"` — landing in
+the transcript exactly as an ordinary accepted peer message would, confirming §4's "delivered after
+hold" row (previously `[source]`-only) is real.
+
+**Bottom line for #667:** both outcomes in the open-unknowns row are now `[verified]`, not
+`[source]`. `held`, `denied`, and `delivered`-after-hold all produce a `peer_message_status`
+receipt when the poster is addressable — `held` was already known; `denied` and `delivered` are new
+confirmations. No human/UI-click blocker turned out to be necessary — the actual blocker was purely
+mechanical (the correct confirm-key encoding), and it is now documented. Two follow-ups worth
+filing separately: (1) the `CLAUDE_CODE_*` env-leak-breaks-registration trap above, for anyone
+building tooling that shells out to `claude` from inside a Claude Code session; (2) if squadrant
+ever needs to *automate* resolving a held message (not just observe it), the driver must send
+`\x1b[13u`, and should not assume a bare `\r` works.
+
 ---
 
 ## Delivery slices
