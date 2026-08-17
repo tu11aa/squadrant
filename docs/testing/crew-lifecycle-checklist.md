@@ -18,7 +18,8 @@ silently stuck. Every pause (question / permission / idle) and the finish must r
 - [ ] Daemon running — `squadrant` reports a live `squadrantd` (or it auto-starts on spawn)
 - [ ] Captain notifications are delivered daemon-direct (no relay tab required — daemon calls cmux directly since #332/PR#373)
 - [ ] Record `develop` HEAD so you can attribute any regression: `git rev-parse --short HEAD`
-- [ ] No stale crews: `squadrant crew list &lt;project&gt;` is clean
+- [ ] No stale crews: `squadrant crew list <project>` is clean
+- [ ] Re-run this entire suite whenever `claude` or `opencode` are upgraded locally — control channels are capability-probed, not version-locked.
 
 ---
 
