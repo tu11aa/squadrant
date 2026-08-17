@@ -70,7 +70,7 @@ describe("ClaudePeerRegistrySource — polling", () => {
     expect(reports).toHaveLength(0);
   });
 
-  it("passes pid, cwd and sessionId as correlation hints", () => {
+  it("passes pid and sessionId as correlation hints, dropping cwd (#676 review)", () => {
     const resolve = vi.fn(() => ({ id: "task-1" }));
     const { source, deps } = harness({
       resolve,
@@ -78,7 +78,7 @@ describe("ClaudePeerRegistrySource — polling", () => {
     });
     source.start(deps);
     source.poll();
-    expect(resolve).toHaveBeenCalledWith({ pid: 51712, cwd: "/repo", sessionId: "s-9" });
+    expect(resolve).toHaveBeenCalledWith({ pid: 51712, sessionId: "s-9" });
   });
 
   it("runs a dead pid through the guard: alive:false, state unknown", () => {

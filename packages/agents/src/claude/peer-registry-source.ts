@@ -120,7 +120,6 @@ export class ClaudePeerRegistrySource implements LifecycleSource {
     for (const entry of parseRegistryDir(files, this.readFile)) {
       const crew = this.deps.resolve({
         pid: entry.pid,
-        ...(entry.cwd ? { cwd: entry.cwd } : {}),
         ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
       });
       // No crew: the operator's own Claude windows, other projects' captains.

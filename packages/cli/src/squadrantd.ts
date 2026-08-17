@@ -349,69 +349,26 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     catch (e) { log(`codex app-server source start failed: ${(e as Error).message}`); }
 
     // #667 slice 1: start claude peer registry source
-    const claudePrevSnaps = new Map<string, LifecycleSnapshot>();
     const claudeSourceDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
         return store.listAll().find(
           (r) => !TERMINAL_STATES.has(r.state) && (
             (hint.taskId && r.id === hint.taskId) ||
             (hint.sessionId && r.sessionId === hint.sessionId) ||
-            (hint.pid != null && r.pid === hint.pid) ||
-            (hint.cwd && r.cwd === hint.cwd)
+            (hint.pid != null && r.pid === hint.pid)
           )
         );
       },
-      report: (snap) => {
-        const found = store.listAll().find((r) => r.id === snap.taskId);
-        if (!found) return;
-        const prev = claudePrevSnaps.get(snap.taskId);
-        const newState = reduceLifecycle(prev, snap);
-        const changed = !prev || newState !== prev.state;
-        claudePrevSnaps.set(snap.taskId, snap);
-        if (!snap.alive) {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.session.ended", id: snap.taskId } });
-          return;
-        }
-        if (!changed) return;
-        if (newState === "idle") {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "claude-peer-registry" } });
-        } else if (newState === "running") {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
-        } else if (newState === "needsInput") {
-          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
-        }
-      },
+      report: () => {}, // read-only slice: caching is internal to the source
       log,
     };
     try { claudePeerRegistrySource.start(claudeSourceDeps); }
     catch (e) { log(`claude peer registry source start failed: ${(e as Error).message}`); }
 
     // #667 slice 1: start opencode control source
-    const opencodePrevSnaps = new Map<string, LifecycleSnapshot>();
     const opencodeSourceDeps: LifecycleSourceDeps = {
       resolve: () => undefined,
-      report: (snap) => {
-        const found = store.listAll().find((r) => r.id === snap.taskId);
-        if (!found) return;
-        const prev = opencodePrevSnaps.get(snap.taskId);
-        const newState = reduceLifecycle(prev, snap);
-        const changed = !prev || newState !== prev.state;
-        opencodePrevSnaps.set(snap.taskId, snap);
-        if (!snap.alive) {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.session.ended", id: snap.taskId } });
-          return;
-        }
-        if (!changed) return;
-        if (newState === "idle") {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.turn.completed", id: snap.taskId, turnId: "opencode-control" } });
-        } else if (newState === "running") {
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.progress", id: snap.taskId } });
-        } else if (newState === "needsInput") {
-          const question = snap.detail?.note ?? snap.detail?.reason ?? "crew awaiting input";
-          void ctx.d.handle({ kind: "event", project: found.project, event: { type: "task.blocked", id: snap.taskId, reason: "needsInput", question } });
-        }
-      },
+      report: () => {}, // read-only slice: caching is internal to the source
       log,
     };
     try { opencodeControlSource.start(opencodeSourceDeps); }
