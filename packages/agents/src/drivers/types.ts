@@ -6,7 +6,13 @@ export type AgentCapability =
   | "skills"
   | "auto_approve"
   | "streaming"
-  | "prompt_file";
+  | "prompt_file"
+  // #667: runtime control over the agent's own native API. Tiered, NOT reduced to
+  // the intersection of the two agents — designing to the common denominator would
+  // discard opencode's most valuable endpoints.
+  | "control_send"      // T0 — deliver a message into a live session
+  | "control_observe"   // T1 — read liveness / status
+  | "control_interact"; // T2 — approvals, questions, interrupt (opencode only)
 
 export type Role = "command" | "captain" | "crew" | "exploration" | "side";
 
