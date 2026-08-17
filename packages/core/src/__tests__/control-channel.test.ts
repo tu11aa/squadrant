@@ -49,3 +49,22 @@ describe("describeOutcome — every outcome must be loggable", () => {
       .toContain("awaiting approval");
   });
 });
+describe("accepted confirmation flag (#667 slice 3)", () => {
+  it("renders an unconfirmed accept distinctly from a confirmed one", () => {
+    expect(describeOutcome({ status: "accepted", via: "claude-peer", confirmed: true }))
+      .toBe("accepted via claude-peer");
+    expect(describeOutcome({ status: "accepted", via: "claude-peer", confirmed: false }))
+      .toBe("accepted via claude-peer (unconfirmed — no turn observed)");
+  });
+
+  it("omitted confirmed reads as a plain accept (slice 2 callers unchanged)", () => {
+    expect(describeOutcome({ status: "accepted", via: "opencode-http" }))
+      .toBe("accepted via opencode-http");
+  });
+
+  it("an unconfirmed accept still does NOT fall back to the pane", () => {
+    // Critical: unconfirmed means "we don't know the agent read it", NOT "it failed".
+    // Falling back here would double-send — the exact duplicate this port removes.
+    expect(fallsBackToPane({ status: "accepted", via: "claude-peer", confirmed: false })).toBe(false);
+  });
+});
