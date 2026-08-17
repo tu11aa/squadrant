@@ -85,6 +85,13 @@ vi.mock("@squadrant/agents", () => ({
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
   createOpencodeDriver: () => ({ ...claudeDriver, name: "opencode", templateSuffix: "opencode" }),
+  OpencodeHttpChannel: class {
+    constructor() {}
+    send = vi.fn();
+    probe = vi.fn();
+    name = "opencode-http";
+    agent = "opencode";
+  },
   CapabilityRegistry: class {
     constructor(private drivers: Record<string, unknown>) {}
     get(name: string) { return this.drivers[name]; }

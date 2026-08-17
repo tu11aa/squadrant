@@ -60,7 +60,7 @@ describe("runCrewSend — mode: shadow", () => {
   it("sends through the pane exactly once and never through the channel", async () => {
     // The whole point: shadow must NOT double-deliver.
     const send = vi.fn();
-    const probe = vi.fn(async () => ({ status: "reachable", via: "opencode-http" as const }));
+    const probe = vi.fn(async () => ({ status: "reachable" as const, via: "opencode-http" as const }));
     const { runtime, deps, sendToPane } = harness({
       mode: "shadow", channel: makeChannel({ send, probe }),
     });
@@ -138,7 +138,7 @@ describe("runCrewSend — mode: on", () => {
   });
 
   it("never sends twice — one accepted send means one delivery", async () => {
-    const send = vi.fn(async () => ({ status: "accepted", via: "opencode-http" as const }));
+    const send = vi.fn(async () => ({ status: "accepted" as const, via: "opencode-http" as const }));
     const { runtime, deps, sendToPane } = harness({ mode: "on", channel: makeChannel({ send }) });
     await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
     expect(send).toHaveBeenCalledOnce();

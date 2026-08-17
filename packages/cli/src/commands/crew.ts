@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput } from "@squadrant/shared";
+import { loadConfig, resolveTextInput, resolveControlChannelMode } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver } from "@squadrant/agents";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel } from "@squadrant/agents";
 import {
   runCrewSpawn as coreRunCrewSpawn,
   runCrewSend as coreRunCrewSend,
@@ -62,14 +62,26 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
 
 export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<void> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
+  const cfg = loadConfig();
+  // #667 slice 2: the channel needs the crew's opencode port, which the daemon
+  // already persists on the TaskRecord (rec.serverPort). Resolved lazily so the
+  // off path does no work at all.
+  let tasks: TaskRecord[] = [];
+  const controlChannel = new OpencodeHttpChannel({
+    portFor: (taskId) => tasks.find((t) => t.id === taskId)?.serverPort,
+    log: (m) => console.error(chalk.dim(m)),
+  });
   return coreRunCrewSend(project, name, message, runtime, workspaceId, {
-    listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
+    listTasks: async (p) => {
+      tasks = (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[];
+      return tasks;
+    },
     emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
-    // #448: use paste-settle-Enter confirmation for follow-up sends (same guard
-    // as first-turn #447) so large messages don't strand in paste mode.
     sendToPane: (pane, msg) => confirmedSendToPane(runtime, pane, msg),
-    // #516: side-effect-free modal precheck, run before any daemon-state emit.
     isBlockedByModal: (pane) => paneHasOpenModal(runtime, pane),
+    controlChannel,
+    controlChannelMode: (agent) => resolveControlChannelMode(cfg.defaults.controlChannel, agent),
+    onChannelLog: (m) => console.error(chalk.dim(m)),
   }, opts);
 }
 
