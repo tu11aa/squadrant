@@ -30,3 +30,5 @@ export * from "./launch-workspace.js";
 export * from "./side-session.js";
 export * from "./crew-spawn.js";
 export * from "./lifecycle-source.js";
+export { fallsBackToPane, describeOutcome } from "./control-channel.js";
+export type { ControlChannel, ControlChannelMode, DeliveryOutcome, ProbeResult, ChannelName } from "./control-channel.js";

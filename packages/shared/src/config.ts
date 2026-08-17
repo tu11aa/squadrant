@@ -71,6 +71,9 @@ export interface RoleAssignment {
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
+/** #667 per-agent control-channel rollout position. Unset ⇒ "off". */
+export type ControlChannelMode = "off" | "shadow" | "on";
+
 export interface SquadrantConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _squadrantVersion?: string;
