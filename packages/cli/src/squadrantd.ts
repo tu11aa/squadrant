@@ -24,7 +24,7 @@ import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
          ClaudePeerRegistrySource, OpencodeControlSource } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
-import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
+import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
@@ -35,7 +35,6 @@ const SELF_PATH = fileURLToPath(import.meta.url);
 // Dist-relative + invariant to source moves (see learning #363). Run via
 // `process.execPath <CLI_BIN> ...argv` so we don't depend on PATH (launchd's is minimal).
 const CLI_BIN = join(dirname(SELF_PATH), "index.js");
-const DAEMON_SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 function readPkgVersion(): string {
   try {
     const pkgPath = join(dirname(SELF_PATH), "..", "package.json");
@@ -63,7 +62,7 @@ function buildTelegramBridge(
   // Control surfaces (#402/#403). These act only when remoteControl is on AND the
   // sender is allowlisted (gated inside the bridge); passing them is always safe.
   const ensureCaptainAlive = createEnsureCaptainAlive({
-    isAlive: createIsCaptainAlive(DAEMON_SOCK),
+    isAlive: createIsCaptainAlive(DAEMON_SOCK_PATH),
     launch: createLaunch(CLI_BIN, log),
   });
   const runCommand = createRunCommand(CLI_BIN);
@@ -482,9 +481,8 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     // startServer does unlink-then-bind; without this guard a second invocation
     // unlinks the live socket, orphaning the running daemon on its now-anonymous
     // inode so every new connect() to the path is refused.
-    const sock = join(homedir(), ".config", "squadrant", "squadrant.sock");
-    if (await isDaemonSocketLive(sock)) {
-      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${sock}\n`);
+    if (await isDaemonSocketLive(DAEMON_SOCK_PATH)) {
+      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${DAEMON_SOCK_PATH}\n`);
       process.exit(0);
     }
     const h = startSquadrantd({ sweepMs: 30000 });

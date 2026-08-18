@@ -9,13 +9,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
-import { TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase } from "@squadrant/shared";
+import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
 import { crewChatCommand } from "./crew-chat.js";
 
-const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
+const SOCK = DAEMON_SOCK_PATH;
 
 // Codex thread setup is async after `dispatch` returns; let startThread finish
 // before sending the first turn. Empirically codex handshake completes in well

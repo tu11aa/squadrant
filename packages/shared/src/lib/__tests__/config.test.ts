@@ -1,11 +1,21 @@
 // src/config.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getDefaultConfig, loadConfig, saveConfig } from "@squadrant/shared";
+import { getDefaultConfig, loadConfig, saveConfig, DAEMON_SOCK_PATH, CONFIG_DIR } from "@squadrant/shared";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 describe("config", () => {
+  it("DAEMON_SOCK_PATH resolves correctly based on CONFIG_DIR", () => {
+    // #687: must be derived from the resolved config dir to respect SQUADRANT_CONFIG isolation
+    expect(DAEMON_SOCK_PATH).toBe(path.join(CONFIG_DIR, "squadrant.sock"));
+    
+    // In these tests SQUADRANT_CONFIG is typically unset, so it should equal the default
+    if (!process.env.SQUADRANT_CONFIG) {
+      expect(DAEMON_SOCK_PATH).toBe(path.join(os.homedir(), ".config", "squadrant", "squadrant.sock"));
+    }
+  });
+
   const tmpDir = path.join(os.tmpdir(), "squadrant-test-" + Date.now());
   const configPath = path.join(tmpDir, "config.json");
 

@@ -13,12 +13,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendRequest, resolveCurrentProject } from "@squadrant/core";
 import { mapClaudeHookToEvent, deriveTranscriptPath } from "@squadrant/agents";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
 
-const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
+const SOCK = DAEMON_SOCK_PATH;
 
 async function sendToSock(req: unknown): Promise<void> {
   await sendRequest(SOCK, req);
