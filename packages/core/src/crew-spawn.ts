@@ -603,8 +603,14 @@ export async function runCrewSend(
   const channelLog = deps.onChannelLog ?? (() => {});
 
   if (mode === "on" && channel && task) {
-    const outcome = await channel.send(task.id, message);
-    channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
+    let outcome;
+    try {
+      outcome = await channel.send(task.id, message);
+      channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
+    } catch (e) {
+      channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
+      outcome = { status: "gone" as const };
+    }
     if (outcome.status === "held") {
       // Never retried, never fallen back — the operator must act. Retrying a
       // held message is how duplicates are manufactured.
@@ -623,7 +629,13 @@ export async function runCrewSend(
   if (mode === "shadow" && channel && task) {
     // Probe FIRST so the comparison reflects the session's state at send time,
     // and so a slow probe cannot delay a message that already went out.
-    const probe = await channel.probe(task.id);
+    let probe;
+    try {
+      probe = await channel.probe(task.id);
+    } catch (e) {
+      channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
+      probe = { status: "gone" as const };
+    }
     const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, message);
     const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
     if (paneOk !== (probe.status === "reachable")) {
