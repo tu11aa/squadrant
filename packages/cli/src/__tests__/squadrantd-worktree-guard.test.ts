@@ -18,11 +18,23 @@
 // since a worktree carries the full working tree including packages/.
 import { describe, it, expect } from "vitest";
 import { isMonorepoCheckout } from "../squadrantd.js";
+import { resolve, join } from "node:path";
 
 describe("isMonorepoCheckout (#670)", () => {
   it("is true for a worktree checkout's compiled entry (packages/ sits next to dist/)", () => {
     const dirExists = (p: string) => p === "/Users/me/squadrant/.worktrees/foo/packages";
     expect(isMonorepoCheckout("/Users/me/squadrant/.worktrees/foo/dist/squadrantd.js", dirExists)).toBe(true);
+  });
+
+  it("is true for a worktree path given a RELATIVE argv regardless of cwd (#682)", () => {
+    // If we pass a relative path like "dist/squadrantd.js", the resolve inside isMonorepoCheckout
+    // uses process.cwd(). Since dirExists is mocked, we check if the passed path ends with "packages"
+    // correctly derived from the resolved relative path.
+    const relativeScript = "dist/squadrantd.js";
+    const expectedPackagesPath = join(resolve(relativeScript), "..", "..", "packages");
+    
+    const dirExists = (p: string) => p === expectedPackagesPath;
+    expect(isMonorepoCheckout(relativeScript, dirExists)).toBe(true);
   });
 
   it("is true for a plain (non-worktree) monorepo clone's compiled entry", () => {

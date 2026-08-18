@@ -10,6 +10,7 @@ const loadConfig = vi.hoisted(() => vi.fn());
 vi.mock("@squadrant/shared", () => ({
   loadConfig,
   resolveHome: (p: string) => p,
+  DAEMON_SOCK_PATH: "/tmp/mock.sock",
 }));
 
 import { dispatchToSibling, isCaptainAlive } from "../group-dispatch.js";

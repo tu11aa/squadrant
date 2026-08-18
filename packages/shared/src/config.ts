@@ -181,6 +181,7 @@ export interface SquadrantConfig {
 
 export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.homedir(), ".config", "squadrant", "config.json");
 export const CONFIG_DIR = path.dirname(DEFAULT_CONFIG_PATH);
+export const DAEMON_SOCK_PATH = path.join(CONFIG_DIR, "squadrant.sock");
 
 export function getDefaultConfig(): SquadrantConfig {
   return {

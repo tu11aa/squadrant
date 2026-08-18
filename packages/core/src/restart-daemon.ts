@@ -6,10 +6,10 @@ import { LABEL, kickstartArgv, tryAcquireDaemonLock, releaseDaemonLock } from ".
 
 export type RestartOutcome = "restarted" | "skipped-not-running" | "skipped-opt-out";
 
-const DEFAULT_SOCK_PATH = join(homedir(), ".config", "squadrant", "squadrant.sock");
+import { DAEMON_SOCK_PATH } from "@squadrant/shared";
 
 function defaultIsRunning(): boolean {
-  return existsSync(DEFAULT_SOCK_PATH);
+  return existsSync(DAEMON_SOCK_PATH);
 }
 
 function defaultRunKickstart(): void {

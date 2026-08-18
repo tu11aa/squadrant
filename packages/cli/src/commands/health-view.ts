@@ -8,9 +8,10 @@ import { join } from "node:path";
 import chalk from "chalk";
 import { sendRequest, ageText } from "@squadrant/core";
 export { ageText } from "@squadrant/core";
+import { DAEMON_SOCK_PATH } from "@squadrant/shared";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
 
-export const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
+export const SOCK = DAEMON_SOCK_PATH;
 
 /**
  * Query the daemon for component liveness. Returns null when the daemon is

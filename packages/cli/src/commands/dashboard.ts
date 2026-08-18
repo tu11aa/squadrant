@@ -15,9 +15,9 @@ import {
 } from "@squadrant/web";
 import type { SyncHubResult } from "@squadrant/web";
 import { squadrantdCall } from "./crew-control.js";
-import { resolveCmuxBin } from "@squadrant/shared";
+import { resolveCmuxBin, DAEMON_SOCK_PATH } from "@squadrant/shared";
 
-const SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
+const SOCK = DAEMON_SOCK_PATH;
 
 function detectCurrentWorkspace(): string {
   const out = execSync(`"${resolveCmuxBin()}" current-workspace`, { encoding: "utf-8" }).trim();
