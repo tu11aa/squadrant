@@ -36,7 +36,7 @@ describe("buildUserEnvelope", () => {
   });
 
   it("omits session_id and from when not supplied rather than sending null", () => {
-    const e = buildUserEnvelope({ content: "hi", msgId: "m1" }) as Record<string, unknown>;
+    const e = buildUserEnvelope({ content: "hi", msgId: "m1" }) as unknown as Record<string, unknown>;
     expect("session_id" in e).toBe(false);
     expect("from" in e).toBe(false);
   });
@@ -44,7 +44,7 @@ describe("buildUserEnvelope", () => {
   it("NEVER includes a from-mode attestation", () => {
     // Global constraint: attesting from-mode="bypass" holds EVERY message.
     // This layer must not emit the field at all.
-    const e = buildUserEnvelope({ content: "hi", msgId: "m1" }) as Record<string, unknown>;
+    const e = buildUserEnvelope({ content: "hi", msgId: "m1" }) as unknown as Record<string, unknown>;
     expect("from-mode" in e).toBe(false);
     expect("from_mode" in e).toBe(false);
   });

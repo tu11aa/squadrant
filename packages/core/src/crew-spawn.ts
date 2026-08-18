@@ -25,6 +25,7 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
 } from "@squadrant/shared";
+import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 
 /**
@@ -74,6 +75,7 @@ export interface ResolvedAgent {
     permissionMode?: string;
     model?: string;
     port?: number;
+    messagingSocketPath?: string;
   }): string;
 }
 
@@ -127,6 +129,7 @@ export interface CrewSpawnDeps {
     name: string;
     budgetMs?: number;
     serverPort?: number;
+    messagingSocketPath?: string;
     approvalPolicy?: string;
     roleInstructions?: string;
   }): Promise<TaskRecord>;
@@ -341,6 +344,11 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
+    fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+    // Same directory as the crews' own sockets — receipts are only delivered
+    // within one socket namespace, so our listener must live there too.
+    const messagingSocketPath = path.join(CC_SOCKS_DIR, `squadrant-${randomUUID()}.sock`);
+
     const rec = await deps.dispatchCrew({
       provider: "claude",
       mode: "interactive",
@@ -348,6 +356,7 @@ export async function runCrewSpawn(
       cwd: spawnCwd,
       task: input.task,
       name,
+      messagingSocketPath,
     });
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
@@ -368,6 +377,7 @@ export async function runCrewSpawn(
       role: "crew",
       promptFile,
       interactive: true,
+      messagingSocketPath,
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
       permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",

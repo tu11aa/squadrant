@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ClaudePeerChannel } from "../peer-channel.js";
 
 /** Minimal deps: nothing touches a real socket, clock, or filesystem. */
-function mk(over: Partial<Parameters<typeof ClaudePeerChannel.prototype.constructor>[0]> = {}) {
+function mk(over: Partial<ConstructorParameters<typeof ClaudePeerChannel>[0]> = {}) {
   const base = {
     socketPathFor: (_t: string) => "/tmp/cc-socks/crew.sock",
     sessionIdFor: (_t: string) => "ses_abc",
@@ -13,7 +13,7 @@ function mk(over: Partial<Parameters<typeof ClaudePeerChannel.prototype.construc
     sleep: vi.fn().mockResolvedValue(undefined),
     confirmWindowMs: 100,
   };
-  return new ClaudePeerChannel({ ...base, ...over } as never);
+  return new ClaudePeerChannel({ ...base, ...over } as any);
 }
 
 describe("ClaudePeerChannel.send", () => {
