@@ -1,7 +1,7 @@
 // src/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync, statSync, existsSync } from "node:fs";
@@ -92,6 +92,19 @@ function buildNotifyFault(log: (m: string) => void): (project: string, text: str
 }
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
+  // #670: refuse outright if this build is a monorepo/worktree checkout AND
+  // we are attempting to bind the shared production socket. A module whose import
+  // can seize the production socket is a footgun regardless of the caller.
+  const isDefaultSocket = !opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH;
+  if (isDefaultSocket && isMonorepoCheckout(SELF_PATH)) {
+    process.stderr.write(
+      `[squadrantd] refusing to start: '${SELF_PATH}' is a monorepo/worktree checkout, not an ` +
+      "installed copy — it must never become the shared production daemon (#670). For local testing, " +
+      "use a dedicated sockPath, or run the test suite (`pnpm test`).\n",
+    );
+    process.exit(1);
+  }
+
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -448,7 +461,7 @@ function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: u
  * tree) is unambiguously distinguishable from an installed copy.
  */
 export function isMonorepoCheckout(scriptPath: string, dirExists: (p: string) => boolean = existsSync): boolean {
-  return dirExists(join(dirname(scriptPath), "..", "packages"));
+  return dirExists(join(dirname(resolve(scriptPath)), "..", "packages"));
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).
@@ -465,17 +478,6 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     if (arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v") {
       process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `squadrant` for commands.\n");
       process.exit(0);
-    }
-    // #670: refuse outright if this build is a monorepo/worktree checkout —
-    // regardless of whether anything else is currently live on the socket.
-    if (isMonorepoCheckout(process.argv[1])) {
-      process.stderr.write(
-        `[squadrantd] refusing to start: '${process.argv[1]}' is a monorepo/worktree checkout, not an ` +
-        "installed copy — it must never become the shared production daemon (#670). This entry takes " +
-        "no CLI flags/sockPath override; for local testing, import startSquadrantd({ sockPath, ... }) " +
-        "programmatically instead of running this entry directly, or run the test suite (`pnpm test`).\n",
-      );
-      process.exit(1);
     }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.
     // startServer does unlink-then-bind; without this guard a second invocation
