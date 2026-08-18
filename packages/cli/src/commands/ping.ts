@@ -42,7 +42,7 @@ export async function runPing(project: string, message: string): Promise<Deliver
   
   const mode = resolveCaptainChannelMode(config.defaults);
   const { handled, outcome } = await deliverToCaptain(project, message, {
-    channel: mode === "off" ? undefined : await buildCaptainChannel(project),
+    channel: mode === "off" ? undefined : await buildCaptainChannel(),
     mode,
     log: (m) => console.error(chalk.dim(m)),
   });

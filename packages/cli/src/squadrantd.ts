@@ -52,6 +52,7 @@ function buildTelegramBridge(
   cfg: TelegramConfig,
   stateRoot: string,
   log: (m: string) => void,
+  deliverInbound?: (project: string, text: string) => Promise<{ handled: boolean; outcome?: import("@squadrant/core").DeliveryOutcome }>,
 ): TelegramBridge | undefined {
   const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -70,7 +71,7 @@ function buildTelegramBridge(
     client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
-    ensureCaptainAlive, runCommand, sendReply,
+    ensureCaptainAlive, runCommand, sendReply, deliverInbound,
   });
 }
 
@@ -193,7 +194,13 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // tests inject opts.telegramBridge instead.
   const tgCfg = loadConfig().telegram;
   ctx.telegramBridge = opts.telegramBridge
-    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log) : undefined);
+    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log, (project, text) =>
+      import("@squadrant/core").then((core) => core.deliverToCaptain(project, text, {
+        channel: ctx.captainChannel,
+        mode: ctx.captainChannelMode?.() ?? "off",
+        log,
+      }))
+    ) : undefined);
 
   // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────
   // Skipped under vitest (would shell out to the real `squadrant` CLI); tests

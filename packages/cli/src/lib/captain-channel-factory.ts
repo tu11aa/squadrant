@@ -28,18 +28,21 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   return shared;
 }
 
-export async function buildCaptainChannel(project: string): Promise<ClaudePeerChannel> {
+export async function buildCaptainChannel(): Promise<ClaudePeerChannel> {
   const receipts = await sharedReceiptListener();
-  const projectPath = loadConfig().projects[project]?.path;
+  const config = loadConfig();
   return new ClaudePeerChannel({
     // The port's taskId IS the project name for captains.
-    socketPathFor: () => captainSocketPath(project),
+    socketPathFor: (taskId) => captainSocketPath(taskId),
     // We do not know a captain's session id, so the pid-reuse guard is skipped
     // here. Acceptable: the socket path is project-scoped and squadrant chose it
     // at launch, so a stale path fails as `gone` rather than reaching a stranger.
     sessionIdFor: () => undefined,
     // Captains are identified in the registry by their cwd (the project path).
-    statusFor: () => (projectPath ? readClaudeStatusByCwd(projectPath) : undefined),
+    statusFor: (taskId) => {
+      const projectPath = config.projects[taskId]?.path;
+      return projectPath ? readClaudeStatusByCwd(projectPath) : undefined;
+    },
     wire: (p, e) => writeLine(p, e, { connect: (path) => netConnect(path) }),
     receipts,
     newMsgId: () => randomUUID(),

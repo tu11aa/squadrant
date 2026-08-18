@@ -213,3 +213,7 @@ compare version strings.
 - [ ] #667 claude delivery: with `defaults.controlChannel.claude = "on"`, `crew send` to a claude crew logs `accepted via claude-peer` and the crew's transcript shows the user turn
 - [ ] #667 claude delivery: a send to a killed claude crew logs `gone`, falls back to the pane exactly once, and does not retry
 - [ ] #667 claude delivery: an unconfirmed accept logs `(unconfirmed — no turn observed)` and does NOT double-send
+- [ ] #667 captain channel: with `defaults.captainChannel = "on"`, `squadrant ping <project> "x"` prints `✔ Delivered` and the captain's transcript shows the user turn
+- [ ] #667 captain channel: with `"shadow"`, the message arrives exactly ONCE and probe/disagreement is logged
+- [ ] #667 captain channel: a killed captain yields `⚠ not reachable` and exactly one mailbox fallback
+- [ ] #667 captain channel: a Telegram inbound that is held produces a `⏸ HELD` message to the phone

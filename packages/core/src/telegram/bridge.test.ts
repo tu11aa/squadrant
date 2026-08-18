@@ -291,3 +291,30 @@ describe("typing indicator", () => {
     bridge.stop();
   });
 });
+
+import { formatInboundReceipt } from "./bridge.js";
+
+describe("formatInboundReceipt (#667 slice 4)", () => {
+  it("stays silent when there is no outcome — today's behaviour with the flag off", () => {
+    expect(formatInboundReceipt("demo", undefined)).toBeUndefined();
+  });
+
+  it("stays silent on a plain confirmed accept — a receipt for every message would flood the phone", () => {
+    expect(formatInboundReceipt("demo", { status: "accepted", via: "claude-peer", confirmed: true })).toBeUndefined();
+  });
+
+  it("speaks up when held, because a human must act", () => {
+    expect(formatInboundReceipt("demo", { status: "held", via: "claude-peer", reason: "permission-mode parity" }))
+      .toBe("⏸ Your message to demo is HELD awaiting approval in that session: permission-mode parity");
+  });
+
+  it("speaks up when the captain is gone", () => {
+    expect(formatInboundReceipt("demo", { status: "gone" }))
+      .toBe("⚠ demo's captain is not reachable — your message went to its mailbox instead");
+  });
+
+  it("speaks up on an unconfirmed accept rather than implying delivery", () => {
+    expect(formatInboundReceipt("demo", { status: "accepted", via: "claude-peer", confirmed: false }))
+      .toBe("… Your message reached demo's session but no turn was observed yet");
+  });
+});
