@@ -1,6 +1,6 @@
 // Tests for the Claude session-registry reader (#667 slice 1).
 // Pure functions only — no real filesystem, no real ~/.claude/sessions.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { parseRegistryDir, toLifecycleSnapshot } from "../registry.js";
 import type { ClaudeRegistryEntry } from "../registry.js";
 
@@ -135,5 +135,52 @@ describe("readClaudeStatusByCwd (#667 slice 4)", () => {
       return originalRead(path, options);
     });
     expect(readClaudeStatusByCwd("/repo-b")).toBeUndefined();
+  });
+});
+
+import { readClaudeStatus } from "../registry.js";
+
+describe("readClaudeStatus", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("resolver returns the entry whose socket path matches", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json", "2.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock1", status: "idle" });
+      if (path.toString().endsWith("2.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock2", status: "busy" });
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock2" } as any)).toBe("busy");
+  });
+
+  it("returns undefined for an unknown socket path", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock1", status: "idle" });
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock-unknown" } as any)).toBeUndefined();
+  });
+
+  it("malformed/vanished registry files are skipped, not thrown on", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json", "2.json", "3.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) throw new Error("ENOENT"); // vanished
+      if (path.toString().endsWith("2.json")) return "{ not json"; // malformed
+      if (path.toString().endsWith("3.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock3", status: "shell" });
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock3" } as any)).toBe("shell");
+  });
+
+  it("statusFor falls back to pid/sessionId when messagingSocketPath is absent", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ pid: 1, sessionId: "sess-1", status: "waiting" });
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatus({ id: "t1", pid: 1, sessionId: "sess-1" } as any)).toBe("waiting");
   });
 });

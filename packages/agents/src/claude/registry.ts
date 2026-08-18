@@ -114,7 +114,7 @@ export function toLifecycleSnapshot(
 
 /** #667 slice 3: read status for a single task record. */
 export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" | "shell" | "waiting" | undefined {
-  if (!task || !task.pid) return undefined;
+  if (!task || (!task.pid && !task.messagingSocketPath)) return undefined;
   let files: string[];
   try {
     files = fs.readdirSync(CLAUDE_SESSIONS_DIR);
@@ -122,7 +122,16 @@ export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" 
     return undefined;
   }
   const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
-  const entry = entries.find((e) => e.pid === task.pid && (!task.sessionId || e.sessionId === task.sessionId));
+  
+  let entry: ClaudeRegistryEntry | undefined;
+  if (task.messagingSocketPath) {
+    entry = entries.find((e) => e.messagingSocketPath === task.messagingSocketPath);
+  }
+  
+  if (!entry && task.pid) {
+    entry = entries.find((e) => e.pid === task.pid && (!task.sessionId || e.sessionId === task.sessionId));
+  }
+  
   return entry?.status;
 }
 
