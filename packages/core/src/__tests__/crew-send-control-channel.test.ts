@@ -87,6 +87,16 @@ describe("runCrewSend — mode: shadow", () => {
     const { runtime, deps } = harness({ mode: "shadow", paneDelivered: false });
     await expect(runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps)).rejects.toThrow();
   });
+
+  it("never breaks the loop when probe() throws — falls back and logs", async () => {
+    const probe = vi.fn().mockRejectedValue(new Error("socket closed"));
+    const { runtime, deps, sendToPane, logs } = harness({ mode: "shadow", channel: makeChannel({ probe }) });
+    
+    await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
+    
+    expect(sendToPane).toHaveBeenCalledOnce();
+    expect(logs.join("\n")).toMatch(/threw, falling back to pane — socket closed/);
+  });
 });
 
 describe("runCrewSend — mode: on", () => {
@@ -143,6 +153,17 @@ describe("runCrewSend — mode: on", () => {
     await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
     expect(send).toHaveBeenCalledOnce();
     expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  it("never breaks the loop when send() throws — falls back to pane exactly once, no retry", async () => {
+    const send = vi.fn().mockRejectedValue(new Error("socket closed"));
+    const { runtime, deps, sendToPane, logs } = harness({ mode: "on", channel: makeChannel({ send }) });
+    
+    await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
+    
+    expect(send).toHaveBeenCalledOnce();
+    expect(sendToPane).toHaveBeenCalledOnce();
+    expect(logs.join("\n")).toMatch(/threw, falling back to pane — socket closed/);
   });
 });
 
