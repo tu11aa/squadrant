@@ -92,6 +92,23 @@ vi.mock("@squadrant/agents", () => ({
     name = "opencode-http";
     agent = "opencode";
   },
+  ClaudeReceiptListener: class {
+    constructor() {}
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+    waitFor = vi.fn();
+    onLate = vi.fn();
+    address = "uds:/test.sock";
+  },
+  ClaudePeerChannel: class {
+    constructor() {}
+    send = vi.fn();
+    probe = vi.fn();
+    name = "claude-peer";
+    agent = "claude";
+  },
+  readClaudeStatus: vi.fn(),
+  writeLine: vi.fn(),
   CapabilityRegistry: class {
     constructor(private drivers: Record<string, unknown>) {}
     get(name: string) { return this.drivers[name]; }

@@ -31,7 +31,12 @@ export type { ControlChannelMode };
  * port exists to remove.
  */
 export type DeliveryOutcome =
-  | { status: "accepted"; via: ChannelName }
+  // `confirmed` exists because claude's accept path is SILENT (verified: a
+  // delivered message produced no receipt after 20 s). `confirmed: false` means
+  // "the bytes were accepted by a listening process, but no turn was observed".
+  // It is NOT a failure and MUST NOT fall back to the pane. opencode omits the
+  // field entirely — its 204 is a real server-side accept.
+  | { status: "accepted"; via: ChannelName; confirmed?: boolean }
   | { status: "queued"; via: ChannelName }
   | { status: "held"; via: ChannelName; reason: string }
   | { status: "gone" }
@@ -82,7 +87,10 @@ export function fallsBackToPane(o: DeliveryOutcome): boolean {
 /** Human-readable one-liner. Every fallback and disagreement is logged with this. */
 export function describeOutcome(o: DeliveryOutcome): string {
   switch (o.status) {
-    case "accepted": return `accepted via ${o.via}`;
+    case "accepted":
+      return o.confirmed === false
+        ? `accepted via ${o.via} (unconfirmed — no turn observed)`
+        : `accepted via ${o.via}`;
     case "queued":   return `queued via ${o.via} (agent mid-turn)`;
     case "held":     return `held via ${o.via}: ${o.reason}`;
     case "gone":     return "session gone — falling back to pane";

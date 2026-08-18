@@ -3,7 +3,9 @@ import chalk from "chalk";
 import { loadConfig, resolveTextInput, resolveControlChannelMode } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel } from "@squadrant/agents";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
+import { createServer, connect as netConnect } from "node:net";
+import { randomUUID } from "node:crypto";
 import {
   runCrewSpawn as coreRunCrewSpawn,
   runCrewSend as coreRunCrewSend,
@@ -67,22 +69,47 @@ export async function runCrewSend(project: string, name: string, message: string
   // already persists on the TaskRecord (rec.serverPort). Resolved lazily so the
   // off path does no work at all.
   let tasks: TaskRecord[] = [];
-  const controlChannel = new OpencodeHttpChannel({
-    portFor: (taskId) => tasks.find((t) => t.id === taskId)?.serverPort,
+
+  const receipts = new ClaudeReceiptListener({
+    socketPath: "/tmp/cc-socks/squadrantd.sock",
+    createServer: (h) => createServer(h),
     log: (m) => console.error(chalk.dim(m)),
   });
-  return coreRunCrewSend(project, name, message, runtime, workspaceId, {
-    listTasks: async (p) => {
-      tasks = (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[];
-      return tasks;
-    },
-    emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
-    sendToPane: (pane, msg) => confirmedSendToPane(runtime, pane, msg),
-    isBlockedByModal: (pane) => paneHasOpenModal(runtime, pane),
-    controlChannel,
-    controlChannelMode: (agent) => resolveControlChannelMode(cfg.defaults.controlChannel, agent),
-    onChannelLog: (m) => console.error(chalk.dim(m)),
-  }, opts);
+  await receipts.start();
+
+  const controlChannels = [
+    new OpencodeHttpChannel({
+      portFor: (taskId) => tasks.find((t) => t.id === taskId)?.serverPort,
+      log: (m) => console.error(chalk.dim(m)),
+    }),
+    new ClaudePeerChannel({
+      socketPathFor: (taskId) => tasks.find((t) => t.id === taskId)?.messagingSocketPath,
+      sessionIdFor: (taskId) => tasks.find((t) => t.id === taskId)?.sessionId,
+      statusFor: (taskId) => readClaudeStatus(tasks.find((t) => t.id === taskId)),
+      wire: (p, e) => writeLine(p, e, { connect: (path) => netConnect(path) }),
+      receipts,
+      newMsgId: () => randomUUID(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      log: (m) => console.error(chalk.dim(m)),
+    }),
+  ];
+
+  try {
+    return await coreRunCrewSend(project, name, message, runtime, workspaceId, {
+      listTasks: async (p) => {
+        tasks = (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[];
+        return tasks;
+      },
+      emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
+      sendToPane: (pane, msg) => confirmedSendToPane(runtime, pane, msg),
+      isBlockedByModal: (pane) => paneHasOpenModal(runtime, pane),
+      controlChannels,
+      controlChannelMode: (agent) => resolveControlChannelMode(cfg.defaults.controlChannel, agent),
+      onChannelLog: (m) => console.error(chalk.dim(m)),
+    }, opts);
+  } finally {
+    receipts.stop();
+  }
 }
 
 export async function runCrewRead(project: string, name: string): Promise<string> {

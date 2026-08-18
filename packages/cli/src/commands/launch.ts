@@ -19,7 +19,7 @@ import {
   RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
   isInsideCmux, cmuxLocal, classifyStartupSurface,
 } from "@squadrant/workspaces";
-import { launchOneWorkspace, loadSessions } from "@squadrant/core";
+import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
 
@@ -109,8 +109,13 @@ export const launchCommand = new Command("launch")
           keepOverride: opts.keep,
           sessionsPath: SESSIONS_PATH,
           templatesDir: TEMPLATES_DIR,
-          agentCmdFactory: (forceFresh) =>
-            buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR),
+          agentCmdFactory: (forceFresh) => {
+            if (agentName === "claude") {
+              fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+            }
+            return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
+              agentName === "claude" ? path.join(CC_SOCKS_DIR, `squadrant-captain-${project}.sock`) : undefined);
+          },
           initialPrompt,
           runtime,
           navigate,

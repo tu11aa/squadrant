@@ -92,6 +92,10 @@ export interface TaskRecord {
    *  (`opencode --port <N>`). The daemon's SSE bridge subscribes to
    *  http://127.0.0.1:<serverPort>/event for reliable turn-end detection. */
   serverPort?: number;
+  /** #667 slice 3: claude UDS inbox path chosen at spawn. Mirrors serverPort's
+   *  role for opencode — persisted so the daemon can re-address the session
+   *  after a bounce (daemon/start.ts re-reads store.listAll()). */
+  messagingSocketPath?: string;
   /** #246: cross-project intra-group delegation — set to the origin project's
    *  name when this task was dispatched by a sibling captain. When the task
    *  settles, the daemon fans the outcome back to originProject's mailbox. */

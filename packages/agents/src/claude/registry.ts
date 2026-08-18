@@ -11,7 +11,9 @@
 // without touching a real home directory.
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import type { LifecycleSnapshot } from "@squadrant/core";
+import type { TaskRecord } from "@squadrant/shared";
 
 /** Where Claude Code writes one JSON file per live session. */
 export const CLAUDE_SESSIONS_DIR = join(homedir(), ".claude", "sessions");
@@ -108,4 +110,18 @@ export function toLifecycleSnapshot(
       // does not recognise. Never guess "idle" here.
       return { ...base, state: "unknown" };
   }
+}
+
+/** #667 slice 3: read status for a single task record. */
+export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" | "shell" | "waiting" | undefined {
+  if (!task || !task.pid) return undefined;
+  let files: string[];
+  try {
+    files = readdirSync(CLAUDE_SESSIONS_DIR);
+  } catch {
+    return undefined;
+  }
+  const entries = parseRegistryDir(files, (name) => readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
+  const entry = entries.find((e) => e.pid === task.pid && (!task.sessionId || e.sessionId === task.sessionId));
+  return entry?.status;
 }

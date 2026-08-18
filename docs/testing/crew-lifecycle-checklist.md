@@ -210,3 +210,6 @@ contracts:
 **Upgrading either agent requires re-running the live smoke in this checklist.**
 Probe for capability — does the file parse, does `connect()` succeed — and never
 compare version strings.
+- [ ] #667 claude delivery: with `defaults.controlChannel.claude = "on"`, `crew send` to a claude crew logs `accepted via claude-peer` and the crew's transcript shows the user turn
+- [ ] #667 claude delivery: a send to a killed claude crew logs `gone`, falls back to the pane exactly once, and does not retry
+- [ ] #667 claude delivery: an unconfirmed accept logs `(unconfirmed — no turn observed)` and does NOT double-send

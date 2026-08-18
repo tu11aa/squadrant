@@ -25,7 +25,19 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
 } from "@squadrant/shared";
+import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+
+/**
+ * Where claude sessions' UDS inboxes live. Squadrant's own receipt listener MUST
+ * bind inside this same directory — the receiver refuses to send a receipt to a
+ * `from` address outside its own socket namespace (verified 2026-08-08).
+ *
+ * That makes this directory a trust boundary. Hardening its permissions is #675,
+ * which is live today and NOT addressed by this slice.
+ */
+export const CC_SOCKS_DIR = "/tmp/cc-socks";
+
 import {
   buildCompletionProtocol,
   shellQuote,
@@ -63,6 +75,7 @@ export interface ResolvedAgent {
     permissionMode?: string;
     model?: string;
     port?: number;
+    messagingSocketPath?: string;
   }): string;
 }
 
@@ -116,6 +129,7 @@ export interface CrewSpawnDeps {
     name: string;
     budgetMs?: number;
     serverPort?: number;
+    messagingSocketPath?: string;
     approvalPolicy?: string;
     roleInstructions?: string;
   }): Promise<TaskRecord>;
@@ -330,6 +344,11 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
+    fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+    // Same directory as the crews' own sockets — receipts are only delivered
+    // within one socket namespace, so our listener must live there too.
+    const messagingSocketPath = path.join(CC_SOCKS_DIR, `squadrant-${randomUUID()}.sock`);
+
     const rec = await deps.dispatchCrew({
       provider: "claude",
       mode: "interactive",
@@ -337,6 +356,7 @@ export async function runCrewSpawn(
       cwd: spawnCwd,
       task: input.task,
       name,
+      messagingSocketPath,
     });
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
@@ -357,6 +377,7 @@ export async function runCrewSpawn(
       role: "crew",
       promptFile,
       interactive: true,
+      messagingSocketPath,
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
       permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
@@ -503,9 +524,12 @@ export async function runCrewSend(
     // blockedByModal AFTER attempting delivery, which is too late here — the
     // emit block must never run for a message that never reached the crew.
     isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
-    // #667 slice 2: native control channel for this crew's agent. Absent ⇒ the
-    // pane path is used unchanged, exactly as before this slice.
-    controlChannel?: ControlChannel;
+    /**
+     * #667: one channel per agent with a native control API. Selected by the
+     * crew's own provider — slice 2 shipped a single channel because opencode was
+     * the only implementation; slice 3 adds claude, so selection is explicit.
+     */
+    controlChannels?: ControlChannel[];
     /** Per-agent rollout position. Absent ⇒ always "off". */
     controlChannelMode?: (agent: string) => ControlChannelMode;
     /** Where channel decisions and disagreements are recorded. */
@@ -571,14 +595,15 @@ export async function runCrewSend(
   //           NOT a real channel send — that would deliver the message twice.
   //   on      the channel leads; the pane becomes the fallback
   const agent = task?.provider;
+  const channel = agent ? deps.controlChannels?.find((c) => c.agent === agent) : undefined;
+  // No channel for this provider (codex, gemini, …) ⇒ off, regardless of config.
+  // The flag cannot opt an agent in that has no implementation.
   const mode: ControlChannelMode =
-    deps.controlChannel && agent && deps.controlChannelMode
-      ? deps.controlChannelMode(agent)
-      : "off";
+    channel && agent && deps.controlChannelMode ? deps.controlChannelMode(agent) : "off";
   const channelLog = deps.onChannelLog ?? (() => {});
 
-  if (mode === "on" && deps.controlChannel && task) {
-    const outcome = await deps.controlChannel.send(task.id, message);
+  if (mode === "on" && channel && task) {
+    const outcome = await channel.send(task.id, message);
     channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
     if (outcome.status === "held") {
       // Never retried, never fallen back — the operator must act. Retrying a
@@ -595,10 +620,10 @@ export async function runCrewSend(
     // gone / unsupported: fall back to the pane ONCE, already logged above.
   }
 
-  if (mode === "shadow" && deps.controlChannel && task) {
+  if (mode === "shadow" && channel && task) {
     // Probe FIRST so the comparison reflects the session's state at send time,
     // and so a slow probe cannot delay a message that already went out.
-    const probe = await deps.controlChannel.probe(task.id);
+    const probe = await channel.probe(task.id);
     const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, message);
     const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
     if (paneOk !== (probe.status === "reachable")) {
