@@ -75,8 +75,7 @@ export type ControlChannelConfig = Partial<Record<string, ControlChannelMode>>;
 
 const CONTROL_CHANNEL_MODES: ReadonlySet<string> = new Set(["off", "shadow", "on"]);
 
-/**
- * Resolve one agent's rollout position. Unset, unknown agent, or an invalid
+/** Resolve one agent's rollout position. Unset, unknown agent, or an invalid
  * value all mean "off" — a config typo must never silently take the delivery
  * path with it.
  */
@@ -86,6 +85,14 @@ export function resolveControlChannelMode(
 ): ControlChannelMode {
   const v = cfg?.[agent];
   return v && CONTROL_CHANNEL_MODES.has(v) ? v : "off";
+}
+
+/** Resolve captain-delivery rollout. Unset or invalid ⇒ "off". */
+export function resolveCaptainChannelMode(
+  defaults: { captainChannel?: string } | undefined,
+): ControlChannelMode {
+  const v = defaults?.captainChannel;
+  return v && CONTROL_CHANNEL_MODES.has(v) ? (v as ControlChannelMode) : "off";
 }
 
 /** #667 per-agent control-channel rollout position. Unset ⇒ "off". */
@@ -152,6 +159,11 @@ export interface SquadrantConfig {
      *  installClaudeHooks, non-clobbering (a key the user already set is never overwritten).
      *  Absent ⇒ nothing written. e.g. { CLAUDE_AFK_TIMEOUT_MS: "240000" } for Claude's AFK mode. */
     claudeEnv?: Record<string, string>;
+    /** #667 slice 4 captain-delivery rollout position. Unset ⇒ "off".
+     *  Deliberately SEPARATE from `controlChannel` (which is per-agent, for
+     *  crews): a captain merges PRs and spawns crews, so an operator may want
+     *  crew delivery on while captain delivery is still off. */
+    captainChannel?: ControlChannelMode;
     /** #667 per-agent control-channel rollout. Absent ⇒ every agent "off".
      *  Read per send, so flipping a position needs no daemon restart.
      *    off     unchanged behaviour — the channel code path is not entered
