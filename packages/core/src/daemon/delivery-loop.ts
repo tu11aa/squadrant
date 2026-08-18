@@ -5,6 +5,7 @@ import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { deriveCaptainState } from "../liveness.js";
+import { deliverToCaptain } from "../captain-channel.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
 import type { Store } from "../store.js";
@@ -305,9 +306,29 @@ export function createDelivery(
             log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
           }
         }
-        const result = await d.deliver(entry, (text, sendOpts) =>
-          cmux.send(surface!, text, sendOpts),
-        );
+        const result = await d.deliver(entry, async (text, sendOpts) => {
+          // #667 slice 4: try the native channel first. A throw here must never
+          // break delivery — fall through to the pane, which is the behaviour that
+          // predates this slice.
+          let handledByChannel = false;
+          try {
+            const mode = ctx.captainChannelMode?.() ?? "off";
+            const r = await deliverToCaptain(project, text, {
+              channel: ctx.captainChannel,
+              mode,
+              log,
+            });
+            handledByChannel = r.handled;
+          } catch (e) {
+            log(`captain-channel ${project}: threw, falling back to pane — ${(e as Error).message}`);
+          }
+          if (handledByChannel) {
+            // Reached the captain (or a human gate in front of it). Advance the
+            // cursor and do NOT also write the pane.
+            return;
+          }
+          return cmux.send(surface!, text, sendOpts);
+        });
         if ("delivered" in result) {
           log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=delivered`);
           await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });

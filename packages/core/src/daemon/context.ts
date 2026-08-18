@@ -151,6 +151,10 @@ export interface DaemonContext {
   notifyFault: (project: string, text: string) => Promise<void> | void;
   /** B4: registered LifecycleSource instances for per-source health aggregation. */
   lifecycleSources: LifecycleSource[];
+  /** #667 slice 4: injected captain control channel. Absent ⇒ pane-only, exactly
+   *  as before this slice. core may not import @squadrant/agents. */
+  captainChannel?: import("../control-channel.js").ControlChannel;
+  captainChannelMode?: () => import("../control-channel.js").ControlChannelMode;
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */

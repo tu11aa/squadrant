@@ -9,6 +9,32 @@ import type { TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
+import type { DeliveryOutcome } from "../control-channel.js";
+
+/**
+ * What to tell the phone about an inbound message's fate.
+ *
+ * Deliberately quiet on the happy path: a receipt for every message would flood
+ * the operator's phone, and the pre-slice behaviour was silence. Only the three
+ * states the operator can ACT on get a message.
+ */
+export function formatInboundReceipt(project: string, outcome?: DeliveryOutcome): string | undefined {
+  if (!outcome) return undefined;
+  switch (outcome.status) {
+    case "held":
+      return `⏸ Your message to ${project} is HELD awaiting approval in that session: ${outcome.reason}`;
+    case "gone":
+      return `⚠ ${project}'s captain is not reachable — your message went to its mailbox instead`;
+    case "accepted":
+      return outcome.confirmed === false
+        ? `… Your message reached ${project}'s session but no turn was observed yet`
+        : undefined;
+    case "queued":
+    case "unsupported":
+      return undefined;
+  }
+}
+
 import { formatInbound, formatLifecycle, topicName } from "./format.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
@@ -66,6 +92,8 @@ export interface TelegramBridgeOptions {
   /** Post a reply to the General topic (threadId undefined) or a project topic.
    *  The optional replyMarkup attaches an inline-button panel (tap-first commands). */
   sendReply?: (threadId: number | undefined, text: string, replyMarkup?: unknown) => Promise<void>;
+  /** #667 slice 4: native channel delivery. Injected by the daemon host. */
+  deliverInbound?: (project: string, text: string) => Promise<{ handled: boolean; outcome?: import("../control-channel.js").DeliveryOutcome }>;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
@@ -441,7 +469,25 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`);
       }
     }
-    await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
+    
+    let handled = false;
+    let outcome: DeliveryOutcome | undefined;
+    if (opts.deliverInbound) {
+      const res = await opts.deliverInbound(resolved.project, formatInbound(text));
+      handled = res.handled;
+      outcome = res.outcome;
+    }
+    
+    if (!handled) {
+      await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
+    }
+    
+    const receipt = formatInboundReceipt(resolved.project, outcome);
+    if (receipt && sendReply) {
+      await sendReply(threadId, receipt).catch((e) =>
+        log(`telegram receipt failed project=${resolved.project}: ${(e as Error).message}`)
+      );
+    }
   }
 
   // Inbound: classify by thread id. General topic → command channel; project

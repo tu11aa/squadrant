@@ -9,9 +9,9 @@
 // This file is pure: parsing and mapping only. Polling, fs access, and the
 // process-liveness check live in peer-registry-source.ts so both are testable
 // without touching a real home directory.
-import { homedir } from "node:os";
+import fs from "node:fs";
 import { join } from "node:path";
-import { readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import type { LifecycleSnapshot } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 
@@ -117,11 +117,25 @@ export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" 
   if (!task || !task.pid) return undefined;
   let files: string[];
   try {
-    files = readdirSync(CLAUDE_SESSIONS_DIR);
+    files = fs.readdirSync(CLAUDE_SESSIONS_DIR);
   } catch {
     return undefined;
   }
-  const entries = parseRegistryDir(files, (name) => readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
+  const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
   const entry = entries.find((e) => e.pid === task.pid && (!task.sessionId || e.sessionId === task.sessionId));
+  return entry?.status;
+}
+
+/** #667 slice 4: read status for a captain session identified by its project directory. */
+export function readClaudeStatusByCwd(cwd: string): "idle" | "busy" | "shell" | "waiting" | undefined {
+  let files: string[];
+  try {
+    files = fs.readdirSync(CLAUDE_SESSIONS_DIR);
+  } catch {
+    return undefined;
+  }
+  const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
+  // A captain's session has the project directory as its cwd.
+  const entry = entries.find((e) => e.cwd === cwd);
   return entry?.status;
 }

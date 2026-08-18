@@ -1,8 +1,10 @@
 // Tests for the Claude session-registry reader (#667 slice 1).
 // Pure functions only — no real filesystem, no real ~/.claude/sessions.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseRegistryDir, toLifecycleSnapshot } from "../registry.js";
 import type { ClaudeRegistryEntry } from "../registry.js";
+
+import fs from "node:fs";
 
 const NOW = 1_786_807_700_000;
 
@@ -102,5 +104,36 @@ describe("toLifecycleSnapshot — the three mandatory guards", () => {
     const snap = toLifecycleSnapshot(entry(), "task-abc", true, NOW);
     expect(snap.taskId).toBe("task-abc");
     expect(snap.pid).toBe(51712);
+  });
+});
+
+import { readClaudeStatusByCwd } from "../registry.js";
+
+describe("readClaudeStatusByCwd (#667 slice 4)", () => {
+  it("returns undefined when the directory cannot be read", () => {
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => { throw new Error("ENOENT"); });
+    expect(readClaudeStatusByCwd("/nonexistent")).toBeUndefined();
+  });
+
+  it("returns the status of the session matching the cwd", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json", "2.json"] as any);
+    const originalRead = fs.readFileSync;
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any, options: any) => {
+      
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ cwd: "/repo-a", status: "idle" });
+      if (path.toString().endsWith("2.json")) return JSON.stringify({ cwd: "/repo-b", status: "busy" });
+      return originalRead(path, options);
+    });
+    expect(readClaudeStatusByCwd("/repo-b")).toBe("busy");
+  });
+
+  it("returns undefined for an unknown cwd", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json"] as any);
+    const originalRead = fs.readFileSync;
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any, options: any) => {
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ cwd: "/repo-a", status: "idle" });
+      return originalRead(path, options);
+    });
+    expect(readClaudeStatusByCwd("/repo-b")).toBeUndefined();
   });
 });
