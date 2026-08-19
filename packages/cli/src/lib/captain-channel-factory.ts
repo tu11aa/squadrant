@@ -11,9 +11,8 @@ import { createServer, connect as netConnect } from "node:net";
 import { unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
-import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusByCwd } from "@squadrant/agents";
+import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath } from "@squadrant/agents";
 import { captainSocketPath, CC_SOCKS_DIR } from "@squadrant/core";
-import { loadConfig } from "@squadrant/shared";
 
 let shared: ClaudeReceiptListener | undefined;
 
@@ -42,7 +41,6 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
 
 export async function buildCaptainChannel(): Promise<ClaudePeerChannel> {
   const receipts = await sharedReceiptListener();
-  const config = loadConfig();
   return new ClaudePeerChannel({
     // The port's taskId IS the project name for captains.
     socketPathFor: (taskId) => captainSocketPath(taskId),
@@ -51,10 +49,10 @@ export async function buildCaptainChannel(): Promise<ClaudePeerChannel> {
     // at launch, so a stale path fails as `gone` rather than reaching a stranger.
     sessionIdFor: () => undefined,
     // Captains are identified in the registry by their cwd (the project path).
-    statusFor: (taskId) => {
-      const projectPath = config.projects[taskId]?.path;
-      return projectPath ? readClaudeStatusByCwd(projectPath) : undefined;
-    },
+    // Resolve by the socket path squadrant chose at launch, NOT by cwd: a captain
+    // in /tmp/x registers cwd "/private/tmp/x" on macOS, so cwd matching silently
+    // missed and every captain ping reported accepted-unconfirmed.
+    statusFor: (taskId) => readClaudeStatusBySocketPath(captainSocketPath(taskId)),
     wire: (p, e) => writeLine(p, e, { connect: (path) => netConnect(path) }),
     receipts,
     newMsgId: () => randomUUID(),
