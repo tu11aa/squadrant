@@ -6,7 +6,7 @@ function mk(over: Partial<ConstructorParameters<typeof ClaudePeerChannel>[0]> = 
   const base = {
     socketPathFor: (_t: string) => "/tmp/cc-socks/crew.sock",
     sessionIdFor: (_t: string) => "ses_abc",
-    statusFor: vi.fn().mockReturnValue("idle"),
+    statusFor: vi.fn().mockReturnValue({ status: "idle", statusUpdatedAt: 1 }),
     wire: vi.fn().mockResolvedValue({ ok: true }),
     receipts: { address: "uds:/tmp/cc-socks/squadrantd.sock", waitFor: vi.fn().mockResolvedValue(undefined) },
     newMsgId: () => "m-1",
@@ -33,21 +33,35 @@ describe("ClaudePeerChannel.send", () => {
         address: "uds:/x.sock",
         waitFor: vi.fn().mockResolvedValue({ status: "held", reason: "parity", origMsgId: "m-1" }),
       },
-      statusFor: vi.fn().mockReturnValue("busy"),
+      statusFor: vi.fn().mockReturnValue({ status: "busy", statusUpdatedAt: 2 }),
     });
     expect(await ch.send("t1", "hi")).toEqual({ status: "held", via: "claude-peer", reason: "parity" });
   });
 
   it("confirms via the T1 idle->busy flip when no receipt arrives", async () => {
     // idle at send time, busy after -> the injected message started a turn.
-    const statusFor = vi.fn().mockReturnValueOnce("idle").mockReturnValue("busy");
+    const statusFor = vi.fn()
+      .mockReturnValueOnce({ status: "idle", statusUpdatedAt: 1 })
+      .mockReturnValue({ status: "busy", statusUpdatedAt: 2 });
     const ch = mk({ statusFor });
     expect(await ch.send("t1", "hi")).toEqual({ status: "accepted", via: "claude-peer", confirmed: true });
   });
 
-  it("records accepted-unconfirmed when no flip is observed, and does NOT retry", async () => {
+  it("confirms via statusUpdatedAt advanced, even if status returned to idle", async () => {
+    // idle at send time, idle after -> but statusUpdatedAt advanced -> confirmed!
+    const statusFor = vi.fn()
+      .mockReturnValueOnce({ status: "idle", statusUpdatedAt: 1 })
+      .mockReturnValue({ status: "idle", statusUpdatedAt: 2 });
+    const ch = mk({ statusFor });
+    expect(await ch.send("t1", "hi")).toEqual({ status: "accepted", via: "claude-peer", confirmed: true });
+  });
+
+  it("records accepted-unconfirmed when statusUpdatedAt missing and status stays idle", async () => {
     const wire = vi.fn().mockResolvedValue({ ok: true });
-    const ch = mk({ wire, statusFor: vi.fn().mockReturnValue("idle") });
+    const statusFor = vi.fn()
+      .mockReturnValueOnce({ status: "idle", statusUpdatedAt: undefined })
+      .mockReturnValue({ status: "idle", statusUpdatedAt: undefined });
+    const ch = mk({ wire, statusFor });
     expect(await ch.send("t1", "hi")).toEqual({ status: "accepted", via: "claude-peer", confirmed: false });
     expect(wire).toHaveBeenCalledTimes(1);   // the 30 s dedup rule
   });
@@ -55,7 +69,7 @@ describe("ClaudePeerChannel.send", () => {
   it("treats an already-busy session as accepted-unconfirmed, never as a flip", async () => {
     // Busy before AND after tells us nothing — refusing to claim confirmation
     // here is the whole point of not inferring.
-    const ch = mk({ statusFor: vi.fn().mockReturnValue("busy") });
+    const ch = mk({ statusFor: vi.fn().mockReturnValue({ status: "busy", statusUpdatedAt: 1 }) });
     expect(await ch.send("t1", "hi")).toEqual({ status: "accepted", via: "claude-peer", confirmed: false });
   });
 
@@ -79,7 +93,7 @@ describe("ClaudePeerChannel.send", () => {
 
 describe("ClaudePeerChannel.probe", () => {
   it("is reachable when the registry knows the session", async () => {
-    const ch = mk({ statusFor: vi.fn().mockReturnValue("idle") });
+    const ch = mk({ statusFor: vi.fn().mockReturnValue({ status: "idle", statusUpdatedAt: 1 }) });
     expect(await ch.probe("t1")).toEqual({ status: "reachable", via: "claude-peer" });
   });
 
