@@ -17,7 +17,7 @@
 // monorepo checkout (a fresh clone or ANY git worktree of it) always will,
 // since a worktree carries the full working tree including packages/.
 import { describe, it, expect } from "vitest";
-import { isMonorepoCheckout } from "../squadrantd.js";
+import { isMonorepoCheckout, isLinkedWorktree } from "../squadrantd.js";
 import { resolve, join } from "node:path";
 
 describe("isMonorepoCheckout (#670)", () => {
@@ -57,5 +57,42 @@ describe("isMonorepoCheckout (#670)", () => {
     expect(
       isMonorepoCheckout("/Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/squadrantd.js", dirExists),
     ).toBe(false);
+  });
+});
+
+// A LINKED worktree must never be allowed to become the production daemon (that
+// is the 2026-08-18 incident), but the operator's own main checkout has been the
+// standard dev-install topology here for months. The two are told apart
+// structurally: `git worktree add` writes .git as a FILE ("gitdir: …"), a clone's
+// .git is a DIRECTORY. Path naming is a convention and is deliberately not used.
+describe("isLinkedWorktree (#682 follow-up — distinguish worktree from main checkout)", () => {
+  it("is true when .git is a FILE (linked worktree)", () => {
+    const statFile = (p: string) =>
+      p.endsWith("/.git") ? { isFile: true } : undefined;
+    expect(
+      isLinkedWorktree("/Users/me/repo/.worktrees/crew-x/dist/squadrantd.js", statFile),
+    ).toBe(true);
+  });
+
+  it("is false when .git is a DIRECTORY (main checkout — the operator's dev install)", () => {
+    const statFile = (p: string) =>
+      p.endsWith("/.git") ? { isFile: false } : undefined;
+    expect(isLinkedWorktree("/Users/me/repo/dist/squadrantd.js", statFile)).toBe(false);
+  });
+
+  it("is false when .git is absent entirely (installed copy)", () => {
+    const statFile = () => undefined;
+    expect(
+      isLinkedWorktree("/Users/me/Library/pnpm/global/5/node_modules/squadrant/dist/squadrantd.js", statFile),
+    ).toBe(false);
+  });
+
+  it("does not rely on the path containing .worktrees", () => {
+    // A worktree created anywhere must still be caught, and a main checkout that
+    // merely lives under a directory called .worktrees must not be misclassified.
+    const asFile = () => ({ isFile: true });
+    const asDir = () => ({ isFile: false });
+    expect(isLinkedWorktree("/tmp/somewhere/else/dist/squadrantd.js", asFile)).toBe(true);
+    expect(isLinkedWorktree("/Users/me/.worktrees/main/dist/squadrantd.js", asDir)).toBe(false);
   });
 });

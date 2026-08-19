@@ -92,17 +92,41 @@ function buildNotifyFault(log: (m: string) => void): (project: string, text: str
 }
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
-  // #670: refuse outright if this build is a monorepo/worktree checkout AND
-  // we are attempting to bind the shared production socket. A module whose import
-  // can seize the production socket is a footgun regardless of the caller.
+  // #670/#682: a checkout build must not silently become the shared production
+  // daemon. But a DELIBERATE local install is the long-standing dev topology here
+  // (symlinked global bin + launchd running the repo's dist/), so the refusal
+  // distinguishes three cases instead of blanket-refusing every checkout:
+  //
+  //   linked worktree        -> ALWAYS refuse. This is the 2026-08-18 incident: a
+  //                             crew's .worktrees/ build seized the plist and became
+  //                             the control plane for every project. No opt-out.
+  //   checkout, not opted in -> refuse, and say how to opt in.
+  //   checkout + opt-in      -> allow, loudly. The operator asked for it.
   const isDefaultSocket = !opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH;
   if (isDefaultSocket && isMonorepoCheckout(SELF_PATH)) {
+    if (isLinkedWorktree(SELF_PATH)) {
+      process.stderr.write(
+        `[squadrantd] refusing to start: '${SELF_PATH}' is a git WORKTREE build. A worktree must never ` +
+        "become the shared production daemon — this is exactly the #682 incident, where a crew's worktree " +
+        "took over the launchd plist for every project. There is no opt-out for worktrees; use a dedicated " +
+        "sockPath, or run the test suite (`pnpm test`).\n",
+      );
+      process.exit(1);
+    }
+    if (!process.env.SQUADRANT_DEV_DAEMON) {
+      process.stderr.write(
+        `[squadrantd] refusing to start: '${SELF_PATH}' is a monorepo checkout, not an installed copy, ` +
+        "so it will not silently become the shared production daemon (#670). If this IS your intended " +
+        "local dev install, set SQUADRANT_DEV_DAEMON=1 for the daemon process. Otherwise use a dedicated " +
+        "sockPath, or run the test suite (`pnpm test`).\n",
+      );
+      process.exit(1);
+    }
     process.stderr.write(
-      `[squadrantd] refusing to start: '${SELF_PATH}' is a monorepo/worktree checkout, not an ` +
-      "installed copy — it must never become the shared production daemon (#670). For local testing, " +
-      "use a dedicated sockPath, or run the test suite (`pnpm test`).\n",
+      `[squadrantd] WARNING: running the shared production daemon from a monorepo checkout ` +
+      `('${SELF_PATH}') because SQUADRANT_DEV_DAEMON=1. Unreviewed local code is now the control plane ` +
+      "for every registered project. Unset it and reinstall from npm to go back.\n",
     );
-    process.exit(1);
   }
 
   const ctx = buildContext(opts);
@@ -462,6 +486,30 @@ function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: u
  */
 export function isMonorepoCheckout(scriptPath: string, dirExists: (p: string) => boolean = existsSync): boolean {
   return dirExists(join(dirname(resolve(scriptPath)), "..", "packages"));
+}
+
+/**
+ * Distinguish a LINKED git worktree from the operator's main checkout.
+ *
+ * Why this distinction has to exist: linking the main checkout as the global
+ * install and letting launchd run its dist/ was the STANDARD dev topology here
+ * for months (recorded 2026-06-18: "rebuilding repo dist updates BOTH CLI +
+ * daemon; only the daemon needs a restart"). #670's blanket checkout refusal
+ * outlawed that workflow as collateral — the incident it was reacting to was a
+ * crew's `.worktrees/…` build seizing the plist, not a deliberate local install.
+ *
+ * Structural signal, not a path convention: `git worktree add` writes `.git` as a
+ * FILE containing `gitdir: …`, whereas a clone's `.git` is a DIRECTORY. So this
+ * holds regardless of where the worktree lives or what it is named.
+ */
+export function isLinkedWorktree(
+  scriptPath: string,
+  statFile: (p: string) => { isFile: boolean } | undefined = (p) => {
+    try { return { isFile: statSync(p).isFile() }; } catch { return undefined; }
+  },
+): boolean {
+  const dotGit = join(dirname(resolve(scriptPath)), "..", ".git");
+  return statFile(dotGit)?.isFile === true;
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).
