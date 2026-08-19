@@ -22,7 +22,7 @@ export { ClaudeReceiptListener } from "./claude/receipt-listener.js";
 export type { PeerReceipt } from "./claude/receipt-listener.js";
 export { buildUserEnvelope, writeLine } from "./claude/peer-wire.js";
 export type { PeerUserEnvelope, WireResult } from "./claude/peer-wire.js";
-export { parseRegistryDir, toLifecycleSnapshot, CLAUDE_SESSIONS_DIR, readClaudeStatus, readClaudeStatusByCwd } from "./claude/registry.js";
+export { parseRegistryDir, toLifecycleSnapshot, CLAUDE_SESSIONS_DIR, readClaudeStatus, readClaudeStatusByCwd, readClaudeStatusBySocketPath } from "./claude/registry.js";
 export type { ClaudeStatusInfo } from "./claude/registry.js";
 export type { ClaudeRegistryEntry } from "./claude/registry.js";
 export { OpencodeControlSource } from "./opencode/control-source.js";

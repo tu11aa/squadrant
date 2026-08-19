@@ -65,12 +65,23 @@ export class ClaudeReceiptListener {
       this.deps.unlinkStale?.(this.deps.socketPath);
       this.server = this.deps.createServer((conn) => this.handle(conn));
       this.server.once("error", (e) => reject(e));
-      this.server.listen(this.deps.socketPath, () => resolve());
+      this.server.listen(this.deps.socketPath, () => {
+        // A listening server keeps Node's event loop alive. Without unref, every
+        // short-lived CLI command that builds a channel (`squadrant ping`) did its
+        // work and then HUNG FOREVER (live, 2026-08-19 — the message was delivered,
+        // the process never exited). unref is safe for the daemon too: it stays
+        // alive on its own control socket, not on this one.
+        (this.server as { unref?: () => void }).unref?.();
+        resolve();
+      });
     });
   }
 
   stop(): void {
     try { this.server?.close(); } catch { /* best-effort */ }
+    // close() does not remove the socket FILE. Without this, every process that
+    // ever bound one left a squadrantd-<pid>.sock behind in the shared directory.
+    try { this.deps.unlinkStale?.(this.deps.socketPath); } catch { /* best-effort */ }
     this.server = undefined;
     this.waiters.clear();
   }

@@ -127,3 +127,38 @@ describe("start() failure handling (#667 slice 4 — daemon boot crash)", () => 
     await expect(l.start()).resolves.toBeUndefined();
   });
 });
+
+// Live incident 2026-08-19 (second one): `squadrant ping` delivered its message
+// and then hung forever. A listening server keeps Node's event loop alive, so a
+// short-lived CLI that bound a receipt socket could never exit.
+describe("process lifetime and cleanup (#667 slice 4 — CLI hang)", () => {
+  it("unrefs the server so it cannot hold the event loop open", async () => {
+    const srv = fakeServer();
+    let unrefed = false;
+    srv.unref = () => { unrefed = true; };
+    const l = new ClaudeReceiptListener({ socketPath: "/tmp/cc-socks/a.sock", createServer: () => srv });
+    await l.start();
+    expect(unrefed).toBe(true);
+  });
+
+  it("starts fine against a server with no unref (optional call)", async () => {
+    const srv = fakeServer();
+    const l = new ClaudeReceiptListener({ socketPath: "/tmp/cc-socks/b.sock", createServer: () => srv });
+    await expect(l.start()).resolves.toBeUndefined();
+  });
+
+  it("removes the socket FILE on stop, not just the server", async () => {
+    const removed: string[] = [];
+    const srv = fakeServer();
+    const l = new ClaudeReceiptListener({
+      socketPath: "/tmp/cc-socks/c.sock",
+      createServer: () => srv,
+      unlinkStale: (p) => removed.push(p),
+    });
+    await l.start();
+    l.stop();
+    // once before binding, once on teardown
+    expect(removed).toEqual(["/tmp/cc-socks/c.sock", "/tmp/cc-socks/c.sock"]);
+    expect(srv.close).toHaveBeenCalled();
+  });
+});

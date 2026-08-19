@@ -155,3 +155,30 @@ export function readClaudeStatusByCwd(cwd: string): ClaudeStatusInfo | undefined
   if (!entry) return undefined;
   return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt };
 }
+
+/**
+ * Resolve a session by the inbox socket path squadrant itself chose.
+ *
+ * Prefer this over cwd matching. Two independent reasons, both paid for:
+ *   - cwd is not canonical. A captain in /tmp/x registers cwd
+ *     "/private/tmp/x" on macOS (/tmp is a symlink), so a raw string compare
+ *     silently misses and the caller sees "no session" for a live captain
+ *     (live, 2026-08-19: every captain ping reported accepted-unconfirmed).
+ *   - cwd is ambiguous. Slice 1 removed cwd matching for crews because the
+ *     operator's own Claude window shares the project root.
+ *
+ * The socket path has neither problem: squadrant picks it at launch and the
+ * session echoes it back verbatim.
+ */
+export function readClaudeStatusBySocketPath(socketPath: string): ClaudeStatusInfo | undefined {
+  let files: string[];
+  try {
+    files = fs.readdirSync(CLAUDE_SESSIONS_DIR);
+  } catch {
+    return undefined;
+  }
+  const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
+  const entry = entries.find((e) => e.messagingSocketPath === socketPath);
+  if (!entry) return undefined;
+  return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt };
+}
