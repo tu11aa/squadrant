@@ -88,3 +88,42 @@ describe("ClaudeReceiptListener", () => {
     await expect(p).resolves.toBeUndefined();
   });
 });
+
+// Live incident 2026-08-19: a leftover /tmp/cc-socks/squadrantd.sock made listen()
+// emit EADDRINUSE as an 'error' EVENT. start() only wired the success callback, so
+// the failure bypassed every caller's .catch, became an uncaughtException, and
+// killed the daemon at boot — taking the control plane down for every project.
+describe("start() failure handling (#667 slice 4 — daemon boot crash)", () => {
+  function failingServer(code: string) {
+    const srv = new EventEmitter() as any;
+    srv.listen = () => { process.nextTick(() => srv.emit("error", Object.assign(new Error(code), { code }))); return srv; };
+    srv.close = vi.fn();
+    return srv;
+  }
+
+  it("REJECTS on a listen error instead of throwing out of band", async () => {
+    const l = new ClaudeReceiptListener({
+      socketPath: "/tmp/cc-socks/x.sock",
+      createServer: () => failingServer("EADDRINUSE"),
+    });
+    await expect(l.start()).rejects.toThrow(/EADDRINUSE/);
+  });
+
+  it("unlinks a stale socket file before binding", async () => {
+    const unlinked: string[] = [];
+    const srv = fakeServer();
+    const l = new ClaudeReceiptListener({
+      socketPath: "/tmp/cc-socks/stale.sock",
+      createServer: () => srv,
+      unlinkStale: (p) => unlinked.push(p),
+    });
+    await l.start();
+    expect(unlinked).toEqual(["/tmp/cc-socks/stale.sock"]);
+  });
+
+  it("still starts when no unlinkStale is injected (optional dep)", async () => {
+    const srv = fakeServer();
+    const l = new ClaudeReceiptListener({ socketPath: "/tmp/cc-socks/y.sock", createServer: () => srv });
+    await expect(l.start()).resolves.toBeUndefined();
+  });
+});

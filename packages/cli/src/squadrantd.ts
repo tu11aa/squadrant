@@ -251,9 +251,16 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // ── #667 slice 4: captain channel ─────────────────────────────────────────
   if (!process.env.VITEST) {
     ctx.captainChannelMode = () => loadConfig().defaults.captainChannel ?? "off";
-    buildCaptainChannel()
-      .then((ch) => { ctx.captainChannel = ch; })
-      .catch((e) => log(`captain-channel init failed: ${(e as Error).message}`));
+    // Build ONLY when the operator has opted in. This used to run unconditionally,
+    // so an off-by-default feature bound a socket at every boot — and on 2026-08-19
+    // a leftover socket file made that bind throw, killing the daemon and the whole
+    // control plane. An `off` feature must not touch the filesystem at all.
+    if (ctx.captainChannelMode() !== "off") {
+      buildCaptainChannel()
+        .then((ch) => { ctx.captainChannel = ch; })
+        // Degrade to the pane path rather than take the daemon down with us.
+        .catch((e) => log(`captain-channel init failed, pane delivery only: ${(e as Error).message}`));
+    }
   }
 
   // ── #466 self-heal: first-turn resend wiring ──────────────────────────────
