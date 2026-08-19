@@ -8,6 +8,7 @@
 // derives the address from the project name alone.
 
 import { createServer, connect as netConnect } from "node:net";
+import { unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusByCwd } from "@squadrant/agents";
@@ -16,12 +17,23 @@ import { loadConfig } from "@squadrant/shared";
 
 let shared: ClaudeReceiptListener | undefined;
 
-/** One listener per process — it binds a socket, so constructing several would EADDRINUSE. */
+/**
+ * One listener per process — it binds a socket, so constructing several would EADDRINUSE.
+ *
+ * The path is PID-scoped. A fixed `squadrantd.sock` was shared by the daemon and
+ * every CLI invocation, so whichever started second died on EADDRINUSE — and when
+ * that was the daemon, the whole control plane went down (live, 2026-08-19).
+ * Receipts are routed by the `from` address we advertise, so a per-process name
+ * costs nothing and removes the collision class entirely.
+ */
 export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   if (shared) return shared;
   shared = new ClaudeReceiptListener({
-    socketPath: `${CC_SOCKS_DIR}/squadrantd.sock`,
+    socketPath: `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`,
     createServer: (h) => createServer(h),
+    // A UDS path is not cleaned up when a process is killed, so our own leftover
+    // must never be the reason we refuse to start.
+    unlinkStale: (p) => { try { unlinkSync(p); } catch { /* absent is the normal case */ } },
     log: (m) => console.error(chalk.dim(m)),
   });
   await shared.start();

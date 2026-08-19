@@ -31,6 +31,8 @@ const KNOWN: ReadonlySet<string> = new Set(["held", "denied", "delivered", "expi
 export interface ClaudeReceiptListenerDeps {
   socketPath: string;
   createServer: (handler: (conn: import("node:net").Socket) => void) => Server;
+  /** Remove a leftover socket file before binding. Injected so tests touch no fs. */
+  unlinkStale?: (path: string) => void;
   log?: (m: string) => void;
 }
 
@@ -44,9 +46,25 @@ export class ClaudeReceiptListener {
     this.address = `uds:${deps.socketPath}`;
   }
 
+  /**
+   * Bind the receipt socket.
+   *
+   * A UDS `listen` failure (EADDRINUSE from a socket file a crashed process left
+   * behind) arrives as an 'error' EVENT on the server, not as a promise
+   * rejection. Without the once("error") wiring below it escaped every caller's
+   * .catch and surfaced as an uncaughtException — which killed the daemon at boot
+   * and took the control plane down for every project (live, 2026-08-19).
+   *
+   * Stale files are unlinked first: a UDS path is not auto-cleaned on crash, so
+   * refusing to start because of our own leftover would be a self-inflicted
+   * outage. Anything still genuinely listening survives, because then the unlink
+   * target is a live socket and the subsequent listen fails loudly instead.
+   */
   start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.deps.unlinkStale?.(this.deps.socketPath);
       this.server = this.deps.createServer((conn) => this.handle(conn));
+      this.server.once("error", (e) => reject(e));
       this.server.listen(this.deps.socketPath, () => resolve());
     });
   }
