@@ -47,10 +47,6 @@ export function buildAgentCmd(
       cmd += " --dangerously-skip-permissions";
     }
 
-    if (messagingSocketPath) {
-      cmd += ` --messaging-socket-path ${messagingSocketPath}`;
-    }
-
     if (model) {
       cmd += ` --model ${model}`;
     }
@@ -69,6 +65,14 @@ export function buildAgentCmd(
       if (fs.existsSync(pluginDir)) {
         cmd += ` --plugin-dir ${pluginDir}`;
       }
+    }
+
+    // #697: must come AFTER --append-system-prompt-file and --plugin-dir —
+    // cmux truncates launchCommand.arguments at --messaging-socket-path when
+    // storing it, so anything after it (including the template flag) is lost
+    // and role classification breaks. Match the crew path (drivers/claude.ts).
+    if (messagingSocketPath) {
+      cmd += ` --messaging-socket-path ${messagingSocketPath}`;
     }
 
     return cmd;

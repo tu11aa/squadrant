@@ -24,7 +24,7 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
-import { deliverStartupPrompt, ensureCmuxReady } from "../launch.js";
+import { deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -55,6 +55,32 @@ describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   it("returns trimmed stdout for callers that need the output", () => {
     execFileMock.mockReturnValue("  workspace:7 squadrant-captain  \n");
     expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 squadrant-captain");
+  });
+});
+
+// #697: launch.ts unconditionally passed --messaging-socket-path to every
+// claude captain, gated only on agentName==="claude" — not on
+// defaults.captainChannel. An off-by-default feature must not alter the
+// launch command or touch the filesystem (CC_SOCKS_DIR mkdirSync).
+describe("shouldWireCaptainChannel (#697 off-by-default gate)", () => {
+  it("is false when captainChannel is unset (default off)", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: {} })).toBe(false);
+  });
+
+  it("is false when captainChannel is explicitly 'off'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "off" } })).toBe(false);
+  });
+
+  it("is true when captainChannel is 'shadow'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "shadow" } })).toBe(true);
+  });
+
+  it("is true when captainChannel is 'on'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "on" } })).toBe(true);
+  });
+
+  it("is false for non-claude agents even when captainChannel is on", () => {
+    expect(shouldWireCaptainChannel("codex", { defaults: { captainChannel: "on" } })).toBe(false);
   });
 });
 

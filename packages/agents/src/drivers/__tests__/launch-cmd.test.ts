@@ -172,4 +172,27 @@ describe("claude --messaging-socket-path (#667 slice 3)", () => {
     const cmd = buildAgentCmd("claude", r, "captain", true, "auto");
     expect(cmd).not.toContain("--messaging-socket-path");
   });
+
+  // #697: cmux truncates launchCommand.arguments at --messaging-socket-path
+  // when storing it, so anything after it (including the role template flag)
+  // is lost and role classification breaks. The flag must come LAST.
+  it("places --append-system-prompt-file (and --plugin-dir) before --messaging-socket-path", () => {
+    const roleFile = path.join(templatesDir, "captain.claude.md");
+    fs.writeFileSync(roleFile, "# captain");
+    const pluginDir = path.join(templatesDir, "..", "plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto", undefined, templatesDir,
+      "/tmp/cc-socks/squadrant-captain-demo.sock");
+
+    const promptFileIdx = cmd.indexOf("--append-system-prompt-file");
+    const pluginDirIdx = cmd.indexOf("--plugin-dir");
+    const mspIdx = cmd.indexOf("--messaging-socket-path");
+    expect(promptFileIdx).toBeGreaterThan(-1);
+    expect(pluginDirIdx).toBeGreaterThan(-1);
+    expect(mspIdx).toBeGreaterThan(-1);
+    expect(promptFileIdx).toBeLessThan(mspIdx);
+    expect(pluginDirIdx).toBeLessThan(mspIdx);
+  });
 });
