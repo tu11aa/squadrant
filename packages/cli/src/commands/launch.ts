@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureSpokeLayout } from "@squadrant/shared";
+import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode } from "@squadrant/shared";
 import type { ModelRoutingConfig } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
@@ -30,6 +30,17 @@ export type { StartupDeliveryOptions } from "@squadrant/core";
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 const SESSIONS_PATH = path.join(os.homedir(), ".config", "squadrant", "sessions.json");
+
+// #697: an off-by-default feature must not alter the launch command or touch
+// the filesystem. Only wire the captain messaging socket when captain
+// delivery is actually enabled (shadow/on), not merely agentName==="claude".
+// Exported for testing (see launch.test.ts).
+export function shouldWireCaptainChannel(
+  agentName: string,
+  config: { defaults: Parameters<typeof resolveCaptainChannelMode>[0] },
+): boolean {
+  return agentName === "claude" && resolveCaptainChannelMode(config.defaults) !== "off";
+}
 
 // #520: a non-interactive caller (the daemon's Telegram boot-if-down path)
 // has no CMUX_WORKSPACE_ID and no terminal to run `open` from — headless=true
@@ -110,11 +121,12 @@ export const launchCommand = new Command("launch")
           sessionsPath: SESSIONS_PATH,
           templatesDir: TEMPLATES_DIR,
           agentCmdFactory: (forceFresh) => {
-            if (agentName === "claude") {
+            const captainChannelEnabled = shouldWireCaptainChannel(agentName, config);
+            if (captainChannelEnabled) {
               fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
-              agentName === "claude" ? path.join(CC_SOCKS_DIR, `squadrant-captain-${project}.sock`) : undefined);
+              captainChannelEnabled ? path.join(CC_SOCKS_DIR, `squadrant-captain-${project}.sock`) : undefined);
           },
           initialPrompt,
           runtime,
