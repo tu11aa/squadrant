@@ -24,13 +24,15 @@ import type { PeerReceipt } from "./receipt-listener.js";
 /** Claude's registry `status` values (slice 1's registry.ts maps these). */
 export type ClaudeStatus = "idle" | "busy" | "shell" | "waiting" | undefined;
 
+import type { ClaudeStatusInfo } from "./registry.js";
+
 export interface ClaudePeerChannelDeps {
   /** Where this task's session listens. undefined ⇒ this crew was not launched with the flag. */
   socketPathFor: (taskId: string) => string | undefined;
   /** Receiver's own session id — the pid-reuse guard. */
   sessionIdFor: (taskId: string) => string | undefined;
   /** Current registry status, from slice 1's ClaudePeerRegistrySource view. */
-  statusFor: (taskId: string) => ClaudeStatus;
+  statusFor: (taskId: string) => ClaudeStatusInfo | undefined;
   wire: (socketPath: string, envelope: object) => Promise<WireResult>;
   receipts: { address: string; waitFor: (msgId: string, timeoutMs: number) => Promise<PeerReceipt | undefined> };
   newMsgId: () => string;
@@ -52,7 +54,10 @@ export class ClaudePeerChannel implements ControlChannel {
     const socketPath = this.deps.socketPathFor(taskId);
     if (!socketPath) return { status: "unsupported" };
 
-    const statusBefore = this.deps.statusFor(taskId);
+    const statusBeforeInfo = this.deps.statusFor(taskId);
+    const statusBefore = statusBeforeInfo?.status;
+    const updatedAtBefore = statusBeforeInfo?.statusUpdatedAt;
+    
     const msgId = this.deps.newMsgId();
     const envelope = buildUserEnvelope({
       content: message,
@@ -90,13 +95,17 @@ export class ClaudePeerChannel implements ControlChannel {
       }
     }
 
-    // No receipt: the silent-accept path. Use T1 to confirm T0. A flip out of
-    // idle means our line started a turn. Anything else is unconfirmed — and we
-    // say so instead of pretending.
+    // No receipt: the silent-accept path. Use T1 to confirm T0.
+    // We capture statusUpdatedAt before writing. After the window, if it advanced,
+    // a transition definitively occurred (even if status is back to idle now).
     if (statusBefore === "idle") {
       await this.deps.sleep(window);
-      const after = this.deps.statusFor(taskId);
-      if (after === "busy" || after === "shell") {
+      const afterInfo = this.deps.statusFor(taskId);
+      const after = afterInfo?.status;
+      const updatedAtAfter = afterInfo?.statusUpdatedAt;
+      
+      const advanced = (updatedAtBefore !== undefined && updatedAtAfter !== undefined && updatedAtAfter > updatedAtBefore);
+      if (advanced || after === "busy" || after === "shell") {
         return { status: "accepted", via: this.name, confirmed: true };
       }
     }
@@ -106,7 +115,7 @@ export class ClaudePeerChannel implements ControlChannel {
   /** Non-mutating. Registry presence only — never writes a byte. */
   async probe(taskId: string): Promise<ProbeResult> {
     if (!this.deps.socketPathFor(taskId)) return { status: "unsupported" };
-    return this.deps.statusFor(taskId) === undefined
+    return this.deps.statusFor(taskId)?.status === undefined
       ? { status: "gone" }
       : { status: "reachable", via: this.name };
   }

@@ -112,8 +112,13 @@ export function toLifecycleSnapshot(
   }
 }
 
+export interface ClaudeStatusInfo {
+  status: "idle" | "busy" | "shell" | "waiting" | undefined;
+  statusUpdatedAt?: number;
+}
+
 /** #667 slice 3: read status for a single task record. */
-export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" | "shell" | "waiting" | undefined {
+export function readClaudeStatus(task: TaskRecord | undefined): ClaudeStatusInfo | undefined {
   if (!task || (!task.pid && !task.messagingSocketPath)) return undefined;
   let files: string[];
   try {
@@ -132,11 +137,12 @@ export function readClaudeStatus(task: TaskRecord | undefined): "idle" | "busy" 
     entry = entries.find((e) => e.pid === task.pid && (!task.sessionId || e.sessionId === task.sessionId));
   }
   
-  return entry?.status;
+  if (!entry) return undefined;
+  return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt };
 }
 
 /** #667 slice 4: read status for a captain session identified by its project directory. */
-export function readClaudeStatusByCwd(cwd: string): "idle" | "busy" | "shell" | "waiting" | undefined {
+export function readClaudeStatusByCwd(cwd: string): ClaudeStatusInfo | undefined {
   let files: string[];
   try {
     files = fs.readdirSync(CLAUDE_SESSIONS_DIR);
@@ -146,5 +152,6 @@ export function readClaudeStatusByCwd(cwd: string): "idle" | "busy" | "shell" | 
   const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
   // A captain's session has the project directory as its cwd.
   const entry = entries.find((e) => e.cwd === cwd);
-  return entry?.status;
+  if (!entry) return undefined;
+  return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt };
 }

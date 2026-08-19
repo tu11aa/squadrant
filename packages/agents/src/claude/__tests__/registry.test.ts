@@ -120,11 +120,11 @@ describe("readClaudeStatusByCwd (#667 slice 4)", () => {
     const originalRead = fs.readFileSync;
     vi.spyOn(fs, "readFileSync").mockImplementation((path: any, options: any) => {
       
-      if (path.toString().endsWith("1.json")) return JSON.stringify({ cwd: "/repo-a", status: "idle" });
-      if (path.toString().endsWith("2.json")) return JSON.stringify({ cwd: "/repo-b", status: "busy" });
+      if (path.toString().endsWith("1.json")) return JSON.stringify({ cwd: "/repo-a", status: "idle", statusUpdatedAt: 1 });
+      if (path.toString().endsWith("2.json")) return JSON.stringify({ cwd: "/repo-b", status: "busy", statusUpdatedAt: 2 });
       return originalRead(path, options);
     });
-    expect(readClaudeStatusByCwd("/repo-b")).toBe("busy");
+    expect(readClaudeStatusByCwd("/repo-b")).toEqual({ status: "busy", statusUpdatedAt: 2 });
   });
 
   it("returns undefined for an unknown cwd", () => {
@@ -152,7 +152,7 @@ describe("readClaudeStatus", () => {
       if (path.toString().endsWith("2.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock2", status: "busy" });
       throw new Error("ENOENT");
     });
-    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock2" } as any)).toBe("busy");
+    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock2" } as any)).toEqual({ status: "busy", statusUpdatedAt: undefined });
   });
 
   it("returns undefined for an unknown socket path", () => {
@@ -172,7 +172,7 @@ describe("readClaudeStatus", () => {
       if (path.toString().endsWith("3.json")) return JSON.stringify({ messagingSocketPath: "/tmp/sock3", status: "shell" });
       throw new Error("ENOENT");
     });
-    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock3" } as any)).toBe("shell");
+    expect(readClaudeStatus({ id: "t1", messagingSocketPath: "/tmp/sock3" } as any)).toEqual({ status: "shell", statusUpdatedAt: undefined });
   });
 
   it("statusFor falls back to pid/sessionId when messagingSocketPath is absent", () => {
@@ -181,6 +181,6 @@ describe("readClaudeStatus", () => {
       if (path.toString().endsWith("1.json")) return JSON.stringify({ pid: 1, sessionId: "sess-1", status: "waiting" });
       throw new Error("ENOENT");
     });
-    expect(readClaudeStatus({ id: "t1", pid: 1, sessionId: "sess-1" } as any)).toBe("waiting");
+    expect(readClaudeStatus({ id: "t1", pid: 1, sessionId: "sess-1" } as any)).toEqual({ status: "waiting", statusUpdatedAt: undefined });
   });
 });
