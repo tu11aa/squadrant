@@ -13,6 +13,7 @@ export * from "./crew-pane-reader.js";
 export * from "./interfaces.js";
 export * from "./gate.js";
 export * from "./daemon/context.js";
+export * from "./daemon/liveness-registry.js";
 export * from "./daemon/attach.js";
 export * from "./daemon/start.js";
 export * from "./daemon/delivery-loop.js";
