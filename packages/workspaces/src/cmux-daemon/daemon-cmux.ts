@@ -24,6 +24,21 @@ import { readLivenessSnapshot } from "./store-fingerprint.js";
  *
  * This is the seam #333's LifecycleSource port sits beside.
  */
+/**
+ * Standalone form of `DaemonCmux.liveness()` — no `RuntimeDriver` needed, so
+ * callers outside the daemon (e.g. the `heal captain` CLI, #699) can read
+ * ground-truth captain liveness without constructing a full DaemonCmux. Same
+ * throw-on-unreadable-store contract as the method (see class doc below).
+ */
+export async function readCmuxLiveness(): Promise<RuntimeLivenessRecord[]> {
+  const dir = process.env.CMUX_AGENT_HOOK_STATE_DIR ?? join(homedir(), ".cmuxterm");
+  const projects = loadConfig().projects as Record<string, { path: string }>;
+  let files: string[];
+  try { files = readdirSync(dir).filter((f) => f.endsWith("-hook-sessions.json") && !f.endsWith(".lock")); }
+  catch (e) { throw new Error(`liveness: could not read cmux state dir ${dir}: ${(e as Error).message}`); }
+  return readLivenessSnapshot(files, (f) => readFileSync(join(dir, f), "utf-8"), projects);
+}
+
 export class DaemonCmux {
   constructor(private readonly driver: RuntimeDriver) {}
 
@@ -70,11 +85,6 @@ export class DaemonCmux {
    * file failed to read/parse — see the class doc above.
    */
   async liveness(): Promise<RuntimeLivenessRecord[]> {
-    const dir = process.env.CMUX_AGENT_HOOK_STATE_DIR ?? join(homedir(), ".cmuxterm");
-    const projects = loadConfig().projects as Record<string, { path: string }>;
-    let files: string[];
-    try { files = readdirSync(dir).filter((f) => f.endsWith("-hook-sessions.json") && !f.endsWith(".lock")); }
-    catch (e) { throw new Error(`liveness: could not read cmux state dir ${dir}: ${(e as Error).message}`); }
-    return readLivenessSnapshot(files, (f) => readFileSync(join(dir, f), "utf-8"), projects);
+    return readCmuxLiveness();
   }
 }

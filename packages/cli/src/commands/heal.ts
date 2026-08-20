@@ -4,17 +4,28 @@
 // surface for the detect → notify → remediate loop (#234).
 //
 // Subcommands:
-//   heal status  — dry-run: print unhealthy components + the exact heal command
-//   heal daemon  — restart squadrantd via the existing launchd kickstart path
+//   heal status   — dry-run: print unhealthy components + the exact heal command
+//   heal daemon   — restart squadrantd via the existing launchd kickstart path
+//   heal captain  — #699 escape hatch: re-adopt a RUNNING captain whose cmux
+//                   argv was truncated (see store-fingerprint.ts's argv fallback
+//                   for the primary, automatic fix — this is the manual hand-hold
+//                   for when that self-heal hasn't run yet, e.g. before an
+//                   upgrade lands on a still-running daemon).
 //
 // DEFERRED: heal crew <id> — re-attach a stuck crew task (overlaps #100, more
 // complex; explicitly out of MVP scope).
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { Command } from "commander";
 import chalk from "chalk";
+import { loadConfig } from "@squadrant/shared";
+import type { RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
-import { reregisterDaemon, isDaemonSocketLive } from "@squadrant/core";
+import { reregisterDaemon, isDaemonSocketLive, defaultIsPidAlive, LivenessRegistry, LABEL } from "@squadrant/core";
+import { readCmuxLiveness } from "@squadrant/workspaces";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
 
@@ -151,6 +162,106 @@ export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
   }
 }
 
+export interface ResolvedCaptain {
+  project: string;
+  pid: number;
+  sessionId: string;
+}
+
+/**
+ * Pure. Pick the live captain for one project from a runtime liveness snapshot
+ * — same "prefer a confirmed-alive pid" rule `runLivenessTick` uses. Returns
+ * null when no candidate has a confirmed-alive pid: a hibernated (pid:null)
+ * or dead captain is not something `heal captain` re-adopts — it never
+ * invents an entry for a pid that isn't actually running (#699).
+ */
+export function resolveLiveCaptain(
+  records: RuntimeLivenessRecord[],
+  project: string,
+  isPidAlive: (pid: number) => boolean,
+): ResolvedCaptain | null {
+  const winner = records.find(
+    (r) => r.role === "captain" && r.project === project && r.pid != null && isPidAlive(r.pid),
+  );
+  if (!winner || winner.pid == null) return null;
+  return { project, pid: winner.pid, sessionId: winner.sessionId };
+}
+
+export interface HealCaptainDeps {
+  /** Ground-truth captain records from the cmux store (+ OS argv fallback). */
+  liveness: () => Promise<RuntimeLivenessRecord[]>;
+  isPidAlive: (pid: number) => boolean;
+  now: () => number;
+  /** Current registry entry for a project, if any — used to skip a no-op heal. */
+  getEntry: (project: string) => LivenessEntry | undefined;
+  /** Write the corrected entry into the on-disk LivenessRegistry. */
+  applyEntry: (entry: LivenessEntry) => void;
+  /** Reload the daemon so it re-reads liveness.json (write-then-kickstart -k). */
+  kickstartDaemon: () => void;
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
+}
+
+/**
+ * Returns exit code: 0=success (including "nothing needed healing"), 1=error.
+ *
+ * Idempotent: a project whose registry entry already matches the resolved
+ * live captain is left untouched — no write, no kickstart. Only projects that
+ * actually needed correcting trigger a single daemon kickstart at the end.
+ */
+export async function runHealCaptain(projects: string[], deps: HealCaptainDeps): Promise<number> {
+  const { stdout, stderr } = deps;
+  let records: RuntimeLivenessRecord[];
+  try {
+    records = await deps.liveness();
+  } catch (e) {
+    stderr.write(`heal captain: could not read cmux liveness store: ${(e as Error).message}\n`);
+    return 1;
+  }
+
+  const now = deps.now();
+  const healed: string[] = [];
+
+  for (const project of projects) {
+    const resolved = resolveLiveCaptain(records, project, deps.isPidAlive);
+    if (!resolved) {
+      stdout.write(`  ${chalk.yellow("–")} ${project}: no live captain found — nothing to heal\n`);
+      continue;
+    }
+    const prev = deps.getEntry(project);
+    const alreadyCorrect =
+      prev?.role === "captain" && prev.pid === resolved.pid && prev.sessionId === resolved.sessionId &&
+      prev.lastState === "start" && prev.pidAlive === true;
+    if (alreadyCorrect) {
+      stdout.write(`  ${chalk.green("✔")} ${project}: already healthy (pid=${resolved.pid})\n`);
+      continue;
+    }
+    deps.applyEntry({
+      project, role: "captain", pid: resolved.pid, sessionId: resolved.sessionId,
+      startedAt: now, lastState: "start", lastSeenAt: now, pidAlive: true, source: "runtime",
+    });
+    healed.push(project);
+    stdout.write(`  ${chalk.green("✔")} ${project}: re-adopted captain pid=${resolved.pid} sessionId=${resolved.sessionId}\n`);
+  }
+
+  if (healed.length === 0) return 0;
+
+  try {
+    deps.kickstartDaemon();
+    stdout.write(chalk.green(`✔ healed ${healed.length} captain(s); daemon kickstarted\n`));
+    return 0;
+  } catch (e) {
+    stderr.write(`heal captain: registry updated but daemon kickstart failed: ${(e as Error).message}\n`);
+    return 1;
+  }
+}
+
+/** Real kickstart: write-then-`-k`, never `bootout` (loses the ~2s KeepAlive respawn race — #699). */
+function kickstartDaemonForHealCaptain(): void {
+  const uid = process.getuid?.() ?? 0;
+  execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/${LABEL}`], { stdio: "ignore" });
+}
+
 // ── Commander command tree ────────────────────────────────────────────────────
 
 export const healCommand = new Command("heal")
@@ -178,6 +289,38 @@ export const healCommand = new Command("heal")
       .action(async () => {
         const code = await runHealDaemon({
           ensureDaemon: () => reregisterDaemon(),
+          stdout: process.stdout,
+          stderr: process.stderr,
+        });
+        process.exit(code);
+      }),
+  )
+  .addCommand(
+    new Command("captain")
+      .description(
+        "#699 escape hatch: re-adopt a RUNNING captain the daemon can't classify (truncated cmux argv) " +
+        "without relaunching it — resolves the live captain from the cmux store + process table, corrects " +
+        "the liveness registry, then reloads the daemon.",
+      )
+      .argument("[project]", "Project name to heal captain liveness for")
+      .option("--all", "heal captain liveness for every project")
+      .action(async (project: string | undefined, opts: { all?: boolean }) => {
+        if (!opts.all && !project) {
+          process.stderr.write("heal captain: specify a project name, or pass --all\n");
+          process.exit(1);
+        }
+        const config = loadConfig();
+        const projects = opts.all ? Object.keys(config.projects) : [project as string];
+        const stateRoot = join(homedir(), ".config", "squadrant", "state");
+        const registry = new LivenessRegistry({ path: join(stateRoot, "liveness.json") });
+        registry.load();
+        const code = await runHealCaptain(projects, {
+          liveness: readCmuxLiveness,
+          isPidAlive: defaultIsPidAlive,
+          now: () => Date.now(),
+          getEntry: (p) => registry.get(p),
+          applyEntry: (e) => registry.apply(e),
+          kickstartDaemon: kickstartDaemonForHealCaptain,
           stdout: process.stdout,
           stderr: process.stderr,
         });
