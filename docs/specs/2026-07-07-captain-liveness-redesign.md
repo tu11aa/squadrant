@@ -257,7 +257,7 @@ Registry → `projectHealth` → **one `health` IPC** → both consumers.
 Off cmux, where there is no runtime record: intent comes from SessionEnd/close-CLI (`lastState`), else
 abrupt-death defaults to `gone`.
 
-## 8. Affected code
+## 8. Affected code (run `gitnexus_impact` before editing each)
 
 | Area | File | Change |
 |---|---|---|
@@ -290,7 +290,7 @@ abrupt-death defaults to `gone`.
 ## 10. Rollout / risk
 
 - **Blast radius:** the `health` IPC shape is unchanged (`ComponentHealth[]`) — consumers keep
-  working. Check impact on `projectHealth`, `createIsCaptainAlive`, `discoverCaptainSurface`,
+  working. Run `gitnexus_impact` on `projectHealth`, `createIsCaptainAlive`, `discoverCaptainSurface`,
   `deliveryTick` before editing. No new `HealthState` value → no renderer churn.
 - **Sequencing:** (1) registry + persistence + pure derivation + tests; (2) `runtime.liveness()`
   seam + cmux impl (open + §7 + restart reconcile); (3) pid floor per tick (crash→gone); (4) Telegram

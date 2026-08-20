@@ -13,9 +13,9 @@ import { TERMINAL_STATES } from "@squadrant/shared";
 
 /**
  * Boot-time guard for the daemon's codex reattach loop. Reattaching a thread
- * re-spawns its per-thread MCP servers (mcp/pay), so reattaching EVERY
+ * re-spawns its per-thread MCP servers (gitnexus/pay), so reattaching EVERY
  * non-terminal codex task on boot re-storms one MCP set per historical crew
- * (observed: 22 zombie tasks → 22 mcp servers → RAM exhaustion). Only
+ * (observed: 22 zombie tasks → 22 gitnexus servers → RAM exhaustion). Only
  * reattach a task that is (a) interactive codex, (b) non-terminal — closed
  * crews are `cancelled` via codex-close, so they're skipped, (c) still fresh:
  * a dead crew's pane is gone and hasn't heartbeat within the staleness window,
@@ -152,7 +152,7 @@ export class CodexInteractiveDriver {
   /**
    * Tear down a task's thread when its crew closes. Squadrant runs ONE shared
    * app-server with a thread per crew; closing the cmux pane only kills the
-   * `crew attach` renderer, so without this the thread — and the mcp/pay
+   * `crew attach` renderer, so without this the thread — and the gitnexus/pay
    * MCP servers it spawned — leak forever (verified: ~53MB per orphaned crew).
    * Archiving the thread lets the app-server reap it and its MCP children.
    */
