@@ -127,10 +127,12 @@ vi.mock("../crew-control.js", () => ({
 const writePerCrewSettings = vi.hoisted(() => vi.fn());
 const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
 const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
+const readGlobalOpencodeModel = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
+  readGlobalOpencodeModel,
 }));
 
 

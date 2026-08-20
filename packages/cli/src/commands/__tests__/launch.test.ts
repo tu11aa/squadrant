@@ -24,7 +24,7 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
-import { deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel } from "../launch.js";
+import { deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -123,6 +123,44 @@ describe("ensureCmuxReady (#520 daemon headless launch)", () => {
     expect(() => ensureCmuxReady(false)).not.toThrow();
     expect(execSyncMock).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+// #627 item B, review follow-up: the comment above the guard once claimed the
+// Anthropic-fallback refusal was captain-only, but isBlockedFallback takes no
+// role argument — it cannot special-case by role. Pin the scope decision
+// itself (not just the message text, which model-guard.test.ts already pins):
+// resolveAnthropicRefusal must refuse identically for every role, proving no
+// per-role branching sits between launchOne's `role` param and the guard.
+describe("resolveAnthropicRefusal (#627 role-scope, review follow-up)", () => {
+  it("refuses identically for captain, command, and side — no per-role branching", () => {
+    for (const role of ["captain", "command", "side"]) {
+      const refusal = resolveAnthropicRefusal(role, "myproj-captain", "opencode", "anthropic/claude-sonnet-4-5");
+      expect(refusal).not.toBeNull();
+      expect(refusal).toContain(`Refusing to launch ${role} 'myproj-captain'`);
+    }
+  });
+
+  it("returns null (no refusal) when the resolved model isn't Anthropic", () => {
+    expect(resolveAnthropicRefusal("captain", "myproj-captain", "opencode", "gpt-5")).toBeNull();
+  });
+
+  it("falls through to the opencode global config default when --model is omitted", () => {
+    const refusal = resolveAnthropicRefusal(
+      "captain",
+      "myproj-captain",
+      "opencode",
+      undefined,
+      () => "anthropic/claude-sonnet-4-5",
+    );
+    expect(refusal).toContain("opencode");
+    expect(refusal).toContain("anthropic/claude-sonnet-4-5");
+  });
+
+  it("never consults the opencode global config for non-opencode agents", () => {
+    const readOpencodeModel = vi.fn(() => "anthropic/claude-sonnet-4-5");
+    expect(resolveAnthropicRefusal("captain", "myproj-captain", "claude", undefined, readOpencodeModel)).toBeNull();
+    expect(readOpencodeModel).not.toHaveBeenCalled();
   });
 });
 

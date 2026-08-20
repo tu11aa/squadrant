@@ -22,6 +22,9 @@ import {
 import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
+import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
+import { isBlockedFallback, anthropicRefusalMessage } from "../lib/model-guard.js";
+import { readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 
 // Re-export for test-import stability (launch.test.ts imports from ../launch.js).
 export { deliverStartupPrompt } from "@squadrant/core";
@@ -40,6 +43,27 @@ export function shouldWireCaptainChannel(
   config: { defaults: Parameters<typeof resolveCaptainChannelMode>[0] },
 ): boolean {
   return agentName === "claude" && resolveCaptainChannelMode(config.defaults) !== "off";
+}
+
+// #627 item B, review follow-up: the guard itself (isBlockedFallback) takes no
+// role argument, so it cannot special-case by role — it refuses for whatever
+// role launchOne is called with. Today that's only "captain": launch.ts's three
+// launchOne call sites all pass role="captain" literally, and `squadrant
+// command` / `squadrant side spawn` boot agents through their own code paths
+// (command.ts, side.ts) that never call launchOne or this guard at all. If
+// launchOne is ever reused for those roles, the refusal applies unchanged —
+// that's deliberate, not an oversight. Exported so launch.test.ts can pin
+// role-agnosticism directly, instead of only the message text.
+export function resolveAnthropicRefusal(
+  role: string,
+  workspaceName: string,
+  agentName: string,
+  model: string | undefined,
+  readOpencodeModel: () => string | undefined = readGlobalOpencodeModel,
+): string | null {
+  const effectiveModel = model ?? (agentName === "opencode" ? readOpencodeModel() : undefined);
+  if (!isBlockedFallback(agentName, effectiveModel)) return null;
+  return anthropicRefusalMessage(role, workspaceName, agentName, effectiveModel!);
 }
 
 // #520: a non-interactive caller (the daemon's Telegram boot-if-down path)
@@ -64,7 +88,9 @@ export const launchCommand = new Command("launch")
   .option("--keep", "Resume the latest session even on a new day / after a template change")
   .option("--all", "Launch all captain workspaces")
   .option("--headless", "Skip the interactive cmux-app requirement (used by the daemon to boot captains without a terminal)")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean }) => {
+  .option("--agent <name>", "Override captain agent for this launch (claude|codex|gemini|opencode); takes precedence over defaults.roles.captain.agent")
+  .option("--model <name>", "Override captain model for this launch; takes precedence over defaults.roles.captain.model")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string }) => {
     if (opts.fresh && opts.keep) {
       console.error(chalk.red("\n  ✘ --fresh and --keep are mutually exclusive\n"));
       process.exit(1);
@@ -94,11 +120,29 @@ export const launchCommand = new Command("launch")
       pinToTop = false,
       projectName?: string,
     ): Promise<void> {
-      ensureCmuxReady(!!opts.headless);
-
       const roleConfig = config.defaults.roles?.[role as keyof NonNullable<typeof config.defaults.roles>];
-      const agentName = roleConfig?.agent || "claude";
-      const model = roleConfig?.model || config.defaults.models?.[role as keyof ModelRoutingConfig];
+      const { agentName, model } = resolveLaunchAgent(
+        { agent: opts.agent, model: opts.model },
+        roleConfig,
+        config.defaults.models?.[role as keyof ModelRoutingConfig],
+      );
+
+      // #627 item B: refuse to boot a fallback agent that silently depends on
+      // the provider it's meant to survive losing. For opencode, an omitted
+      // --model doesn't mean "no model" — it falls through to opencode's own
+      // global config, which defaults to an Anthropic model (ensureGlobalOpencodeConfig).
+      // Refuse (not warn): the whole point of manual mode is surviving an
+      // Anthropic outage, so a silent Anthropic dependency here is the exact
+      // trap this command exists to close. See resolveAnthropicRefusal for why
+      // this applies to whatever role launchOne is called with, not just captain.
+      const refusal = resolveAnthropicRefusal(role, workspaceName, agentName, model);
+      if (refusal) {
+        console.error(chalk.red(`\n  ✘ ${refusal}\n`));
+        hadFailure = true;
+        return;
+      }
+
+      ensureCmuxReady(!!opts.headless);
 
       let initialPrompt: string | undefined;
       if (role === "captain") {

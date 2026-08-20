@@ -143,6 +143,7 @@ function makeSpawnDeps(runtime: RuntimeDriver, agent: ResolvedAgent): CrewSpawnD
     getFreePort: vi.fn().mockResolvedValue(9876),
     sendCodexFirstTurn: vi.fn().mockResolvedValue(undefined),
     onRouted: vi.fn(),
+    onModelResolved: vi.fn(),
   };
 }
 
@@ -486,6 +487,68 @@ describe("runCrewSpawn", () => {
       expect(deps.writeOpencodeConfig).toHaveBeenCalledWith(
         expect.objectContaining({ gateBash: true }),
       );
+    });
+  });
+
+  // #627 item B: an opencode/codex/gemini crew that resolves to an Anthropic
+  // model still depends on the provider a fallback is meant to route around.
+  // onModelResolved lets the CLI edge warn (not block — crews are less
+  // catastrophic and more often intentional than a captain on the same path).
+  describe("onModelResolved (#627 item B)", () => {
+    it("fires with the resolved agent+model for a non-claude spawn", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn(
+        { project: PROJECT, task: "t", agent: "opencode", agentExplicit: true, model: "anthropic/claude-sonnet-4-5" },
+        config,
+        deps,
+      );
+
+      expect(deps.onModelResolved).toHaveBeenCalledWith({
+        agentName: "opencode",
+        model: "anthropic/claude-sonnet-4-5",
+      });
+    });
+
+    it("fires with model=undefined when nothing resolves a model (opencode falls through to its own default)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(deps.onModelResolved).toHaveBeenCalledWith({ agentName: "opencode", model: undefined });
+    });
+
+    it("does NOT fire for the claude branch (claude on an anthropic model is expected, not a trap)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "claude", agentExplicit: true }, config, deps);
+
+      expect(deps.onModelResolved).not.toHaveBeenCalled();
+    });
+
+    it("does not throw when onModelResolved is absent (optional dep)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      delete (deps as { onModelResolved?: unknown }).onModelResolved;
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps),
+      ).resolves.toBeDefined();
     });
   });
 

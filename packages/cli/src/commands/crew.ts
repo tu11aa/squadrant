@@ -18,7 +18,8 @@ import {
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
-import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
+import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
+import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 
 export type { CrewSpawnInput };
 
@@ -59,6 +60,19 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
         ),
       ),
     onBaseResolved: (base) => console.log(chalk.dim(`base: ${base}`)),
+    // #627 item B: warn (don't block) when a fallback crew silently resolves to
+    // an Anthropic model — less catastrophic than a captain on the same path,
+    // and more often intentional, so it just needs to be visible.
+    onModelResolved: ({ agentName, model }) => {
+      const effectiveModel = model ?? (agentName === "opencode" ? readGlobalOpencodeModel() : undefined);
+      if (isBlockedFallback(agentName, effectiveModel)) {
+        console.error(
+          chalk.yellow(
+            `  ⚠ ${anthropicFallbackMessage(agentName, effectiveModel!)} (crew — not blocked; pass --model to pin a different provider)`,
+          ),
+        );
+      }
+    },
   });
 }
 
