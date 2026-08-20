@@ -16,20 +16,49 @@ export interface ArgvRecoveryDeps {
   readArgv?: (pid: number) => string[] | undefined;
 }
 
+function defaultExecPs(pid: number): string {
+  return execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+}
+
+// #699 review: argv is immutable for the lifetime of a live process (set once
+// at execve), but a session whose real argv still doesn't classify (a
+// legitimate side.research.* session) stays role:"unknown" forever — without
+// caching, that re-shells out to `ps` on every liveness tick for as long as
+// the session exists. Cache SUCCESSFUL reads only (never `undefined`, so a
+// transient ps failure on a genuinely-alive pid is retried, not given up on
+// permanently); no eviction — pid reuse for an unrelated process while the
+// cached pid's own cmux session record still exists is not a case that
+// occurs in practice (a dead pid's session record is gone from the store
+// before that pid number could be recycled onto something else the store
+// would ask about).
+const argvCache = new Map<number, string[]>();
+
+/** @internal — reset only in tests; never call from production code */
+export function _resetArgvCacheForTest(): void {
+  argvCache.clear();
+}
+
 /**
  * Read a live process's full argv via `ps` (#699: cmux's own store truncates
  * launchCommand — e.g. argc=4 — while the OS process table always holds the
  * complete command line). Returns undefined on any failure (pid gone, ps
  * missing, permission denied, …) — never throws, so a liveness tick can
- * always fall back to "stays unknown" instead of crashing.
+ * always fall back to "stays unknown" instead of crashing. `execPs` is
+ * injected (defaulting to a real `ps` shell-out) purely so the caching layer
+ * is testable without mocking node:child_process.
  */
-export function readArgvFromPid(pid: number): string[] | undefined {
+export function readArgvFromPid(pid: number, execPs: (pid: number) => string = defaultExecPs): string[] | undefined {
+  const cached = argvCache.get(pid);
+  if (cached) return cached;
   try {
-    const out = execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out ? out.split(/\s+/) : undefined;
+    const out = execPs(pid).trim();
+    if (!out) return undefined;
+    const argv = out.split(/\s+/);
+    argvCache.set(pid, argv);
+    return argv;
   } catch {
     return undefined;
   }

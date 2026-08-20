@@ -198,16 +198,58 @@ export interface HealCaptainDeps {
   applyEntry: (entry: LivenessEntry) => void;
   /** Reload the daemon so it re-reads liveness.json (write-then-kickstart -k). */
   kickstartDaemon: () => void;
+  /**
+   * Fresh, on-disk read of a project's registry entry, taken AFTER a
+   * kickstart. The still-dying old daemon persists its own in-memory map
+   * every tick and can clobber our write in the window before `kickstart -k`'s
+   * kill actually lands — this must re-read from disk, not return whatever
+   * `getEntry`'s backing instance already has in memory (that would just
+   * echo our own write back and never catch the clobber).
+   */
+  reloadEntry: (project: string) => LivenessEntry | undefined;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
 }
 
+interface HealTarget {
+  project: string;
+  resolved: ResolvedCaptain;
+}
+
+/** Pure: does an on-disk entry reflect the resolved live captain? */
+function entryMatchesResolved(entry: LivenessEntry | undefined, resolved: ResolvedCaptain): boolean {
+  return entry?.role === "captain" && entry.pid === resolved.pid && entry.sessionId === resolved.sessionId &&
+    entry.lastState === "start" && entry.pidAlive === true;
+}
+
+/** Write + kickstart one batch, then verify each target actually landed on disk. */
+function applyAndVerify(targets: HealTarget[], deps: HealCaptainDeps): Set<string> {
+  const now = deps.now();
+  for (const { project, resolved } of targets) {
+    deps.applyEntry({
+      project, role: "captain", pid: resolved.pid, sessionId: resolved.sessionId,
+      startedAt: now, lastState: "start", lastSeenAt: now, pidAlive: true, source: "runtime",
+    });
+  }
+  deps.kickstartDaemon();
+  const landed = new Set<string>();
+  for (const { project, resolved } of targets) {
+    if (entryMatchesResolved(deps.reloadEntry(project), resolved)) landed.add(project);
+  }
+  return landed;
+}
+
 /**
- * Returns exit code: 0=success (including "nothing needed healing"), 1=error.
+ * Returns exit code: 0=success (including "nothing needed healing"), 1=error
+ * or a heal that still didn't land after the retry.
  *
  * Idempotent: a project whose registry entry already matches the resolved
- * live captain is left untouched — no write, no kickstart. Only projects that
- * actually needed correcting trigger a single daemon kickstart at the end.
+ * live captain is left untouched — no write, no kickstart. Projects that
+ * needed correcting are written and verified after a single shared kickstart;
+ * the still-dying old daemon can clobber that write in the race window before
+ * its kill lands (#699 review), so a mismatch after kickstart gets exactly
+ * one retry (re-write + re-kickstart) before being reported as a real failure
+ * — never claimed as healed when it didn't actually land.
  */
 export async function runHealCaptain(projects: string[], deps: HealCaptainDeps): Promise<number> {
   const { stdout, stderr } = deps;
@@ -219,41 +261,56 @@ export async function runHealCaptain(projects: string[], deps: HealCaptainDeps):
     return 1;
   }
 
-  const now = deps.now();
-  const healed: string[] = [];
-
+  const targets: HealTarget[] = [];
   for (const project of projects) {
     const resolved = resolveLiveCaptain(records, project, deps.isPidAlive);
     if (!resolved) {
       stdout.write(`  ${chalk.yellow("–")} ${project}: no live captain found — nothing to heal\n`);
       continue;
     }
-    const prev = deps.getEntry(project);
-    const alreadyCorrect =
-      prev?.role === "captain" && prev.pid === resolved.pid && prev.sessionId === resolved.sessionId &&
-      prev.lastState === "start" && prev.pidAlive === true;
-    if (alreadyCorrect) {
+    if (entryMatchesResolved(deps.getEntry(project), resolved)) {
       stdout.write(`  ${chalk.green("✔")} ${project}: already healthy (pid=${resolved.pid})\n`);
       continue;
     }
-    deps.applyEntry({
-      project, role: "captain", pid: resolved.pid, sessionId: resolved.sessionId,
-      startedAt: now, lastState: "start", lastSeenAt: now, pidAlive: true, source: "runtime",
-    });
-    healed.push(project);
-    stdout.write(`  ${chalk.green("✔")} ${project}: re-adopted captain pid=${resolved.pid} sessionId=${resolved.sessionId}\n`);
+    targets.push({ project, resolved });
   }
 
-  if (healed.length === 0) return 0;
+  if (targets.length === 0) return 0;
 
+  let landed: Set<string>;
   try {
-    deps.kickstartDaemon();
-    stdout.write(chalk.green(`✔ healed ${healed.length} captain(s); daemon kickstarted\n`));
-    return 0;
+    landed = applyAndVerify(targets, deps);
   } catch (e) {
     stderr.write(`heal captain: registry updated but daemon kickstart failed: ${(e as Error).message}\n`);
     return 1;
   }
+
+  let stillMissing = targets.filter((t) => !landed.has(t.project));
+  if (stillMissing.length > 0) {
+    try {
+      const retryLanded = applyAndVerify(stillMissing, deps);
+      stillMissing = stillMissing.filter((t) => !retryLanded.has(t.project));
+    } catch (e) {
+      stderr.write(`heal captain: retry write/kickstart failed: ${(e as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  const stillMissingSet = new Set(stillMissing.map((t) => t.project));
+  for (const { project, resolved } of targets) {
+    if (stillMissingSet.has(project)) {
+      stderr.write(
+        `  ${chalk.red("✘")} ${project}: heal did not survive the daemon restart after one retry — ` +
+        `pid=${resolved.pid} sessionId=${resolved.sessionId} may be racing the daemon's own periodic persist\n`,
+      );
+    } else {
+      stdout.write(`  ${chalk.green("✔")} ${project}: re-adopted captain pid=${resolved.pid} sessionId=${resolved.sessionId}\n`);
+    }
+  }
+
+  if (stillMissingSet.size > 0) return 1;
+  stdout.write(chalk.green(`✔ healed ${targets.length} captain(s); daemon kickstarted\n`));
+  return 0;
 }
 
 /** Real kickstart: write-then-`-k`, never `bootout` (loses the ~2s KeepAlive respawn race — #699). */
@@ -321,6 +378,11 @@ export const healCommand = new Command("heal")
           getEntry: (p) => registry.get(p),
           applyEntry: (e) => registry.apply(e),
           kickstartDaemon: kickstartDaemonForHealCaptain,
+          // Fresh disk read (not the in-memory instance's stale view) — this
+          // is what actually detects the running daemon's own persist
+          // clobbering our write in the race window before kickstart's kill
+          // lands (#699 review).
+          reloadEntry: (p) => { registry.load(); return registry.get(p); },
           stdout: process.stdout,
           stderr: process.stderr,
         });

@@ -232,8 +232,13 @@ describe("runHealCaptain (integration, mocked I/O)", () => {
     records: RuntimeLivenessRecord[];
     entry: LivenessEntry | undefined;
     isPidAlive: (pid: number) => boolean;
+    reloadEntry: (project: string) => LivenessEntry | undefined;
   }> = {}) {
-    const applyEntry = vi.fn();
+    // Default reloadEntry simulates the no-race case: whatever applyEntry most
+    // recently wrote for a project is what a fresh disk read returns — i.e.
+    // the write survived the daemon restart cleanly.
+    const lastApplied = new Map<string, LivenessEntry>();
+    const applyEntry = vi.fn((e: LivenessEntry) => { lastApplied.set(e.project, e); });
     const kickstartDaemon = vi.fn();
     const stdoutLines: string[] = [];
     const stderrLines: string[] = [];
@@ -249,6 +254,7 @@ describe("runHealCaptain (integration, mocked I/O)", () => {
         getEntry: () => overrides.entry,
         applyEntry,
         kickstartDaemon,
+        reloadEntry: overrides.reloadEntry ?? ((project: string) => lastApplied.get(project)),
         stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
         stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
       },
@@ -317,6 +323,74 @@ describe("runHealCaptain (integration, mocked I/O)", () => {
     expect(code).toBe(0);
     expect(applyEntry).toHaveBeenCalledTimes(2);
     expect(kickstartDaemon).toHaveBeenCalledOnce();
+  });
+
+  // ── #699 review: verify-after-kickstart race (the running daemon persists
+  // its own in-memory map every tick and can clobber our write in the window
+  // before the kill from `kickstart -k` actually lands) ──────────────────────
+
+  it("detects a clobbered write after kickstart, retries once, and succeeds", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const staleEntry: LivenessEntry = {
+      project: "squadrant", role: "captain", pid: 5057, sessionId: "stale-session",
+      startedAt: 1, lastState: "end", lastSeenAt: 1, pidAlive: false, source: "runtime",
+    };
+    let reloadCalls = 0;
+    const { opts, applyEntry, kickstartDaemon, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "new-session", present: true }],
+      entry: staleEntry,
+      reloadEntry: () => {
+        reloadCalls++;
+        // First verify (right after the first kickstart) simulates the race:
+        // the still-dying old daemon's own periodic persist clobbered our write.
+        if (reloadCalls === 1) return staleEntry;
+        return { project: "squadrant", role: "captain", pid: 12236, sessionId: "new-session", startedAt: 1000, lastState: "start", lastSeenAt: 1000, pidAlive: true, source: "runtime" };
+      },
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).toHaveBeenCalledTimes(2); // initial write + one retry
+    expect(kickstartDaemon).toHaveBeenCalledTimes(2);
+    expect(stdoutLines.join("")).toContain("re-adopted");
+  });
+
+  it("reports failure honestly when the clobber survives the retry — never claims success for a change that didn't land", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const staleEntry: LivenessEntry = {
+      project: "squadrant", role: "captain", pid: 5057, sessionId: "stale-session",
+      startedAt: 1, lastState: "end", lastSeenAt: 1, pidAlive: false, source: "runtime",
+    };
+    const { opts, applyEntry, kickstartDaemon, stderrLines, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "new-session", present: true }],
+      entry: staleEntry,
+      reloadEntry: () => staleEntry, // never lands, on either attempt
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(1);
+    expect(applyEntry).toHaveBeenCalledTimes(2); // initial + one retry, no more
+    expect(kickstartDaemon).toHaveBeenCalledTimes(2);
+    expect(stderrLines.join("")).toContain("squadrant");
+    expect(stdoutLines.join("")).not.toContain("re-adopted");
+  });
+
+  it("in a multi-project heal, reports each project's outcome independently (one lands, one doesn't)", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, stdoutLines, stderrLines } = makeDeps({
+      records: [
+        { role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true },
+        { role: "captain", project: "helpa", pid: 4242, sessionId: "s2", present: true },
+      ],
+      reloadEntry: (project) => {
+        if (project === "squadrant") {
+          return { project, role: "captain", pid: 12236, sessionId: "s1", startedAt: 1000, lastState: "start", lastSeenAt: 1000, pidAlive: true, source: "runtime" };
+        }
+        return undefined; // helpa never lands, even after retry
+      },
+    });
+    const code = await runHealCaptain(["squadrant", "helpa"], opts);
+    expect(code).toBe(1);
+    expect(stdoutLines.join("")).toContain("squadrant");
+    expect(stderrLines.join("")).toContain("helpa");
   });
 });
 
