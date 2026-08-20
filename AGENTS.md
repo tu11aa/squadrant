@@ -46,7 +46,7 @@ squadrant owns and reconciles `~/.claude/settings.json` via `installClaudeHooks`
 
 ## Coding Discipline: Karpathy Principles
 
-Every coding task in this repo follows [`plugin/skills/karpathy-principles/SKILL.md`](plugin/skills/karpathy-principles/SKILL.md):
+Every coding task in this repo (captain, crew, and direct edits) follows [`plugin/skills/karpathy-principles/SKILL.md`](plugin/skills/karpathy-principles/SKILL.md):
 
 1. **Think before coding** — surface assumptions and tradeoffs; ask if ambiguous
 2. **Simplicity first** — no speculative abstractions, no impossible-case error handling
