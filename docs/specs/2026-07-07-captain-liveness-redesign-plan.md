@@ -12,7 +12,7 @@
 
 - **Spec:** `docs/specs/2026-07-07-captain-liveness-redesign.md` — every task traces to a spec section.
 - **NodeNext imports:** all relative imports use the `.js` extension (e.g. `./liveness-registry.js`). `tsc` + `vitest` miss omissions; the real gate is `node dist/index.js --help` after build.
-- **GitNexus first:** before editing ANY existing function/method/class, run `gitnexus_impact({target, direction:"upstream"})` and report blast radius; run `gitnexus_detect_changes()` before each commit (repo CLAUDE.md mandate).
+- **Check impact first:** before editing ANY existing function/method/class, check blast radius; run tests before each commit.
 - **Karpathy discipline:** surgical changes only — every changed line traces to this plan; no drive-by refactors; no speculative abstraction.
 - **macOS-only:** guard any OS-specific test with `it.skipIf(process.platform !== "darwin")`.
 - **Pure-first:** derivation/reconciliation live in pure functions (no I/O, explicit `now`) — mirrors existing `liveness.ts` / `watchdog.ts`.
@@ -370,7 +370,7 @@ Spec: §5.2, §5.4, §7. This is where the cmux store becomes ground-truth.
   - `parseStoreRecords(fileContent: string, projects: Record<string,{path:string}>, captainTemplate?: string): RuntimeLivenessRecord[]`
   - `DaemonSurfaceDriver.liveness?(): Promise<RuntimeLivenessRecord[]>`
 
-**GitNexus:** run `gitnexus_impact({target:"DaemonSurfaceDriver", direction:"upstream"})` before editing `interfaces.ts`.
+**Check impact:** check callers of `DaemonSurfaceDriver` before editing `interfaces.ts`.
 
 - [ ] **Step 1: Write the failing test** — `store-fingerprint.test.ts`
 
@@ -537,7 +537,7 @@ Spec: §4.5, §5.3, §6 (pane path). This replaces the streak model.
 - Consumes: `LivenessRegistry` (Task 2), `DaemonSurfaceDriver.liveness()` (Task 3), `deriveCaptainState` (Task 1).
 - Produces: `runLivenessTick(deps): Promise<void>` — one reconcile+floor pass.
 
-**GitNexus:** `gitnexus_impact` on `projectHealth`, `deliveryTick`, and `createDaemonContext` before editing.
+**Check impact:** check callers of `projectHealth`, `deliveryTick`, and `createDaemonContext` before editing.
 
 - [ ] **Step 1: Write the failing test** — `liveness-tick.test.ts`
 
@@ -626,7 +626,7 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
 
 - [ ] **Step 4: Swap context fields** — `packages/core/src/daemon/context.ts`
 
-Run `gitnexus_impact({target:"createDaemonContext"})`. Replace the two fields (lines ~113-115) and their init (lines ~183-184):
+Check callers of `createDaemonContext`. Replace the two fields (lines ~113-115) and their init (lines ~183-184):
 
 ```ts
 // remove: captainMissingStreak: Map<string, number>;  stoppedProjects: Set<string>;
@@ -704,7 +704,7 @@ Spec: §4.5. Direct regression fix.
 **Interfaces:**
 - Consumes: the daemon `health` reply (`ComponentHealth[]`) which now reflects the registry (Task 4). `createIsCaptainAlive` signature is unchanged (still `(sock) => (project) => Promise<boolean>`), but "alive" now means a live pid, not a stale streak.
 
-**GitNexus:** `gitnexus_impact({target:"createIsCaptainAlive"})`.
+**Check impact:** check callers of `createIsCaptainAlive`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -775,7 +775,7 @@ Spec: §6.
 - Consumes: the `health` IPC (`ComponentHealth[]`) alongside `list`.
 - Produces: `deriveState(tasks, captainState)` — captain liveness dominates.
 
-**GitNexus:** `gitnexus_impact({target:"readAllStatuses"})`.
+**Check impact:** check callers of `readAllStatuses`.
 
 - [ ] **Step 1: Write the failing test** (extend existing)
 
@@ -855,7 +855,7 @@ npm run build && npm test && node dist/index.js --help && node dist/squadrantd.j
 ```
 Expected: build clean, all tests pass, both bins print help (NodeNext `.js` import invariant holds for BOTH entry points).
 
-- [ ] **Step 5: `gitnexus_detect_changes` + manual smoke on a THROWAWAY project**
+- [ ] **Step 5: manual smoke on a THROWAWAY project**
 
 Register a throwaway test project, `squadrant launch <test>`, confirm `squadrant status --detailed` shows the captain `alive`; press workspace-X, confirm it flips to `stopped` within ~1 tick; `kill -9` a fresh captain's pid, confirm `gone`. **Never** run this on a real captain.
 
@@ -873,4 +873,4 @@ git commit -m "refactor(liveness): retire streak-based sweep; role/source logs; 
 - **Spec coverage:** §4.1→T2/T4, §4.2/4.3→T1, §4.4→T7, §4.5→T5, §5.1/§7→T1+T3+T4(+T7 smoke), §5.2→T3, §5.3→T2+T4, §5.4→T3, §6→T4(pane)+T6(web). ✅ all sections mapped.
 - **Placeholder scan:** no TBD/TODO; every code step carries real code.
 - **Type consistency:** `LivenessEntry`, `RuntimeLivenessRecord`, `deriveCaptainState`, `reconcileLiveness`, `runLivenessTick`, `parseStoreRecords`, `isCaptainAliveFromHealth`, `deriveRowState` used consistently across tasks.
-- **Open detail for the implementer:** confirm `proj.path` home-resolution in Task 3 Step 5 (match `read-status.ts`); confirm the shared barrel export path in Task 1 Step 3; extend `projectHealth` with the optional `captainState` param in Task 4 Step 5 (verify its current signature with `gitnexus_context({name:"projectHealth"})` first).
+- **Open detail for the implementer:** confirm `proj.path` home-resolution in Task 3 Step 5 (match `read-status.ts`); confirm the shared barrel export path in Task 1 Step 3; extend `projectHealth` with the optional `captainState` param in Task 4 Step 5 (verify its current signature first).

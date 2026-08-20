@@ -92,8 +92,8 @@ Implementation note: `packages/core/src/store.ts` already encodes the
 security-critical `safeSegment` + `assertUnderRoot` logic. Duplicating it is
 worse than generalising it. Prefer widening `createStore` to
 `createStore<T extends { project: string; id: string }>` — `TaskRecord` already
-satisfies the constraint, so this is additive. **Run `gitnexus_impact` on
-`createStore` before touching it** (per `CLAUDE.md`); it is a high-fan-in symbol.
+satisfies the constraint, so this is additive. **Check impact on
+`createStore` before touching it** it is a high-fan-in symbol.
 
 ### 4.2 Record shape
 

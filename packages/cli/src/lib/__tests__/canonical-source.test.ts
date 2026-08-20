@@ -56,7 +56,7 @@ describe("canonical-source", () => {
 
   it("readUserLevelSource does NOT include squadrant's own AGENTS.md", async () => {
     const driver = memDriver({
-      "AGENTS.md": "# Squadrant-specific content\ngitnexus stuff",
+      "AGENTS.md": "# Squadrant-specific content\nmcp stuff",
       "plugin/skills/karpathy-principles/SKILL.md":
         "---\nname: karpathy-principles\ndescription: K\n---\n\nK body",
     });

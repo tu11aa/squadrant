@@ -39,7 +39,7 @@ Component breakdown for 7b631cf9 (numbers consistent within ~5% across all
 | Deferred-tool name list (86 names, schemas NOT loaded) | measured, transcript | 652 | 1.3% |
 | Agent-type listing (`agent_listing_delta`) | measured, transcript | 636 | 1.2% |
 | SessionStart hook system message | measured, transcript | 554 | 1.1% |
-| MCP server instructions (gitnexus/context7/chrome deltas) | measured, transcript | 246 | 0.5% |
+| MCP server instructions (context7/chrome deltas) | measured, transcript | 246 | 0.5% |
 | Startup-checklist first user message | measured, transcript | 28 | 0.05% |
 | Misc hook stdout (PATH export, cmux hook) | measured, transcript | 24 | 0.05% |
 
@@ -66,7 +66,7 @@ line.
   "droppable" list in §4 since it was never in context to begin with.
 - The deferred-tool mechanism observed in this very session (86 tool names
   listed, schemas fetched on demand via `ToolSearch`) already keeps most
-  MCP tool schemas (gitnexus, claude-mem, chrome, figma, context7) **out**
+  MCP tool schemas (claude-mem, chrome, figma, context7) **out**
   of the always-loaded residual — so that 63% residual is smaller than a
   naive "all MCP servers loaded" estimate would suggest, but still opaque.
 

@@ -352,7 +352,7 @@ await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatI
 - Keep token input masking (existing raw-mode keypress handling) and the stdin-pause-on-complete fix (so the process exits — prior bug).
 - Idempotent: re-running setup updates `users`/`remoteControl` without clobbering `chats`/`supergroupId`.
 
-- [ ] **Step 1:** Read the current wizard to match its prompt/style. **Run `gitnexus_impact` on the setup function before editing** (CLAUDE.md rule).
+- [ ] **Step 1:** Read the current wizard to match its prompt/style. **Check impact on the setup function before editing**.
 - [ ] **Step 2:** Add the remote-control prompt + user-id capture + config write.
 - [ ] **Step 3:** Manual verification path documented (can't fully unit-test interactive TTY): `squadrant telegram setup` → enable → confirm config has `users`/`remoteControl`.
 - [ ] **Step 4: Commit** — `git commit -m "feat(telegram): setup wizard captures user-id + enables remoteControl (#321)"`
@@ -368,7 +368,7 @@ await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatI
 
 - [ ] **Step 1:** Update the Telegram doc with the new config fields + command channel + security model. Add a short "remote-wake (WoL)" section pointing at #403 as operator-side infra.
 - [ ] **Step 2:** Run the FULL test suite on the authoritative checkout — `pnpm test` — confirm green (baseline was 1358/1358). Record the number.
-- [ ] **Step 3:** `node dist/index.js --help` + `node dist/squadrantd.js --help` smoke. Run `gitnexus_detect_changes()` to confirm only expected symbols changed.
+- [ ] **Step 3:** `node dist/index.js --help` + `node dist/squadrantd.js --help` smoke. Check git diff to confirm only expected symbols changed.
 - [ ] **Step 4:** Add CHANGELOG v0.10.0 entry summarizing the three features.
 - [ ] **Step 5: Commit** — `git commit -m "docs(telegram): v0.10 command channel + security model; changelog"`
 - [ ] **Step 6:** Push branch, open PR to `develop` titled "Telegram v0.10 stability: auto-launch + general command channel + user-id allowlist (#403/#402/#321)". Link all three issues.

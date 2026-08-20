@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the codex app-server protocol bindings.
 # Requires codex-cli ≥0.130.0 on PATH.
-# Output goes to vendor/ (outside src/) so tsc/tsup and GitNexus skip it.
+# Output goes to vendor/ (outside src/) so tsc/tsup skip it.
 set -euo pipefail
 OUT="packages/agents/vendor/codex-protocol"
 rm -rf "$OUT"

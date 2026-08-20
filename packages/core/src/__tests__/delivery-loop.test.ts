@@ -253,7 +253,7 @@ describe("delivery-loop", () => {
   // (DeferDelivery.reason) to decide to defer, not a new one.
   it("logs project= and reason= on the defer outcome line (#617)", async () => {
     const stateRoot = freshState();
-    const project = "gitnexus";
+    const project = "testproj";
     const captainName = `${project}-captain`;
     const store = createStore(stateRoot);
     store.put({
