@@ -24,7 +24,10 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
-import { deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal } from "../launch.js";
+import {
+  deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
+  captainSocketPath,
+} from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -132,6 +135,25 @@ describe("ensureCmuxReady (#520 daemon headless launch)", () => {
 // itself (not just the message text, which model-guard.test.ts already pins):
 // resolveAnthropicRefusal must refuse identically for every role, proving no
 // per-role branching sits between launchOne's `role` param and the guard.
+// #706: launch.ts interpolated the command-level `project` positional (only
+// ever set on the single-project path) into the captain socket path, instead
+// of launchOne's `projectName` param. On --all and interactive-parallel
+// launches `project` is undefined, so every captain collapsed onto
+// squadrant-captain-undefined.sock — first bind wins, the rest silently fail
+// to boot. Pin that the path is derived from the project name given, with a
+// distinct path per project.
+describe("captainSocketPath (#706 per-project socket path)", () => {
+  it("derives a distinct socket path per project name", () => {
+    expect(captainSocketPath("alpha")).toContain("squadrant-captain-alpha.sock");
+    expect(captainSocketPath("beta")).toContain("squadrant-captain-beta.sock");
+    expect(captainSocketPath("alpha")).not.toBe(captainSocketPath("beta"));
+  });
+
+  it("never renders 'undefined' in the socket filename", () => {
+    expect(captainSocketPath("myproj")).not.toContain("undefined");
+  });
+});
+
 describe("resolveAnthropicRefusal (#627 role-scope, review follow-up)", () => {
   it("refuses identically for captain, command, and side — no per-role branching", () => {
     for (const role of ["captain", "command", "side"]) {

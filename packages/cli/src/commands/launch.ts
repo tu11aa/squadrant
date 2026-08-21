@@ -45,6 +45,15 @@ export function shouldWireCaptainChannel(
   return agentName === "claude" && resolveCaptainChannelMode(config.defaults) !== "off";
 }
 
+// #706: the socket path must be built from launchOne's `projectName` param,
+// not the command's `project` positional — `project` is undefined on the
+// --all and interactive-parallel paths, which collapsed every captain onto
+// the same /tmp/cc-socks/squadrant-captain-undefined.sock (first bind wins).
+// Exported for testing (see launch.test.ts).
+export function captainSocketPath(projectName: string): string {
+  return path.join(CC_SOCKS_DIR, `squadrant-captain-${projectName}.sock`);
+}
+
 // #627 item B, review follow-up: the guard itself (isBlockedFallback) takes no
 // role argument, so it cannot special-case by role — it refuses for whatever
 // role launchOne is called with. Today that's only "captain": launch.ts's three
@@ -170,7 +179,7 @@ export const launchCommand = new Command("launch")
               fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
-              captainChannelEnabled ? path.join(CC_SOCKS_DIR, `squadrant-captain-${project}.sock`) : undefined);
+              captainChannelEnabled && projectName ? captainSocketPath(projectName) : undefined);
           },
           initialPrompt,
           runtime,
