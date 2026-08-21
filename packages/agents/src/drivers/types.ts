@@ -47,6 +47,10 @@ export interface SpawnOptions {
   // lets the daemon address the session without reverse-engineering the
   // pid-derived default. Absent ⇒ flag omitted ⇒ no behaviour change.
   messagingSocketPath?: string;
+  // #708: claude's `-n, --name` flag. Absent ⇒ flag omitted ⇒ Claude Code
+  // falls back to its own cwd-derived default, same as today. Only the claude
+  // driver reads this — other drivers ignore it, `-n` is claude-only.
+  sessionName?: string;
   // Per-invocation settings file (Claude's --settings flag). The
   // daemon-supervised claude crew spawn writes a per-crew settings.json
   // containing the squadrant Stop hook and passes the path here so the hook

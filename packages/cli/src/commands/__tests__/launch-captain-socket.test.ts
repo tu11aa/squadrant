@@ -107,4 +107,15 @@ describe("launchCommand --all (#706 per-project captain socket wiring)", () => {
     expect(new Set(socketPaths).size).toBe(2);
     expect(socketPaths.every((p) => !String(p).includes("undefined"))).toBe(true);
   });
+
+  it("gives each captain a distinct #708 session name derived from its own project name", async () => {
+    const { launchCommand } = await import("../launch.js");
+    await launchCommand.parseAsync(["node", "squadrant", "launch", "--all"]);
+
+    const sessionNames = buildAgentCmdMock.mock.calls.map((call) => (call as unknown[])[8]);
+    expect(sessionNames).toEqual(["squadrant-captain-alpha", "squadrant-captain-beta"]);
+    // Same failure class as #706: both collapsing onto one name, or "undefined".
+    expect(new Set(sessionNames).size).toBe(2);
+    expect(sessionNames.every((n) => !String(n).includes("undefined"))).toBe(true);
+  });
 });

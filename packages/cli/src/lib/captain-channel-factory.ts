@@ -39,15 +39,26 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   return shared;
 }
 
+/**
+ * Resolve a captain's own session id from the registry entry keyed by the
+ * socket path squadrant chose at launch (#709) — the same entry
+ * readClaudeStatusBySocketPath already reads for statusFor. Wiring this into
+ * sessionIdFor restores the pid-reuse guard and drops the "Another Claude
+ * session sent a message" wrapper on the captain side. A captain that has not
+ * registered yet (just booted) resolves to undefined here, same as before: no
+ * session_id is sent, and the guard is skipped for that send rather than
+ * throwing.
+ */
+export function captainSessionIdFor(taskId: string): string | undefined {
+  return readClaudeStatusBySocketPath(captainSocketPath(taskId))?.sessionId;
+}
+
 export async function buildCaptainChannel(): Promise<ClaudePeerChannel> {
   const receipts = await sharedReceiptListener();
   return new ClaudePeerChannel({
     // The port's taskId IS the project name for captains.
     socketPathFor: (taskId) => captainSocketPath(taskId),
-    // We do not know a captain's session id, so the pid-reuse guard is skipped
-    // here. Acceptable: the socket path is project-scoped and squadrant chose it
-    // at launch, so a stale path fails as `gone` rather than reaching a stranger.
-    sessionIdFor: () => undefined,
+    sessionIdFor: captainSessionIdFor,
     // Captains are identified in the registry by their cwd (the project path).
     // Resolve by the socket path squadrant chose at launch, NOT by cwd: a captain
     // in /tmp/x registers cwd "/private/tmp/x" on macOS, so cwd matching silently

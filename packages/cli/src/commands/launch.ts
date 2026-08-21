@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode } from "@squadrant/shared";
+import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName } from "@squadrant/shared";
 import type { ModelRoutingConfig } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
@@ -65,6 +65,15 @@ export function resolveCaptainSocketPath(
     throw new Error(`launch: captain channel requires a project name, but none was provided for workspace '${workspaceName}'`);
   }
   return captainSocketPath(projectName);
+}
+
+// #708: only claude honours `-n` — gate on the agent, not the role, since
+// launchOne is claude-only for captains today (agents without this
+// capability just never see the flag). Purely cosmetic (unlike the socket
+// path), so a missing project name yields no name rather than throwing.
+export function resolveCaptainSessionName(agentName: string, projectName: string | undefined): string | undefined {
+  if (agentName !== "claude" || !projectName) return undefined;
+  return captainSessionName(projectName);
 }
 
 // #627 item B, review follow-up: the guard itself (isBlockedFallback) takes no
@@ -192,7 +201,8 @@ export const launchCommand = new Command("launch")
               fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
-              resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName));
+              resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
+              resolveCaptainSessionName(agentName, projectName));
           },
           initialPrompt,
           runtime,

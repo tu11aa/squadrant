@@ -138,6 +138,37 @@ describe("readClaudeStatusByCwd (#667 slice 4)", () => {
   });
 });
 
+import { readClaudeStatusBySocketPath } from "../registry.js";
+
+describe("readClaudeStatusBySocketPath (#709)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("carries sessionId through from the matching registry entry", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) {
+        return JSON.stringify({ messagingSocketPath: "/tmp/cc-socks/squadrant-captain-demo.sock", sessionId: "sess-1", status: "idle" });
+      }
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatusBySocketPath("/tmp/cc-socks/squadrant-captain-demo.sock"))
+      .toEqual({ status: "idle", statusUpdatedAt: undefined, sessionId: "sess-1" });
+  });
+
+  it("returns undefined for a socket path with no matching entry (captain not registered yet)", () => {
+    vi.spyOn(fs, "readdirSync").mockReturnValue(["1.json"] as any);
+    vi.spyOn(fs, "readFileSync").mockImplementation((path: any) => {
+      if (path.toString().endsWith("1.json")) {
+        return JSON.stringify({ messagingSocketPath: "/tmp/cc-socks/some-other.sock", sessionId: "sess-1", status: "idle" });
+      }
+      throw new Error("ENOENT");
+    });
+    expect(readClaudeStatusBySocketPath("/tmp/cc-socks/squadrant-captain-demo.sock")).toBeUndefined();
+  });
+});
+
 import { readClaudeStatus } from "../registry.js";
 
 describe("readClaudeStatus", () => {
