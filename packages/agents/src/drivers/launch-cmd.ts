@@ -33,11 +33,19 @@ export function buildAgentCmd(
    *  ping/chat surface (slice 4) to reach them over the control channel. Last
    *  parameter so every existing call site is unaffected. */
   messagingSocketPath?: string,
+  /** #708: claude's `-n, --name` flag, so captains are self-describing in
+   *  ListAgents instead of an auto-derived cwd basename. Absent ⇒ flag
+   *  omitted ⇒ today's behaviour. */
+  sessionName?: string,
 ): string {
   const driver = registry.getDriver(agentName);
 
   if (driver.name === "claude") {
     let cmd = fresh ? "claude" : "claude -c";
+
+    if (sessionName) {
+      cmd += ` -n ${sessionName}`;
+    }
 
     if (permissionMode === "acceptEdits") {
       cmd += " --permission-mode acceptEdits";

@@ -30,6 +30,10 @@ export function createClaudeDriver(): AgentDriver {
     buildCommand(opts: SpawnOptions): string {
       let cmd = "claude";
 
+      if (opts.sessionName) {
+        cmd += ` -n ${opts.sessionName}`;
+      }
+
       if (opts.model) {
         cmd += ` --model ${opts.model}`;
       }

@@ -25,9 +25,10 @@ vi.mock("@squadrant/shared", async () => {
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
 import { captainSocketPath as coreCaptainSocketPath } from "@squadrant/core";
+import { captainSessionName as coreCaptainSessionName } from "@squadrant/shared";
 import {
   deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
-  resolveCaptainSocketPath,
+  resolveCaptainSocketPath, resolveCaptainSessionName,
 } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
@@ -167,6 +168,26 @@ describe("resolveCaptainSocketPath (#706 per-project socket path)", () => {
     // Silently falling back to `undefined` would hide the failure the same
     // way the original bug did; it must throw instead.
     expect(() => resolveCaptainSocketPath(true, undefined, "alpha-captain")).toThrow(/project name/);
+  });
+});
+
+describe("resolveCaptainSessionName (#708 self-describing captain names)", () => {
+  it("matches @squadrant/shared's captainSessionName exactly — the two formulas must never drift", () => {
+    expect(resolveCaptainSessionName("claude", "demo")).toBe(coreCaptainSessionName("demo"));
+  });
+
+  it("derives a distinct, project-tied name", () => {
+    expect(resolveCaptainSessionName("claude", "alpha")).toBe("squadrant-captain-alpha");
+    expect(resolveCaptainSessionName("claude", "beta")).toBe("squadrant-captain-beta");
+  });
+
+  it("returns undefined for a non-claude agent — `-n` is claude-only", () => {
+    expect(resolveCaptainSessionName("opencode", "alpha")).toBeUndefined();
+    expect(resolveCaptainSessionName("codex", "alpha")).toBeUndefined();
+  });
+
+  it("returns undefined (not throw) when no project name reached the call site — cosmetic, unlike the socket path", () => {
+    expect(resolveCaptainSessionName("claude", undefined)).toBeUndefined();
   });
 });
 

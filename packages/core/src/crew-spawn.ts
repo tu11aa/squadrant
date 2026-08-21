@@ -24,6 +24,7 @@ import {
   removeWorktree,
   worktreeDirtyFiles,
   TERMINAL_STATES,
+  crewSessionName,
 } from "@squadrant/shared";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -76,6 +77,7 @@ export interface ResolvedAgent {
     model?: string;
     port?: number;
     messagingSocketPath?: string;
+    sessionName?: string;
   }): string;
 }
 
@@ -391,6 +393,10 @@ export async function runCrewSpawn(
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
       permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
+      // #708: self-describing name so ListAgents/the registry can tell this
+      // crew apart from an unrelated session instead of an auto-derived cwd
+      // basename (only the claude driver reads this — other agents ignore it).
+      sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";

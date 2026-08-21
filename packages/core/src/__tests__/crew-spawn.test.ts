@@ -327,6 +327,17 @@ describe("runCrewSpawn", () => {
       );
     });
 
+    it("passes a project-and-crew-tied sessionName so the driver can emit `-n` (#708)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      await runCrewSpawn({ project: PROJECT, task: "t", name: "fix-706" }, config, deps);
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionName: "squadrant-crew-myproj-fix-706" }),
+      );
+    });
+
     it("uses worktree cwd by default (no --shared)", async () => {
       const config = makeConfig();
       const runtime = makeRuntime();
