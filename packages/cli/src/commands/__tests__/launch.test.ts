@@ -24,9 +24,10 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
+import { captainSocketPath as coreCaptainSocketPath } from "@squadrant/core";
 import {
   deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
-  captainSocketPath,
+  resolveCaptainSocketPath,
 } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
@@ -129,28 +130,43 @@ describe("ensureCmuxReady (#520 daemon headless launch)", () => {
   });
 });
 
-// #627 item B, review follow-up: the comment above the guard once claimed the
-// Anthropic-fallback refusal was captain-only, but isBlockedFallback takes no
-// role argument — it cannot special-case by role. Pin the scope decision
-// itself (not just the message text, which model-guard.test.ts already pins):
-// resolveAnthropicRefusal must refuse identically for every role, proving no
-// per-role branching sits between launchOne's `role` param and the guard.
 // #706: launch.ts interpolated the command-level `project` positional (only
 // ever set on the single-project path) into the captain socket path, instead
 // of launchOne's `projectName` param. On --all and interactive-parallel
 // launches `project` is undefined, so every captain collapsed onto
-// squadrant-captain-undefined.sock — first bind wins, the rest silently fail
-// to boot. Pin that the path is derived from the project name given, with a
-// distinct path per project.
-describe("captainSocketPath (#706 per-project socket path)", () => {
-  it("derives a distinct socket path per project name", () => {
-    expect(captainSocketPath("alpha")).toContain("squadrant-captain-alpha.sock");
-    expect(captainSocketPath("beta")).toContain("squadrant-captain-beta.sock");
-    expect(captainSocketPath("alpha")).not.toBe(captainSocketPath("beta"));
+// squadrant-captain-undefined.sock — first bind wins, the rest are refused by
+// Claude Code's live-socket guard and never start.
+//
+// resolveCaptainSocketPath is the pure decision function launch.ts calls at
+// the buildAgentCmd call site; it delegates to @squadrant/core's
+// captainSocketPath (imported here directly, not reimplemented) so the two
+// formulas can never drift apart. This does NOT exercise the call site's
+// wiring itself — see launch-captain-socket.test.ts for the regression test
+// that drives the real `--all` command action and would catch `${project}`
+// being reintroduced there.
+describe("resolveCaptainSocketPath (#706 per-project socket path)", () => {
+  it("matches @squadrant/core's captainSocketPath exactly — the two formulas must never drift", () => {
+    expect(resolveCaptainSocketPath(true, "demo", "demo-captain")).toBe(coreCaptainSocketPath("demo"));
   });
 
-  it("never renders 'undefined' in the socket filename", () => {
-    expect(captainSocketPath("myproj")).not.toContain("undefined");
+  it("derives a distinct socket path per project name", () => {
+    expect(resolveCaptainSocketPath(true, "alpha", "alpha-captain")).toContain("squadrant-captain-alpha.sock");
+    expect(resolveCaptainSocketPath(true, "beta", "beta-captain")).toContain("squadrant-captain-beta.sock");
+    expect(resolveCaptainSocketPath(true, "alpha", "alpha-captain"))
+      .not.toBe(resolveCaptainSocketPath(true, "beta", "beta-captain"));
+  });
+
+  it("returns undefined (no channel wiring) when the captain channel is disabled", () => {
+    expect(resolveCaptainSocketPath(false, "alpha", "alpha-captain")).toBeUndefined();
+    expect(resolveCaptainSocketPath(false, undefined, "alpha-captain")).toBeUndefined();
+  });
+
+  it("fails loudly instead of silently disabling the channel when no project name reached the call site", () => {
+    // This is the exact shape of the #706 bug: captainChannelEnabled=true but
+    // the project name never arrived (the undefined `project` positional).
+    // Silently falling back to `undefined` would hide the failure the same
+    // way the original bug did; it must throw instead.
+    expect(() => resolveCaptainSocketPath(true, undefined, "alpha-captain")).toThrow(/project name/);
   });
 });
 

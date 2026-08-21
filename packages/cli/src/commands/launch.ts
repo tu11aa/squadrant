@@ -19,7 +19,7 @@ import {
   RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
   isInsideCmux, cmuxLocal, classifyStartupSurface,
 } from "@squadrant/workspaces";
-import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR } from "@squadrant/core";
+import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR, captainSocketPath } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
 import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
@@ -48,10 +48,23 @@ export function shouldWireCaptainChannel(
 // #706: the socket path must be built from launchOne's `projectName` param,
 // not the command's `project` positional — `project` is undefined on the
 // --all and interactive-parallel paths, which collapsed every captain onto
-// the same /tmp/cc-socks/squadrant-captain-undefined.sock (first bind wins).
+// the same /tmp/cc-socks/squadrant-captain-undefined.sock (first bind wins,
+// the rest are refused by Claude Code's live-socket guard and never start).
+// Delegates to @squadrant/core's captainSocketPath — the two formulas must
+// stay byte-identical (see captain-channel.ts's header comment) — and fails
+// loudly if no project name reached this call at all, since core's name-safety
+// regex would otherwise happily accept the literal string "undefined".
 // Exported for testing (see launch.test.ts).
-export function captainSocketPath(projectName: string): string {
-  return path.join(CC_SOCKS_DIR, `squadrant-captain-${projectName}.sock`);
+export function resolveCaptainSocketPath(
+  captainChannelEnabled: boolean,
+  projectName: string | undefined,
+  workspaceName: string,
+): string | undefined {
+  if (!captainChannelEnabled) return undefined;
+  if (!projectName) {
+    throw new Error(`launch: captain channel requires a project name, but none was provided for workspace '${workspaceName}'`);
+  }
+  return captainSocketPath(projectName);
 }
 
 // #627 item B, review follow-up: the guard itself (isBlockedFallback) takes no
@@ -179,7 +192,7 @@ export const launchCommand = new Command("launch")
               fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
-              captainChannelEnabled && projectName ? captainSocketPath(projectName) : undefined);
+              resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName));
           },
           initialPrompt,
           runtime,
