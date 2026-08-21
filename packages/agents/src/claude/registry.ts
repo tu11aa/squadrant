@@ -115,6 +115,7 @@ export function toLifecycleSnapshot(
 export interface ClaudeStatusInfo {
   status: "idle" | "busy" | "shell" | "waiting" | undefined;
   statusUpdatedAt?: number;
+  sessionId?: string;
 }
 
 /** #667 slice 3: read status for a single task record. */
@@ -180,5 +181,5 @@ export function readClaudeStatusBySocketPath(socketPath: string): ClaudeStatusIn
   const entries = parseRegistryDir(files, (name) => fs.readFileSync(join(CLAUDE_SESSIONS_DIR, name), "utf8"));
   const entry = entries.find((e) => e.messagingSocketPath === socketPath);
   if (!entry) return undefined;
-  return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt };
+  return { status: entry.status, statusUpdatedAt: entry.statusUpdatedAt, sessionId: entry.sessionId };
 }
