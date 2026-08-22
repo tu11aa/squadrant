@@ -27,7 +27,7 @@ let shared: ClaudeReceiptListener | undefined;
  */
 export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   if (shared) return shared;
-  shared = new ClaudeReceiptListener({
+  const listener = new ClaudeReceiptListener({
     socketPath: `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`,
     createServer: (h) => createServer(h),
     // A UDS path is not cleaned up when a process is killed, so our own leftover
@@ -35,7 +35,12 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
     unlinkStale: (p) => { try { unlinkSync(p); } catch { /* absent is the normal case */ } },
     log: (m) => console.error(chalk.dim(m)),
   });
-  await shared.start();
+  // Cache only AFTER a successful bind (#712). Assigning `shared` before start()
+  // resolves meant a transient listen failure permanently poisoned the module-level
+  // singleton: every later call saw `shared` truthy and returned the never-started
+  // listener without retrying the bind at all.
+  await listener.start();
+  shared = listener;
   return shared;
 }
 
@@ -70,4 +75,42 @@ export async function buildCaptainChannel(): Promise<ClaudePeerChannel> {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     log: (m) => console.error(chalk.dim(m)),
   });
+}
+
+export interface CaptainChannelRetryOpts {
+  build?: () => Promise<ClaudePeerChannel>;
+  sleep?: (ms: number) => Promise<void>;
+  log?: (m: string) => void;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+/**
+ * #712: a bind failure at daemon boot (e.g. a transient `listen EACCES` on the
+ * shared socket directory) used to be logged once and never retried, latching
+ * the daemon into pane-only delivery for its entire process lifetime even
+ * though the very next attempt — a manual restart — bound fine.
+ *
+ * Retries with capped exponential backoff FOREVER rather than giving up after
+ * N tries: there is no safe bound to stop at, since giving up re-enters the
+ * exact permanent degradation this fix exists to remove.
+ */
+export async function buildCaptainChannelWithRetry(opts: CaptainChannelRetryOpts = {}): Promise<ClaudePeerChannel> {
+  const build = opts.build ?? buildCaptainChannel;
+  // unref: a pending backoff timer must not hold the daemon's event loop open on shutdown.
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); }));
+  const log = opts.log ?? ((m: string) => console.error(chalk.dim(m)));
+  const initialDelayMs = opts.initialDelayMs ?? 1_000;
+  const maxDelayMs = opts.maxDelayMs ?? 60_000;
+
+  let delay = initialDelayMs;
+  for (;;) {
+    try {
+      return await build();
+    } catch (e) {
+      log(`captain-channel init failed (retrying in ${delay}ms), pane delivery only for now: ${(e as Error).message}`);
+      await sleep(delay);
+      delay = Math.min(delay * 2, maxDelayMs);
+    }
+  }
 }
