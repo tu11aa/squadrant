@@ -97,7 +97,8 @@ export interface CaptainChannelRetryOpts {
  */
 export async function buildCaptainChannelWithRetry(opts: CaptainChannelRetryOpts = {}): Promise<ClaudePeerChannel> {
   const build = opts.build ?? buildCaptainChannel;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // unref: a pending backoff timer must not hold the daemon's event loop open on shutdown.
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); }));
   const log = opts.log ?? ((m: string) => console.error(chalk.dim(m)));
   const initialDelayMs = opts.initialDelayMs ?? 1_000;
   const maxDelayMs = opts.maxDelayMs ?? 60_000;

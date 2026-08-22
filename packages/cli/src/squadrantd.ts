@@ -260,7 +260,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       // setup) used to log once and latch the daemon into pane-only delivery
       // for its entire process lifetime. Retry with backoff instead of a
       // one-shot .catch — never take the daemon down with us either way.
-      void buildCaptainChannelWithRetry({ log }).then((ch) => { ctx.captainChannel = ch; });
+      void buildCaptainChannelWithRetry({ log })
+        .then((ch) => { ctx.captainChannel = ch; })
+        // The retry loop itself only stops by resolving; this only guards a
+        // throwing `log` from escaping as an unhandled rejection.
+        .catch((e) => log(`captain-channel: unexpected retry-loop error: ${(e as Error).message}`));
     }
   }
 
