@@ -28,7 +28,7 @@ import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
-import { buildCaptainChannel } from "./lib/captain-channel-factory.js";
+import { buildCaptainChannelWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 // Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
@@ -256,10 +256,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     // a leftover socket file made that bind throw, killing the daemon and the whole
     // control plane. An `off` feature must not touch the filesystem at all.
     if (ctx.captainChannelMode() !== "off") {
-      buildCaptainChannel()
-        .then((ch) => { ctx.captainChannel = ch; })
-        // Degrade to the pane path rather than take the daemon down with us.
-        .catch((e) => log(`captain-channel init failed, pane delivery only: ${(e as Error).message}`));
+      // #712: a transient bind failure (e.g. `listen EACCES` racing directory
+      // setup) used to log once and latch the daemon into pane-only delivery
+      // for its entire process lifetime. Retry with backoff instead of a
+      // one-shot .catch — never take the daemon down with us either way.
+      void buildCaptainChannelWithRetry({ log }).then((ch) => { ctx.captainChannel = ch; });
     }
   }
 
