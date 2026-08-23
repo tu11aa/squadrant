@@ -24,7 +24,7 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 | `@squadrant/web` | Observability dashboard (bundled HTML/JS) |
 | `@squadrant/cli` | Commands, bin entry, daemon host — root package |
 
-Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-squadrant-monorepo-architecture.html).
+Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-08-22-squadrant-architecture.html).
 
 ## Telegram (opt-in, #65)
 
@@ -44,6 +44,14 @@ squadrant owns and reconciles `~/.claude/settings.json` via `installClaudeHooks`
   ```
 
   Motivating example: Claude Code's AFK auto-continue mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves prompts after an idle timeout — the same risk class as auto-answering approval prompts while unattended (#484/#516). squadrant does **not** enable this by default for anyone; it's opt-in per machine only, via `claudeEnv`.
+
+## Captain/Control Channel (#667)
+
+Squadrant is replacing screen-scraped liveness/delivery inference with native agent control APIs as ground truth. Lives in `@squadrant/core` (`src/captain-channel.ts`, `src/control-channel.ts`, `src/lifecycle-source.ts`), fed by the 3 `LifecycleSource` implementations (`CmuxStore`, `NativeHook`, `CodexAppServer` — #333) that already replaced the old title-sweep liveness model.
+
+- **`controlChannel`** — per-agent-type setting (`off` / `shadow` / `on`). `claude` is cut over to `on`: delivery verdicts for crew turns come from an agent receipt, not pane-scraping. `opencode` remains the unproven branch — it still misfires and is left off/shadow. `off → shadow` needs a daemon bounce; `shadow → on` does not.
+- **`captainChannel`** — `on` makes crew wrapper/receipt text visible in captain panes (noisier, but delivery-verified); `shadow` keeps captain panes clean while still comparing against the old inference path for verification. Design doc: [`docs/specs/2026-08-13-agent-control-channel-design.md`](docs/specs/2026-08-13-agent-control-channel-design.md). Diagram: [`docs/diagrams/2026-08-13-agent-control-channel.html`](docs/diagrams/2026-08-13-agent-control-channel.html).
+- Scope is deliberately fixed to `claude` and `opencode` only — both expose a native control API that's been exercised live; `pi`/`gemini`/ACP agents don't fit this model and are out of scope (see the design doc's Appendix A).
 
 ## Coding Discipline: Karpathy Principles
 

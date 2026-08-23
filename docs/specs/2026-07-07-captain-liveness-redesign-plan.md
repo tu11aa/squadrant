@@ -1,5 +1,7 @@
 # Captain Liveness Redesign — Implementation Plan
 
+> **Status (2026-08-22):** Shipped in v0.15.0. Kept as the implementation record; see [`docs/specs/2026-07-07-captain-liveness-redesign.md`](2026-07-07-captain-liveness-redesign.md) for the design spec this plan implements.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the stale, restart-volatile, title-sweep captain liveness with a hybrid ground-truth model — cmux store (via a `liveness()` runtime seam) preferred when present, backed by a squadrant-owned persisted registry — so open/close detection, dashboards, and the Telegram probe are correct and survive daemon restarts.
