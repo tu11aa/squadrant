@@ -1,9 +1,67 @@
+import { execFileSync } from "node:child_process";
 import { resolveHome } from "@squadrant/shared";
 import type { RuntimeLivenessRecord, Role } from "@squadrant/shared";
+import { defaultIsPidAlive } from "@squadrant/core";
 
 interface RawSession {
   sessionId?: string; pid?: number | null; cwd?: string; isRestorable?: boolean;
   launchCommand?: { arguments?: string[]; workingDirectory?: string };
+}
+
+/** Dependencies for recovering role from the OS process table when the cmux
+ *  store's own launchCommand.arguments was truncated (#699). Both default to
+ *  real implementations; injected here so parseStoreRecords stays pure/testable. */
+export interface ArgvRecoveryDeps {
+  isPidAlive?: (pid: number) => boolean;
+  readArgv?: (pid: number) => string[] | undefined;
+}
+
+function defaultExecPs(pid: number): string {
+  return execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+}
+
+// #699 review: argv is immutable for the lifetime of a live process (set once
+// at execve), but a session whose real argv still doesn't classify (a
+// legitimate side.research.* session) stays role:"unknown" forever — without
+// caching, that re-shells out to `ps` on every liveness tick for as long as
+// the session exists. Cache SUCCESSFUL reads only (never `undefined`, so a
+// transient ps failure on a genuinely-alive pid is retried, not given up on
+// permanently); no eviction — pid reuse for an unrelated process while the
+// cached pid's own cmux session record still exists is not a case that
+// occurs in practice (a dead pid's session record is gone from the store
+// before that pid number could be recycled onto something else the store
+// would ask about).
+const argvCache = new Map<number, string[]>();
+
+/** @internal — reset only in tests; never call from production code */
+export function _resetArgvCacheForTest(): void {
+  argvCache.clear();
+}
+
+/**
+ * Read a live process's full argv via `ps` (#699: cmux's own store truncates
+ * launchCommand — e.g. argc=4 — while the OS process table always holds the
+ * complete command line). Returns undefined on any failure (pid gone, ps
+ * missing, permission denied, …) — never throws, so a liveness tick can
+ * always fall back to "stays unknown" instead of crashing. `execPs` is
+ * injected (defaulting to a real `ps` shell-out) purely so the caching layer
+ * is testable without mocking node:child_process.
+ */
+export function readArgvFromPid(pid: number, execPs: (pid: number) => string = defaultExecPs): string[] | undefined {
+  const cached = argvCache.get(pid);
+  if (cached) return cached;
+  try {
+    const out = execPs(pid).trim();
+    if (!out) return undefined;
+    const argv = out.split(/\s+/);
+    argvCache.set(pid, argv);
+    return argv;
+  } catch {
+    return undefined;
+  }
 }
 
 /** template basename → role (captain.claude.md → captain, crew.claude.md → crew, …). */
@@ -33,17 +91,30 @@ function projectFromCwd(cwd: string, projects: Record<string, { path: string }>)
 export function parseStoreRecords(
   fileContent: string,
   projects: Record<string, { path: string }>,
+  argvRecovery: ArgvRecoveryDeps = {},
 ): RuntimeLivenessRecord[] {
   let parsed: { sessions?: Record<string, RawSession> };
   try { parsed = JSON.parse(fileContent); }
   catch (e) { throw new Error(`parseStoreRecords: invalid JSON: ${(e as Error).message}`); }
+  const isPidAlive = argvRecovery.isPidAlive ?? defaultIsPidAlive;
+  const readArgv = argvRecovery.readArgv ?? readArgvFromPid;
   const out: RuntimeLivenessRecord[] = [];
   for (const s of Object.values(parsed.sessions ?? {})) {
     const cwd = s.cwd ?? s.launchCommand?.workingDirectory ?? "";
     const project = projectFromCwd(cwd, projects);
     if (!project || !s.sessionId) continue;
+    let role = roleFromTemplate(s.launchCommand?.arguments);
+    // #699: cmux's own store can truncate launchCommand.arguments (observed:
+    // argc=4, missing --append-system-prompt-file entirely). Ground truth is
+    // already on the machine — a live pid's real argv, via `ps` — so fall
+    // back to it only when the stored argv failed to classify AND the pid is
+    // confirmed alive (never invent a role for a dead/gone pid).
+    if (role === "unknown" && typeof s.pid === "number" && isPidAlive(s.pid)) {
+      const osArgv = readArgv(s.pid);
+      if (osArgv) role = roleFromTemplate(osArgv);
+    }
     out.push({
-      role: roleFromTemplate(s.launchCommand?.arguments),
+      role,
       project,
       pid: typeof s.pid === "number" ? s.pid : null,
       sessionId: s.sessionId,
@@ -65,12 +136,13 @@ export function readLivenessSnapshot(
   files: string[],
   readFile: (filename: string) => string,
   projects: Record<string, { path: string }>,
+  argvRecovery: ArgvRecoveryDeps = {},
 ): RuntimeLivenessRecord[] {
   const out: RuntimeLivenessRecord[] = [];
   let successes = 0;
   for (const f of files) {
     try {
-      out.push(...parseStoreRecords(readFile(f), projects));
+      out.push(...parseStoreRecords(readFile(f), projects, argvRecovery));
       successes++;
     } catch { /* this file unreadable/corrupt — other files may still be good */ }
   }

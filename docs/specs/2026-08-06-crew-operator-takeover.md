@@ -2,6 +2,8 @@
 
 **Issue:** #649 (P0) · **Date:** 2026-08-06 · **Status:** DRAFT — naming approved, spec pending operator review
 
+> **Status update (2026-08-22):** Shipped in v0.18.0 — `/takeover` and `/handback` skills are live (`plugin-crew/skills/takeover`), `squadrant crew takeover`/`squadrant crew handback` set/clear `operatorHold` on the crew task record. Kept below for the design rationale.
+
 Naming settled by the operator on 2026-08-06: **`takeover` / `handback`**.
 
 ---

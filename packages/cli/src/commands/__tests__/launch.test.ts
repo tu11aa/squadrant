@@ -24,7 +24,12 @@ vi.mock("@squadrant/shared", async () => {
 });
 
 import { cmuxLocal, classifyStartupSurface } from "@squadrant/workspaces";
-import { deliverStartupPrompt, ensureCmuxReady } from "../launch.js";
+import { captainSocketPath as coreCaptainSocketPath } from "@squadrant/core";
+import { captainSessionName as coreCaptainSessionName } from "@squadrant/shared";
+import {
+  deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
+  resolveCaptainSocketPath, resolveCaptainSessionName,
+} from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -55,6 +60,32 @@ describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   it("returns trimmed stdout for callers that need the output", () => {
     execFileMock.mockReturnValue("  workspace:7 squadrant-captain  \n");
     expect(cmuxLocal(["current-workspace"])).toBe("workspace:7 squadrant-captain");
+  });
+});
+
+// #697: launch.ts unconditionally passed --messaging-socket-path to every
+// claude captain, gated only on agentName==="claude" — not on
+// defaults.captainChannel. An off-by-default feature must not alter the
+// launch command or touch the filesystem (CC_SOCKS_DIR mkdirSync).
+describe("shouldWireCaptainChannel (#697 off-by-default gate)", () => {
+  it("is false when captainChannel is unset (default off)", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: {} })).toBe(false);
+  });
+
+  it("is false when captainChannel is explicitly 'off'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "off" } })).toBe(false);
+  });
+
+  it("is true when captainChannel is 'shadow'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "shadow" } })).toBe(true);
+  });
+
+  it("is true when captainChannel is 'on'", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: { captainChannel: "on" } })).toBe(true);
+  });
+
+  it("is false for non-claude agents even when captainChannel is on", () => {
+    expect(shouldWireCaptainChannel("codex", { defaults: { captainChannel: "on" } })).toBe(false);
   });
 });
 
@@ -97,6 +128,98 @@ describe("ensureCmuxReady (#520 daemon headless launch)", () => {
     expect(() => ensureCmuxReady(false)).not.toThrow();
     expect(execSyncMock).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+// #706: launch.ts interpolated the command-level `project` positional (only
+// ever set on the single-project path) into the captain socket path, instead
+// of launchOne's `projectName` param. On --all and interactive-parallel
+// launches `project` is undefined, so every captain collapsed onto
+// squadrant-captain-undefined.sock — first bind wins, the rest are refused by
+// Claude Code's live-socket guard and never start.
+//
+// resolveCaptainSocketPath is the pure decision function launch.ts calls at
+// the buildAgentCmd call site; it delegates to @squadrant/core's
+// captainSocketPath (imported here directly, not reimplemented) so the two
+// formulas can never drift apart. This does NOT exercise the call site's
+// wiring itself — see launch-captain-socket.test.ts for the regression test
+// that drives the real `--all` command action and would catch `${project}`
+// being reintroduced there.
+describe("resolveCaptainSocketPath (#706 per-project socket path)", () => {
+  it("matches @squadrant/core's captainSocketPath exactly — the two formulas must never drift", () => {
+    expect(resolveCaptainSocketPath(true, "demo", "demo-captain")).toBe(coreCaptainSocketPath("demo"));
+  });
+
+  it("derives a distinct socket path per project name", () => {
+    expect(resolveCaptainSocketPath(true, "alpha", "alpha-captain")).toContain("squadrant-captain-alpha.sock");
+    expect(resolveCaptainSocketPath(true, "beta", "beta-captain")).toContain("squadrant-captain-beta.sock");
+    expect(resolveCaptainSocketPath(true, "alpha", "alpha-captain"))
+      .not.toBe(resolveCaptainSocketPath(true, "beta", "beta-captain"));
+  });
+
+  it("returns undefined (no channel wiring) when the captain channel is disabled", () => {
+    expect(resolveCaptainSocketPath(false, "alpha", "alpha-captain")).toBeUndefined();
+    expect(resolveCaptainSocketPath(false, undefined, "alpha-captain")).toBeUndefined();
+  });
+
+  it("fails loudly instead of silently disabling the channel when no project name reached the call site", () => {
+    // This is the exact shape of the #706 bug: captainChannelEnabled=true but
+    // the project name never arrived (the undefined `project` positional).
+    // Silently falling back to `undefined` would hide the failure the same
+    // way the original bug did; it must throw instead.
+    expect(() => resolveCaptainSocketPath(true, undefined, "alpha-captain")).toThrow(/project name/);
+  });
+});
+
+describe("resolveCaptainSessionName (#708 self-describing captain names)", () => {
+  it("matches @squadrant/shared's captainSessionName exactly — the two formulas must never drift", () => {
+    expect(resolveCaptainSessionName("claude", "demo")).toBe(coreCaptainSessionName("demo"));
+  });
+
+  it("derives a distinct, project-tied name", () => {
+    expect(resolveCaptainSessionName("claude", "alpha")).toBe("squadrant-captain-alpha");
+    expect(resolveCaptainSessionName("claude", "beta")).toBe("squadrant-captain-beta");
+  });
+
+  it("returns undefined for a non-claude agent — `-n` is claude-only", () => {
+    expect(resolveCaptainSessionName("opencode", "alpha")).toBeUndefined();
+    expect(resolveCaptainSessionName("codex", "alpha")).toBeUndefined();
+  });
+
+  it("returns undefined (not throw) when no project name reached the call site — cosmetic, unlike the socket path", () => {
+    expect(resolveCaptainSessionName("claude", undefined)).toBeUndefined();
+  });
+});
+
+describe("resolveAnthropicRefusal (#627 role-scope, review follow-up)", () => {
+  it("refuses identically for captain, command, and side — no per-role branching", () => {
+    for (const role of ["captain", "command", "side"]) {
+      const refusal = resolveAnthropicRefusal(role, "myproj-captain", "opencode", "anthropic/claude-sonnet-4-5");
+      expect(refusal).not.toBeNull();
+      expect(refusal).toContain(`Refusing to launch ${role} 'myproj-captain'`);
+    }
+  });
+
+  it("returns null (no refusal) when the resolved model isn't Anthropic", () => {
+    expect(resolveAnthropicRefusal("captain", "myproj-captain", "opencode", "gpt-5")).toBeNull();
+  });
+
+  it("falls through to the opencode global config default when --model is omitted", () => {
+    const refusal = resolveAnthropicRefusal(
+      "captain",
+      "myproj-captain",
+      "opencode",
+      undefined,
+      () => "anthropic/claude-sonnet-4-5",
+    );
+    expect(refusal).toContain("opencode");
+    expect(refusal).toContain("anthropic/claude-sonnet-4-5");
+  });
+
+  it("never consults the opencode global config for non-opencode agents", () => {
+    const readOpencodeModel = vi.fn(() => "anthropic/claude-sonnet-4-5");
+    expect(resolveAnthropicRefusal("captain", "myproj-captain", "claude", undefined, readOpencodeModel)).toBeNull();
+    expect(readOpencodeModel).not.toHaveBeenCalled();
   });
 });
 

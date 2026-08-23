@@ -18,7 +18,8 @@ silently stuck. Every pause (question / permission / idle) and the finish must r
 - [ ] Daemon running — `squadrant` reports a live `squadrantd` (or it auto-starts on spawn)
 - [ ] Captain notifications are delivered daemon-direct (no relay tab required — daemon calls cmux directly since #332/PR#373)
 - [ ] Record `develop` HEAD so you can attribute any regression: `git rev-parse --short HEAD`
-- [ ] No stale crews: `squadrant crew list &lt;project&gt;` is clean
+- [ ] No stale crews: `squadrant crew list <project>` is clean
+- [ ] Re-run this entire suite whenever `claude` or `opencode` are upgraded locally — control channels are capability-probed, not version-locked.
 
 ---
 
@@ -197,3 +198,22 @@ This run corrected the checklist methodology after the captain identified that t
 - **CP4 (idle) = GAP (#210) for ALL agents.** The daemon correctly transitions `working → awaiting-input` via each agent's Type 1 mechanism (opencode SSE reliable, codex reliable, claude Stop hook flaky). But the captain receives **zero** idle/awaiting notification because the relay's `formatEntry` drops `task.turn.completed` / `task.idle` events before they reach the captain mailbox. This is a single infrastructure fix tracked as #210. Do NOT mark CP4 PASS until the relay delivers the idle ping.
 - **codex signal path verified intact.** PR #173's `--task-id` / `--project` injection in `developerInstructions` is working. The earlier apparent codex "failure" was a test error — a bare `squadrant crew signal done` (no `--task-id`) inside a codex crew, which correctly errors `SQUADRANT_CREW_TASK_ID unset`. The crew's self-signal via its own instructions works.
 - **Cross-reference issues:** #207 (relay as SPOF), #208 (captain polling defeats notification), #209 (cmux execFileSync hang), #210 (relay formatEntry drops idle events).
+
+## Agent upgrades (#667)
+
+Squadrant reads two agent-internal surfaces that are **not** promised-stable public
+contracts:
+
+- claude: `~/.claude/sessions/<pid>.json` (`status`, `waitingFor`, `statusUpdatedAt`)
+- opencode: the HTTP event bus and `/session/*` routes (mid-migration to `/api/session/*`)
+
+**Upgrading either agent requires re-running the live smoke in this checklist.**
+Probe for capability — does the file parse, does `connect()` succeed — and never
+compare version strings.
+- [ ] #667 claude delivery: with `defaults.controlChannel.claude = "on"`, `crew send` to a claude crew logs `accepted via claude-peer` and the crew's transcript shows the user turn
+- [ ] #667 claude delivery: a send to a killed claude crew logs `gone`, falls back to the pane exactly once, and does not retry
+- [ ] #667 claude delivery: an unconfirmed accept logs `(unconfirmed — no turn observed)` and does NOT double-send
+- [ ] #667 captain channel: with `defaults.captainChannel = "on"`, `squadrant ping <project> "x"` prints `✔ Delivered` and the captain's transcript shows the user turn
+- [ ] #667 captain channel: with `"shadow"`, the message arrives exactly ONCE and probe/disagreement is logged
+- [ ] #667 captain channel: a killed captain yields `⚠ not reachable` and exactly one mailbox fallback
+- [ ] #667 captain channel: a Telegram inbound that is held produces a `⏸ HELD` message to the phone

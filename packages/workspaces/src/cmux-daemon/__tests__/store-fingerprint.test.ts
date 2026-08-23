@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseStoreRecords, readLivenessSnapshot } from "../store-fingerprint.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import { parseStoreRecords, readLivenessSnapshot, readArgvFromPid, _resetArgvCacheForTest } from "../store-fingerprint.js";
 
 const projects = { squadrant: { path: "/Users/me/squadrant" } };
 
@@ -34,6 +34,110 @@ describe("parseStoreRecords", () => {
   });
   it("throws on invalid JSON (distinguishes 'unreadable' from 'valid + empty')", () => {
     expect(() => parseStoreRecords("{not json", projects)).toThrow();
+  });
+});
+
+describe("parseStoreRecords — #699 OS argv fallback for truncated cmux store argv", () => {
+  const truncatedCaptainFile = JSON.stringify({
+    sessions: {
+      a: {
+        sessionId: "a", pid: 12236, cwd: "/Users/me/squadrant", isRestorable: true,
+        // Truncated by cmux (argc=4): missing --append-system-prompt-file entirely.
+        launchCommand: { arguments: ["claude", "--permission-mode", "auto", "--messaging-socket-path"] },
+      },
+    },
+  });
+  const fullOsArgv = [
+    "claude", "--permission-mode", "auto", "--messaging-socket-path", "/tmp/x.sock",
+    "--append-system-prompt-file", "/x/templates/captain.claude.md",
+  ];
+
+  it("recovers role from OS argv when stored argv is truncated and pid is alive", () => {
+    const recs = parseStoreRecords(truncatedCaptainFile, projects, {
+      isPidAlive: () => true,
+      readArgv: () => fullOsArgv,
+    });
+    expect(recs[0].role).toBe("captain");
+  });
+
+  it("does not call readArgv when the pid is not alive (never invents a role for a dead pid)", () => {
+    const readArgv = () => { throw new Error("must not be called"); };
+    const recs = parseStoreRecords(truncatedCaptainFile, projects, {
+      isPidAlive: () => false,
+      readArgv,
+    });
+    expect(recs[0].role).toBe("unknown");
+  });
+
+  it("does not call readArgv for a session whose stored argv already classifies cleanly (no regression)", () => {
+    const calledPids: number[] = [];
+    const readArgv = (pid: number) => { calledPids.push(pid); return undefined; };
+    const recs = parseStoreRecords(file, projects, { isPidAlive: () => true, readArgv });
+    // session "a" (pid 41030) classifies as captain from stored argv alone — no OS lookup needed.
+    expect(calledPids).not.toContain(41030);
+    expect(recs.find((r) => r.role === "captain")?.pid).toBe(41030);
+  });
+
+  it("stays 'unknown' when the OS argv read also fails to classify (e.g. a genuine side-session)", () => {
+    const recs = parseStoreRecords(truncatedCaptainFile, projects, {
+      isPidAlive: () => true,
+      readArgv: () => ["claude", "--permission-mode", "auto"],
+    });
+    expect(recs[0].role).toBe("unknown");
+  });
+});
+
+describe("readLivenessSnapshot — threads the argv-fallback deps through to parseStoreRecords", () => {
+  it("passes isPidAlive/readArgv down so a truncated-argv captain is recovered", () => {
+    const truncated = JSON.stringify({
+      sessions: {
+        a: {
+          sessionId: "a", pid: 12236, cwd: "/Users/me/squadrant", isRestorable: true,
+          launchCommand: { arguments: ["claude", "--messaging-socket-path"] },
+        },
+      },
+    });
+    const recs = readLivenessSnapshot(["a-hook-sessions.json"], () => truncated, projects, {
+      isPidAlive: () => true,
+      readArgv: () => ["claude", "--append-system-prompt-file", "/x/templates/captain.claude.md"],
+    });
+    expect(recs[0].role).toBe("captain");
+  });
+});
+
+describe("readArgvFromPid — real OS process-table reader (#699)", () => {
+  it("returns undefined for a dead/nonexistent pid instead of throwing (ps failure handled gracefully)", () => {
+    expect(readArgvFromPid(999999)).toBeUndefined();
+  });
+});
+
+describe("readArgvFromPid — caches a successful read per pid (#699 review: avoid unbounded ps churn for legitimately-unknown-forever sessions)", () => {
+  beforeEach(() => { _resetArgvCacheForTest(); });
+
+  it("only shells out once for repeated reads of the same pid", () => {
+    let calls = 0;
+    const execPs = () => { calls++; return "claude --append-system-prompt-file /x/templates/captain.claude.md"; };
+    const first = readArgvFromPid(12236, execPs);
+    const second = readArgvFromPid(12236, execPs);
+    expect(calls).toBe(1);
+    expect(second).toEqual(first);
+  });
+
+  it("does not cache a failed read — ps is retried on the next call", () => {
+    let calls = 0;
+    const execPs = () => { calls++; throw new Error("ps: no such process"); };
+    readArgvFromPid(424242, execPs);
+    readArgvFromPid(424242, execPs);
+    expect(calls).toBe(2);
+  });
+
+  it("caches independently per pid", () => {
+    let calls = 0;
+    const execPs = (pid: number) => { calls++; return `claude --append-system-prompt-file /x/templates/pid-${pid}.claude.md`; };
+    readArgvFromPid(1, execPs);
+    readArgvFromPid(2, execPs);
+    readArgvFromPid(1, execPs);
+    expect(calls).toBe(2);
   });
 });
 

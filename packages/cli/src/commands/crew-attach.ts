@@ -6,9 +6,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { decodeFrames, type AttachFrame, type AttachInbound } from "@squadrant/core";
+import { DAEMON_SOCK_PATH } from "@squadrant/shared";
 
 function socketPath(): string {
-  return process.env.SQUADRANTD_SOCK ?? join(homedir(), ".config", "squadrant", "squadrant.sock");
+  return process.env.SQUADRANTD_SOCK ?? DAEMON_SOCK_PATH;
 }
 
 // --- Pure formatters (exported for tests) ---

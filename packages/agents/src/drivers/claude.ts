@@ -30,6 +30,10 @@ export function createClaudeDriver(): AgentDriver {
     buildCommand(opts: SpawnOptions): string {
       let cmd = "claude";
 
+      if (opts.sessionName) {
+        cmd += ` -n ${opts.sessionName}`;
+      }
+
       if (opts.model) {
         cmd += ` --model ${opts.model}`;
       }
@@ -46,6 +50,10 @@ export function createClaudeDriver(): AgentDriver {
 
       if (opts.settingsPath) {
         cmd += ` --settings ${opts.settingsPath}`;
+      }
+
+      if (opts.messagingSocketPath) {
+        cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
       }
 
       // Load squadrant plugin for skills. Crews get a subset plugin dir

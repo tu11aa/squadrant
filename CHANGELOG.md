@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-23
+
+### Added
+
+- **Agent Control Channel & Captain Channel (#667).** Replaces screen-scraped liveness and pane-typing delivery inference with native agent control channels and socket messaging.
+  - Implemented the `ControlChannel` port with a five-branch `DeliveryOutcome` (`delivered`, `held`, `denied`, `unreachable`, `accepted`), plus native `LifecycleSource` implementations (`ClaudePeerRegistrySource`, `OpencodeControlSource`).
+  - Added rollout configuration flags: `defaults.controlChannel` for crew delivery and `defaults.captainChannel` for captain delivery (`off` / `shadow` / `on`).
+  - **Claude Peer Channel (Slice 3):** Routes crew messaging over Claude's native `--messaging-socket-path` with NDJSON framing, T1-confirms-T0 delivery receipts, a background receipt listener for held/denied/delivered observability, and records `accepted-unconfirmed` status.
+  - **Captain Channel (Slice 4):** Routes captain-bound delivery through the peer control socket (`captainChannel`), bypassing pane-defer machinery (ghosts, modals, `no-box`). Added Telegram delivery receipts for held and unreachable captain deliveries, and `squadrant ping` now reports honest delivery outcomes.
+- **CLI Agent & Model Runtime Overrides (#627).** Added `--agent <name>` and `--model <name>` flags to `squadrant launch <project>` so operators can override configured captain agent and model defaults at runtime.
+- **Claude Instruction File Projection Target (#705).** Brought `CLAUDE.md` into the cross-agent projection system (`packages/shared/src/agents/projection.ts`), unifying instruction emission alongside Codex, Gemini, and opencode to eliminate instruction-file drift across formats.
+- **Captain Session Self-Description & Identity Wiring (#708, #709).**
+  - Passed Claude's `-n, --name` flag during launch and crew spawn so captains (`squadrant-captain-<project>`) and crews (`squadrant-crew-<project>-<name>`) are self-describing in session registries.
+  - Resolved captain `sessionId` from launch-time socket paths and wired it into captain-bound messages, restoring pid-reuse protection.
+- **Local Dev Daemon Opt-In (#694).** Added the `SQUADRANT_DEV_DAEMON` environment variable allowing developers to run a local daemon from a repo checkout while maintaining strict refusal for linked worktrees.
+
+### Fixed
+
+- **Captain channel init retry loop (#712).** Fixed an issue where transient socket bind errors (`EACCES`) at daemon boot permanently latched the daemon into pane-only fallback mode for its entire lifetime. It now retries initialization with capped exponential backoff, unrefs the timer, and catches retry errors cleanly.
+- **Captain socket collisions during batch launches (#706).** Fixed `launch.ts` using an undefined command-level positional argument instead of the target project name, which caused batch (`--all`) and parallel launches to collide on `/tmp/cc-socks/squadrant-captain-undefined.sock`.
+- **Receipt listener daemon crash on boot and CLI hang (#695, #696).**
+  - Handled UDS error events during listener startup, scoped receipt sockets by PID (`squadrantd-<pid>.sock`), and cleaned up stale socket files before binding to prevent crash-loops.
+  - Unref'd the receipt server and cleaned up socket files on exit so short-lived CLI commands (like `squadrant ping`) do not hang.
+- **Captain and crew resolution on symlinked paths (#689, #696).** Switched registry lookups from working directory paths (which broke on macOS symlinks like `/tmp` vs `/private/tmp`) to launch-time `messagingSocketPath`, preventing false `gone` or `accepted-unconfirmed` delivery verdicts.
+- **Captain re-adoption with truncated cmux argv (#699).** Fall back to reading live arguments from the OS process table (`ps`) when cmux truncates stored argv at `--messaging-socket-path`, and added `squadrant heal captain [project] --all` to reconcile degraded registry entries.
+- **Fast-turn confirmation race (#691).** Used `statusUpdatedAt` timestamps to reliably confirm turns on fast-responding agents.
+- **Control channel exception safety in crew send (#686).** Guarded control-channel exceptions in `runCrewSend` (both shadow and on modes) to ensure errors log cleanly and fall back safely to pane delivery without breaking the turn loop.
+- **Claude captain visibility in liveness registry (#697).** Gated launch `--messaging-socket-path` injection strictly on `captainChannel !== 'off'` and positioned it last in the command arguments to prevent cmux store truncation from breaking role classification.
+
+### Security
+
+- **Refuse silent Anthropic fallback (#627).** When an alternative agent (opencode/codex/gemini) is launched with no explicit model and defaults to an Anthropic model via global configuration, `squadrant launch` now refuses to boot rather than silently falling back to Anthropic.
+- **Hardened daemon worktree guard (#682).** Strengthened the daemon's refusal to bind production sockets from inside linked worktrees against caller context bypasses.
+- **Daemon socket process isolation (#687).** Derived the daemon socket path from `SQUADRANT_CONFIG`, enabling complete process isolation across test and dev environments.
+
+### Removed
+
+- **Complete removal of GitNexus integration (#703).** Removed all remaining references, skills, and configuration for GitNexus across the codebase, architecture documentation, and agent instruction files following its deprecation.
+
 ## [0.18.1] - 2026-08-13
 
 ### Security

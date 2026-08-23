@@ -11,6 +11,7 @@ import {
   mergeCrewPermissions,
   ensureGlobalOpencodeConfig,
   DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH,
+  readGlobalOpencodeModel,
 } from "../per-crew-settings.js";
 
 describe("writePerCrewSettings", () => {
@@ -435,5 +436,37 @@ describe("ensureGlobalOpencodeConfig — #141 provision-if-absent", () => {
     expect(DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH).toBe(
       path.join(os.homedir(), ".config", "opencode", "opencode.json"),
     );
+  });
+});
+
+describe("readGlobalOpencodeModel — #627 item B: see through an omitted --model", () => {
+  let tmp: string;
+  const configPath = () => path.join(tmp, "opencode.json");
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-read-opencode-model-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("returns the model field opencode itself would fall back to", () => {
+    fs.writeFileSync(configPath(), JSON.stringify({ model: "anthropic/claude-sonnet-4-5" }));
+    expect(readGlobalOpencodeModel(configPath())).toBe("anthropic/claude-sonnet-4-5");
+  });
+
+  it("returns undefined when the config file does not exist", () => {
+    expect(readGlobalOpencodeModel(configPath())).toBeUndefined();
+  });
+
+  it("returns undefined when the config has no model field", () => {
+    fs.writeFileSync(configPath(), JSON.stringify({ $schema: "https://opencode.ai/config.json" }));
+    expect(readGlobalOpencodeModel(configPath())).toBeUndefined();
+  });
+
+  it("returns undefined for invalid JSON instead of throwing", () => {
+    fs.writeFileSync(configPath(), "{ not valid json");
+    expect(readGlobalOpencodeModel(configPath())).toBeUndefined();
   });
 });

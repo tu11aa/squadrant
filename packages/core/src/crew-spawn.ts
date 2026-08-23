@@ -4,6 +4,9 @@
 // and core-internal modules. The algorithm is IDENTICAL to the prior crew.ts
 // implementation — zero behavior change.
 
+import { fallsBackToPane, describeOutcome } from "./control-channel.js";
+import type { ControlChannel, ControlChannelMode } from "./control-channel.js";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,8 +24,21 @@ import {
   removeWorktree,
   worktreeDirtyFiles,
   TERMINAL_STATES,
+  crewSessionName,
 } from "@squadrant/shared";
+import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+
+/**
+ * Where claude sessions' UDS inboxes live. Squadrant's own receipt listener MUST
+ * bind inside this same directory — the receiver refuses to send a receipt to a
+ * `from` address outside its own socket namespace (verified 2026-08-08).
+ *
+ * That makes this directory a trust boundary. Hardening its permissions is #675,
+ * which is live today and NOT addressed by this slice.
+ */
+export const CC_SOCKS_DIR = "/tmp/cc-socks";
+
 import {
   buildCompletionProtocol,
   shellQuote,
@@ -60,6 +76,8 @@ export interface ResolvedAgent {
     permissionMode?: string;
     model?: string;
     port?: number;
+    messagingSocketPath?: string;
+    sessionName?: string;
   }): string;
 }
 
@@ -113,6 +131,7 @@ export interface CrewSpawnDeps {
     name: string;
     budgetMs?: number;
     serverPort?: number;
+    messagingSocketPath?: string;
     approvalPolicy?: string;
     roleInstructions?: string;
   }): Promise<TaskRecord>;
@@ -130,6 +149,12 @@ export interface CrewSpawnDeps {
   sendCodexFirstTurn(taskId: string, task: string): Promise<void>;
   /** Optional: called after routing to log the selected route (e.g. chalk.dim(...)). */
   onRouted?(route: CrewRouteResult): void;
+  /** #627 item B: called once agent/model resolution is final for a non-claude
+   *  spawn, before the agent CLI command is built. Lets the CLI edge warn when
+   *  a fallback agent silently resolves to an Anthropic model — `model` is
+   *  undefined when nothing resolved one (e.g. opencode falling through to its
+   *  own global config default), not just when an explicit flag was anthropic. */
+  onModelResolved?(o: { agentName: string; model: string | undefined }): void;
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
@@ -320,6 +345,10 @@ export async function runCrewSpawn(
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
   const crewModel = input.model ?? route?.model ?? configModel;
 
+  if (agentName !== "claude") {
+    deps.onModelResolved?.({ agentName, model: crewModel });
+  }
+
   // Claude crews route through the control-plane daemon (PR #85) so the captain
   // learns terminal state via `squadrant crew status`. The cmux tab still does
   // the actual CLI launch — the daemon doesn't own Claude's PID. Hook bridge
@@ -327,6 +356,11 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
+    fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+    // Same directory as the crews' own sockets — receipts are only delivered
+    // within one socket namespace, so our listener must live there too.
+    const messagingSocketPath = path.join(CC_SOCKS_DIR, `squadrant-${randomUUID()}.sock`);
+
     const rec = await deps.dispatchCrew({
       provider: "claude",
       mode: "interactive",
@@ -334,6 +368,7 @@ export async function runCrewSpawn(
       cwd: spawnCwd,
       task: input.task,
       name,
+      messagingSocketPath,
     });
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
@@ -354,9 +389,14 @@ export async function runCrewSpawn(
       role: "crew",
       promptFile,
       interactive: true,
+      messagingSocketPath,
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
       permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
+      // #708: self-describing name so ListAgents/the registry can tell this
+      // crew apart from an unrelated session instead of an auto-derived cwd
+      // basename (only the claude driver reads this — other agents ignore it).
+      sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
@@ -500,6 +540,16 @@ export async function runCrewSend(
     // blockedByModal AFTER attempting delivery, which is too late here — the
     // emit block must never run for a message that never reached the crew.
     isBlockedByModal?: (pane: PaneRef) => Promise<boolean>;
+    /**
+     * #667: one channel per agent with a native control API. Selected by the
+     * crew's own provider — slice 2 shipped a single channel because opencode was
+     * the only implementation; slice 3 adds claude, so selection is explicit.
+     */
+    controlChannels?: ControlChannel[];
+    /** Per-agent rollout position. Absent ⇒ always "off". */
+    controlChannelMode?: (agent: string) => ControlChannelMode;
+    /** Where channel decisions and disagreements are recorded. */
+    onChannelLog?: (msg: string) => void;
   },
   opts?: { force?: boolean }
 ): Promise<void> {
@@ -552,20 +602,84 @@ export async function runCrewSend(
   }
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
+
+  // ── #667 slice 2: control channel ────────────────────────────────────────
+  // Three positions, resolved per send from the crew's own provider:
+  //   off     the block below is not entered at all
+  //   shadow  the pane still sends and still decides; the channel runs a
+  //           NON-MUTATING probe and any disagreement is logged. Deliberately
+  //           NOT a real channel send — that would deliver the message twice.
+  //   on      the channel leads; the pane becomes the fallback
+  const agent = task?.provider;
+  const channel = agent ? deps.controlChannels?.find((c) => c.agent === agent) : undefined;
+  // No channel for this provider (codex, gemini, …) ⇒ off, regardless of config.
+  // The flag cannot opt an agent in that has no implementation.
+  const mode: ControlChannelMode =
+    channel && agent && deps.controlChannelMode ? deps.controlChannelMode(agent) : "off";
+  const channelLog = deps.onChannelLog ?? (() => {});
+
+  if (mode === "on" && channel && task) {
+    let outcome;
+    try {
+      outcome = await channel.send(task.id, message);
+      channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
+    } catch (e) {
+      channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
+      outcome = { status: "gone" as const };
+    }
+    if (outcome.status === "held") {
+      // Never retried, never fallen back — the operator must act. Retrying a
+      // held message is how duplicates are manufactured.
+      throw new Error(
+        `Message to crew '${name}' is held: ${outcome.reason}. ` +
+          `Resolve it in the crew's session, then re-send.`,
+      );
+    }
+    if (!fallsBackToPane(outcome)) {
+      // accepted / queued: it reached the agent. Done — do NOT also use the pane.
+      return;
+    }
+    // gone / unsupported: fall back to the pane ONCE, already logged above.
+  }
+
+  if (mode === "shadow" && channel && task) {
+    // Probe FIRST so the comparison reflects the session's state at send time,
+    // and so a slow probe cannot delay a message that already went out.
+    let probe;
+    try {
+      probe = await channel.probe(task.id);
+    } catch (e) {
+      channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
+      probe = { status: "gone" as const };
+    }
+    const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, message);
+    const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
+    if (paneOk !== (probe.status === "reachable")) {
+      // The measurement this mode exists for: countable evidence for #514/#657.
+      channelLog(
+        `crew send ${name}: DISAGREEMENT — pane=${paneOk ? "delivered" : "not delivered"}, ` +
+          `channel=${channelWouldSay}`,
+      );
+    } else {
+      channelLog(`crew send ${name}: agree (pane=${paneOk}, channel=${channelWouldSay})`);
+    }
+    if (paneModal) throw new Error(blockedByModalMessage());
+    if (!paneOk) {
+      throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
+    }
+    return;
+  }
+
   const { delivered, blockedByModal } = await deliver(crew, message);
   // #516 backstop: covers the TOCTOU window between the precheck above and this
-  // delivery attempt, and callers that don't inject isBlockedByModal at all. By
-  // this point the emit block (if any) has already run — unavoidable without the
-  // precheck — but the send still fails loudly instead of reporting success.
+  // delivery attempt, and callers that don't inject isBlockedByModal at all.
   if (blockedByModal) {
     throw new Error(blockedByModalMessage());
   }
   if (!delivered) {
-    // #566: a follow-up send has no self-heal sweep behind it (unlike first-turn
-    // delivery, which the daemon retries via resendCrewFirstTurn) — a stderr-only
-    // warning here let the CLI's own catch block never fire, so it printed "✔ Sent"
-    // and exited 0 for a message that was never submitted. Throw so the caller
-    // fails loudly instead.
+    // #566: a follow-up send has no self-heal sweep behind it — a stderr-only
+    // warning let the CLI print "✔ Sent" and exit 0 for a message that was never
+    // submitted. Throw so the caller fails loudly instead.
     throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
 }

@@ -187,6 +187,213 @@ describe("runHealStatus — ground-truth daemon liveness (#671)", () => {
 
 // ── integration: runHealDaemon (mocked I/O) ───────────────────────────────────
 
+// ── heal captain (#699) ────────────────────────────────────────────────────
+
+import type { RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
+
+describe("resolveLiveCaptain", () => {
+  it("returns the live captain record for the given project", async () => {
+    const { resolveLiveCaptain } = await import("../heal.js");
+    const records: RuntimeLivenessRecord[] = [
+      { role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true },
+      { role: "captain", project: "helpa", pid: 999, sessionId: "s2", present: true },
+    ];
+    const resolved = resolveLiveCaptain(records, "squadrant", () => true);
+    expect(resolved).toEqual({ project: "squadrant", pid: 12236, sessionId: "s1" });
+  });
+
+  it("never invents an entry for a dead pid", async () => {
+    const { resolveLiveCaptain } = await import("../heal.js");
+    const records: RuntimeLivenessRecord[] = [
+      { role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true },
+    ];
+    const resolved = resolveLiveCaptain(records, "squadrant", () => false);
+    expect(resolved).toBeNull();
+  });
+
+  it("returns null when no record matches the project", async () => {
+    const { resolveLiveCaptain } = await import("../heal.js");
+    const resolved = resolveLiveCaptain([], "squadrant", () => true);
+    expect(resolved).toBeNull();
+  });
+
+  it("returns null when the only candidate has a null (hibernated) pid — heal captain only re-adopts a RUNNING captain", async () => {
+    const { resolveLiveCaptain } = await import("../heal.js");
+    const records: RuntimeLivenessRecord[] = [
+      { role: "captain", project: "squadrant", pid: null, sessionId: "s1", present: true },
+    ];
+    const resolved = resolveLiveCaptain(records, "squadrant", () => true);
+    expect(resolved).toBeNull();
+  });
+});
+
+describe("runHealCaptain (integration, mocked I/O)", () => {
+  function makeDeps(overrides: Partial<{
+    records: RuntimeLivenessRecord[];
+    entry: LivenessEntry | undefined;
+    isPidAlive: (pid: number) => boolean;
+    reloadEntry: (project: string) => LivenessEntry | undefined;
+  }> = {}) {
+    // Default reloadEntry simulates the no-race case: whatever applyEntry most
+    // recently wrote for a project is what a fresh disk read returns — i.e.
+    // the write survived the daemon restart cleanly.
+    const lastApplied = new Map<string, LivenessEntry>();
+    const applyEntry = vi.fn((e: LivenessEntry) => { lastApplied.set(e.project, e); });
+    const kickstartDaemon = vi.fn();
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    return {
+      applyEntry,
+      kickstartDaemon,
+      stdoutLines,
+      stderrLines,
+      opts: {
+        liveness: async () => overrides.records ?? [],
+        isPidAlive: overrides.isPidAlive ?? (() => true),
+        now: () => 1000,
+        getEntry: () => overrides.entry,
+        applyEntry,
+        kickstartDaemon,
+        reloadEntry: overrides.reloadEntry ?? ((project: string) => lastApplied.get(project)),
+        stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+        stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+      },
+    };
+  }
+
+  it("re-adopts a live captain: writes the corrected entry and kickstarts the daemon", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, applyEntry, kickstartDaemon, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "new-session", present: true }],
+      entry: { project: "squadrant", role: "captain", pid: 5057, sessionId: "stale-session", startedAt: 1, lastState: "end", lastSeenAt: 1, pidAlive: false, source: "runtime" },
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).toHaveBeenCalledWith(expect.objectContaining({
+      project: "squadrant", role: "captain", pid: 12236, sessionId: "new-session",
+      lastState: "start", pidAlive: true, source: "runtime",
+    }));
+    expect(kickstartDaemon).toHaveBeenCalledOnce();
+    expect(stdoutLines.join("")).toContain("squadrant");
+  });
+
+  it("is idempotent: a second run against an already-correct registry entry writes nothing and does not kickstart", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, applyEntry, kickstartDaemon } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true }],
+      entry: { project: "squadrant", role: "captain", pid: 12236, sessionId: "s1", startedAt: 500, lastState: "start", lastSeenAt: 500, pidAlive: true, source: "runtime" },
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).not.toHaveBeenCalled();
+    expect(kickstartDaemon).not.toHaveBeenCalled();
+  });
+
+  it("never invents an entry for a dead pid — skips the project, does not write or kickstart", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, applyEntry, kickstartDaemon, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true }],
+      isPidAlive: () => false,
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).not.toHaveBeenCalled();
+    expect(kickstartDaemon).not.toHaveBeenCalled();
+    expect(stdoutLines.join("")).toContain("no live captain");
+  });
+
+  it("handles a cmux store read failure gracefully — never throws, exits 1", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, stderrLines } = makeDeps();
+    opts.liveness = async () => { throw new Error("could not read cmux state dir"); };
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(1);
+    expect(stderrLines.join("")).toContain("could not read cmux state dir");
+  });
+
+  it("heals multiple projects with --all", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, applyEntry, kickstartDaemon } = makeDeps({
+      records: [
+        { role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true },
+        { role: "captain", project: "helpa", pid: 4242, sessionId: "s2", present: true },
+      ],
+    });
+    const code = await runHealCaptain(["squadrant", "helpa"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).toHaveBeenCalledTimes(2);
+    expect(kickstartDaemon).toHaveBeenCalledOnce();
+  });
+
+  // ── #699 review: verify-after-kickstart race (the running daemon persists
+  // its own in-memory map every tick and can clobber our write in the window
+  // before the kill from `kickstart -k` actually lands) ──────────────────────
+
+  it("detects a clobbered write after kickstart, retries once, and succeeds", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const staleEntry: LivenessEntry = {
+      project: "squadrant", role: "captain", pid: 5057, sessionId: "stale-session",
+      startedAt: 1, lastState: "end", lastSeenAt: 1, pidAlive: false, source: "runtime",
+    };
+    let reloadCalls = 0;
+    const { opts, applyEntry, kickstartDaemon, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "new-session", present: true }],
+      entry: staleEntry,
+      reloadEntry: () => {
+        reloadCalls++;
+        // First verify (right after the first kickstart) simulates the race:
+        // the still-dying old daemon's own periodic persist clobbered our write.
+        if (reloadCalls === 1) return staleEntry;
+        return { project: "squadrant", role: "captain", pid: 12236, sessionId: "new-session", startedAt: 1000, lastState: "start", lastSeenAt: 1000, pidAlive: true, source: "runtime" };
+      },
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(0);
+    expect(applyEntry).toHaveBeenCalledTimes(2); // initial write + one retry
+    expect(kickstartDaemon).toHaveBeenCalledTimes(2);
+    expect(stdoutLines.join("")).toContain("re-adopted");
+  });
+
+  it("reports failure honestly when the clobber survives the retry — never claims success for a change that didn't land", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const staleEntry: LivenessEntry = {
+      project: "squadrant", role: "captain", pid: 5057, sessionId: "stale-session",
+      startedAt: 1, lastState: "end", lastSeenAt: 1, pidAlive: false, source: "runtime",
+    };
+    const { opts, applyEntry, kickstartDaemon, stderrLines, stdoutLines } = makeDeps({
+      records: [{ role: "captain", project: "squadrant", pid: 12236, sessionId: "new-session", present: true }],
+      entry: staleEntry,
+      reloadEntry: () => staleEntry, // never lands, on either attempt
+    });
+    const code = await runHealCaptain(["squadrant"], opts);
+    expect(code).toBe(1);
+    expect(applyEntry).toHaveBeenCalledTimes(2); // initial + one retry, no more
+    expect(kickstartDaemon).toHaveBeenCalledTimes(2);
+    expect(stderrLines.join("")).toContain("squadrant");
+    expect(stdoutLines.join("")).not.toContain("re-adopted");
+  });
+
+  it("in a multi-project heal, reports each project's outcome independently (one lands, one doesn't)", async () => {
+    const { runHealCaptain } = await import("../heal.js");
+    const { opts, stdoutLines, stderrLines } = makeDeps({
+      records: [
+        { role: "captain", project: "squadrant", pid: 12236, sessionId: "s1", present: true },
+        { role: "captain", project: "helpa", pid: 4242, sessionId: "s2", present: true },
+      ],
+      reloadEntry: (project) => {
+        if (project === "squadrant") {
+          return { project, role: "captain", pid: 12236, sessionId: "s1", startedAt: 1000, lastState: "start", lastSeenAt: 1000, pidAlive: true, source: "runtime" };
+        }
+        return undefined; // helpa never lands, even after retry
+      },
+    });
+    const code = await runHealCaptain(["squadrant", "helpa"], opts);
+    expect(code).toBe(1);
+    expect(stdoutLines.join("")).toContain("squadrant");
+    expect(stderrLines.join("")).toContain("helpa");
+  });
+});
+
 describe("runHealDaemon (integration, mocked I/O)", () => {
   it("calls ensureDaemon and exits 0", async () => {
     const ensure = vi.fn();

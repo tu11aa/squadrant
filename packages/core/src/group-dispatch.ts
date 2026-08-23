@@ -6,11 +6,9 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, resolveHome, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, DAEMON_SOCK_PATH, type SquadrantConfig } from "@squadrant/shared";
 import { sendRequest } from "./protocol.js";
 import type { TaskRecord, Provider, Mode } from "@squadrant/shared";
-
-const DEFAULT_SOCK_PATH = join(homedir(), ".config", "squadrant", "squadrant.sock");
 
 // #288: cold captain boot takes 45-90s; 120s gives the full chain comfortable headroom.
 export const GROUP_DISPATCH_WARMUP_TIMEOUT_MS = 120_000;
@@ -29,7 +27,7 @@ export function resolveCurrentProject(config: SquadrantConfig): string | null {
 /** Check via the daemon health endpoint whether a project's captain is up. */
 export async function isCaptainAlive(
   project: string,
-  sockPath: string = DEFAULT_SOCK_PATH,
+  sockPath: string = DAEMON_SOCK_PATH,
 ): Promise<boolean> {
   try {
     const health = (await sendRequest(sockPath, { kind: "health", project }, 5000)) as Array<{
@@ -49,7 +47,7 @@ export async function isCaptainAlive(
  *  or the hard timeout expires. Returns true if warmup succeeded. */
 export async function waitForWarmup(
   project: string,
-  sockPath: string = DEFAULT_SOCK_PATH,
+  sockPath: string = DAEMON_SOCK_PATH,
   timeoutMs = GROUP_DISPATCH_WARMUP_TIMEOUT_MS,
   pollMs = GROUP_DISPATCH_WARMUP_POLL_MS,
 ): Promise<boolean> {
@@ -102,7 +100,7 @@ export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRe
     );
   }
 
-  const sockPath = opts.sockPath ?? DEFAULT_SOCK_PATH;
+  const sockPath = opts.sockPath ?? DAEMON_SOCK_PATH;
 
   // Ensure target captain is up. Same-group boots via the injected callback;
   // cross-group does not auto-boot — fail fast with a clear next step instead.

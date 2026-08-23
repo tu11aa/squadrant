@@ -1,7 +1,7 @@
 // src/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync, statSync, existsSync } from "node:fs";
@@ -21,19 +21,20 @@ export { defaultIsPidAlive } from "@squadrant/core";
 export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
-import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource } from "@squadrant/agents";
+import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
+         ClaudePeerRegistrySource, OpencodeControlSource } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
-import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
+import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
+import { buildCaptainChannelWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 // Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
 // Dist-relative + invariant to source moves (see learning #363). Run via
 // `process.execPath <CLI_BIN> ...argv` so we don't depend on PATH (launchd's is minimal).
 const CLI_BIN = join(dirname(SELF_PATH), "index.js");
-const DAEMON_SOCK = join(homedir(), ".config", "squadrant", "squadrant.sock");
 function readPkgVersion(): string {
   try {
     const pkgPath = join(dirname(SELF_PATH), "..", "package.json");
@@ -50,6 +51,7 @@ function buildTelegramBridge(
   cfg: TelegramConfig,
   stateRoot: string,
   log: (m: string) => void,
+  deliverInbound?: (project: string, text: string) => Promise<{ handled: boolean; outcome?: import("@squadrant/core").DeliveryOutcome }>,
 ): TelegramBridge | undefined {
   const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -60,7 +62,7 @@ function buildTelegramBridge(
   // Control surfaces (#402/#403). These act only when remoteControl is on AND the
   // sender is allowlisted (gated inside the bridge); passing them is always safe.
   const ensureCaptainAlive = createEnsureCaptainAlive({
-    isAlive: createIsCaptainAlive(DAEMON_SOCK),
+    isAlive: createIsCaptainAlive(DAEMON_SOCK_PATH),
     launch: createLaunch(CLI_BIN, log),
   });
   const runCommand = createRunCommand(CLI_BIN);
@@ -68,7 +70,7 @@ function buildTelegramBridge(
     client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
-    ensureCaptainAlive, runCommand, sendReply,
+    ensureCaptainAlive, runCommand, sendReply, deliverInbound,
   });
 }
 
@@ -90,6 +92,43 @@ function buildNotifyFault(log: (m: string) => void): (project: string, text: str
 }
 
 export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts = {}) {
+  // #670/#682: a checkout build must not silently become the shared production
+  // daemon. But a DELIBERATE local install is the long-standing dev topology here
+  // (symlinked global bin + launchd running the repo's dist/), so the refusal
+  // distinguishes three cases instead of blanket-refusing every checkout:
+  //
+  //   linked worktree        -> ALWAYS refuse. This is the 2026-08-18 incident: a
+  //                             crew's .worktrees/ build seized the plist and became
+  //                             the control plane for every project. No opt-out.
+  //   checkout, not opted in -> refuse, and say how to opt in.
+  //   checkout + opt-in      -> allow, loudly. The operator asked for it.
+  const isDefaultSocket = !opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH;
+  if (isDefaultSocket && isMonorepoCheckout(SELF_PATH)) {
+    if (isLinkedWorktree(SELF_PATH)) {
+      process.stderr.write(
+        `[squadrantd] refusing to start: '${SELF_PATH}' is a git WORKTREE build. A worktree must never ` +
+        "become the shared production daemon — this is exactly the #682 incident, where a crew's worktree " +
+        "took over the launchd plist for every project. There is no opt-out for worktrees; use a dedicated " +
+        "sockPath, or run the test suite (`pnpm test`).\n",
+      );
+      process.exit(1);
+    }
+    if (!process.env.SQUADRANT_DEV_DAEMON) {
+      process.stderr.write(
+        `[squadrantd] refusing to start: '${SELF_PATH}' is a monorepo checkout, not an installed copy, ` +
+        "so it will not silently become the shared production daemon (#670). If this IS your intended " +
+        "local dev install, set SQUADRANT_DEV_DAEMON=1 for the daemon process. Otherwise use a dedicated " +
+        "sockPath, or run the test suite (`pnpm test`).\n",
+      );
+      process.exit(1);
+    }
+    process.stderr.write(
+      `[squadrantd] WARNING: running the shared production daemon from a monorepo checkout ` +
+      `('${SELF_PATH}') because SQUADRANT_DEV_DAEMON=1. Unreviewed local code is now the control plane ` +
+      "for every registered project. Unset it and reinstall from npm to go back.\n",
+    );
+  }
+
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -130,6 +169,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     },
   });
 
+  // #667 slice 1: opencode lifecycle behind the LifecycleSource port. The bridge
+  // keeps emitting exactly what it emits today; this source observes the same
+  // stream in parallel so opencode signals finally reach reduceLifecycle and the
+  // health board. Behaviour-neutral by construction.
+  const opencodeControlSource = new OpencodeControlSource();
+
   const opencodeBridge = opts.opencodeBridge ?? new OpencodeSseBridge({
     emit: (ev) => {
       const found = store.listAll().find((r) => r.id === ev.id);
@@ -137,6 +182,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       void ctx.d.handle({ kind: "event", project: found.project, event: ev });
       if (ev.type === "task.approval.requested")
         ctx.schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
+      opencodeControlSource.observe(ev);
     },
     log,
   });
@@ -165,10 +211,18 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;
   ctx.cmuxEventsBridge = cmuxEventsBridge;
+
+  // #667 slice 1: claude's own session registry (~/.claude/sessions/<pid>.json).
+  // Polled, but origin:"agent" — see the note in registry.ts on why.
+  const claudePeerRegistrySource = new ClaudePeerRegistrySource({ log });
+
   // B4: register for per-source health aggregation in the snapshot. Registering
   // is inert (no I/O) — only start() below (VITEST-guarded) actually runs a
   // source, so health() correctly reports inactive until then.
-  ctx.lifecycleSources = [cmuxStoreSource, nativeHookSource, codexAppServerSource];
+  ctx.lifecycleSources = [
+    cmuxStoreSource, nativeHookSource, codexAppServerSource,
+    claudePeerRegistrySource, opencodeControlSource,
+  ];
 
   // ── Telegram bridge (opt-in #65) ──────────────────────────────────────────
   // Built only when config.telegram is present. Skipped under vitest because the
@@ -176,7 +230,13 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // tests inject opts.telegramBridge instead.
   const tgCfg = loadConfig().telegram;
   ctx.telegramBridge = opts.telegramBridge
-    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log) : undefined);
+    ?? (tgCfg && !process.env.VITEST ? buildTelegramBridge(tgCfg, stateRoot, log, (project, text) =>
+      import("@squadrant/core").then((core) => core.deliverToCaptain(project, text, {
+        channel: ctx.captainChannel,
+        mode: ctx.captainChannelMode?.() ?? "off",
+        log,
+      }))
+    ) : undefined);
 
   // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────
   // Skipped under vitest (would shell out to the real `squadrant` CLI); tests
@@ -187,6 +247,26 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   // ── daemonCmux resolution ─────────────────────────────────────────────────
   ctx.daemonCmux = opts.daemonCmux
     ?? (opts.makeDaemonCmux ?? (() => new DaemonCmux(createCmuxDriver())))();
+
+  // ── #667 slice 4: captain channel ─────────────────────────────────────────
+  if (!process.env.VITEST) {
+    ctx.captainChannelMode = () => loadConfig().defaults.captainChannel ?? "off";
+    // Build ONLY when the operator has opted in. This used to run unconditionally,
+    // so an off-by-default feature bound a socket at every boot — and on 2026-08-19
+    // a leftover socket file made that bind throw, killing the daemon and the whole
+    // control plane. An `off` feature must not touch the filesystem at all.
+    if (ctx.captainChannelMode() !== "off") {
+      // #712: a transient bind failure (e.g. `listen EACCES` racing directory
+      // setup) used to log once and latch the daemon into pane-only delivery
+      // for its entire process lifetime. Retry with backoff instead of a
+      // one-shot .catch — never take the daemon down with us either way.
+      void buildCaptainChannelWithRetry({ log })
+        .then((ch) => { ctx.captainChannel = ch; })
+        // The retry loop itself only stops by resolving; this only guards a
+        // throwing `log` from escaping as an unhandled rejection.
+        .catch((e) => log(`captain-channel: unexpected retry-loop error: ${(e as Error).message}`));
+    }
+  }
 
   // ── #466 self-heal: first-turn resend wiring ──────────────────────────────
   // Uses a fresh cmux RuntimeDriver (independent of daemonCmux's narrower
@@ -331,6 +411,32 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     };
     try { codexAppServerSource.start(codexSourceDeps); }
     catch (e) { log(`codex app-server source start failed: ${(e as Error).message}`); }
+
+    // #667 slice 1: start claude peer registry source
+    const claudeSourceDeps: LifecycleSourceDeps = {
+      resolve: (hint) => {
+        return store.listAll().find(
+          (r) => !TERMINAL_STATES.has(r.state) && (
+            (hint.taskId && r.id === hint.taskId) ||
+            (hint.sessionId && r.sessionId === hint.sessionId) ||
+            (hint.pid != null && r.pid === hint.pid)
+          )
+        );
+      },
+      report: () => {}, // read-only slice: caching is internal to the source
+      log,
+    };
+    try { claudePeerRegistrySource.start(claudeSourceDeps); }
+    catch (e) { log(`claude peer registry source start failed: ${(e as Error).message}`); }
+
+    // #667 slice 1: start opencode control source
+    const opencodeSourceDeps: LifecycleSourceDeps = {
+      resolve: () => undefined,
+      report: () => {}, // read-only slice: caching is internal to the source
+      log,
+    };
+    try { opencodeControlSource.start(opencodeSourceDeps); }
+    catch (e) { log(`opencode control source start failed: ${(e as Error).message}`); }
   }
 
   // Daemon-restart broadcast: notify every running captain that the daemon
@@ -362,6 +468,8 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     try { cmuxStoreSource.stop(); } catch { /* best-effort */ }
     try { nativeHookSource.stop(); } catch { /* best-effort */ }
     try { codexAppServerSource.stop(); } catch { /* best-effort */ }
+    try { claudePeerRegistrySource.stop(); } catch { /* best-effort */ }
+    try { opencodeControlSource.stop(); } catch { /* best-effort */ }
     return origStop(reason);
   };
 
@@ -389,7 +497,31 @@ function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: u
  * tree) is unambiguously distinguishable from an installed copy.
  */
 export function isMonorepoCheckout(scriptPath: string, dirExists: (p: string) => boolean = existsSync): boolean {
-  return dirExists(join(dirname(scriptPath), "..", "packages"));
+  return dirExists(join(dirname(resolve(scriptPath)), "..", "packages"));
+}
+
+/**
+ * Distinguish a LINKED git worktree from the operator's main checkout.
+ *
+ * Why this distinction has to exist: linking the main checkout as the global
+ * install and letting launchd run its dist/ was the STANDARD dev topology here
+ * for months (recorded 2026-06-18: "rebuilding repo dist updates BOTH CLI +
+ * daemon; only the daemon needs a restart"). #670's blanket checkout refusal
+ * outlawed that workflow as collateral — the incident it was reacting to was a
+ * crew's `.worktrees/…` build seizing the plist, not a deliberate local install.
+ *
+ * Structural signal, not a path convention: `git worktree add` writes `.git` as a
+ * FILE containing `gitdir: …`, whereas a clone's `.git` is a DIRECTORY. So this
+ * holds regardless of where the worktree lives or what it is named.
+ */
+export function isLinkedWorktree(
+  scriptPath: string,
+  statFile: (p: string) => { isFile: boolean } | undefined = (p) => {
+    try { return { isFile: statSync(p).isFile() }; } catch { return undefined; }
+  },
+): boolean {
+  const dotGit = join(dirname(resolve(scriptPath)), "..", ".git");
+  return statFile(dotGit)?.isFile === true;
 }
 
 // Executed by launchd (ProgramArguments → this file's compiled .js).
@@ -407,24 +539,12 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       process.stdout.write("squadrantd: launchd-managed daemon entry (no CLI args). Use `squadrant` for commands.\n");
       process.exit(0);
     }
-    // #670: refuse outright if this build is a monorepo/worktree checkout —
-    // regardless of whether anything else is currently live on the socket.
-    if (isMonorepoCheckout(process.argv[1])) {
-      process.stderr.write(
-        `[squadrantd] refusing to start: '${process.argv[1]}' is a monorepo/worktree checkout, not an ` +
-        "installed copy — it must never become the shared production daemon (#670). This entry takes " +
-        "no CLI flags/sockPath override; for local testing, import startSquadrantd({ sockPath, ... }) " +
-        "programmatically instead of running this entry directly, or run the test suite (`pnpm test`).\n",
-      );
-      process.exit(1);
-    }
     // #360 layer 2: refuse to start if a live daemon already owns the socket.
     // startServer does unlink-then-bind; without this guard a second invocation
     // unlinks the live socket, orphaning the running daemon on its now-anonymous
     // inode so every new connect() to the path is refused.
-    const sock = join(homedir(), ".config", "squadrant", "squadrant.sock");
-    if (await isDaemonSocketLive(sock)) {
-      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${sock}\n`);
+    if (await isDaemonSocketLive(DAEMON_SOCK_PATH)) {
+      process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${DAEMON_SOCK_PATH}\n`);
       process.exit(0);
     }
     const h = startSquadrantd({ sweepMs: 30000 });

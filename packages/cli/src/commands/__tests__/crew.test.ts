@@ -85,6 +85,30 @@ vi.mock("@squadrant/agents", () => ({
   createCodexDriver: () => ({ ...claudeDriver, name: "codex", templateSuffix: "generic" }),
   createGeminiDriver: () => ({ ...claudeDriver, name: "gemini", templateSuffix: "generic" }),
   createOpencodeDriver: () => ({ ...claudeDriver, name: "opencode", templateSuffix: "opencode" }),
+  OpencodeHttpChannel: class {
+    constructor() {}
+    send = vi.fn();
+    probe = vi.fn();
+    name = "opencode-http";
+    agent = "opencode";
+  },
+  ClaudeReceiptListener: class {
+    constructor() {}
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+    waitFor = vi.fn();
+    onLate = vi.fn();
+    address = "uds:/test.sock";
+  },
+  ClaudePeerChannel: class {
+    constructor() {}
+    send = vi.fn();
+    probe = vi.fn();
+    name = "claude-peer";
+    agent = "claude";
+  },
+  readClaudeStatus: vi.fn(),
+  writeLine: vi.fn(),
   CapabilityRegistry: class {
     constructor(private drivers: Record<string, unknown>) {}
     get(name: string) { return this.drivers[name]; }
@@ -103,10 +127,12 @@ vi.mock("../crew-control.js", () => ({
 const writePerCrewSettings = vi.hoisted(() => vi.fn());
 const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
 const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
+const readGlobalOpencodeModel = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
+  readGlobalOpencodeModel,
 }));
 
 

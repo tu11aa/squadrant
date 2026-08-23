@@ -14,6 +14,7 @@ import {
   createCodexEmitter,
   createGeminiEmitter,
   createOpencodeEmitter,
+  createClaudeEmitter,
   ProjectionRegistry,
 } from "@squadrant/agents";
 
@@ -259,6 +260,7 @@ export const doctorCommand = new Command("doctor")
       codex: createCodexEmitter,
       gemini: createGeminiEmitter,
       opencode: createOpencodeEmitter,
+      claude: createClaudeEmitter,
     });
     for (const name of projectionRegistry.list()) {
       const emitter = projectionRegistry.get(name);

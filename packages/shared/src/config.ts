@@ -71,6 +71,33 @@ export interface RoleAssignment {
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;
 
+export type ControlChannelConfig = Partial<Record<string, ControlChannelMode>>;
+
+const CONTROL_CHANNEL_MODES: ReadonlySet<string> = new Set(["off", "shadow", "on"]);
+
+/** Resolve one agent's rollout position. Unset, unknown agent, or an invalid
+ * value all mean "off" — a config typo must never silently take the delivery
+ * path with it.
+ */
+export function resolveControlChannelMode(
+  cfg: ControlChannelConfig | undefined,
+  agent: string,
+): ControlChannelMode {
+  const v = cfg?.[agent];
+  return v && CONTROL_CHANNEL_MODES.has(v) ? v : "off";
+}
+
+/** Resolve captain-delivery rollout. Unset or invalid ⇒ "off". */
+export function resolveCaptainChannelMode(
+  defaults: { captainChannel?: string } | undefined,
+): ControlChannelMode {
+  const v = defaults?.captainChannel;
+  return v && CONTROL_CHANNEL_MODES.has(v) ? (v as ControlChannelMode) : "off";
+}
+
+/** #667 per-agent control-channel rollout position. Unset ⇒ "off". */
+export type ControlChannelMode = "off" | "shadow" | "on";
+
 export interface SquadrantConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _squadrantVersion?: string;
@@ -132,6 +159,19 @@ export interface SquadrantConfig {
      *  installClaudeHooks, non-clobbering (a key the user already set is never overwritten).
      *  Absent ⇒ nothing written. e.g. { CLAUDE_AFK_TIMEOUT_MS: "240000" } for Claude's AFK mode. */
     claudeEnv?: Record<string, string>;
+    /** #667 slice 4 captain-delivery rollout position. Unset ⇒ "off".
+     *  Deliberately SEPARATE from `controlChannel` (which is per-agent, for
+     *  crews): a captain merges PRs and spawns crews, so an operator may want
+     *  crew delivery on while captain delivery is still off. */
+    captainChannel?: ControlChannelMode;
+    /** #667 per-agent control-channel rollout. Absent ⇒ every agent "off".
+     *  Read per send, so flipping a position needs no daemon restart.
+     *    off     unchanged behaviour — the channel code path is not entered
+     *    shadow  pane still sends and still decides; the channel runs a
+     *            NON-MUTATING probe and squadrant logs any disagreement
+     *    on      channel leads; the pane becomes the fallback
+     *  Per-project override via projects/<name>.json (existing deep merge). */
+    controlChannel?: ControlChannelConfig;
   };
   metrics: {
     enabled: boolean;
@@ -141,6 +181,7 @@ export interface SquadrantConfig {
 
 export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.homedir(), ".config", "squadrant", "config.json");
 export const CONFIG_DIR = path.dirname(DEFAULT_CONFIG_PATH);
+export const DAEMON_SOCK_PATH = path.join(CONFIG_DIR, "squadrant.sock");
 
 export function getDefaultConfig(): SquadrantConfig {
   return {

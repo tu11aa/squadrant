@@ -1,49 +1,4 @@
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **squadrant** (5174 symbols, 7796 relationships, 174 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
-
-> **Known-broken gate (#638/#642):** `gitnexus_impact` has confirmed false negatives — it reports 0 callers / LOW risk for symbols that demonstrably have callers. A replacement is being evaluated in #642; until that lands, treat the guidance below as advisory, not a hard mandate.
-
-## Always Do
-
-- Before modifying a function, class, or method, running `gitnexus_impact({target: "symbolName", direction: "upstream"})` is good practice and can surface real risk. Report the blast radius (direct callers, affected processes, risk level) to the user when you do.
-- A **LOW or 0-caller result carries no information** — it does not mean the change is safe. Cross-check with `grep`/an editor's find-references and a typecheck before editing, regardless of what `gitnexus_impact` reported.
-- **A HIGH or CRITICAL result is still meaningful — warn the user** and treat it as a real signal before proceeding with edits.
-- Run `gitnexus_detect_changes()` before committing as one useful check among others, not as the sole gate.
-- When exploring unfamiliar code, `gitnexus_query({query: "concept"})` can find execution flows faster than grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER treat a LOW-risk or 0-caller `gitnexus_impact` result as proof a change is safe — it is a known false negative (#638), not an all-clear.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis — those remain meaningful.
-- Prefer `gitnexus_rename` over find-and-replace for renames, but verify its result the same way — with grep and a typecheck — since it shares the same underlying gap.
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/squadrant/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/squadrant/clusters` | All functional areas |
-| `gitnexus://repo/squadrant/processes` | All execution flows |
-| `gitnexus://repo/squadrant/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
-
+<!-- squadrant:start -->
 ## Project Direction: Multi-Agent
 
 Squadrant is a **multi-agent orchestration layer**, not a Claude-Code-only tool. Claude Code is the reference implementation today; Codex, Cursor, and Gemini CLI are supported (or in progress) through the runtime driver abstraction and the upcoming cross-agent projection layer (issue #31).
@@ -69,7 +24,34 @@ Six packages in a one-way DAG: `shared ◄ core ◄ {agents, workspaces, web} �
 | `@squadrant/web` | Observability dashboard (bundled HTML/JS) |
 | `@squadrant/cli` | Commands, bin entry, daemon host — root package |
 
-Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-06-18-squadrant-monorepo-architecture.html).
+Build outputs: `dist/index.js` (CLI bin) · `dist/squadrantd.js` (daemon). See [architecture diagram](docs/diagrams/2026-08-22-squadrant-architecture.html).
+
+## Telegram (opt-in, #65)
+
+Two-way Telegram lives in `@squadrant/core` (`src/telegram/*`: `client`/`format`/`state`/`bridge`/`setup`) and is wired into the daemon by the CLI host (`squadrantd.ts`) — a daemon-internal `TelegramBridge`, **not** a separate process. Outbound crew lifecycle events push to a per-project forum topic; inbound replies become a `captain.message` mailbox entry delivered to the captain pane. It is constructed only when `config.telegram` is present (zero behavior change otherwise) and uses plain `fetch` — no runtime SDK (`@grammyjs/types` is a dev-only type dep). Set up via `squadrant telegram setup` (interactive wizard) then `squadrant telegram link <project>` / `squadrant telegram status`; full guide + config block in [docs/reference.md](docs/reference.md#telegram-two-way-opt-in).
+
+**⚠️ Security gap (v1):** chat membership implies captain control — anyone who can post in the linked supergroup can steer the captain. Inbound is filtered only by a `chat_id` allowlist; a per-user-id allowlist is deferred to [#321](https://github.com/tu11aa/squadrant/issues/321). Inbound text is always data (a captain message), never an executed command.
+
+## Managed `~/.claude/settings.json` (#615)
+
+squadrant owns and reconciles `~/.claude/settings.json` via `installClaudeHooks` (`packages/workspaces/src/native-hooks/native-hook-source.ts`), called by `NativeHookSource.install()` on every daemon boot. It is idempotent and non-clobbering — unrelated top-level fields and non-squadrant hook entries (yours, cmux's, etc.) are always preserved.
+
+- **Hooks — always verified + repaired, unconditional.** The full squadrant-owned hook set (`SessionStart` / `UserPromptSubmit` / `PreToolUse` incl. the `AskUserQuestion` tool matcher / `Stop` / `Notification` / `SessionEnd`) is checked on every run. A missing hook is repaired and a one-line warning is logged. The `AskUserQuestion` → `squadrant hooks claude ask-question` mapping is what makes crew-blocked signalling work (#560); a machine that never had it — or had it clobbered — used to lose blocked-signalling silently. It no longer does.
+- **`env` overlay — opt-in only, `defaults.claudeEnv`.** Set `defaults.claudeEnv` in `~/.config/squadrant/config.json` to deep-merge extra keys into settings.json's `env` block. Absent ⇒ nothing is written to `env`. The merge is non-clobbering: a key already present with a different value is never overwritten, just logged.
+
+  ```json
+  { "defaults": { "claudeEnv": { "CLAUDE_AFK_TIMEOUT_MS": "240000", "CLAUDE_AFK_COUNTDOWN_MS": "30000" } } }
+  ```
+
+  Motivating example: Claude Code's AFK auto-continue mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves prompts after an idle timeout — the same risk class as auto-answering approval prompts while unattended (#484/#516). squadrant does **not** enable this by default for anyone; it's opt-in per machine only, via `claudeEnv`.
+
+## Captain/Control Channel (#667)
+
+Squadrant is replacing screen-scraped liveness/delivery inference with native agent control APIs as ground truth. Lives in `@squadrant/core` (`src/captain-channel.ts`, `src/control-channel.ts`, `src/lifecycle-source.ts`), fed by the 3 `LifecycleSource` implementations (`CmuxStore`, `NativeHook`, `CodexAppServer` — #333) that already replaced the old title-sweep liveness model.
+
+- **`controlChannel`** — per-agent-type setting (`off` / `shadow` / `on`). `claude` is cut over to `on`: delivery verdicts for crew turns come from an agent receipt, not pane-scraping. `opencode` remains the unproven branch — it still misfires and is left off/shadow. `off → shadow` needs a daemon bounce; `shadow → on` does not.
+- **`captainChannel`** — `on` routes captain-bound delivery over the native peer socket, bypassing the pane-defer machine entirely. `shadow` probes but never sends: it logs and discards the probe result, provides no liveness of its own, and falls back to pane delivery — which re-enters draft/ghost/modal/`no-box` deferral. Prefer `on`; `shadow` is a verification aid, not a safe fallback. (Crew wrapper/receipt text visible in `on` mode is a sender-identity artifact tracked separately in #711, not an inherent property of the channel.) Design doc: [`docs/specs/2026-08-13-agent-control-channel-design.md`](docs/specs/2026-08-13-agent-control-channel-design.md). Diagram: [`docs/diagrams/2026-08-13-agent-control-channel.html`](docs/diagrams/2026-08-13-agent-control-channel.html).
+- Scope is deliberately fixed to `claude` and `opencode` only — both expose a native control API that's been exercised live; `pi`/`gemini`/ACP agents don't fit this model and are out of scope (see the design doc's Appendix A).
 
 ## Coding Discipline: Karpathy Principles
 
@@ -80,4 +62,27 @@ Every coding task in this repo (captain, crew, and direct edits) follows [`plugi
 3. **Surgical changes** — every changed line traces to the request; no drive-by refactors
 4. **Goal-driven execution** — define verifiable success criteria before implementing
 
-These complement (do not replace) `superpowers:test-driven-development`.
+## Reporting squadrant bugs
+
+**Captain** (interactive — can search, decide, and file): If you or a crew hit an error or behavior that looks like a defect in *squadrant itself* — a `squadrant`/`squadrantd` command throwing a stack trace through `dist/`/`packages/`, a daemon/socket crash (`ECONNREFUSED`/`EADDRINUSE`), an `ENOENT` or wrong path in a path squadrant computed, a state-machine invariant throw, or a lifecycle signal that should have fired and didn't — and it is **not** one of the noise cases below, then search `tu11aa/squadrant`:
+
+```
+gh issue search --repo tu11aa/squadrant --state all "<short signature>"
+```
+
+- **Already fixed** in a release newer than the running version? → tell the user to update (`npm i -g squadrant@latest`); don't file.
+- **Open duplicate?** → don't file; optionally mention "+1, already tracked as #NNN."
+- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`).
+- If the fix looks small, offer to draft a **PR** instead of / in addition to the issue (see `CONTRIBUTING.md`).
+
+**Never file** (noise — the failures you hit most are not squadrant defects):
+- transient model-infra: `API Error: 529`, `Overloaded`, `429`, `retrying 7/10`, `retries exhausted`
+- network: DNS/timeout/TLS to the model API
+- user/config error: bad project name, a token the user must set, not-a-git-repo
+- expected failure: a red TDD test, a lint/type error in the crew's *target* repo
+- known flakiness: the relay-proxy tests (baseline = 3 fails)
+
+When any signal is ambiguous, **don't file** — silence beats spam. Cap: at most one new issue per session by judgment; recurring known bugs get a mention, not a re-file.
+
+**Crew** (headless — can't prompt the user, so it routes up): If a task failed because of a defect in *squadrant itself* (not infra/config/an expected failure), say so in your `signal blocked`/`done` message so the captain can check the repo and file it. **Don't file from the crew.**
+<!-- squadrant:end -->

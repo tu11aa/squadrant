@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Control Channel — #667 · squadrant</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#161d2b; --line:#222c3d;
+    --fg:#e6edf7; --dim:#8b9bb4; --dimmer:#5d6b83;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --acc2:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:48px 24px 96px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:20px;margin:52px 0 6px;letter-spacing:-.01em;
+     padding-left:12px;border-left:3px solid var(--acc)}
+  h3{font-size:15px;margin:26px 0 10px;color:var(--dim);
+     text-transform:uppercase;letter-spacing:.09em}
+  .sub{color:var(--dim);margin:0 0 4px}
+  .meta{color:var(--dimmer);font-size:13px;font-family:var(--mono);margin-bottom:36px}
+  p{margin:12px 0}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:var(--acc2)}
+  .card{background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:860px){.g2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;
+    text-transform:uppercase;letter-spacing:.07em}
+  tr:last-child td{border-bottom:none}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  .acc{color:var(--acc)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;
+    padding:2px 8px;border-radius:999px;border:1px solid var(--line);
+    color:var(--dim);background:var(--panel2)}
+  .tag.v{border-color:#1c4a2a;background:#0f2417;color:var(--ok)}
+  .tag.s{border-color:#4a3a12;background:#241d0f;color:var(--warn)}
+  pre{background:#080b11;border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;overflow-x:auto;font-family:var(--mono);
+    font-size:12.5px;line-height:1.6;margin:14px 0}
+  .c1{color:var(--dimmer)} .c2{color:var(--acc)} .c3{color:var(--ok)}
+  .c4{color:var(--acc2)} .c5{color:var(--warn)} .c6{color:var(--bad)}
+  .lead{font-size:16px;color:var(--dim);margin:8px 0 0}
+  .note{border-left:3px solid var(--warn);background:#1a1608;
+    padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0}
+  .note.b{border-color:var(--bad);background:#1c0f0e}
+  .note.g{border-color:var(--ok);background:#0c1a10}
+  .note strong{color:var(--fg)}
+  .flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;margin:18px 0}
+  .node{flex:1;min-width:150px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:14px}
+  .node .t{font-family:var(--mono);font-size:12px;color:var(--acc);
+    margin-bottom:6px}
+  .node .d{font-size:13px;color:var(--dim);line-height:1.45}
+  .arrow{display:flex;align-items:center;color:var(--dimmer);font-size:20px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;
+    padding:3px 10px;border-radius:6px;margin:3px 4px 3px 0}
+  .p-ok{background:#0f2417;color:var(--ok);border:1px solid #1c4a2a}
+  .p-warn{background:#241d0f;color:var(--warn);border:1px solid #4a3a12}
+  .p-bad{background:#1c0f0e;color:var(--bad);border:1px solid #4a1c1a}
+  .p-dim{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);
+    color:var(--dimmer);font-size:13px}
+  .foot a{color:var(--acc);text-decoration:none}
+  .big{font-size:26px;font-family:var(--mono);font-weight:600}
+  .kv{display:flex;gap:12px;align-items:baseline;margin:6px 0}
+  .kv .k{font-family:var(--mono);font-size:12px;color:var(--dimmer);
+    min-width:118px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Agent Control Channel</h1>
+  <p class="sub">Stop reading terminal pixels. Ask the agent.</p>
+  <p class="meta">issue #667 · 2026-08-13 · scope: claude + opencode · status: DRAFT</p>
+
+  <div class="note b">
+    <strong>Five false signals in one captain session — 2026-08-13.</strong>
+    Not history. The day this was written.
+  </div>
+
+  <table>
+    <tr><th>Signal</th><th>Claimed</th><th>Ground truth</th><th></th></tr>
+    <tr><td><code>crew send</code></td><td>"not delivered"</td>
+        <td class="ok">delivered — visible with a <code>QUEUED</code> marker</td>
+        <td><span class="tag">#657 open</span></td></tr>
+    <tr><td><code>CREW IDLE</code></td><td>turn ended</td>
+        <td class="ok">mid-tool-call, running <code>git add</code></td>
+        <td><span class="tag">#492 class</span></td></tr>
+    <tr><td><code>CREW STALLED</code></td><td>"running Bash ~10min"</td>
+        <td class="bad">no such process existed</td>
+        <td><span class="tag">unfiled</span></td></tr>
+    <tr><td><code>heal status</code></td><td>"✔ all healthy"</td>
+        <td class="bad">daemon booted out, zero processes</td>
+        <td><span class="tag">#671 fixed</span></td></tr>
+    <tr><td>local test run</td><td>green</td>
+        <td class="warn">green only because that machine had a live daemon</td>
+        <td><span class="tag">author error</span></td></tr>
+  </table>
+
+  <p>Three of the five are screen-scraping or heartbeat inference. Inference is
+  wrong sometimes — and wrong <em>silently</em>, which is worse: the answer looks
+  identical to a true one.</p>
+
+  <h2>What changed</h2>
+  <p class="lead">#667 was filed as <em>"Claude shipped cross-session messaging — but it's
+  Claude-only."</em> That premise is now wrong, in the operator's favour.</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>claude 2.1.226 — UDS</h3>
+      <div class="kv"><span class="k">transport</span><span>one NDJSON line into <code>/tmp/cc-socks/&lt;pid&gt;.sock</code></span></div>
+      <div class="kv"><span class="k">send ACK</span><span class="bad">none — accept path is silent</span></div>
+      <div class="kv"><span class="k">liveness</span><span class="ok"><code>idle｜busy｜shell｜waiting</code></span></div>
+      <div class="kv"><span class="k">approvals</span><span class="warn">visible, not answerable</span></div>
+      <p><span class="tag v">verified on the wire 2026-08-08</span></p>
+    </div>
+    <div class="card">
+      <h3>opencode 1.18.18 — HTTP</h3>
+      <div class="kv"><span class="k">transport</span><span>REST + SSE on <code>127.0.0.1:&lt;port&gt;</code></span></div>
+      <div class="kv"><span class="k">send ACK</span><span class="ok">204 accepted · 404 unknown session</span></div>
+      <div class="kv"><span class="k">liveness</span><span class="ok"><code>/session/active</code> + per-session SSE</span></div>
+      <div class="kv"><span class="k">approvals</span><span class="ok">readable <em>and</em> answerable</span></div>
+      <p><span class="tag v">verified on the wire 2026-08-13</span></p>
+    </div>
+  </div>
+
+  <h3>The live probe that settled it</h3>
+<pre><span class="c1"># throwaway TUI in /tmp/oc-lab, spawned exactly how squadrant spawns crews</span>
+POST /tui/append-prompt  {"text":"Reply with exactly: PROBE-OK"}   <span class="c3">→ 200 true</span>
+POST /tui/submit-prompt                                            <span class="c3">→ 200 true</span>
+POST /session/{id}/prompt_async {"parts":[{"type":"text",...}]}     <span class="c3">→ 204</span>
+POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async                     <span class="c6">→ 404 NotFoundError</span>
+
+<span class="c1"># transcript — the ONLY thing that counts as proof</span>
+[user] Reply with exactly: PROBE-OK   <span class="c3">→</span>  [assistant] <span class="c3">PROBE-OK</span>
+[user] Reply with exactly: ASYNC-OK   <span class="c3">→</span>  [assistant] <span class="c3">ASYNC-OK</span></pre>
+
+  <div class="note g">
+    <strong>The 404 is the important line.</strong> Today a dead crew still gets a
+    confident "sent". Now it reports <em>dead</em>. And
+    <strong>a status code is not evidence</strong> — <code>200 true</code> proved only that
+    a handler ate some bytes. The transcript proved the turn ran.
+  </div>
+
+  <h2>The seam</h2>
+  <p>Four seams already exist. This adds <strong>one port</strong> and no new tower.</p>
+
+  <div class="flow">
+    <div class="node"><div class="t">crew send</div>
+      <div class="d">CLI · <code>crew.ts:70</code><br>injection point exists</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">ControlChannel</div>
+      <div class="d"><strong>new port</strong><br><code>core/control-channel.ts</code></div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">2 drivers</div>
+      <div class="d">claude UDS<br>opencode HTTP</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">fallback</div>
+      <div class="d"><code>confirmedSendToPane</code><br>only on <code>gone</code>/<code>unsupported</code></div></div>
+  </div>
+
+  <h3>Delivery result is a union, never a boolean</h3>
+  <p>This is <code>confirmedSendToPane</code>'s original sin — collapsing a five-branch
+  reality into true/false. The collapse <em>is</em> the false negative.</p>
+
+  <p>
+    <span class="pill p-ok">accepted</span>
+    <span class="pill p-ok">queued</span>
+    <span class="pill p-warn">held</span>
+    <span class="pill p-bad">gone</span>
+    <span class="pill p-dim">unsupported</span>
+  </p>
+  <p class="sub" style="font-size:14px">Only the last two may fall back to the pane —
+  and both must log why. A silent fallback rebuilds the ambiguity being removed.</p>
+
+  <h3>Capabilities are tiered, not intersected</h3>
+  <table>
+    <tr><th>Tier</th><th>Contents</th><th>claude</th><th>opencode</th></tr>
+    <tr><td><code>T0</code> send</td><td><code>send()</code></td>
+        <td class="ok">✅</td><td class="ok">✅</td></tr>
+    <tr><td><code>T1</code> observe</td><td>liveness via <code>LifecycleSource</code></td>
+        <td class="ok">✅</td><td class="ok">✅</td></tr>
+    <tr><td><code>T2</code> interact</td><td>approvals · questions · interrupt</td>
+        <td class="bad">❌</td><td class="ok">✅</td></tr>
+  </table>
+  <p>Designing to the intersection would throw away the endpoints that finally separate
+  <em>blocked for direction</em> from <em>blocked asking permission</em> — two states that
+  demand opposite responses and are guessed at today.</p>
+
+  <h2>Liveness — and one trap</h2>
+  <table>
+    <tr><th>Observable truth</th><th>claude</th><th>opencode</th><th>LifecycleState</th></tr>
+    <tr><td>running a turn</td><td><code>busy</code></td>
+        <td><code>/session/active</code></td><td><code>running</code></td></tr>
+    <tr><td>turn done, awaiting input</td><td><code>idle</code></td>
+        <td><code>session.idle</code></td><td><code>idle</code></td></tr>
+    <tr><td class="acc"><strong>stuck on a permission prompt</strong></td>
+        <td class="acc"><code>waiting</code> + <code>waitingFor</code></td>
+        <td class="acc"><code>/api/permission/request</code></td>
+        <td class="acc"><strong><code>needsInput</code></strong></td></tr>
+    <tr><td>unreadable / <code>sdk-cli</code></td><td>absent</td>
+        <td>unreachable</td><td><code>unknown</code></td></tr>
+  </table>
+  <p>The highlighted row has <strong>no observable signature from outside a terminal</strong>
+  — which is exactly why the #484/#590 class was possible. Both agents state it outright.</p>
+
+  <div class="note">
+    <strong>The trap: <code>origin</code> is about trust, not transport.</strong><br>
+    <code>reduceLifecycle</code> forbids a <code>"scan"</code> signal from asserting
+    <code>needsInput</code>. Claude's registry is a file we <em>poll</em> — read naively that
+    looks like a scan, and the rule would <strong>silently discard</strong>
+    <code>waitingFor: "permission prompt"</code>: the single most valuable signal in the whole
+    design. It is agent-authored data we happen to fetch by polling. It is
+    <code>origin: "agent"</code>.
+  </div>
+
+  <h3>Three mandatory guards</h3>
+  <div class="grid g2">
+    <div class="card"><strong class="acc">kill(pid, 0)</strong>
+      <p style="margin:8px 0 0;font-size:14px;color:var(--dim)">A crashed session's status is
+      frozen and <strong>looks fresh forever</strong> — the exact mechanism behind today's
+      phantom <code>CREW STALLED</code>, merely relocated.</p></div>
+    <div class="card"><strong class="acc">absence ≠ idle</strong>
+      <p style="margin:8px 0 0;font-size:14px;color:var(--dim)">
+      <code>sdk-cli</code> sessions carry no <code>status</code> at all. Mapping that to
+      <code>idle</code> announces "ready for work" about a session we don't understand.</p></div>
+  </div>
+
+  <h2>Rollout: shadow first</h2>
+  <div class="flow">
+    <div class="node"><div class="t">off</div>
+      <div class="d">unchanged</div></div>
+    <div class="arrow">→</div>
+    <div class="node" style="border-color:var(--acc)"><div class="t">shadow</div>
+      <div class="d">both paths run · log only where they <strong>disagree</strong> ·
+      pane still decides</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">on</div>
+      <div class="d">channel leads · pane is fallback</div></div>
+  </div>
+
+  <div class="note">
+    <strong>A false-signal fix cannot be proven without observing the signal being false.</strong>
+    That is the standing caveat on #671: <code>heal status</code> is green today, and that is
+    true — but it never exercises the false-green branch. Shadow mode turns the claim into
+    data. Every "pane says not-delivered, HTTP says 204" is countable evidence for #514/#657.
+  </div>
+
+  <p>It also yields something squadrant has never had: <strong>the real error rate of the
+  screen-scraping layer</strong>. Five in one session is an anecdote, not a measurement.</p>
+
+  <h2>Out of scope — and why</h2>
+  <p class="lead">The real axis is <strong>topology</strong>, not API availability.</p>
+  <table>
+    <tr><th>Agent</th><th>Control channel</th><th>Topology</th><th>Fits a cmux pane?</th></tr>
+    <tr><td>opencode</td><td>HTTP + SSE on a port</td><td>daemon <strong>connects in</strong></td><td class="ok">✅ in scope</td></tr>
+    <tr><td>claude</td><td>UDS socket</td><td>daemon <strong>connects in</strong></td><td class="ok">✅ in scope</td></tr>
+    <tr><td>codex</td><td>app-server JSON-RPC · <code>remote-control</code></td><td>daemon <strong>connects in</strong></td><td class="warn">client exists, deferred</td></tr>
+    <tr><td>gemini</td><td><code>--acp</code> (stdio)</td><td><strong>spawner owns the pipe</strong></td><td class="bad">⚠ conflicts</td></tr>
+    <tr><td>pi</td><td><code>pi --mode rpc</code> (stdio)</td><td><strong>spawner owns the pipe</strong></td><td class="bad">⚠ conflicts</td></tr>
+  </table>
+  <p><code>pi</code> and <code>gemini</code> are excluded <strong>not for lacking an API</strong>
+  but because stdin/stdout has exactly one owner. A cmux pane holds the TTY — so the daemon
+  cannot also drive it, unless the agent runs headless with no pane, which forfeits operator
+  takeover (#649).</p>
+
+  <div class="note g">
+    <strong>Worth stealing from Pi later:</strong> its RPC <code>prompt</code> requires
+    <code>streamingBehavior: "steer" | "followUp"</code> when the agent is mid-turn, and
+    <strong>returns an error if you don't say which</strong>. It refuses to guess.
+    <code>confirmedSendToPane</code> does the opposite.
+  </div>
+
+  <div class="foot">
+    Spec: <a href="../specs/2026-08-13-agent-control-channel-design.md">docs/specs/2026-08-13-agent-control-channel-design.md</a><br>
+    Protocol findings: <code>squadrant-hub/spokes/squadrant/findings/2026-08-08-cc-peer-messaging-protocol.md</code><br>
+    Related: #333 · #514 · #551 · #552 · #567 · #618 · #657 · #671
+  </div>
+
+</div>
+</body>
+</html>

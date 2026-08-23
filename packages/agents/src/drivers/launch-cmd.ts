@@ -29,11 +29,23 @@ export function buildAgentCmd(
   permissionMode: string,
   model?: string,
   templatesDir?: string,
+  /** #667 slice 3: claude UDS inbox path. Captains must be addressable for the
+   *  ping/chat surface (slice 4) to reach them over the control channel. Last
+   *  parameter so every existing call site is unaffected. */
+  messagingSocketPath?: string,
+  /** #708: claude's `-n, --name` flag, so captains are self-describing in
+   *  ListAgents instead of an auto-derived cwd basename. Absent ⇒ flag
+   *  omitted ⇒ today's behaviour. */
+  sessionName?: string,
 ): string {
   const driver = registry.getDriver(agentName);
 
   if (driver.name === "claude") {
     let cmd = fresh ? "claude" : "claude -c";
+
+    if (sessionName) {
+      cmd += ` -n ${sessionName}`;
+    }
 
     if (permissionMode === "acceptEdits") {
       cmd += " --permission-mode acceptEdits";
@@ -61,6 +73,14 @@ export function buildAgentCmd(
       if (fs.existsSync(pluginDir)) {
         cmd += ` --plugin-dir ${pluginDir}`;
       }
+    }
+
+    // #697: must come AFTER --append-system-prompt-file and --plugin-dir —
+    // cmux truncates launchCommand.arguments at --messaging-socket-path when
+    // storing it, so anything after it (including the template flag) is lost
+    // and role classification breaks. Match the crew path (drivers/claude.ts).
+    if (messagingSocketPath) {
+      cmd += ` --messaging-socket-path ${messagingSocketPath}`;
     }
 
     return cmd;

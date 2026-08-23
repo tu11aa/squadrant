@@ -233,6 +233,24 @@ export function ensureGlobalOpencodeConfig(configPath: string = DEFAULT_GLOBAL_O
   }
 }
 
+/**
+ * #627 item B: read the `model` field opencode itself would fall back to when
+ * a spawn omits an explicit --model (the same global config
+ * `ensureGlobalOpencodeConfig` provisions). Lets a caller see through the
+ * omission and detect that the *actual* resolved model is the Anthropic
+ * default, rather than only checking an explicit --model that was never set.
+ * Returns undefined (never throws) when the file is missing, unreadable, or
+ * has no string `model` field.
+ */
+export function readGlobalOpencodeModel(configPath: string = DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    return typeof parsed.model === "string" ? parsed.model : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function writePerCrewOpencodeConfig(o: {
   stateRoot: string;
   project: string;
