@@ -357,10 +357,10 @@
         <!-- captainChannel box -->
         <rect x="810" y="60" width="330" height="130" rx="8" fill="var(--panel)" stroke="var(--control)" stroke-width="2"/>
         <text class="chip" x="975" y="88" text-anchor="middle" fill="var(--control)">captainChannel: on | shadow</text>
-        <text class="bs" x="975" y="112" text-anchor="middle">on → crew wrapper/receipt text visible</text>
-        <text class="bs" x="975" y="130" text-anchor="middle">in the captain pane (noisy, verified)</text>
-        <text class="bs" x="975" y="152" text-anchor="middle">shadow → clean pane, still cross-checks</text>
-        <text class="bs" x="975" y="170" text-anchor="middle">against the old inference path</text>
+        <text class="bs" x="975" y="112" text-anchor="middle">on → native peer socket, bypasses</text>
+        <text class="bs" x="975" y="130" text-anchor="middle">the pane-defer machine entirely</text>
+        <text class="bs" x="975" y="152" text-anchor="middle">shadow → probes, discards result, NO</text>
+        <text class="bs" x="975" y="170" text-anchor="middle">liveness, falls back to pane-defer</text>
 
         <line class="edge" x1="810" y1="150" x2="742" y2="245"/>
 
