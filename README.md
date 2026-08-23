@@ -92,8 +92,8 @@ tracked in [#31](https://github.com/tu11aa/squadrant/issues/31).
 
 - [QUICKSTART.md](QUICKSTART.md) — hands-on first run: install, first
   captain, first crew, optional Telegram
-- [Architecture diagram](docs/diagrams/2026-06-18-squadrant-monorepo-architecture.html)
-  — visual overview of the monorepo
+- [Architecture diagram](docs/diagrams/2026-08-22-squadrant-architecture.html)
+  — visual overview of the monorepo, driver seams, lifecycle sources, and control/captain channel
 - [docs/reference.md](docs/reference.md) — full command table, monorepo
   structure, architecture deep-dive, Telegram integration, config schema
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, branching, and conventions for

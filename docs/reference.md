@@ -15,6 +15,8 @@ guided first run — come back here when you need the details.
   - [Runtime Abstraction](#runtime-abstraction)
   - [Workspace Abstraction](#workspace-abstraction)
   - [Notifier Abstraction](#notifier-abstraction)
+  - [Lifecycle Sources](#lifecycle-sources)
+  - [Control/Captain Channel (#667)](#controlcaptain-channel-667)
   - [Crew Spawn (Interactive Sub-Sessions)](#crew-spawn-interactive-sub-sessions)
   - [Effort Dial (Tokenomics)](#effort-dial-tokenomics)
   - [Crew Lifecycle & Delivery](#crew-lifecycle--delivery)
@@ -87,7 +89,7 @@ Six internal packages in a one-way dependency DAG. All are private (not publishe
 - `dist/index.js` — CLI bin (`squadrant` command), entry: `packages/cli/src/index.ts`
 - `dist/squadrantd.js` — daemon process, entry: `packages/cli/src/daemon-host.ts`
 
-See the [architecture diagram](diagrams/2026-06-18-squadrant-monorepo-architecture.html) for a visual overview.
+See the [architecture diagram](diagrams/2026-08-22-squadrant-architecture.html) for a visual overview (6-package DAG, driver seams, lifecycle sources, control/captain channel).
 
 ## Architecture
 
@@ -116,6 +118,25 @@ Vault storage (hub + per-project spokes) runs behind a pluggable **workspace dri
 
 User-facing notifications run behind a pluggable **notifier driver** (currently only `cmux`). Escalations and other "tell the user" events go through `squadrant notify <message>`. The default `CmuxNotifier` delegates to `squadrant runtime send --command` — the abstraction exists as a swap-point for future Slack/Discord/email/pager drivers. Notifier is global (no per-project override). See `docs/specs/archive/2026-04-21-plugin-system-notifier-design.md`.
 
+### Lifecycle Sources
+
+Squadrant used to infer whether a captain/crew was alive or idle by scraping terminal titles/pixels — slow, and wrong in ways nobody could tell apart from a true answer. That model was replaced (#333) by a `LifecycleSource` port with three concrete implementations feeding one core state machine:
+
+- **`CmuxStore`** — reads cmux's own session store directly; authoritative when the runtime is cmux, distinguishes a user-initiated close from a crash.
+- **`NativeHook`** — Claude Code's native hooks (`SessionStart`/`UserPromptSubmit`/`PreToolUse`/`Stop`/`Notification`/`SessionEnd`, wired via `squadrant hooks claude`, see [Managed settings.json](../CLAUDE.md)) — the primary source for claude captains/crews.
+- **`CodexAppServer`** — Codex's JSON-RPC app-server connection, used when the agent is codex.
+
+A per-tick pid floor (`kill(pid,0)`) arbitrates when sources disagree; provenance precedence is `runtime ≥ agent > scan`. This is the ground-truth layer the [captain-liveness redesign](../specs/2026-07-07-captain-liveness-redesign.md) (v0.15.0) and the [control/captain channel](#controlcaptain-channel-667) below both build on.
+
+### Control/Captain Channel (#667)
+
+The next step past lifecycle sources: use each agent's **native control API** as ground truth for *delivery*, not just liveness — did a message I sent actually land and get processed, not just "the pane looks idle now." Screen-scraped delivery inference (`confirmedSendToPane`: paste → settle → Enter → re-read the screen) produced a long bug tail (#447, #455, #466, #484, #492, #516, #566, #590, #514, #657) because it's an inference that fails silently.
+
+- **`controlChannel`** (per agent type: `off` / `shadow` / `on`) — `claude` is cut over to `on`: delivery verdicts for crew turns come from an agent receipt via `@squadrant/core`'s `control-channel.ts`, not pane-scraping. `opencode` has a richer native control API (verified — `prompt_async` → 204, dead session → 404) but is still shadow/off pending more mileage; `pi`/`gemini`/ACP agents don't fit this model and are out of scope. `off → shadow` needs a daemon bounce; `shadow → on` does not.
+- **`captainChannel`** (`off` / `shadow` / `on`) — `on` routes captain-bound delivery over the native peer socket, bypassing the pane-defer machine entirely. `shadow` probes but never sends: it logs and discards the probe result, provides no liveness of its own, and falls back to pane delivery — which re-enters draft/ghost/modal/`no-box` deferral. Prefer `on`; `shadow` is a verification aid, not a safe fallback. (Crew wrapper/receipt text visible in `on` mode is a sender-identity artifact tracked separately in #711, not an inherent property of the channel.)
+- Implementation: `@squadrant/core/src/captain-channel.ts`, `control-channel.ts`, `lifecycle-source.ts`.
+- Design doc: [`specs/2026-08-13-agent-control-channel-design.md`](specs/2026-08-13-agent-control-channel-design.md). Diagram: [`diagrams/2026-08-13-agent-control-channel.html`](diagrams/2026-08-13-agent-control-channel.html).
+
 ### Crew Spawn (Interactive Sub-Sessions)
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
@@ -131,6 +152,7 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 - **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/squadrant/issues/332)).
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
+- **Status: superseded for claude by the control channel.** The semantic heartbeat above still runs, but delivery confirmation for claude crews now comes from an agent receipt (`controlChannel=on`), not pane inference — see [Control/Captain Channel (#667)](#controlcaptain-channel-667).
 
 ### Telegram (Two-Way, opt-in)
 

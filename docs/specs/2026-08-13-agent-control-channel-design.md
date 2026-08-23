@@ -2,6 +2,8 @@
 
 **Issue:** #667 (P1) · **Date:** 2026-08-13 · **Status:** DRAFT — awaiting operator review
 
+> **Status update (2026-08-22):** Approved and cut over — `controlChannel`/`captainChannel=on` is live for `claude` as of 2026-08-20 (delivery verdicts now come from an agent receipt, not screen-scraping). `opencode` remains shadow/off — its control API is verified but not yet proven in production. See [`AGENTS.md` § Captain/Control Channel](../../AGENTS.md#captaincontrol-channel-667) and [`reference.md` § Control/Captain Channel](../reference.md#controlcaptain-channel-667) for the current state.
+
 **Scope, fixed by the operator on 2026-08-13: `claude` and `opencode` only.** Both have a
 native control API that has been exercised live. `pi`, `gemini`, and ACP are surveyed in
 [Appendix A](#appendix-a--agents-out-of-scope) and deliberately left out.
