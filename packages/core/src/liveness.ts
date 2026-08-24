@@ -128,15 +128,14 @@ export function projectHealth(input: {
     detail:
       captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
       captainState === "gone" ? "captain process died (crash) — crews reaped" :
-      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries) — ${deferralReasonNote(deferral.reason)}` :
+      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries, reason: ${deferral.reason ?? "unknown"})` :
       undefined,
   });
 
   // ── delivery ───────────────────────────────────────────────────────────
   const deliveryState: HealthState =
     captainState === "stopped" ? "stopped" :
-    deferral?.stuck ? "gone" :
-    deferral && deferral.maxDeferCount > 0 ? "stale" :
+    deferral?.stuck || (deferral && deferral.maxDeferCount > 0) ? "stale" :
     "alive";
 
   const deliveryDetail =
@@ -189,12 +188,6 @@ export function projectHealth(input: {
   return out;
 }
 
-function deferralReasonNote(reason?: string): string {
-  if (reason === "no-box") return "no input box found in captain pane";
-  if (reason === "modal") return "modal prompt open in captain pane";
-  return "draft/ghost text blocking captain pane; input never touched, delivers automatically once cleared";
-}
-
 function presence(p: boolean | null): HealthState {
   if (p === null) return "unknown";
   return p ? "alive" : "gone";
@@ -215,12 +208,7 @@ export function ageText(lastSeenMs: number | null, now: number): string {
  * or null when no action is needed (or when no heal verb exists for this kind).
  */
 export function healCmdFor(c: ComponentHealth): string | null {
-  if (c.kind === "captain" && c.state === "gone") {
-    return `squadrant heal captain ${c.project}`;
-  }
-  if (c.kind === "delivery" && c.state === "gone") {
-    return `squadrant heal captain ${c.project}`;
-  }
+  // No heal verb for captain/crew — daemon-direct delivery handles recovery automatically.
   return null;
 }
 

@@ -41,12 +41,8 @@ function makeCrew(state: ComponentHealth["state"]): ComponentHealth {
 }
 
 describe("healCmdFor", () => {
-  it("returns heal captain command for a gone captain", () => {
-    expect(healCmdFor(makeCaptain("gone", "brove"))).toBe("squadrant heal captain brove");
-  });
-
-  it("returns heal captain command for gone delivery (stuck delivery)", () => {
-    expect(healCmdFor({ kind: "delivery", project: "brove", ref: "delivery", state: "gone", lastSeenMs: null })).toBe("squadrant heal captain brove");
+  it("returns null for a gone captain (no heal verb exists)", () => {
+    expect(healCmdFor(makeCaptain("gone"))).toBeNull();
   });
 
   it("returns null for an unknown captain", () => {
@@ -61,8 +57,9 @@ describe("healCmdFor", () => {
     expect(healCmdFor(makeCaptain("stale"))).toBeNull();
   });
 
-  it("returns null for a stale delivery (deferring, not stuck)", () => {
+  it("returns null for a delivery component", () => {
     expect(healCmdFor({ kind: "delivery", project: "brove", ref: "delivery", state: "stale", lastSeenMs: null })).toBeNull();
+    expect(healCmdFor({ kind: "delivery", project: "brove", ref: "delivery", state: "alive", lastSeenMs: null })).toBeNull();
   });
 
   it("returns null for crew (no heal verb exists)", () => {

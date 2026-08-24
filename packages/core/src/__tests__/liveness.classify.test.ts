@@ -67,7 +67,7 @@ describe("projectHealth (pure projection)", () => {
 
     const delivery = find(cs, "delivery")!;
     expect(delivery).toBeDefined();
-    expect(delivery.state).toBe("gone");
+    expect(delivery.state).toBe("stale");
     expect(delivery.detail).toMatch(/delivery stuck/i);
     expect(delivery.detail).toContain("300");
     expect(delivery.detail).toContain("no-box");

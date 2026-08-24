@@ -64,9 +64,12 @@ export function buildHealStatus(components: ComponentHealth[] | null): HealStatu
     detail: c.detail,
     healCmd: healCmdFor(c),
   }));
-  const healthy = out.every(
-    (c) => (c.state === "alive" || c.state === "stopped" || c.state === "unknown") && c.healCmd === null,
-  );
+  const healthy = out.every((c) => {
+    if (c.kind === "delivery") {
+      return c.state === "alive" || c.state === "stopped" || c.state === "unknown";
+    }
+    return c.healCmd === null;
+  });
   return { healthy, components: out };
 }
 
@@ -138,7 +141,9 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 
   stdout.write(chalk.bold("Unhealthy components:\n\n"));
   for (const c of result.components) {
-    const isUnhealthy = c.state === "gone" || c.state === "stale" || c.healCmd !== null;
+    const isUnhealthy = c.kind === "delivery"
+      ? (c.state !== "alive" && c.state !== "stopped" && c.state !== "unknown")
+      : c.healCmd !== null;
     if (isUnhealthy) {
       const glyph = c.state === "stale" ? chalk.yellow("•") : chalk.red("✘");
       const stateColor = c.state === "stale" ? chalk.yellow : chalk.red;

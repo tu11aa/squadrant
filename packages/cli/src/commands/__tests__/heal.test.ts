@@ -25,26 +25,13 @@ function makeDelivery(state: ComponentHealth["state"], project = "brove", detail
 // ── healCmdFor ───────────────────────────────────────────────────────────────
 
 describe("healCmdFor", () => {
-  it("returns heal captain command for gone captain", () => {
-    expect(healCmdFor(makeCaptain("gone", "brove"))).toBe("squadrant heal captain brove");
-  });
-
-  it("returns heal captain command for gone delivery (e.g. stuck delivery)", () => {
-    expect(healCmdFor(makeDelivery("gone", "squadrant"))).toBe("squadrant heal captain squadrant");
-  });
-
-  it("returns null for alive or stopped captain", () => {
+  it("returns null for all components (no heal verb exists)", () => {
     expect(healCmdFor(makeCaptain("alive"))).toBeNull();
-    expect(healCmdFor(makeCaptain("stopped"))).toBeNull();
+    expect(healCmdFor(makeCaptain("gone"))).toBeNull();
     expect(healCmdFor(makeCaptain("unknown"))).toBeNull();
-  });
-
-  it("returns null for stale delivery (deferring, not yet stuck)", () => {
-    expect(healCmdFor(makeDelivery("stale"))).toBeNull();
-  });
-
-  it("returns null for crew", () => {
+    expect(healCmdFor(makeCaptain("stopped"))).toBeNull();
     expect(healCmdFor(makeCrew("gone"))).toBeNull();
+    expect(healCmdFor(makeDelivery("stale"))).toBeNull();
   });
 });
 
@@ -61,28 +48,36 @@ describe("buildHealStatus", () => {
     expect(result.components.every((c) => c.healCmd === null)).toBe(true);
   });
 
-  it("healthy=false when captain is gone", () => {
+  it("healthy=true when captain is gone (no heal verb → healCmd null, daemon handles recovery)", () => {
     const components: ComponentHealth[] = [
       makeCaptain("gone", "brove"),
       makeCaptain("alive", "scaffold"),
     ];
     const result = buildHealStatus(components);
-    expect(result.healthy).toBe(false);
-    expect(result.components.find((c) => c.project === "brove")?.healCmd).toBe("squadrant heal captain brove");
+    expect(result.healthy).toBe(true);
+  });
+
+  it("healthy=true when crew is stale (routine idle crew does not make whole system unhealthy)", () => {
+    const components: ComponentHealth[] = [
+      makeCaptain("alive", "brove"),
+      makeCrew("stale"),
+    ];
+    const result = buildHealStatus(components);
+    expect(result.healthy).toBe(true);
   });
 
   it("healthy=false when delivery is stuck (#715)", () => {
     const components: ComponentHealth[] = [
       makeCaptain("alive", "squadrant"),
-      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
     ];
     const result = buildHealStatus(components);
     expect(result.healthy).toBe(false);
     const deliv = result.components.find((c) => c.kind === "delivery");
     expect(deliv).toBeDefined();
-    expect(deliv?.state).toBe("gone");
+    expect(deliv?.state).toBe("stale");
     expect(deliv?.detail).toBe("⚠️ delivery stuck (300+ retries, reason: no-box)");
-    expect(deliv?.healCmd).toBe("squadrant heal captain squadrant");
+    expect(deliv?.healCmd).toBeNull();
   });
 
   it("healthy=false when delivery is deferring (#715)", () => {
@@ -112,7 +107,7 @@ describe("buildHealStatus", () => {
     expect(out.kind).toBe("captain");
     expect(out.project).toBe("brove");
     expect(out.state).toBe("gone");
-    expect(out.healCmd).toBe("squadrant heal captain brove");
+    expect(out.healCmd).toBeNull();
   });
 
   it("empty component list → healthy=true", () => {
@@ -167,7 +162,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   it("exits 2 and prints unhealthy when delivery is stuck (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -182,15 +177,14 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     const out = stdoutLines.join("");
     expect(out).toContain("Unhealthy components:");
     expect(out).toContain("delivery");
-    expect(out).toContain("gone");
+    expect(out).toContain("stale");
     expect(out).toContain("⚠️ delivery stuck (300+ retries, reason: no-box)");
-    expect(out).toContain("squadrant heal captain squadrant");
   });
 
   it("exits 2 with --json and outputs structured error when delivery is stuck (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -205,9 +199,9 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     const parsed = JSON.parse(stdoutLines.join(""));
     expect(parsed.healthy).toBe(false);
     const deliv = parsed.components.find((c: any) => c.kind === "delivery");
-    expect(deliv.state).toBe("gone");
+    expect(deliv.state).toBe("stale");
     expect(deliv.detail).toContain("delivery stuck");
-    expect(deliv.healCmd).toBe("squadrant heal captain squadrant");
+    expect(deliv.healCmd).toBeNull();
   });
 
   it("exits 1 and prints error when daemon unreachable", async () => {
