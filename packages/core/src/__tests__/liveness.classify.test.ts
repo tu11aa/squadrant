@@ -58,31 +58,55 @@ describe("projectHealth (pure projection)", () => {
   it("captainDeferral.stuck=true → captain row carries a DELIVERY STUCK detail even though the captain is alive", () => {
     const cs = projectHealth({
       ...base, now: 1_000, captainStopped: false,
-      captainDeferral: { stuck: true, maxDeferCount: 300 },
+      captainDeferral: { stuck: true, maxDeferCount: 300, reason: "no-box" },
     });
     const captain = find(cs, "captain")!;
     expect(captain.state).toBe("alive"); // captain itself is fine — delivery is what's stuck
     expect(captain.detail).toMatch(/delivery stuck/i);
     expect(captain.detail).toContain("300");
+
+    const delivery = find(cs, "delivery")!;
+    expect(delivery).toBeDefined();
+    expect(delivery.state).toBe("stale");
+    expect(delivery.stuck).toBe(true);
+    expect(delivery.detail).toMatch(/delivery stuck/i);
+    expect(delivery.detail).toContain("300");
+    expect(delivery.detail).toContain("no-box");
   });
 
-  it("captainDeferral.stuck=false (or omitted) → no stuck detail on an otherwise-healthy captain", () => {
+  it("captainDeferral.maxDeferCount > 0 and stuck=false → delivery component is stale (deferring)", () => {
+    const cs = projectHealth({
+      ...base, now: 1_000, captainStopped: false,
+      captainDeferral: { stuck: false, maxDeferCount: 15, reason: "draft" },
+    });
+    const delivery = find(cs, "delivery")!;
+    expect(delivery).toBeDefined();
+    expect(delivery.state).toBe("stale");
+    expect(delivery.stuck).toBe(false);
+    expect(delivery.detail).toContain("15");
+    expect(delivery.detail).toContain("draft");
+  });
+
+  it("captainDeferral.stuck=false (or omitted) → delivery component is alive", () => {
     const withStats = projectHealth({
       ...base, now: 1_000, captainStopped: false,
-      captainDeferral: { stuck: false, maxDeferCount: 2 },
+      captainDeferral: { stuck: false, maxDeferCount: 0 },
     });
     expect(find(withStats, "captain")!.detail).toBeUndefined();
+    expect(find(withStats, "delivery")!.state).toBe("alive");
 
     const omitted = projectHealth({ ...base, now: 1_000, captainStopped: false });
     expect(find(omitted, "captain")!.detail).toBeUndefined();
+    expect(find(omitted, "delivery")!.state).toBe("alive");
   });
 
-  it("captainStopped=true wins over a stuck deferral — an intentional close explains the detail, not a stale defer count", () => {
+  it("captainStopped=true → delivery component is stopped", () => {
     const cs = projectHealth({
       ...base, now: 1_000, captainStopped: true,
       captainDeferral: { stuck: true, maxDeferCount: 300 },
     });
     expect(find(cs, "captain")!.detail).toMatch(/closed/i);
+    expect(find(cs, "delivery")!.state).toBe("stopped");
   });
 
   it("captainStopped=null → captain unknown (no signal yet)", () => {
