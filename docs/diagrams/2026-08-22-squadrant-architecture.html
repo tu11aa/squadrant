@@ -321,7 +321,7 @@
   <!-- SLIDE 6: Control/Captain Channel (#667) -->
   <section class="slide">
     <h2>6 · Control/Captain Channel (#667)</h2>
-    <p class="sub">The layer past lifecycle sources: use each agent's <b style="color:var(--control)">native control API</b> as ground truth for <i>delivery</i>, not just liveness — did a message actually land, not just "the pane looks idle now." Screen-scraped delivery inference produced a long silent-failure bug tail (#447, #455, #466, #484, #492, #516, #566, #590, #514, #657). Full design: <code>docs/specs/2026-08-13-agent-control-channel-design.md</code> · diagram: <code>docs/diagrams/2026-08-13-agent-control-channel.html</code>.</p>
+    <p class="sub">The layer past lifecycle sources: use each agent's <b style="color:var(--control)">native control API</b> as ground truth for <i>delivery</i>, not just liveness — ships <b>off by default</b>; opt-in per machine via <code>~/.config/squadrant/config.json</code> defaults. Screen-scraped delivery inference produced a long silent-failure bug tail (#447, #455, #466, #484, #492, #516, #566, #590, #514, #657). Full design: <code>docs/specs/2026-08-13-agent-control-channel-design.md</code> · diagram: <code>docs/diagrams/2026-08-13-agent-control-channel.html</code>.</p>
     <div class="stage">
       <svg viewBox="0 0 1180 460">
         <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52606d"/></marker></defs>
@@ -335,13 +335,13 @@
 
         <!-- claude control -->
         <rect x="40" y="60" width="290" height="90" rx="8" fill="var(--panel)" stroke="var(--control)" stroke-width="2"/>
-        <text class="chip" x="185" y="88" text-anchor="middle" fill="var(--control)">claude — controlChannel: on</text>
+        <text class="chip" x="185" y="88" text-anchor="middle" fill="var(--control)">claude — controlChannel: on (opt-in)</text>
         <text class="bs" x="185" y="108" text-anchor="middle">agent receipt = delivery ground truth</text>
         <text class="bs" x="185" y="126" text-anchor="middle">replaces confirmedSendToPane inference</text>
 
         <!-- opencode control -->
         <rect x="40" y="170" width="290" height="90" rx="8" fill="var(--panel)" stroke="var(--control)" stroke-width="1.5" stroke-dasharray="4 3"/>
-        <text class="chip" x="185" y="198" text-anchor="middle" fill="var(--control)">opencode — controlChannel: shadow/off</text>
+        <text class="chip" x="185" y="198" text-anchor="middle" fill="var(--control)">opencode — controlChannel: off</text>
         <text class="bs" x="185" y="218" text-anchor="middle">richer API verified (prompt_async→204,</text>
         <text class="bs" x="185" y="234" text-anchor="middle">dead session→404) — not proven yet</text>
 
@@ -356,7 +356,7 @@
 
         <!-- captainChannel box -->
         <rect x="810" y="60" width="330" height="130" rx="8" fill="var(--panel)" stroke="var(--control)" stroke-width="2"/>
-        <text class="chip" x="975" y="88" text-anchor="middle" fill="var(--control)">captainChannel: on | shadow</text>
+        <text class="chip" x="975" y="88" text-anchor="middle" fill="var(--control)">captainChannel: on | shadow (opt-in)</text>
         <text class="bs" x="975" y="112" text-anchor="middle">on → native peer socket, bypasses</text>
         <text class="bs" x="975" y="130" text-anchor="middle">the pane-defer machine entirely</text>
         <text class="bs" x="975" y="152" text-anchor="middle">shadow → probes, discards result, NO</text>
@@ -374,11 +374,12 @@
 
         <line class="edge" x1="810" y1="290" x2="742" y2="270"/>
 
-        <!-- cutover note -->
-        <rect x="440" y="380" width="300" height="60" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
-        <text class="bs" x="590" y="405" text-anchor="middle">off → shadow needs a daemon bounce</text>
-        <text class="bs" x="590" y="423" text-anchor="middle">shadow → on does not</text>
-        <line class="edge" x1="590" y1="380" x2="590" y2="302"/>
+        <!-- cutover & defaults note -->
+        <rect x="420" y="375" width="340" height="75" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="1.5"/>
+        <text class="bs" x="590" y="395" text-anchor="middle" fill="var(--core)">SHIPS OFF BY DEFAULT · opt-in via config.json defaults</text>
+        <text class="bs" x="590" y="413" text-anchor="middle">off → shadow needs a daemon bounce</text>
+        <text class="bs" x="590" y="431" text-anchor="middle">shadow → on does not</text>
+        <line class="edge" x1="590" y1="375" x2="590" y2="302"/>
       </svg>
     </div>
     <div style="margin-top:12px;margin-bottom:12px;overflow:auto">

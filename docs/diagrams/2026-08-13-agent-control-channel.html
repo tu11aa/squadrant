@@ -85,7 +85,7 @@
   <p class="meta">issue #667 · 2026-08-13 (updated 2026-08-23) · scope: claude + opencode · status: SHIPPED (v0.19.0) · LIVE for claude</p>
 
   <div class="note g">
-    <strong>Status update (2026-08-22, v0.19.0):</strong> Approved and cut over — <code>controlChannel</code>/<code>captainChannel=on</code> is live for <code>claude</code> as of 2026-08-20 (delivery verdicts now come from an agent receipt, not screen-scraping). <code>opencode</code> remains shadow/off — its control API is verified but not yet proven in production. See <a href="../../AGENTS.md#captaincontrol-channel-667">AGENTS.md § Captain/Control Channel</a> and <a href="../reference.md#controlcaptain-channel-667">reference.md § Control/Captain Channel</a> for the current state.
+    <strong>Status update (2026-08-22, v0.19.0):</strong> Approved and cut over — <code>controlChannel</code>/<code>captainChannel=on</code> is live for <code>claude</code> as of 2026-08-20 (delivery verdicts now come from an agent receipt, not screen-scraping). <code>opencode</code> remains off — its control API is verified but not yet proven in production. See <a href="../../AGENTS.md#captaincontrol-channel-667">AGENTS.md § Captain/Control Channel</a> and <a href="../reference.md#controlcaptain-channel-667">reference.md § Control/Captain Channel</a> for the current state.
   </div>
 
   <div class="note b">
@@ -246,7 +246,7 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
   <div class="grid g2">
     <div class="card">
       <h3>captainChannel: on (preferred)</h3>
-      <p>Routes captain-bound delivery directly over the <strong>native peer socket</strong> (<code>/tmp/cc-socks/squadrant-&lt;project&gt;.sock</code>), bypassing the pane-defer machine entirely.</p>
+      <p>Routes captain-bound delivery directly over the <strong>native peer socket</strong> (<code>/tmp/cc-socks/squadrant-captain-&lt;project&gt;.sock</code>), bypassing the pane-defer machine entirely.</p>
       <p><span class="pill p-ok">on</span> No draft/ghost/modal/<code>no-box</code> deferral loops.</p>
     </div>
     <div class="card">
