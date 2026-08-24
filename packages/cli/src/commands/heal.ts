@@ -38,6 +38,7 @@ export interface HealComponent {
   project: string;
   ref: string;
   state: HealthState;
+  detail?: string;
   healCmd: string | null;
 }
 
@@ -60,9 +61,12 @@ export function buildHealStatus(components: ComponentHealth[] | null): HealStatu
     project: c.project,
     ref: c.ref,
     state: c.state,
+    detail: c.detail,
     healCmd: healCmdFor(c),
   }));
-  const healthy = out.every((c) => c.healCmd === null);
+  const healthy = out.every(
+    (c) => (c.state === "alive" || c.state === "stopped" || c.state === "unknown") && c.healCmd === null,
+  );
   return { healthy, components: out };
 }
 
@@ -134,9 +138,17 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 
   stdout.write(chalk.bold("Unhealthy components:\n\n"));
   for (const c of result.components) {
-    if (c.healCmd) {
-      stdout.write(`  ${chalk.red("✘")} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${chalk.red(c.state.padEnd(8))} ${c.project}\n`);
-      stdout.write(`      heal: ${chalk.cyan(c.healCmd)}\n`);
+    const isUnhealthy = c.state === "gone" || c.state === "stale" || c.healCmd !== null;
+    if (isUnhealthy) {
+      const glyph = c.state === "stale" ? chalk.yellow("•") : chalk.red("✘");
+      const stateColor = c.state === "stale" ? chalk.yellow : chalk.red;
+      stdout.write(`  ${glyph} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${stateColor(c.state.padEnd(8))} ${c.project}\n`);
+      if (c.detail) {
+        stdout.write(`      detail: ${c.detail}\n`);
+      }
+      if (c.healCmd) {
+        stdout.write(`      heal: ${chalk.cyan(c.healCmd)}\n`);
+      }
     }
   }
   return 2;

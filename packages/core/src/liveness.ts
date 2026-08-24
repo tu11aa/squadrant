@@ -6,8 +6,9 @@
 // presence) is gathered by the caller (squadrantd) and passed in already-resolved;
 // this module never touches cmux.
 import type { TaskState, Mode, LivenessEntry } from "@squadrant/shared";
+import type { DeliverDeferReason } from "./delivery/captain-delivery.js";
 
-export type ComponentKind = "captain" | "crew" | "command";
+export type ComponentKind = "captain" | "crew" | "command" | "delivery";
 
 // alive   = seen within the stale window (healthy)
 // stale   = quiet past stale but not yet gone (degrading)
@@ -106,7 +107,7 @@ export function projectHealth(input: {
    *  --detailed` show a stuck delivery with zero extra configuration (no
    *  Telegram, no mute state to fight) — a pull-based fallback that can never
    *  be silenced, unlike the push alerts in delivery-loop.ts. */
-  captainDeferral?: { stuck: boolean; maxDeferCount: number };
+  captainDeferral?: { stuck: boolean; maxDeferCount: number; reason?: DeliverDeferReason };
 }): ComponentHealth[] {
   const { project, now, captainName, captainStopped, commandPresent, crews } = input;
   const out: ComponentHealth[] = [];
@@ -127,8 +128,30 @@ export function projectHealth(input: {
     detail:
       captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
       captainState === "gone" ? "captain process died (crash) — crews reaped" :
-      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries) — draft/ghost text blocking captain pane; input never touched, delivers automatically once cleared` :
+      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries) — ${deferralReasonNote(deferral.reason)}` :
       undefined,
+  });
+
+  // ── delivery ───────────────────────────────────────────────────────────
+  const deliveryState: HealthState =
+    captainState === "stopped" ? "stopped" :
+    deferral?.stuck ? "gone" :
+    deferral && deferral.maxDeferCount > 0 ? "stale" :
+    "alive";
+
+  const deliveryDetail =
+    captainState === "stopped" ? "delivery paused (captain stopped)" :
+    deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries, reason: ${deferral.reason ?? "unknown"})` :
+    deferral && deferral.maxDeferCount > 0 ? `delivery deferred (${deferral.maxDeferCount} retries, reason: ${deferral.reason ?? "unknown"})` :
+    undefined;
+
+  out.push({
+    kind: "delivery",
+    project,
+    ref: "delivery",
+    state: deliveryState,
+    lastSeenMs: null,
+    detail: deliveryDetail,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────
@@ -166,6 +189,12 @@ export function projectHealth(input: {
   return out;
 }
 
+function deferralReasonNote(reason?: string): string {
+  if (reason === "no-box") return "no input box found in captain pane";
+  if (reason === "modal") return "modal prompt open in captain pane";
+  return "draft/ghost text blocking captain pane; input never touched, delivers automatically once cleared";
+}
+
 function presence(p: boolean | null): HealthState {
   if (p === null) return "unknown";
   return p ? "alive" : "gone";
@@ -186,7 +215,12 @@ export function ageText(lastSeenMs: number | null, now: number): string {
  * or null when no action is needed (or when no heal verb exists for this kind).
  */
 export function healCmdFor(c: ComponentHealth): string | null {
-  // No heal verb for captain/crew — daemon-direct delivery handles recovery automatically.
+  if (c.kind === "captain" && c.state === "gone") {
+    return `squadrant heal captain ${c.project}`;
+  }
+  if (c.kind === "delivery" && c.state === "gone") {
+    return `squadrant heal captain ${c.project}`;
+  }
   return null;
 }
 

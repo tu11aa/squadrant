@@ -18,14 +18,32 @@ function makeCaptain(state: ComponentHealth["state"], project = "brove"): Compon
 function makeCrew(state: ComponentHealth["state"]): ComponentHealth {
   return { kind: "crew", project: "brove", ref: "worker-1", state, lastSeenMs: null };
 }
+function makeDelivery(state: ComponentHealth["state"], project = "brove", detail?: string): ComponentHealth {
+  return { kind: "delivery", project, ref: "delivery", state, lastSeenMs: null, detail };
+}
 
 // ── healCmdFor ───────────────────────────────────────────────────────────────
 
 describe("healCmdFor", () => {
-  it("returns null for all components (no heal verb exists)", () => {
+  it("returns heal captain command for gone captain", () => {
+    expect(healCmdFor(makeCaptain("gone", "brove"))).toBe("squadrant heal captain brove");
+  });
+
+  it("returns heal captain command for gone delivery (e.g. stuck delivery)", () => {
+    expect(healCmdFor(makeDelivery("gone", "squadrant"))).toBe("squadrant heal captain squadrant");
+  });
+
+  it("returns null for alive or stopped captain", () => {
     expect(healCmdFor(makeCaptain("alive"))).toBeNull();
-    expect(healCmdFor(makeCaptain("gone"))).toBeNull();
+    expect(healCmdFor(makeCaptain("stopped"))).toBeNull();
     expect(healCmdFor(makeCaptain("unknown"))).toBeNull();
+  });
+
+  it("returns null for stale delivery (deferring, not yet stuck)", () => {
+    expect(healCmdFor(makeDelivery("stale"))).toBeNull();
+  });
+
+  it("returns null for crew", () => {
     expect(healCmdFor(makeCrew("gone"))).toBeNull();
   });
 });
@@ -43,24 +61,58 @@ describe("buildHealStatus", () => {
     expect(result.components.every((c) => c.healCmd === null)).toBe(true);
   });
 
-  it("healthy=true when captain is gone (no heal verb → healCmd null)", () => {
+  it("healthy=false when captain is gone", () => {
     const components: ComponentHealth[] = [
       makeCaptain("gone", "brove"),
       makeCaptain("alive", "scaffold"),
     ];
     const result = buildHealStatus(components);
-    // healCmdFor always returns null now, so healthy=true even for gone
-    expect(result.components.find((c) => c.project === "brove")?.healCmd).toBeNull();
+    expect(result.healthy).toBe(false);
+    expect(result.components.find((c) => c.project === "brove")?.healCmd).toBe("squadrant heal captain brove");
   });
 
-  it("returns all component fields in output", () => {
+  it("healthy=false when delivery is stuck (#715)", () => {
+    const components: ComponentHealth[] = [
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+    ];
+    const result = buildHealStatus(components);
+    expect(result.healthy).toBe(false);
+    const deliv = result.components.find((c) => c.kind === "delivery");
+    expect(deliv).toBeDefined();
+    expect(deliv?.state).toBe("gone");
+    expect(deliv?.detail).toBe("⚠️ delivery stuck (300+ retries, reason: no-box)");
+    expect(deliv?.healCmd).toBe("squadrant heal captain squadrant");
+  });
+
+  it("healthy=false when delivery is deferring (#715)", () => {
+    const components: ComponentHealth[] = [
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+    ];
+    const result = buildHealStatus(components);
+    expect(result.healthy).toBe(false);
+    const deliv = result.components.find((c) => c.kind === "delivery");
+    expect(deliv?.state).toBe("stale");
+    expect(deliv?.detail).toBe("delivery deferred (15 retries, reason: draft)");
+  });
+
+  it("healthy=true when captain is stopped (intentional close)", () => {
+    const components: ComponentHealth[] = [
+      makeCaptain("stopped", "brove"),
+    ];
+    const result = buildHealStatus(components);
+    expect(result.healthy).toBe(true);
+  });
+
+  it("returns all component fields including detail in output", () => {
     const captain = makeCaptain("gone", "brove");
     const result = buildHealStatus([captain]);
     const out = result.components[0];
     expect(out.kind).toBe("captain");
     expect(out.project).toBe("brove");
     expect(out.state).toBe("gone");
-    expect(out.healCmd).toBeNull();
+    expect(out.healCmd).toBe("squadrant heal captain brove");
   });
 
   it("empty component list → healthy=true", () => {
@@ -110,6 +162,52 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     expect(code).toBe(0);
     const out = stdoutLines.join("");
     expect(out).toContain("healthy");
+  });
+
+  it("exits 2 and prints unhealthy when delivery is stuck (#715)", async () => {
+    queryHealthMock.mockResolvedValue([
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+    ]);
+    const { runHealStatus } = await import("../heal.js");
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive: async () => true,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+    expect(code).toBe(2);
+    const out = stdoutLines.join("");
+    expect(out).toContain("Unhealthy components:");
+    expect(out).toContain("delivery");
+    expect(out).toContain("gone");
+    expect(out).toContain("⚠️ delivery stuck (300+ retries, reason: no-box)");
+    expect(out).toContain("squadrant heal captain squadrant");
+  });
+
+  it("exits 2 with --json and outputs structured error when delivery is stuck (#715)", async () => {
+    queryHealthMock.mockResolvedValue([
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("gone", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+    ]);
+    const { runHealStatus } = await import("../heal.js");
+    const code = await runHealStatus({
+      project: undefined,
+      json: true,
+      queryHealth: queryHealthMock,
+      isDaemonAlive: async () => true,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutLines.join(""));
+    expect(parsed.healthy).toBe(false);
+    const deliv = parsed.components.find((c: any) => c.kind === "delivery");
+    expect(deliv.state).toBe("gone");
+    expect(deliv.detail).toContain("delivery stuck");
+    expect(deliv.healCmd).toBe("squadrant heal captain squadrant");
   });
 
   it("exits 1 and prints error when daemon unreachable", async () => {
