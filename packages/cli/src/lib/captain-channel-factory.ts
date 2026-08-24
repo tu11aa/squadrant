@@ -51,10 +51,12 @@ function registerSenderIdentity(socketPath: string): void {
     // must never survive as "our" identity.
     unregisterSenderIdentity();
     fs.mkdirSync(CLAUDE_SESSIONS_DIR, { recursive: true });
-    // kind:"daemon" is one of Claude's own registry kinds (verified against the
-    // 2.1.241 binary's allowlist: interactive|bg|daemon|daemon-worker), so the
-    // registry stays truthful. Name resolution reads `name` regardless of kind;
-    // `name` is what the receiver renders instead of "Another Claude session".
+    // kind:"daemon" is one of Claude's own registry kinds — verified in the
+    // compiled binary at ~/.local/share/claude/versions/2.1.241 (Mach-O, not an
+    // npm cli.js): strings -a <binary> | grep 'interactive","bg","daemon'
+    // → ["interactive","bg","daemon","daemon-worker"]. Name resolution reads
+    // `name` regardless of kind, so the registry stays truthful and the
+    // receiver renders `name` instead of "Another Claude session".
     // No status/statusUpdatedAt: we never refresh them, and a frozen timestamp
     // reads as a live-but-stuck session to anything trusting it.
     fs.writeFileSync(
