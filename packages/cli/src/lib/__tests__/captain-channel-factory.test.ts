@@ -135,17 +135,23 @@ describe("sender identity registration (#711)", () => {
 
   function mockFs() {
     const writes: Array<{ path: string; body: any }> = [];
+    const ops: string[] = [];
     vi.doMock("node:net", () => ({ createServer: vi.fn(() => fakeServerSucceeding()), connect: vi.fn() }));
     vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     vi.spyOn(fs, "writeFileSync").mockImplementation((path: any, data: any) => {
       writes.push({ path: path.toString(), body: JSON.parse(data.toString()) });
+      ops.push(`write:${path}`);
       return undefined as any;
     });
-    return writes;
+    vi.spyOn(fs, "unlinkSync").mockImplementation((path: any) => {
+      ops.push(`unlink:${path}`);
+      return undefined as any;
+    });
+    return { writes, ops };
   }
 
   it("writes a ~/.claude/sessions/<pid>.json entry naming the socket it just bound", async () => {
-    const writes = mockFs();
+    const { writes } = mockFs();
     const { sharedReceiptListener } = await import("../captain-channel-factory.js");
     await sharedReceiptListener();
     expect(writes).toHaveLength(1);
@@ -158,8 +164,49 @@ describe("sender identity registration (#711)", () => {
     expect(typeof body.sessionId).toBe("string");
   });
 
+  it("declares an honest kind and no stale-prone status fields (#711 review)", async () => {
+    const { writes } = mockFs();
+    const { sharedReceiptListener } = await import("../captain-channel-factory.js");
+    await sharedReceiptListener();
+    const body = writes[0].body;
+    // "daemon" is in Claude's own registry-kind allowlist (2.1.241) — not a lie.
+    expect(body.kind).toBe("daemon");
+    // Never refreshed ⇒ would read as a live-but-frozen session. Omit entirely.
+    expect(body.statusUpdatedAt).toBeUndefined();
+    expect(body.status).toBeUndefined();
+  });
+
+  it("unlinks any pre-existing entry for our pid before writing (pid reuse)", async () => {
+    const { ops } = mockFs();
+    const { sharedReceiptListener } = await import("../captain-channel-factory.js");
+    await sharedReceiptListener();
+    const expected = require("node:path").join(require("node:os").homedir(), ".claude", "sessions", `${process.pid}.json`);
+    // The stale-entry unlink for our own pid happens BEFORE the fresh write.
+    expect(ops.indexOf(`unlink:${expected}`)).toBeGreaterThanOrEqual(0);
+    expect(ops.indexOf(`unlink:${expected}`)).toBeLessThan(ops.indexOf(`write:${expected}`));
+  });
+
+  it("removes the entry on process exit so a clean shutdown leaves no stale identity", async () => {
+    const { ops } = mockFs();
+    const handlers: Array<() => void> = [];
+    const onSpy = vi.spyOn(process, "on").mockImplementation(((event: string, handler: () => void) => {
+      if (event === "exit") handlers.push(handler);
+      return process;
+    }) as any);
+    try {
+      const { sharedReceiptListener } = await import("../captain-channel-factory.js");
+      await sharedReceiptListener();
+      expect(handlers).toHaveLength(1);
+      handlers[0]();
+      const expected = require("node:path").join(require("node:os").homedir(), ".claude", "sessions", `${process.pid}.json`);
+      expect(ops).toContain(`unlink:${expected}`);
+    } finally {
+      onSpy.mockRestore();
+    }
+  });
+
   it("a failed bind never writes a registry entry", async () => {
-    const writes = mockFs();
+    const { writes } = mockFs();
     vi.doMock("node:net", () => ({
       createServer: vi.fn(() => {
         const srv = new EventEmitter() as any;

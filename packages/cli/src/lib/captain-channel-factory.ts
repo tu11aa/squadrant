@@ -35,23 +35,45 @@ let shared: ClaudeReceiptListener | undefined;
  * Best-effort: a write failure must degrade to the old anonymous-wrapper
  * behaviour, never block channel construction.
  */
+const registryEntryPath = (): string => join(CLAUDE_SESSIONS_DIR, `${process.pid}.json`);
+
+function unregisterSenderIdentity(): void {
+  try {
+    fs.unlinkSync(registryEntryPath());
+  } catch {
+    // absent is the normal case after a failed write or a prior clean exit
+  }
+}
+
 function registerSenderIdentity(socketPath: string): void {
   try {
+    // Pids get reused: a leftover file from a dead process that owned this pid
+    // must never survive as "our" identity.
+    unregisterSenderIdentity();
     fs.mkdirSync(CLAUDE_SESSIONS_DIR, { recursive: true });
-    // Shape mirrors what live Claude sessions publish; `name` is what the
-    // receiver renders instead of "Another Claude session".
+    // kind:"daemon" is one of Claude's own registry kinds (verified against the
+    // 2.1.241 binary's allowlist: interactive|bg|daemon|daemon-worker), so the
+    // registry stays truthful. Name resolution reads `name` regardless of kind;
+    // `name` is what the receiver renders instead of "Another Claude session".
+    // No status/statusUpdatedAt: we never refresh them, and a frozen timestamp
+    // reads as a live-but-stuck session to anything trusting it.
     fs.writeFileSync(
-      join(CLAUDE_SESSIONS_DIR, `${process.pid}.json`),
+      registryEntryPath(),
       JSON.stringify({
         pid: process.pid,
         sessionId: randomUUID(),
         name: "squadrantd",
         messagingSocketPath: socketPath,
-        kind: "interactive",
+        kind: "daemon",
         peerProtocol: 1,
-        statusUpdatedAt: Date.now(),
       }),
     );
+    // Same contract Claude itself uses for this file (process.on("exit") unlink
+    // + graceful-stop unlink): a SIGKILLed writer leaves the entry behind, but
+    // readers liveness-check by pid, so a dead daemon's entry is inert. A CLEAN
+    // exit never leaves one — the frozen-fresh-forever class is reserved for
+    // hard kills, where no handler can run.
+    process.on("exit", unregisterSenderIdentity);
   } catch {
     // anonymous wrapper is the pre-#711 behaviour — acceptable degradation
   }
