@@ -961,17 +961,42 @@ describe("sendToSurface draft-preservation", () => {
   });
 
   // #268: unreadable screen → draft stays null → DeferDelivery (never deliver into unknown state).
-  it("throws DeferDelivery when read-screen throws (surface unreadable — defer, not deliver)", async () => {
+  // #714: a FAILED read-screen is no longer conflated with no-box — it logs the
+  // error text and classifies as its own 'probe-failed' reason.
+  it("throws DeferDelivery reason='probe-failed' when read-screen throws, logging the error text (#714)", async () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) throw new Error("surface gone");
+      if (args.includes("read-screen")) throw new Error("not_found: Surface not found for the given surface_id");
+      return "";
+    });
+    const stderr: string[] = [];
+    const errWrite = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      stderr.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      await expect(
+        driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
+      ).rejects.toMatchObject({ name: "DeferDelivery", reason: "probe-failed" });
+    } finally {
+      errWrite.mockRestore();
+    }
+    expect(stderr.join("")).toContain("read-screen failed");
+    expect(stderr.join("")).toContain("not_found: Surface not found for the given surface_id");
+    const cmds = execFileMock.mock.calls.map(cmdOf);
+    // Must not have sent anything — deferred (#268 rule intact)
+    expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
+  });
+
+  // #714: read-screen SUCCEEDING but the box not visible stays 'no-box' — the
+  // two failure classes must remain distinguishable.
+  it("throws DeferDelivery reason='no-box' when read-screen succeeds but the box is not visible (#714)", async () => {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("read-screen")) return "just transcript text\nwith no input box here";
       return "";
     });
     await expect(
       driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done"),
-    ).rejects.toBeInstanceOf(DeferDelivery);
-    const cmds = execFileMock.mock.calls.map(cmdOf);
-    // Must not have sent anything — deferred
-    expect(cmds.filter((c) => c.startsWith("send ") && !c.startsWith("send-key"))).toHaveLength(0);
+    ).rejects.toMatchObject({ name: "DeferDelivery", reason: "no-box" });
   });
 });
 
