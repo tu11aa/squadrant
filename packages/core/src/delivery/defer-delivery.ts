@@ -1,6 +1,7 @@
 /** #617: the classification sendToSurface already decides at each throw site —
  *  surfaced so callers can log *why* a send deferred, not just that it did.
- *  "no-box": input box not confirmed visible (overlay/unreadable screen, #268).
+ *  "no-box": read-screen succeeded but the input box was not confirmed
+ *            visible (overlay/menu/scrolled, #268).
  *  "modal": an AskUserQuestion/permission selection modal is open (#484).
  *  "draft": a real (or not-yet-disambiguated) draft is present in the input box.
  *  "probe-failed": the screen probe itself failed (dead surface, cmux down,
