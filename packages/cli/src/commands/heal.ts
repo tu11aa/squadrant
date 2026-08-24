@@ -66,7 +66,9 @@ export function buildHealStatus(components: ComponentHealth[] | null): HealStatu
   }));
   const healthy = out.every((c) => {
     if (c.kind === "delivery") {
-      return c.state === "alive" || c.state === "stopped" || c.state === "unknown";
+      // Only 'stuck' delivery makes healthy=false. A deferring-but-not-stuck queue is advisory (healthy=true).
+      const isStuck = (c.detail?.includes("delivery stuck") ?? false) || c.state === "gone";
+      return !isStuck && (c.state === "alive" || c.state === "stale" || c.state === "stopped" || c.state === "unknown");
     }
     return c.healCmd === null;
   });
@@ -136,13 +138,23 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 
   if (result.healthy) {
     stdout.write(chalk.green("✔ all components healthy\n"));
+    for (const c of result.components) {
+      if (c.kind === "delivery" && c.state === "stale") {
+        const glyph = chalk.yellow("•");
+        const stateColor = chalk.yellow;
+        stdout.write(`  ${glyph} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${stateColor(c.state.padEnd(8))} ${c.project}\n`);
+        if (c.detail) {
+          stdout.write(`      detail: ${c.detail}\n`);
+        }
+      }
+    }
     return 0;
   }
 
   stdout.write(chalk.bold("Unhealthy components:\n\n"));
   for (const c of result.components) {
     const isUnhealthy = c.kind === "delivery"
-      ? (c.state !== "alive" && c.state !== "stopped" && c.state !== "unknown")
+      ? ((c.detail?.includes("delivery stuck") ?? false) || c.state === "gone")
       : c.healCmd !== null;
     if (isUnhealthy) {
       const glyph = c.state === "stale" ? chalk.yellow("•") : chalk.red("✘");

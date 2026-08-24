@@ -80,13 +80,13 @@ describe("buildHealStatus", () => {
     expect(deliv?.healCmd).toBeNull();
   });
 
-  it("healthy=false when delivery is deferring (#715)", () => {
+  it("healthy=true when delivery is deferring (not stuck) (#715)", () => {
     const components: ComponentHealth[] = [
       makeCaptain("alive", "squadrant"),
       makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
     ];
     const result = buildHealStatus(components);
-    expect(result.healthy).toBe(false);
+    expect(result.healthy).toBe(true);
     const deliv = result.components.find((c) => c.kind === "delivery");
     expect(deliv?.state).toBe("stale");
     expect(deliv?.detail).toBe("delivery deferred (15 retries, reason: draft)");
@@ -157,6 +157,51 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     expect(code).toBe(0);
     const out = stdoutLines.join("");
     expect(out).toContain("healthy");
+  });
+
+  it("exits 0 and prints deferring delivery detail when deferring (not stuck) (#715)", async () => {
+    queryHealthMock.mockResolvedValue([
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+    ]);
+    const { runHealStatus } = await import("../heal.js");
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive: async () => true,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+    expect(code).toBe(0);
+    const out = stdoutLines.join("");
+    expect(out).toContain("healthy");
+    expect(out).toContain("delivery");
+    expect(out).toContain("stale");
+    expect(out).toContain("delivery deferred (15 retries, reason: draft)");
+  });
+
+  it("exits 0 with --json and reports healthy=true when delivery is deferring (not stuck) (#715)", async () => {
+    queryHealthMock.mockResolvedValue([
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+    ]);
+    const { runHealStatus } = await import("../heal.js");
+    const code = await runHealStatus({
+      project: undefined,
+      json: true,
+      queryHealth: queryHealthMock,
+      isDaemonAlive: async () => true,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdoutLines.join(""));
+    expect(parsed.healthy).toBe(true);
+    const deliv = parsed.components.find((c: any) => c.kind === "delivery");
+    expect(deliv.state).toBe("stale");
+    expect(deliv.detail).toBe("delivery deferred (15 retries, reason: draft)");
+    expect(deliv.healCmd).toBeNull();
   });
 
   it("exits 2 and prints unhealthy when delivery is stuck (#715)", async () => {
