@@ -8,13 +8,54 @@
 // derives the address from the project name alone.
 
 import { createServer, connect as netConnect } from "node:net";
-import { unlinkSync } from "node:fs";
+import fs from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
-import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath } from "@squadrant/agents";
+import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath, CLAUDE_SESSIONS_DIR } from "@squadrant/agents";
 import { captainSocketPath, CC_SOCKS_DIR } from "@squadrant/core";
 
 let shared: ClaudeReceiptListener | undefined;
+
+/**
+ * #711: register a name for the socket we just bound.
+ *
+ * The receiving Claude session resolves a sender's display name by looking the
+ * sender's socket path up in ~/.claude/sessions/<pid>.json. We bind a socket
+ * but never wrote such an entry, so every daemon-sent lifecycle message
+ * (CREW DONE / BLOCKED / IDLE / TAKEOVER) rendered as anonymous "Another Claude
+ * session" plus Claude's reduced-trust peer guardrail — squadrant's own signals
+ * delivered under third-party framing.
+ *
+ * Tradeoff accepted (issue #711, direction 1): this entry makes this process
+ * visible as a peer in ListAgents to every Claude session on the machine.
+ * Stray traffic is inert — the receipt listener discards every frame that is
+ * not a peer_message_status receipt.
+ *
+ * Best-effort: a write failure must degrade to the old anonymous-wrapper
+ * behaviour, never block channel construction.
+ */
+function registerSenderIdentity(socketPath: string): void {
+  try {
+    fs.mkdirSync(CLAUDE_SESSIONS_DIR, { recursive: true });
+    // Shape mirrors what live Claude sessions publish; `name` is what the
+    // receiver renders instead of "Another Claude session".
+    fs.writeFileSync(
+      join(CLAUDE_SESSIONS_DIR, `${process.pid}.json`),
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: randomUUID(),
+        name: "squadrantd",
+        messagingSocketPath: socketPath,
+        kind: "interactive",
+        peerProtocol: 1,
+        statusUpdatedAt: Date.now(),
+      }),
+    );
+  } catch {
+    // anonymous wrapper is the pre-#711 behaviour — acceptable degradation
+  }
+}
 
 /**
  * One listener per process — it binds a socket, so constructing several would EADDRINUSE.
@@ -27,12 +68,13 @@ let shared: ClaudeReceiptListener | undefined;
  */
 export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   if (shared) return shared;
+  const socketPath = `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`;
   const listener = new ClaudeReceiptListener({
-    socketPath: `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`,
+    socketPath,
     createServer: (h) => createServer(h),
     // A UDS path is not cleaned up when a process is killed, so our own leftover
     // must never be the reason we refuse to start.
-    unlinkStale: (p) => { try { unlinkSync(p); } catch { /* absent is the normal case */ } },
+    unlinkStale: (p) => { try { fs.unlinkSync(p); } catch { /* absent is the normal case */ } },
     log: (m) => console.error(chalk.dim(m)),
   });
   // Cache only AFTER a successful bind (#712). Assigning `shared` before start()
@@ -40,6 +82,7 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   // singleton: every later call saw `shared` truthy and returned the never-started
   // listener without retrying the bind at all.
   await listener.start();
+  registerSenderIdentity(socketPath);
   shared = listener;
   return shared;
 }
