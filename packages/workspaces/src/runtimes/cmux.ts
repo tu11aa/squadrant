@@ -650,7 +650,14 @@ export function createCmuxDriver(): RuntimeDriver {
       let screen = "";
       try {
         screen = await cmux(["read-screen", "--workspace", ws, "--surface", sf]);
-      } catch { /* screen unreadable — parseDraftFromScreen("") → null → defer below */ }
+      } catch (e) {
+        // #714: the probe invocation itself failed (dead surface, cmux down,
+        // bad ref). Never conflate that with no-box — log the error text and
+        // classify it as its own reason so callers can re-resolve (#713).
+        // The #268 rule stands: we never keystroke into an unconfirmed box.
+        process.stderr.write(`[squadrant] read-screen failed for ${ws}/${sf}: ${(e as Error).message}\n`);
+        throw new DeferDelivery(null, "probe-failed");
+      }
       const draft = parseDraftFromScreen(screen);
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).

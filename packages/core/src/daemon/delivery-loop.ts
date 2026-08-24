@@ -1,7 +1,8 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
-import { CaptainDelivery, type CaptainDeliveryStats } from "../delivery/captain-delivery.js";
+import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
+import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { deriveCaptainState } from "../liveness.js";
@@ -19,6 +20,27 @@ const CURSOR_SUBSCRIBER = "captain";
 // Includes terminal transitions (done/failed/cancelled) AND task.blocked:
 // a dropped task.blocked leaves the captain waiting forever on a crew question.
 const TERMINAL_KINDS = new Set(["task.done", "task.failed", "task.cancelled", "task.blocked"]);
+
+// #714: the DELIVERY STUCK alert must name the reason that actually fired —
+// a binary modal-vs-everything-else text sent the operator hunting for a draft
+// that never existed (the 2026-08-22 no-box jam pointed at an input box when
+// the real cause was a destroyed surface). One distinct sentence per reason;
+// "stable"/"unknown" have no operator action of their own, so they keep the
+// generic retry-assurance wording.
+const STUCK_ALERT_TEXT: Record<DeliverDeferReason, (n: number) => string> = {
+  "no-box": (n) =>
+    `⚠️ DELIVERY STUCK: your captain pane's input box could not be confirmed visible (an overlay, menu, or scrolled view may be covering it) and has blocked pending notification(s) for ${n}+ retries. This keeps retrying safely and will deliver automatically once the input box is visible again.`,
+  modal: (n) =>
+    `⚠️ DELIVERY STUCK: a modal question is open in your captain pane and has blocked pending notification(s) for ${n}+ retries. This keeps retrying safely and will deliver automatically once you answer or dismiss it.`,
+  draft: (n) =>
+    `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${n}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`,
+  "probe-failed": (n) =>
+    `⚠️ DELIVERY STUCK: reading your captain pane failed (stale/dead surface reference or cmux unavailable) and has blocked pending notification(s) for ${n}+ retries. Delivery re-resolves the pane automatically; if this persists after a captain restart, bounce the daemon to refresh its surface references.`,
+  stable: (n) =>
+    `⚠️ DELIVERY STUCK: pending notification(s) have been blocked for ${n}+ retries. This keeps retrying safely and will deliver automatically once the blocker clears.`,
+  unknown: (n) =>
+    `⚠️ DELIVERY STUCK: pending notification(s) have been blocked for ${n}+ retries. This keeps retrying safely and will deliver automatically once the blocker clears.`,
+};
 
 /** Pure: find the captain surface by title in a surface list (#332). */
 export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
@@ -263,16 +285,15 @@ export function createDelivery(
 
       // Surface discovery is ONLY for the delivery target (where to cmux.send);
       // captain presence/liveness authority now lives in livenessRegistry.
-      const wsId = cmux.findWorkspaceId ? await cmux.findWorkspaceId(captainTitle) : null;
       let surface: PaneRef | null = null;
-
-      if (wsId) {
+      const resolveCaptainSurface = async (): Promise<PaneRef | null> => {
+        const wsId = cmux.findWorkspaceId ? await cmux.findWorkspaceId(captainTitle) : null;
+        if (!wsId) return injectedSurfaces[project] ?? null;
         const surfaces = await cmux.listSurfaces(wsId);
-        surface = discoverCaptainSurface(surfaces, captainTitle);
-      }
-
-      // Fall back to injected surface (tests / config-less projects).
-      if (!surface) surface = injectedSurfaces[project] ?? null;
+        // Fall back to injected surface (tests / config-less projects).
+        return discoverCaptainSurface(surfaces, captainTitle) ?? injectedSurfaces[project] ?? null;
+      };
+      surface = await resolveCaptainSurface();
 
       if (!surface) continue;
 
@@ -327,7 +348,31 @@ export function createDelivery(
             // cursor and do NOT also write the pane.
             return;
           }
-          return cmux.send(surface!, text, sendOpts);
+          try {
+            return await cmux.send(surface!, text, sendOpts);
+          } catch (e) {
+            // #713: probe-failed (#714) means the cmux invocation itself failed
+            // — most likely a stale surface ref after a captain restart. The
+            // resolved surface is never re-resolved otherwise, so a dead ref
+            // would defer forever (the ~4h 2026-08-22 jam). Re-resolve once via
+            // the same discovery path and retry against the new surface. Only
+            // probe-failed triggers this: no-box/modal/draft mean the surface
+            // is alive and the pane is merely busy — re-resolving those would
+            // churn. Guarded against looping: no new surface (none found, or
+            // the SAME one that just failed) defers normally.
+            if (!(e instanceof DeferDelivery) || e.reason !== "probe-failed") throw e;
+            const next = await resolveCaptainSurface();
+            const same = next !== null
+              && next.workspaceId === surface!.workspaceId
+              && next.surfaceId === surface!.surfaceId;
+            if (!next || same) {
+              log(`delivery project=${project}: probe-failed but surface re-resolution found ${next ? "the same dead surface" : "no captain surface"} — deferring`);
+              throw e;
+            }
+            log(`delivery project=${project}: probe-failed on ${surface!.workspaceId}/${surface!.surfaceId} — re-resolved to ${next.workspaceId}/${next.surfaceId}, retrying`);
+            surface = next;
+            return cmux.send(next, text, sendOpts);
+          }
         });
         if ("delivered" in result) {
           log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=delivered`);
@@ -376,12 +421,11 @@ export function createDelivery(
         stuckNotified.add(project);
         const { maxDeferCount, reason } = d.stats();
         log(`delivery stuck project=${project} deferCount=${maxDeferCount} reason=${reason ?? "unknown"}`);
-        // #617: report the actual blocker instead of always blaming the input
-        // box — a modal (#484) isn't a draft/ghost and pointing the operator at
-        // their input box is actively misleading when a question is open.
-        const text = reason === "modal"
-          ? `⚠️ DELIVERY STUCK: a modal question is open in your captain pane and has blocked pending notification(s) for ${maxDeferCount}+ retries. This keeps retrying safely and will deliver automatically once you answer or dismiss it.`
-          : `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${maxDeferCount}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`;
+        // #617/#714: report the ACTUAL blocker instead of always blaming the
+        // input box — a modal (#484) isn't a draft, and a failed screen probe
+        // (#714) is neither: it's a dead surface/cmux invocation failure that
+        // re-resolution should heal (#713). One distinct sentence per reason.
+        const text = STUCK_ALERT_TEXT[reason ?? "unknown"](maxDeferCount);
         appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
           .catch((e) => log(`delivery stuck alert failed project=${project}: ${(e as Error).message}`));
         Promise.resolve(notifyFault(project, text))
