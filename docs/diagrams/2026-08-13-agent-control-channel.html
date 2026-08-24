@@ -241,18 +241,35 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
       <code>idle</code> announces "ready for work" about a session we don't understand.</p></div>
   </div>
 
+  <h2>captainChannel — native captain delivery</h2>
+  <p class="lead">Modes: <code>off</code> / <code>shadow</code> / <code>on</code>. Replaces screen-scraped captain delivery with native peer socket delivery.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h3>captainChannel: on (preferred)</h3>
+      <p>Routes captain-bound delivery directly over the <strong>native peer socket</strong> (<code>/tmp/cc-socks/squadrant-&lt;project&gt;.sock</code>), bypassing the pane-defer machine entirely.</p>
+      <p><span class="pill p-ok">on</span> No draft/ghost/modal/<code>no-box</code> deferral loops.</p>
+    </div>
+    <div class="card">
+      <h3>captainChannel: shadow (probe-only)</h3>
+      <p>Probes the socket but <strong>never sends</strong>: logs and <strong>discards</strong> the probe result, provides <strong>no liveness of its own</strong>, and falls back to pane delivery — which re-enters the full pane-defer machine.</p>
+      <p><span class="pill p-warn">shadow</span> Verification aid only — not a safe fallback.</p>
+    </div>
+  </div>
+  <p class="sub" style="font-size:13.5px">Note: Crew wrapper/receipt text visible in prompt under <code>on</code> mode is a sender-identity artifact (<span class="tag">#711</span>), not an inherent property of the channel.</p>
+
   <h2>Rollout &amp; channel status (v0.19.0)</h2>
   <div class="flow">
     <div class="node"><div class="t">off</div>
-      <div class="d">unchanged</div></div>
+      <div class="d">unchanged<br><span class="pill p-dim">opencode live (off)</span></div></div>
     <div class="arrow">→</div>
     <div class="node" style="border-color:var(--warn)"><div class="t">shadow</div>
-      <div class="d">both paths run · log only where they <strong>disagree</strong> ·
-      pane still decides<br><span class="pill p-warn">opencode current</span></div></div>
+      <div class="d">probes but never sends · logs and discards the result · provides no liveness · falls back to pane delivery</div></div>
     <div class="arrow">→</div>
     <div class="node" style="border-color:var(--ok)"><div class="t">on</div>
       <div class="d">channel leads · native peer socket · agent receipt ground truth<br><span class="pill p-ok">claude live (v0.19.0)</span></div></div>
   </div>
+
+  <p class="sub" style="font-size:13.5px;margin:10px 0"><code>off → shadow</code> needs a daemon bounce; <code>shadow → on</code> does not.</p>
 
   <div class="note">
     <strong>A false-signal fix cannot be proven without observing the signal being false.</strong>

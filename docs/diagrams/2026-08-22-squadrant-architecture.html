@@ -381,6 +381,18 @@
         <line class="edge" x1="590" y1="380" x2="590" y2="302"/>
       </svg>
     </div>
+    <div style="margin-top:12px;margin-bottom:12px;overflow:auto">
+      <table>
+        <thead><tr><th>Issue</th><th>Behavior</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>#712</td><td>Channel init used to latch pane-only after a single transient bind error</td><td style="color:var(--agents)">FIXED in v0.19.0 (retries with backoff)</td></tr>
+          <tr><td>#713</td><td>Daemon can hold a stale surface ref after a captain pid change</td><td style="color:var(--cli)">#713 open</td></tr>
+          <tr><td>#714</td><td>A failed <code>cmux read-screen</code> is swallowed and misreported as <code>reason=no-box</code> (which does NOT mean the screen is covered)</td><td style="color:var(--cli)">#714 open</td></tr>
+          <tr><td>#715</td><td><code>squadrant heal status</code> reports all-healthy while delivery is dead</td><td style="color:var(--cli)">#715 open</td></tr>
+          <tr><td>#711</td><td>Crew wrapper/receipt text visible in <code>on</code> mode is a sender-identity artifact</td><td style="color:var(--cli)">#711 open</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <footer>
