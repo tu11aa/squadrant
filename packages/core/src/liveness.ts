@@ -30,6 +30,8 @@ export interface ComponentHealth {
   lastSeenMs: number | null;
   /** human-facing context — e.g. a recovery command. */
   detail?: string;
+  /** true when a delivery queue has crossed its maxDefers retry threshold (#715) */
+  stuck?: boolean;
 }
 
 // Crews legitimately idle for long (24h interactive budget), so the surface uses
@@ -151,6 +153,7 @@ export function projectHealth(input: {
     state: deliveryState,
     lastSeenMs: null,
     detail: deliveryDetail,
+    stuck: deferral?.stuck,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────

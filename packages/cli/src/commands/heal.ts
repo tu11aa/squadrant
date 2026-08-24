@@ -39,6 +39,7 @@ export interface HealComponent {
   ref: string;
   state: HealthState;
   detail?: string;
+  stuck?: boolean;
   healCmd: string | null;
 }
 
@@ -62,13 +63,13 @@ export function buildHealStatus(components: ComponentHealth[] | null): HealStatu
     ref: c.ref,
     state: c.state,
     detail: c.detail,
+    stuck: c.stuck,
     healCmd: healCmdFor(c),
   }));
   const healthy = out.every((c) => {
     if (c.kind === "delivery") {
       // Only 'stuck' delivery makes healthy=false. A deferring-but-not-stuck queue is advisory (healthy=true).
-      const isStuck = (c.detail?.includes("delivery stuck") ?? false) || c.state === "gone";
-      return !isStuck && (c.state === "alive" || c.state === "stale" || c.state === "stopped" || c.state === "unknown");
+      return c.stuck !== true;
     }
     return c.healCmd === null;
   });
@@ -153,12 +154,11 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 
   stdout.write(chalk.bold("Unhealthy components:\n\n"));
   for (const c of result.components) {
-    const isUnhealthy = c.kind === "delivery"
-      ? ((c.detail?.includes("delivery stuck") ?? false) || c.state === "gone")
-      : c.healCmd !== null;
-    if (isUnhealthy) {
-      const glyph = c.state === "stale" ? chalk.yellow("•") : chalk.red("✘");
-      const stateColor = c.state === "stale" ? chalk.yellow : chalk.red;
+    const isUnhealthy = c.kind === "delivery" ? c.stuck === true : c.healCmd !== null;
+    const isAdvisoryDelivery = c.kind === "delivery" && c.state === "stale" && c.stuck !== true;
+    if (isUnhealthy || isAdvisoryDelivery) {
+      const glyph = (c.state === "stale" || isAdvisoryDelivery) ? chalk.yellow("•") : chalk.red("✘");
+      const stateColor = (c.state === "stale" || isAdvisoryDelivery) ? chalk.yellow : chalk.red;
       stdout.write(`  ${glyph} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${stateColor(c.state.padEnd(8))} ${c.project}\n`);
       if (c.detail) {
         stdout.write(`      detail: ${c.detail}\n`);

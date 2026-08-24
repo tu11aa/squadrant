@@ -18,8 +18,8 @@ function makeCaptain(state: ComponentHealth["state"], project = "brove"): Compon
 function makeCrew(state: ComponentHealth["state"]): ComponentHealth {
   return { kind: "crew", project: "brove", ref: "worker-1", state, lastSeenMs: null };
 }
-function makeDelivery(state: ComponentHealth["state"], project = "brove", detail?: string): ComponentHealth {
-  return { kind: "delivery", project, ref: "delivery", state, lastSeenMs: null, detail };
+function makeDelivery(state: ComponentHealth["state"], project = "brove", detail?: string, stuck?: boolean): ComponentHealth {
+  return { kind: "delivery", project, ref: "delivery", state, lastSeenMs: null, detail, stuck };
 }
 
 // ── healCmdFor ───────────────────────────────────────────────────────────────
@@ -69,26 +69,44 @@ describe("buildHealStatus", () => {
   it("healthy=false when delivery is stuck (#715)", () => {
     const components: ComponentHealth[] = [
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)", true),
     ];
     const result = buildHealStatus(components);
     expect(result.healthy).toBe(false);
     const deliv = result.components.find((c) => c.kind === "delivery");
     expect(deliv).toBeDefined();
     expect(deliv?.state).toBe("stale");
+    expect(deliv?.stuck).toBe(true);
     expect(deliv?.detail).toBe("⚠️ delivery stuck (300+ retries, reason: no-box)");
     expect(deliv?.healCmd).toBeNull();
+  });
+
+  it("stuck is decided by the stuck boolean field and NOT by message text (#715)", () => {
+    const components: ComponentHealth[] = [
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("stale", "squadrant", "custom reworded status message without the keyword", true),
+    ];
+    const result = buildHealStatus(components);
+    expect(result.healthy).toBe(false);
+
+    const nonStuck: ComponentHealth[] = [
+      makeCaptain("alive", "squadrant"),
+      makeDelivery("stale", "squadrant", "mentions delivery stuck in prose but stuck=false", false),
+    ];
+    const nonStuckResult = buildHealStatus(nonStuck);
+    expect(nonStuckResult.healthy).toBe(true);
   });
 
   it("healthy=true when delivery is deferring (not stuck) (#715)", () => {
     const components: ComponentHealth[] = [
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)", false),
     ];
     const result = buildHealStatus(components);
     expect(result.healthy).toBe(true);
     const deliv = result.components.find((c) => c.kind === "delivery");
     expect(deliv?.state).toBe("stale");
+    expect(deliv?.stuck).toBe(false);
     expect(deliv?.detail).toBe("delivery deferred (15 retries, reason: draft)");
   });
 
@@ -162,7 +180,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   it("exits 0 and prints deferring delivery detail when deferring (not stuck) (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)", false),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -184,7 +202,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   it("exits 0 with --json and reports healthy=true when delivery is deferring (not stuck) (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)"),
+      makeDelivery("stale", "squadrant", "delivery deferred (15 retries, reason: draft)", false),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -200,6 +218,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     expect(parsed.healthy).toBe(true);
     const deliv = parsed.components.find((c: any) => c.kind === "delivery");
     expect(deliv.state).toBe("stale");
+    expect(deliv.stuck).toBe(false);
     expect(deliv.detail).toBe("delivery deferred (15 retries, reason: draft)");
     expect(deliv.healCmd).toBeNull();
   });
@@ -207,7 +226,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   it("exits 2 and prints unhealthy when delivery is stuck (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)", true),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -229,7 +248,7 @@ describe("runHealStatus (integration, mocked I/O)", () => {
   it("exits 2 with --json and outputs structured error when delivery is stuck (#715)", async () => {
     queryHealthMock.mockResolvedValue([
       makeCaptain("alive", "squadrant"),
-      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)"),
+      makeDelivery("stale", "squadrant", "⚠️ delivery stuck (300+ retries, reason: no-box)", true),
     ]);
     const { runHealStatus } = await import("../heal.js");
     const code = await runHealStatus({
@@ -245,8 +264,34 @@ describe("runHealStatus (integration, mocked I/O)", () => {
     expect(parsed.healthy).toBe(false);
     const deliv = parsed.components.find((c: any) => c.kind === "delivery");
     expect(deliv.state).toBe("stale");
+    expect(deliv.stuck).toBe(true);
     expect(deliv.detail).toContain("delivery stuck");
     expect(deliv.healCmd).toBeNull();
+  });
+
+  it("prints advisory delivery rows in unhealthy branch when something else is unhealthy (#715)", async () => {
+    queryHealthMock.mockResolvedValue([
+      makeCaptain("alive", "projA"),
+      makeDelivery("stale", "projA", "⚠️ delivery stuck (300+ retries, reason: no-box)", true),
+      makeCaptain("alive", "projB"),
+      makeDelivery("stale", "projB", "delivery deferred (5 retries, reason: draft)", false),
+    ]);
+    const { runHealStatus } = await import("../heal.js");
+    const code = await runHealStatus({
+      project: undefined,
+      json: false,
+      queryHealth: queryHealthMock,
+      isDaemonAlive: async () => true,
+      stdout: { write: (s: string) => { stdoutLines.push(s); } } as unknown as NodeJS.WritableStream,
+      stderr: { write: (s: string) => { stderrLines.push(s); } } as unknown as NodeJS.WritableStream,
+    });
+    expect(code).toBe(2);
+    const out = stdoutLines.join("");
+    expect(out).toContain("Unhealthy components:");
+    expect(out).toContain("projA");
+    expect(out).toContain("⚠️ delivery stuck (300+ retries, reason: no-box)");
+    expect(out).toContain("projB");
+    expect(out).toContain("delivery deferred (5 retries, reason: draft)");
   });
 
   it("exits 1 and prints error when daemon unreachable", async () => {

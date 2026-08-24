@@ -68,6 +68,7 @@ describe("projectHealth (pure projection)", () => {
     const delivery = find(cs, "delivery")!;
     expect(delivery).toBeDefined();
     expect(delivery.state).toBe("stale");
+    expect(delivery.stuck).toBe(true);
     expect(delivery.detail).toMatch(/delivery stuck/i);
     expect(delivery.detail).toContain("300");
     expect(delivery.detail).toContain("no-box");
@@ -81,6 +82,7 @@ describe("projectHealth (pure projection)", () => {
     const delivery = find(cs, "delivery")!;
     expect(delivery).toBeDefined();
     expect(delivery.state).toBe("stale");
+    expect(delivery.stuck).toBe(false);
     expect(delivery.detail).toContain("15");
     expect(delivery.detail).toContain("draft");
   });
