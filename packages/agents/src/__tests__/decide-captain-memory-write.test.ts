@@ -14,7 +14,7 @@ describe("decideCaptainMemoryWrite (#556)", () => {
       HOME,
     );
     expect(result.decision).toBe("deny");
-    expect(result.reason).toMatch(/report/i);
+    expect(result.reason).toMatch(/#556/);
   });
 
   it("denies a crew Edit into a memory file other than MEMORY.md", () => {
@@ -25,6 +25,41 @@ describe("decideCaptainMemoryWrite (#556)", () => {
       HOME,
     );
     expect(result.decision).toBe("deny");
+  });
+
+  it("denies a crew MultiEdit into the memory directory", () => {
+    const result = decideCaptainMemoryWrite(
+      "MultiEdit",
+      { file_path: `${HOME}/.claude/projects/-Users-q3labsadmin-me-squadrant/memory/MEMORY.md`, edits: [] },
+      CREW_ENV,
+      HOME,
+    );
+    expect(result.decision).toBe("deny");
+  });
+
+  it("denies a crew NotebookEdit into the memory directory (notebook_path, not file_path)", () => {
+    const result = decideCaptainMemoryWrite(
+      "NotebookEdit",
+      { notebook_path: `${HOME}/.claude/projects/-Users-q3labsadmin-me-squadrant/memory/notes.ipynb` },
+      CREW_ENV,
+      HOME,
+    );
+    expect(result.decision).toBe("deny");
+  });
+
+  it("denies a crew Bash command that targets a memory path in its text (best-effort match)", () => {
+    const result = decideCaptainMemoryWrite(
+      "Bash",
+      { command: `echo "wrong conclusion" >> ${HOME}/.claude/projects/-Users-q3labsadmin-me-squadrant/memory/foo.md` },
+      CREW_ENV,
+      HOME,
+    );
+    expect(result.decision).toBe("deny");
+  });
+
+  it("allows a crew Bash command with no memory-path reference", () => {
+    const result = decideCaptainMemoryWrite("Bash", { command: "npm test" }, CREW_ENV, HOME);
+    expect(result.decision).toBe("allow");
   });
 
   it("allows a crew Write outside the memory directory", () => {

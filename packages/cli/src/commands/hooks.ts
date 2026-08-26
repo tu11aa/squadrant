@@ -141,9 +141,10 @@ export function hooksCommand(): Command {
       if (!taskId || !project) { process.exit(0); }
 
       // #556: the broad ("" matcher) pre-tool-use hook fires for every tool
-      // call, including Write/Edit — the only point that can see a crew's
-      // file_path before it lands. Deny writes into the captain's long-term
-      // memory directory; report/propose is the only allowed path there.
+      // call, including Write/Edit/MultiEdit/NotebookEdit/Bash — the only
+      // point that can see a crew's target path before it lands. Deny writes
+      // into the captain's long-term memory directory; report/propose is the
+      // only allowed path there.
       if (sub === "pre-tool-use") {
         const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
         const guard = decideCaptainMemoryWrite(
@@ -153,6 +154,7 @@ export function hooksCommand(): Command {
           homedir(),
         );
         if (guard.decision === "deny") {
+          console.error(`[squadrant] denied crew write into captain memory (task ${taskId}): ${guard.reason}`);
           process.stdout.write(JSON.stringify({
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
