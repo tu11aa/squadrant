@@ -18,6 +18,7 @@ guided first run — come back here when you need the details.
   - [Lifecycle Sources](#lifecycle-sources)
   - [Control/Captain Channel (#667)](#controlcaptain-channel-667)
   - [Crew Spawn (Interactive Sub-Sessions)](#crew-spawn-interactive-sub-sessions)
+  - [Answering a Crew's Open Prompt (#592)](#answering-a-crews-open-prompt-592)
   - [Effort Dial (Tokenomics)](#effort-dial-tokenomics)
   - [Crew Lifecycle & Delivery](#crew-lifecycle--delivery)
   - [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)
@@ -56,6 +57,7 @@ guided first run — come back here when you need the details.
 | `squadrant projection list` | Show registered projection targets and their destinations |
 | `squadrant crew spawn <project> <task> [--name <n>] [--direction tab\|right\|left\|up\|down] [--agent <a>]` | Spawn an interactive crew sub-session (tab in the captain workspace by default; `--direction` for a pane) |
 | `squadrant crew send <project> <name> <message>` | Send a follow-up turn to an existing crew |
+| `squadrant crew answer <project> <name> <option> [--expect <text>] [--text <answer>]` | Deliberately answer a crew's open AskUserQuestion/permission prompt by index or text — never an implicit default (#592) |
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
@@ -146,6 +148,29 @@ The next step past lifecycle sources: use each agent's **native control API** as
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
 Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `squadrant shutdown`. codex now launches interactively (parity with claude/opencode); gemini currently still launches in print-mode, full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-squadrant-thin-redirect-design.md`](specs/archive/2026-05-05-squadrant-thin-redirect-design.md).
+
+### Answering a Crew's Open Prompt (#592)
+
+`squadrant crew send` correctly **refuses** to touch a pane while a crew has an AskUserQuestion/permission modal open — a bare keystroke would confirm whatever option the model happened to highlight ([#484](https://github.com/tu11aa/squadrant/issues/484)). That used to be a dead end: the refusal's own advice ("wait for the prompt to close") was unactionable, since the prompt only closes when answered.
+
+`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection (`Down`/`Up` from wherever the highlighted row currently sits, then `Enter`):
+
+```
+$ squadrant crew read myproj video          # see the options first
+❯ 1. Use main as the base
+  2. Use the existing stale branch
+  3. Ask me something else
+
+$ squadrant crew answer myproj video 1
+→ selecting 1. "Use main as the base"
+✔ Answered myproj:video with 1. "Use main as the base" — prompt closed
+```
+
+- `--expect "<text>"` refuses if the resolved option's label doesn't contain that text — a guard against the option order shifting between renders (it's model-generated, not fixed).
+- `--text "<answer>"` is for a free-text option (e.g. "Type something."): select it, then type the given answer and submit.
+- If no option list is visible, `crew answer` refuses rather than guessing — read the screen with `crew read` first.
+
+`squadrant crew reply <project> <id> [message]` (control-plane path, keyed by task id instead of crew name) now delivers through the same path as `crew send` **before** transitioning task state — never the reverse. If delivery throws (e.g. the prompt is open), the command exits non-zero and no state transition happens; the error points at `crew answer`.
 
 ### Effort Dial (Tokenomics)
 

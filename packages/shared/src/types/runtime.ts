@@ -34,6 +34,16 @@ export interface RuntimeProbeResult {
   version: string;
 }
 
+// One row of an open AskUserQuestion/permission SELECTION MODAL (#484), parsed
+// from the rendered "N. Label" lines between a modal's HR borders. `highlighted`
+// marks the row currently prefixed with the ❯ prompt glyph — #592's `crew answer`
+// needs it to compute how many Down/Up presses move the selection to a target row.
+export interface ModalOption {
+  index: number;
+  label: string;
+  highlighted: boolean;
+}
+
 export interface RuntimeDriver {
   name: string;                                        // "cmux", "tmux", ...
 

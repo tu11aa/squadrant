@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveTextInput, resolveControlChannelMode } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
-import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, getFreePort } from "@squadrant/workspaces";
+import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -12,8 +12,10 @@ import {
   runCrewRead as coreRunCrewRead,
   runCrewClose as coreRunCrewClose,
   runCrewList as coreRunCrewList,
+  runCrewAnswer as coreRunCrewAnswer,
   type CrewSpawnInput,
   type ResolvedAgent,
+  type CrewAnswerResult,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
@@ -145,6 +147,27 @@ export async function runCrewList(project: string): Promise<Array<{ name: string
   return coreRunCrewList(project, runtime, workspaceId);
 }
 
+export async function runCrewAnswer(
+  project: string,
+  name: string,
+  option: string,
+  opts?: { expect?: string; text?: string },
+): Promise<CrewAnswerResult> {
+  const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
+  return coreRunCrewAnswer(
+    project,
+    name,
+    option,
+    runtime,
+    workspaceId,
+    {
+      readModalOptions: (pane) => readModalOptions(runtime, pane),
+      log: (m) => console.log(chalk.dim(m)),
+    },
+    opts,
+  );
+}
+
 // ─── CLI command definitions ──────────────────────────────────────────────────
 
 export const crewCommand = new Command("crew").description(
@@ -264,6 +287,30 @@ crewCommand
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
+  });
+
+crewCommand
+  .command("answer")
+  .description(
+    "Deliberately answer a crew's open AskUserQuestion/permission prompt (#592) — never an implicit default",
+  )
+  .argument("<project>", "Project name")
+  .argument("<name>", "Crew name")
+  .argument("<option>", "1-based option index, or an exact/prefix match of the option's text")
+  .option("--expect <text>", "Refuse unless the resolved option's label contains this text (guards against option order shifting)")
+  .option("--text <answer>", "For a free-text option (e.g. 'Type something.'): select it, then type this answer and submit")
+  .action(async (project: string, name: string, option: string, opts: { expect?: string; text?: string }) => {
+    try {
+      const { selected, closed } = await runCrewAnswer(project, name, option, opts);
+      if (closed) {
+        console.log(chalk.green(`✔ Answered ${project}:${name} with ${selected.index}. "${selected.label}" — prompt closed`));
+      } else {
+        console.log(chalk.yellow(`⚠ Sent ${selected.index}. "${selected.label}" to ${project}:${name}, but the prompt still appears open — read it again with 'squadrant crew read ${project} ${name}'`));
+      }
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
       process.exit(1);
     }
   });

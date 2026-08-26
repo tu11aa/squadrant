@@ -214,7 +214,7 @@ You don't have an Agent Team or `TaskCreate`/`TaskUpdate` tools — those were C
 
 If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attempts with a sleep between), or watch the mailbox seq — never an unbounded `until` loop.
 
-### Handling CREW IDLE
+### Handling CREW IDLE / BLOCKED
 
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
 - **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
@@ -226,12 +226,13 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 | Spot-check shows | Captain action |
 |-----------------|----------------|
 | Completed work (PR opened, commits pushed, results reported) but no CREW DONE | Treat as the #278 case — review, then follow the HUMAN REVIEW GATE contract: surface the diff and wait for operator go-ahead; never merge unprompted. If not actually done, **re-task**: send the next instruction via `crew send` (the #148 re-open flow). |
-| Crew asked a question or is waiting for a decision | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
+| Crew asked a question or is waiting for a decision (plain text, no rendered options) | Respond via `crew send`. Do NOT terminalize — it will signal done after the next turn. |
+| Crew has an **open AskUserQuestion/permission prompt** (a rendered `❯ 1. …` option list) | `crew send` will correctly **refuse** to touch it — don't fight the refusal or fall back to `crew close` + re-spawn. Read the options with `squadrant crew read <project> <name>`, then answer deliberately with `squadrant crew answer <project> <name> <option>` (#592). Never guess with a bare Enter. |
 | Still mid-task / transient idle | Leave it; wait for the next daemon event. |
 
 **Do not re-send the original task** if the crew appears to have completed it — that triggers a duplicate run. Read the crew screen or diff first, then decide: terminalize vs re-task vs leave.
 
-This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE.
+This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE. The same BLOCKED-on-a-real-prompt case applies whether the daemon fires an explicit CREW BLOCKED event or you only notice via a spot-check on IDLE.
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
