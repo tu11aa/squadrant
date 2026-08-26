@@ -54,3 +54,59 @@ export function consumeExitMarker(stateRoot: string, now: () => number = Date.no
   const gapMs = Math.max(0, now() - new Date(marker.ts).getTime());
   return { marker, gapMs };
 }
+
+/**
+ * #589 gap: an exit marker only ever gets written by JS running on the way
+ * out (stop(), or the uncaughtException/unhandledRejection crash handler) —
+ * a SIGKILL, an OOM kill, or a power loss runs none of that, so the daemon
+ * can die with NO exit marker at all. Without more, that's indistinguishable
+ * from a genuine first boot ("previous exit: none"), which is exactly the
+ * silent case #589 is about.
+ *
+ * The running marker closes that gap: written at boot and re-touched
+ * periodically (~60s) as a heartbeat, then explicitly removed on a graceful
+ * stop(). If it's still on disk on the NEXT boot with no exit marker to
+ * explain it, the only daemon that could have written it never got to run
+ * any shutdown code — an unclean death.
+ */
+export interface RunningMarker {
+  pid: number;
+  bootTs: string;
+  lastHeartbeatTs: string;
+}
+
+export function runningMarkerPath(stateRoot: string): string {
+  return join(stateRoot, "running-marker.json");
+}
+
+/** Best-effort, synchronous. Called once at boot (fresh pid/bootTs) and again
+ *  on every heartbeat tick (same pid/bootTs, refreshed lastHeartbeatTs). */
+export function writeRunningMarker(stateRoot: string, marker: RunningMarker, log: (m: string) => void): void {
+  try {
+    writeFileSync(runningMarkerPath(stateRoot), JSON.stringify(marker));
+  } catch (e) {
+    log(`running marker write failed: ${(e as Error).message}`);
+  }
+}
+
+/** Read the running marker left by a PRIOR boot, if any. Does not delete it —
+ *  the caller overwrites it unconditionally with a fresh one for this boot
+ *  right after deciding what the read told them. Corrupt/missing → null. */
+export function readRunningMarker(stateRoot: string): RunningMarker | null {
+  try {
+    return JSON.parse(readFileSync(runningMarkerPath(stateRoot), "utf-8")) as RunningMarker;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort. Called on graceful stop() — its absence (together with the
+ *  fresh exit marker stop() also writes) is what marks a shutdown as
+ *  diagnosed/clean on the next boot, rather than unclean. */
+export function removeRunningMarker(stateRoot: string, log: (m: string) => void): void {
+  try {
+    unlinkSync(runningMarkerPath(stateRoot));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") log(`running marker remove failed: ${(e as Error).message}`);
+  }
+}
