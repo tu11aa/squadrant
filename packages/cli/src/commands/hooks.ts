@@ -12,7 +12,7 @@ import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendRequest, resolveCurrentProject } from "@squadrant/core";
-import { mapClaudeHookToEvent, deriveTranscriptPath } from "@squadrant/agents";
+import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite } from "@squadrant/agents";
 import { loadConfig, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
@@ -139,6 +139,30 @@ export function hooksCommand(): Command {
       const project = process.env.SQUADRANT_CREW_PROJECT;
       // Not a crew session — no-op (hook fires for all claude processes).
       if (!taskId || !project) { process.exit(0); }
+
+      // #556: the broad ("" matcher) pre-tool-use hook fires for every tool
+      // call, including Write/Edit — the only point that can see a crew's
+      // file_path before it lands. Deny writes into the captain's long-term
+      // memory directory; report/propose is the only allowed path there.
+      if (sub === "pre-tool-use") {
+        const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
+        const guard = decideCaptainMemoryWrite(
+          typeof p?.tool_name === "string" ? p.tool_name : "",
+          p?.tool_input,
+          process.env,
+          homedir(),
+        );
+        if (guard.decision === "deny") {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: guard.reason,
+            },
+          }));
+          process.exit(0);
+        }
+      }
 
       const ev = mapHookSub(sub, payload, taskId);
       if (!ev) { process.exit(0); }

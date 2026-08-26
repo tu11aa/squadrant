@@ -228,6 +228,48 @@ export function formatAskUserQuestionPrompt(toolInput: unknown): string | null {
   return parts.length > 0 ? parts.join(" | ") : null;
 }
 
+/** Pure result of the captain-memory write guard (#556). */
+export interface MemoryWriteGuardResult {
+  decision: "deny" | "allow";
+  reason?: string;
+}
+
+// #556: a crew wrote a materially wrong memory into its captain's long-term
+// memory (~/.claude/projects/<encoded-cwd>/memory/{MEMORY.md,*.md}) and nothing
+// flagged it — memory is loaded into every future session, so a wrong entry
+// teaches the same mistake forever. Rule: crews REPORT, captains DECIDE what's
+// durable. Path-shaped, not content-shaped — matches on the memory directory
+// regardless of which file inside it a crew targets.
+const CAPTAIN_MEMORY_DIR_RE = /\.claude\/projects\/[^/]+\/memory(\/|$)/;
+
+/**
+ * Pure: decide whether a crew's Write/Edit tool call must be denied for
+ * targeting a captain's long-term memory directory. Takes exactly what a
+ * PreToolUse hook payload + process env provide — no I/O — so the rule is
+ * unit-testable without spawning claude. Only applies inside a crew session
+ * (`SQUADRANT_CREW_TASK_ID` set); captain/command sessions write their own
+ * memory freely.
+ */
+export function decideCaptainMemoryWrite(
+  toolName: string,
+  toolInput: unknown,
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+): MemoryWriteGuardResult {
+  if (!env.SQUADRANT_CREW_TASK_ID) return { decision: "allow" };
+  if (toolName !== "Write" && toolName !== "Edit") return { decision: "allow" };
+  const filePath = (toolInput as { file_path?: unknown } | null | undefined)?.file_path;
+  if (typeof filePath !== "string" || !filePath) return { decision: "allow" };
+  const home = homeDir.endsWith("/") ? homeDir.slice(0, -1) : homeDir;
+  if (!filePath.startsWith(home)) return { decision: "allow" };
+  if (!CAPTAIN_MEMORY_DIR_RE.test(filePath)) return { decision: "allow" };
+  return {
+    decision: "deny",
+    reason:
+      "Crews report, captains decide what is durable. Do not write to the captain's long-term memory directory — propose durable learnings in your signal done/blocked message instead.",
+  };
+}
+
 /**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
