@@ -268,7 +268,8 @@ export async function runCrewSignal(
   if (current && TERMINAL_STATES.has(current.state)) {
     throw new Error(
       `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
-        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it before signaling again.`,
+        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it — ` +
+        `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
     );
   }
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });

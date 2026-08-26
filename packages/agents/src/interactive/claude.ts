@@ -228,6 +228,73 @@ export function formatAskUserQuestionPrompt(toolInput: unknown): string | null {
   return parts.length > 0 ? parts.join(" | ") : null;
 }
 
+/** Pure result of the captain-memory write guard (#556). */
+export interface MemoryWriteGuardResult {
+  decision: "deny" | "allow";
+  reason?: string;
+}
+
+// #556: a crew wrote a materially wrong memory into its captain's long-term
+// memory (~/.claude/projects/<encoded-cwd>/memory/{MEMORY.md,*.md}) and nothing
+// flagged it — memory is loaded into every future session, so a wrong entry
+// teaches the same mistake forever. Rule: crews REPORT, captains DECIDE what's
+// durable. Path-shaped, not content-shaped — matches on the memory directory
+// regardless of which file inside it a crew targets, or which tool it goes
+// through (best-effort for Bash, since a shell command's target path is just
+// text, not a resolvable field).
+const CAPTAIN_MEMORY_PATH_RE = /\.claude\/projects\/.*\/memory\//;
+
+const DENY_REASON =
+  "Crews do not write captain memory. Put the finding in your done/blocked message; the captain decides what is durable (#556).";
+
+// Tool → tool_input field that carries the target file path. MultiEdit shares
+// Edit's file_path; NotebookEdit uses its own notebook_path.
+const FILE_PATH_FIELD_BY_TOOL: Readonly<Record<string, string>> = {
+  Write: "file_path",
+  Edit: "file_path",
+  MultiEdit: "file_path",
+  NotebookEdit: "notebook_path",
+};
+
+/**
+ * Pure: decide whether a crew's tool call must be denied for targeting a
+ * captain's long-term memory directory. Takes exactly what a PreToolUse hook
+ * payload + process env provide — no I/O — so the rule is unit-testable
+ * without spawning claude. Only applies inside a crew session
+ * (`SQUADRANT_CREW_TASK_ID` set); captain/command sessions write their own
+ * memory freely.
+ *
+ * Write/Edit/MultiEdit/NotebookEdit are checked against their resolved target
+ * path (must live under `homeDir`). Bash is checked with a best-effort string
+ * match against its raw command text — a crew piping `cat >>` or `echo` into
+ * a memory file never touches a structured file-path field.
+ */
+export function decideCaptainMemoryWrite(
+  toolName: string,
+  toolInput: unknown,
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+): MemoryWriteGuardResult {
+  if (!env.SQUADRANT_CREW_TASK_ID) return { decision: "allow" };
+
+  if (toolName === "Bash") {
+    const command = (toolInput as { command?: unknown } | null | undefined)?.command;
+    if (typeof command === "string" && CAPTAIN_MEMORY_PATH_RE.test(command)) {
+      return { decision: "deny", reason: DENY_REASON };
+    }
+    return { decision: "allow" };
+  }
+
+  const field = FILE_PATH_FIELD_BY_TOOL[toolName];
+  if (!field) return { decision: "allow" };
+  const filePath = (toolInput as Record<string, unknown> | null | undefined)?.[field];
+  if (typeof filePath !== "string" || !filePath) return { decision: "allow" };
+  const home = homeDir.endsWith("/") ? homeDir.slice(0, -1) : homeDir;
+  if (!filePath.startsWith(home)) return { decision: "allow" };
+  if (!CAPTAIN_MEMORY_PATH_RE.test(filePath)) return { decision: "allow" };
+  return { decision: "deny", reason: DENY_REASON };
+}
+
 /**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.

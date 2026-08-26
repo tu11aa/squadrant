@@ -292,18 +292,30 @@ describe("squadrantd daemon-direct (#332)", () => {
 
     const captainTitle = "p-captain";
     const crewPane = crewPaneTitle("p", "orphan");
-    // Ground-truth liveness (Task 4): the registry — not the surface sweep —
-    // now decides captain presence. Surfaces stay present throughout so this
-    // test isolates the registry-driven reap from delivery-target discovery.
+    // Ground-truth liveness (Task 4): the registry decides CAPTAIN presence,
+    // driven by cmux's hook-session files — a separate signal from the
+    // workspace container cmux tracks by title (findWorkspaceId/listSurfaces).
+    // #595: captain-liveness alone is no longer sufficient to reap — the
+    // crew's own pane must also be confirmed gone. Modeled realistically here:
+    // the workspace CONTAINER (resolved by its stable title, independent of
+    // which process/pane is currently alive inside it) still resolves, but the
+    // crew's own pane entry disappears from its surface list once genuinely
+    // closed — that is what lets the probe report "gone" instead of "unknown".
     let captainPresent = true;
     let captainPidAlive = true; // genuine close kills the pid too, not just the snapshot entry
     const cmux = {
       sent: [] as Array<{ text: string }>,
       send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
-      listSurfaces: async () => [
-        { workspaceId: "ws:1", surfaceId: "s1", title: captainTitle },
-        { workspaceId: "ws:1", surfaceId: "sc", title: crewPane },
-      ],
+      listSurfaces: async () => captainPresent
+        ? [
+            { workspaceId: "ws:1", surfaceId: "s1", title: captainTitle },
+            { workspaceId: "ws:1", surfaceId: "sc", title: crewPane },
+          ]
+        : [
+            // Crew pane gone; the workspace's surface list must stay non-empty
+            // or the probe reads "unknown" (empty-list fail-safe), not "gone".
+            { workspaceId: "ws:1", surfaceId: "s1", title: captainTitle },
+          ],
       readScreen: async () => null,
       isAvailable: async () => true,
       findWorkspaceId: async (name: string) => name === captainTitle ? "ws:1" : null,
@@ -323,14 +335,74 @@ describe("squadrantd daemon-direct (#332)", () => {
     expect(before.state).toBe("working");
 
     if (handle.tickDelivery) await handle.tickDelivery(); // captain present → deliver, crew untouched
-    captainPresent = false; // captain workspace closed
+    captainPresent = false; // captain workspace closed — its surfaces (incl. the crew pane) tear down with it
     captainPidAlive = false; // ...and the process is confirmed dead (genuine close)
-    if (handle.tickDelivery) await handle.tickDelivery(); // registry sees captain gone + pid dead → stopped → reap
+    if (handle.tickDelivery) await handle.tickDelivery(); // registry sees captain gone + pid dead + crew surface gone → reap
 
     // The orphaned crew is reaped to a terminal state with the captain-stopped marker.
     const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-1" }) as TaskRecord;
     expect(after.state).toBe("cancelled");
     expect(after.lastEvent).toBe("captain-stopped");
+  });
+
+  // #595/#697: the captain's own liveness read can false-positive (looks
+  // stopped/gone) while it is still alive and the crew is still working. This
+  // reproduces that split: the registry sees the captain as gone (snapshot
+  // empty, pid confirmed dead — same trigger as the genuine-close test above),
+  // but the crew's own pane is STILL listed as a live surface (e.g. a
+  // partial/inconsistent teardown, or the captain-liveness signal is simply
+  // wrong). The crew's task record must not be terminalized while its surface
+  // is provably still alive.
+  it("does NOT reap an orphaned crew whose own surface is still present, even when the captain reads as stopped/gone (#595)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-orphan-live-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    mkdirSync(join(stateRoot, "inbox"), { recursive: true });
+
+    const crew: TaskRecord = {
+      id: "orphan-2", project: "p", provider: "claude", mode: "interactive",
+      state: "working", task: "build", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "task.started", heartbeatBudgetMs: 1000,
+      name: "orphan",
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }],
+    };
+    await appendToMailbox({ stateRoot, project: "p", taskRecord: crew, event: EVENT, message: "CREW DONE #1" });
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+    mkdirSync(join(stateRoot, "p"), { recursive: true });
+    writeFileSync(join(stateRoot, "p", `${crew.id}.json`), JSON.stringify(crew));
+
+    const captainTitle = "p-captain";
+    const crewPane = crewPaneTitle("p", "orphan");
+    let captainPresent = true;
+    let captainPidAlive = true;
+    const cmux = {
+      sent: [] as Array<{ text: string }>,
+      send: async (_surface: PaneRef, text: string) => { (cmux as any).sent.push({ text }); },
+      // The crew's own pane stays listed regardless of captain presence —
+      // the crew surface is confirmed alive independent of the captain signal.
+      listSurfaces: async () => [
+        { workspaceId: "ws:1", surfaceId: "sc", title: crewPane },
+      ],
+      readScreen: async () => null,
+      isAvailable: async () => true,
+      findWorkspaceId: async () => "ws:1",
+      liveness: async () => captainPresent
+        ? [{ role: "captain" as const, project: "p", pid: 424242, sessionId: "s", present: true }]
+        : [],
+    } as unknown as DaemonCmux & { sent: Array<{ text: string }> };
+
+    const handle = startSquadrantd({ stateRoot, sockPath: sock, sweepMs: 0, daemonCmux: cmux, isPidAlive: () => captainPidAlive });
+    stop = handle.stop;
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    if (handle.tickDelivery) await handle.tickDelivery();
+    captainPresent = false;
+    captainPidAlive = false;
+    if (handle.tickDelivery) await handle.tickDelivery(); // captain reads as gone, but crew surface still alive
+
+    const after = await sendRequest(sock, { kind: "status", project: "p", id: "orphan-2" }) as TaskRecord;
+    expect(after.state).toBe("working");
   });
 
   // #565 — the actual incident: the captain vanishes from the runtime
