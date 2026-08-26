@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1427,6 +1427,71 @@ describe("hasModalOptionList (#484 AskUserQuestion / permission-picker detector)
       "utf-8",
     );
     expect(hasModalOptionList(fixture)).toBe(false);
+  });
+});
+
+// #592: `crew answer` needs the modal's rendered option list, not just a
+// boolean. parseModalOptions reuses hasModalOptionList's HR-boundary
+// detection, so it inherits the same "which screens count as a modal" rules
+// exercised above — these tests focus on what gets extracted once a modal IS
+// detected.
+describe("parseModalOptions (#592 crew answer option-list parser)", () => {
+  it("parses the real captured AskUserQuestion modal frame into structured options", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-askuserquestion-fixture.txt"),
+      "utf-8",
+    );
+    const options = parseModalOptions(fixture);
+    expect(options).toEqual([
+      { index: 1, label: "Red", highlighted: true },
+      { index: 2, label: "Blue", highlighted: false },
+      { index: 3, label: "Green", highlighted: false },
+      { index: 4, label: "Type something.", highlighted: false },
+    ]);
+  });
+
+  it("returns null for a real captured permission-approval frame (only one HR — not detected as a modal)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-permission-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseModalOptions(fixture)).toBeNull();
+  });
+
+  it("returns null for a real captured genuine idle empty input box", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/484-idle-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseModalOptions(fixture)).toBeNull();
+  });
+
+  it("returns null for a genuine typed draft (no numbered option lines)", () => {
+    const screen = makeTestScreen("❯ my draft here", "Some history");
+    expect(parseModalOptions(screen)).toBeNull();
+  });
+
+  it("returns null when HR boundaries are absent (overlay/scrolled)", () => {
+    const fixture = readFileSync(
+      join(process.cwd(), "docs/reports/268-overlay-fixture.txt"),
+      "utf-8",
+    );
+    expect(parseModalOptions(fixture)).toBeNull();
+  });
+
+  it("moves the highlighted row when a second option is selected", () => {
+    const screen = [
+      "──────────────────────────────",
+      "  1. Red",
+      "❯ 2. Blue",
+      "  3. Green",
+      "──────────────────────────────",
+    ].join("\n");
+    expect(parseModalOptions(screen)).toEqual([
+      { index: 1, label: "Red", highlighted: false },
+      { index: 2, label: "Blue", highlighted: true },
+      { index: 3, label: "Green", highlighted: false },
+    ]);
   });
 });
 

@@ -169,7 +169,7 @@ async function listCrewPanes(runtime: RuntimeDriver, workspaceId: string, projec
   return surfaces.filter((s) => s.title && isCrewTitle(project, s.title));
 }
 
-async function findCrewPane(
+export async function findCrewPane(
   runtime: RuntimeDriver,
   workspaceId: string,
   project: string,
@@ -557,8 +557,11 @@ export async function runCrewSend(
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
+  // #592: the old "wait for the prompt to close" advice was unactionable — it
+  // only closes when answered, and answering is exactly what this refusal
+  // blocks. Point at the deliberate escape hatch instead.
   const blockedByModalMessage = () =>
-    `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. Wait for the prompt to close, then re-send with 'squadrant crew send ${project} ${name}'.`;
+    `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. To answer it deliberately: squadrant crew read ${project} ${name} to see the options, then squadrant crew answer ${project} ${name} <n>.`;
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }
