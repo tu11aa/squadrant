@@ -228,6 +228,7 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
   });
 
   it("re-arms after recovery — a second, later stall episode alerts again", async () => {
+    vi.useFakeTimers();
     const stateRoot = freshState();
     const project = "gamma";
     const captainName = `${project}-captain`;
@@ -271,7 +272,11 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     expect(texts.filter((t) => t.includes("DELIVERY STUCK"))).toHaveLength(1);
 
     // Recover: the original entry finally delivers, clearing the stuck flag.
+    // #590: once stuck, the project is backed off for a window (grows up to
+    // 60s) before the next attempt — advance past it so recovery is actually
+    // attempted rather than skipped.
     stuck = false;
+    await vi.advanceTimersByTimeAsync(2_000);
     await deliv.deliveryTick!();
 
     // New task, new stall episode.
@@ -286,10 +291,14 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
       message: "CREW DONE t2",
     });
     stuck = true;
-    for (let i = 0; i < 4; i++) await deliv.deliveryTick!();
+    for (let i = 0; i < 4; i++) {
+      await deliv.deliveryTick!();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
 
     texts = await rawMailboxTexts(stateRoot, project);
     expect(texts.filter((t) => t.includes("DELIVERY STUCK"))).toHaveLength(2);
+    vi.useRealTimers();
   });
 
   // #617: the stuck message hardcoded "an in-progress draft (or ghost text)
