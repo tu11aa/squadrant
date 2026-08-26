@@ -552,7 +552,7 @@ export async function runCrewSend(
     onChannelLog?: (msg: string) => void;
   },
   opts?: { force?: boolean }
-): Promise<void> {
+): Promise<{ reopened: boolean }> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
@@ -586,10 +586,17 @@ export async function runCrewSend(
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
   // Blocked task: emit task.started to clear blocked→working so a subsequent real
   // permission prompt re-fires CREW BLOCKED (#182).
+  // #595: `reopened` is reported back to the caller (CLI output) so it can
+  // truthfully confirm a reopen happened instead of a bare "✔ Sent" that gave
+  // no signal either way — the guard message that tells a blocked crew to
+  // "ask the captain to run crew send to reopen it" is only actually true if
+  // that outcome is visible, not silently swallowed with everything else.
+  let reopened = false;
   try {
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
+        reopened = true;
       } else if (task.state === "blocked" || task.state === "awaiting-input" || task.state === "review") {
         // #599: feedback on a 'review' task is the reject path — clear it back
         // to working the same way an answer clears 'blocked'.
@@ -598,7 +605,8 @@ export async function runCrewSend(
     }
   } catch {
     // Swallow daemon errors so crews without a daemon or offline daemon
-    // still receive the sent message.
+    // still receive the sent message. `reopened` stays false — a failed
+    // reopen attempt must never be reported as a success (#595).
   }
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
@@ -637,7 +645,7 @@ export async function runCrewSend(
     }
     if (!fallsBackToPane(outcome)) {
       // accepted / queued: it reached the agent. Done — do NOT also use the pane.
-      return;
+      return { reopened };
     }
     // gone / unsupported: fall back to the pane ONCE, already logged above.
   }
@@ -667,7 +675,7 @@ export async function runCrewSend(
     if (!paneOk) {
       throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
     }
-    return;
+    return { reopened };
   }
 
   const { delivered, blockedByModal } = await deliver(crew, message);
@@ -682,6 +690,7 @@ export async function runCrewSend(
     // submitted. Throw so the caller fails loudly instead.
     throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
+  return { reopened };
 }
 
 export async function runCrewRead(

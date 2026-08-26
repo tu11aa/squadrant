@@ -76,7 +76,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
   });
 }
 
-export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<void> {
+export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean }> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const cfg = loadConfig();
   // #667 slice 2: the channel needs the crew's opencode port, which the daemon
@@ -257,7 +257,10 @@ crewCommand
   .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
-      await runCrewSend(project, name, resolvedMessage, opts);
+      const { reopened } = await runCrewSend(project, name, resolvedMessage, opts);
+      // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
+      // gave the captain no way to tell a stale terminal record was revived.
+      if (reopened) console.log(chalk.cyan(`↻ Task was terminal — reopened to working`));
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
