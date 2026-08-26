@@ -542,7 +542,13 @@ export function createDaemon(deps: DaemonDeps) {
         // finished and was correctly waiting on `crew approve`, permanently
         // closing that path. A still-live surface keeps waiting indefinitely;
         // a dead one is still caught by the surface-gone reap right below.
-        if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state)) {
+        // #595: 'awaiting-input' is the same "waiting on a human" state — a
+        // crew that finished a turn and is idle until the captain's next
+        // instruction has no natural time bound either. Without this exemption
+        // the wall-clock ceiling alone terminalized a healthy, live crew after
+        // ~24h of legitimate idle waiting. REAPABLE_SURFACE_STATES already
+        // covers 'awaiting-input', so a dead surface is still reaped below.
+        if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state) && r.state !== "awaiting-input") {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           const refTime = r.workingStretchStartedAt ?? r.createdAt;
           if (t - refTime > ceiling) {

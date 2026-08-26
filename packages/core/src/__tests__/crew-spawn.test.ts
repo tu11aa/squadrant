@@ -722,6 +722,48 @@ describe("runCrewSend", () => {
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
   });
 
+  // #595: the caller (CLI output) must be able to truthfully report whether a
+  // reopen happened — a silent void return gave no way to distinguish "task
+  // was already working" from "task was terminal and got reopened".
+  it("returns reopened:true when a terminal task is successfully reopened", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "done" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(result).toEqual({ reopened: true });
+  });
+
+  it("returns reopened:false when the task is already non-terminal", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "working" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(result).toEqual({ reopened: false });
+  });
+
+  // The reopen attempt is best-effort against an offline/erroring daemon (the
+  // message must still be delivered) — but the return value must be honest
+  // about that failure rather than falsely reporting a reopen that didn't
+  // actually happen (this is what made the #595 guard message untrue: crew
+  // send LOOKED like it succeeded even when the reopen silently failed).
+  it("returns reopened:false when the daemon reopen call throws, without breaking pane delivery", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "done" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockRejectedValue(new Error("daemon down")),
+    });
+    expect(result).toEqual({ reopened: false });
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
+  });
+
   it("emits task.started for blocked task before sending", async () => {
     const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime("workspace:1", [existing]);

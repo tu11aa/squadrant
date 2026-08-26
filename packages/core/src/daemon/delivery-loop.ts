@@ -56,12 +56,27 @@ export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string
  *
  * Headless crews are excluded — they run as detached processes, not panes in the
  * captain's workspace, and are reconciled by their own pid liveness instead.
+ *
+ * #595: the caller only knows the CAPTAIN reads as stopped/gone — #697 showed
+ * that liveness signal can false-positive on a captain that is still very much
+ * alive and working. That is not proof the crew's own pane is gone too, so
+ * this must never cancel on captain-liveness alone: only a crew whose own
+ * surface is confirmed 'gone' is reaped. 'alive'/'unknown' (cmux down,
+ * transient) fail safe and are left running — the invariant this issue exists
+ * to restore is that a task record must never go terminal while its crew
+ * surface is alive.
  */
-export function reapOrphanedCrews(store: Pick<Store, "list" | "put">, project: string): number {
+export async function reapOrphanedCrews(
+  store: Pick<Store, "list" | "put">,
+  project: string,
+  isSurfaceAlive: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">,
+): Promise<number> {
   let reaped = 0;
   for (const r of store.list(project)) {
     if (TERMINAL_STATES.has(r.state)) continue;
     if (r.mode !== "interactive") continue;
+    const liveness = await isSurfaceAlive(r);
+    if (liveness !== "gone") continue;
     store.put({ ...r, state: "cancelled", lastEvent: "captain-stopped" });
     reaped++;
   }
@@ -77,7 +92,7 @@ export interface LivenessTickDeps {
    *  streak-triggered reap, now driven by the registry). Optional so pure
    *  liveness-only callers can omit it. Idempotent (already-terminal crews are
    *  skipped), so calling it every tick for a non-alive captain is safe. */
-  reap?: (project: string) => number;
+  reap?: (project: string) => number | Promise<number>;
   /** One grep-able line per applied/transitioned record (§4.4): `[role/source]
    *  project pid=… → state`. Optional so pure liveness-only callers can omit it. */
   log?: (msg: string) => void;
@@ -162,7 +177,7 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
     for (const e of deps.registry.all()) {
       if (e.role !== "captain") continue;
       const state = deriveCaptainState(e);
-      if (state === "stopped" || state === "gone") deps.reap(e.project);
+      if (state === "stopped" || state === "gone") await deps.reap(e.project);
     }
   }
 }
@@ -179,8 +194,15 @@ export interface DeliveryResult {
 export function createDelivery(
   ctx: DaemonContext,
   daemonCmux: DaemonSurfaceDriver | undefined,
+  /** #595: crew surface liveness probe, used to gate reapOrphanedCrews so a
+   *  captain that merely reads as stopped/gone never terminalizes a crew whose
+   *  own pane is still alive. Defaults to always-"unknown" (never reap) so
+   *  callers that don't wire a real probe (tests) get the safe, inert default
+   *  rather than the old unconditional-reap behavior. */
+  isSurfaceAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">,
 ): DeliveryResult {
   const { stateRoot, store, log, livenessRegistry, isPidAlive, opts, telegramBridge } = ctx;
+  const surfaceProbe = isSurfaceAlive ?? (async () => "unknown" as const);
   // Default to a no-op so tests that construct a bare ctx object (not via
   // buildContext) don't need to inject this. squadrantd.ts always overrides
   // ctx.notifyFault with the real one in production (see context.ts).
@@ -259,8 +281,8 @@ export function createDelivery(
       isPidAlive,
       now: () => Date.now(),
       log,
-      reap: (project) => {
-        const reaped = reapOrphanedCrews(store, project);
+      reap: async (project) => {
+        const reaped = await reapOrphanedCrews(store, project, surfaceProbe);
         if (reaped > 0) {
           const title = cfg.projects?.[project]?.captainName ?? `${project}-captain`;
           log(`captain ${title}: reaped ${reaped} orphaned crew(s)`);

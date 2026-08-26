@@ -143,4 +143,15 @@ describe("runCrewSignal('review') (#599)", () => {
     const call = vi.fn().mockResolvedValueOnce({ state: "done" });
     await expect(runCrewSignal("review", {}, { call })).rejects.toThrow(/already terminal/);
   });
+
+  // #595: the guard must point at a confirmable outcome — `crew send` DOES
+  // reopen a terminal record (task.reopened), but that was previously silent,
+  // so the message referencing it is only "actually true" if the crew can
+  // verify the reopen happened rather than take it on faith.
+  it("terminal guard message tells the crew what confirms the reopen actually happened (#595)", async () => {
+    const call = vi.fn().mockResolvedValueOnce({ state: "cancelled" });
+    await expect(runCrewSignal("done", {}, { call })).rejects.toThrow(
+      /crew send.*reopened to working/s,
+    );
+  });
 });

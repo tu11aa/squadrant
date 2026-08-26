@@ -40,7 +40,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux);
+  // #595: built before createDelivery so reapOrphanedCrews can be gated on the
+  // crew's own surface liveness instead of the captain's alone.
+  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux, surfaceProbe);
   // Compose the Telegram outbound push onto the notify fan-out: a captain
   // notification also pushes to the project's Telegram topic. When no bridge is
   // configured, notify is the base function unchanged (zero behavior change).
@@ -53,7 +56,6 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
         ctx.telegramBridge!.pushLifecycle(args.project, args.event);
       }
     : baseNotify;
-  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
 
   const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });
