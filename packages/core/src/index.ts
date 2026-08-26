@@ -17,6 +17,7 @@ export * from "./daemon/liveness-registry.js";
 export * from "./daemon/attach.js";
 export * from "./daemon/start.js";
 export * from "./daemon/delivery-loop.js";
+export * from "./daemon/exit-marker.js";
 export * from "./daemon/interactive-probe.js";
 export * from "./delivery/captain-delivery.js";
 export * from "./delivery/defer-delivery.js";

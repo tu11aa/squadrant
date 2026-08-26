@@ -10,7 +10,8 @@ import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
-import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";
+import { rotateIfNeeded, mailboxStats, readCursor, appendCaptainMessage } from "../mailbox.js";
+import { writeExitMarker, consumeExitMarker } from "./exit-marker.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
@@ -40,7 +41,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats, inFlightDelivery } = createDelivery(ctx, daemonCmux);
   // Compose the Telegram outbound push onto the notify fan-out: a captain
   // notification also pushes to the project's Telegram topic. When no bridge is
   // configured, notify is the base function unchanged (zero behavior change).
@@ -227,6 +228,30 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   // never inferred from process START time.
   log(`boot pid=${process.pid} version=${pkgVersion} socket=${ctx.sockPath} stateRoot=${stateRoot}`);
 
+  // #589: read back the previous exit marker (if any) and surface the gap
+  // between that exit and this boot — the 2026-07-20 outage's 23-minutes-awake
+  // silent gap must be visible from the log alone next time, not reconstructed
+  // after the fact from unrelated timestamps.
+  {
+    const { marker, gapMs } = consumeExitMarker(stateRoot);
+    if (marker) {
+      log(`previous exit ts=${marker.ts} reason=${marker.reason} gap=${((gapMs ?? 0) / 1000).toFixed(1)}s`);
+      if ((gapMs ?? 0) > 60_000) {
+        const minutes = Math.round((gapMs ?? 0) / 60_000);
+        const text = `⚠️ daemon was down for ${minutes} min (last exit reason=${marker.reason})`;
+        // Same project-list source as the Tier 2 snapshot below — injectable
+        // for tests, defaults to every configured project in production.
+        const alertProjects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
+        for (const project of alertProjects) {
+          appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
+            .catch((e) => log(`boot-gap alert failed project=${project}: ${(e as Error).message}`));
+        }
+      }
+    } else {
+      log("previous exit: none (clean or first boot)");
+    }
+  }
+
   let deliveryTick: (() => Promise<void>) | undefined = initialDeliveryTick;
   let probeTick: (() => Promise<void>) | undefined;
 
@@ -290,9 +315,20 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
 
   return {
     stop(reason = "requested"): Promise<void> {
-      // #535: write the exit marker synchronously, before any async
-      // teardown, so it lands even if the caller doesn't await this promise.
-      log(`exit pid=${process.pid} reason=${reason}`);
+      // #589/#590: capture signal-source evidence (ppid, whether launchd is
+      // the parent, process uptime) and the in-flight delivery state BEFORE
+      // any async teardown — Node gives no siginfo for who sent a signal, so
+      // ppid + uptime + in-flight delivery is the evidence actually available,
+      // and it must be captured synchronously so it lands even if the caller
+      // fires-and-forgets stop() (the historical #535 bug).
+      const ppid = process.ppid;
+      const uptimeMs = Math.round(process.uptime() * 1000);
+      const inFlight = inFlightDelivery();
+      log(
+        `exit pid=${process.pid} reason=${reason} ppid=${ppid} launchd=${ppid === 1} ` +
+        `uptimeMs=${uptimeMs} inFlightDelivery=${inFlight ? `${inFlight.project}#${inFlight.seq}(defers=${inFlight.deferCount})` : "none"}`,
+      );
+      writeExitMarker(stateRoot, { ts: new Date().toISOString(), pid: process.pid, reason, ppid, uptimeMs, inFlightDelivery: inFlight }, log);
       if (deliveryTimer) clearInterval(deliveryTimer);
       if (probeTimer) clearInterval(probeTimer);
       if (timer) clearInterval(timer);
