@@ -149,9 +149,14 @@ export async function runLivenessTick(deps: LivenessTickDeps): Promise<void> {
     // Preserve original startedAt if we already knew this captain (avoid churn):
     const prev = deps.registry.get(project);
     if (prev && prev.lastState === "start") entry.startedAt = prev.startedAt;
+    // #732: only log on a state transition (or first observation, where
+    // prev is undefined → deriveCaptainState returns "unknown") — otherwise a
+    // dead-but-still-listed captain re-logs its "gone" line every tick forever.
+    const prevState = deriveCaptainState(prev);
     deps.registry.apply(entry);
     if (winner.pid != null) deps.registry.setPidAlive(project, deps.isPidAlive(winner.pid), now);
-    logEntry(deps.log, project, deps.registry.get(project));
+    const updated = deps.registry.get(project);
+    if (deriveCaptainState(updated) !== prevState) logEntry(deps.log, project, updated);
   }
 
   // Captains we knew but the snapshot no longer lists → clean close — but ONLY

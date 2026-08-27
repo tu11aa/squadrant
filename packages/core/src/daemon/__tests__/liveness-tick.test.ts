@@ -152,6 +152,45 @@ describe("runLivenessTick", () => {
     expect(deriveCaptainState(reg.get("p"))).toBe("alive");
   });
 
+  // ── log-spam fix: only log on a state transition, not every tick ───────
+
+  it("same state on consecutive ticks does not re-log (log-spam fix)", async () => {
+    const reg = memReg();
+    const rec: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s", present: true };
+    const lines: string[] = [];
+    const deps = { registry: reg, liveness: async () => [rec], isPidAlive: () => true, now: () => 5_000, log: (m: string) => lines.push(m) };
+    await runLivenessTick(deps);
+    await runLivenessTick(deps);
+    const pLines = lines.filter((l) => l.startsWith("[captain/runtime] p "));
+    expect(pLines).toEqual(["[captain/runtime] p pid=100 → alive"]);
+  });
+
+  it("dead captain still listed in every snapshot logs the gone transition once, not every tick (log-spam fix)", async () => {
+    const reg = memReg();
+    const rec: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s", present: true, isRestorable: true };
+    const lines: string[] = [];
+    const deps = { registry: reg, liveness: async () => [rec], isPidAlive: () => false, now: () => 5_000, log: (m: string) => lines.push(m) };
+    await runLivenessTick(deps);
+    await runLivenessTick(deps);
+    await runLivenessTick(deps);
+    const pLines = lines.filter((l) => l.startsWith("[captain/runtime] p "));
+    expect(pLines).toEqual(["[captain/runtime] p pid=100 → gone"]);
+  });
+
+  it("captain transitioning alive → gone logs a new line, format unchanged", async () => {
+    const reg = memReg();
+    const lines: string[] = [];
+    const aliveRec: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s", present: true };
+    await runLivenessTick({ registry: reg, liveness: async () => [aliveRec], isPidAlive: () => true, now: () => 5_000, log: (m) => lines.push(m) });
+    const deadRec: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s", present: true, isRestorable: true };
+    await runLivenessTick({ registry: reg, liveness: async () => [deadRec], isPidAlive: () => false, now: () => 6_000, log: (m) => lines.push(m) });
+    const pLines = lines.filter((l) => l.startsWith("[captain/runtime] p "));
+    expect(pLines).toEqual([
+      "[captain/runtime] p pid=100 → alive",
+      "[captain/runtime] p pid=100 → gone",
+    ]);
+  });
+
   it("two records same project, both pids dead → captain gone", async () => {
     const reg = memReg();
     const dead1: RuntimeLivenessRecord = { role: "captain", project: "p", pid: 100, sessionId: "s1", present: true, isRestorable: true };
