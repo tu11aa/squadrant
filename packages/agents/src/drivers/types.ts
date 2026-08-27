@@ -1,3 +1,5 @@
+import type { ThinkingLevel } from "@squadrant/shared";
+
 export type AgentCapability =
   | "teams"
   | "json_output"
@@ -27,6 +29,10 @@ export interface SpawnOptions {
   workdir: string;
   role: Role;
   model?: string;
+  // Per-role thinking level → claude's `--effort <level>`. Only the claude
+  // driver reads this; no other agent CLI accepts the flag. Absent ⇒ flag
+  // omitted ⇒ the agent's own default effort.
+  thinking?: ThinkingLevel;
   autoApprove?: boolean;
   jsonOutput?: boolean;
   promptFile?: string;
