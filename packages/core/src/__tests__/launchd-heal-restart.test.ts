@@ -94,6 +94,40 @@ describe("forceKickstartAndVerify (#729)", () => {
     const result = forceKickstartAndVerify(`gui/501/${LABEL}`, { pollAttempts: 2, pollDelayMs: 1 });
     expect(result).toEqual({ target: `gui/501/${LABEL}`, pidBefore: 100, pidAfter: 100, restarted: false });
   });
+
+  // Code-review follow-up (#737): reregisterDaemon calls this right after a
+  // bootout+bootstrap on program-arg drift — exactly today's upgrade case —
+  // and `kickstart -k` racing bootout's still-unloading exit handler throws
+  // (exit-113). A single failed attempt must not fail the whole heal.
+  it("retries `kickstart -k` when it throws (racing bootout's exit handler) and succeeds on a later attempt", () => {
+    let kickstartAttempts = 0;
+    let printCalls = 0;
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "launchctl" && args[0] === "print") {
+        printCalls += 1;
+        return `pid = ${printCalls === 1 ? 100 : 200}\n`;
+      }
+      if (cmd === "launchctl" && args[0] === "kickstart") {
+        kickstartAttempts += 1;
+        if (kickstartAttempts === 1) throw new Error("Operation now in progress (exit-113)");
+        return "";
+      }
+      return undefined;
+    });
+    const result = forceKickstartAndVerify(`gui/501/${LABEL}`, {
+      pollAttempts: 3, pollDelayMs: 1, kickstartRetries: 3, kickstartRetryDelayMs: 1,
+    });
+    expect(kickstartAttempts).toBe(2);
+    expect(result).toEqual({ target: `gui/501/${LABEL}`, pidBefore: 100, pidAfter: 200, restarted: true });
+  });
+
+  it("throws once `kickstart -k` retries are exhausted", () => {
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "launchctl" && args[0] === "kickstart") throw new Error("still unloading (exit-113)");
+      return undefined;
+    });
+    expect(() => forceKickstartAndVerify(`gui/501/${LABEL}`, { kickstartRetries: 2, kickstartRetryDelayMs: 1 })).toThrow(/still unloading/);
+  });
 });
 
 describe("reregisterDaemon (#729 — heal daemon must never claim success on a no-op)", () => {

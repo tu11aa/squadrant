@@ -360,17 +360,33 @@ export interface DaemonKickstartResult {
  * operator bounce: always `kickstart -k` (kill-then-restart, unconditional —
  * unlike applyDaemonDrift's cautious plain kickstart used on every routine CLI
  * invocation) and poll the pid until it changes before reporting success.
- * Never throws itself — callers decide what an unrestarted daemon means.
+ *
+ * Code-review follow-up (#737): reregisterDaemon calls this right after a
+ * bootout+bootstrap on program-arg drift — exactly the race the plain-kickstart
+ * comment above warns about (`-k` racing bootout's exit handler → exit-113
+ * while the old instance is still unloading). Retry the `kickstart -k` call
+ * itself a bounded number of times before giving up; only then does it throw.
  */
 export function forceKickstartAndVerify(
   target: string,
-  opts: { pollAttempts?: number; pollDelayMs?: number } = {},
+  opts: { pollAttempts?: number; pollDelayMs?: number; kickstartRetries?: number; kickstartRetryDelayMs?: number } = {},
 ): DaemonKickstartResult {
   const pollAttempts = opts.pollAttempts ?? 15;
   const pollDelayMs = opts.pollDelayMs ?? 300;
+  const kickstartRetries = opts.kickstartRetries ?? 5;
+  const kickstartRetryDelayMs = opts.kickstartRetryDelayMs ?? 300;
 
   const pidBefore = getDaemonPid(target);
-  execFileSync("launchctl", ["kickstart", "-k", target], { stdio: "ignore" });
+
+  for (let i = 0; i < kickstartRetries; i++) {
+    try {
+      execFileSync("launchctl", ["kickstart", "-k", target], { stdio: "ignore" });
+      break;
+    } catch (e) {
+      if (i === kickstartRetries - 1) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, kickstartRetryDelayMs);
+    }
+  }
 
   let pidAfter: number | null = null;
   for (let i = 0; i < pollAttempts; i++) {
@@ -519,7 +535,7 @@ export function printForeignInstallError(foreign: ForeignInstall): string {
  */
 export function reregisterDaemon(
   nodeBin: string = process.execPath,
-  kickstartOpts: { pollAttempts?: number; pollDelayMs?: number } = {},
+  kickstartOpts: Parameters<typeof forceKickstartAndVerify>[1] = {},
 ): DaemonKickstartResult {
   if (!tryAcquireDaemonLock()) {
     throw new Error("could not acquire the daemon lock — another squadrant process is already restarting the daemon");
