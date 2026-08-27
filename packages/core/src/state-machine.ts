@@ -36,9 +36,11 @@ export function isStickyAttention(state: TaskRecord["state"]): boolean {
  * A PreToolUse (carried from the cmux events-bridge, with the tool name) opens a
  * tool-in-flight window; a PostToolUse or a new UserPromptSubmit closes it. Other
  * liveness notes (subagentstop / notification) leave the marker untouched — they
- * do not bound a tool call. The note strings match the two feeds: the events-bridge
- * emits the raw cmux hook name ("agent.hook.PreToolUse"); the claude hook bridge
- * emits the lower-cased event ("posttooluse").
+ * do not bound a tool call. The note strings match two feeds, each with its own
+ * PostToolUse spelling: the events-bridge emits the raw cmux hook name for both
+ * the opener ("agent.hook.PreToolUse") and, per #542, its closer
+ * ("agent.hook.PostToolUse"); the claude native-hook bridge emits the
+ * lower-cased event ("posttooluse").
  */
 function nextPendingTool(
   current: TaskRecord["pendingTool"],
@@ -46,7 +48,13 @@ function nextPendingTool(
   now: number,
 ): TaskRecord["pendingTool"] {
   if (ev.note === "agent.hook.PreToolUse") return { name: ev.tool ?? "tool", since: now };
-  if (ev.note === "posttooluse" || ev.note === "agent.hook.UserPromptSubmit") return undefined;
+  if (
+    ev.note === "posttooluse" ||
+    ev.note === "agent.hook.PostToolUse" ||
+    ev.note === "agent.hook.UserPromptSubmit"
+  ) {
+    return undefined;
+  }
   return current;
 }
 

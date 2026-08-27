@@ -266,6 +266,15 @@ describe("state-machine reduce", () => {
     expect(closed.pendingTool).toBeUndefined();
   });
 
+  // #542: the cmux events-bridge closer spelling — a real tool completion
+  // observed on the daemon's `cmux events` stream, distinct from the claude
+  // native-hook bridge's lower-cased "posttooluse".
+  it("task.progress agent.hook.PostToolUse (cmux events-bridge spelling) closes the pendingTool window (#542)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "agent.hook.PostToolUse" }, 8000);
+    expect(closed.pendingTool).toBeUndefined();
+  });
+
   it("task.progress UserPromptSubmit (new turn) closes the pendingTool window", () => {
     const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
     const closed = reduce(open, { type: "task.progress", id: "t1", note: "agent.hook.UserPromptSubmit" }, 8000);

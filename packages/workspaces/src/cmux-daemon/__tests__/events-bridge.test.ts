@@ -273,6 +273,66 @@ describe("CmuxEventsBridge working hooks → task.progress", () => {
   });
 });
 
+// #542: PostToolUse closes the pendingTool window PreToolUse opens (see
+// nextPendingTool in state-machine.ts). Before this fix, deriveRunState
+// mapped PostToolUse to null and the bridge silently dropped the frame,
+// leaving pendingTool stale forever and eventually tripping a false CREW
+// STALLED against an actually-idle crew.
+describe("CmuxEventsBridge PostToolUse → task.progress (#542)", () => {
+  it("maps agent.hook.PostToolUse → task.progress for the matching crew cwd", async () => {
+    const events: ControlEvent[] = [];
+    const bridge = new CmuxEventsBridge({
+      emit: (e) => events.push(e),
+      resolve: (h) => (h.cwd === "/wt/crew-a" ? { id: "task-a" } : undefined),
+      cursorFile: "/tmp/seq",
+      spawnImpl: (() => fakeChild([ack, workingFrame("/wt/crew-a", "agent.hook.PostToolUse")])) as never,
+      stopAfterFirstRun: true,
+    });
+    bridge.start();
+    await flush();
+    await flush();
+    expect(events).toEqual([{ type: "task.progress", id: "task-a", note: "agent.hook.PostToolUse" }]);
+    bridge.stop();
+  });
+
+  it("ignores the received-phase duplicate of a PostToolUse frame (emits once)", async () => {
+    const events: ControlEvent[] = [];
+    const bridge = new CmuxEventsBridge({
+      emit: (e) => events.push(e),
+      resolve: () => ({ id: "x" }),
+      cursorFile: "/tmp/seq",
+      spawnImpl: (() =>
+        fakeChild([
+          ack,
+          workingFrame("/wt/x", "agent.hook.PostToolUse", "received"),
+          workingFrame("/wt/x", "agent.hook.PostToolUse"),
+        ])) as never,
+      stopAfterFirstRun: true,
+    });
+    bridge.start();
+    await flush();
+    await flush();
+    expect(events).toHaveLength(1);
+    bridge.stop();
+  });
+
+  it("does not emit a PostToolUse frame whose cwd matches no crew", async () => {
+    const events: ControlEvent[] = [];
+    const bridge = new CmuxEventsBridge({
+      emit: (e) => events.push(e),
+      resolve: () => undefined,
+      cursorFile: "/tmp/seq",
+      spawnImpl: (() => fakeChild([ack, workingFrame("/wt/unknown", "agent.hook.PostToolUse")])) as never,
+      stopAfterFirstRun: true,
+    });
+    bridge.start();
+    await flush();
+    await flush();
+    expect(events).toHaveLength(0);
+    bridge.stop();
+  });
+});
+
 // B4/A3 — end-to-end suppression: a working hook's task.progress refreshes the
 // liveness clock the watchdog keys off, so evaluateStall stops false-idling a
 // crew that is mid long tool-call but quiet on screen (#292 false-stalled).

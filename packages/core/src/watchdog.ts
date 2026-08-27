@@ -44,7 +44,14 @@ export const MONITOR_STALL_BUDGET_MS = 60 * 60 * 1000;
  *    `working`. This replaces the old wall-clock → 'awaiting-input' flip, which
  *    mislabeled deep-thinking crews as "awaiting your input".
  *
- * This function never produces `failed` or `awaiting-input` directly.
+ * This function never produces `failed` directly. #542 NARROW EXCEPTION: a
+ * pendingTool past `toolStallMs` normally stalls, but if `rec.lastEvent` is
+ * already "task.turn.completed" — a genuine Stop hook fired after this tool
+ * window opened, and the #492 veto (state-machine.ts) merely deferred acting
+ * on it because pendingTool looked fresh at the time — that Stop is positive
+ * proof the crew is idle, not hung (a dropped/never-forwarded PostToolUse is
+ * far likelier than a tool still running this long). Recover straight to
+ * 'awaiting-input' instead of sounding a false CREW STALLED.
  */
 export function evaluateStall(
   rec: TaskRecord,
@@ -57,6 +64,17 @@ export function evaluateStall(
     // A hung tool call takes priority over a registered Monitor watch.
     if (rec.pendingTool) {
       if (now - rec.pendingTool.since <= toolStallMs) return null;
+      // #542: a Stop already arrived and was vetoed for looking premature —
+      // now that the window has outlived the stall budget, trust it.
+      if (rec.lastEvent === "task.turn.completed") {
+        return {
+          ...rec,
+          state: "awaiting-input",
+          pendingTool: undefined,
+          pendingMonitor: undefined,
+          lastEvent: "watchdog.tool-stall-recovered",
+        };
+      }
       return { ...rec, state: "stalled", lastEvent: "watchdog.tool-stall" };
     }
     if (rec.pendingMonitor) {

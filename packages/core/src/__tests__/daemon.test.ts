@@ -373,6 +373,27 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(0);
   });
 
+  // #542: a Stop hook fired (vetoed by #492 because pendingTool looked fresh
+  // at the time — lastEvent recorded it anyway) but the matching PostToolUse
+  // never arrived. Once the tool window outlives the stall budget, that
+  // recorded Stop is positive proof the crew is idle, not hung — recover to
+  // awaiting-input (CREW IDLE) instead of a false CREW STALLED.
+  it("sweep: stale pendingTool with a recorded turn-completed → recovers to awaiting-input, not stalled (#542)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s1r", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      lastEvent: "task.turn.completed",
+      heartbeatBudgetMs: 100, pendingTool: { name: "Bash", since: 0 },
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 11 * 60_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    const after = store.get("p", "s1r");
+    expect(after?.state).toBe("awaiting-input");
+    expect(after?.pendingTool).toBeUndefined();
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW IDLE/);
+  });
+
   it("sweep: recovers a stalled task that has a fresh heartbeat", async () => {
     const store = createStore(dir);
     store.put(rec("s2", { state: "stalled", lastHeartbeat: 990, heartbeatBudgetMs: 100 }));
