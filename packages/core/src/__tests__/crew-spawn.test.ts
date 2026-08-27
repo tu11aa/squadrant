@@ -35,7 +35,15 @@ vi.mock("node:fs", async (importOriginal) => {
   const existsSync = vi.fn().mockReturnValue(false);
   const readFileSync = vi.fn().mockReturnValue("");
   const copyFileSync = vi.fn();
-  return { ...actual, existsSync, readFileSync, copyFileSync, default: { ...actual, existsSync, readFileSync, copyFileSync } };
+  const writeFileSync = vi.fn();
+  return {
+    ...actual,
+    existsSync,
+    readFileSync,
+    copyFileSync,
+    writeFileSync,
+    default: { ...actual, existsSync, readFileSync, copyFileSync, writeFileSync },
+  };
 });
 
 // Prevent reapCrewChildren from running real `ps auxE` during close tests.
@@ -239,6 +247,60 @@ describe("runCrewSpawn", () => {
       expect(deps.sendFirstTurn).toHaveBeenCalledWith(
         expect.anything(),
         expect.stringContaining("squadrant crew signal done"),
+        expect.any(String),
+      );
+    });
+
+    // #730: a first-turn task above FIRST_TURN_INLINE_MAX_BYTES is spilled to a
+    // temp file and replaced with a short pointer instead of being pasted into
+    // the pane verbatim — the paste-and-confirm path has no way to verify a
+    // large payload landed intact before Enter submits it (mid-sentence cuts
+    // and whole dropped items were observed in the wild at ~2.5-3 KB).
+    it("spills an oversized first-turn task to a temp file and sends a short pointer (#730)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      // Multi-line payload with parens, ===, and colons — the exact shape #730
+      // reported damage on — well above the inline threshold.
+      const bigTask = Array.from({ length: 80 }, (_, i) =>
+        `${i + 1}. item (${i}) === detail: packages/core/src/daemon/start.ts exit marker persist ppid===1`,
+      ).join("\n");
+      expect(Buffer.byteLength(bigTask, "utf8")).toBeGreaterThan(1200);
+
+      await runCrewSpawn({ project: PROJECT, task: bigTask }, config, deps);
+
+      expect(vi.mocked(nodefs.writeFileSync)).toHaveBeenCalledWith(
+        expect.stringContaining("squadrant-task-"),
+        bigTask,
+        "utf8",
+      );
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("cat it and follow it exactly"),
+        expect.any(String),
+      );
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.stringContaining("packages/core/src/daemon/start.ts"),
+        expect.any(String),
+      );
+      // The daemon dispatch still gets the full task text — only pane delivery is spilled.
+      expect(deps.dispatchCrew).toHaveBeenCalledWith(expect.objectContaining({ task: bigTask }));
+    });
+
+    it("does NOT spill a short first-turn task (preserves current behavior) (#730)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+
+      expect(vi.mocked(nodefs.writeFileSync)).not.toHaveBeenCalled();
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("fix the bug"),
         expect.any(String),
       );
     });

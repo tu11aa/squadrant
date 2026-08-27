@@ -40,6 +40,21 @@ import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
  */
 export const CC_SOCKS_DIR = "/tmp/cc-socks";
 
+/**
+ * #730: the first-turn task text for a claude crew is delivered by pasting it
+ * into the crew's cmux pane, then confirming submit once the input box stops
+ * changing (confirmedSendToPane / sendFirstTurnWhenReady in
+ * packages/workspaces/src/crew-pane.ts). That "stops changing" check only
+ * samples the screen a couple of times a second — a multi-KB paste that
+ * briefly stalls mid-render (observed at ~2.5-3 KB in #730) can look settled
+ * before it has fully landed, and Enter then submits a truncated draft. There
+ * is no way to positively confirm a large paste arrived intact over that path,
+ * so text above this size is spilled to a temp file and a short pointer is
+ * sent instead — the same workaround that reliably avoided the corruption in
+ * #730's own report.
+ */
+export const FIRST_TURN_INLINE_MAX_BYTES = 1200;
+
 import {
   buildCompletionProtocol,
   shellQuote,
@@ -416,7 +431,15 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    const claudeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    // #730: spill an oversized first-turn to a temp file rather than risking a
+    // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
+    let claudeFirstTurn = firstTurnTask;
+    if (Buffer.byteLength(claudeFirstTurn, "utf8") > FIRST_TURN_INLINE_MAX_BYTES) {
+      const spillFile = path.join(os.tmpdir(), `squadrant-task-${rec.id}.md`);
+      fs.writeFileSync(spillFile, claudeFirstTurn, "utf8");
+      claudeFirstTurn = `Full task is at ${spillFile} — cat it and follow it exactly.`;
+    }
+    const claudeResult = await deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     // #466: surface non-delivery explicitly instead of silently returning success.
     if (!claudeResult.delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
