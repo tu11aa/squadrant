@@ -35,6 +35,11 @@ export function createProbes(ctx: DaemonContext): ProbeHandlers {
   // loop's interval.
   function buildInteractiveProbe(deps: { cmux: DaemonSurfaceDriver }): () => Promise<void> {
     const directPaneReader = createDirectCrewPaneReader(deps.cmux, captainNameForProject);
+    // #704: ground truth for a pane-detected "error" verdict — same surface
+    // liveness check buildSurfaceProbe already uses for reaping (reduce.ts's
+    // task.session.ended guard), reused so a scraped error string never
+    // terminalizes a crew whose pane is still there.
+    const checkAlive = createDirectSurfaceLivenessProbe(deps.cmux, captainNameForProject);
     const probe = createInteractiveProbe({
       project: "_all_",
       listTasks: async () => store.listAll(),
@@ -47,6 +52,7 @@ export function createProbes(ctx: DaemonContext): ProbeHandlers {
       },
       now: () => Date.now(),
       log,
+      checkAlive,
     });
     let probing = false;
     return async () => {
