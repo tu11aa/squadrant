@@ -674,6 +674,52 @@ describe("runCrewSpawn", () => {
       );
     });
   });
+
+  // ── thinking level → claude --effort ──────────────────────────────────────
+
+  describe("thinking level", () => {
+    it("applies defaults.roles.crew.thinking when no override is passed", async () => {
+      const config = makeConfig({ roles: { crew: { agent: "claude", thinking: "high" } } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ thinking: "high" }),
+      );
+    });
+
+    it("an explicit thinking override beats defaults.roles.crew.thinking", async () => {
+      const config = makeConfig({ roles: { crew: { agent: "claude", thinking: "high" } } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work", thinking: "low" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ thinking: "low" }),
+      );
+    });
+
+    it("omits thinking entirely when neither override nor config sets it", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({ thinking: expect.anything() }),
+      );
+    });
+  });
 });
 
 // ─── runCrewSend ─────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
   crewSessionName,
+  type ThinkingLevel,
 } from "@squadrant/shared";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -75,6 +76,7 @@ export interface ResolvedAgent {
     interactive: boolean;
     permissionMode?: string;
     model?: string;
+    thinking?: ThinkingLevel;
     port?: number;
     messagingSocketPath?: string;
     sessionName?: string;
@@ -100,6 +102,9 @@ export interface CrewSpawnInput {
   approval?: boolean;
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model. */
   model?: string;
+  /** Per-spawn thinking level override — takes precedence over
+   *  defaults.roles.crew.thinking. Claude-only (→ `--effort <level>`). */
+  thinking?: ThinkingLevel;
   /** True when --agent was explicitly passed by the caller; suppresses crew routing. */
   agentExplicit?: boolean;
   /** Path to the task file when --task-file was used (not '-' for stdin). Set by
@@ -344,6 +349,9 @@ export async function runCrewSpawn(
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
   const crewModel = input.model ?? route?.model ?? configModel;
+  // Thinking level is claude-only, so — unlike model — it has no routing-rule
+  // source; explicit flag beats defaults.roles.crew.thinking, else omitted.
+  const crewThinking = input.thinking ?? config.defaults.roles?.crew?.thinking;
 
   if (agentName !== "claude") {
     deps.onModelResolved?.({ agentName, model: crewModel });
@@ -398,6 +406,7 @@ export async function runCrewSpawn(
       // basename (only the claude driver reads this — other agents ignore it).
       sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
+      ...(crewThinking ? { thinking: crewThinking } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);

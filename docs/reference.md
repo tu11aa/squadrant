@@ -12,6 +12,7 @@ guided first run — come back here when you need the details.
 - [Architecture](#architecture)
   - [Roles](#roles)
   - [Model Routing](#model-routing)
+  - [Thinking Level (per-role)](#thinking-level-per-role)
   - [Runtime Abstraction](#runtime-abstraction)
   - [Workspace Abstraction](#workspace-abstraction)
   - [Notifier Abstraction](#notifier-abstraction)
@@ -107,6 +108,29 @@ Each role runs on the optimal model for cost/quality tradeoff. Configured in `co
 - Command/Captain/Review: Opus (coordination + quality)
 - Crew: Sonnet (execution)
 - Exploration: Haiku (cheap lookups)
+
+### Thinking Level (per-role)
+
+Alongside a per-role **model**, each role can pin a per-role **thinking level** — how hard the model reasons within a session. It maps to Claude Code's `--effort` flag and is **claude-only**: codex / opencode / gemini never receive the flag.
+
+```json
+{
+  "defaults": {
+    "roles": {
+      "captain": { "agent": "claude", "model": "fable", "thinking": "medium" },
+      "crew":    { "agent": "claude", "model": "sonnet", "thinking": "high" }
+    }
+  }
+}
+```
+
+- Valid values: `low` | `medium` | `high` | `xhigh` | `max`.
+- Settable on any role (`command` | `captain` | `crew` | `exploration` | `side`).
+- **Unset ⇒ the flag is omitted entirely** ⇒ the agent's own default effort. There is no built-in default.
+- Override per invocation with `squadrant launch --thinking <level>` (captain/command) or `squadrant crew spawn --thinking <level>` (crew). Precedence, highest first: explicit `--thinking` flag → `defaults.roles.<role>.thinking` → omitted — the same rule `--model` already follows.
+- An invalid level fails fast with the list of valid values, rather than being passed through for the claude CLI to warn about and silently ignore.
+
+> **Not the same thing as [`defaults.effort`](#effort-dial-tokenomics).** `defaults.effort` (`max|balance|low`, set via `squadrant effort`) is the *crew tokenomics dial* — a global, captain-discretion signal about how aggressively to spend tokens. `defaults.roles.<role>.thinking` is a per-role reasoning-depth setting emitted as a CLI flag. They share the word `max` and nothing else; changing one does not affect the other.
 
 ### Runtime Abstraction
 
@@ -308,6 +332,9 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
       "crew": "sonnet",
       "exploration": "haiku",
       "review": "opus"
+    },
+    "roles": {
+      "captain": { "agent": "claude", "model": "fable", "thinking": "medium" }
     }
   }
 }

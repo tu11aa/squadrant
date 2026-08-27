@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { ThinkingLevel } from "@squadrant/shared";
 import type { Role } from "./types.js";
 import type { CapabilityRegistry } from "./registry.js";
 
@@ -20,6 +21,7 @@ import type { CapabilityRegistry } from "./registry.js";
  * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions"
  * @param model         - optional model override
  * @param templatesDir  - resolved path to ~/.config/squadrant/templates
+ * @param thinking      - optional thinking level → claude `--effort`
  */
 export function buildAgentCmd(
   agentName: string,
@@ -37,6 +39,9 @@ export function buildAgentCmd(
    *  ListAgents instead of an auto-derived cwd basename. Absent ⇒ flag
    *  omitted ⇒ today's behaviour. */
   sessionName?: string,
+  /** Per-role thinking level → claude `--effort <level>`. Claude-only; the
+   *  non-claude delegate path never forwards it. Absent ⇒ flag omitted. */
+  thinking?: ThinkingLevel,
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -57,6 +62,10 @@ export function buildAgentCmd(
 
     if (model) {
       cmd += ` --model ${model}`;
+    }
+
+    if (thinking) {
+      cmd += ` --effort ${thinking}`;
     }
 
     if (templatesDir) {

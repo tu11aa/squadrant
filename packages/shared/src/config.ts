@@ -64,9 +64,31 @@ export interface AgentEntry {
   driver: string;
 }
 
+/** Claude's `--effort` levels. Distinct from `defaults.effort` (the crew
+ *  tokenomics dial in effort.ts) — this pins how hard the model thinks within
+ *  one session. Closed set: the CLI enumerates it and warns on anything else. */
+export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+export function isThinkingLevel(v: string): v is ThinkingLevel {
+  return (THINKING_LEVELS as readonly string[]).includes(v);
+}
+
+/** Validate a CLI-supplied `--thinking` value. Fail fast rather than passing a
+ *  typo through for the claude CLI to warn about and silently ignore. */
+export function parseThinkingLevel(v: string): ThinkingLevel {
+  if (!isThinkingLevel(v)) {
+    throw new Error(`Invalid --thinking value '${v}'. Valid values: ${THINKING_LEVELS.join(", ")}`);
+  }
+  return v;
+}
+
 export interface RoleAssignment {
   agent: string;
   model?: string;
+  /** Per-role thinking level → claude `--effort <level>`. Unset ⇒ flag omitted. */
+  thinking?: ThinkingLevel;
 }
 
 export type RoleConfig = Partial<Record<"command" | "captain" | "crew" | "exploration" | "side", RoleAssignment>>;

@@ -9,8 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName } from "@squadrant/shared";
-import type { ModelRoutingConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
+import type { ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd,
@@ -121,9 +121,20 @@ export const launchCommand = new Command("launch")
   .option("--headless", "Skip the interactive cmux-app requirement (used by the daemon to boot captains without a terminal)")
   .option("--agent <name>", "Override captain agent for this launch (claude|codex|gemini|opencode); takes precedence over defaults.roles.captain.agent")
   .option("--model <name>", "Override captain model for this launch; takes precedence over defaults.roles.captain.model")
-  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string }) => {
+  .option("--thinking <level>", `Override captain thinking level for this launch (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over defaults.roles.captain.thinking`)
+  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string; thinking?: string }) => {
     if (opts.fresh && opts.keep) {
       console.error(chalk.red("\n  ✘ --fresh and --keep are mutually exclusive\n"));
+      process.exit(1);
+    }
+
+    // Fail fast on a typo rather than letting the claude CLI warn and fall
+    // back to its default effort — a silently-ignored flag is worse than an error.
+    let thinkingOverride: ThinkingLevel | undefined;
+    try {
+      thinkingOverride = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
+    } catch (err) {
+      console.error(chalk.red(`\n  ✘ ${(err as Error).message}\n`));
       process.exit(1);
     }
 
@@ -152,8 +163,8 @@ export const launchCommand = new Command("launch")
       projectName?: string,
     ): Promise<void> {
       const roleConfig = config.defaults.roles?.[role as keyof NonNullable<typeof config.defaults.roles>];
-      const { agentName, model } = resolveLaunchAgent(
-        { agent: opts.agent, model: opts.model },
+      const { agentName, model, thinking } = resolveLaunchAgent(
+        { agent: opts.agent, model: opts.model, thinking: thinkingOverride },
         roleConfig,
         config.defaults.models?.[role as keyof ModelRoutingConfig],
       );
@@ -202,7 +213,8 @@ export const launchCommand = new Command("launch")
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
               resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
-              resolveCaptainSessionName(agentName, projectName));
+              resolveCaptainSessionName(agentName, projectName),
+              thinking);
           },
           initialPrompt,
           runtime,

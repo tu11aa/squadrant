@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput, resolveControlChannelMode } from "@squadrant/shared";
+import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
@@ -188,14 +188,18 @@ crewCommand
   .option("--shared", "run the crew in the root checkout instead of an isolated worktree (for small/one-off tasks)", false)
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
+  .option("--thinking <level>", `Override crew thinking level for this spawn (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over config defaults.roles.crew.thinking`)
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string },
       cmd: Command,
     ) => {
       try {
+        // Fail fast on a typo rather than letting the claude CLI warn and
+        // silently fall back to its default effort.
+        const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
@@ -210,6 +214,7 @@ crewCommand
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
           ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
+          ...(thinking ? { thinking } : {}),
           // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
           // into the isolated worktree root for relative-path access.
           ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
