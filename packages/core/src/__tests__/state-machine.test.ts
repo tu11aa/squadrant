@@ -392,6 +392,12 @@ describe("state-machine reduce", () => {
     expect(next).toBe(working); // same reference — pure no-op
   });
 
+  it("#704: task.warn is a no-op (notify-only; a pane-scraped error string never terminalizes)", () => {
+    const working = rec({ state: "working" });
+    const next = reduce(working, { type: "task.warn", id: "t1", message: "CREW WARN t1: ..." }, 9000);
+    expect(next).toBe(working); // same reference — pure no-op, crew stays working
+  });
+
   it("awaiting-input + task.done still transitions to done (terminal not blocked)", () => {
     const next = reduce(rec({ state: "awaiting-input" }), { type: "task.done", id: "t1", resultRef: "/r" }, 10000);
     expect(next.state).toBe("done");

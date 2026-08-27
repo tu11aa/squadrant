@@ -53,6 +53,7 @@ export function createProbes(ctx: DaemonContext): ProbeHandlers {
       now: () => Date.now(),
       log,
       checkAlive,
+      notify: ctx.notify,
     });
     let probing = false;
     return async () => {

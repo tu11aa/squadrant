@@ -125,8 +125,14 @@ interface InteractiveProbeDeps {
   // task.session.ended guard — a scraped error string alone must never terminalize
   // a crew that's still there. "gone" (provably absent) is the only verdict that
   // proceeds to task.failed; "alive"/"unknown" (incl. when this dep is omitted)
-  // downgrade to a logged warning and leave the task `working`.
+  // downgrade to a non-terminal task.warn push instead.
   checkAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
+  // #704: same notify-only channel reduce.ts's sweep uses for task.quiet —
+  // pushes the downgraded CREW WARN to the captain pane without going through
+  // sendEvent/reduce() (task.warn is a reducer no-op, so applyEvent's own
+  // firePush would never fire for it; the pipeline requires calling notify
+  // directly, same as every other notify-only synthetic event).
+  notify?: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
 }
 
 export function createInteractiveProbe(deps: InteractiveProbeDeps): {
@@ -171,9 +177,16 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
       if (verdict.kind === "error") {
         const alive = deps.checkAlive ? await deps.checkAlive(rec) : "unknown";
         if (alive !== "gone") {
-          deps.log(
-            `probe -> CREW WARN ${rec.name} (pane-detected error string, crew still ${alive} — not terminalized): ${verdict.text}`,
-          );
+          const message = `CREW WARN ${rec.name}: pane shows an error string — crew still ${alive}, not terminalized (pane-detected): ${verdict.text}`;
+          deps.log(`probe -> ${message}`);
+          if (deps.notify) {
+            const warnEvent: ControlEvent = { type: "task.warn", id: rec.id, message };
+            try {
+              await deps.notify({ project: rec.project, message, record: rec, event: warnEvent });
+            } catch (e) {
+              deps.log(`probe notify failed for ${rec.id}: ${(e as Error).message}`);
+            }
+          }
           continue;
         }
       }

@@ -61,6 +61,12 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
         ctx.telegramBridge!.pushLifecycle(args.project, args.event);
       }
     : baseNotify;
+  // #704: DaemonContext.notify is documented as late-bound by start.ts (see
+  // context.ts's "d, notify, broadcast, etc." comment) but was never actually
+  // assigned — probes.ts's interactive-probe needs a direct notify call for its
+  // notify-only task.warn push (task.warn is a reducer no-op, so routing it
+  // through ctx.d.handle() alone would never fire a captain push).
+  ctx.notify = notify;
 
   const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });

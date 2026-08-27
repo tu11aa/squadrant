@@ -23,10 +23,12 @@ function makeRec(overrides: Partial<TaskRecord> = {}): TaskRecord {
 function setup(opts: {
   tail: string;
   checkAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
+  withNotify?: boolean;
 }) {
   const rec = makeRec();
   const sent: ControlEvent[] = [];
   const logs: string[] = [];
+  const notified: { project: string; message: string; record: TaskRecord; event: ControlEvent }[] = [];
   const probe = createInteractiveProbe({
     project: "_all_",
     listTasks: async () => [rec],
@@ -35,8 +37,9 @@ function setup(opts: {
     now: () => PROBE_QUIET_MS + 1,
     log: (m) => logs.push(m),
     checkAlive: opts.checkAlive,
+    notify: opts.withNotify ? async (args) => { notified.push(args); } : undefined,
   });
-  return { probe, sent, logs };
+  return { probe, sent, logs, notified };
 }
 
 describe("interactive-probe #704", () => {
@@ -65,6 +68,25 @@ describe("interactive-probe #704", () => {
     await probe.tick();
     expect(sent).toEqual([]);
     expect(logs.some((l) => l.includes("CREW WARN"))).toBe(true);
+  });
+
+  it("pushes a non-terminal task.warn to the captain pane (via notify) instead of staying silent", async () => {
+    const tail = [
+      "● Calling the API...",
+      "API Error: 529 Overloaded",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    const { probe, sent, notified } = setup({ tail, checkAlive: async () => "alive", withNotify: true });
+    await probe.tick();
+    expect(sent).toEqual([]); // never goes through sendEvent/reduce — task.warn is a direct notify push
+    expect(notified).toHaveLength(1);
+    expect(notified[0].project).toBe("demo");
+    expect(notified[0].record.id).toBe("t1");
+    expect(notified[0].event).toMatchObject({ type: "task.warn", id: "t1" });
+    expect(notified[0].message).toContain("CREW WARN");
+    expect(notified[0].message).toContain("not terminalized");
   });
 
   it("still fails a crew with a genuine error whose pane is confirmed gone", async () => {
