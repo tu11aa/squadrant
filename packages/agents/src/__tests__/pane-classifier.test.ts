@@ -214,4 +214,28 @@ describe("classifyPaneTail", () => {
     const r = classifyPaneTail(tail);
     expect(r?.kind).toBe("error");
   });
+
+  // ── #704: displayed (quoted) content must never trip the error verdict ────
+
+  it("does not misfire error on AGENTS.md's own bug-report bullet displayed in the pane", () => {
+    const tail = [
+      "● Reading AGENTS.md before filing a report.",
+      "- transient model-infra: `API Error: 529`, `Overloaded`, `429`, `retrying 7/10`, `retries exhausted`",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)).toBeNull();
+  });
+
+  it("does not misfire error on a box-quoted line (│ prefix) from a file preview", () => {
+    const tail = [
+      "● Showing the log excerpt:",
+      "│ API Error: 529 Overloaded",
+      "╭────────────────────────────╮",
+      "│ >                          │",
+      "╰────────────────────────────╯",
+    ].join("\n");
+    expect(classifyPaneTail(tail)).toBeNull();
+  });
 });

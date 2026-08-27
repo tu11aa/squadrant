@@ -236,6 +236,7 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
     case "task.stalled":
     case "task.idle":
     case "task.quiet":
+    case "task.warn":
     case "task.timeout":
     case "task.reconcile-failed":
       // Synthetic notify-only events; the daemon has already updated state

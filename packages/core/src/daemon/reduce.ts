@@ -294,7 +294,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.session", "task.turn.started", "task.turn.completed",
   "task.delta", "task.input.requested", "task.approval.requested",
   "task.reattached", "task.reopened",
-  "task.stalled", "task.idle", "task.quiet", "task.timeout", "task.reconcile-failed",
+  "task.stalled", "task.idle", "task.quiet", "task.warn", "task.timeout", "task.reconcile-failed",
   "task.cancelled", "task.session.ended",
   "task.first-turn.confirmed",  // #466: delivery confirmation
   "crew.takeover.started", "crew.takeover.ended", // #649: operator takeover
