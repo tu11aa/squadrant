@@ -68,6 +68,31 @@ describe("evaluateStall", () => {
     expect(out?.lastEvent).toBe("watchdog.monitor-stall");
   });
 
+  // ── #542: stale pendingTool with corroborating idle evidence recovers ──────
+  it("working INTERACTIVE with a stale pendingTool but a recorded turn-completed → recovers to awaiting-input, not stalled (#542)", () => {
+    // A Stop hook fired and was vetoed by #492 (pendingTool looked fresh at the
+    // time), but the matching PostToolUse never arrived. Once the window
+    // outlives the tool-stall budget, that recorded Stop is trusted.
+    const out = evaluateStall(
+      rec({ mode: "interactive", pendingTool: { name: "Bash", since: 0 }, lastEvent: "task.turn.completed" }),
+      11 * 60_000,
+    );
+    expect(out?.state).toBe("awaiting-input");
+    expect(out?.pendingTool).toBeUndefined();
+    expect(out?.pendingMonitor).toBeUndefined();
+  });
+
+  it("working INTERACTIVE with a stale pendingTool and NO recorded turn-completed → still stalled as before (#542)", () => {
+    // No Stop was ever observed for this tool window — a genuinely hung tool
+    // call must still surface as CREW STALLED, unchanged from pre-#542 behavior.
+    const out = evaluateStall(
+      rec({ mode: "interactive", pendingTool: { name: "Bash", since: 0 }, lastEvent: "task.progress" }),
+      11 * 60_000,
+    );
+    expect(out?.state).toBe("stalled");
+    expect(out?.lastEvent).toBe("watchdog.tool-stall");
+  });
+
   it("a hung pendingTool is checked before pendingMonitor (pendingTool budget applies when both are set)", () => {
     const out = evaluateStall(
       rec({ mode: "interactive", pendingTool: { name: "Bash", since: 0 }, pendingMonitor: { since: 0 } }),

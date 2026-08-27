@@ -14,6 +14,10 @@
 //     `task.progress` (B4/A3): a real-activity signal that refreshes the crew's
 //     liveness clock so the watchdog does not false-stall a crew mid long,
 //     screen-quiet tool call (#292).
+//   - `agent.hook.PostToolUse` (#542) → `task.progress` with the raw hook name
+//     as note, closing the tool-in-flight window PreToolUse opened. No
+//     run-state of its own (deriveRunState maps it to null); handled directly
+//     in handleLine so a real tool completion always clears `pendingTool`.
 //
 // ADDITIVE & SAFE: this runs ALONGSIDE the existing relay-proxy/pane-reader path,
 // which stays as the fallback. Both emissions are liveness, NOT completion
@@ -202,6 +206,22 @@ export class CmuxEventsBridge {
     }
     // Only agent hook events; ignore ack/heartbeat and other categories.
     if (f?.type !== "event" || f.category !== "agent") return;
+    // #542: PostToolUse closes the tool-in-flight window this same bridge opens
+    // via PreToolUse (state-machine.ts's nextPendingTool). It carries no
+    // turn-level run-state of its own (deriveRunState correctly maps it to
+    // null, same as SubagentStop), so it must be handled here rather than
+    // falling through the runState classification below — otherwise a
+    // PreToolUse-opened pendingTool never gets a matching close from this
+    // bridge, goes stale, and eventually trips a false CREW STALLED on an
+    // actually-idle crew.
+    if (f.name === "agent.hook.PostToolUse") {
+      const p = f.payload ?? {};
+      if (p.phase === "received") return;
+      const rec = this.deps.resolve({ cwd: p.cwd, source: p._source ?? f.source, sessionId: p.session_id });
+      if (!rec) return;
+      this.deps.emit({ type: "task.progress", id: rec.id, note: f.name });
+      return;
+    }
     // Classify the hook into a run-state. `Stop` is the main-session turn-end;
     // PreToolUse/UserPromptSubmit mean a turn is live; SubagentStop and any
     // other hook carry no turn-level run-state and are ignored.
