@@ -41,6 +41,18 @@ const PICKER_FOOTER_RE = /↑↓\s*select|enter\s+submit|esc\s+dismiss/i;
 const PURE_CHROME_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▁▂▃▄▅▆▇█▔▏▕]+$/;
 const STATUS_LINE_RE = /accept edits on|shift\+tab|⏵⏵|\? for shortcuts|esc to interrupt|tokens? (used|left)|context left/i;
 
+// #704: a line that is visibly QUOTED/PREFIXED — a box-drawn preview border, a
+// markdown blockquote/diff/bullet marker, or a cat -n / Read-tool line-number
+// echo — is displayed content, not the agent's own words. Error banners must
+// never be sourced from a quoted line (e.g. AGENTS.md's own bug-report vocab
+// list, catted into the pane, starts each entry with "- ").
+const QUOTED_PREFIX_RE = /^\s*(?:[┃│▏▕]|>|[+-]|\d+[\t:→])\s/;
+
+function isQuotedLine(raw: string): boolean {
+  const noAnsi = raw.replace(/\[[0-9;]*m/g, "");
+  return QUOTED_PREFIX_RE.test(noAnsi);
+}
+
 function stripChrome(raw: string): string | null {
   let line = raw.replace(/\[[0-9;]*m/g, "");
   line = line.replace(/^[\s│┃▏▕|]+/, "").replace(/[\s│┃▏▕|]+$/, "");
@@ -90,8 +102,10 @@ function classifyPaneTail(
   const q = detectTrailingQuestion(region);
   if (q) return { kind: "question", text: q };
   let errLine: string | null = null;
-  for (const c of cleaned) {
-    if (c != null && ERROR_BANNER_RE.some((re) => re.test(c))) errLine = c;
+  for (let i = 0; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (c == null || isQuotedLine(raw[i])) continue;
+    if (ERROR_BANNER_RE.some((re) => re.test(c))) errLine = c;
   }
   if (errLine) return { kind: "error", text: errLine.slice(0, 200) };
   return null;
@@ -107,6 +121,18 @@ interface InteractiveProbeDeps {
   now: () => number;
   log: (m: string) => void;
   quietMs?: number;
+  // #704: ground truth for a pane-detected "error" verdict, mirroring reduce.ts's
+  // task.session.ended guard — a scraped error string alone must never terminalize
+  // a crew that's still there. "gone" (provably absent) is the only verdict that
+  // proceeds to task.failed; "alive"/"unknown" (incl. when this dep is omitted)
+  // downgrade to a non-terminal task.warn push instead.
+  checkAlive?: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
+  // #704: same notify-only channel reduce.ts's sweep uses for task.quiet —
+  // pushes the downgraded CREW WARN to the captain pane without going through
+  // sendEvent/reduce() (task.warn is a reducer no-op, so applyEvent's own
+  // firePush would never fire for it; the pipeline requires calling notify
+  // directly, same as every other notify-only synthetic event).
+  notify?: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
 }
 
 export function createInteractiveProbe(deps: InteractiveProbeDeps): {
@@ -143,6 +169,28 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
 
       const verdict = classifyPaneTail(tail);
       if (!verdict) continue;
+
+      // #704: a pane-scraped "error" verdict must never terminalize a crew that
+      // ground truth says is still there — cross-check before failing, same
+      // principle as reduce.ts's task.session.ended guard (only "gone" is
+      // trusted; "alive"/"unknown" downgrade to a non-terminal logged warning).
+      if (verdict.kind === "error") {
+        const alive = deps.checkAlive ? await deps.checkAlive(rec) : "unknown";
+        if (alive !== "gone") {
+          const message = `CREW WARN ${rec.name}: pane shows an error string — crew still ${alive}, not terminalized (pane-detected): ${verdict.text}`;
+          deps.log(`probe -> ${message}`);
+          if (deps.notify) {
+            const warnEvent: ControlEvent = { type: "task.warn", id: rec.id, message };
+            try {
+              await deps.notify({ project: rec.project, message, record: rec, event: warnEvent });
+            } catch (e) {
+              deps.log(`probe notify failed for ${rec.id}: ${(e as Error).message}`);
+            }
+          }
+          continue;
+        }
+      }
+
       const event: ControlEvent =
         verdict.kind === "error"
           ? {

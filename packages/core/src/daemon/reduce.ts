@@ -185,14 +185,16 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
     }
     case "awaiting-input":
-      // #522: 'awaiting-input' is reached ONLY via a genuine turn-boundary event
-      // (task.turn.completed — see state-machine.ts) — there is no separate
-      // watchdog-derived path into this state (the old wall-clock idle flip was
-      // retired by #354; evaluateStall never produces 'awaiting-input'). So this
-      // always means "the crew deliberately ended its turn", including the
-      // common case of a long-lived crew pausing between sequential subtasks.
-      // The former "review and reply or close" phrasing read like a possible
-      // fault and forced a spot-check every time; state calmly instead.
+      // #522: 'awaiting-input' is reached via a genuine turn-boundary event
+      // (task.turn.completed — see state-machine.ts). #542 NARROW EXCEPTION:
+      // evaluateStall's watchdog path can also land here — a Stop that was
+      // vetoed by #492 for looking premature, later confirmed once its
+      // pendingTool outlived the stall budget — but that is still a genuine
+      // turn-end, just recognized late. So this always means "the crew
+      // deliberately ended its turn", including the common case of a
+      // long-lived crew pausing between sequential subtasks. The former
+      // "review and reply or close" phrasing read like a possible fault and
+      // forced a spot-check every time; state calmly instead.
       return `CREW IDLE ${tag}: turn ended, awaiting your reply.`;
     default:
       return null;
@@ -292,7 +294,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.session", "task.turn.started", "task.turn.completed",
   "task.delta", "task.input.requested", "task.approval.requested",
   "task.reattached", "task.reopened",
-  "task.stalled", "task.idle", "task.quiet", "task.timeout", "task.reconcile-failed",
+  "task.stalled", "task.idle", "task.quiet", "task.warn", "task.timeout", "task.reconcile-failed",
   "task.cancelled", "task.session.ended",
   "task.first-turn.confirmed",  // #466: delivery confirmation
   "crew.takeover.started", "crew.takeover.ended", // #649: operator takeover
@@ -542,7 +544,13 @@ export function createDaemon(deps: DaemonDeps) {
         // finished and was correctly waiting on `crew approve`, permanently
         // closing that path. A still-live surface keeps waiting indefinitely;
         // a dead one is still caught by the surface-gone reap right below.
-        if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state)) {
+        // #595: 'awaiting-input' is the same "waiting on a human" state — a
+        // crew that finished a turn and is idle until the captain's next
+        // instruction has no natural time bound either. Without this exemption
+        // the wall-clock ceiling alone terminalized a healthy, live crew after
+        // ~24h of legitimate idle waiting. REAPABLE_SURFACE_STATES already
+        // covers 'awaiting-input', so a dead surface is still reaped below.
+        if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state) && r.state !== "awaiting-input") {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           const refTime = r.workingStretchStartedAt ?? r.createdAt;
           if (t - refTime > ceiling) {
@@ -610,6 +618,15 @@ export function createDaemon(deps: DaemonDeps) {
         const idle = evaluateStall(r, t);
         if (idle) {
           store.put(idle);
+          if (idle.state === "awaiting-input") {
+            // #542: evaluateStall recovered a stale pendingTool using positive
+            // idle evidence (a Stop the #492 veto had deferred acting on)
+            // instead of stalling — notify CREW IDLE, same as an un-vetoed
+            // turn.completed would have.
+            const recoveredEvent: ControlEvent = { type: "task.turn.completed", id: r.id, turnId: "watchdog-recover" };
+            firePush(deps, r.project, r.state, idle, recoveredEvent, lastCaptainTurnAt.get(r.id));
+            continue;
+          }
           // The synth event only carries the notify payload; the reducer treats
           // it as a no-op (state already updated above). A hung-tool or expired-
           // Monitor stall carries the tool name + elapsed so the notifier renders

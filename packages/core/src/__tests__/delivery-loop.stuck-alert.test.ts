@@ -228,6 +228,7 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
   });
 
   it("re-arms after recovery — a second, later stall episode alerts again", async () => {
+    vi.useFakeTimers();
     const stateRoot = freshState();
     const project = "gamma";
     const captainName = `${project}-captain`;
@@ -271,7 +272,11 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     expect(texts.filter((t) => t.includes("DELIVERY STUCK"))).toHaveLength(1);
 
     // Recover: the original entry finally delivers, clearing the stuck flag.
+    // #590: once stuck, the project is backed off for a window (grows up to
+    // 60s) before the next attempt — advance past it so recovery is actually
+    // attempted rather than skipped.
     stuck = false;
+    await vi.advanceTimersByTimeAsync(2_000);
     await deliv.deliveryTick!();
 
     // New task, new stall episode.
@@ -286,10 +291,14 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
       message: "CREW DONE t2",
     });
     stuck = true;
-    for (let i = 0; i < 4; i++) await deliv.deliveryTick!();
+    for (let i = 0; i < 4; i++) {
+      await deliv.deliveryTick!();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
 
     texts = await rawMailboxTexts(stateRoot, project);
     expect(texts.filter((t) => t.includes("DELIVERY STUCK"))).toHaveLength(2);
+    vi.useRealTimers();
   });
 
   // #617: the stuck message hardcoded "an in-progress draft (or ghost text)
@@ -376,5 +385,80 @@ describe("delivery-loop stuck-delivery alert (#579/#484)", () => {
     const texts = await rawMailboxTexts(stateRoot, project);
     const alert = texts.find((t) => t.includes("DELIVERY STUCK"));
     expect(alert).toContain("an in-progress draft (or ghost text) in your input box");
+  });
+
+});
+
+// #714: the DELIVERY STUCK alert was binary — modal got one sentence, EVERY
+// other reason got the draft wording, so a no-box jam told the operator to go
+// clear a draft that did not exist (the 2026-08-22 incident). The alert text
+// must reflect the actual DeferReason that fired, with a distinct sentence
+// for each of the four.
+describe("delivery-loop stuck-delivery alert reason-specific wording (#714)", () => {
+  async function alertForReason(reason: "no-box" | "modal" | "draft" | "probe-failed"): Promise<string> {
+    const stateRoot = freshState();
+    const project = `reason-${reason}`;
+    const captainName = `${project}-captain`;
+    mockConfig({ projects: { [project]: { captainName } } });
+    const store = createStore(stateRoot);
+    store.put({
+      id: "t1", project, provider: "claude", mode: "interactive",
+      state: "done", task: "t", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "", heartbeatBudgetMs: 1000, attempts: [],
+    });
+    await appendToMailbox({
+      stateRoot, project, taskRecord: store.list(project)[0],
+      event: { type: "task.done", id: "t1" } as any,
+      message: "CREW DONE t1",
+    });
+    const livenessRegistry = new LivenessRegistry({ path: join(stateRoot, "live.json") });
+    livenessRegistry.apply({
+      project, role: "captain", pid: 123, sessionId: "s1",
+      startedAt: Date.now(), lastState: "start", lastSeenAt: Date.now(),
+      pidAlive: true, source: "runtime",
+    });
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: async () => { throw new DeferDelivery(null, reason); },
+    };
+    const notifyFault = vi.fn();
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {}, notifyFault,
+    } as any, cmux as any);
+
+    for (let i = 0; i < 6; i++) await deliv.deliveryTick!();
+    expect(notifyFault).toHaveBeenCalledTimes(1);
+    return notifyFault.mock.calls[0][1] as string;
+  }
+
+  it("no-box names the unconfirmed-visible input box", async () => {
+    const alert = await alertForReason("no-box");
+    expect(alert).toContain("input box could not be confirmed visible");
+    expect(alert).not.toContain("in-progress draft");
+  });
+
+  it("modal names the open question modal", async () => {
+    const alert = await alertForReason("modal");
+    expect(alert).toContain("a modal question is open");
+    expect(alert).not.toContain("input box");
+  });
+
+  it("draft names the in-progress draft/ghost", async () => {
+    const alert = await alertForReason("draft");
+    expect(alert).toContain("an in-progress draft (or ghost text) in your input box");
+  });
+
+  it("probe-failed names the failed screen probe / stale surface, not a UI condition", async () => {
+    const alert = await alertForReason("probe-failed");
+    expect(alert).toContain("reading your captain pane failed");
+    expect(alert).not.toContain("draft");
+    expect(alert).not.toContain("input box");
+  });
+
+  it("all four reason texts are pairwise distinct", async () => {
+    const reasons = ["no-box", "modal", "draft", "probe-failed"] as const;
+    const alerts = await Promise.all(reasons.map((r) => alertForReason(r)));
+    expect(new Set(alerts).size).toBe(4);
   });
 });

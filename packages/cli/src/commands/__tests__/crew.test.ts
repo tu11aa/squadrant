@@ -10,6 +10,9 @@ const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 const probe = vi.hoisted(() => vi.fn());
 const sendFirstTurnWhenReadyMock = vi.hoisted(() => vi.fn());
+const sendKeyToPane = vi.hoisted(() => vi.fn());
+const pasteToPane = vi.hoisted(() => vi.fn());
+const readModalOptionsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
@@ -25,6 +28,8 @@ vi.mock("@squadrant/workspaces", () => ({
     newPane,
     closePane,
     sendToPane,
+    pasteToPane,
+    sendKeyToPane,
     readPaneScreen,
     listSurfaces,
   }),
@@ -52,7 +57,7 @@ vi.mock("@squadrant/workspaces", () => ({
     if (!proj) throw new Error(`Project '${project}' not found. Run 'squadrant projects list'.`);
     const ws = await status(proj.captainName);
     if (!ws) throw new Error(`Captain workspace '${proj.captainName}' is not running. Run 'squadrant launch ${project}' first.`);
-    return { runtime: { newPane, closePane, sendToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
+    return { runtime: { newPane, closePane, sendToPane, pasteToPane, sendKeyToPane, readPaneScreen, listSurfaces, status }, workspaceId: ws.id };
   },
   sendFirstTurnWhenReady: sendFirstTurnWhenReadyMock,
   confirmedSendToPane: async (_runtime: unknown, pane: unknown, msg: string) => {
@@ -60,6 +65,7 @@ vi.mock("@squadrant/workspaces", () => ({
     return { delivered: true };
   },
   paneHasOpenModal: async () => false,
+  readModalOptions: readModalOptionsMock,
   getFreePort: vi.fn().mockResolvedValue(12345),
 }));
 
@@ -150,7 +156,7 @@ vi.mock("@squadrant/core", async (importOriginal) => ({
   resolveCrewRoute,
 }));
 
-import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList } from "../crew.js";
+import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, runCrewAnswer } from "../crew.js";
 import { reapCrewChildren } from "@squadrant/core";
 
 const baseConfig = {
@@ -1144,6 +1150,55 @@ describe("squadrant crew send/read/close/list", () => {
       { name: "crew-1", surfaceId: "surface:10" },
       { name: "fix-typos", surfaceId: "surface:11" },
     ]);
+  });
+});
+
+// #592: CLI-level wiring for `crew answer` — the core algorithm (index/text
+// resolution, --expect, key-driving) is covered by crew-answer.test.ts against
+// a mock RuntimeDriver; these tests only verify the CLI wrapper plugs
+// @squadrant/workspaces' readModalOptions/sendKeyToPane/pasteToPane into it.
+describe("squadrant crew answer (#592)", () => {
+  beforeEach(() => {
+    listSurfaces.mockReset();
+    status.mockReset();
+    sendKeyToPane.mockReset();
+    pasteToPane.mockReset();
+    readModalOptionsMock.mockReset();
+    loadConfig.mockReset();
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+  });
+
+  it("selects an option by index and drives Down/Enter from the highlighted row", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    readModalOptionsMock
+      .mockResolvedValueOnce([
+        { index: 1, label: "Red", highlighted: true },
+        { index: 2, label: "Blue", highlighted: false },
+      ])
+      .mockResolvedValueOnce(null);
+
+    const result = await runCrewAnswer("brove", "crew-1", "2");
+
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down");
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(result).toEqual({ selected: { index: 2, label: "Blue", highlighted: false }, closed: true });
+  });
+
+  it("throws when no option list is visible", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    readModalOptionsMock.mockResolvedValue(null);
+    await expect(runCrewAnswer("brove", "crew-1", "1")).rejects.toThrow(/no interactive option prompt visible/i);
+    expect(sendKeyToPane).not.toHaveBeenCalled();
+  });
+
+  it("throws when the crew is not found", async () => {
+    listSurfaces.mockResolvedValue([]);
+    await expect(runCrewAnswer("brove", "ghost", "1")).rejects.toThrow(/Crew 'ghost' not found/);
   });
 });
 

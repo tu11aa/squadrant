@@ -8,13 +8,78 @@
 // derives the address from the project name alone.
 
 import { createServer, connect as netConnect } from "node:net";
-import { unlinkSync } from "node:fs";
+import fs from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
-import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath } from "@squadrant/agents";
+import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath, CLAUDE_SESSIONS_DIR } from "@squadrant/agents";
 import { captainSocketPath, CC_SOCKS_DIR } from "@squadrant/core";
 
 let shared: ClaudeReceiptListener | undefined;
+
+/**
+ * #711: register a name for the socket we just bound.
+ *
+ * The receiving Claude session resolves a sender's display name by looking the
+ * sender's socket path up in ~/.claude/sessions/<pid>.json. We bind a socket
+ * but never wrote such an entry, so every daemon-sent lifecycle message
+ * (CREW DONE / BLOCKED / IDLE / TAKEOVER) rendered as anonymous "Another Claude
+ * session" plus Claude's reduced-trust peer guardrail — squadrant's own signals
+ * delivered under third-party framing.
+ *
+ * Tradeoff accepted (issue #711, direction 1): this entry makes this process
+ * visible as a peer in ListAgents to every Claude session on the machine.
+ * Stray traffic is inert — the receipt listener discards every frame that is
+ * not a peer_message_status receipt.
+ *
+ * Best-effort: a write failure must degrade to the old anonymous-wrapper
+ * behaviour, never block channel construction.
+ */
+const registryEntryPath = (): string => join(CLAUDE_SESSIONS_DIR, `${process.pid}.json`);
+
+function unregisterSenderIdentity(): void {
+  try {
+    fs.unlinkSync(registryEntryPath());
+  } catch {
+    // absent is the normal case after a failed write or a prior clean exit
+  }
+}
+
+function registerSenderIdentity(socketPath: string): void {
+  try {
+    // Pids get reused: a leftover file from a dead process that owned this pid
+    // must never survive as "our" identity.
+    unregisterSenderIdentity();
+    fs.mkdirSync(CLAUDE_SESSIONS_DIR, { recursive: true });
+    // kind:"daemon" is one of Claude's own registry kinds — verified in the
+    // compiled binary at ~/.local/share/claude/versions/2.1.241 (Mach-O, not an
+    // npm cli.js): strings -a <binary> | grep 'interactive","bg","daemon'
+    // → ["interactive","bg","daemon","daemon-worker"]. Name resolution reads
+    // `name` regardless of kind, so the registry stays truthful and the
+    // receiver renders `name` instead of "Another Claude session".
+    // No status/statusUpdatedAt: we never refresh them, and a frozen timestamp
+    // reads as a live-but-stuck session to anything trusting it.
+    fs.writeFileSync(
+      registryEntryPath(),
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: randomUUID(),
+        name: "squadrantd",
+        messagingSocketPath: socketPath,
+        kind: "daemon",
+        peerProtocol: 1,
+      }),
+    );
+    // Same contract Claude itself uses for this file (process.on("exit") unlink
+    // + graceful-stop unlink): a SIGKILLed writer leaves the entry behind, but
+    // readers liveness-check by pid, so a dead daemon's entry is inert. A CLEAN
+    // exit never leaves one — the frozen-fresh-forever class is reserved for
+    // hard kills, where no handler can run.
+    process.on("exit", unregisterSenderIdentity);
+  } catch {
+    // anonymous wrapper is the pre-#711 behaviour — acceptable degradation
+  }
+}
 
 /**
  * One listener per process — it binds a socket, so constructing several would EADDRINUSE.
@@ -27,12 +92,13 @@ let shared: ClaudeReceiptListener | undefined;
  */
 export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   if (shared) return shared;
+  const socketPath = `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`;
   const listener = new ClaudeReceiptListener({
-    socketPath: `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`,
+    socketPath,
     createServer: (h) => createServer(h),
     // A UDS path is not cleaned up when a process is killed, so our own leftover
     // must never be the reason we refuse to start.
-    unlinkStale: (p) => { try { unlinkSync(p); } catch { /* absent is the normal case */ } },
+    unlinkStale: (p) => { try { fs.unlinkSync(p); } catch { /* absent is the normal case */ } },
     log: (m) => console.error(chalk.dim(m)),
   });
   // Cache only AFTER a successful bind (#712). Assigning `shared` before start()
@@ -40,6 +106,7 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   // singleton: every later call saw `shared` truthy and returned the never-started
   // listener without retrying the bind at all.
   await listener.start();
+  registerSenderIdentity(socketPath);
   shared = listener;
   return shared;
 }

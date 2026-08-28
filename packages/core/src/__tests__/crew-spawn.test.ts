@@ -35,7 +35,15 @@ vi.mock("node:fs", async (importOriginal) => {
   const existsSync = vi.fn().mockReturnValue(false);
   const readFileSync = vi.fn().mockReturnValue("");
   const copyFileSync = vi.fn();
-  return { ...actual, existsSync, readFileSync, copyFileSync, default: { ...actual, existsSync, readFileSync, copyFileSync } };
+  const writeFileSync = vi.fn();
+  return {
+    ...actual,
+    existsSync,
+    readFileSync,
+    copyFileSync,
+    writeFileSync,
+    default: { ...actual, existsSync, readFileSync, copyFileSync, writeFileSync },
+  };
 });
 
 // Prevent reapCrewChildren from running real `ps auxE` during close tests.
@@ -239,6 +247,60 @@ describe("runCrewSpawn", () => {
       expect(deps.sendFirstTurn).toHaveBeenCalledWith(
         expect.anything(),
         expect.stringContaining("squadrant crew signal done"),
+        expect.any(String),
+      );
+    });
+
+    // #730: a first-turn task above FIRST_TURN_INLINE_MAX_BYTES is spilled to a
+    // temp file and replaced with a short pointer instead of being pasted into
+    // the pane verbatim — the paste-and-confirm path has no way to verify a
+    // large payload landed intact before Enter submits it (mid-sentence cuts
+    // and whole dropped items were observed in the wild at ~2.5-3 KB).
+    it("spills an oversized first-turn task to a temp file and sends a short pointer (#730)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      // Multi-line payload with parens, ===, and colons — the exact shape #730
+      // reported damage on — well above the inline threshold.
+      const bigTask = Array.from({ length: 80 }, (_, i) =>
+        `${i + 1}. item (${i}) === detail: packages/core/src/daemon/start.ts exit marker persist ppid===1`,
+      ).join("\n");
+      expect(Buffer.byteLength(bigTask, "utf8")).toBeGreaterThan(1200);
+
+      await runCrewSpawn({ project: PROJECT, task: bigTask }, config, deps);
+
+      expect(vi.mocked(nodefs.writeFileSync)).toHaveBeenCalledWith(
+        expect.stringContaining("squadrant-task-"),
+        bigTask,
+        "utf8",
+      );
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("cat it and follow it exactly"),
+        expect.any(String),
+      );
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.stringContaining("packages/core/src/daemon/start.ts"),
+        expect.any(String),
+      );
+      // The daemon dispatch still gets the full task text — only pane delivery is spilled.
+      expect(deps.dispatchCrew).toHaveBeenCalledWith(expect.objectContaining({ task: bigTask }));
+    });
+
+    it("does NOT spill a short first-turn task (preserves current behavior) (#730)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+
+      expect(vi.mocked(nodefs.writeFileSync)).not.toHaveBeenCalled();
+      expect(deps.sendFirstTurn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("fix the bug"),
         expect.any(String),
       );
     });
@@ -674,6 +736,52 @@ describe("runCrewSpawn", () => {
       );
     });
   });
+
+  // ── thinking level → claude --effort ──────────────────────────────────────
+
+  describe("thinking level", () => {
+    it("applies defaults.roles.crew.thinking when no override is passed", async () => {
+      const config = makeConfig({ roles: { crew: { agent: "claude", thinking: "high" } } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ thinking: "high" }),
+      );
+    });
+
+    it("an explicit thinking override beats defaults.roles.crew.thinking", async () => {
+      const config = makeConfig({ roles: { crew: { agent: "claude", thinking: "high" } } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work", thinking: "low" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ thinking: "low" }),
+      );
+    });
+
+    it("omits thinking entirely when neither override nor config sets it", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "do work" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({ thinking: expect.anything() }),
+      );
+    });
+  });
 });
 
 // ─── runCrewSend ─────────────────────────────────────────────────────────────
@@ -719,6 +827,48 @@ describe("runCrewSend", () => {
       emitEvent,
     });
     expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.reopened", id: "t1" });
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
+  });
+
+  // #595: the caller (CLI output) must be able to truthfully report whether a
+  // reopen happened — a silent void return gave no way to distinguish "task
+  // was already working" from "task was terminal and got reopened".
+  it("returns reopened:true when a terminal task is successfully reopened", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "done" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(result).toEqual({ reopened: true });
+  });
+
+  it("returns reopened:false when the task is already non-terminal", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "working" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(result).toEqual({ reopened: false });
+  });
+
+  // The reopen attempt is best-effort against an offline/erroring daemon (the
+  // message must still be delivered) — but the return value must be honest
+  // about that failure rather than falsely reporting a reopen that didn't
+  // actually happen (this is what made the #595 guard message untrue: crew
+  // send LOOKED like it succeeded even when the reopen silently failed).
+  it("returns reopened:false when the daemon reopen call throws, without breaking pane delivery", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("workspace:1", [existing]);
+    const task = { id: "t1", name: "crew-1", state: "done" } as Partial<TaskRecord>;
+    const result = await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+      listTasks: vi.fn().mockResolvedValue([task]),
+      emitEvent: vi.fn().mockRejectedValue(new Error("daemon down")),
+    });
+    expect(result).toEqual({ reopened: false });
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
   });
 

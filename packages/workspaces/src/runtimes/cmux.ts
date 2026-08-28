@@ -3,6 +3,7 @@ import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceR
 import { resolveCmuxBin } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { compatManifest } from "@squadrant/shared";
+import type { ModalOption } from "@squadrant/shared";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -276,6 +277,43 @@ export function hasModalOptionList(screen: string): boolean {
   }
   if (topHR === -1) return false;
   return lines.slice(topHR + 1, bottomHR).some((l) => /^\s*\d+\.\s/.test(l));
+}
+
+/**
+ * Parse an open AskUserQuestion/permission SELECTION MODAL's rendered option
+ * list into structured rows (#592 `crew answer`). Reuses hasModalOptionList's
+ * detection (same HR-boundary scan) — returns null when no modal option list
+ * is visible, so callers get the same "can't tell, refuse" behavior #484
+ * already established for this screen shape (e.g. a single-HR permission
+ * frame — see 484-permission-fixture.txt — is NOT parsed; it was never
+ * detected as a modal to begin with).
+ *
+ * Each "N. Label" row becomes one entry; description/continuation lines with
+ * no leading number (e.g. AskUserQuestion's indented option-body line) are
+ * skipped. `highlighted` marks the row prefixed with the ❯ prompt glyph — the
+ * option cmux would confirm on a bare Enter.
+ */
+export function parseModalOptions(screen: string): ModalOption[] | null {
+  if (!hasModalOptionList(screen)) return null;
+  const lines = screen.split(/\r?\n/);
+  const HR_RE = /^\s*─{10,}\s*$/;
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) bottomHR = i;
+      else { topHR = i; break; }
+    }
+  }
+  if (topHR === -1) return null;
+  const OPTION_RE = /^\s*(❯)?\s*(\d+)\.\s*(.*?)\s*$/;
+  const options: ModalOption[] = [];
+  for (const line of lines.slice(topHR + 1, bottomHR)) {
+    const m = line.match(OPTION_RE);
+    if (!m) continue;
+    options.push({ index: Number(m[2]), label: m[3], highlighted: m[1] === "❯" });
+  }
+  return options.length > 0 ? options : null;
 }
 
 /**
@@ -650,7 +688,14 @@ export function createCmuxDriver(): RuntimeDriver {
       let screen = "";
       try {
         screen = await cmux(["read-screen", "--workspace", ws, "--surface", sf]);
-      } catch { /* screen unreadable — parseDraftFromScreen("") → null → defer below */ }
+      } catch (e) {
+        // #714: the probe invocation itself failed (dead surface, cmux down,
+        // bad ref). Never conflate that with no-box — log the error text and
+        // classify it as its own reason so callers can re-resolve (#713).
+        // The #268 rule stands: we never keystroke into an unconfirmed box.
+        process.stderr.write(`[squadrant] read-screen failed for ${ws}/${sf}: ${(e as Error).message}\n`);
+        throw new DeferDelivery(null, "probe-failed");
+      }
       const draft = parseDraftFromScreen(screen);
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).

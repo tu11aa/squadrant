@@ -4,9 +4,9 @@
 
 import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
-import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
+import type { PaneRef, RuntimeDriver, ModalOption } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, classifyStartupSurface } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, parseModalOptions, classifyStartupSurface } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, screenHasSplashMarker } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
@@ -134,6 +134,21 @@ export async function paneHasOpenModal(
 ): Promise<boolean> {
   const screen = (await runtime.readPaneScreen(pane)) ?? "";
   return hasModalOptionList(screen);
+}
+
+/**
+ * #592: read a crew pane's screen and parse its open SELECTION MODAL (if any)
+ * into structured options — the read+parse pairing `crew answer` needs both
+ * before driving a selection (to resolve the target) and after (to confirm
+ * the prompt closed). Returns null when no modal option list is visible,
+ * same as paneHasOpenModal's underlying detector.
+ */
+export async function readModalOptions(
+  runtime: Pick<RuntimeDriver, "readPaneScreen">,
+  pane: PaneRef,
+): Promise<ModalOption[] | null> {
+  const screen = (await runtime.readPaneScreen(pane)) ?? "";
+  return parseModalOptions(screen);
 }
 
 /**

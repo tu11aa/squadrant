@@ -1,5 +1,5 @@
 // packages/core/src/__tests__/store.test.ts
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,61 @@ describe("store", () => {
     s.put({ ...rec("t1"), project: "p1" });
     s.put({ ...rec("t2"), project: "p2" });
     expect(s.listAll().map((r) => r.id).sort()).toEqual(["t1", "t2"]);
+  });
+
+  // #595: store.put() was the one chokepoint with zero state-machine awareness —
+  // every caller relied on its OWN pre-check against TERMINAL_STATES, so a
+  // future/racing writer that skipped that check could silently clobber a
+  // terminal record's state/reason with no error and no trace (reported live:
+  // a 'cancelled' record silently became 'done'). Enforce the invariant at the
+  // one place every write funnels through, matching the existing safeSegment
+  // "one chokepoint" philosophy in this file.
+  describe("terminal→terminal overwrite protection (#595)", () => {
+    it("refuses to overwrite an existing terminal record with a different terminal state", () => {
+      const s = createStore(dir);
+      s.put({ ...rec("t1"), state: "cancelled", lastEvent: "captain-stopped" });
+      s.put({ ...rec("t1"), state: "done", lastEvent: "task.done" });
+      const r = s.get("proj", "t1");
+      expect(r?.state).toBe("cancelled");
+      expect(r?.lastEvent).toBe("captain-stopped");
+    });
+
+    it("refuses to overwrite lastEvent on an already-terminal record even when state is repeated", () => {
+      const s = createStore(dir);
+      s.put({ ...rec("t2"), state: "cancelled", lastEvent: "sweep.task-timeout" });
+      s.put({ ...rec("t2"), state: "cancelled", lastEvent: "captain-stopped" });
+      const r = s.get("proj", "t2");
+      expect(r?.lastEvent).toBe("sweep.task-timeout");
+    });
+
+    it("logs a loud warning when a terminal→terminal overwrite is rejected", () => {
+      const s = createStore(dir);
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        s.put({ ...rec("t5"), state: "cancelled", lastEvent: "captain-stopped" });
+        s.put({ ...rec("t5"), state: "done", lastEvent: "task.done" });
+        expect(spy).toHaveBeenCalledWith(expect.stringContaining("t5"));
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("still allows reviving a terminal record to a non-terminal state (task.reopened path)", () => {
+      const s = createStore(dir);
+      s.put({ ...rec("t3"), state: "cancelled", lastEvent: "captain-stopped" });
+      s.put({ ...rec("t3"), state: "working", lastEvent: "task.reopened" });
+      const r = s.get("proj", "t3");
+      expect(r?.state).toBe("working");
+      expect(r?.lastEvent).toBe("task.reopened");
+    });
+
+    it("still allows updating other fields of a terminal record when state and lastEvent are unchanged", () => {
+      const s = createStore(dir);
+      s.put({ ...rec("t4"), state: "done", lastEvent: "task.done" });
+      s.put({ ...rec("t4"), state: "done", lastEvent: "task.done", resultRef: "some-ref" });
+      const r = s.get("proj", "t4");
+      expect(r?.resultRef).toBe("some-ref");
+    });
   });
 
   // Red-team #1 (Critical): project/id are attacker-controlled via the socket.

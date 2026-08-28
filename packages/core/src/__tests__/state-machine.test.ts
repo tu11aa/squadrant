@@ -266,6 +266,15 @@ describe("state-machine reduce", () => {
     expect(closed.pendingTool).toBeUndefined();
   });
 
+  // #542: the cmux events-bridge closer spelling — a real tool completion
+  // observed on the daemon's `cmux events` stream, distinct from the claude
+  // native-hook bridge's lower-cased "posttooluse".
+  it("task.progress agent.hook.PostToolUse (cmux events-bridge spelling) closes the pendingTool window (#542)", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const closed = reduce(open, { type: "task.progress", id: "t1", note: "agent.hook.PostToolUse" }, 8000);
+    expect(closed.pendingTool).toBeUndefined();
+  });
+
   it("task.progress UserPromptSubmit (new turn) closes the pendingTool window", () => {
     const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
     const closed = reduce(open, { type: "task.progress", id: "t1", note: "agent.hook.UserPromptSubmit" }, 8000);
@@ -390,6 +399,12 @@ describe("state-machine reduce", () => {
     const working = rec({ state: "working" });
     const next = reduce(working, { type: "task.quiet", id: "t1", quietMs: 400000 }, 9000);
     expect(next).toBe(working); // same reference — pure no-op
+  });
+
+  it("#704: task.warn is a no-op (notify-only; a pane-scraped error string never terminalizes)", () => {
+    const working = rec({ state: "working" });
+    const next = reduce(working, { type: "task.warn", id: "t1", message: "CREW WARN t1: ..." }, 9000);
+    expect(next).toBe(working); // same reference — pure no-op, crew stays working
   });
 
   it("awaiting-input + task.done still transitions to done (terminal not blocked)", () => {

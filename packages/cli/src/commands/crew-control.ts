@@ -9,11 +9,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
-import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase } from "@squadrant/shared";
+import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
 import { crewChatCommand } from "./crew-chat.js";
+import { runCrewSend } from "./crew.js";
 
 const SOCK = DAEMON_SOCK_PATH;
 
@@ -268,7 +269,8 @@ export async function runCrewSignal(
   if (current && TERMINAL_STATES.has(current.state)) {
     throw new Error(
       `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
-        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it before signaling again.`,
+        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it — ` +
+        `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
     );
   }
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
@@ -368,6 +370,44 @@ export async function runCrewApprove(
 }
 
 /**
+ * #592: `crew reply` — resolve a task id to its crew name, deliver through the
+ * SAME path `crew send` uses (deps.sendCrew, normally runCrewSend), and only
+ * report the resulting task record. Delivery happening first is the whole
+ * fix: the old command transitioned state unconditionally then printed a
+ * warning that the message body was dropped, so a captain could believe a
+ * crew had been answered while its prompt sat untouched. If deps.sendCrew
+ * throws (e.g. an interactive prompt is open — runCrewSend's own
+ * isBlockedByModal precheck refuses before touching state), this throws too
+ * and deps.getStatus is never called — no transition on a message that never
+ * landed. runCrewSend already performs the blocked→working transition as
+ * part of a normal send, so there is nothing left for a separate transition
+ * step to do here.
+ */
+export async function runCrewReply(
+  project: string,
+  id: string,
+  message: string,
+  deps: {
+    listTasks: (project: string) => Promise<TaskRecord[]>;
+    sendCrew: (project: string, name: string, message: string) => Promise<unknown>;
+    getStatus: (project: string, id: string) => Promise<unknown>;
+  },
+): Promise<unknown> {
+  const tasks = await deps.listTasks(project);
+  const matches = tasks.filter((t) => t.id === id || t.id.startsWith(id));
+  if (matches.length === 0) throw new Error(`unknown task ${id}`);
+  if (matches.length > 1) {
+    throw new Error(`task id '${id}' is ambiguous — matches ${matches.map((t) => t.id).join(", ")}`);
+  }
+  const target = matches[0];
+  if (!target.name) {
+    throw new Error(`task ${id} has no crew name on record — cannot deliver via 'crew reply'`);
+  }
+  await deps.sendCrew(project, target.name, message);
+  return deps.getStatus(project, target.id);
+}
+
+/**
  * Attach the control-plane verbs onto an existing `squadrant crew` command so
  * they coexist with the legacy cmux-scrape verbs (spawn/send/read/close/list).
  * The control-plane task listing is `tasks` (not `list`) to avoid colliding
@@ -434,21 +474,36 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       process.stdout.write(formatCompactTasks(records, { compact }) + "\n");
     });
 
-  // TODO(downstream interactive-wiring spec): deliverReply is not yet wired in
-  // squadrantd, so this transitions task state but never reaches the agent. Deferred.
-  // --gate <gateId> routes through the gate-resolve verb instead (spec §4.9).
+  // #592: delivery goes through the SAME path 'crew send' uses (runCrewSend)
+  // BEFORE the state transition — never the other way around. The old code
+  // transitioned state unconditionally then printed a warning that the body
+  // was dropped; that let a captain believe a crew was answered when its
+  // prompt was still open and untouched. If delivery throws (e.g. an
+  // interactive prompt is open — runCrewSend's own isBlockedByModal precheck
+  // runs first and refuses before touching state), this command exits
+  // non-zero and NO transition happens. runCrewSend already performs the
+  // blocked→working transition as part of a normal send (task.started), so
+  // there is nothing left for the daemon's 'reply' verb to do afterward —
+  // calling it would just fail its own "state=blocked" guard a second time.
+  // --gate <gateId> routes through the gate-resolve verb instead (spec §4.9)
+  // — that path is unrelated to pane delivery.
   crew
-    .command("reply <project> <id> <message>")
-    .description("Reply to a blocked control-plane task (delivery deferred), or resolve a gate via --gate")
+    .command("reply <project> <id> [message]")
+    .description("Reply to a blocked crew task — delivers the message first, then transitions state; never transitions on a dropped message. Resolve a gate via --gate.")
+    .option("--message-file <path>", "Read message from file instead of positional arg ('-' for stdin)")
     .option("--gate <gateId>", "resolve a pending gate by id (codex interactive, spec §4.9)")
-    .action(async (project: string, id: string, message: string, opts: { gate?: string }) => {
+    .action(async (project: string, id: string, message: string | undefined, opts: { gate?: string; messageFile?: string }) => {
+      const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
       if (opts.gate) {
-        const r = await squadrantdCall(buildGateResolveRequest({ project, gateId: opts.gate, message }));
+        const r = await squadrantdCall(buildGateResolveRequest({ project, gateId: opts.gate, message: resolvedMessage }));
         process.stdout.write(JSON.stringify(r) + "\n");
         return;
       }
-      process.stderr.write("reply delivery is not yet wired (deferred); state transitioned only\n");
-      const r = await squadrantdCall({ kind: "reply", project, id, message });
+      const r = await runCrewReply(project, id, resolvedMessage, {
+        listTasks: async (p) => (await squadrantdCall({ kind: "list", project: p })) as TaskRecord[],
+        sendCrew: (p, name, msg) => runCrewSend(p, name, msg),
+        getStatus: (p, taskId) => squadrantdCall(buildStatusRequest(p, taskId)),
+      });
       process.stdout.write(JSON.stringify(r) + "\n");
     });
 

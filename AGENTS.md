@@ -42,7 +42,8 @@ squadrant owns and reconciles `~/.claude/settings.json` via `installClaudeHooks`
   { "defaults": { "claudeEnv": { "CLAUDE_AFK_TIMEOUT_MS": "240000", "CLAUDE_AFK_COUNTDOWN_MS": "30000" } } }
   ```
 
-  Motivating example: Claude Code's AFK auto-continue mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves prompts after an idle timeout — the same risk class as auto-answering approval prompts while unattended (#484/#516). squadrant does **not** enable this by default for anyone; it's opt-in per machine only, via `claudeEnv`.
+  Motivating example: Claude Code's AFK auto-continue mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves prompts after an idle timeout — the same risk class as auto-answering approval prompts while unattended (#484/#516). squadrant does **not** enable this by default for anyone; it's opt-in per machine only, via `claudeEnv`. Approval-class prompts are guarded by the safe-option-only clause in the captain/crew templates (#616); the human-decides fix for answering while away is remote answer via Telegram (#486).
+- **Captain-memory write gate (#556).** The unmatched `PreToolUse` entry (`squadrant hooks claude pre-tool-use`) fires for every tool call, so it also doubles as the crew memory guard: inside a crew session (`SQUADRANT_CREW_TASK_ID` set), a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` targeting `~/.claude/projects/<encoded-cwd>/memory/*`, or a `Bash` command whose text references a path under it, is denied via `hookSpecificOutput.permissionDecision: "deny"` and logged to stderr — pure decision logic in `decideCaptainMemoryWrite` (`packages/agents/src/interactive/claude.ts`). Crews report, captains decide what's durable; captain/command sessions (no crew env vars) are unaffected.
 
 ## Captain/Control Channel (#667)
 

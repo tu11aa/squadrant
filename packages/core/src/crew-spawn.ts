@@ -25,6 +25,7 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
   crewSessionName,
+  type ThinkingLevel,
 } from "@squadrant/shared";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -38,6 +39,21 @@ import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
  * which is live today and NOT addressed by this slice.
  */
 export const CC_SOCKS_DIR = "/tmp/cc-socks";
+
+/**
+ * #730: the first-turn task text for a claude crew is delivered by pasting it
+ * into the crew's cmux pane, then confirming submit once the input box stops
+ * changing (confirmedSendToPane / sendFirstTurnWhenReady in
+ * packages/workspaces/src/crew-pane.ts). That "stops changing" check only
+ * samples the screen a couple of times a second — a multi-KB paste that
+ * briefly stalls mid-render (observed at ~2.5-3 KB in #730) can look settled
+ * before it has fully landed, and Enter then submits a truncated draft. There
+ * is no way to positively confirm a large paste arrived intact over that path,
+ * so text above this size is spilled to a temp file and a short pointer is
+ * sent instead — the same workaround that reliably avoided the corruption in
+ * #730's own report.
+ */
+export const FIRST_TURN_INLINE_MAX_BYTES = 1200;
 
 import {
   buildCompletionProtocol,
@@ -75,6 +91,7 @@ export interface ResolvedAgent {
     interactive: boolean;
     permissionMode?: string;
     model?: string;
+    thinking?: ThinkingLevel;
     port?: number;
     messagingSocketPath?: string;
     sessionName?: string;
@@ -100,6 +117,9 @@ export interface CrewSpawnInput {
   approval?: boolean;
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model. */
   model?: string;
+  /** Per-spawn thinking level override — takes precedence over
+   *  defaults.roles.crew.thinking. Claude-only (→ `--effort <level>`). */
+  thinking?: ThinkingLevel;
   /** True when --agent was explicitly passed by the caller; suppresses crew routing. */
   agentExplicit?: boolean;
   /** Path to the task file when --task-file was used (not '-' for stdin). Set by
@@ -169,7 +189,7 @@ async function listCrewPanes(runtime: RuntimeDriver, workspaceId: string, projec
   return surfaces.filter((s) => s.title && isCrewTitle(project, s.title));
 }
 
-async function findCrewPane(
+export async function findCrewPane(
   runtime: RuntimeDriver,
   workspaceId: string,
   project: string,
@@ -344,6 +364,9 @@ export async function runCrewSpawn(
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
   const crewModel = input.model ?? route?.model ?? configModel;
+  // Thinking level is claude-only, so — unlike model — it has no routing-rule
+  // source; explicit flag beats defaults.roles.crew.thinking, else omitted.
+  const crewThinking = input.thinking ?? config.defaults.roles?.crew?.thinking;
 
   if (agentName !== "claude") {
     deps.onModelResolved?.({ agentName, model: crewModel });
@@ -398,6 +421,7 @@ export async function runCrewSpawn(
       // basename (only the claude driver reads this — other agents ignore it).
       sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
+      ...(crewThinking ? { thinking: crewThinking } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
@@ -407,7 +431,15 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    const claudeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    // #730: spill an oversized first-turn to a temp file rather than risking a
+    // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
+    let claudeFirstTurn = firstTurnTask;
+    if (Buffer.byteLength(claudeFirstTurn, "utf8") > FIRST_TURN_INLINE_MAX_BYTES) {
+      const spillFile = path.join(os.tmpdir(), `squadrant-task-${rec.id}.md`);
+      fs.writeFileSync(spillFile, claudeFirstTurn, "utf8");
+      claudeFirstTurn = `Full task is at ${spillFile} — cat it and follow it exactly.`;
+    }
+    const claudeResult = await deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     // #466: surface non-delivery explicitly instead of silently returning success.
     if (!claudeResult.delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
@@ -552,13 +584,16 @@ export async function runCrewSend(
     onChannelLog?: (msg: string) => void;
   },
   opts?: { force?: boolean }
-): Promise<void> {
+): Promise<{ reopened: boolean }> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
+  // #592: the old "wait for the prompt to close" advice was unactionable — it
+  // only closes when answered, and answering is exactly what this refusal
+  // blocks. Point at the deliberate escape hatch instead.
   const blockedByModalMessage = () =>
-    `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. Wait for the prompt to close, then re-send with 'squadrant crew send ${project} ${name}'.`;
+    `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. To answer it deliberately: squadrant crew read ${project} ${name} to see the options, then squadrant crew answer ${project} ${name} <n>.`;
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }
@@ -586,10 +621,17 @@ export async function runCrewSend(
   // Terminal task (done/failed): reopen so the next signal done fires CREW DONE (#148).
   // Blocked task: emit task.started to clear blocked→working so a subsequent real
   // permission prompt re-fires CREW BLOCKED (#182).
+  // #595: `reopened` is reported back to the caller (CLI output) so it can
+  // truthfully confirm a reopen happened instead of a bare "✔ Sent" that gave
+  // no signal either way — the guard message that tells a blocked crew to
+  // "ask the captain to run crew send to reopen it" is only actually true if
+  // that outcome is visible, not silently swallowed with everything else.
+  let reopened = false;
   try {
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
+        reopened = true;
       } else if (task.state === "blocked" || task.state === "awaiting-input" || task.state === "review") {
         // #599: feedback on a 'review' task is the reject path — clear it back
         // to working the same way an answer clears 'blocked'.
@@ -598,7 +640,8 @@ export async function runCrewSend(
     }
   } catch {
     // Swallow daemon errors so crews without a daemon or offline daemon
-    // still receive the sent message.
+    // still receive the sent message. `reopened` stays false — a failed
+    // reopen attempt must never be reported as a success (#595).
   }
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
@@ -637,7 +680,7 @@ export async function runCrewSend(
     }
     if (!fallsBackToPane(outcome)) {
       // accepted / queued: it reached the agent. Done — do NOT also use the pane.
-      return;
+      return { reopened };
     }
     // gone / unsupported: fall back to the pane ONCE, already logged above.
   }
@@ -667,7 +710,7 @@ export async function runCrewSend(
     if (!paneOk) {
       throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
     }
-    return;
+    return { reopened };
   }
 
   const { delivered, blockedByModal } = await deliver(crew, message);
@@ -682,6 +725,7 @@ export async function runCrewSend(
     // submitted. Throw so the caller fails loudly instead.
     throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
+  return { reopened };
 }
 
 export async function runCrewRead(

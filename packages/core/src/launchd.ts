@@ -292,13 +292,12 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
 }
 
 /**
- * The dangerous part: write the plist (if changed), bootout on program-arg
- * drift, bootstrap, and a plain kickstart (never -k, to avoid racing bootout's
- * exit handler — see the comment at the call site). Callers MUST already be
- * authorized to mutate the shared daemon: only ensureDaemon's captain-gated
- * branch and the explicit reregisterDaemon call this.
+ * Write the plist (if changed), bootout on program-arg drift, and bootstrap.
+ * Shared by applyDaemonDrift (implicit, cautious path) and reregisterDaemon
+ * (explicit heal path) — both need the plist/service reconciled, they only
+ * differ on how they kickstart afterward.
  */
-function applyDaemonDrift(drift: DaemonDrift): void {
+function reconcilePlistAndService(drift: DaemonDrift): void {
   if (drift.changed) {
     mkdirSync(dirname(drift.plistPath), { recursive: true });
     writeFileSync(drift.plistPath, drift.desired);
@@ -313,12 +312,92 @@ function applyDaemonDrift(drift: DaemonDrift): void {
   const uid = process.getuid?.() ?? 0;
   try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, drift.plistPath], { stdio: "ignore" }); }
   catch { /* already bootstrapped */ }
+}
+
+/**
+ * The dangerous part: reconcile the plist/service, then a plain kickstart
+ * (never -k, to avoid racing bootout's exit handler — see the comment at the
+ * call site). Callers MUST already be authorized to mutate the shared daemon:
+ * only ensureDaemon's captain-gated branch calls this.
+ */
+function applyDaemonDrift(drift: DaemonDrift): void {
+  reconcilePlistAndService(drift);
 
   // Plain kickstart (never -k): no-op on a healthy daemon, starts one that
   // was booted-out above or that stopped for other reasons.  -k is avoided
   // because it races with bootout's exit handler and produces exit-113 when
   // the service hasn't finished unloading.
   execFileSync("launchctl", ["kickstart", drift.target], { stdio: "ignore" });
+}
+
+/**
+ * Read the live pid of the launchd service, or null if it isn't loaded/running.
+ * `launchctl print <target>` prints a `pid = N` line while the job is up and
+ * exits non-zero (throws) when the job isn't loaded — both are valid states,
+ * not errors.
+ */
+export function getDaemonPid(target: string): number | null {
+  try {
+    const out = execFileSync("launchctl", ["print", target], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    const m = out.match(/\bpid\s*=\s*(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface DaemonKickstartResult {
+  target: string;
+  pidBefore: number | null;
+  pidAfter: number | null;
+  restarted: boolean;
+}
+
+/**
+ * #729: `launchctl kickstart <target>` (no `-k`) is a no-op on an already
+ * healthy daemon, and neither `bootstrap` nor a plain `kickstart` returning
+ * without error means the daemon actually restarted. This is the explicit
+ * operator bounce: always `kickstart -k` (kill-then-restart, unconditional —
+ * unlike applyDaemonDrift's cautious plain kickstart used on every routine CLI
+ * invocation) and poll the pid until it changes before reporting success.
+ *
+ * Code-review follow-up (#737): reregisterDaemon calls this right after a
+ * bootout+bootstrap on program-arg drift — exactly the race the plain-kickstart
+ * comment above warns about (`-k` racing bootout's exit handler → exit-113
+ * while the old instance is still unloading). Retry the `kickstart -k` call
+ * itself a bounded number of times before giving up; only then does it throw.
+ */
+export function forceKickstartAndVerify(
+  target: string,
+  opts: { pollAttempts?: number; pollDelayMs?: number; kickstartRetries?: number; kickstartRetryDelayMs?: number } = {},
+): DaemonKickstartResult {
+  const pollAttempts = opts.pollAttempts ?? 15;
+  const pollDelayMs = opts.pollDelayMs ?? 300;
+  const kickstartRetries = opts.kickstartRetries ?? 5;
+  const kickstartRetryDelayMs = opts.kickstartRetryDelayMs ?? 300;
+
+  const pidBefore = getDaemonPid(target);
+
+  for (let i = 0; i < kickstartRetries; i++) {
+    try {
+      execFileSync("launchctl", ["kickstart", "-k", target], { stdio: "ignore" });
+      break;
+    } catch (e) {
+      if (i === kickstartRetries - 1) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, kickstartRetryDelayMs);
+    }
+  }
+
+  let pidAfter: number | null = null;
+  for (let i = 0; i < pollAttempts; i++) {
+    pidAfter = getDaemonPid(target);
+    if (pidAfter !== null && pidAfter !== pidBefore) break;
+    if (i < pollAttempts - 1) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollDelayMs);
+    }
+  }
+
+  return { target, pidBefore, pidAfter, restarted: pidAfter !== null && pidAfter !== pidBefore };
 }
 
 /**
@@ -447,11 +526,31 @@ export function printForeignInstallError(foreign: ForeignInstall): string {
  * the current environment (PATH drift, entry-path drift) and apply it. This
  * is the opt-in the issue asks for — a deliberate human action, never an
  * implicit side effect of an arbitrary CLI invocation.
+ *
+ * #729: unlike ensureDaemon's cautious applyDaemonDrift, this ALWAYS forces a
+ * verified `kickstart -k` and throws if the pid never changed — the whole
+ * point of typing `heal daemon` is "make the daemon actually restart", so a
+ * no-op (plist already matched → old plain-kickstart path did nothing) must
+ * never be reported as success.
  */
-export function reregisterDaemon(nodeBin: string = process.execPath): void {
-  if (!tryAcquireDaemonLock()) return;
+export function reregisterDaemon(
+  nodeBin: string = process.execPath,
+  kickstartOpts: Parameters<typeof forceKickstartAndVerify>[1] = {},
+): DaemonKickstartResult {
+  if (!tryAcquireDaemonLock()) {
+    throw new Error("could not acquire the daemon lock — another squadrant process is already restarting the daemon");
+  }
   try {
-    applyDaemonDrift(computeDaemonDrift(nodeBin));
+    const drift = computeDaemonDrift(nodeBin);
+    reconcilePlistAndService(drift);
+    const result = forceKickstartAndVerify(drift.target, kickstartOpts);
+    if (!result.restarted) {
+      throw new Error(
+        `daemon did not restart (pid before=${result.pidBefore ?? "none"}, after=${result.pidAfter ?? "none"}) — ` +
+        `\`launchctl kickstart -k ${drift.target}\` ran but the pid never changed`,
+      );
+    }
+    return result;
   } finally {
     releaseDaemonLock();
   }

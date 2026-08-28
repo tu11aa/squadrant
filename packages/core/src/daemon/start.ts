@@ -10,7 +10,8 @@ import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
-import { rotateIfNeeded, mailboxStats, readCursor } from "../mailbox.js";
+import { rotateIfNeeded, mailboxStats, readCursor, appendCaptainMessage } from "../mailbox.js";
+import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
@@ -26,6 +27,10 @@ export interface DaemonHandle {
   stop(reason?: string): Promise<void>;
   tickDelivery: (() => Promise<void>) | undefined;
   tickProbe: (() => Promise<void>) | undefined;
+  /** #589: the mailbox-rotation tick, exposed for tests — also touches the
+   *  running-marker heartbeat (see exit-marker.ts). undefined when rotation
+   *  is disabled (rotationIntervalMs <= 0). */
+  tickRotation: (() => Promise<void>) | undefined;
 }
 
 /** Wire all daemon/* factories, run boot recovery, start timers.
@@ -40,7 +45,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const { daemonCmux } = ctx;
 
   const probes = createProbes(ctx);
-  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats } = createDelivery(ctx, daemonCmux);
+  // #595: built before createDelivery so reapOrphanedCrews can be gated on the
+  // crew's own surface liveness instead of the captain's alone.
+  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
+  const { defaultNotify, deliveryTick: initialDeliveryTick, deliveryStats, inFlightDelivery } = createDelivery(ctx, daemonCmux, surfaceProbe);
   // Compose the Telegram outbound push onto the notify fan-out: a captain
   // notification also pushes to the project's Telegram topic. When no bridge is
   // configured, notify is the base function unchanged (zero behavior change).
@@ -53,7 +61,12 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
         ctx.telegramBridge!.pushLifecycle(args.project, args.event);
       }
     : baseNotify;
-  const surfaceProbe = buildSurfaceProbe(ctx, probes, daemonCmux);
+  // #704: DaemonContext.notify is documented as late-bound by start.ts (see
+  // context.ts's "d, notify, broadcast, etc." comment) but was never actually
+  // assigned — probes.ts's interactive-probe needs a direct notify call for its
+  // notify-only task.warn push (task.warn is a reducer no-op, so routing it
+  // through ctx.d.handle() alone would never fire a captain push).
+  ctx.notify = notify;
 
   const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });
@@ -227,6 +240,49 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   // never inferred from process START time.
   log(`boot pid=${process.pid} version=${pkgVersion} socket=${ctx.sockPath} stateRoot=${stateRoot}`);
 
+  // #589: read back the previous exit marker (if any) and surface the gap
+  // between that exit and this boot — the 2026-07-20 outage's 23-minutes-awake
+  // silent gap must be visible from the log alone next time, not reconstructed
+  // after the fact from unrelated timestamps.
+  const bootTs = new Date().toISOString();
+  {
+    const sendDownAlert = (minutes: number, reasonText: string) => {
+      const text = `⚠️ daemon was down for ${minutes} min (last exit reason=${reasonText})`;
+      // Same project-list source as the Tier 2 snapshot below — injectable
+      // for tests, defaults to every configured project in production.
+      const alertProjects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
+      for (const project of alertProjects) {
+        appendCaptainMessage({ stateRoot, project, text, source: "daemon" })
+          .catch((e) => log(`boot-gap alert failed project=${project}: ${(e as Error).message}`));
+      }
+    };
+
+    const { marker, gapMs } = consumeExitMarker(stateRoot);
+    // Read BEFORE writing this boot's own fresh running marker below.
+    const prevRunning = readRunningMarker(stateRoot);
+    if (marker) {
+      log(`previous exit ts=${marker.ts} reason=${marker.reason} gap=${((gapMs ?? 0) / 1000).toFixed(1)}s`);
+      if ((gapMs ?? 0) > 60_000) sendDownAlert(Math.round((gapMs ?? 0) / 60_000), marker.reason);
+    } else if (prevRunning) {
+      // #589: a running marker survived with no exit marker to explain it —
+      // the prior daemon died without running any JS shutdown code (SIGKILL,
+      // OOM, power loss). Without this heartbeat marker, this is exactly the
+      // silent case #589 is about: it would read as "previous exit: none",
+      // indistinguishable from a genuine first boot.
+      const lastHeartbeatMs = new Date(prevRunning.lastHeartbeatTs).getTime();
+      const uncleanGapMs = Math.max(0, Date.now() - lastHeartbeatMs);
+      log(`previous exit: UNCLEAN (no marker; last heartbeat ${prevRunning.lastHeartbeatTs}, gap=${(uncleanGapMs / 1000).toFixed(1)}s)`);
+      if (uncleanGapMs > 60_000) {
+        sendDownAlert(Math.round(uncleanGapMs / 60_000), "unclean/unknown — no exit marker, likely SIGKILL/OOM/power-loss");
+      }
+    } else {
+      log("previous exit: none (clean or first boot)");
+    }
+    // A fresh running marker for THIS boot, regardless of which branch above
+    // fired — the rotation-tick heartbeat below re-touches lastHeartbeatTs.
+    writeRunningMarker(stateRoot, { pid: process.pid, bootTs, lastHeartbeatTs: bootTs }, log);
+  }
+
   let deliveryTick: (() => Promise<void>) | undefined = initialDeliveryTick;
   let probeTick: (() => Promise<void>) | undefined;
 
@@ -271,9 +327,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     keepCount: opts.mailboxConfig?.keepCount ?? 3,
   };
   let rotationTimer: NodeJS.Timeout | undefined;
+  let rotationTick: (() => Promise<void>) | undefined;
   if (rotationInterval > 0) {
     const inboxPath = join(stateRoot, "inbox");
-    rotationTimer = setInterval(async () => {
+    rotationTick = async () => {
       try {
         let entries: string[];
         try { entries = await readdir(inboxPath); } catch { return; }
@@ -283,16 +340,37 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
         for (const project of projects) await rotateIfNeeded({ stateRoot, project, ...mboxCfg });
       } catch (e) {
         log(`rotation timer error: ${(e as Error).message}`);
+      } finally {
+        // #589: this timer is the daemon's existing ~60s cadence — piggyback
+        // the running-marker heartbeat on it rather than adding a new timer.
+        writeRunningMarker(stateRoot, { pid: process.pid, bootTs, lastHeartbeatTs: new Date().toISOString() }, log);
       }
-    }, rotationInterval);
+    };
+    rotationTimer = setInterval(() => { void rotationTick!(); }, rotationInterval);
     rotationTimer.unref?.();
   }
 
   return {
     stop(reason = "requested"): Promise<void> {
-      // #535: write the exit marker synchronously, before any async
-      // teardown, so it lands even if the caller doesn't await this promise.
-      log(`exit pid=${process.pid} reason=${reason}`);
+      // #589/#590: capture signal-source evidence (ppid, whether launchd is
+      // the parent, process uptime) and the in-flight delivery state BEFORE
+      // any async teardown — Node gives no siginfo for who sent a signal, so
+      // ppid + uptime + in-flight delivery is the evidence actually available,
+      // and it must be captured synchronously so it lands even if the caller
+      // fires-and-forgets stop() (the historical #535 bug).
+      const ppid = process.ppid;
+      const uptimeMs = Math.round(process.uptime() * 1000);
+      const inFlight = inFlightDelivery();
+      log(
+        `exit pid=${process.pid} reason=${reason} ppid=${ppid} launchd=${ppid === 1} ` +
+        `uptimeMs=${uptimeMs} inFlightDelivery=${inFlight ? `${inFlight.project}#${inFlight.seq}(defers=${inFlight.deferCount})` : "none"}`,
+      );
+      writeExitMarker(stateRoot, { ts: new Date().toISOString(), pid: process.pid, reason, ppid, uptimeMs, inFlightDelivery: inFlight }, log);
+      // #589: a graceful stop diagnoses itself (the exit marker above) — the
+      // running marker's only job is flagging an UNCLEAN death, so remove it
+      // here. Its absence next boot (alongside the fresh exit marker) is what
+      // marks this shutdown as clean, not unclean.
+      removeRunningMarker(stateRoot, log);
       if (deliveryTimer) clearInterval(deliveryTimer);
       if (probeTimer) clearInterval(probeTimer);
       if (timer) clearInterval(timer);
@@ -305,5 +383,6 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     },
     tickDelivery: deliveryTick,
     tickProbe: probeTick,
+    tickRotation: rotationTick,
   };
 }

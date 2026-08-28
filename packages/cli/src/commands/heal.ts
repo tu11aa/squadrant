@@ -38,6 +38,8 @@ export interface HealComponent {
   project: string;
   ref: string;
   state: HealthState;
+  detail?: string;
+  stuck?: boolean;
   healCmd: string | null;
 }
 
@@ -60,9 +62,17 @@ export function buildHealStatus(components: ComponentHealth[] | null): HealStatu
     project: c.project,
     ref: c.ref,
     state: c.state,
+    detail: c.detail,
+    stuck: c.stuck,
     healCmd: healCmdFor(c),
   }));
-  const healthy = out.every((c) => c.healCmd === null);
+  const healthy = out.every((c) => {
+    if (c.kind === "delivery") {
+      // Only 'stuck' delivery makes healthy=false. A deferring-but-not-stuck queue is advisory (healthy=true).
+      return c.stuck !== true;
+    }
+    return c.healCmd === null;
+  });
   return { healthy, components: out };
 }
 
@@ -129,14 +139,33 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 
   if (result.healthy) {
     stdout.write(chalk.green("✔ all components healthy\n"));
+    for (const c of result.components) {
+      if (c.kind === "delivery" && c.state === "stale") {
+        const glyph = chalk.yellow("•");
+        const stateColor = chalk.yellow;
+        stdout.write(`  ${glyph} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${stateColor(c.state.padEnd(8))} ${c.project}\n`);
+        if (c.detail) {
+          stdout.write(`      detail: ${c.detail}\n`);
+        }
+      }
+    }
     return 0;
   }
 
   stdout.write(chalk.bold("Unhealthy components:\n\n"));
   for (const c of result.components) {
-    if (c.healCmd) {
-      stdout.write(`  ${chalk.red("✘")} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${chalk.red(c.state.padEnd(8))} ${c.project}\n`);
-      stdout.write(`      heal: ${chalk.cyan(c.healCmd)}\n`);
+    const isUnhealthy = c.kind === "delivery" ? c.stuck === true : c.healCmd !== null;
+    const isAdvisoryDelivery = c.kind === "delivery" && c.state === "stale" && c.stuck !== true;
+    if (isUnhealthy || isAdvisoryDelivery) {
+      const glyph = (c.state === "stale" || isAdvisoryDelivery) ? chalk.yellow("•") : chalk.red("✘");
+      const stateColor = (c.state === "stale" || isAdvisoryDelivery) ? chalk.yellow : chalk.red;
+      stdout.write(`  ${glyph} ${c.kind.padEnd(8)} ${c.ref.padEnd(16)} ${stateColor(c.state.padEnd(8))} ${c.project}\n`);
+      if (c.detail) {
+        stdout.write(`      detail: ${c.detail}\n`);
+      }
+      if (c.healCmd) {
+        stdout.write(`      heal: ${chalk.cyan(c.healCmd)}\n`);
+      }
     }
   }
   return 2;

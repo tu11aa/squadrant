@@ -12,12 +12,14 @@ guided first run — come back here when you need the details.
 - [Architecture](#architecture)
   - [Roles](#roles)
   - [Model Routing](#model-routing)
+  - [Thinking Level (per-role)](#thinking-level-per-role)
   - [Runtime Abstraction](#runtime-abstraction)
   - [Workspace Abstraction](#workspace-abstraction)
   - [Notifier Abstraction](#notifier-abstraction)
   - [Lifecycle Sources](#lifecycle-sources)
   - [Control/Captain Channel (#667)](#controlcaptain-channel-667)
   - [Crew Spawn (Interactive Sub-Sessions)](#crew-spawn-interactive-sub-sessions)
+  - [Answering a Crew's Open Prompt (#592)](#answering-a-crews-open-prompt-592)
   - [Effort Dial (Tokenomics)](#effort-dial-tokenomics)
   - [Crew Lifecycle & Delivery](#crew-lifecycle--delivery)
   - [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)
@@ -56,6 +58,7 @@ guided first run — come back here when you need the details.
 | `squadrant projection list` | Show registered projection targets and their destinations |
 | `squadrant crew spawn <project> <task> [--name <n>] [--direction tab\|right\|left\|up\|down] [--agent <a>]` | Spawn an interactive crew sub-session (tab in the captain workspace by default; `--direction` for a pane) |
 | `squadrant crew send <project> <name> <message>` | Send a follow-up turn to an existing crew |
+| `squadrant crew answer <project> <name> <option> [--expect <text>] [--text <answer>]` | Deliberately answer a crew's open AskUserQuestion/permission prompt by index or text — never an implicit default (#592) |
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
@@ -106,6 +109,29 @@ Each role runs on the optimal model for cost/quality tradeoff. Configured in `co
 - Crew: Sonnet (execution)
 - Exploration: Haiku (cheap lookups)
 
+### Thinking Level (per-role)
+
+Alongside a per-role **model**, each role can pin a per-role **thinking level** — how hard the model reasons within a session. It maps to Claude Code's `--effort` flag and is **claude-only**: codex / opencode / gemini never receive the flag.
+
+```json
+{
+  "defaults": {
+    "roles": {
+      "captain": { "agent": "claude", "model": "fable", "thinking": "medium" },
+      "crew":    { "agent": "claude", "model": "sonnet", "thinking": "high" }
+    }
+  }
+}
+```
+
+- Valid values: `low` | `medium` | `high` | `xhigh` | `max`.
+- Settable on any role (`command` | `captain` | `crew` | `exploration` | `side`).
+- **Unset ⇒ the flag is omitted entirely** ⇒ the agent's own default effort. There is no built-in default.
+- Override per invocation with `squadrant launch --thinking <level>` (captain/command) or `squadrant crew spawn --thinking <level>` (crew). Precedence, highest first: explicit `--thinking` flag → `defaults.roles.<role>.thinking` → omitted — the same rule `--model` already follows.
+- An invalid level fails fast with the list of valid values, rather than being passed through for the claude CLI to warn about and silently ignore.
+
+> **Not the same thing as [`defaults.effort`](#effort-dial-tokenomics).** `defaults.effort` (`max|balance|low`, set via `squadrant effort`) is the *crew tokenomics dial* — a global, captain-discretion signal about how aggressively to spend tokens. `defaults.roles.<role>.thinking` is a per-role reasoning-depth setting emitted as a CLI flag. They share the word `max` and nothing else; changing one does not affect the other.
+
 ### Runtime Abstraction
 
 Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `squadrant runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/runtimes/`) — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
@@ -128,6 +154,10 @@ Squadrant used to infer whether a captain/crew was alive or idle by scraping ter
 
 A per-tick pid floor (`kill(pid,0)`) arbitrates when sources disagree; provenance precedence is `runtime ≥ agent > scan`. This is the ground-truth layer the [captain-liveness redesign](../specs/2026-07-07-captain-liveness-redesign.md) (v0.15.0) and the [control/captain channel](#controlcaptain-channel-667) below both build on.
 
+**Captain-memory write gate (#556).** The unmatched `PreToolUse` hook entry (fires for every tool call, not just `AskUserQuestion`) doubles as a write gate on the captain's long-term memory directory (`~/.claude/projects/<encoded-cwd>/memory/`). Inside a crew session (`SQUADRANT_CREW_TASK_ID` set), a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` targeting that directory, or a `Bash` command whose text references a path under it, is denied via `hookSpecificOutput.permissionDecision: "deny"` and logged to stderr — the pure decision logic (`decideCaptainMemoryWrite`, `packages/agents/src/interactive/claude.ts`) takes tool name/input/env/home dir and is unit-tested without spawning claude. Rule: crews report findings in their done/blocked message; captains decide what's durable. Captain/command sessions (no crew env vars) are unaffected.
+
+**AFK auto-continue (#616).** Claude Code's AFK mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves `AskUserQuestion` prompts with a synthetic no-answer after an idle timeout. squadrant never enables this itself; it is opt-in per machine via the [`defaults.claudeEnv`](#config) overlay (#615). Approval-class prompts are guarded by a safe-option-only clause in the captain/crew templates: if a question resolves without a human answer, treat it as *not* approval and take only the safe, reversible option (or none). We do not disable AFK outright because it defuses the modal-induced "delivery stuck" precondition of [#590](https://github.com/tu11aa/squadrant/issues/590) — a modal self-clears long before the stuck threshold fires. The real fix for answering while away is remote answer via Telegram ([#486](https://github.com/tu11aa/squadrant/issues/486)).
+
 ### Control/Captain Channel (#667)
 
 The next step past lifecycle sources: use each agent's **native control API** as ground truth for *delivery*, not just liveness — did a message I sent actually land and get processed, not just "the pane looks idle now." Screen-scraped delivery inference (`confirmedSendToPane`: paste → settle → Enter → re-read the screen) produced a long bug tail (#447, #455, #466, #484, #492, #516, #566, #590, #514, #657) because it's an inference that fails silently.
@@ -142,6 +172,29 @@ The next step past lifecycle sources: use each agent's **native control API** as
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
 Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `squadrant shutdown`. codex now launches interactively (parity with claude/opencode); gemini currently still launches in print-mode, full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-squadrant-thin-redirect-design.md`](specs/archive/2026-05-05-squadrant-thin-redirect-design.md).
+
+### Answering a Crew's Open Prompt (#592)
+
+`squadrant crew send` correctly **refuses** to touch a pane while a crew has an AskUserQuestion/permission modal open — a bare keystroke would confirm whatever option the model happened to highlight ([#484](https://github.com/tu11aa/squadrant/issues/484)). That used to be a dead end: the refusal's own advice ("wait for the prompt to close") was unactionable, since the prompt only closes when answered.
+
+`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection (`Down`/`Up` from wherever the highlighted row currently sits, then `Enter`):
+
+```
+$ squadrant crew read myproj video          # see the options first
+❯ 1. Use main as the base
+  2. Use the existing stale branch
+  3. Ask me something else
+
+$ squadrant crew answer myproj video 1
+→ selecting 1. "Use main as the base"
+✔ Answered myproj:video with 1. "Use main as the base" — prompt closed
+```
+
+- `--expect "<text>"` refuses if the resolved option's label doesn't contain that text — a guard against the option order shifting between renders (it's model-generated, not fixed).
+- `--text "<answer>"` is for a free-text option (e.g. "Type something."): select it, then type the given answer and submit.
+- If no option list is visible, `crew answer` refuses rather than guessing — read the screen with `crew read` first.
+
+`squadrant crew reply <project> <id> [message]` (control-plane path, keyed by task id instead of crew name) now delivers through the same path as `crew send` **before** transitioning task state — never the reverse. If delivery throws (e.g. the prompt is open), the command exits non-zero and no state transition happens; the error points at `crew answer`.
 
 ### Effort Dial (Tokenomics)
 
@@ -279,6 +332,9 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
       "crew": "sonnet",
       "exploration": "haiku",
       "review": "opus"
+    },
+    "roles": {
+      "captain": { "agent": "claude", "model": "fable", "thinking": "medium" }
     }
   }
 }

@@ -134,3 +134,27 @@ describe("claude driver", () => {
     expect(result.output).toBe("plain text output");
   });
 });
+
+describe("claude driver — thinking level", () => {
+  const driver = createClaudeDriver();
+
+  it("adds --effort flag when thinking specified", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      thinking: "medium",
+    });
+    expect(cmd).toContain("--effort medium");
+  });
+
+  it("omits --effort entirely when thinking is unset", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      model: "opus",
+    });
+    expect(cmd).not.toContain("--effort");
+  });
+});

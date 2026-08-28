@@ -57,6 +57,11 @@ describe("healCmdFor", () => {
     expect(healCmdFor(makeCaptain("stale"))).toBeNull();
   });
 
+  it("returns null for a delivery component", () => {
+    expect(healCmdFor({ kind: "delivery", project: "brove", ref: "delivery", state: "stale", lastSeenMs: null })).toBeNull();
+    expect(healCmdFor({ kind: "delivery", project: "brove", ref: "delivery", state: "alive", lastSeenMs: null })).toBeNull();
+  });
+
   it("returns null for crew (no heal verb exists)", () => {
     expect(healCmdFor(makeCrew("gone"))).toBeNull();
     expect(healCmdFor(makeCrew("unknown"))).toBeNull();

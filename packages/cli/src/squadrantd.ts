@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -478,10 +478,26 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
 
 /** Greppable crash marker (#535) — matches the `[squadrantd] <iso> <msg>` shape
  *  ctx.log uses, but writes directly since ctx.log doesn't exist until buildContext()
- *  runs; a crash before that point must still be diagnosable. */
+ *  runs; a crash before that point must still be diagnosable.
+ *
+ *  #589: also persists the same exit-marker JSON the graceful stop() path
+ *  writes (see daemon/start.ts), so an uncaught crash is exactly as
+ *  diagnosable on the next boot as a clean SIGTERM/SIGINT — no separate,
+ *  duplicated marker scheme. Uses the production default state root: this
+ *  handler is only ever registered below the `endsWith("squadrantd.js")`
+ *  guard, i.e. the real launchd-run daemon, which never overrides stateRoot. */
 function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: unknown): void {
   const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
   process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${kind} pid=${process.pid} error=${message}\n`);
+  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+  writeExitMarker(stateRoot, {
+    ts: new Date().toISOString(),
+    pid: process.pid,
+    reason: kind,
+    ppid: process.ppid,
+    uptimeMs: Math.round(process.uptime() * 1000),
+    inFlightDelivery: null, // crash path has no access to the delivery loop's live state
+  }, (m: string) => process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${m}\n`));
 }
 
 /**

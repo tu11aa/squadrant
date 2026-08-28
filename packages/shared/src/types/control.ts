@@ -175,6 +175,12 @@ export type ControlEvent =
   // `working`, NOT awaiting-input. Real CREW IDLE still comes only from the Stop
   // hook (a genuine turn-end). `quietMs` = how long it has been silent.
   | { type: "task.quiet"; id: string; quietMs: number }
+  // #704: the pane error-detector matched an error banner, but ground truth
+  // (surface liveness) could not confirm the crew is actually gone — a scraped
+  // string alone must never terminalize a task. Notify-only (reducer no-op):
+  // the crew stays `working`, exactly like task.quiet. `message` carries the
+  // "CREW WARN ... not terminalized" text verbatim.
+  | { type: "task.warn"; id: string; message: string }
   // #225: emitted by the sweep when a task's wall-clock age exceeds the ceiling.
   // Notify-only (detect-first, #77); reducer is a no-op.
   | { type: "task.timeout"; id: string; taskTimeoutMs: number }

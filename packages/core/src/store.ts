@@ -4,6 +4,7 @@ import {
   rmSync, statSync,
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { TERMINAL_STATES } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 
 export interface Store {
@@ -50,8 +51,43 @@ export function createStore(root: string): Store {
   const taskFile = (p: string, id: string) =>
     assertUnderRoot(join(projDir(p), `${safeSegment("id", id)}.json`));
 
+  const readRecord = (project: string, id: string): TaskRecord | undefined => {
+    const f = taskFile(project, id);
+    if (!existsSync(f)) return undefined;
+    try {
+      return JSON.parse(readFileSync(f, "utf-8")) as TaskRecord;
+    } catch {
+      return undefined; // corrupt file: caller handles (Task 6)
+    }
+  };
+
   return {
     put(rec) {
+      // #595: the one chokepoint every fs write funnels through — same
+      // philosophy as safeSegment above. Every in-process writer is expected
+      // to pre-check TERMINAL_STATES itself before calling put(), but that is
+      // a convention, not an invariant; a caller that forgets (or a future
+      // one that never learns the rule) can silently clobber a terminal
+      // record's state/reason with no error and no trace — reported live: a
+      // 'cancelled' record silently became 'done'. Enforce it here too, as
+      // defense in depth: once a record is terminal, only a transition OUT of
+      // terminal (task.reopened → a non-terminal state) may change its
+      // state/lastEvent. A same-or-different terminal→terminal write is
+      // rejected outright and the original terminal record is preserved.
+      const existing = readRecord(rec.project, rec.id);
+      if (
+        existing &&
+        TERMINAL_STATES.has(existing.state) &&
+        TERMINAL_STATES.has(rec.state) &&
+        (existing.state !== rec.state || existing.lastEvent !== rec.lastEvent)
+      ) {
+        console.error(
+          `[squadrant] REJECTED terminal→terminal overwrite of ${rec.project}/${rec.id}: ` +
+            `already ${existing.state}/${existing.lastEvent} — refusing ${rec.state}/${rec.lastEvent}; ` +
+            `original terminal record preserved (#595)`,
+        );
+        return;
+      }
       mkdirSync(projDir(rec.project), { recursive: true });
       const dest = taskFile(rec.project, rec.id);
       const tmp = `${dest}.tmp`;
@@ -59,13 +95,7 @@ export function createStore(root: string): Store {
       renameSync(tmp, dest); // atomic replace
     },
     get(project, id) {
-      const f = taskFile(project, id);
-      if (!existsSync(f)) return undefined;
-      try {
-        return JSON.parse(readFileSync(f, "utf-8")) as TaskRecord;
-      } catch {
-        return undefined; // corrupt file: caller handles (Task 6)
-      }
+      return readRecord(project, id);
     },
     list(project) {
       const d = projDir(project);

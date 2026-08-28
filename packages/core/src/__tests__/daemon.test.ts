@@ -373,6 +373,27 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(0);
   });
 
+  // #542: a Stop hook fired (vetoed by #492 because pendingTool looked fresh
+  // at the time — lastEvent recorded it anyway) but the matching PostToolUse
+  // never arrived. Once the tool window outlives the stall budget, that
+  // recorded Stop is positive proof the crew is idle, not hung — recover to
+  // awaiting-input (CREW IDLE) instead of a false CREW STALLED.
+  it("sweep: stale pendingTool with a recorded turn-completed → recovers to awaiting-input, not stalled (#542)", async () => {
+    const store = createStore(dir);
+    const calls: any[] = [];
+    store.put(rec("s1r", { mode: "interactive", state: "working", lastHeartbeat: 0,
+      lastEvent: "task.turn.completed",
+      heartbeatBudgetMs: 100, pendingTool: { name: "Bash", since: 0 },
+      attempts: [{ attemptId: "a0", startedAt: 0, lastHeartbeatAt: 0 }] }));
+    const d = createDaemon({ store, now: () => 11 * 60_000, notify: async (a) => { calls.push(a); } });
+    await d.sweep();
+    const after = store.get("p", "s1r");
+    expect(after?.state).toBe("awaiting-input");
+    expect(after?.pendingTool).toBeUndefined();
+    expect(calls.length).toBe(1);
+    expect(calls[0].message).toMatch(/CREW IDLE/);
+  });
+
   it("sweep: recovers a stalled task that has a fresh heartbeat", async () => {
     const store = createStore(dir);
     store.put(rec("s2", { state: "stalled", lastHeartbeat: 990, heartbeatBudgetMs: 100 }));
@@ -1157,15 +1178,18 @@ describe("sweep: task-timeout (#225)", () => {
   });
 
   it("timeout message shows original state, not 'cancelled' (Fix C note 1)", async () => {
+    // #595: 'awaiting-input' is now ceiling-exempt (see below), so this uses
+    // 'stalled' — still subject to the wall-clock ceiling — to keep exercising
+    // the original "message shows pre-cancellation state" behavior.
     const store = createStore(dir);
     const calls: any[] = [];
     store.put(rec("t225i", {
-      state: "awaiting-input", createdAt: 0,
+      state: "stalled", createdAt: 0,
       lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
     }));
     const d = createDaemon({ store, now: () => 2000, taskTimeoutMs: 1_000, notify: async (a) => { calls.push(a); } });
     await d.sweep();
-    expect(calls[0].message).toContain("awaiting-input");
+    expect(calls[0].message).toContain("stalled");
     expect(calls[0].message).not.toContain("state: cancelled");
   });
 
@@ -1298,6 +1322,44 @@ describe("sweep: task-timeout (#225)", () => {
     });
     await d.sweep();
     const r = store.get("p", "t629d");
+    expect(r?.state).toBe("cancelled");
+    expect(r?.lastEvent).toBe("sweep.surface-gone");
+  });
+
+  // #595: a crew that finished its turn and is sitting in 'awaiting-input'
+  // (waiting on the captain's next instruction) has no natural time bound —
+  // same reasoning #629 already applies to blocked/review. Without this
+  // exemption the wall-clock ceiling alone terminalizes a healthy, live crew
+  // that is simply waiting on a human, exactly the reported #595 defect.
+  it("does NOT cancel a task sitting in 'awaiting-input' past the ceiling with a live surface (#595)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t595a", {
+      state: "awaiting-input", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "alive" as const,
+    });
+    await d.sweep();
+    expect(store.get("p", "t595a")?.state).toBe("awaiting-input");
+  });
+
+  // The ceiling exemption must not blind the SEPARATE liveness reap: a dead
+  // surface sitting in awaiting-input is still cleaned up, just via
+  // sweep.surface-gone instead of the wall-clock sweep.task-timeout (#595).
+  it("an 'awaiting-input' task with a gone surface is still reaped past the ceiling (#595)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t595b", {
+      state: "awaiting-input", mode: "interactive", createdAt: 0,
+      lastHeartbeat: 1990, heartbeatBudgetMs: 86_400_000,
+    }));
+    const d = createDaemon({
+      store, now: () => 2000, taskTimeoutMs: 1_000,
+      isSurfaceAlive: async () => "gone" as const,
+    });
+    await d.sweep();
+    const r = store.get("p", "t595b");
     expect(r?.state).toBe("cancelled");
     expect(r?.lastEvent).toBe("sweep.surface-gone");
   });

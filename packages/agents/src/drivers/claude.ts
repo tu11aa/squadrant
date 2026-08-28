@@ -38,6 +38,10 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --model ${opts.model}`;
       }
 
+      if (opts.thinking) {
+        cmd += ` --effort ${opts.thinking}`;
+      }
+
       if (opts.autoApprove) {
         cmd += " --dangerously-skip-permissions";
       } else if (opts.permissionMode) {

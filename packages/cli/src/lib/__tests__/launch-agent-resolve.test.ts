@@ -35,4 +35,23 @@ describe("resolveLaunchAgent", () => {
     const result = resolveLaunchAgent({ agent: "opencode" }, { agent: "claude", model: "sonnet" }, undefined);
     expect(result).toEqual({ agentName: "opencode", model: "sonnet" });
   });
+
+  it("picks up defaults.roles.captain.thinking when no --thinking flag is passed", () => {
+    const result = resolveLaunchAgent({}, { agent: "claude", model: "fable", thinking: "medium" }, undefined);
+    expect(result.thinking).toBe("medium");
+  });
+
+  it("an explicit --thinking flag wins over defaults.roles.captain.thinking", () => {
+    const result = resolveLaunchAgent(
+      { thinking: "max" },
+      { agent: "claude", model: "fable", thinking: "medium" },
+      undefined,
+    );
+    expect(result.thinking).toBe("max");
+  });
+
+  it("leaves thinking undefined when neither flag nor config sets it (no built-in default)", () => {
+    const result = resolveLaunchAgent({}, { agent: "claude", model: "sonnet" }, undefined);
+    expect(result.thinking).toBeUndefined();
+  });
 });

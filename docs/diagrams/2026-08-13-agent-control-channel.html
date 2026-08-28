@@ -82,7 +82,11 @@
 
   <h1>Agent Control Channel</h1>
   <p class="sub">Stop reading terminal pixels. Ask the agent.</p>
-  <p class="meta">issue #667 · 2026-08-13 · scope: claude + opencode · status: DRAFT</p>
+  <p class="meta">issue #667 · 2026-08-13 (updated 2026-08-23) · scope: claude + opencode · status: SHIPPED (v0.19.0) · LIVE for claude</p>
+
+  <div class="note g">
+    <strong>Status update (2026-08-22, v0.19.0):</strong> Approved and cut over — <code>controlChannel</code>/<code>captainChannel=on</code> is live for <code>claude</code> as of 2026-08-20 (delivery verdicts now come from an agent receipt, not screen-scraping). <code>opencode</code> remains off — its control API is verified but not yet proven in production. See <a href="../../AGENTS.md#captaincontrol-channel-667">AGENTS.md § Captain/Control Channel</a> and <a href="../reference.md#controlcaptain-channel-667">reference.md § Control/Captain Channel</a> for the current state.
+  </div>
 
   <div class="note b">
     <strong>Five false signals in one captain session — 2026-08-13.</strong>
@@ -237,18 +241,35 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
       <code>idle</code> announces "ready for work" about a session we don't understand.</p></div>
   </div>
 
-  <h2>Rollout: shadow first</h2>
+  <h2>captainChannel — native captain delivery</h2>
+  <p class="lead">Modes: <code>off</code> / <code>shadow</code> / <code>on</code>. Replaces screen-scraped captain delivery with native peer socket delivery.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h3>captainChannel: on (preferred)</h3>
+      <p>Routes captain-bound delivery directly over the <strong>native peer socket</strong> (<code>/tmp/cc-socks/squadrant-captain-&lt;project&gt;.sock</code>), bypassing the pane-defer machine entirely.</p>
+      <p><span class="pill p-ok">on</span> No draft/ghost/modal/<code>no-box</code> deferral loops.</p>
+    </div>
+    <div class="card">
+      <h3>captainChannel: shadow (probe-only)</h3>
+      <p>Probes the socket but <strong>never sends</strong>: logs and <strong>discards</strong> the probe result, provides <strong>no liveness of its own</strong>, and falls back to pane delivery — which re-enters the full pane-defer machine.</p>
+      <p><span class="pill p-warn">shadow</span> Verification aid only — not a safe fallback.</p>
+    </div>
+  </div>
+  <p class="sub" style="font-size:13.5px">Note: Crew wrapper/receipt text visible in prompt under <code>on</code> mode is a sender-identity artifact (<span class="tag">#711</span>), not an inherent property of the channel.</p>
+
+  <h2>Rollout &amp; channel status (v0.19.0)</h2>
   <div class="flow">
     <div class="node"><div class="t">off</div>
-      <div class="d">unchanged</div></div>
+      <div class="d">unchanged<br><span class="pill p-dim">opencode live (off)</span></div></div>
     <div class="arrow">→</div>
-    <div class="node" style="border-color:var(--acc)"><div class="t">shadow</div>
-      <div class="d">both paths run · log only where they <strong>disagree</strong> ·
-      pane still decides</div></div>
+    <div class="node" style="border-color:var(--warn)"><div class="t">shadow</div>
+      <div class="d">probes but never sends · logs and discards the result · provides no liveness · falls back to pane delivery</div></div>
     <div class="arrow">→</div>
-    <div class="node"><div class="t">on</div>
-      <div class="d">channel leads · pane is fallback</div></div>
+    <div class="node" style="border-color:var(--ok)"><div class="t">on</div>
+      <div class="d">channel leads · native peer socket · agent receipt ground truth<br><span class="pill p-ok">claude live (v0.19.0)</span></div></div>
   </div>
+
+  <p class="sub" style="font-size:13.5px;margin:10px 0"><code>off → shadow</code> needs a daemon bounce; <code>shadow → on</code> does not.</p>
 
   <div class="note">
     <strong>A false-signal fix cannot be proven without observing the signal being false.</strong>
@@ -259,6 +280,16 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
 
   <p>It also yields something squadrant has never had: <strong>the real error rate of the
   screen-scraping layer</strong>. Five in one session is an anecdote, not a measurement.</p>
+
+  <h3>Channel fixes &amp; open issues</h3>
+  <table>
+    <tr><th>Issue</th><th>Behavior</th><th>Status</th></tr>
+    <tr><td>#712</td><td>Channel init used to latch pane-only after a single transient bind error</td><td class="ok"><span class="tag v">FIXED in v0.19.0 (retries with backoff)</span></td></tr>
+    <tr><td>#713</td><td>Daemon can hold a stale surface ref after a captain pid change</td><td><span class="tag">#713 open</span></td></tr>
+    <tr><td>#714</td><td>A failed <code>cmux read-screen</code> is swallowed and misreported as <code>reason=no-box</code> (which does NOT mean the screen is covered)</td><td><span class="tag">#714 open</span></td></tr>
+    <tr><td>#715</td><td><code>squadrant heal status</code> reports all-healthy while delivery is dead</td><td><span class="tag">#715 open</span></td></tr>
+    <tr><td>#711</td><td>Crew wrapper/receipt text visible in <code>on</code> mode is a sender-identity artifact</td><td><span class="tag">#711 open</span></td></tr>
+  </table>
 
   <h2>Out of scope — and why</h2>
   <p class="lead">The real axis is <strong>topology</strong>, not API availability.</p>
@@ -285,7 +316,7 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
   <div class="foot">
     Spec: <a href="../specs/2026-08-13-agent-control-channel-design.md">docs/specs/2026-08-13-agent-control-channel-design.md</a><br>
     Protocol findings: <code>squadrant-hub/spokes/squadrant/findings/2026-08-08-cc-peer-messaging-protocol.md</code><br>
-    Related: #333 · #514 · #551 · #552 · #567 · #618 · #657 · #671
+    Related: #333 · #514 · #551 · #552 · #567 · #618 · #657 · #671 · #711 · #712 · #713 · #714 · #715
   </div>
 
 </div>

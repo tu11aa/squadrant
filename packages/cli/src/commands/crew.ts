@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput, resolveControlChannelMode } from "@squadrant/shared";
+import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
 import type { PanePlacement } from "@squadrant/shared";
-import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, getFreePort } from "@squadrant/workspaces";
+import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
@@ -12,8 +12,10 @@ import {
   runCrewRead as coreRunCrewRead,
   runCrewClose as coreRunCrewClose,
   runCrewList as coreRunCrewList,
+  runCrewAnswer as coreRunCrewAnswer,
   type CrewSpawnInput,
   type ResolvedAgent,
+  type CrewAnswerResult,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
@@ -76,7 +78,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
   });
 }
 
-export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<void> {
+export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean }> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const cfg = loadConfig();
   // #667 slice 2: the channel needs the crew's opencode port, which the daemon
@@ -145,6 +147,27 @@ export async function runCrewList(project: string): Promise<Array<{ name: string
   return coreRunCrewList(project, runtime, workspaceId);
 }
 
+export async function runCrewAnswer(
+  project: string,
+  name: string,
+  option: string,
+  opts?: { expect?: string; text?: string },
+): Promise<CrewAnswerResult> {
+  const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
+  return coreRunCrewAnswer(
+    project,
+    name,
+    option,
+    runtime,
+    workspaceId,
+    {
+      readModalOptions: (pane) => readModalOptions(runtime, pane),
+      log: (m) => console.log(chalk.dim(m)),
+    },
+    opts,
+  );
+}
+
 // ─── CLI command definitions ──────────────────────────────────────────────────
 
 export const crewCommand = new Command("crew").description(
@@ -165,14 +188,18 @@ crewCommand
   .option("--shared", "run the crew in the root checkout instead of an isolated worktree (for small/one-off tasks)", false)
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
+  .option("--thinking <level>", `Override crew thinking level for this spawn (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over config defaults.roles.crew.thinking`)
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string },
       cmd: Command,
     ) => {
       try {
+        // Fail fast on a typo rather than letting the claude CLI warn and
+        // silently fall back to its default effort.
+        const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
@@ -187,6 +214,7 @@ crewCommand
           ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
           ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
+          ...(thinking ? { thinking } : {}),
           // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
           // into the isolated worktree root for relative-path access.
           ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
@@ -257,10 +285,37 @@ crewCommand
   .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
-      await runCrewSend(project, name, resolvedMessage, opts);
+      const { reopened } = await runCrewSend(project, name, resolvedMessage, opts);
+      // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
+      // gave the captain no way to tell a stale terminal record was revived.
+      if (reopened) console.log(chalk.cyan(`↻ Task was terminal — reopened to working`));
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
+  });
+
+crewCommand
+  .command("answer")
+  .description(
+    "Deliberately answer a crew's open AskUserQuestion/permission prompt (#592) — never an implicit default",
+  )
+  .argument("<project>", "Project name")
+  .argument("<name>", "Crew name")
+  .argument("<option>", "1-based option index, or an exact/prefix match of the option's text")
+  .option("--expect <text>", "Refuse unless the resolved option's label contains this text (guards against option order shifting)")
+  .option("--text <answer>", "For a free-text option (e.g. 'Type something.'): select it, then type this answer and submit")
+  .action(async (project: string, name: string, option: string, opts: { expect?: string; text?: string }) => {
+    try {
+      const { selected, closed } = await runCrewAnswer(project, name, option, opts);
+      if (closed) {
+        console.log(chalk.green(`✔ Answered ${project}:${name} with ${selected.index}. "${selected.label}" — prompt closed`));
+      } else {
+        console.log(chalk.yellow(`⚠ Sent ${selected.index}. "${selected.label}" to ${project}:${name}, but the prompt still appears open — read it again with 'squadrant crew read ${project} ${name}'`));
+      }
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
       process.exit(1);
     }
   });

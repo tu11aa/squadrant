@@ -196,3 +196,31 @@ describe("claude --messaging-socket-path (#667 slice 3)", () => {
     expect(pluginDirIdx).toBeLessThan(mspIdx);
   });
 });
+
+// ── thinking level → claude --effort ─────────────────────────────────────────
+
+describe("buildAgentCmd — thinking level", () => {
+  it("appends --effort when thinking is set", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto", "fable", undefined, undefined, undefined, "medium");
+    expect(cmd).toContain("--effort medium");
+  });
+
+  it("omits --effort when thinking is unset (every existing call site)", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto", "fable");
+    expect(cmd).not.toContain("--effort");
+  });
+
+  // --effort is claude-only: codex/opencode/gemini reject it, so the flag must
+  // never reach the delegate path even when a thinking level is configured.
+  it("never forwards --effort to a non-claude driver", () => {
+    const opencode = mockDriver("opencode", "opencode");
+    const r = makeRegistry({ opencode });
+    const cmd = buildAgentCmd("opencode", r, "captain", true, "auto", undefined, undefined, undefined, undefined, "max");
+    expect(cmd).not.toContain("--effort");
+    expect(opencode.buildCommand).toHaveBeenCalledWith(
+      expect.not.objectContaining({ thinking: expect.anything() }),
+    );
+  });
+});

@@ -6,8 +6,9 @@
 // presence) is gathered by the caller (squadrantd) and passed in already-resolved;
 // this module never touches cmux.
 import type { TaskState, Mode, LivenessEntry } from "@squadrant/shared";
+import type { DeliverDeferReason } from "./delivery/captain-delivery.js";
 
-export type ComponentKind = "captain" | "crew" | "command";
+export type ComponentKind = "captain" | "crew" | "command" | "delivery";
 
 // alive   = seen within the stale window (healthy)
 // stale   = quiet past stale but not yet gone (degrading)
@@ -29,6 +30,8 @@ export interface ComponentHealth {
   lastSeenMs: number | null;
   /** human-facing context — e.g. a recovery command. */
   detail?: string;
+  /** true when a delivery queue has crossed its maxDefers retry threshold (#715) */
+  stuck?: boolean;
 }
 
 // Crews legitimately idle for long (24h interactive budget), so the surface uses
@@ -106,7 +109,7 @@ export function projectHealth(input: {
    *  --detailed` show a stuck delivery with zero extra configuration (no
    *  Telegram, no mute state to fight) — a pull-based fallback that can never
    *  be silenced, unlike the push alerts in delivery-loop.ts. */
-  captainDeferral?: { stuck: boolean; maxDeferCount: number };
+  captainDeferral?: { stuck: boolean; maxDeferCount: number; reason?: DeliverDeferReason };
 }): ComponentHealth[] {
   const { project, now, captainName, captainStopped, commandPresent, crews } = input;
   const out: ComponentHealth[] = [];
@@ -127,8 +130,30 @@ export function projectHealth(input: {
     detail:
       captainState === "stopped" ? "captain workspace closed — crews reaped; delivery paused" :
       captainState === "gone" ? "captain process died (crash) — crews reaped" :
-      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries) — draft/ghost text blocking captain pane; input never touched, delivers automatically once cleared` :
+      deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries, reason: ${deferral.reason ?? "unknown"})` :
       undefined,
+  });
+
+  // ── delivery ───────────────────────────────────────────────────────────
+  const deliveryState: HealthState =
+    captainState === "stopped" ? "stopped" :
+    deferral?.stuck || (deferral && deferral.maxDeferCount > 0) ? "stale" :
+    "alive";
+
+  const deliveryDetail =
+    captainState === "stopped" ? "delivery paused (captain stopped)" :
+    deferral?.stuck ? `⚠️ delivery stuck (${deferral.maxDeferCount}+ retries, reason: ${deferral.reason ?? "unknown"})` :
+    deferral && deferral.maxDeferCount > 0 ? `delivery deferred (${deferral.maxDeferCount} retries, reason: ${deferral.reason ?? "unknown"})` :
+    undefined;
+
+  out.push({
+    kind: "delivery",
+    project,
+    ref: "delivery",
+    state: deliveryState,
+    lastSeenMs: null,
+    detail: deliveryDetail,
+    stuck: deferral?.stuck,
   });
 
   // ── command (on-demand; only surfaced when applicable) ───────────────────

@@ -1,6 +1,6 @@
 // src/control/__tests__/crew-control.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest, runCrewSignal } from "../commands/crew-control.js";
+import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest, runCrewSignal, runCrewReply } from "../commands/crew-control.js";
 import type { TaskRecord } from "@squadrant/shared";
 
 describe("crew-control request builders", () => {
@@ -90,5 +90,80 @@ describe("runCrewSignal (#557)", () => {
     });
     await runCrewSignal("done", { taskId: "gone-id", project: "p", message: "finished", writeResult: () => "ref" }, { call });
     expect(call).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", event: expect.objectContaining({ type: "task.done", id: "gone-id" }) }));
+  });
+});
+
+// #592: `crew reply` used to transition task state unconditionally and only
+// THEN report that the message body was dropped — a no-op that looked like
+// success. It must now deliver first (through the same path `crew send`
+// uses) and never report/transition on a delivery failure.
+describe("runCrewReply (#592)", () => {
+  const task = { id: "task-abc123", project: "p", name: "crew-1", state: "blocked" } as TaskRecord;
+
+  it("delivers via sendCrew before checking status, then reports the resulting record", async () => {
+    const calls: string[] = [];
+    const listTasks = vi.fn().mockResolvedValue([task]);
+    const sendCrew = vi.fn().mockImplementation(async () => { calls.push("send"); });
+    const getStatus = vi.fn().mockImplementation(async () => { calls.push("status"); return { ...task, state: "working" }; });
+    const result = await runCrewReply("p", "task-abc123", "yes, option 1", { listTasks, sendCrew, getStatus });
+    expect(sendCrew).toHaveBeenCalledWith("p", "crew-1", "yes, option 1");
+    expect(calls).toEqual(["send", "status"]);
+    expect(result).toEqual({ ...task, state: "working" });
+  });
+
+  it("resolves the task by an id prefix, not just an exact match", async () => {
+    const listTasks = vi.fn().mockResolvedValue([task]);
+    const sendCrew = vi.fn().mockResolvedValue(undefined);
+    const getStatus = vi.fn().mockResolvedValue(task);
+    await runCrewReply("p", "task-abc", "msg", { listTasks, sendCrew, getStatus });
+    expect(sendCrew).toHaveBeenCalledWith("p", "crew-1", "msg");
+  });
+
+  // The core assertion: when delivery throws (e.g. runCrewSend's own
+  // isBlockedByModal precheck refuses because a prompt is open), the state
+  // check/transition (getStatus) must NEVER be reached — no "looked like it
+  // worked" no-op.
+  it("propagates the delivery error and never calls getStatus when sendCrew throws", async () => {
+    const listTasks = vi.fn().mockResolvedValue([task]);
+    const sendCrew = vi.fn().mockRejectedValue(
+      new Error("Crew 'crew-1' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered"),
+    );
+    const getStatus = vi.fn();
+    await expect(
+      runCrewReply("p", "task-abc123", "yes, option 1", { listTasks, sendCrew, getStatus }),
+    ).rejects.toThrow(/interactive prompt open/i);
+    expect(getStatus).not.toHaveBeenCalled();
+  });
+
+  it("throws unknown task without calling sendCrew when the id doesn't match any task", async () => {
+    const listTasks = vi.fn().mockResolvedValue([task]);
+    const sendCrew = vi.fn();
+    const getStatus = vi.fn();
+    await expect(
+      runCrewReply("p", "nope", "msg", { listTasks, sendCrew, getStatus }),
+    ).rejects.toThrow(/unknown task nope/);
+    expect(sendCrew).not.toHaveBeenCalled();
+  });
+
+  it("throws ambiguous without calling sendCrew when the id prefix matches multiple tasks", async () => {
+    const other = { ...task, id: "task-abc999", name: "crew-2" } as TaskRecord;
+    const listTasks = vi.fn().mockResolvedValue([task, other]);
+    const sendCrew = vi.fn();
+    const getStatus = vi.fn();
+    await expect(
+      runCrewReply("p", "task-abc", "msg", { listTasks, sendCrew, getStatus }),
+    ).rejects.toThrow(/ambiguous/);
+    expect(sendCrew).not.toHaveBeenCalled();
+  });
+
+  it("throws when the matched task record has no crew name (cannot resolve a pane)", async () => {
+    const nameless = { ...task, name: undefined } as TaskRecord;
+    const listTasks = vi.fn().mockResolvedValue([nameless]);
+    const sendCrew = vi.fn();
+    const getStatus = vi.fn();
+    await expect(
+      runCrewReply("p", "task-abc123", "msg", { listTasks, sendCrew, getStatus }),
+    ).rejects.toThrow(/no crew name on record/);
+    expect(sendCrew).not.toHaveBeenCalled();
   });
 });
