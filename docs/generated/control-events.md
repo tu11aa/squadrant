@@ -39,7 +39,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.started`
   - packages/agents/src/codex/driver.ts:119
   - packages/agents/src/headless-launcher.ts:42
-  - packages/agents/src/opencode/sse-bridge.ts:107
+  - packages/agents/src/opencode/sse-bridge.ts:113
   - packages/core/src/crew-spawn.ts:638
   - packages/core/src/daemon/reduce.ts:400
   - packages/core/src/daemon/reduce.ts:455
@@ -51,9 +51,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:364
   - packages/agents/src/interactive/claude.ts:376
   - packages/cli/src/commands/hooks.ts:42
-  - packages/cli/src/squadrantd.ts:334
-  - packages/cli/src/squadrantd.ts:373
-  - packages/cli/src/squadrantd.ts:404
+  - packages/cli/src/squadrantd.ts:346
+  - packages/cli/src/squadrantd.ts:385
+  - packages/cli/src/squadrantd.ts:416
   - packages/core/src/daemon/reduce.ts:527
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:222
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:257
@@ -61,9 +61,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:355
   - packages/agents/src/interactive/claude.ts:362
   - packages/cli/src/commands/crew-control.ts:212
-  - packages/cli/src/squadrantd.ts:337
-  - packages/cli/src/squadrantd.ts:376
-  - packages/cli/src/squadrantd.ts:407
+  - packages/cli/src/squadrantd.ts:349
+  - packages/cli/src/squadrantd.ts:388
+  - packages/cli/src/squadrantd.ts:419
   - packages/core/src/daemon/interactive-probe.ts:202
 - `task.review`
   - packages/cli/src/commands/crew-control.ts:216
@@ -86,10 +86,10 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.turn.completed`
   - packages/agents/src/codex/normalize.ts:42
   - packages/agents/src/interactive/claude.ts:357
-  - packages/agents/src/opencode/sse-bridge.ts:202
-  - packages/cli/src/squadrantd.ts:332
-  - packages/cli/src/squadrantd.ts:371
-  - packages/cli/src/squadrantd.ts:402
+  - packages/agents/src/opencode/sse-bridge.ts:209
+  - packages/cli/src/squadrantd.ts:344
+  - packages/cli/src/squadrantd.ts:383
+  - packages/cli/src/squadrantd.ts:414
   - packages/core/src/daemon/reduce.ts:626
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:243
@@ -102,7 +102,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:37
 - `task.approval.requested`
   - packages/agents/src/codex/driver.ts:253
-  - packages/agents/src/opencode/sse-bridge.ts:219
+  - packages/agents/src/opencode/sse-bridge.ts:228
   - packages/core/src/events/to-control-event.ts:28
 - `task.reattached`
   - packages/agents/src/codex/driver.ts:222
@@ -132,9 +132,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:371
-  - packages/cli/src/squadrantd.ts:327
-  - packages/cli/src/squadrantd.ts:366
-  - packages/cli/src/squadrantd.ts:397
+  - packages/cli/src/squadrantd.ts:339
+  - packages/cli/src/squadrantd.ts:378
+  - packages/cli/src/squadrantd.ts:409
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
   - packages/cli/src/commands/crew-control.ts:130
@@ -151,10 +151,10 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 
 Registered in `packages/cli/src/squadrantd.ts` (`ctx.lifecycleSources`): **5**
 
+- `eventsSource`
 - `CmuxStoreSource`
 - `NativeHookSource`
 - `CodexAppServerSource`
 - `ClaudePeerRegistrySource`
-- `OpencodeControlSource`
 
 CLAUDE.md claims: **5** (matches ✓)

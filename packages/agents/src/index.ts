@@ -25,6 +25,7 @@ export type { PeerUserEnvelope, WireResult } from "./claude/peer-wire.js";
 export { parseRegistryDir, toLifecycleSnapshot, CLAUDE_SESSIONS_DIR, readClaudeStatus, readClaudeStatusByCwd, readClaudeStatusBySocketPath } from "./claude/registry.js";
 export type { ClaudeStatusInfo } from "./claude/registry.js";
 export type { ClaudeRegistryEntry } from "./claude/registry.js";
-export { OpencodeControlSource } from "./opencode/control-source.js";
 export { OpencodeHttpChannel } from "./opencode/http-channel.js";
 export type { OpencodeHttpChannelDeps } from "./opencode/http-channel.js";
+export { createOpencodeFactAdapter } from "./opencode/fact-adapter.js";
+export type { OpencodeFactAdapterDeps } from "./opencode/fact-adapter.js";

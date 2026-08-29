@@ -194,6 +194,15 @@ export interface NativeHookSourceOpts {
  * Unlike CmuxStoreSource (file-watcher), NativeHookSource is purely push-driven:
  * every snapshot arrives via handleHook() from the daemon's 'squadrant hooks'
  * CLI subcommand. The snapshot() method serves the liveness floor from the cache.
+ *
+ * DEFERRED (2026-08-29): the LifecycleSource half of this class is INERT.
+ * handleHook() — the only method that populates `cache` and calls deps.report()
+ * — has no caller in shipped code; every reference is in this package's own
+ * tests. snapshot() therefore always returns undefined and this source
+ * contributes zero lifecycle signals. install() is real and load-bearing (#615).
+ * The live claude hook path is: `squadrant hooks claude <sub>` → mapHookSub()
+ * → socket → applyEvent. Kept as-is by operator decision; do not delete or
+ * wire up without revisiting docs/specs/2026-08-29-event-architecture-design.md.
  */
 export class NativeHookSource implements LifecycleSource {
   readonly name = "native-hook";
