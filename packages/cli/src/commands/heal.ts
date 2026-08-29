@@ -25,6 +25,7 @@ import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
 import { reregisterDaemon, isDaemonSocketLive, defaultIsPidAlive, LivenessRegistry, LABEL } from "@squadrant/core";
+import type { DaemonKickstartResult } from "@squadrant/core";
 import { readCmuxLiveness } from "@squadrant/workspaces";
 
 // ── pure helpers (fully unit-testable, no I/O) ────────────────────────────────
@@ -172,7 +173,7 @@ export async function runHealStatus(opts: HealStatusOpts): Promise<number> {
 }
 
 export interface HealDaemonOpts {
-  ensureDaemon: () => void;
+  ensureDaemon: () => DaemonKickstartResult | void;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
 }
@@ -182,8 +183,12 @@ export async function runHealDaemon(opts: HealDaemonOpts): Promise<number> {
   const { stdout, stderr } = opts;
   stdout.write("restarting squadrantd via launchd kickstart...\n");
   try {
-    opts.ensureDaemon();
-    stdout.write(chalk.green("✔ daemon kickstart complete\n"));
+    const result = opts.ensureDaemon();
+    // #741: the drift path's `note` (kickstart -k refused, but bootstrap
+    // already restarted it) is exactly the info that would otherwise be lost
+    // — surface it instead of a bare success line.
+    const noteSuffix = result?.note ? ` (${result.note})` : "";
+    stdout.write(chalk.green(`✔ daemon kickstart complete${noteSuffix}\n`));
     return 0;
   } catch (e) {
     stderr.write(`heal daemon failed: ${(e as Error).message}\n`);
