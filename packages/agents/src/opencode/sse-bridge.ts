@@ -14,6 +14,11 @@
 // session.idle that arrives after the task is already terminal.
 import type { ControlEvent } from "@squadrant/shared";
 
+// High-frequency opencode bus traffic that carries no lifecycle meaning.
+// message.part.* fires per streaming chunk; routing it into the fact
+// pipeline costs a store walk + an I5 log line per token.
+const IGNORED_FRAME = /^(message|storage|file|lsp|installation)\./;
+
 export interface OpencodeSseBridgeDeps {
   /** Ingress into the daemon's event pipeline (resolves project + handles). */
   emit: (ev: ControlEvent) => void;
@@ -239,7 +244,7 @@ export class OpencodeSseBridge {
       // pending state so a later captain answer is a no-op rather than a stale POST.
       this.pendingPermByTask.delete(taskId);
       this.deps.ingest?.(json, taskId);
-    } else {
+    } else if (!IGNORED_FRAME.test(json?.type ?? "")) {
       // Previously fell through silently — now recorded (spec §1, problem 5).
       this.deps.ingest?.(json, taskId);
     }

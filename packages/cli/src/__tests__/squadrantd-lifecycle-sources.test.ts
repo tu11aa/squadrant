@@ -42,4 +42,26 @@ describe("squadrantd lifecycle source list (Phase 1 events facade)", () => {
     expect(names).toContain("events");
     expect(names).not.toContain("opencode-control");
   });
+
+  // I1: registration alone doesn't prove start() was ever called — under
+  // vitest the real production boot path that calls eventsSource.start() is
+  // skipped entirely, so a future refactor could delete that call and every
+  // other test would stay green while opencode's event pipeline went dead.
+  // forceStartEventsSource is a pure-registration test hook (no I/O) that
+  // exercises the same start() call the guarded production path uses.
+  it("eventsSource.start() actually runs and reports active health (#events-c1-i1)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-lifecycle-"));
+    const sock = join(dir, "c.sock");
+    const handle = startSquadrantd({
+      stateRoot: join(dir, "state"),
+      sockPath: sock,
+      sweepMs: 0,
+      forceStartEventsSource: true,
+    });
+    stop = handle.stop;
+
+    const snap = await sendRequest(sock, { kind: "snapshot" }) as DaemonSnapshot;
+    const events = snap.tier0.lifecycleSources.find((s) => s.name === "events");
+    expect(events?.active).toBe(true);
+  });
 });

@@ -6,7 +6,7 @@
  */
 import type { ControlEvent } from "@squadrant/shared";
 import type {
-  CorrelationHint, LifecycleSource, LifecycleSourceDeps, LifecycleSnapshot,
+  CorrelationHint, LifecycleSource, LifecycleSourceDeps,
 } from "../lifecycle-source.js";
 import type { AgentFact, FactAdapter, FactSource, RawFact } from "./fact.js";
 import { stampFact } from "./fact.js";
@@ -42,7 +42,6 @@ export function createEventsSource(opts: EventsSourceOptions): EventsSource {
   const adapters = new Map(opts.adapters.map((a) => [a.name, a]));
   const traces = new Map<string, CrewTrace>();
   const seqs = new Map<string, number>();
-  const lastState = new Map<string, LifecycleSnapshot>();
   let deps: LifecycleSourceDeps | undefined;
 
   const traceFor = (taskId: string): CrewTrace => {
@@ -62,8 +61,6 @@ export function createEventsSource(opts: EventsSourceOptions): EventsSource {
 
     start(d) { deps = d; },
     stop() { deps = undefined; },
-
-    snapshot(taskId) { return lastState.get(taskId); },
 
     health() { return { active: deps !== undefined, error: null }; },
 

@@ -170,6 +170,29 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     },
   });
 
+  // C1 (optional): a chatty crew can otherwise write one I5 "unknown fact" log
+  // line per unrecognised frame. Log the first occurrence of a given
+  // (taskId, code) pair in full, then a periodic summary rather than a line
+  // per occurrence.
+  const violationLogState = new Map<string, { count: number; loggedAt: number }>();
+  const VIOLATION_LOG_SUMMARY_MS = 60_000;
+  const onEventsViolation = (v: { code: string; taskId: string; message: string }) => {
+    const key = `${v.taskId}:${v.code}`;
+    const prev = violationLogState.get(key);
+    if (!prev) {
+      violationLogState.set(key, { count: 1, loggedAt: Date.now() });
+      log(`[events] ${v.code} ${v.taskId}: ${v.message}`);
+      return;
+    }
+    prev.count++;
+    const now = Date.now();
+    if (now - prev.loggedAt > VIOLATION_LOG_SUMMARY_MS) {
+      log(`[events] ${v.code} ${v.taskId}: seen ${prev.count}x since last log (latest: ${v.message})`);
+      prev.count = 0;
+      prev.loggedAt = now;
+    }
+  };
+
   // The one fact pipeline. Adapters are registered here; the facade owns
   // identity, the flight recorder, invariants, and the ControlEvent boundary.
   const opencodeRequestIds = { n: 1 };
@@ -182,7 +205,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       if (ev.type === "task.approval.requested")
         ctx.schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
     },
-    onViolation: (v) => log(`[events] ${v.code} ${v.taskId}: ${v.message}`),
+    onViolation: onEventsViolation,
     check: { stallBudgetMs: 60_000, disagreeWindowMs: 5_000 },
   });
 
@@ -315,6 +338,45 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
 
   const h = startDaemon(ctx, { ...opts, launchHeadless }, PKG_VERSION);
 
+  // The fact pipeline resolves by taskId only — the strongest correlation
+  // hint (SQUADRANT_CREW_TASK_ID), already threaded through by the bridge's
+  // ingest() call. deps.report() is unused: the facade emits ControlEvents
+  // directly via its own `emit` option, not through the reducer's report seam.
+  //
+  // C1: this used to call store.listAll() (a full directory walk + JSON.parse
+  // of every task file) on every ingested frame. The bridge now filters chatty
+  // frame families before calling ingest(), but recognised lifecycle frames
+  // (session.idle, permission.asked, …) can still arrive in quick bursts
+  // across concurrent crews. A short-TTL in-memory index absorbs those bursts
+  // with a single scan instead of one per frame, while staying simple enough
+  // not to need any store-API changes or a mutation-hook wiring.
+  //
+  // I1: extracted to a named function (rather than inlined in the VITEST
+  // guard below) so it is independently callable — see forceStartEventsSource.
+  const startEventsLifecycleSource = () => {
+    let eventsTaskIndex: Map<string, { id: string }> | undefined;
+    let eventsTaskIndexAt = 0;
+    const EVENTS_TASK_INDEX_TTL_MS = 500;
+    const eventsSourceDeps: LifecycleSourceDeps = {
+      resolve: (hint) => {
+        if (!hint.taskId) return undefined;
+        const now = Date.now();
+        if (!eventsTaskIndex || now - eventsTaskIndexAt > EVENTS_TASK_INDEX_TTL_MS) {
+          eventsTaskIndex = new Map();
+          for (const r of store.listAll()) {
+            if (!TERMINAL_STATES.has(r.state)) eventsTaskIndex.set(r.id, { id: r.id });
+          }
+          eventsTaskIndexAt = now;
+        }
+        return eventsTaskIndex.get(hint.taskId);
+      },
+      report: () => {},
+      log,
+    };
+    try { eventsSource.start(eventsSourceDeps); }
+    catch (e) { log(`events source start failed: ${(e as Error).message}`); }
+  };
+
   // A1: start cmux store-file backup lifecycle source alongside CmuxEventsBridge (B1).
   // startDaemon() guarantees ctx.d is set before returning. Skipped under vitest
   // (mirrors the B1 guard in start.ts — real fs.watch would touch disk in tests).
@@ -441,21 +503,15 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     try { claudePeerRegistrySource.start(claudeSourceDeps); }
     catch (e) { log(`claude peer registry source start failed: ${(e as Error).message}`); }
 
-    // The fact pipeline resolves by taskId only — the strongest correlation
-    // hint (SQUADRANT_CREW_TASK_ID), already threaded through by the bridge's
-    // ingest() call. deps.report() is unused: the facade emits ControlEvents
-    // directly via its own `emit` option, not through the reducer's report seam.
-    const eventsSourceDeps: LifecycleSourceDeps = {
-      resolve: (hint) => {
-        if (!hint.taskId) return undefined;
-        return store.listAll().find((r) => !TERMINAL_STATES.has(r.state) && r.id === hint.taskId);
-      },
-      report: () => {},
-      log,
-    };
-    try { eventsSource.start(eventsSourceDeps); }
-    catch (e) { log(`events source start failed: ${(e as Error).message}`); }
+    startEventsLifecycleSource();
   }
+
+  // I1: forced test hook — under vitest the guard above never runs, so
+  // nothing previously verified eventsSource.start() actually gets called; a
+  // future refactor could delete that one line and every existing test would
+  // stay green while opencode's event pipeline silently went dead (ingest()
+  // early-returns until start() runs). Opt-in only, zero effect otherwise.
+  if (opts.forceStartEventsSource) startEventsLifecycleSource();
 
   // Daemon-restart broadcast: notify every running captain that the daemon
   // bounced, but only when the running build actually changed (version bump

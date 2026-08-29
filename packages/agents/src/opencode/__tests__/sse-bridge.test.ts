@@ -270,4 +270,26 @@ describe("OpencodeSseBridge — fact routing", () => {
     bridge.handleLineForTest('{"type":"session.idle","properties":{"sessionID":"ses_1"}}', "t1");
     expect(emitted.map((e) => e.type)).toEqual(["task.turn.completed"]);
   });
+
+  // C1: message.part.* (and other chatty bus families) stream continuously
+  // during a turn — routing them into the fact pipeline would cost a store
+  // walk per token. They must be filtered before ever reaching ingest().
+  it("does not route chatty message.part.* frames to ingest", () => {
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: (raw) => ingested.push(raw) });
+    bridge.handleLineForTest('{"type":"message.part.updated","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"message.part.delta","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"storage.write","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"file.edited","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"lsp.updated","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"installation.updated","properties":{}}', "t1");
+    expect(ingested).toEqual([]);
+  });
+
+  it("still routes genuinely unrecognised frames to ingest", () => {
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: (raw) => ingested.push(raw) });
+    bridge.handleLineForTest('{"type":"some.unknown.frame"}', "t1");
+    expect(ingested).toHaveLength(1);
+  });
 });
