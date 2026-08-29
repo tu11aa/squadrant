@@ -77,3 +77,76 @@ describe("depth invariants", () => {
     expect(checkFact(t, mk({ kind: "activity" }, at0 + 62_000), opts)).toEqual([]);
   });
 });
+
+describe("trust, unknown, and disagreement invariants", () => {
+  it("I4: an inferred fact that would terminalise is recorded", () => {
+    const t = freshTrace();
+    const f: AgentFact = {
+      kind: "session.ended", seq: 0, taskId: "t1", at: at0,
+      source: "pane", origin: "inferred",
+    };
+    expect(codes(checkFact(t, f, {}))).toEqual(["I4"]);
+  });
+
+  it("I4 does not fire for an agent-origin session.ended", () => {
+    const t = freshTrace();
+    const f: AgentFact = {
+      kind: "session.ended", seq: 0, taskId: "t1", at: at0,
+      source: "claude-hook", origin: "agent",
+    };
+    expect(checkFact(t, f, {})).toEqual([]);
+  });
+
+  it("I5: any unknown fact is a violation, naming source and event", () => {
+    const t = freshTrace();
+    const f: AgentFact = {
+      kind: "unknown", name: "agent.hook.Wat", seq: 0, taskId: "t1", at: at0,
+      source: "cmux-events", origin: "agent",
+    };
+    const out = checkFact(t, f, {});
+    expect(codes(out)).toEqual(["I5"]);
+    expect(out[0]!.message).toContain("agent.hook.Wat");
+    expect(out[0]!.message).toContain("cmux-events");
+  });
+
+  it("I6: two sources disagreeing on liveness inside the window", () => {
+    const t = freshTrace();
+    const opts = { disagreeWindowMs: 5000 };
+    const alive: AgentFact = {
+      kind: "process.observed", alive: true, seq: 0, taskId: "t1", at: at0,
+      source: "cmux-scan", origin: "scan",
+    };
+    const dead: AgentFact = {
+      kind: "process.observed", alive: false, seq: 1, taskId: "t1", at: at0 + 1000,
+      source: "claude-peer", origin: "agent",
+    };
+    expect(checkFact(t, alive, opts)).toEqual([]);
+    expect(codes(checkFact(t, dead, opts))).toEqual(["I6"]);
+  });
+
+  it("I6 does not fire once the window has passed", () => {
+    const t = freshTrace();
+    const opts = { disagreeWindowMs: 5000 };
+    checkFact(t, {
+      kind: "process.observed", alive: true, seq: 0, taskId: "t1", at: at0,
+      source: "cmux-scan", origin: "scan",
+    }, opts);
+    expect(checkFact(t, {
+      kind: "process.observed", alive: false, seq: 1, taskId: "t1", at: at0 + 6000,
+      source: "claude-peer", origin: "agent",
+    }, opts)).toEqual([]);
+  });
+
+  it("I6 does not fire when one source reports twice", () => {
+    const t = freshTrace();
+    const opts = { disagreeWindowMs: 5000 };
+    checkFact(t, {
+      kind: "process.observed", alive: true, seq: 0, taskId: "t1", at: at0,
+      source: "cmux-scan", origin: "scan",
+    }, opts);
+    expect(checkFact(t, {
+      kind: "process.observed", alive: false, seq: 1, taskId: "t1", at: at0 + 1000,
+      source: "cmux-scan", origin: "scan",
+    }, opts)).toEqual([]);
+  });
+});
