@@ -241,3 +241,55 @@ describe("OpencodeSseBridge", () => {
     expect(await bridge.answer("t1", "approve")).toBe(false);
   });
 });
+
+describe("OpencodeSseBridge — fact routing", () => {
+  it("routes session.idle through ingest and stops emitting it directly", () => {
+    const emitted: unknown[] = [];
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({
+      emit: (ev) => emitted.push(ev),
+      ingest: (raw) => ingested.push(raw),
+    });
+    bridge.handleLineForTest('{"type":"session.idle","properties":{"sessionID":"ses_1"}}', "t1");
+    expect(ingested).toHaveLength(1);
+    expect(emitted).toEqual([]);
+  });
+
+  it("still records pendingPerm on permission.asked so answer() keeps working", () => {
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: () => {} });
+    bridge.handleLineForTest(
+      '{"type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_1","permission":"bash"}}',
+      "t1",
+    );
+    expect(bridge.pendingPermForTest("t1")).toEqual({ permID: "per_1", sessionID: "ses_1" });
+  });
+
+  it("falls back to direct emit when no ingest is supplied", () => {
+    const emitted: { type: string }[] = [];
+    const bridge = new OpencodeSseBridge({ emit: (ev) => emitted.push(ev) });
+    bridge.handleLineForTest('{"type":"session.idle","properties":{"sessionID":"ses_1"}}', "t1");
+    expect(emitted.map((e) => e.type)).toEqual(["task.turn.completed"]);
+  });
+
+  // C1: message.part.* (and other chatty bus families) stream continuously
+  // during a turn — routing them into the fact pipeline would cost a store
+  // walk per token. They must be filtered before ever reaching ingest().
+  it("does not route chatty message.part.* frames to ingest", () => {
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: (raw) => ingested.push(raw) });
+    bridge.handleLineForTest('{"type":"message.part.updated","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"message.part.delta","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"storage.write","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"file.edited","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"lsp.updated","properties":{}}', "t1");
+    bridge.handleLineForTest('{"type":"installation.updated","properties":{}}', "t1");
+    expect(ingested).toEqual([]);
+  });
+
+  it("still routes genuinely unrecognised frames to ingest", () => {
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: (raw) => ingested.push(raw) });
+    bridge.handleLineForTest('{"type":"some.unknown.frame"}', "t1");
+    expect(ingested).toHaveLength(1);
+  });
+});
