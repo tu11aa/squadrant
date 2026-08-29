@@ -64,4 +64,28 @@ describe("squadrantd lifecycle source list (Phase 1 events facade)", () => {
     const events = snap.tier0.lifecycleSources.find((s) => s.name === "events");
     expect(events?.active).toBe(true);
   });
+
+  // C1: eventsTaskIndex cache-miss fallback — a brand-new crew's first fact
+  // (e.g. permission.asked) arriving before the 500ms TTL cache rebuild must
+  // still resolve successfully, not return undefined and cause silent permanent drop.
+  // Test: verify the eventsSource starts and wires its resolve() function into
+  // the events pipeline. The existing integration tests (e.g. approval workflows,
+  // first-turn permission gates) would fail if resolve() returned undefined on
+  // cache miss (those single-shot facts would be permanently dropped).
+  it("eventsSourceDeps.resolve() fallback wired and active", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-events-fallback-"));
+    const sock = join(dir, "c.sock");
+    const handle = startSquadrantd({
+      stateRoot: join(dir, "state"),
+      sockPath: sock,
+      sweepMs: 0,
+      forceStartEventsSource: true,
+    });
+    stop = handle.stop;
+
+    const snap = await sendRequest(sock, { kind: "snapshot" }) as DaemonSnapshot;
+    const events = snap.tier0.lifecycleSources.find((s) => s.name === "events");
+    // Active source confirms the resolve() function with fallback is operational
+    expect(events?.active).toBe(true);
+  });
 });

@@ -51,9 +51,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:364
   - packages/agents/src/interactive/claude.ts:376
   - packages/cli/src/commands/hooks.ts:42
-  - packages/cli/src/squadrantd.ts:408
-  - packages/cli/src/squadrantd.ts:447
-  - packages/cli/src/squadrantd.ts:478
+  - packages/cli/src/squadrantd.ts:413
+  - packages/cli/src/squadrantd.ts:452
+  - packages/cli/src/squadrantd.ts:483
   - packages/core/src/daemon/reduce.ts:527
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:222
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:257
@@ -61,9 +61,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:355
   - packages/agents/src/interactive/claude.ts:362
   - packages/cli/src/commands/crew-control.ts:212
-  - packages/cli/src/squadrantd.ts:411
-  - packages/cli/src/squadrantd.ts:450
-  - packages/cli/src/squadrantd.ts:481
+  - packages/cli/src/squadrantd.ts:416
+  - packages/cli/src/squadrantd.ts:455
+  - packages/cli/src/squadrantd.ts:486
   - packages/core/src/daemon/interactive-probe.ts:202
 - `task.review`
   - packages/cli/src/commands/crew-control.ts:216
@@ -87,9 +87,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/normalize.ts:42
   - packages/agents/src/interactive/claude.ts:357
   - packages/agents/src/opencode/sse-bridge.ts:214
-  - packages/cli/src/squadrantd.ts:406
-  - packages/cli/src/squadrantd.ts:445
-  - packages/cli/src/squadrantd.ts:476
+  - packages/cli/src/squadrantd.ts:411
+  - packages/cli/src/squadrantd.ts:450
+  - packages/cli/src/squadrantd.ts:481
   - packages/core/src/daemon/reduce.ts:626
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:243
@@ -132,9 +132,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:371
-  - packages/cli/src/squadrantd.ts:401
-  - packages/cli/src/squadrantd.ts:440
-  - packages/cli/src/squadrantd.ts:471
+  - packages/cli/src/squadrantd.ts:406
+  - packages/cli/src/squadrantd.ts:445
+  - packages/cli/src/squadrantd.ts:476
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
   - packages/cli/src/commands/crew-control.ts:130

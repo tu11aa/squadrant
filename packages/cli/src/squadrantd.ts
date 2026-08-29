@@ -368,7 +368,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
           }
           eventsTaskIndexAt = now;
         }
-        return eventsTaskIndex.get(hint.taskId);
+        const cached = eventsTaskIndex.get(hint.taskId);
+        if (cached) return cached;
+        // Cache miss: fall back to live store lookup for records that exist but may not yet be indexed
+        return store.listAll().find(
+          (r) => r.id === hint.taskId && !TERMINAL_STATES.has(r.state),
+        );
       },
       report: () => {},
       log,
