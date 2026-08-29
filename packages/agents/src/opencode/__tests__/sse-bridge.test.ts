@@ -241,3 +241,33 @@ describe("OpencodeSseBridge", () => {
     expect(await bridge.answer("t1", "approve")).toBe(false);
   });
 });
+
+describe("OpencodeSseBridge — fact routing", () => {
+  it("routes session.idle through ingest and stops emitting it directly", () => {
+    const emitted: unknown[] = [];
+    const ingested: unknown[] = [];
+    const bridge = new OpencodeSseBridge({
+      emit: (ev) => emitted.push(ev),
+      ingest: (raw) => ingested.push(raw),
+    });
+    bridge.handleLineForTest('{"type":"session.idle","properties":{"sessionID":"ses_1"}}', "t1");
+    expect(ingested).toHaveLength(1);
+    expect(emitted).toEqual([]);
+  });
+
+  it("still records pendingPerm on permission.asked so answer() keeps working", () => {
+    const bridge = new OpencodeSseBridge({ emit: () => {}, ingest: () => {} });
+    bridge.handleLineForTest(
+      '{"type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_1","permission":"bash"}}',
+      "t1",
+    );
+    expect(bridge.pendingPermForTest("t1")).toEqual({ permID: "per_1", sessionID: "ses_1" });
+  });
+
+  it("falls back to direct emit when no ingest is supplied", () => {
+    const emitted: { type: string }[] = [];
+    const bridge = new OpencodeSseBridge({ emit: (ev) => emitted.push(ev) });
+    bridge.handleLineForTest('{"type":"session.idle","properties":{"sessionID":"ses_1"}}', "t1");
+    expect(emitted.map((e) => e.type)).toEqual(["task.turn.completed"]);
+  });
+});
