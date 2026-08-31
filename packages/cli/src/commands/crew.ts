@@ -18,7 +18,7 @@ import {
   type CrewAnswerResult,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
-import { buildDispatchRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
+import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
@@ -55,6 +55,11 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     sendCodexFirstTurn,
     // #466: wire delivery confirmation so the daemon stamps firstTurnConfirmedAt.
     emitEvent: async (p, event) => { await squadrantdCall({ kind: "event", project: p, event }); },
+    // #745: check the daemon's hook-confirmed state before reporting a false
+    // "first turn not delivered" — swallow errors (offline/unreachable daemon)
+    // so this optional check never itself breaks the spawn.
+    getTaskRecord: async (p, id) =>
+      (await squadrantdCall(buildStatusRequest(p, id)).catch(() => undefined)) as TaskRecord | undefined,
     onRouted: (route) =>
       console.log(
         chalk.dim(

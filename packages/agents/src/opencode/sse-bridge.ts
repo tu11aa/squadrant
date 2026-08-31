@@ -14,6 +14,11 @@
 // session.idle that arrives after the task is already terminal.
 import type { ControlEvent } from "@squadrant/shared";
 
+// High-frequency opencode bus traffic that carries no lifecycle meaning.
+// message.part.* fires per streaming chunk; routing it into the fact
+// pipeline costs a store walk + an I5 log line per token.
+const IGNORED_FRAME = /^(message|storage|file|lsp|installation)\./;
+
 export interface OpencodeSseBridgeDeps {
   /** Ingress into the daemon's event pipeline (resolves project + handles). */
   emit: (ev: ControlEvent) => void;
@@ -36,6 +41,12 @@ export interface OpencodeSseBridgeDeps {
    *  (which fires correctly once subscribed — verified live) was never seen. */
   maxBootAttempts?: number;
   log?: (msg: string) => void;
+  /**
+   * When supplied, lifecycle frames are routed here instead of being emitted
+   * directly as ControlEvents. Side-effect bookkeeping (pendingPermByTask)
+   * still happens in this class — see spec §5.
+   */
+  ingest?: (raw: unknown, taskId: string) => void;
 }
 
 /**
@@ -198,6 +209,7 @@ export class OpencodeSseBridge {
     if (json?.type === "session.idle") {
       // turnId is informational for opencode (no per-turn id on the bus); use
       // the session id so the ledger attempt carries a stable correlation key.
+      if (this.deps.ingest) { this.deps.ingest(json, taskId); return; }
       this.deps.emit({
         type: "task.turn.completed",
         id: taskId,
@@ -212,7 +224,9 @@ export class OpencodeSseBridge {
       // blocked and the relay renders CREW BLOCKED with the tool + command.
       const p = json.properties;
       if (p?.id && p?.sessionID) {
+        // Bookkeeping happens on BOTH paths — answer() depends on it.
         this.pendingPermByTask.set(taskId, { permID: p.id, sessionID: p.sessionID });
+        if (this.deps.ingest) { this.deps.ingest(json, taskId); return; }
         const tool = p.permission ?? "a tool";
         const cmd = Array.isArray(p.patterns) && p.patterns.length ? `: ${p.patterns.join(" ")}` : "";
         this.deps.emit({
@@ -222,11 +236,27 @@ export class OpencodeSseBridge {
           question: `opencode requests permission to run ${tool}${cmd}`,
           kind: tool,
         });
+      } else if (this.deps.ingest) {
+        this.deps.ingest(json, taskId);
       }
     } else if (json?.type === "permission.replied") {
       // The permission was resolved on the bus (by us or another client) — clear
       // pending state so a later captain answer is a no-op rather than a stale POST.
       this.pendingPermByTask.delete(taskId);
+      this.deps.ingest?.(json, taskId);
+    } else if (!IGNORED_FRAME.test(json?.type ?? "")) {
+      // Previously fell through silently — now recorded (spec §1, problem 5).
+      this.deps.ingest?.(json, taskId);
     }
+  }
+
+  /** Test seam: exercise handleLine without an SSE stream. */
+  handleLineForTest(rawLine: string, taskId: string): void {
+    this.handleLine(taskId, rawLine);
+  }
+
+  /** Test seam: read pendingPermByTask without exposing it publicly. */
+  pendingPermForTest(taskId: string): { permID: string; sessionID: string } | undefined {
+    return this.pendingPermByTask.get(taskId);
   }
 }

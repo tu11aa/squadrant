@@ -128,6 +128,43 @@ describe("forceKickstartAndVerify (#729)", () => {
     });
     expect(() => forceKickstartAndVerify(`gui/501/${LABEL}`, { kickstartRetries: 2, kickstartRetryDelayMs: 1 })).toThrow(/still unloading/);
   });
+
+  // #741: on the plist-drift path, `kickstart -k` can lose the race against
+  // bootout's unload on every single retry — but launchd's own bootstrap
+  // (RunAtLoad) may already have started the new instance by then. Exhausted
+  // retries must not be reported as failure when the pid actually changed.
+  it("reports restarted=true with a note when all `kickstart -k` retries throw but a new pid shows up", () => {
+    let printCalls = 0;
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "launchctl" && args[0] === "print") {
+        printCalls += 1;
+        return `pid = ${printCalls === 1 ? 100 : 200}\n`;
+      }
+      if (cmd === "launchctl" && args[0] === "kickstart") throw new Error("still unloading (exit-113)");
+      return undefined;
+    });
+    const result = forceKickstartAndVerify(`gui/501/${LABEL}`, {
+      pollAttempts: 3, pollDelayMs: 1, kickstartRetries: 2, kickstartRetryDelayMs: 1,
+    });
+    expect(result).toEqual({
+      target: `gui/501/${LABEL}`,
+      pidBefore: 100,
+      pidAfter: 200,
+      restarted: true,
+      note: "kickstart -k refused; daemon restarted by bootstrap",
+    });
+  });
+
+  it("still throws when all `kickstart -k` retries throw and the pid never changes", () => {
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "launchctl" && args[0] === "print") return "pid = 100\n"; // same every time
+      if (cmd === "launchctl" && args[0] === "kickstart") throw new Error("still unloading (exit-113)");
+      return undefined;
+    });
+    expect(() => forceKickstartAndVerify(`gui/501/${LABEL}`, {
+      pollAttempts: 2, pollDelayMs: 1, kickstartRetries: 2, kickstartRetryDelayMs: 1,
+    })).toThrow(/still unloading/);
+  });
 });
 
 describe("reregisterDaemon (#729 — heal daemon must never claim success on a no-op)", () => {

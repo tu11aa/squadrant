@@ -180,9 +180,66 @@ export interface CrewSpawnDeps {
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
   /** Optional: called when worktree base is resolved. */
   onBaseResolved?(base: string): void;
+  /** #745: optional — reads the daemon's current TaskRecord for a task. Used to
+   *  check firstTurnConfirmedAt before reporting non-delivery: a claude crew's
+   *  UserPromptSubmit hook confirms delivery independently of (and can outrace)
+   *  this process's own screen-scrape confirmation, so a scrape timeout is not
+   *  by itself proof the turn never landed. Absent ⇒ no such check is possible
+   *  (pure unit tests, non-daemon deployments) — behavior is unchanged. */
+  getTaskRecord?(project: string, id: string): Promise<TaskRecord | undefined>;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+// #745: for a claude crew with hooks installed, the UserPromptSubmit hook's
+// daemon-side confirmation (firstTurnConfirmedAt) is the PRIMARY signal — it
+// fires from inside the crew's own process the instant claude actually
+// processes the submitted prompt, independently of (and not bounded by) this
+// process's own screen-scrape confirmation (sendFirstTurn). The scrape still
+// SENDS the keystrokes — nothing else does — and a fast scrape success is a
+// useful early-exit hint, but a scrape FAILURE alone must never produce the
+// false-negative warning: the hook is watched for the same window the scrape
+// itself is allowed to run in, and only when NEITHER signal confirms by the
+// end of that window is the first turn genuinely considered undelivered.
+//
+// The window below matches (with slack for its own post-send retries)
+// crew-pane.ts's SEND_FIRST_TURN_TIMEOUT_MS (90s) — core cannot import that
+// constant directly (workspaces depends on core, never the reverse), so it is
+// restated here.
+const FIRST_TURN_HOOK_CONFIRM_WINDOW_MS = 100_000;
+const FIRST_TURN_HOOK_POLL_INTERVAL_MS = 2_000;
+
+/** Polls the daemon for firstTurnConfirmedAt until it appears or the window
+ *  (matching the scrape's own budget) elapses. */
+async function pollFirstTurnConfirmedAt(
+  getTaskRecord: NonNullable<CrewSpawnDeps["getTaskRecord"]>,
+  project: string,
+  id: string,
+): Promise<boolean> {
+  const deadline = Date.now() + FIRST_TURN_HOOK_CONFIRM_WINDOW_MS;
+  for (;;) {
+    const rec = await getTaskRecord(project, id).catch(() => undefined);
+    if (rec?.firstTurnConfirmedAt) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, FIRST_TURN_HOOK_POLL_INTERVAL_MS));
+  }
+}
+
+/** Resolves `true` the instant EITHER promise reports true (early-exit hint),
+ *  `false` only once BOTH have settled false. A fast false from one side never
+ *  short-circuits the result — the other side is always given its full run. */
+function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settledFalseCount = 0;
+    const onSettle = (ok: boolean) => {
+      if (ok) { resolve(true); return; }
+      settledFalseCount++;
+      if (settledFalseCount === 2) resolve(false);
+    };
+    a.then(onSettle, () => onSettle(false));
+    b.then(onSettle, () => onSettle(false));
+  });
+}
 
 async function listCrewPanes(runtime: RuntimeDriver, workspaceId: string, project: string): Promise<PaneRef[]> {
   const surfaces = await runtime.listSurfaces(workspaceId);
@@ -439,9 +496,17 @@ export async function runCrewSpawn(
       fs.writeFileSync(spillFile, claudeFirstTurn, "utf8");
       claudeFirstTurn = `Full task is at ${spillFile} — cat it and follow it exactly.`;
     }
-    const claudeResult = await deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
-    // #466: surface non-delivery explicitly instead of silently returning success.
-    if (!claudeResult.delivered) {
+    const sendPromise = deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    const scrapeDelivered = sendPromise.then((r) => r.delivered).catch(() => false);
+    // #466/#745: surface non-delivery explicitly instead of silently returning
+    // success — but when hooks are installed, the hook's daemon-side
+    // confirmation is PRIMARY (see pollFirstTurnConfirmedAt above): the scrape
+    // is raced against it rather than trusted on its own, so a scrape failure
+    // alone can never produce the false-negative warning.
+    const delivered = hooksInstalled && deps.getTaskRecord
+      ? await firstTrueOrBothFalse(scrapeDelivered, pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id))
+      : await scrapeDelivered;
+    if (!delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
     } else if (!hooksInstalled) {
       // #472: hooks unavailable — scrape is the only confirmation source for this crew.
@@ -614,6 +679,23 @@ export async function runCrewSend(
         `${task.operatorHold.note ? `: ${task.operatorHold.note}` : ""}). ` +
         `The operator is working in that tab — sending a message disrupts their conversation. ` +
         `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+    );
+  }
+
+  // #745: a spawn-side delivery-confirmation false negative used to send the
+  // captain a "First turn not delivered — re-send" warning even when the task
+  // genuinely landed (confirmed independently by the crew's own hook). Following
+  // that guidance re-sends the identical task text, running it twice. Once the
+  // daemon has confirmed the first turn landed (firstTurnConfirmedAt), re-sending
+  // the exact same task text can only be that stale remediation advice — refuse
+  // it instead of silently duplicating the task. Any other message (a genuine
+  // follow-up) is unaffected. Excludes blocked/awaiting-input/review so this
+  // never touches the task.blocked reopen path below.
+  const isAttentionState = task?.state === "blocked" || task?.state === "awaiting-input" || task?.state === "review";
+  if (task && !isAttentionState && task.firstTurnConfirmedAt && task.task === message) {
+    throw new Error(
+      `Crew '${name}' already confirmed receipt of this task — its first turn was delivered and is not being re-sent to avoid running it twice. ` +
+        `If you have new instructions, send different text.`,
     );
   }
 

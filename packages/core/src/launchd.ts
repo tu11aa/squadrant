@@ -351,6 +351,8 @@ export interface DaemonKickstartResult {
   pidBefore: number | null;
   pidAfter: number | null;
   restarted: boolean;
+  /** Set when the restart was confirmed by pid change despite `kickstart -k` itself failing (see below). */
+  note?: string;
 }
 
 /**
@@ -365,7 +367,15 @@ export interface DaemonKickstartResult {
  * bootout+bootstrap on program-arg drift — exactly the race the plain-kickstart
  * comment above warns about (`-k` racing bootout's exit handler → exit-113
  * while the old instance is still unloading). Retry the `kickstart -k` call
- * itself a bounded number of times before giving up; only then does it throw.
+ * itself a bounded number of times before giving up.
+ *
+ * #741: on this same drift path, all `kickstart -k` retries can still lose
+ * the race and exhaust — but by then launchd's own `bootstrap` (RunAtLoad)
+ * may have already started the new instance. Exhausting retries is therefore
+ * not proof of failure: before throwing, fall through to the same pid-change
+ * poll used on the success path. If a new pid shows up, the daemon did
+ * restart (just not via `-k`) — report `restarted: true` with a `note`
+ * instead of a false FAILED. Only throw when polling also finds no new pid.
  */
 export function forceKickstartAndVerify(
   target: string,
@@ -373,18 +383,22 @@ export function forceKickstartAndVerify(
 ): DaemonKickstartResult {
   const pollAttempts = opts.pollAttempts ?? 15;
   const pollDelayMs = opts.pollDelayMs ?? 300;
-  const kickstartRetries = opts.kickstartRetries ?? 5;
+  const kickstartRetries = opts.kickstartRetries ?? 10;
   const kickstartRetryDelayMs = opts.kickstartRetryDelayMs ?? 300;
 
   const pidBefore = getDaemonPid(target);
 
+  let kickstartError: unknown = null;
   for (let i = 0; i < kickstartRetries; i++) {
     try {
       execFileSync("launchctl", ["kickstart", "-k", target], { stdio: "ignore" });
+      kickstartError = null;
       break;
     } catch (e) {
-      if (i === kickstartRetries - 1) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, kickstartRetryDelayMs);
+      kickstartError = e;
+      if (i < kickstartRetries - 1) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, kickstartRetryDelayMs);
+      }
     }
   }
 
@@ -397,7 +411,16 @@ export function forceKickstartAndVerify(
     }
   }
 
-  return { target, pidBefore, pidAfter, restarted: pidAfter !== null && pidAfter !== pidBefore };
+  const restarted = pidAfter !== null && pidAfter !== pidBefore;
+  if (kickstartError && !restarted) throw kickstartError;
+
+  return {
+    target,
+    pidBefore,
+    pidAfter,
+    restarted,
+    ...(kickstartError ? { note: "kickstart -k refused; daemon restarted by bootstrap" } : {}),
+  };
 }
 
 /**

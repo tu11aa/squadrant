@@ -86,6 +86,11 @@ export interface SquadrantdOpts {
    *  host (squadrantd.ts) builds the real implementation and injects it here —
    *  mirrors how telegramBridge is wired. Must never throw/block; best-effort. */
   notifyFault?: (project: string, text: string) => Promise<void> | void;
+  /** I1 test hook: force the events LifecycleSource's start() to run even
+   *  under vitest (where the real-I/O boot block is normally skipped). Pure
+   *  registration, no I/O — safe to force in tests. Defaults to false, so
+   *  behavior is unchanged unless a test opts in. */
+  forceStartEventsSource?: boolean;
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
