@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-08-31
+
+### Added
+
+- **Event architecture Phase 0-1: fact pipeline + opencode cutover (#739, #740, #743).** Introduces `@squadrant/core`'s own event-tracking module — an `AgentFact` vocabulary, per-agent `FactAdapter` seam, a `LifecycleSource` facade wiring adapters to the pipeline, a flight-recorder ring buffer for post-hoc debugging, and a pure fact-to-`ControlEvent` mapping layer with an adapter conformance test suite. Ships invariant checks I1–I3 (depth-based tool-call pairing) and I4–I6 (trust, unknown-rate, and liveness-disagreement). `opencode` is moved onto the fact pipeline via a `FactAdapter` reading SSE frames directly, retiring the old `OpencodeControlSource`; `claude` stays on its existing path (shadow only) per the approved design. A generated `ControlEvent` producer/consumer table plus a `--check` gate now catches producer/consumer drift at build time.
+
+### Fixed
+
+- **False "First turn not delivered" warning + duplicate first-turn re-send (#745).** `crew spawn`'s own screen-scrape confirmation could time out even when the first turn genuinely landed, because the crew's `UserPromptSubmit` hook confirms delivery to the daemon independently of — and can outrace — that scrape. Hook confirmation is now raced against the scrape for the scrape's own full timeout window and treated as **primary**, not a post-failure fallback: a scrape failure alone no longer concludes non-delivery when the hook already confirmed. As defense in depth, `crew send` now refuses to re-send the exact original task text once delivery is confirmed, closing the double-run scenario where following the (previously false) warning's guidance re-ran the task a second time.
+- **Heal daemon false-FAIL on the plist-drift race (#741, #742).** `squadrant heal daemon` could report a failed restart even when the daemon had actually come back up cleanly, racing its own plist-drift detection against the just-completed restart. Fixed at the source of the race rather than papering over it with a retry.
+- **Opencode fact-pipeline perf regression and event-index cache-miss fallback (#743).** A per-frame performance regression in the new opencode adapter (introduced during Phase 0-1 development) is fixed before shipping; chatty opencode frames are filtered, `resolve()` is TTL-cached, and dead snapshot state is removed. The `eventsTaskIndex` now falls back to a live store lookup on a cache miss instead of losing the event.
+
+### Notes
+
+- Phase 2 (per-crew `FactLog` cleanup, `claude` shadow-mode cutover, lifecycle refinement) is deliberately deferred — not part of this release.
+- First opencode crew after upgrade should be watched for event-pipeline health (I5 invariant floods, subagent-orchestrating crews' known ~2 CREW IDLE per task).
+
 ## [0.19.1] - 2026-08-28
 
 ### Added
