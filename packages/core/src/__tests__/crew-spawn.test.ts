@@ -326,38 +326,70 @@ describe("runCrewSpawn", () => {
       }
     });
 
-    // #745: a scrape timeout is not proof of non-delivery — the crew's own
-    // UserPromptSubmit hook can confirm delivery to the daemon independently
-    // (and faster than) this process's own screen-scrape poll. When hooks are
-    // installed and the daemon already has firstTurnConfirmedAt for this task,
-    // the false-negative warning must be suppressed.
-    it("suppresses the false-negative warning when the daemon already confirmed firstTurnConfirmedAt via hook (#745)", async () => {
-      const config = makeConfig();
-      const runtime = makeRuntime();
-      const agent = makeAgent("claude");
-      const deps = makeSpawnDeps(runtime, agent);
-      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
-      deps.getTaskRecord = vi.fn().mockResolvedValue({
-        id: "task-001",
-        firstTurnConfirmedAt: Date.now(),
-      } as TaskRecord);
-
-      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // #745 (rework per review): the hook's daemon-side confirmation is
+    // PRIMARY for a claude crew with hooks installed — it is raced against the
+    // scrape for the scrape's own full timeout window, not consulted only
+    // after the scrape already gave up. A scrape failure alone must never
+    // produce the false-negative warning when the hook confirms within that
+    // window (here: immediately).
+    it("suppresses the false-negative warning when the hook confirms even though the scrape itself never does (#745)", async () => {
+      vi.useFakeTimers();
       try {
-        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        // The scrape never resolves within the test — proves the warning path
+        // isn't waiting on it, only on the raced hook confirmation.
+        deps.sendFirstTurn = vi.fn().mockReturnValue(new Promise(() => {}));
+        deps.getTaskRecord = vi.fn().mockResolvedValue({
+          id: "task-001",
+          firstTurnConfirmedAt: Date.now(),
+        } as TaskRecord);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        // No timer advance needed — firstTrueOrBothFalse resolves on the hook's
+        // first (immediately-confirmed) check, via microtasks only.
+        await promise;
         const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
         expect(stderrOutput).not.toMatch(/not.*delivered/i);
-        expect(stderrOutput).toMatch(/confirmed via hook/i);
         expect(deps.getTaskRecord).toHaveBeenCalledWith(PROJECT, "task-001");
-      } finally {
         stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
       }
     });
 
-    // #745: when the daemon NEVER confirms (the turn genuinely never landed),
-    // the warning must still fire — the hook check is a fix for false negatives,
-    // not a way to silence real ones.
-    it("still warns when getTaskRecord is wired but never reports firstTurnConfirmedAt (#745)", async () => {
+    // #745 (rework): a fast scrape SUCCESS is an early-exit hint — it must not
+    // be made to wait out the (now much longer) hook-confirmation window.
+    it("lets a fast scrape success short-circuit without waiting for the hook window (#745)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
+        // Never confirms — if the implementation waited for this to time out,
+        // the promise below would never settle without a huge timer advance.
+        deps.getTaskRecord = vi.fn().mockResolvedValue({ id: "task-001" } as TaskRecord);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        await promise;
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).not.toMatch(/not.*delivered/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // #745 (rework): when NEITHER the scrape nor the hook confirms within the
+    // full window, the warning must still fire — this is a fix for false
+    // negatives, not a way to silence genuine non-delivery.
+    it("still warns when neither the scrape nor the hook confirms within the full window (#745)", async () => {
       vi.useFakeTimers();
       try {
         const config = makeConfig();
@@ -369,11 +401,43 @@ describe("runCrewSpawn", () => {
 
         const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
         const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
-        await vi.advanceTimersByTimeAsync(5000);
+        await vi.advanceTimersByTimeAsync(101_000);
         await promise;
         const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
         expect(stderrOutput).toMatch(/first turn.*not.*delivered|not.*delivered.*first turn/i);
         expect(stderrOutput).toMatch(/crew send/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // #745: reproduces the exact race the review flagged — a hook confirmation
+    // that lands AFTER a fast scrape failure (but well inside the shared
+    // window) must still suppress the warning. This is what a fixed-count
+    // post-failure poll (the original band-aid) could miss.
+    it("suppresses the warning when the hook confirms well after the scrape has already failed (#745)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
+        let confirmedAt: number | undefined;
+        deps.getTaskRecord = vi.fn().mockImplementation(async () =>
+          ({ id: "task-001", firstTurnConfirmedAt: confirmedAt }) as TaskRecord,
+        );
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        // Well past where a 3x1s post-failure poll would have given up, but
+        // still inside the shared confirmation window.
+        setTimeout(() => { confirmedAt = Date.now(); }, 10_000);
+        await vi.advanceTimersByTimeAsync(12_000);
+        await promise;
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).not.toMatch(/not.*delivered/i);
         stderrSpy.mockRestore();
       } finally {
         vi.useRealTimers();

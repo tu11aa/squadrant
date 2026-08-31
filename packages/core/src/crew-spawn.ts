@@ -191,30 +191,54 @@ export interface CrewSpawnDeps {
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-// #745: the UserPromptSubmit hook posts task.first-turn.confirmed to the daemon
-// directly from inside the crew's own process, independently of this process's
-// screen-scrape confirmation (sendFirstTurn). By the time sendFirstTurn gives up
-// (SEND_FIRST_TURN_TIMEOUT_MS ~90s), a genuinely-landed first turn has almost
-// always already been processed by claude and the hook has already fired — a
-// few short, cheap re-checks are enough to catch it without adding a meaningful
-// delay to the genuine-failure case.
-const FIRST_TURN_HOOK_CHECK_ATTEMPTS = 3;
-const FIRST_TURN_HOOK_CHECK_INTERVAL_MS = 1000;
+// #745: for a claude crew with hooks installed, the UserPromptSubmit hook's
+// daemon-side confirmation (firstTurnConfirmedAt) is the PRIMARY signal — it
+// fires from inside the crew's own process the instant claude actually
+// processes the submitted prompt, independently of (and not bounded by) this
+// process's own screen-scrape confirmation (sendFirstTurn). The scrape still
+// SENDS the keystrokes — nothing else does — and a fast scrape success is a
+// useful early-exit hint, but a scrape FAILURE alone must never produce the
+// false-negative warning: the hook is watched for the same window the scrape
+// itself is allowed to run in, and only when NEITHER signal confirms by the
+// end of that window is the first turn genuinely considered undelivered.
+//
+// The window below matches (with slack for its own post-send retries)
+// crew-pane.ts's SEND_FIRST_TURN_TIMEOUT_MS (90s) — core cannot import that
+// constant directly (workspaces depends on core, never the reverse), so it is
+// restated here.
+const FIRST_TURN_HOOK_CONFIRM_WINDOW_MS = 100_000;
+const FIRST_TURN_HOOK_POLL_INTERVAL_MS = 2_000;
 
-async function firstTurnConfirmedViaHook(
-  getTaskRecord: CrewSpawnDeps["getTaskRecord"],
+/** Polls the daemon for firstTurnConfirmedAt until it appears or the window
+ *  (matching the scrape's own budget) elapses. */
+async function pollFirstTurnConfirmedAt(
+  getTaskRecord: NonNullable<CrewSpawnDeps["getTaskRecord"]>,
   project: string,
   id: string,
 ): Promise<boolean> {
-  if (!getTaskRecord) return false;
-  for (let attempt = 0; attempt < FIRST_TURN_HOOK_CHECK_ATTEMPTS; attempt++) {
+  const deadline = Date.now() + FIRST_TURN_HOOK_CONFIRM_WINDOW_MS;
+  for (;;) {
     const rec = await getTaskRecord(project, id).catch(() => undefined);
     if (rec?.firstTurnConfirmedAt) return true;
-    if (attempt < FIRST_TURN_HOOK_CHECK_ATTEMPTS - 1) {
-      await new Promise((r) => setTimeout(r, FIRST_TURN_HOOK_CHECK_INTERVAL_MS));
-    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, FIRST_TURN_HOOK_POLL_INTERVAL_MS));
   }
-  return false;
+}
+
+/** Resolves `true` the instant EITHER promise reports true (early-exit hint),
+ *  `false` only once BOTH have settled false. A fast false from one side never
+ *  short-circuits the result — the other side is always given its full run. */
+function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settledFalseCount = 0;
+    const onSettle = (ok: boolean) => {
+      if (ok) { resolve(true); return; }
+      settledFalseCount++;
+      if (settledFalseCount === 2) resolve(false);
+    };
+    a.then(onSettle, () => onSettle(false));
+    b.then(onSettle, () => onSettle(false));
+  });
 }
 
 async function listCrewPanes(runtime: RuntimeDriver, workspaceId: string, project: string): Promise<PaneRef[]> {
@@ -472,17 +496,18 @@ export async function runCrewSpawn(
       fs.writeFileSync(spillFile, claudeFirstTurn, "utf8");
       claudeFirstTurn = `Full task is at ${spillFile} — cat it and follow it exactly.`;
     }
-    const claudeResult = await deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
-    // #466: surface non-delivery explicitly instead of silently returning success.
-    // #745: a scrape timeout is not by itself proof the turn never landed — when
-    // hooks are installed, the crew's own UserPromptSubmit hook posts
-    // task.first-turn.confirmed to the daemon independently of this scrape, and
-    // can beat it to the punch (e.g. the scrape's own pane reads were starved).
-    // Only warn once that independent signal also fails to confirm delivery.
-    if (!claudeResult.delivered && !(hooksInstalled && (await firstTurnConfirmedViaHook(deps.getTaskRecord, input.project, rec.id)))) {
+    const sendPromise = deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    const scrapeDelivered = sendPromise.then((r) => r.delivered).catch(() => false);
+    // #466/#745: surface non-delivery explicitly instead of silently returning
+    // success — but when hooks are installed, the hook's daemon-side
+    // confirmation is PRIMARY (see pollFirstTurnConfirmedAt above): the scrape
+    // is raced against it rather than trusted on its own, so a scrape failure
+    // alone can never produce the false-negative warning.
+    const delivered = hooksInstalled && deps.getTaskRecord
+      ? await firstTrueOrBothFalse(scrapeDelivered, pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id))
+      : await scrapeDelivered;
+    if (!delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
-    } else if (!claudeResult.delivered) {
-      process.stderr.write(`ℹ️  First turn for crew '${name}' confirmed via hook — the delivery scrape timed out, but the task landed; no re-send needed.\n`);
     } else if (!hooksInstalled) {
       // #472: hooks unavailable — scrape is the only confirmation source for this crew.
       await deps.emitEvent?.(input.project, { type: "task.first-turn.confirmed", id: rec.id });
