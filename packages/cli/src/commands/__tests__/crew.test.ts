@@ -718,7 +718,10 @@ describe("squadrant crew spawn", () => {
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const promise = runCrewSpawn({ project: "brove", task: "undelivered task" });
-    await vi.advanceTimersByTimeAsync(3000);
+    // #745: the daemon's firstTurnConfirmedAt is raced against the scrape for
+    // its own full timeout window before the warning fires — advance past that
+    // window (squadrantdCall's generic mock never reports firstTurnConfirmedAt).
+    await vi.advanceTimersByTimeAsync(101_000);
     await promise;
 
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("First turn not delivered"));
