@@ -180,9 +180,42 @@ export interface CrewSpawnDeps {
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
   /** Optional: called when worktree base is resolved. */
   onBaseResolved?(base: string): void;
+  /** #745: optional — reads the daemon's current TaskRecord for a task. Used to
+   *  check firstTurnConfirmedAt before reporting non-delivery: a claude crew's
+   *  UserPromptSubmit hook confirms delivery independently of (and can outrace)
+   *  this process's own screen-scrape confirmation, so a scrape timeout is not
+   *  by itself proof the turn never landed. Absent ⇒ no such check is possible
+   *  (pure unit tests, non-daemon deployments) — behavior is unchanged. */
+  getTaskRecord?(project: string, id: string): Promise<TaskRecord | undefined>;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+// #745: the UserPromptSubmit hook posts task.first-turn.confirmed to the daemon
+// directly from inside the crew's own process, independently of this process's
+// screen-scrape confirmation (sendFirstTurn). By the time sendFirstTurn gives up
+// (SEND_FIRST_TURN_TIMEOUT_MS ~90s), a genuinely-landed first turn has almost
+// always already been processed by claude and the hook has already fired — a
+// few short, cheap re-checks are enough to catch it without adding a meaningful
+// delay to the genuine-failure case.
+const FIRST_TURN_HOOK_CHECK_ATTEMPTS = 3;
+const FIRST_TURN_HOOK_CHECK_INTERVAL_MS = 1000;
+
+async function firstTurnConfirmedViaHook(
+  getTaskRecord: CrewSpawnDeps["getTaskRecord"],
+  project: string,
+  id: string,
+): Promise<boolean> {
+  if (!getTaskRecord) return false;
+  for (let attempt = 0; attempt < FIRST_TURN_HOOK_CHECK_ATTEMPTS; attempt++) {
+    const rec = await getTaskRecord(project, id).catch(() => undefined);
+    if (rec?.firstTurnConfirmedAt) return true;
+    if (attempt < FIRST_TURN_HOOK_CHECK_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, FIRST_TURN_HOOK_CHECK_INTERVAL_MS));
+    }
+  }
+  return false;
+}
 
 async function listCrewPanes(runtime: RuntimeDriver, workspaceId: string, project: string): Promise<PaneRef[]> {
   const surfaces = await runtime.listSurfaces(workspaceId);
@@ -441,8 +474,15 @@ export async function runCrewSpawn(
     }
     const claudeResult = await deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     // #466: surface non-delivery explicitly instead of silently returning success.
-    if (!claudeResult.delivered) {
+    // #745: a scrape timeout is not by itself proof the turn never landed — when
+    // hooks are installed, the crew's own UserPromptSubmit hook posts
+    // task.first-turn.confirmed to the daemon independently of this scrape, and
+    // can beat it to the punch (e.g. the scrape's own pane reads were starved).
+    // Only warn once that independent signal also fails to confirm delivery.
+    if (!claudeResult.delivered && !(hooksInstalled && (await firstTurnConfirmedViaHook(deps.getTaskRecord, input.project, rec.id)))) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
+    } else if (!claudeResult.delivered) {
+      process.stderr.write(`ℹ️  First turn for crew '${name}' confirmed via hook — the delivery scrape timed out, but the task landed; no re-send needed.\n`);
     } else if (!hooksInstalled) {
       // #472: hooks unavailable — scrape is the only confirmation source for this crew.
       await deps.emitEvent?.(input.project, { type: "task.first-turn.confirmed", id: rec.id });
@@ -614,6 +654,23 @@ export async function runCrewSend(
         `${task.operatorHold.note ? `: ${task.operatorHold.note}` : ""}). ` +
         `The operator is working in that tab — sending a message disrupts their conversation. ` +
         `Ask them to run 'squadrant crew handback ${project} ${name}', or pass --force if they told you to.`,
+    );
+  }
+
+  // #745: a spawn-side delivery-confirmation false negative used to send the
+  // captain a "First turn not delivered — re-send" warning even when the task
+  // genuinely landed (confirmed independently by the crew's own hook). Following
+  // that guidance re-sends the identical task text, running it twice. Once the
+  // daemon has confirmed the first turn landed (firstTurnConfirmedAt), re-sending
+  // the exact same task text can only be that stale remediation advice — refuse
+  // it instead of silently duplicating the task. Any other message (a genuine
+  // follow-up) is unaffected. Excludes blocked/awaiting-input/review so this
+  // never touches the task.blocked reopen path below.
+  const isAttentionState = task?.state === "blocked" || task?.state === "awaiting-input" || task?.state === "review";
+  if (task && !isAttentionState && task.firstTurnConfirmedAt && task.task === message) {
+    throw new Error(
+      `Crew '${name}' already confirmed receipt of this task — its first turn was delivered and is not being re-sent to avoid running it twice. ` +
+        `If you have new instructions, send different text.`,
     );
   }
 

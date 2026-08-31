@@ -326,6 +326,80 @@ describe("runCrewSpawn", () => {
       }
     });
 
+    // #745: a scrape timeout is not proof of non-delivery — the crew's own
+    // UserPromptSubmit hook can confirm delivery to the daemon independently
+    // (and faster than) this process's own screen-scrape poll. When hooks are
+    // installed and the daemon already has firstTurnConfirmedAt for this task,
+    // the false-negative warning must be suppressed.
+    it("suppresses the false-negative warning when the daemon already confirmed firstTurnConfirmedAt via hook (#745)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
+      deps.getTaskRecord = vi.fn().mockResolvedValue({
+        id: "task-001",
+        firstTurnConfirmedAt: Date.now(),
+      } as TaskRecord);
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).not.toMatch(/not.*delivered/i);
+        expect(stderrOutput).toMatch(/confirmed via hook/i);
+        expect(deps.getTaskRecord).toHaveBeenCalledWith(PROJECT, "task-001");
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    // #745: when the daemon NEVER confirms (the turn genuinely never landed),
+    // the warning must still fire — the hook check is a fix for false negatives,
+    // not a way to silence real ones.
+    it("still warns when getTaskRecord is wired but never reports firstTurnConfirmedAt (#745)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
+        deps.getTaskRecord = vi.fn().mockResolvedValue({ id: "task-001" } as TaskRecord);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        await vi.advanceTimersByTimeAsync(5000);
+        await promise;
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).toMatch(/first turn.*not.*delivered|not.*delivered.*first turn/i);
+        expect(stderrOutput).toMatch(/crew send/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // #745: when getTaskRecord is absent (pure unit test / no daemon wired),
+    // behavior must be identical to before this fix — warn immediately, no poll.
+    it("warns immediately without polling when getTaskRecord is not wired (#745)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false });
+      // getTaskRecord intentionally not set
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).toMatch(/first turn.*not.*delivered|not.*delivered.*first turn/i);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
     // #472: when hooks are installed (writeSettingsLocal succeeds), the scrape must
     // NOT emit task.first-turn.confirmed — UserPromptSubmit hook is the sole source.
     it("does NOT emit task.first-turn.confirmed from scrape when hooks installed (#472)", async () => {
@@ -805,6 +879,82 @@ describe("runCrewSend", () => {
         emitEvent: vi.fn(),
       }),
     ).rejects.toThrow("Crew 'crew-1' not found");
+  });
+
+  // #745: refuses to double-run the first turn when the daemon already
+  // confirmed it landed and the caller is re-sending the exact original task
+  // text — the manual remediation for a stale spawn-side "not delivered"
+  // warning. Never delivers to the pane in this case.
+  describe("first-turn dedup guard (#745)", () => {
+    it("refuses to re-send the exact task text once firstTurnConfirmedAt is set", async () => {
+      const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+      const runtime = makeRuntime("workspace:1", [existing]);
+      const task = {
+        id: "t1",
+        name: "crew-1",
+        state: "working",
+        task: "fix the bug",
+        firstTurnConfirmedAt: Date.now(),
+      } as TaskRecord;
+      await expect(
+        runCrewSend(PROJECT, "crew-1", "fix the bug", runtime, "workspace:1", {
+          listTasks: vi.fn().mockResolvedValue([task]),
+          emitEvent: vi.fn(),
+        }),
+      ).rejects.toThrow(/already confirmed receipt/i);
+      expect(runtime.sendToPane).not.toHaveBeenCalled();
+    });
+
+    it("still delivers a genuine follow-up (different text) even after firstTurnConfirmedAt is set", async () => {
+      const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+      const runtime = makeRuntime("workspace:1", [existing]);
+      const task = {
+        id: "t1",
+        name: "crew-1",
+        state: "working",
+        task: "fix the bug",
+        firstTurnConfirmedAt: Date.now(),
+      } as TaskRecord;
+      await runCrewSend(PROJECT, "crew-1", "also update the changelog", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([task]),
+        emitEvent: vi.fn(),
+      });
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "also update the changelog");
+    });
+
+    it("still delivers the identical task text when firstTurnConfirmedAt is NOT yet set (genuine non-delivery)", async () => {
+      const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+      const runtime = makeRuntime("workspace:1", [existing]);
+      const task = { id: "t1", name: "crew-1", state: "working", task: "fix the bug" } as TaskRecord;
+      await runCrewSend(PROJECT, "crew-1", "fix the bug", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([task]),
+        emitEvent: vi.fn(),
+      });
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "fix the bug");
+    });
+
+    // Task explicitly requires task.blocked behavior to be untouched — even in
+    // the (unlikely) coincidence of an answer matching the original task text
+    // verbatim, a blocked/awaiting-input/review task must still clear back to
+    // working via the existing reopen path, never refused by this guard.
+    it("does not guard a blocked task even when the answer text matches the original task verbatim", async () => {
+      const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+      const runtime = makeRuntime("workspace:1", [existing]);
+      const emitEvent = vi.fn().mockResolvedValue(undefined);
+      const task = {
+        id: "t1",
+        name: "crew-1",
+        state: "blocked",
+        task: "fix the bug",
+        firstTurnConfirmedAt: Date.now(),
+      } as TaskRecord;
+      await runCrewSend(PROJECT, "crew-1", "fix the bug", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([task]),
+        emitEvent,
+      });
+      expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "fix the bug");
+    });
   });
 
   it("sends message to found crew pane", async () => {
