@@ -527,6 +527,68 @@ describe("sendFirstTurnWhenReady — large paste race (#455)", () => {
   });
 });
 
+// ─── #745: double-prompt — re-paste after the turn already landed ─────────────
+// Live regression (0.19.3, 2026-09-03): every claude crew spawned today had its
+// first turn submitted TWICE. Under a cold CC boot the paste is accepted and
+// submitted before settleInputBox ever observes the [Pasted text] draft, so
+// sawDraft stays false while the box is legitimately empty. The #455 rule
+// ("paste never rendered → re-paste once") then fires and re-submits the whole
+// first turn. The distinguishing evidence is the SCREEN: a paste that never
+// landed leaves the pane exactly as it was pre-send; a paste that landed and was
+// submitted has moved the transcript. Never re-paste onto a screen that moved.
+
+describe("first-turn delivery — never re-paste onto a moved screen (#745)", () => {
+  let readPaneScreen: ReturnType<typeof vi.fn>;
+  let sendToPane: ReturnType<typeof vi.fn>;
+  let pasteToPane: ReturnType<typeof vi.fn>;
+  let sendKeyToPane: ReturnType<typeof vi.fn>;
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rt = () => ({ readPaneScreen, sendToPane, pasteToPane, sendKeyToPane });
+
+  // Box empty (submitted), but the transcript above it now holds the prompt —
+  // i.e. the screen has MOVED since the pre-send snapshot.
+  const SUBMITTED = `…transcript…\n> the whole task\n${HR}\n❯ \n${HR}\n   Model: Sonnet 4.6  Ctx Used: 0.0%`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    readPaneScreen = vi.fn();
+    sendToPane = vi.fn();
+    pasteToPane = vi.fn();
+    sendKeyToPane = vi.fn();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("confirmedSendToPane: does not re-paste when the box is empty but the screen moved", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 3) return EMPTY_BOX;  // preSend snapshot + settle: draft never observed
+      return SUBMITTED;              // post-Enter: prompt landed, box empty again
+    });
+
+    const promise = confirmedSendToPane(rt(), pane, "the whole task");
+    await vi.advanceTimersByTimeAsync(20000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendFirstTurnWhenReady: does not re-paste or fall back after the turn already landed", async () => {
+    let n = 0;
+    readPaneScreen.mockImplementation(async () => {
+      n++;
+      if (n <= 5) return EMPTY_BOX;  // readiness polls + preSend + settle (no draft seen)
+      return SUBMITTED;              // post-Enter: prompt landed, box empty again
+    });
+
+    const promise = sendFirstTurnWhenReady(rt(), pane, "the whole task", "$ launch");
+    await vi.advanceTimersByTimeAsync(30000);
+    await promise;
+
+    expect(pasteToPane).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ─── #466: boot-gate requires parseable input box ─────────────────────────────
 
 describe("sendFirstTurnWhenReady — boot gate requires parseable box (#466)", () => {
