@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractTranscriptTail } from "../handoff-transcript.js";
+import { fileURLToPath } from "node:url";
+import { extractTranscriptTail, DIGEST_BYTE_CAP } from "../handoff-transcript.js";
+
+const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 function userLine(text: string): string {
   return JSON.stringify({ type: "user", message: { role: "user", content: text }, timestamp: "2026-08-03T00:00:00.000Z" });
@@ -82,5 +85,84 @@ describe("extractTranscriptTail", () => {
     const result = extractTranscriptTail(file);
 
     expect(result?.mtimeIso).toBe(mtime.toISOString());
+  });
+});
+
+// #753: last-user/last-assistant-only was throwing away everything a gap
+// session actually did. `digest` reconstructs a bounded summary instead —
+// lastUserMessage/lastAssistantText stay for compatibility.
+describe("extractTranscriptTail — digest (#753)", () => {
+  const fixture = path.join(FIXTURES_DIR, "gap-session-transcript.jsonl");
+
+  it("lists ordered user prompts", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.userPrompts).toEqual([
+      "Fix the null-check bug in the login flow, see auth.ts",
+      "Great, now open a PR for it — this closes issue #753",
+    ]);
+  });
+
+  it("lists assistant final text per turn, not just the last one", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.assistantTexts).toEqual([
+      "Fixed the null check in auth.ts and confirmed with tests. Ready for review.",
+      "Opened PR #760 closing issue #753, commit abc1234 on develop.",
+    ]);
+  });
+
+  it("counts tool calls by name", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.toolCalls).toEqual({ Read: 1, Edit: 1, Bash: 2 });
+  });
+
+  it("collects files touched from tool inputs", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.filesTouched).toEqual(["/repo/src/auth.ts"]);
+  });
+
+  it("finds PR/issue and commit refs mentioned in prompts and replies", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.refs).toEqual(expect.arrayContaining(["#753", "#760", "abc1234"]));
+  });
+
+  it("still fills lastUserMessage/lastAssistantText for compatibility", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.lastUserMessage).toBe("Great, now open a PR for it — this closes issue #753");
+    expect(result?.lastAssistantText).toBe("Opened PR #760 closing issue #753, commit abc1234 on develop.");
+  });
+
+  it("marks truncated: false when a transcript fits comfortably under the cap", () => {
+    const result = extractTranscriptTail(fixture);
+
+    expect(result?.digest.truncated).toBe(false);
+  });
+
+  it("caps the digest to ~8KB, dropping oldest entries and setting truncated: true", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-transcript-"));
+    try {
+      const file = path.join(dir, "big.jsonl");
+      const lines: string[] = [];
+      for (let i = 0; i < 200; i++) {
+        lines.push(userLine(`prompt number ${i} `.repeat(20)));
+        lines.push(assistantLine(`reply number ${i} `.repeat(20)));
+      }
+      fs.writeFileSync(file, lines.join("\n") + "\n");
+
+      const result = extractTranscriptTail(file);
+
+      expect(result?.digest.truncated).toBe(true);
+      const size = Buffer.byteLength(JSON.stringify(result?.digest), "utf-8");
+      expect(size).toBeLessThanOrEqual(DIGEST_BYTE_CAP);
+      // most recent turns are kept over the oldest ones
+      expect(result?.digest.userPrompts.at(-1)).toContain("prompt number 199");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

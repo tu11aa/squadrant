@@ -57,6 +57,14 @@ function transcript(overrides: Partial<TranscriptTail> = {}): TranscriptTail {
     mtimeIso: "2026-08-01T01:00:00.000Z",
     lastUserMessage: "do the thing",
     lastAssistantText: "done",
+    digest: {
+      userPrompts: ["do the thing"],
+      assistantTexts: ["done"],
+      toolCalls: {},
+      filesTouched: [],
+      refs: [],
+      truncated: false,
+    },
     ...overrides,
   };
 }

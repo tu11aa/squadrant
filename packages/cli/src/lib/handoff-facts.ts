@@ -117,11 +117,29 @@ export interface ClaudeMemSummary {
   oldestCreatedAt: string | null;
 }
 
+/** Bounded digest of a whole transcript (#753) — the tail-only lastUserMessage/
+ *  lastAssistantText threw away everything a gap session actually did. */
+export interface TranscriptDigest {
+  /** Ordered user prompts (string-content lines only — tool_result arrays are not prompts), truncated ~300 chars each. */
+  userPrompts: string[];
+  /** Assistant final text per turn (not just the last one), truncated ~300 chars each. */
+  assistantTexts: string[];
+  /** Tool name -> call count, across the whole transcript. */
+  toolCalls: Record<string, number>;
+  /** Unique file_path values seen in tool_use inputs, in first-seen order. */
+  filesTouched: string[];
+  /** PR/issue refs (#123) and commit-SHA-looking tokens found in prompts/replies, in first-seen order. */
+  refs: string[];
+  /** True when entries were dropped (oldest first) to fit the ~8KB cap. */
+  truncated: boolean;
+}
+
 export interface TranscriptTail {
   path: string;
   mtimeIso: string;
   lastUserMessage: string | null;
   lastAssistantText: string | null;
+  digest: TranscriptDigest;
 }
 
 /** A captain session recorded at the source (SessionStart hook) — ground
