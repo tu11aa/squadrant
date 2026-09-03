@@ -51,6 +51,7 @@ vi.mock("@squadrant/core", () => ({
   launchOneWorkspace: launchOneWorkspaceMock,
   loadSessions: vi.fn(() => ({ workspaces: {} })),
   CC_SOCKS_DIR: "/tmp/cc-socks",
+  ensureSocksDir: vi.fn(),
   // Real formula (matches packages/core/src/captain-channel.ts byte-for-byte)
   // — a mock that hardcoded a fixed string would defeat the point of this test.
   captainSocketPath: (project: string) => {

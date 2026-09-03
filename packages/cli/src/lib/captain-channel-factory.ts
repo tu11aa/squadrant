@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
 import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath, CLAUDE_SESSIONS_DIR } from "@squadrant/agents";
-import { captainSocketPath, CC_SOCKS_DIR } from "@squadrant/core";
+import { captainSocketPath, CC_SOCKS_DIR, ensureSocksDir } from "@squadrant/core";
 
 let shared: ClaudeReceiptListener | undefined;
 
@@ -92,6 +92,10 @@ function registerSenderIdentity(socketPath: string): void {
  */
 export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
   if (shared) return shared;
+  // The daemon is usually the first process to touch CC_SOCKS_DIR after a
+  // reboot clears /tmp — if it leaves the directory 755, no claude session can
+  // launch afterwards (2026-09-03).
+  ensureSocksDir();
   const socketPath = `${CC_SOCKS_DIR}/squadrantd-${process.pid}.sock`;
   const listener = new ClaudeReceiptListener({
     socketPath,
