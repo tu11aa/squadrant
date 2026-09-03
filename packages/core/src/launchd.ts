@@ -53,6 +53,43 @@ export interface ForeignInstall {
   registeredEntry: string;
   /** This process's own daemonEntryPath(). */
   thisEntry: string;
+  /**
+   * #752: true when registeredEntry/thisEntry look like the SAME install
+   * manager's path for two different versions (a routine upgrade), false
+   * when they look like genuinely different installs (the real #670 case).
+   */
+  isUpgrade: boolean;
+}
+
+/**
+ * #752: "same install manager, new version" (e.g. pnpm's per-version store
+ * path `.pnpm/squadrant@0.19.2/...` -> `.pnpm/squadrant@0.19.3/...`) is a
+ * normal upgrade, not a hijack — the #670 guard must not cry wolf on every
+ * routine `pnpm add -g squadrant@latest`. Structural check: every path
+ * segment is identical except exactly one, and that one segment differs only
+ * in a `<name>@<version>` suffix sharing the same `<name>`. A genuinely
+ * different install (npm vs pnpm, a repo checkout, an unrelated nvm path)
+ * either differs in more than one segment or isn't shaped like
+ * `<name>@<version>` at all, so it stays classified as a hijack.
+ */
+export function isVersionUpgrade(registeredEntry: string, thisEntry: string): boolean {
+  const a = registeredEntry.split("/");
+  const b = thisEntry.split("/");
+  if (a.length !== b.length) return false;
+
+  let diffIndex = -1;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      if (diffIndex !== -1) return false; // more than one differing segment
+      diffIndex = i;
+    }
+  }
+  if (diffIndex === -1) return false; // identical paths — not handled here
+
+  const versionedSegment = /^(.+)@([^@]+)$/;
+  const ma = a[diffIndex].match(versionedSegment);
+  const mb = b[diffIndex].match(versionedSegment);
+  return ma !== null && mb !== null && ma[1] === mb[1] && ma[2] !== mb[2];
 }
 
 /**
@@ -72,7 +109,11 @@ export function detectForeignInstall(
   if (!parsed) return null;
   if (parsed.daemonEntry === thisEntry) return null;
   if (!registeredEntryExists) return null;
-  return { registeredEntry: parsed.daemonEntry, thisEntry };
+  return {
+    registeredEntry: parsed.daemonEntry,
+    thisEntry,
+    isUpgrade: isVersionUpgrade(parsed.daemonEntry, thisEntry),
+  };
 }
 
 /**
@@ -376,17 +417,27 @@ export interface DaemonKickstartResult {
  * poll used on the success path. If a new pid shows up, the daemon did
  * restart (just not via `-k`) — report `restarted: true` with a `note`
  * instead of a false FAILED. Only throw when polling also finds no new pid.
+ *
+ * #751: `pidBefore` defaults to a fresh `getDaemonPid` query, which is only
+ * correct when nothing has touched the daemon between "before" and this call.
+ * On the program-arg drift path, `reconcilePlistAndService`'s bootout+bootstrap
+ * runs BEFORE this function and can itself already start the new instance
+ * (RunAtLoad) — so a same-call `getDaemonPid` would capture the ALREADY-new
+ * pid as the baseline, and a `kickstart -k` that keeps losing the race can
+ * never show a "change" against it even though the daemon is already healthy.
+ * Callers that reconcile first (reregisterDaemon) must pass the pid captured
+ * BEFORE that reconcile so the poll compares against the true prior state.
  */
 export function forceKickstartAndVerify(
   target: string,
-  opts: { pollAttempts?: number; pollDelayMs?: number; kickstartRetries?: number; kickstartRetryDelayMs?: number } = {},
+  opts: { pollAttempts?: number; pollDelayMs?: number; kickstartRetries?: number; kickstartRetryDelayMs?: number; pidBefore?: number | null } = {},
 ): DaemonKickstartResult {
   const pollAttempts = opts.pollAttempts ?? 15;
   const pollDelayMs = opts.pollDelayMs ?? 300;
   const kickstartRetries = opts.kickstartRetries ?? 10;
   const kickstartRetryDelayMs = opts.kickstartRetryDelayMs ?? 300;
 
-  const pidBefore = getDaemonPid(target);
+  const pidBefore = opts.pidBefore !== undefined ? opts.pidBefore : getDaemonPid(target);
 
   let kickstartError: unknown = null;
   for (let i = 0; i < kickstartRetries; i++) {
@@ -447,6 +498,20 @@ export const OPERATOR_INITIATED_COMMANDS = new Set(["launch", "init"]);
 /** Pure: was this process's top-level subcommand one of the operator-initiated ones above? */
 export function isOperatorInitiatedCommand(topLevelArg: string | undefined): boolean {
   return topLevelArg !== undefined && OPERATOR_INITIATED_COMMANDS.has(topLevelArg);
+}
+
+/**
+ * #752: read-only `crew` subcommands never need the daemon reconciled to do
+ * their job (they just read over the socket), so they must never trigger —
+ * and never print — the #670/#752 foreign-install banner or notice either.
+ * Deliberately the small, explicit set the issue names; not a general
+ * "read-only" classifier for every subcommand.
+ */
+export const READ_ONLY_CREW_SUBCOMMANDS = new Set(["list", "read", "tasks"]);
+
+/** Pure: is this invocation one of the read-only `crew` subcommands above? */
+export function isReadOnlyCrewCommand(argv: readonly string[]): boolean {
+  return argv[2] === "crew" && argv[3] !== undefined && READ_ONLY_CREW_SUBCOMMANDS.has(argv[3]);
 }
 
 /**
@@ -515,12 +580,9 @@ export function ensureDaemon(nodeBin: string = process.execPath, opts: { operato
   try {
     const drift = computeDaemonDrift(nodeBin);
     if (drift.foreignInstall) {
-      // #670: the plist is owned by a DIFFERENT, still-installed squadrant.
-      // Seizing it is exactly what produced the production crash-loop
-      // (alternating versions flapping the socket). Leave it untouched and
-      // tell a human what to do instead.
-      process.stderr.write(printForeignInstallError(drift.foreignInstall));
-      return;
+      const decision = decideForeignInstall(drift.foreignInstall);
+      process.stderr.write(decision.message);
+      if (!decision.proceed) return;
     }
     applyDaemonDrift(drift);
   } catch (e) {
@@ -529,6 +591,26 @@ export function ensureDaemon(nodeBin: string = process.execPath, opts: { operato
   } finally {
     releaseDaemonLock();
   }
+}
+
+export interface ForeignInstallDecision {
+  /** true when it's safe to proceed with the normal reconcile+restart. */
+  proceed: boolean;
+  /** stderr message to print — the #670 refusal banner or the #752 upgrade notice. */
+  message: string;
+}
+
+/**
+ * Pure: given a detected foreign install, decide whether it's safe to
+ * reconcile and what to tell the human. #752: a same-manager version bump
+ * proceeds with a one-line notice; a genuine hijack (#670) refuses and prints
+ * the full banner.
+ */
+export function decideForeignInstall(foreign: ForeignInstall): ForeignInstallDecision {
+  if (foreign.isUpgrade) {
+    return { proceed: true, message: printVersionUpgradeNotice(foreign) };
+  }
+  return { proceed: false, message: printForeignInstallError(foreign) };
 }
 
 /** Pure: the legible refuse-to-seize error message for a detected foreign install (#670). */
@@ -541,6 +623,11 @@ export function printForeignInstallError(foreign: ForeignInstall): string {
     "  Two squadrant installs on this machine will keep fighting over the daemon (#670). " +
     "Uninstall the one you don't use, then run `squadrant heal daemon` to reconcile.\n"
   );
+}
+
+/** Pure: the one-line notice printed when a foreign install is classified as a routine upgrade (#752). */
+export function printVersionUpgradeNotice(foreign: ForeignInstall): string {
+  return `[squadrant] upgraded plist: ${foreign.registeredEntry} -> ${foreign.thisEntry}\n`;
 }
 
 /**
@@ -565,8 +652,11 @@ export function reregisterDaemon(
   }
   try {
     const drift = computeDaemonDrift(nodeBin);
+    // #751: snapshot the pid BEFORE reconcile (bootout+bootstrap) can itself
+    // already start the new instance — see forceKickstartAndVerify's #751 note.
+    const pidBeforeReconcile = getDaemonPid(drift.target);
     reconcilePlistAndService(drift);
-    const result = forceKickstartAndVerify(drift.target, kickstartOpts);
+    const result = forceKickstartAndVerify(drift.target, { ...kickstartOpts, pidBefore: pidBeforeReconcile });
     if (!result.restarted) {
       throw new Error(
         `daemon did not restart (pid before=${result.pidBefore ?? "none"}, after=${result.pidAfter ?? "none"}) — ` +

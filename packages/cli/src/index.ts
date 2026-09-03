@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
-import { ensureDaemon, isOperatorInitiatedCommand } from "@squadrant/core";
+import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand } from "@squadrant/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -98,7 +98,11 @@ if (process.argv[2] !== "config") {
 // so ensureDaemon can authorize a first-run/cold-start self-heal for those two
 // commands specifically, without weakening the fail-closed default for anything
 // else (crew, side-session, dashboard, cron, or any other bare subcommand).
-if (!process.env.SQUADRANT_DAEMON_SKIP) {
+// #752: read-only `crew` subcommands (list/read/tasks) never need the daemon
+// reconciled — skip ensureDaemon entirely so they can never print the
+// #670/#752 foreign-install banner, even when run inside a captain session
+// (SQUADRANT_ROLE=captain would otherwise authorize the mutating path here).
+if (!process.env.SQUADRANT_DAEMON_SKIP && !isReadOnlyCrewCommand(process.argv)) {
   ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]) });
 }
 

@@ -51,3 +51,13 @@ it("index.ts derives operatorInitiated from process.argv[2] via isOperatorInitia
 it("daemonEntryPath throws when compiled entry not found (src-tree guard, #259)", () => {
   expect(() => daemonEntryPath()).toThrow(/compiled entry not found|run.*build/i);
 });
+
+// #752: read-only `crew` subcommands (list/read/tasks) must never reach
+// ensureDaemon at all — that's what keeps them from ever printing the
+// #670/#752 foreign-install banner, even inside a captain session where
+// SQUADRANT_ROLE=captain would otherwise authorize the mutating path.
+it("index.ts skips ensureDaemon for read-only crew subcommands via isReadOnlyCrewCommand", () => {
+  const idx = read("index.ts");
+  expect(idx).toMatch(/!isReadOnlyCrewCommand\(process\.argv\)/);
+  expect(idx.indexOf("isReadOnlyCrewCommand")).toBeLessThan(idx.indexOf("ensureDaemon(undefined"));
+});
