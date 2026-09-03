@@ -189,9 +189,12 @@ export async function confirmedSendToPane(
   await runtime.sendKeyToPane(pane, "Enter");
 
   let repasted = false;
+  let screenMoved = false;
   for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
     await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
     const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    // #745: latch whether the pane has moved at all since the pre-send snapshot.
+    if (afterScreen !== preSendScreen) screenMoved = true;
     const draft = parseDraftFromScreen(afterScreen);
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
@@ -200,7 +203,15 @@ export async function confirmedSendToPane(
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
-    if (!sawDraft && !repasted) {
+    // #745: …but ONLY while the pane still looks exactly as it did pre-send. Under a
+    // cold CC boot the paste can be accepted AND submitted before settleInputBox ever
+    // observes the draft, leaving sawDraft=false over a legitimately empty box — and
+    // re-pasting there submits the whole turn a SECOND time (live: every claude crew
+    // spawned on 0.19.3 got its first turn twice). A moved screen is proof the
+    // keystrokes landed; only a pane frozen at the pre-send image is evidence of a
+    // lost paste. Failing closed here just yields delivered:false, which the hook
+    // confirmation (crew-spawn) or the daemon's undelivered self-heal resolves safely.
+    if (!sawDraft && !repasted && !screenMoved) {
       repasted = true;
       await runtime.pasteToPane(pane, message);
     }
@@ -354,9 +365,14 @@ export async function sendFirstTurnWhenReady(
 
   const retryLimit = acceptanceConfig?.retryLimit ?? SUBMIT_RETRY_LIMIT;
   let repasted = false;
+  // #745: has the pane moved at all since the pre-send snapshot? See the
+  // confirmedSendToPane comment below — a moved screen means the keystrokes
+  // landed, so neither the re-paste nor the fallback re-send may fire.
+  let screenMoved = false;
   for (let attempt = 0; attempt < retryLimit; attempt++) {
     await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
     const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+    if (afterScreen !== preSendScreen) screenMoved = true;
     const draft = parseDraftFromScreen(afterScreen);
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
@@ -368,7 +384,8 @@ export async function sendFirstTurnWhenReady(
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
-    if (!sawDraft && !repasted) {
+    // #745: only while the pane is still frozen at the pre-send image.
+    if (!sawDraft && !repasted && !screenMoved) {
       repasted = true;
       await runtime.pasteToPane(pane, task);
     }
@@ -381,7 +398,10 @@ export async function sendFirstTurnWhenReady(
   // once to confirmedSendToPane which starts fresh on a now-settled box.
   // When sawDraft=true (paste rendered, Enter repeatedly failed), re-pasting would
   // stack [Pasted text] entries — do not retry, just report non-delivery.
-  if (!sawDraft) {
+  // #745: the same guard as the re-paste above — this fallback pastes the whole
+  // task again, so a pane that has moved since pre-send (turn already submitted)
+  // must never reach it.
+  if (!sawDraft && !screenMoved) {
     return confirmedSendToPane(runtime, pane, task);
   }
   return { delivered: false };

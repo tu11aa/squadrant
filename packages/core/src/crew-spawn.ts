@@ -219,24 +219,42 @@ export interface CrewSpawnDeps {
 // itself is allowed to run in, and only when NEITHER signal confirms by the
 // end of that window is the first turn genuinely considered undelivered.
 //
-// The window below matches (with slack for its own post-send retries)
-// crew-pane.ts's SEND_FIRST_TURN_TIMEOUT_MS (90s) — core cannot import that
-// constant directly (workspaces depends on core, never the reverse), so it is
-// restated here.
-const FIRST_TURN_HOOK_CONFIRM_WINDOW_MS = 100_000;
+// The window CANNOT be a fixed budget anchored at spawn start. The scrape is
+// what actually SENDS the keystrokes, so the hook can only fire once the scrape
+// has managed to submit — i.e. the confirmation is downstream of the scrape's
+// own runtime, not concurrent with it. crew-pane.ts spends up to 90s waiting for
+// the TUI to become ready (SEND_FIRST_TURN_TIMEOUT_MS), then ~16s of submit
+// retries, then a confirmedSendToPane fallback; under a cold claude-mem boot
+// that routinely lands the first prompt past 100s (#745 live: 108.7s), which the
+// old fixed window had already given up on — the exact false negative it was
+// added to prevent. So: poll for as long as the scrape is still running, plus a
+// grace period after it settles for the hook round-trip, under an absolute cap.
+const FIRST_TURN_HOOK_CONFIRM_GRACE_MS = 15_000;
+const FIRST_TURN_HOOK_CONFIRM_MAX_MS = 180_000;
 const FIRST_TURN_HOOK_POLL_INTERVAL_MS = 2_000;
 
-/** Polls the daemon for firstTurnConfirmedAt until it appears or the window
- *  (matching the scrape's own budget) elapses. */
+/** Polls the daemon for firstTurnConfirmedAt until it appears, the scrape has
+ *  settled and the post-settle grace has elapsed, or the absolute cap is hit.
+ *  `cancel` lets the caller stop the loop once the combined verdict is already
+ *  decided so the CLI process isn't held open by a pending poll. */
 async function pollFirstTurnConfirmedAt(
   getTaskRecord: NonNullable<CrewSpawnDeps["getTaskRecord"]>,
   project: string,
   id: string,
+  scrapeSettled: Promise<unknown>,
+  cancel: { stopped: boolean },
 ): Promise<boolean> {
-  const deadline = Date.now() + FIRST_TURN_HOOK_CONFIRM_WINDOW_MS;
+  let scrapeSettledAt: number | undefined;
+  const markSettled = () => { scrapeSettledAt ??= Date.now(); };
+  scrapeSettled.then(markSettled, markSettled);
+  const hardDeadline = Date.now() + FIRST_TURN_HOOK_CONFIRM_MAX_MS;
   for (;;) {
+    if (cancel.stopped) return false;
     const rec = await getTaskRecord(project, id).catch(() => undefined);
     if (rec?.firstTurnConfirmedAt) return true;
+    const deadline = scrapeSettledAt !== undefined
+      ? Math.min(hardDeadline, scrapeSettledAt + FIRST_TURN_HOOK_CONFIRM_GRACE_MS)
+      : hardDeadline;
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, FIRST_TURN_HOOK_POLL_INTERVAL_MS));
   }
@@ -520,9 +538,14 @@ export async function runCrewSpawn(
     // confirmation is PRIMARY (see pollFirstTurnConfirmedAt above): the scrape
     // is raced against it rather than trusted on its own, so a scrape failure
     // alone can never produce the false-negative warning.
+    const cancelHookPoll = { stopped: false };
     const delivered = hooksInstalled && deps.getTaskRecord
-      ? await firstTrueOrBothFalse(scrapeDelivered, pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id))
+      ? await firstTrueOrBothFalse(
+          scrapeDelivered,
+          pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id, scrapeDelivered, cancelHookPoll),
+        )
       : await scrapeDelivered;
+    cancelHookPoll.stopped = true;
     if (!delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
     } else if (!hooksInstalled) {
