@@ -43,8 +43,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:760
   - packages/core/src/daemon/reduce.ts:400
   - packages/core/src/daemon/reduce.ts:455
-  - packages/core/src/daemon/start.ts:86
-  - packages/core/src/daemon/start.ts:90
+  - packages/core/src/daemon/start.ts:87
+  - packages/core/src/daemon/start.ts:91
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
