@@ -92,8 +92,11 @@ describe("squadrantd boot-gap detection (#589)", () => {
       for await (const entry of readFromCursor({ stateRoot, project: "demo", fromSeq: 1 })) {
         if (entry.message) texts.push(entry.message);
       }
-      const alert = texts.find((t) => t.includes("daemon was down for"));
+      const alert = texts.find((t) => t.includes("daemon was down"));
       expect(alert).toBeDefined();
+      // #744: the window (not just a bare minute count) must be baked in —
+      // a "→" between the local start/end timestamps, plus the tz offset.
+      expect(alert).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} → \d{4}-\d{2}-\d{2} \d{2}:\d{2} \([+-]\d{2}(:\d{2})?\)/);
       expect(alert).toContain("25 min");
       expect(alert).toContain("reason=SIGTERM");
     } finally {
@@ -123,7 +126,7 @@ describe("squadrantd boot-gap detection (#589)", () => {
       for await (const entry of readFromCursor({ stateRoot, project: "demo", fromSeq: 1 })) {
         if (entry.message) texts.push(entry.message);
       }
-      expect(texts.some((t) => t.includes("daemon was down for"))).toBe(false);
+      expect(texts.some((t) => t.includes("daemon was down"))).toBe(false);
     } finally {
       writeSpy.mockRestore();
       handle?.stop();
@@ -164,7 +167,7 @@ describe("squadrantd unclean-death detection via the running marker (#589)", () 
       for await (const entry of readFromCursor({ stateRoot, project: "demo", fromSeq: 1 })) {
         if (entry.message) texts.push(entry.message);
       }
-      const alert = texts.find((t) => t.includes("daemon was down for"));
+      const alert = texts.find((t) => t.includes("daemon was down"));
       expect(alert).toBeDefined();
       expect(alert).toContain("25 min");
       expect(alert).toMatch(/SIGKILL|OOM|power-loss/);

@@ -12,6 +12,7 @@ import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, appendCaptainMessage } from "../mailbox.js";
 import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
+import { formatDownAlertText } from "./down-alert.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
@@ -246,8 +247,8 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   // after the fact from unrelated timestamps.
   const bootTs = new Date().toISOString();
   {
-    const sendDownAlert = (minutes: number, reasonText: string) => {
-      const text = `⚠️ daemon was down for ${minutes} min (last exit reason=${reasonText})`;
+    const sendDownAlert = (startTs: string, endTs: string, minutes: number, reasonText: string) => {
+      const text = formatDownAlertText({ startTs, endTs, minutes, reasonText });
       // Same project-list source as the Tier 2 snapshot below — injectable
       // for tests, defaults to every configured project in production.
       const alertProjects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
@@ -262,7 +263,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     const prevRunning = readRunningMarker(stateRoot);
     if (marker) {
       log(`previous exit ts=${marker.ts} reason=${marker.reason} gap=${((gapMs ?? 0) / 1000).toFixed(1)}s`);
-      if ((gapMs ?? 0) > 60_000) sendDownAlert(Math.round((gapMs ?? 0) / 60_000), marker.reason);
+      if ((gapMs ?? 0) > 60_000) sendDownAlert(marker.ts, bootTs, Math.round((gapMs ?? 0) / 60_000), marker.reason);
     } else if (prevRunning) {
       // #589: a running marker survived with no exit marker to explain it —
       // the prior daemon died without running any JS shutdown code (SIGKILL,
@@ -273,7 +274,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       const uncleanGapMs = Math.max(0, Date.now() - lastHeartbeatMs);
       log(`previous exit: UNCLEAN (no marker; last heartbeat ${prevRunning.lastHeartbeatTs}, gap=${(uncleanGapMs / 1000).toFixed(1)}s)`);
       if (uncleanGapMs > 60_000) {
-        sendDownAlert(Math.round(uncleanGapMs / 60_000), "unclean/unknown — no exit marker, likely SIGKILL/OOM/power-loss");
+        sendDownAlert(
+          prevRunning.lastHeartbeatTs, bootTs, Math.round(uncleanGapMs / 60_000),
+          "unclean/unknown — no exit marker, likely SIGKILL/OOM/power-loss",
+        );
       }
     } else {
       log("previous exit: none (clean or first boot)");
