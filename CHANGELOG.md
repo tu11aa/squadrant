@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-09-03
+
+### Fixed
+
+- **Socket directory created world-readable, blocking captain/crew launch on Claude Code ≥2.1.259 (#749).** `ensureSocksDir()` now creates `/tmp/cc-socks` with mode `0700`; Claude Code 2.1.259 refuses to operate against a `755` socket directory.
+
 ## [0.19.2] - 2026-08-31
 
 ### Added

@@ -41,6 +41,23 @@ import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 export const CC_SOCKS_DIR = "/tmp/cc-socks";
 
 /**
+ * Create the socket directory as 0700, or tighten it if it already exists.
+ *
+ * Claude Code ≥ 2.1.259 refuses `--messaging-socket-path` outright when the
+ * directory is not mode 0700 ("directory /tmp/cc-socks is not private (mode
+ * 755)", live 2026-09-03), so every claude captain/crew launch dies at boot. A
+ * plain `mkdirSync({ recursive: true })` yields 755 under the default umask —
+ * `mode` is masked by umask, hence the explicit chmod. This is also layer 1 of
+ * #675 (b): the directory is the trust boundary for the captain inbox.
+ *
+ * Every site that creates or binds into CC_SOCKS_DIR must go through here.
+ */
+export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if ((fs.statSync(dir).mode & 0o777) !== 0o700) fs.chmodSync(dir, 0o700);
+}
+
+/**
  * #730: the first-turn task text for a claude crew is delivered by pasting it
  * into the crew's cmux pane, then confirming submit once the input box stops
  * changing (confirmedSendToPane / sendFirstTurnWhenReady in
@@ -436,7 +453,7 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
-    fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+    ensureSocksDir();
     // Same directory as the crews' own sockets — receipts are only delivered
     // within one socket namespace, so our listener must live there too.
     const messagingSocketPath = path.join(CC_SOCKS_DIR, `squadrant-${randomUUID()}.sock`);

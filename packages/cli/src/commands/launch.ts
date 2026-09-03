@@ -19,7 +19,7 @@ import {
   RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
   isInsideCmux, cmuxLocal, classifyStartupSurface,
 } from "@squadrant/workspaces";
-import { launchOneWorkspace, loadSessions, CC_SOCKS_DIR, captainSocketPath } from "@squadrant/core";
+import { launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
 import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
@@ -209,7 +209,7 @@ export const launchCommand = new Command("launch")
           agentCmdFactory: (forceFresh) => {
             const captainChannelEnabled = shouldWireCaptainChannel(agentName, config);
             if (captainChannelEnabled) {
-              fs.mkdirSync(CC_SOCKS_DIR, { recursive: true });
+              ensureSocksDir();
             }
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
               resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
