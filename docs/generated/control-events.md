@@ -40,7 +40,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/driver.ts:119
   - packages/agents/src/headless-launcher.ts:42
   - packages/agents/src/opencode/sse-bridge.ts:118
-  - packages/core/src/crew-spawn.ts:720
+  - packages/core/src/crew-spawn.ts:737
   - packages/core/src/daemon/reduce.ts:400
   - packages/core/src/daemon/reduce.ts:455
   - packages/core/src/daemon/start.ts:86
@@ -107,7 +107,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.reattached`
   - packages/agents/src/codex/driver.ts:222
 - `task.reopened`
-  - packages/core/src/crew-spawn.ts:715
+  - packages/core/src/crew-spawn.ts:732
 - `task.stalled`
   - packages/core/src/daemon/reduce.ts:636
   - packages/core/src/daemon/reduce.ts:638
@@ -122,12 +122,12 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.cancelled`
   - packages/cli/src/commands/shutdown.ts:83
   - packages/cli/src/commands/shutdown.ts:121
-  - packages/core/src/crew-spawn.ts:929
+  - packages/core/src/crew-spawn.ts:946
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:381
   - packages/cli/src/commands/hooks.ts:46
-  - packages/core/src/crew-spawn.ts:513
-  - packages/core/src/crew-spawn.ts:577
+  - packages/core/src/crew-spawn.ts:530
+  - packages/core/src/crew-spawn.ts:594
   - packages/core/src/daemon/reduce.ts:380
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
