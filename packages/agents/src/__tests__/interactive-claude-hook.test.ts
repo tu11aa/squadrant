@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -498,5 +498,43 @@ describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
     const ev = mapClaudeHookToEvent("PreToolUse", { tool_name: "AskUserQuestion", tool_input: {} }, TID);
     expect(ev!.type).not.toBe("task.done");
     expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+// #761: Stop/PermissionRequest/Notification payloads all carry prompt_id — a
+// real per-turn correlation id that matched across events of the same turn
+// (verified live, 2026-09-04 compat study §8.3). Replaces the constant
+// "hook-stop" turnId the #492 turn-boundary work could not get a real id for.
+describe("mapClaudeHookToEvent Stop turnId (#761)", () => {
+  const TID = "task-abc";
+
+  it("Stop with prompt_id → turnId is the real per-turn id", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "204d13c6-abcd" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "204d13c6-abcd" });
+  });
+
+  it("Stop without prompt_id → turnId falls back to the constant (older clients)", () => {
+    const ev = mapClaudeHookToEvent("Stop", { session_id: "x" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("Stop with empty-string prompt_id → falls back to the constant", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("logs permission_mode when present (log-only, no behaviour change)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", permission_mode: "acceptEdits" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("acceptEdits"));
+    spy.mockRestore();
+  });
+
+  it("does not log when permission_mode is absent", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mapClaudeHookToEvent("Stop", { prompt_id: "p1" }, TID);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

@@ -296,6 +296,27 @@ export function decideCaptainMemoryWrite(
 }
 
 /**
+ * Pure: resolve the real per-turn correlation id. Stop/PermissionRequest/
+ * Notification payloads all carry prompt_id (a UUID that matches across
+ * events of the same turn — verified live, 2026-09-04 compat study §8.3).
+ * Falls back to the pre-#761 constant when absent (older Claude clients).
+ */
+export function resolveTurnId(payload: unknown): string {
+  const id = (payload as { prompt_id?: unknown } | null | undefined)?.prompt_id;
+  return typeof id === "string" && id.trim() ? id : "hook-stop";
+}
+
+// #761: log-only observability for a crew that silently switched permission
+// mode mid-session (cmux #8070 persists this as lastPermissionMode). No
+// behaviour change — this never affects the emitted ControlEvent.
+function logStopPermissionMode(payload: unknown, taskId: string): void {
+  const mode = (payload as { permission_mode?: unknown } | null | undefined)?.permission_mode;
+  if (typeof mode === "string" && mode) {
+    console.error(`[squadrant] hook: Stop permission_mode=${mode} task=${taskId}`);
+  }
+}
+
+/**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
@@ -354,7 +375,8 @@ export function mapClaudeHookToEvent(
       if (question) {
         return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question };
       }
-      return { type: "task.turn.completed", id: taskId, turnId: "hook-stop" };
+      logStopPermissionMode(payload, taskId);
+      return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload) };
     }
     case "Notification": {
       const msg = (payload as any)?.message;
