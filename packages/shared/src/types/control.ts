@@ -149,6 +149,15 @@ export type ControlEvent =
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }
   | { type: "task.turn.completed"; id: string; turnId: string }
+  // #763: a crew's turn died on an API error (e.g. 529/overload) — Claude's
+  // StopFailure hook. Anti-#2576: NOT task.failed — a hook may never
+  // terminalize a task. Structurally identical to task.turn.completed (same
+  // turn-boundary transition, same #492 pendingTool veto, same #608 sticky-
+  // attention guard); only the notify message differs, so the watchdog's
+  // stall path is never independently triggered for the same turn — the
+  // record has already left 'working' for 'awaiting-input' by the time the
+  // hook fires.
+  | { type: "task.turn.failed"; id: string; turnId: string; error: string }
   | { type: "task.delta"; id: string; turnId: string; chunk: string }
   | { type: "task.input.requested"; id: string; requestId: number; question: string }
   | { type: "task.approval.requested"; id: string; requestId: number; question: string; kind: string }

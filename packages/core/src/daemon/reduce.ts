@@ -185,6 +185,12 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       return `CREW STALLED ${tag}: no heartbeat in ${rec.heartbeatBudgetMs}ms`;
     }
     case "awaiting-input":
+      // #763: a turn that ended on an API error reads very differently from
+      // a genuine turn-end — must not be worded like a stall (that story is
+      // reserved for the 'stalled' state's own heartbeat-timeout message).
+      if (event?.type === "task.turn.failed") {
+        return `CREW TURN FAILED ${tag}: API error ended the turn (not a stall) — ${event.error}`;
+      }
       // #522: 'awaiting-input' is reached via a genuine turn-boundary event
       // (task.turn.completed — see state-machine.ts). #542 NARROW EXCEPTION:
       // evaluateStall's watchdog path can also land here — a Stop that was
@@ -291,7 +297,7 @@ type Req =
 const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   "task.started", "task.progress", "heartbeat",
   "task.blocked", "task.review", "task.done", "task.failed",
-  "task.session", "task.turn.started", "task.turn.completed",
+  "task.session", "task.turn.started", "task.turn.completed", "task.turn.failed",
   "task.delta", "task.input.requested", "task.approval.requested",
   "task.reattached", "task.reopened",
   "task.stalled", "task.idle", "task.quiet", "task.warn", "task.timeout", "task.reconcile-failed",

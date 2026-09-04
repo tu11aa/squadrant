@@ -59,6 +59,16 @@ describe("mapHookSub — permission-request (#760)", () => {
   });
 });
 
+// #763: no source exists today for a crew turn killed by an API error.
+describe("mapHookSub — stop-failure (#763)", () => {
+  const TID = "task-abc";
+
+  it("delegates to mapClaudeHookToEvent StopFailure", () => {
+    const ev = mapHookSub("stop-failure", { error: "529 Overloaded" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "529 Overloaded" });
+  });
+});
+
 // #651: attribution recorded AT THE SOURCE (SessionStart hook), not
 // inferred later from file mtimes or transcript content-sniffing — both
 // were tried for #650 and both were rejected as unreliable.

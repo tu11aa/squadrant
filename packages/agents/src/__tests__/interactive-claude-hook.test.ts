@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt, hasActiveBackgroundWork } from "../interactive/claude.js";
+import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt, hasActiveBackgroundWork, redactApiError } from "../interactive/claude.js";
 
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
@@ -686,5 +686,65 @@ describe("mapClaudeHookToEvent Stop background_tasks/session_crons veto (#762)",
   it("background-task veto composes with the #761 turnId resolution — turnId is only relevant on the non-vetoed path", () => {
     const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", last_assistant_message: "Done.", background_tasks: [] }, TID);
     expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
+  });
+});
+
+// #763: no source exists today for a crew turn killed by an API error — the
+// watchdog eventually reports it as a stall, which is the wrong story.
+// StopFailure carries error/error_details/last_assistant_message.
+describe("mapClaudeHookToEvent StopFailure (#763)", () => {
+  const TID = "task-abc";
+
+  it("maps StopFailure → task.turn.failed carrying the resolved turnId and the error", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { prompt_id: "p-1", error: "529 Overloaded" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "p-1", error: "529 Overloaded" });
+  });
+
+  it("StopFailure without prompt_id → turnId falls back to the constant", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { error: "network timeout" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "network timeout" });
+  });
+
+  it("StopFailure with missing error → a generic placeholder, never throws", () => {
+    expect(mapClaudeHookToEvent("StopFailure", {}, TID))
+      .toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "unknown API error" });
+    expect(mapClaudeHookToEvent("StopFailure", null, TID))
+      .toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "unknown API error" });
+  });
+
+  it("anti-#2576 invariant: StopFailure never emits task.done or task.failed", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { error: "x" }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+describe("redactApiError (#763)", () => {
+  it("truncates long error text to 300 chars plus an ellipsis", () => {
+    const scrubbed = redactApiError("x".repeat(500));
+    expect(scrubbed.length).toBeLessThanOrEqual(301);
+    expect(scrubbed.endsWith("…")).toBe(true);
+  });
+
+  it("scrubs an embedded Anthropic API key", () => {
+    const scrubbed = redactApiError("failed with key sk-ant-api03-abcdefghijklmnop");
+    expect(scrubbed).not.toContain("sk-ant-api03-abcdefghijklmnop");
+    expect(scrubbed).toContain("[redacted]");
+  });
+
+  it("scrubs an embedded GitHub token", () => {
+    const scrubbed = redactApiError("auth failed: ghp_abcdefghijklmnopqrstuvwx");
+    expect(scrubbed).not.toContain("ghp_abcdefghijklmnopqrstuvwx");
+  });
+
+  it("falls back to a generic label for a non-string/empty error", () => {
+    expect(redactApiError(undefined)).toBe("unknown API error");
+    expect(redactApiError(null)).toBe("unknown API error");
+    expect(redactApiError("")).toBe("unknown API error");
+    expect(redactApiError("   ")).toBe("unknown API error");
+  });
+
+  it("passes short, clean error text through unchanged", () => {
+    expect(redactApiError("529 Overloaded")).toBe("529 Overloaded");
   });
 });

@@ -31,6 +31,9 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   // #760: fires ~6s before the matching Notification, carrying tool_name +
   // tool_input directly — a strictly better task.blocked source.
   ["PermissionRequest", "permission-request"],
+  // #763: the turn died on an API error — today squadrant has no source for
+  // this at all; without it the watchdog reports a plain stall (wrong story).
+  ["StopFailure", "stop-failure"],
 ];
 
 const DEFAULT_HOOK_CMD = "squadrant hooks";
@@ -172,6 +175,7 @@ export function mapSubToLifecycle(sub: string): LifecycleState | "session-end" |
     case "notification":   return "needsInput";
     case "ask-question":   return "needsInput";
     case "permission-request": return "needsInput";
+    case "stop-failure":  return "idle";
     case "session-end":    return "session-end";
     default:               return null;
   }

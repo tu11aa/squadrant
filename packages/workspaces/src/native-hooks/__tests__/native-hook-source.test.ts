@@ -61,14 +61,14 @@ function makeSource(installOverrides: Parameters<typeof makeInstallOpts>[0] = {}
 // ── installClaudeHooks ────────────────────────────────────────────────────────
 
 describe("installClaudeHooks — basic installation", () => {
-  it("installs hooks for all 8 lifecycle-relevant subs across 7 event keys", () => {
+  it("installs hooks for all 9 lifecycle-relevant subs across 8 event keys", () => {
     const { opts, written } = makeInstallOpts();
     installClaudeHooks(opts);
 
     expect(written).toHaveLength(1);
     const result = JSON.parse(written[0].content);
-    // 7 unique event keys (PreToolUse appears twice: catch-all + AskUserQuestion matcher)
-    for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd", "PermissionRequest"]) {
+    // 8 unique event keys (PreToolUse appears twice: catch-all + AskUserQuestion matcher)
+    for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd", "PermissionRequest", "StopFailure"]) {
       expect(result.hooks[ev]).toBeDefined();
       expect(Array.isArray(result.hooks[ev])).toBe(true);
       expect(result.hooks[ev].length).toBeGreaterThan(0);
@@ -92,6 +92,7 @@ describe("installClaudeHooks — basic installation", () => {
       ["Notification", "notification"],
       ["SessionEnd", "session-end"],
       ["PermissionRequest", "permission-request"],
+      ["StopFailure", "stop-failure"],
     ];
     for (const [ev, sub] of singleEntryExpectations) {
       const entry = result.hooks[ev][0];
@@ -344,6 +345,7 @@ describe("mapSubToLifecycle — pure mapping", () => {
   it("maps notification → needsInput", () => expect(mapSubToLifecycle("notification")).toBe("needsInput"));
   it("maps ask-question → needsInput", () => expect(mapSubToLifecycle("ask-question")).toBe("needsInput"));
   it("maps permission-request → needsInput (#760)", () => expect(mapSubToLifecycle("permission-request")).toBe("needsInput"));
+  it("maps stop-failure → idle (#763, same coarse bucket as a normal turn-end)", () => expect(mapSubToLifecycle("stop-failure")).toBe("idle"));
   it("maps session-end → 'session-end' (teardown sentinel)", () => expect(mapSubToLifecycle("session-end")).toBe("session-end"));
   it("maps unknown sub → null (no-op)", () => {
     expect(mapSubToLifecycle("")).toBeNull();

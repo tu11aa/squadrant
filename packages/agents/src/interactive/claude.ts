@@ -19,7 +19,10 @@ import type { ControlEvent } from "@squadrant/shared";
 // signal (#470), replacing the screen-scrape {delivered} heuristic.
 // PermissionRequest fires while a tool-use permission dialog is open — earlier
 // (~6s) and richer (tool_name + tool_input) than the matching Notification (#760).
-const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit", "PermissionRequest"] as const;
+// StopFailure fires when the turn ends on an API error (529/overload/etc) —
+// today squadrant has no source for this at all; without it the watchdog
+// eventually reports a plain stall, which is the wrong story (#763).
+const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit", "PermissionRequest", "StopFailure"] as const;
 
 // #560: matcher-scoped hook entries beyond the broad EVENTS list above — fires
 // only for the named tool, not every tool call. AskUserQuestion is CC's native
@@ -402,6 +405,27 @@ export function hasActiveBackgroundWork(payload: unknown): boolean {
   return false;
 }
 
+const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
+  /sk-ant-[A-Za-z0-9_-]{10,}/g,      // Anthropic API key
+  /gh[pousr]_[A-Za-z0-9]{10,}/g,     // GitHub token
+  /\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g,  // Telegram bot token shape
+];
+const MAX_API_ERROR_LEN = 300;
+
+/**
+ * Pure: #763. A StopFailure error string is captain-facing (CREW notify
+ * text, possibly a filed issue later) — apply the same redaction discipline
+ * as CLAUDE.md's bug-report rules (strip API keys / GitHub tokens / Telegram
+ * bot tokens) and cap length so a verbose provider error never floods a
+ * notify.
+ */
+export function redactApiError(error: unknown): string {
+  if (typeof error !== "string" || !error.trim()) return "unknown API error";
+  let scrubbed = error.trim();
+  for (const re of SECRET_PATTERNS) scrubbed = scrubbed.replace(re, "[redacted]");
+  return scrubbed.length > MAX_API_ERROR_LEN ? `${scrubbed.slice(0, MAX_API_ERROR_LEN)}…` : scrubbed;
+}
+
 /**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
@@ -443,6 +467,16 @@ export function hasActiveBackgroundWork(payload: unknown): boolean {
  * same-prompt Notification is handled for free by the existing already-blocked
  * no-op in state-machine.ts. tool_input is NEVER serialized in full — only a
  * short, tool-specific hint (file path / Bash command, truncated).
+ *
+ * StopFailure = the turn died on an API error (#763) — today squadrant has NO
+ * source for this at all; without it the watchdog eventually reports a plain
+ * stall, which is the wrong story. Maps to task.turn.failed, NOT task.failed
+ * (anti-#2576: no hook may terminalize a task) — structurally identical to
+ * task.turn.completed (same turn-boundary transition in state-machine.ts), so
+ * the record leaves 'working' for 'awaiting-input' the instant the hook
+ * fires and the watchdog's stall path is never independently triggered for
+ * the same turn. Carries the resolved turnId (same resolver as Stop) and a
+ * redacted error string (redactApiError — never the raw provider error).
  *
  * PreToolUse = matcher-scoped to AskUserQuestion only (#560): the crew's own
  * hook set registers this ONLY for that tool (see MATCHED_EVENTS above), so in
@@ -486,6 +520,18 @@ export function mapClaudeHookToEvent(
       logStopPermissionMode(payload, taskId);
       return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload) };
     }
+    case "StopFailure":
+      // #763: the turn died on an API error (529/overload/etc) — today
+      // squadrant has NO source for this; the watchdog eventually reports a
+      // stall, which is the wrong story. Distinct from Stop: never treated
+      // as a genuine turn.completed AND never task.failed (anti-#2576 — no
+      // hook terminalizes).
+      return {
+        type: "task.turn.failed",
+        id: taskId,
+        turnId: resolveTurnId(payload),
+        error: redactApiError((payload as { error?: unknown } | null | undefined)?.error),
+      };
     case "Notification": {
       const cls = classifyNotification(payload);
       if (cls.kind === "blocked") {

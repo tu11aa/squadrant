@@ -34,7 +34,8 @@ async function sendToSock(req: unknown): Promise<void> {
  * from tool_input the same way (the previous inline version read a `payload.question`
  * field that doesn't exist in Claude's actual PreToolUse payload, so it always fell
  * back to a generic placeholder). "permission-request" delegates to it too (#760) —
- * a dedicated, earlier, richer permission signal than Notification. The remaining
+ * a dedicated, earlier, richer permission signal than Notification. "stop-failure"
+ * delegates to it too (#763) — a crew turn killed by an API error. The remaining
  * subs are handled inline.
  */
 export function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
@@ -48,6 +49,8 @@ export function mapHookSub(sub: string, payload: unknown, taskId: string): Contr
       return { type: "task.first-turn.confirmed", id: taskId };
     case "stop":
       return mapClaudeHookToEvent("Stop", payload, taskId);
+    case "stop-failure":
+      return mapClaudeHookToEvent("StopFailure", payload, taskId);
     case "notification":
       return mapClaudeHookToEvent("Notification", payload, taskId);
     case "ask-question":
