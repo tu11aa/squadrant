@@ -158,3 +158,27 @@ describe("claude driver — thinking level", () => {
     expect(cmd).not.toContain("--effort");
   });
 });
+
+describe("claude driver — #759 --messaging-socket-path ordering", () => {
+  const driver = createClaudeDriver();
+
+  // #697/#759: cmux <=0.64.18 truncates launchCommand.arguments at
+  // --messaging-socket-path when storing it, so anything after it (like
+  // --plugin-dir) is lost. It must be the last argv token for interactive
+  // sessions, matching the captain/command path (launch-cmd.ts).
+  it("is the last argv token for an interactive crew command", () => {
+    const cmd = driver.buildCommand({
+      prompt: "do something",
+      workdir: "/tmp/test",
+      role: "crew",
+      interactive: true,
+      messagingSocketPath: "/tmp/cc-socks/squadrant-crew-demo.sock",
+    });
+    const tokens = cmd.trim().split(/\s+/);
+    const mspIdx = tokens.indexOf("--messaging-socket-path");
+    expect(mspIdx).toBeGreaterThan(-1);
+    expect(mspIdx).toBe(tokens.length - 2);
+    expect(cmd).toContain("--plugin-dir");
+    expect(cmd.indexOf("--plugin-dir")).toBeLessThan(cmd.indexOf("--messaging-socket-path"));
+  });
+});
