@@ -46,6 +46,29 @@ describe("mapHookSub — ask-question (#560)", () => {
   });
 });
 
+// #760: permission-request fires from NativeHookSource's global
+// PermissionRequest install — a dedicated, earlier, richer permission signal
+// than sniffing Notification.message.
+describe("mapHookSub — permission-request (#760)", () => {
+  const TID = "task-abc";
+
+  it("delegates to mapClaudeHookToEvent PermissionRequest", () => {
+    const ev = mapHookSub("permission-request", { tool_name: "Write", tool_input: { file_path: "/tmp/x" } }, TID);
+    expect(ev?.type).toBe("task.blocked");
+    expect((ev as any).question).toContain("Write");
+  });
+});
+
+// #763: no source exists today for a crew turn killed by an API error.
+describe("mapHookSub — stop-failure (#763)", () => {
+  const TID = "task-abc";
+
+  it("delegates to mapClaudeHookToEvent StopFailure", () => {
+    const ev = mapHookSub("stop-failure", { error: "529 Overloaded" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "529 Overloaded" });
+  });
+});
+
 // #651: attribution recorded AT THE SOURCE (SessionStart hook), not
 // inferred later from file mtimes or transcript content-sniffing — both
 // were tried for #650 and both were rejected as unreliable.

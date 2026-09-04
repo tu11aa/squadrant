@@ -240,6 +240,30 @@ describe("state-machine reduce", () => {
     expect(next.lastHeartbeat).toBe(8000);
   });
 
+  // #763: a crew's turn died on an API error (StopFailure hook). Structurally
+  // identical to task.turn.completed — same turn-boundary transition, same
+  // #492 pendingTool veto, same #608 sticky-attention guard — so the watchdog
+  // never independently re-reports the same turn as a stall.
+  it("task.turn.failed transitions working → awaiting-input, same as task.turn.completed (#763)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.turn.failed", id: "t1", turnId: "p1", error: "529 Overloaded" }, 8000);
+    expect(next.state).toBe("awaiting-input");
+    expect(next.lastHeartbeat).toBe(8000);
+    expect(next.lastEvent).toBe("task.turn.failed");
+  });
+
+  it("task.turn.failed respects the #492 pendingTool veto", () => {
+    const open = reduce(rec({ state: "working" }), { type: "task.progress", id: "t1", note: "agent.hook.PreToolUse", tool: "Bash" }, 7000);
+    const stillOpen = reduce(open, { type: "task.turn.failed", id: "t1", turnId: "p1", error: "529" }, 8000);
+    expect(stillOpen.state).toBe("working");
+    expect(stillOpen.pendingTool).toEqual({ name: "Bash", since: 7000 });
+  });
+
+  it("task.turn.failed does NOT auto-unblock a blocked task (#608 sticky-attention guard)", () => {
+    const blocked = reduce(rec({ state: "blocked", question: "q?" }), { type: "task.turn.failed", id: "t1", turnId: "p1", error: "529" }, 5000);
+    expect(blocked.state).toBe("blocked");
+    expect(blocked.question).toBe("q?");
+  });
+
   it("task.progress on awaiting-input transitions back to working (#131 fix: next turn resumes)", () => {
     const taskTurnEnd = reduce(rec({ state: "working" }), { type: "task.turn.completed", id: "t1", turnId: "hook-stop" }, 8000);
     expect(taskTurnEnd.state).toBe("awaiting-input");

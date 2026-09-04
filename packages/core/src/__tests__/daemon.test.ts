@@ -927,6 +927,24 @@ describe("daemon – blocked crew resume path (#183)", () => {
       expect(calls[0].message).not.toContain("review and reply or close");
     });
 
+    // #763: a turn that died on an API error must read very differently from
+    // a genuine turn-end — never worded like a heartbeat stall, since the
+    // watchdog's own stall path is a separate, unrelated story.
+    it("task.turn.failed produces a CREW-facing message naming an API error, not a stall (#763)", async () => {
+      const store = createStore(dir);
+      store.put(rec("t-api-err", { state: "working" }));
+      const calls: any[] = [];
+      const d = createDaemon({ store, now: () => 999_999, notify: async (a) => { calls.push(a); } });
+      await d.handle({
+        kind: "event", project: "p",
+        event: { type: "task.turn.failed", id: "t-api-err", turnId: "p1", error: "529 Overloaded" },
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].message).toMatch(/API error/i);
+      expect(calls[0].message).not.toMatch(/no heartbeat/i);
+      expect(calls[0].message).toContain("529 Overloaded");
+    });
+
     it("does NOT debounce CREW BLOCKED even right after a captain turn", async () => {
       const store = createStore(dir);
       store.put(rec("t-blk", { state: "working" }));
