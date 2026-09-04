@@ -56,10 +56,6 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` --settings ${opts.settingsPath}`;
       }
 
-      if (opts.messagingSocketPath) {
-        cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
-      }
-
       // Load squadrant plugin for skills. Crews get a subset plugin dir
       // (crew.generic.md/crew.claude.md only ever reference karpathy-principles)
       // synced by ensureRuntimeSynced — the harness lists only skills that
@@ -67,6 +63,15 @@ export function createClaudeDriver(): AgentDriver {
       const pluginSubdir = opts.role === "crew" ? "plugin-crew" : "plugin";
       const pluginDir = `${process.env.HOME}/.config/squadrant/${pluginSubdir}`;
       cmd += ` --plugin-dir ${pluginDir}`;
+
+      // #697/#759: must come AFTER --plugin-dir (and be the last flag for
+      // interactive sessions) — cmux <=0.64.18 truncates launchCommand.arguments
+      // at --messaging-socket-path when storing it, so anything after it
+      // (including --plugin-dir) is lost and role classification breaks.
+      // Match the captain/command path (launch-cmd.ts).
+      if (opts.messagingSocketPath) {
+        cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
+      }
 
       if (!opts.interactive) {
         cmd += ` -p "${opts.prompt.replace(/"/g, '\\"')}"`;
