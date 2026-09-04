@@ -28,12 +28,14 @@ async function sendToSock(req: unknown): Promise<void> {
  * Map a NativeHookSource sub-alias to a ControlEvent.
  *
  * "stop", "notification", "session-end" delegate to mapClaudeHookToEvent (which
- * handles detectTrailingQuestion and isPermissionNotification). "ask-question"
+ * handles detectTrailingQuestion and classifyNotification). "ask-question"
  * also delegates to it (#560) — it fires from the same PreToolUse+AskUserQuestion
  * matcher as the crew's own hook set, so it must extract the real question/options
  * from tool_input the same way (the previous inline version read a `payload.question`
  * field that doesn't exist in Claude's actual PreToolUse payload, so it always fell
- * back to a generic placeholder). The remaining subs are handled inline.
+ * back to a generic placeholder). "permission-request" delegates to it too (#760) —
+ * a dedicated, earlier, richer permission signal than Notification. The remaining
+ * subs are handled inline.
  */
 export function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
   switch (sub) {
@@ -50,6 +52,8 @@ export function mapHookSub(sub: string, payload: unknown, taskId: string): Contr
       return mapClaudeHookToEvent("Notification", payload, taskId);
     case "ask-question":
       return mapClaudeHookToEvent("PreToolUse", payload, taskId);
+    case "permission-request":
+      return mapClaudeHookToEvent("PermissionRequest", payload, taskId);
     case "session-end":
       return mapClaudeHookToEvent("SessionEnd", payload, taskId);
     default:

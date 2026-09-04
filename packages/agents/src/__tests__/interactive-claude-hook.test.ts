@@ -538,3 +538,86 @@ describe("mapClaudeHookToEvent Stop turnId (#761)", () => {
     spy.mockRestore();
   });
 });
+
+// #760: notification_type is a REQUIRED, structured field on current Claude
+// clients (14-value enum) — a much more robust classifier than the English
+// substring test, which stays only as the fallback for older clients that
+// omit the field entirely.
+describe("mapClaudeHookToEvent Notification notification_type (#760)", () => {
+  const TID = "task-abc";
+
+  it("notification_type=permission_prompt → task.blocked even without permission wording in message", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "hi", notification_type: "permission_prompt" }, TID);
+    expect(ev).toEqual({
+      type: "task.blocked", id: TID,
+      reason: "crew awaiting permission (notification hook)", question: "hi",
+    });
+  });
+
+  it("notification_type=worker_permission_prompt → task.blocked", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "worker needs approval", notification_type: "worker_permission_prompt" }, TID);
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("notification_type=agent_needs_input → task.input.requested with a requestId", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "need input", notification_type: "agent_needs_input" }, TID);
+    expect(ev?.type).toBe("task.input.requested");
+    expect(typeof (ev as any).requestId).toBe("number");
+    expect((ev as any).question).toBe("need input");
+  });
+
+  it("notification_type=idle_prompt → task.progress (liveness only, never blocked)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Claude is thinking", notification_type: "idle_prompt" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+
+  it("notification_type=quota_auto_resume_fired → task.progress (no dedicated source yet, never blocked)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "quota resumed", notification_type: "quota_auto_resume_fired" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+
+  it("missing notification_type (older client) falls back to substring detection — permission message still blocks", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Claude needs your permission" }, TID);
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("missing notification_type, non-permission message → task.progress (unchanged fallback)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Waiting for your input" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+});
+
+// #760: PermissionRequest fires ~6s BEFORE the matching Notification, and
+// carries the tool name + input directly — a strictly better task.blocked
+// source than sniffing Notification.message.
+describe("mapClaudeHookToEvent PermissionRequest (#760)", () => {
+  const TID = "task-abc";
+
+  it("maps PermissionRequest → task.blocked with a question naming the tool and a short input hint", () => {
+    const payload = { tool_name: "Write", tool_input: { file_path: "/tmp/needs-approval.txt", content: "x".repeat(500) } };
+    const ev = mapClaudeHookToEvent("PermissionRequest", payload, TID);
+    expect(ev?.type).toBe("task.blocked");
+    const question = (ev as any).question as string;
+    expect(question).toContain("Write");
+    expect(question).toContain("/tmp/needs-approval.txt");
+    expect(question.length).toBeLessThan(200); // never dumps the full 500-char content
+  });
+
+  it("maps PermissionRequest for Bash → question includes a truncated command hint", () => {
+    const ev = mapClaudeHookToEvent("PermissionRequest", { tool_name: "Bash", tool_input: { command: "rm -rf /tmp/x" } }, TID);
+    expect((ev as any).question).toContain("Bash");
+    expect((ev as any).question).toContain("rm -rf /tmp/x");
+  });
+
+  it("maps PermissionRequest with missing/malformed tool_input → still task.blocked, generic hint, never throws", () => {
+    expect(mapClaudeHookToEvent("PermissionRequest", { tool_name: "Read" }, TID)?.type).toBe("task.blocked");
+    expect(mapClaudeHookToEvent("PermissionRequest", {}, TID)?.type).toBe("task.blocked");
+    expect(mapClaudeHookToEvent("PermissionRequest", null, TID)?.type).toBe("task.blocked");
+  });
+
+  it("anti-#2576 invariant: PermissionRequest never emits task.done or task.failed", () => {
+    const ev = mapClaudeHookToEvent("PermissionRequest", { tool_name: "Write", tool_input: {} }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
+  });
+});

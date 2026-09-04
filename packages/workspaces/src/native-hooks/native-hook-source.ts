@@ -28,6 +28,9 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   ["Notification",     "notification"],
   ["PreToolUse",       "ask-question", "AskUserQuestion"],
   ["SessionEnd",       "session-end"],
+  // #760: fires ~6s before the matching Notification, carrying tool_name +
+  // tool_input directly — a strictly better task.blocked source.
+  ["PermissionRequest", "permission-request"],
 ];
 
 const DEFAULT_HOOK_CMD = "squadrant hooks";
@@ -168,6 +171,7 @@ export function mapSubToLifecycle(sub: string): LifecycleState | "session-end" |
     case "stop":           return "idle";
     case "notification":   return "needsInput";
     case "ask-question":   return "needsInput";
+    case "permission-request": return "needsInput";
     case "session-end":    return "session-end";
     default:               return null;
   }

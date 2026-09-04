@@ -17,7 +17,9 @@ import type { ControlEvent } from "@squadrant/shared";
 // UserPromptSubmit fires before Claude processes each prompt submission, including
 // the first interactive turn — used as the authoritative first-turn confirmation
 // signal (#470), replacing the screen-scrape {delivered} heuristic.
-const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit"] as const;
+// PermissionRequest fires while a tool-use permission dialog is open — earlier
+// (~6s) and richer (tool_name + tool_input) than the matching Notification (#760).
+const EVENTS = ["Stop", "SubagentStop", "SessionEnd", "PostToolUse", "Notification", "UserPromptSubmit", "PermissionRequest"] as const;
 
 // #560: matcher-scoped hook entries beyond the broad EVENTS list above — fires
 // only for the named tool, not every tool call. AskUserQuestion is CC's native
@@ -29,15 +31,17 @@ const MATCHED_EVENTS: ReadonlyArray<readonly [event: string, matcher: string]> =
   ["PreToolUse", "AskUserQuestion"],
 ];
 
-// #560: Claude's PreToolUse hook payload carries no native per-tool-call id
-// (documented shape is session_id/cwd/tool_name/tool_input only — no
-// tool_use_id), so there is no "real" requestId to forward. Seeded from
-// Date.now() and incremented per call (this module runs fresh per hook
-// invocation, so in practice each call gets Date.now() at that moment) so
-// schedulePromotion's `${taskId}#${requestId}` dedup key never collides
-// across successive AskUserQuestion prompts for the same crew, unlike a
-// hardcoded 0 would.
-let nextAskUserQuestionRequestId = Date.now();
+// #560/#760: neither Claude's PreToolUse (AskUserQuestion) nor Notification
+// hook payload carries a native per-tool-call/per-notification id (documented
+// shapes are session_id/cwd/tool_name/tool_input, and
+// session_id/message/notification_type respectively — no tool_use_id), so
+// there is no "real" requestId to forward for either. Seeded from Date.now()
+// and incremented per call (this module runs fresh per hook invocation, so in
+// practice each call gets Date.now() at that moment) so schedulePromotion's
+// `${taskId}#${requestId}` dedup key never collides across successive prompts
+// for the same crew, unlike a hardcoded 0 would. Shared by both call sites
+// below (AskUserQuestion PreToolUse and Notification agent_needs_input).
+let nextHookRequestId = Date.now();
 
 /**
  * Probe whether the local Claude CLI supports `--settings <path>`. The
@@ -317,6 +321,71 @@ function logStopPermissionMode(payload: unknown, taskId: string): void {
 }
 
 /**
+ * Pure: classify a Notification hook using the structured notification_type
+ * field — REQUIRED (not optional) on current Claude clients, a 14-value enum
+ * (verified live, 2026-09-04 compat study §8.1). The Notification hook is
+ * matcher-scopable on this exact field, the same mechanism squadrant already
+ * uses to scope PreToolUse to AskUserQuestion (#560) — this removes English
+ * substring matching entirely for any client that sends it. Falls back to the
+ * pre-#760 substring test (isPermissionNotification) ONLY when
+ * notification_type is absent (older clients) — never for a recognized-but-
+ * unmapped value on a current client.
+ */
+export function classifyNotification(
+  payload: unknown,
+): { kind: "blocked" | "input-requested" | "progress"; question?: string } {
+  const p = payload as { message?: unknown; notification_type?: unknown } | null | undefined;
+  const msg = typeof p?.message === "string" ? p.message : "";
+  const notificationType = typeof p?.notification_type === "string" ? p.notification_type : null;
+
+  if (notificationType === "permission_prompt" || notificationType === "worker_permission_prompt") {
+    return { kind: "blocked", question: msg || "crew awaiting permission" };
+  }
+  if (notificationType === "agent_needs_input") {
+    return { kind: "input-requested", question: msg || "crew needs input" };
+  }
+  if (notificationType != null) {
+    // idle_prompt, quota_auto_resume_*, auth_success, agent_completed,
+    // elicitation_*, push_notification, computer_use_* — liveness only.
+    // squadrant has no dedicated source for quota/auth state yet (#760).
+    return { kind: "progress" };
+  }
+  if (msg && isPermissionNotification(msg)) {
+    return { kind: "blocked", question: msg };
+  }
+  return { kind: "progress" };
+}
+
+// Tool → tool_input field carrying a short, human-meaningful hint of WHAT is
+// being asked (reuses the file-path map already defined for the captain-
+// memory write guard, plus Bash's command). Never used to dump the full
+// tool_input — only this one field, truncated — so a PermissionRequest
+// question can never leak large file contents (hard rule, #760).
+const TOOL_INPUT_HINT_LEN = 80;
+function summarizeToolInput(toolName: unknown, toolInput: unknown): string {
+  if (typeof toolName !== "string" || !toolName) return "a tool call";
+  const input = toolInput as Record<string, unknown> | null | undefined;
+  if (!input || typeof input !== "object") return toolName;
+  const hintField = FILE_PATH_FIELD_BY_TOOL[toolName] ?? (toolName === "Bash" ? "command" : undefined);
+  const raw = hintField ? input[hintField] : undefined;
+  if (typeof raw === "string" && raw) {
+    const short = raw.length > TOOL_INPUT_HINT_LEN ? `${raw.slice(0, TOOL_INPUT_HINT_LEN)}…` : raw;
+    return `${toolName}(${short})`;
+  }
+  return toolName;
+}
+
+/**
+ * Pure: build a task.blocked question for a PermissionRequest hook. Never
+ * serializes the full tool_input (#760 hard rule) — only a short, tool-
+ * specific hint via summarizeToolInput.
+ */
+export function formatPermissionRequestQuestion(payload: unknown): string {
+  const p = payload as { tool_name?: unknown; tool_input?: unknown } | null | undefined;
+  return `crew needs permission to run ${summarizeToolInput(p?.tool_name, p?.tool_input)}`;
+}
+
+/**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
@@ -333,14 +402,25 @@ function logStopPermissionMode(payload: unknown, taskId: string): void {
  * derived path from session_id+cwd); the payload field is the primary, I/O-free
  * source. All transcript I/O is best-effort and never throws (hook must exit 0).
  *
- * Notification = Claude needs user attention. NARROW EXCEPTION #2
- * (#notification-hook): when the payload.message indicates a permission request
- * (isPermissionNotification), this maps to task.blocked instantly — bypassing the
- * ~20-30s relay poll. The relay poll remains as a fallback for opencode crews and
- * as a safety net; both may fire task.blocked for the same prompt, but the
- * state-machine idempotency (already-blocked → no-op, from #176) deduplicates.
- * Non-permission notifications (idle liveness) → task.progress. Missing/non-string
- * message → task.progress (never throws, hook must exit 0).
+ * Notification = Claude needs user attention. Classified via classifyNotification
+ * (#760): notification_type in {permission_prompt, worker_permission_prompt} maps
+ * to task.blocked instantly — bypassing the ~20-30s relay poll — and
+ * agent_needs_input maps to task.input.requested. The relay poll remains as a
+ * fallback for opencode crews and as a safety net; both may fire task.blocked for
+ * the same prompt, but the state-machine idempotency (already-blocked → no-op,
+ * from #176) deduplicates. All other notification_type values (idle_prompt,
+ * quota_auto_resume_*, etc.) and payloads missing notification_type entirely
+ * (older clients, falls back to the isPermissionNotification substring test) →
+ * task.progress. Missing/non-string message → task.progress (never throws, hook
+ * must exit 0).
+ *
+ * PermissionRequest = a dedicated, earlier (~6s before Notification), richer
+ * permission signal (#760): tool_name + tool_input are present directly on the
+ * payload, so the task.blocked question can say WHAT is being asked instead of
+ * the generic Notification text. Always maps to task.blocked — dedup against a
+ * same-prompt Notification is handled for free by the existing already-blocked
+ * no-op in state-machine.ts. tool_input is NEVER serialized in full — only a
+ * short, tool-specific hint (file path / Bash command, truncated).
  *
  * PreToolUse = matcher-scoped to AskUserQuestion only (#560): the crew's own
  * hook set registers this ONLY for that tool (see MATCHED_EVENTS above), so in
@@ -367,7 +447,7 @@ export function mapClaudeHookToEvent(
       if (toolName !== "AskUserQuestion") return null;
       const question = formatAskUserQuestionPrompt((payload as any)?.tool_input)
         ?? "crew opened an AskUserQuestion prompt (options unavailable)";
-      return { type: "task.input.requested", id: taskId, requestId: nextAskUserQuestionRequestId++, question };
+      return { type: "task.input.requested", id: taskId, requestId: nextHookRequestId++, question };
     }
     case "Stop": {
       const text = resolveLastAssistantText(payload);
@@ -379,12 +459,28 @@ export function mapClaudeHookToEvent(
       return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload) };
     }
     case "Notification": {
-      const msg = (payload as any)?.message;
-      if (typeof msg === "string" && isPermissionNotification(msg)) {
-        return { type: "task.blocked", id: taskId, reason: "crew awaiting permission (notification hook)", question: msg };
+      const cls = classifyNotification(payload);
+      if (cls.kind === "blocked") {
+        return { type: "task.blocked", id: taskId, reason: "crew awaiting permission (notification hook)", question: cls.question! };
+      }
+      if (cls.kind === "input-requested") {
+        return { type: "task.input.requested", id: taskId, requestId: nextHookRequestId++, question: cls.question! };
       }
       return { type: "task.progress", id: taskId, note: "notification" };
     }
+    case "PermissionRequest":
+      // #760: fires ~6s before the matching Notification, with the tool name
+      // and a rich (never fully dumped) input summary — a strictly better
+      // task.blocked source. Re-blocking an already-blocked task is a no-op
+      // in the reducer (task.blocked idempotency, #174), so this naturally
+      // dedups against a Notification for the same prompt_id without extra
+      // state here.
+      return {
+        type: "task.blocked",
+        id: taskId,
+        reason: "crew awaiting permission (permission-request hook)",
+        question: formatPermissionRequestQuestion(payload),
+      };
     case "SessionEnd":
       // #139: the session is GONE. NOT liveness — mapping this to task.progress
       // resumed a dead crew to 'working' (awaiting-input → working), where
