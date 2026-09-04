@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall, isVersionUpgrade, isReadOnlyCrewCommand, READ_ONLY_CREW_SUBCOMMANDS, decideForeignInstall, printForeignInstallError, printVersionUpgradeNotice } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -169,7 +169,104 @@ describe("detectForeignInstall (#670)", () => {
 
   it("flags a foreign install when the registered entry differs AND still exists on disk", () => {
     const result = detectForeignInstall({ daemonEntry: rivalEntry }, thisEntry, true);
-    expect(result).toEqual({ registeredEntry: rivalEntry, thisEntry });
+    expect(result).toEqual({ registeredEntry: rivalEntry, thisEntry, isUpgrade: false });
+  });
+
+  it("classifies a same-manager version bump as isUpgrade=true", () => {
+    const upgraded = "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.19.3/dist/squadrantd.js";
+    const result = detectForeignInstall({ daemonEntry: thisEntry }, upgraded, true);
+    expect(result).toEqual({ registeredEntry: thisEntry, thisEntry: upgraded, isUpgrade: true });
+  });
+});
+
+describe("isVersionUpgrade (#752)", () => {
+  it("classifies pnpm's per-version store path bump as an upgrade", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.19.2/node_modules/squadrant/dist/squadrantd.js",
+      "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.19.3/node_modules/squadrant/dist/squadrantd.js",
+    )).toBe(true);
+  });
+
+  it("classifies a same-shape npm-store version bump as an upgrade", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/.npm-global/store/squadrant@0.19.2/dist/squadrantd.js",
+      "/Users/me/.npm-global/store/squadrant@0.19.3/dist/squadrantd.js",
+    )).toBe(true);
+  });
+
+  it("keeps refusing when the manager root truly differs (npm vs pnpm)", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.19.2/node_modules/squadrant/dist/squadrantd.js",
+      "/Users/me/.nvm/versions/node/v24.6.0/lib/node_modules/squadrant/dist/squadrantd.js",
+    )).toBe(false);
+  });
+
+  it("keeps refusing when more than one path segment differs", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/Library/pnpm/global/5/.pnpm/squadrant@0.19.2/node_modules/squadrant/dist/squadrantd.js",
+      "/Users/other/Library/pnpm/global/5/.pnpm/squadrant@0.19.3/node_modules/squadrant/dist/squadrantd.js",
+    )).toBe(false);
+  });
+
+  it("keeps refusing when the differing segment isn't a <name>@<version> pair", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/Library/pnpm/global/5/.pnpm/squadrant/node_modules/squadrant/dist/squadrantd.js",
+      "/Users/me/Library/pnpm/global/6/.pnpm/squadrant/node_modules/squadrant/dist/squadrantd.js",
+    )).toBe(false);
+  });
+
+  it("keeps refusing when the <name> prefix itself differs across the two versioned segments", () => {
+    expect(isVersionUpgrade(
+      "/Users/me/.pnpm/other-pkg@0.19.2/dist/squadrantd.js",
+      "/Users/me/.pnpm/squadrant@0.19.3/dist/squadrantd.js",
+    )).toBe(false);
+  });
+
+  it("returns false for identical paths (not a difference at all)", () => {
+    const p = "/Users/me/.pnpm/squadrant@0.19.2/dist/squadrantd.js";
+    expect(isVersionUpgrade(p, p)).toBe(false);
+  });
+});
+
+describe("decideForeignInstall (#752)", () => {
+  const registeredEntry = "/Users/me/.pnpm/squadrant@0.19.2/dist/squadrantd.js";
+  const thisEntry = "/Users/me/.pnpm/squadrant@0.19.3/dist/squadrantd.js";
+
+  it("proceeds with the one-line upgrade notice when isUpgrade=true", () => {
+    const decision = decideForeignInstall({ registeredEntry, thisEntry, isUpgrade: true });
+    expect(decision.proceed).toBe(true);
+    expect(decision.message).toBe(printVersionUpgradeNotice({ registeredEntry, thisEntry, isUpgrade: true }));
+    expect(decision.message).not.toContain("refusing to restart");
+  });
+
+  it("refuses with the full #670 banner when isUpgrade=false", () => {
+    const decision = decideForeignInstall({ registeredEntry, thisEntry, isUpgrade: false });
+    expect(decision.proceed).toBe(false);
+    expect(decision.message).toBe(printForeignInstallError({ registeredEntry, thisEntry, isUpgrade: false }));
+    expect(decision.message).toContain("refusing to restart");
+  });
+});
+
+describe("isReadOnlyCrewCommand (#752)", () => {
+  it("recognizes crew list/read/tasks as read-only", () => {
+    for (const sub of READ_ONLY_CREW_SUBCOMMANDS) {
+      expect(isReadOnlyCrewCommand(["node", "squadrant", "crew", sub])).toBe(true);
+    }
+  });
+
+  it("does not treat mutating crew subcommands as read-only", () => {
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "crew", "spawn"])).toBe(false);
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "crew", "close"])).toBe(false);
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "crew", "signal"])).toBe(false);
+  });
+
+  it("does not treat other top-level commands as read-only", () => {
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "heal", "daemon"])).toBe(false);
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "launch"])).toBe(false);
+  });
+
+  it("handles a bare `crew` invocation with no subcommand", () => {
+    expect(isReadOnlyCrewCommand(["node", "squadrant", "crew"])).toBe(false);
   });
 });
 

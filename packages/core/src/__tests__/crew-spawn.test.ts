@@ -444,6 +444,44 @@ describe("runCrewSpawn", () => {
       }
     });
 
+    // #745 live regression (0.19.3, 2026-09-03): the hook window was anchored at
+    // SPAWN START (100s), but the scrape — which is what actually SENDS the
+    // keystrokes — can legitimately run longer than that (90s readiness cap +
+    // ~16s of submit retries + a confirmedSendToPane fallback). The hook can
+    // therefore only stamp AFTER the poll's fixed window has already expired:
+    // measured 108.7s (task 33308346 — createdAt 1788409451151,
+    // firstTurnConfirmedAt 1788409559822), producing the false "First turn not
+    // delivered" warning on 3/3 spawns. The window must outlive the scrape.
+    it("suppresses the warning when the hook confirms just after a very slow scrape failure (#745 live)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        // Scrape grinds for 108s (90s readiness cap + retries) and gives up.
+        deps.sendFirstTurn = vi.fn().mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve({ delivered: false }), 108_000)),
+        );
+        let confirmedAt: number | undefined;
+        deps.getTaskRecord = vi.fn().mockImplementation(async () =>
+          ({ id: "task-001", firstTurnConfirmedAt: confirmedAt }) as TaskRecord,
+        );
+        // The hook stamps a second after the scrape gave up — the paste DID land.
+        setTimeout(() => { confirmedAt = Date.now(); }, 109_000);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        await vi.advanceTimersByTimeAsync(130_000);
+        await promise;
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).not.toMatch(/not.*delivered/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     // #745: when getTaskRecord is absent (pure unit test / no daemon wired),
     // behavior must be identical to before this fix — warn immediately, no poll.
     it("warns immediately without polling when getTaskRecord is not wired (#745)", async () => {

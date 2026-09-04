@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-09-04
+
+### Fixed
+
+- **False "First turn not delivered" warning + duplicate first-turn paste on cold Claude Code boot (#745).** `pollFirstTurnConfirmedAt`'s fixed 100s window was anchored at spawn start, but the hook can only stamp confirmation after the scrape submits — and the scrape itself gets up to ~106s of readiness/submit retries, so the poll could time out ~9s before a delivery that had, in fact, landed. The poll now runs through the scrape's unsettled window plus a 15s post-settle grace (180s absolute cap) and cancels once a verdict is reached. Separately, the "paste never rendered → re-paste once" rule fired on `sawDraft=false` even when a cold-boot paste had already been submitted before the draft was observed, submitting the whole turn twice; the re-paste (and its `confirmedSendToPane` fallback) is now gated on the pane still being frozen at the pre-send image.
+- **`heal daemon` false-FAIL on the plist-drift race, and a same-version-bump misclassified as a hijack (#751, #752).** `forceKickstartAndVerify` captured its "before" pid after `reconcilePlistAndService`'s bootout+bootstrap had already started the new instance, so a `kickstart -k` racing that fresh process could never observe a pid change and reported FAILED on an already-healthy daemon; `reregisterDaemon` now snapshots the pid before reconcile runs. Separately, the #670 foreign-install guard compared full paths, so a routine same-manager version bump (e.g. pnpm's `.pnpm/squadrant@0.19.2/` → `.pnpm/squadrant@0.19.3/`) was misread as a hijack and printed the refusal banner on every CLI call; same-manager/different-version is now classified as an upgrade and reconciled with a one-line notice, while a genuine different-manager hijack still refuses. Read-only crew subcommands (`list`/`read`/`tasks`) now skip `ensureDaemon` entirely.
+- **Gap-session handoff facts lost everything but the last exchange (#753).** `extractTranscriptTail` kept only the final user/assistant message per gap-session transcript, so an incidental last message (e.g. a daemon notice) could erase all record of what the session actually did. It now walks the full tail and builds a per-transcript digest — ordered user prompts, assistant final text per turn, tool-call counts, files touched, and PR/issue/commit references — capped at ~8KB, oldest entries truncated first.
+- **Boot-gap "daemon was down" alert read as a live outage when delivered late (#744).** The alert text carried only a bare minute count, so a copy stuck in an unreachable captain's mailbox for hours read as a current outage once finally delivered. `formatDownAlertText` now bakes the actual outage window (local time + tz offset) into the message, and the delivery loop prefixes a `[stale — generated N ago]` tag when a daemon-sourced message is delivered more than 1h after it was generated.
+
 ## [0.19.3] - 2026-09-03
 
 ### Fixed

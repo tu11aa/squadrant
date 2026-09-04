@@ -5,6 +5,7 @@ import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } f
 import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
+import { stalePrefix } from "./down-alert.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
@@ -383,7 +384,17 @@ export function createDelivery(
               log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
             }
           }
-          const result = await d.deliver(entry, async (text, sendOpts) => {
+          // #744: a daemon-generated captain.message (e.g. the boot-gap "daemon
+          // was down" alert) carries its own generation time in `entry.ts`
+          // already — no new field needed. If it sat in the mailbox long
+          // enough to actually deliver stale, flag that instead of letting it
+          // read as a current event.
+          let deliverEntry = entry;
+          if (entry.kind === "captain.message" && entry.payload?.source === "daemon" && entry.message) {
+            const prefix = stalePrefix(new Date(entry.ts).getTime(), Date.now());
+            if (prefix) deliverEntry = { ...entry, message: `${prefix}${entry.message}` };
+          }
+          const result = await d.deliver(deliverEntry, async (text, sendOpts) => {
             // #667 slice 4: try the native channel first. A throw here must never
             // break delivery — fall through to the pane, which is the behaviour that
             // predates this slice.

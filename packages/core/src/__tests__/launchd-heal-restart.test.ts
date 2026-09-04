@@ -224,4 +224,50 @@ describe("reregisterDaemon (#729 — heal daemon must never claim success on a n
 
     expect(() => reregisterDaemon(process.execPath, { pollAttempts: 2, pollDelayMs: 1 })).toThrow(/did not restart/);
   });
+
+  // #751: on program-arg drift (an upgrade — the registered entry differs
+  // from this install's), reconcilePlistAndService's bootout+bootstrap can
+  // ALREADY start the new daemon (launchd RunAtLoad) before forceKickstartAndVerify
+  // ever runs. If forceKickstartAndVerify computes its "before" pid AFTER that
+  // reconcile has already happened, it captures the NEW (already-correct) pid
+  // as the baseline — so a `kickstart -k` that keeps losing the race against
+  // the freshly-bootstrapped process (throwing on every retry) can never show
+  // a pid "change" during the poll, even though the daemon is already healthy.
+  // The true baseline must be the pid from BEFORE reconcile touched anything.
+  it("does not report failure when bootout+bootstrap already restarted the daemon before kickstart -k starts throwing (program-arg drift)", () => {
+    const thisEntry = daemonEntryPath();
+    let reconciled = false;
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "which") throw new Error("not found");
+      if (cmd === "launchctl" && args[0] === "bootout") return "";
+      if (cmd === "launchctl" && args[0] === "bootstrap") {
+        reconciled = true; // RunAtLoad: bootstrap already brings the new instance up
+        return "";
+      }
+      if (cmd === "launchctl" && args[0] === "print") {
+        return reconciled ? "pid = 200\n" : "pid = 100\n";
+      }
+      if (cmd === "launchctl" && args[0] === "kickstart") {
+        throw new Error("still unloading (exit-113)"); // -k keeps losing the race
+      }
+      return undefined;
+    });
+    // A plist with a DIFFERENT registered entry so programChanged=true (drift path).
+    const pathEnv = buildDaemonPath(process.env.PATH ?? "");
+    const stale = renderPlist(process.execPath, "/old/install/squadrantd.js", pathEnv);
+    vi.mocked(readFileSync).mockImplementation((p: unknown) => {
+      if (String(p).endsWith(".plist")) return stale;
+      throw new Error(`unexpected readFileSync(${p})`);
+    });
+    void thisEntry;
+
+    const result = reregisterDaemon(process.execPath, {
+      pollAttempts: 3, pollDelayMs: 1, kickstartRetries: 2, kickstartRetryDelayMs: 1,
+    });
+
+    expect(result.restarted).toBe(true);
+    expect(result.pidBefore).toBe(100);
+    expect(result.pidAfter).toBe(200);
+    expect(result.note).toMatch(/kickstart -k refused/);
+  });
 });
