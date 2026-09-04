@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt } from "../interactive/claude.js";
+import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt, hasActiveBackgroundWork } from "../interactive/claude.js";
 
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
@@ -619,5 +619,72 @@ describe("mapClaudeHookToEvent PermissionRequest (#760)", () => {
     const ev = mapClaudeHookToEvent("PermissionRequest", { tool_name: "Write", tool_input: {} }, TID);
     expect(ev!.type).not.toBe("task.done");
     expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+// #762: background_tasks/session_crons are a structural, agent-reported veto
+// on turn-completion — stronger than the #492 pendingTool veto because they
+// also cover Claude's own background tasks and session crons, which
+// pendingTool cannot see. Both fields are .optional() on the wire; absence
+// must mean false (matches cmux's own hasActiveClaudeBackgroundWork handling).
+describe("hasActiveBackgroundWork (#762)", () => {
+  it("false when both fields absent", () => {
+    expect(hasActiveBackgroundWork({})).toBe(false);
+    expect(hasActiveBackgroundWork(null)).toBe(false);
+    expect(hasActiveBackgroundWork(undefined)).toBe(false);
+  });
+
+  it("false when both present but empty (matches cmux's absence-means-false)", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [], session_crons: [] })).toBe(false);
+  });
+
+  it("true when background_tasks is non-empty", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [{ status: "running" }], session_crons: [] })).toBe(true);
+  });
+
+  it("true when session_crons is non-empty", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [], session_crons: [{ id: "cron-1" }] })).toBe(true);
+  });
+
+  it("ignores non-array values for either field", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: "not-an-array", session_crons: "also-not" })).toBe(false);
+  });
+});
+
+describe("mapClaudeHookToEvent Stop background_tasks/session_crons veto (#762)", () => {
+  const TID = "task-abc";
+
+  it("Stop with non-empty background_tasks → task.progress instead of task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", background_tasks: [{ status: "running" }] }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "stop-background-work" });
+  });
+
+  it("Stop with non-empty session_crons → task.progress instead of task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", session_crons: [{ id: "c1" }] }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "stop-background-work" });
+  });
+
+  it("Stop with empty background_tasks/session_crons → unchanged task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", background_tasks: [], session_crons: [] }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("Stop with no background_tasks/session_crons fields at all → unchanged task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done." }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("a trailing question STILL wins over an active background-task veto (explicit human ask beats liveness)", () => {
+    const ev = mapClaudeHookToEvent(
+      "Stop",
+      { last_assistant_message: "Which config should I use?", background_tasks: [{ status: "running" }] },
+      TID,
+    );
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("background-task veto composes with the #761 turnId resolution — turnId is only relevant on the non-vetoed path", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", last_assistant_message: "Done.", background_tasks: [] }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
   });
 });

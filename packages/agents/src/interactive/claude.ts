@@ -386,6 +386,23 @@ export function formatPermissionRequestQuestion(payload: unknown): string {
 }
 
 /**
+ * Pure: #762. A Stop payload's background_tasks/session_crons are a
+ * structural, agent-reported veto on turn-completion — stronger than the
+ * #492 pendingTool veto because it also covers Claude's own background
+ * tasks and session crons, which pendingTool cannot see. Both fields are
+ * .optional() on the wire; absence must mean false (matches cmux's own
+ * hasActiveClaudeBackgroundWork handling).
+ */
+export function hasActiveBackgroundWork(payload: unknown): boolean {
+  const p = payload as { background_tasks?: unknown; session_crons?: unknown } | null | undefined;
+  const tasks = p?.background_tasks;
+  if (Array.isArray(tasks) && tasks.length > 0) return true;
+  const crons = p?.session_crons;
+  if (Array.isArray(crons) && crons.length > 0) return true;
+  return false;
+}
+
+/**
  * Map a Claude hook event name to a squadrant ControlEvent. Codifies the anti-#2576
  * invariant: NO Claude hook ever maps to `task.done`/`task.failed`.
  * PostToolUse/SubagentStop = resume-liveness only (task.progress). SessionEnd is
@@ -401,6 +418,11 @@ export function formatPermissionRequestQuestion(payload: unknown): string {
  * a LAYERED source (last_assistant_message on the payload → transcript_path →
  * derived path from session_id+cwd); the payload field is the primary, I/O-free
  * source. All transcript I/O is best-effort and never throws (hook must exit 0).
+ * NARROW EXCEPTION #2 (#762): when neither of the above applies but
+ * hasActiveBackgroundWork(payload) is true, Stop maps to task.progress instead
+ * of task.turn.completed — the turn ended but background_tasks/session_crons
+ * are still running, so it is not a genuine turn boundary (same class as the
+ * #492 pendingTool veto, but agent-reported rather than inferred).
  *
  * Notification = Claude needs user attention. Classified via classifyNotification
  * (#760): notification_type in {permission_prompt, worker_permission_prompt} maps
@@ -454,6 +476,12 @@ export function mapClaudeHookToEvent(
       const question = text ? detectTrailingQuestion(text) : null;
       if (question) {
         return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question };
+      }
+      if (hasActiveBackgroundWork(payload)) {
+        // #762: the turn ended but background_tasks/session_crons are still
+        // running — not a genuine turn boundary. Liveness only, same class as
+        // the #492 pendingTool veto.
+        return { type: "task.progress", id: taskId, note: "stop-background-work" };
       }
       logStopPermissionMode(payload, taskId);
       return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload) };
