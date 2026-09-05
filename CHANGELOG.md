@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.5] - 2026-09-05
+
+### Fixed
+
+- **`claude.ts` emitted `--messaging-socket-path` before `--plugin-dir` on the crew launch command, truncating cmux's stored argv and breaking role classification/restore (#759).** cmux <=0.64.18 truncates `launchCommand.arguments` at `--messaging-socket-path` when storing it in `claude-hook-sessions.json`, so anything appended after it — including `--plugin-dir` — was dropped from the stored command; the flag actually reached the live Claude process fine, but the truncated stored argv is what cmux's role classification/session-restore reads. The flag is now appended at the end of the command, matching the ordering the launch-cmd path (#697) already used.
+
+### Added
+
+- **PermissionRequest registered as a hook source + Notification reclassified by `notification_type` (#760).** `PermissionRequest` fires ~6s before the matching `Notification` and carries `tool_name`/`tool_input` directly — a richer, earlier `task.blocked` source than sniffing `Notification.message`. Added to the managed hook set (#615) and the crew's own per-session hook set, via a new `formatPermissionRequestQuestion` helper that never dumps full `tool_input` (only a short, truncated file-path/command hint). `Notification` is now classified by the structured `notification_type` field (a 14-value enum on current Claude clients) instead of English substring matching; the old substring test is kept only as a fallback for clients that omit the field.
+- **Stop hook's `prompt_id` threaded through as the real per-turn `turnId` (#761).** `Stop`/`PermissionRequest`/`Notification` payloads all carry `prompt_id`, a UUID that matches across events of the same turn (verified live, claude 2.1.260). `mapClaudeHookToEvent` now uses it as `turnId` instead of the constant `"hook-stop"`, falling back to the constant when absent (older clients).
+- **Stop now vetoes turn-completion on active `background_tasks`/`session_crons` (#762).** These are a structural, agent-reported veto on turn-completion, stronger than the #492 `pendingTool` veto because they also cover Claude's own background tasks and session crons, which `pendingTool` cannot see. When either is non-empty, `Stop` maps to `task.progress` instead of `task.turn.completed`; the existing trailing-question detection still takes priority.
+- **New `StopFailure` hook source for API-error turn deaths (#763).** Previously a crew turn that died on an API error (529/overload/etc) was invisible until the watchdog reported a plain stall — the wrong story. `StopFailure` is now registered in the managed hook set (#615) and the crew's own per-session hook set, mapped to a new `ControlEvent` variant `task.turn.failed` carrying the resolved `turnId` and a redacted error string. `task.turn.failed` is deliberately **not** `task.failed` (anti-#2576: no hook may terminalize a task).
+
+Together, #760–#763 add two new entries to the squadrant-owned hook set installed into `~/.claude/settings.json` (`PermissionRequest`, `StopFailure`); `Notification` and `Stop` were already registered, only their in-code classification changed. Both new entries are written on the **next daemon boot** via `installClaudeHooks`, not on `npm install`.
+
 ## [0.19.4] - 2026-09-04
 
 ### Fixed

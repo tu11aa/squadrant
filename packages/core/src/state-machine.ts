@@ -191,6 +191,11 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       return stampAttempt(base, { resumeRef: ev.resumeRef }, now);
     case "task.turn.started":
       return { ...stampAttempt(base, {}, now), state: "working", pendingTool: undefined, pendingMonitor: undefined };
+    case "task.turn.failed":
+      // #763: a crew's turn died on an API error (StopFailure hook). Anti-#2576:
+      // NOT task.failed — a hook may never terminalize a task. Falls through to
+      // the exact same turn-boundary transition as task.turn.completed below;
+      // only the notify message (reduce.ts formatMessage) differs.
     case "task.turn.completed":
       // Anti-#2576 invariant: TurnCompleted is liveness, NEVER completion. Spec §4.8.
       // A turn ending while blocked must NOT unblock — only the captain's answer

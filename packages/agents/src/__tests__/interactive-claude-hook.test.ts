@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt } from "../interactive/claude.js";
+import { mapClaudeHookToEvent, detectTrailingQuestion, deriveTranscriptPath, isPermissionNotification, formatAskUserQuestionPrompt, hasActiveBackgroundWork, redactApiError } from "../interactive/claude.js";
 
 describe("mapClaudeHookToEvent", () => {
   const TID = "task-abc";
@@ -498,5 +498,253 @@ describe("mapClaudeHookToEvent PreToolUse AskUserQuestion (#560)", () => {
     const ev = mapClaudeHookToEvent("PreToolUse", { tool_name: "AskUserQuestion", tool_input: {} }, TID);
     expect(ev!.type).not.toBe("task.done");
     expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+// #761: Stop/PermissionRequest/Notification payloads all carry prompt_id — a
+// real per-turn correlation id that matched across events of the same turn
+// (verified live, 2026-09-04 compat study §8.3). Replaces the constant
+// "hook-stop" turnId the #492 turn-boundary work could not get a real id for.
+describe("mapClaudeHookToEvent Stop turnId (#761)", () => {
+  const TID = "task-abc";
+
+  it("Stop with prompt_id → turnId is the real per-turn id", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "204d13c6-abcd" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "204d13c6-abcd" });
+  });
+
+  it("Stop without prompt_id → turnId falls back to the constant (older clients)", () => {
+    const ev = mapClaudeHookToEvent("Stop", { session_id: "x" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("Stop with empty-string prompt_id → falls back to the constant", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("logs permission_mode when present (log-only, no behaviour change)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", permission_mode: "acceptEdits" }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("acceptEdits"));
+    spy.mockRestore();
+  });
+
+  it("does not log when permission_mode is absent", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mapClaudeHookToEvent("Stop", { prompt_id: "p1" }, TID);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
+// #760: notification_type is a REQUIRED, structured field on current Claude
+// clients (14-value enum) — a much more robust classifier than the English
+// substring test, which stays only as the fallback for older clients that
+// omit the field entirely.
+describe("mapClaudeHookToEvent Notification notification_type (#760)", () => {
+  const TID = "task-abc";
+
+  it("notification_type=permission_prompt → task.blocked even without permission wording in message", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "hi", notification_type: "permission_prompt" }, TID);
+    expect(ev).toEqual({
+      type: "task.blocked", id: TID,
+      reason: "crew awaiting permission (notification hook)", question: "hi",
+    });
+  });
+
+  it("notification_type=worker_permission_prompt → task.blocked", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "worker needs approval", notification_type: "worker_permission_prompt" }, TID);
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("notification_type=agent_needs_input → task.input.requested with a requestId", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "need input", notification_type: "agent_needs_input" }, TID);
+    expect(ev?.type).toBe("task.input.requested");
+    expect(typeof (ev as any).requestId).toBe("number");
+    expect((ev as any).question).toBe("need input");
+  });
+
+  it("notification_type=idle_prompt → task.progress (liveness only, never blocked)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Claude is thinking", notification_type: "idle_prompt" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+
+  it("notification_type=quota_auto_resume_fired → task.progress (no dedicated source yet, never blocked)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "quota resumed", notification_type: "quota_auto_resume_fired" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+
+  it("missing notification_type (older client) falls back to substring detection — permission message still blocks", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Claude needs your permission" }, TID);
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("missing notification_type, non-permission message → task.progress (unchanged fallback)", () => {
+    const ev = mapClaudeHookToEvent("Notification", { message: "Waiting for your input" }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "notification" });
+  });
+});
+
+// #760: PermissionRequest fires ~6s BEFORE the matching Notification, and
+// carries the tool name + input directly — a strictly better task.blocked
+// source than sniffing Notification.message.
+describe("mapClaudeHookToEvent PermissionRequest (#760)", () => {
+  const TID = "task-abc";
+
+  it("maps PermissionRequest → task.blocked with a question naming the tool and a short input hint", () => {
+    const payload = { tool_name: "Write", tool_input: { file_path: "/tmp/needs-approval.txt", content: "x".repeat(500) } };
+    const ev = mapClaudeHookToEvent("PermissionRequest", payload, TID);
+    expect(ev?.type).toBe("task.blocked");
+    const question = (ev as any).question as string;
+    expect(question).toContain("Write");
+    expect(question).toContain("/tmp/needs-approval.txt");
+    expect(question.length).toBeLessThan(200); // never dumps the full 500-char content
+  });
+
+  it("maps PermissionRequest for Bash → question includes a truncated command hint", () => {
+    const ev = mapClaudeHookToEvent("PermissionRequest", { tool_name: "Bash", tool_input: { command: "rm -rf /tmp/x" } }, TID);
+    expect((ev as any).question).toContain("Bash");
+    expect((ev as any).question).toContain("rm -rf /tmp/x");
+  });
+
+  it("maps PermissionRequest with missing/malformed tool_input → still task.blocked, generic hint, never throws", () => {
+    expect(mapClaudeHookToEvent("PermissionRequest", { tool_name: "Read" }, TID)?.type).toBe("task.blocked");
+    expect(mapClaudeHookToEvent("PermissionRequest", {}, TID)?.type).toBe("task.blocked");
+    expect(mapClaudeHookToEvent("PermissionRequest", null, TID)?.type).toBe("task.blocked");
+  });
+
+  it("anti-#2576 invariant: PermissionRequest never emits task.done or task.failed", () => {
+    const ev = mapClaudeHookToEvent("PermissionRequest", { tool_name: "Write", tool_input: {} }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+// #762: background_tasks/session_crons are a structural, agent-reported veto
+// on turn-completion — stronger than the #492 pendingTool veto because they
+// also cover Claude's own background tasks and session crons, which
+// pendingTool cannot see. Both fields are .optional() on the wire; absence
+// must mean false (matches cmux's own hasActiveClaudeBackgroundWork handling).
+describe("hasActiveBackgroundWork (#762)", () => {
+  it("false when both fields absent", () => {
+    expect(hasActiveBackgroundWork({})).toBe(false);
+    expect(hasActiveBackgroundWork(null)).toBe(false);
+    expect(hasActiveBackgroundWork(undefined)).toBe(false);
+  });
+
+  it("false when both present but empty (matches cmux's absence-means-false)", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [], session_crons: [] })).toBe(false);
+  });
+
+  it("true when background_tasks is non-empty", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [{ status: "running" }], session_crons: [] })).toBe(true);
+  });
+
+  it("true when session_crons is non-empty", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: [], session_crons: [{ id: "cron-1" }] })).toBe(true);
+  });
+
+  it("ignores non-array values for either field", () => {
+    expect(hasActiveBackgroundWork({ background_tasks: "not-an-array", session_crons: "also-not" })).toBe(false);
+  });
+});
+
+describe("mapClaudeHookToEvent Stop background_tasks/session_crons veto (#762)", () => {
+  const TID = "task-abc";
+
+  it("Stop with non-empty background_tasks → task.progress instead of task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", background_tasks: [{ status: "running" }] }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "stop-background-work" });
+  });
+
+  it("Stop with non-empty session_crons → task.progress instead of task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", session_crons: [{ id: "c1" }] }, TID);
+    expect(ev).toEqual({ type: "task.progress", id: TID, note: "stop-background-work" });
+  });
+
+  it("Stop with empty background_tasks/session_crons → unchanged task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", background_tasks: [], session_crons: [] }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("Stop with no background_tasks/session_crons fields at all → unchanged task.turn.completed", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done." }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+  });
+
+  it("a trailing question STILL wins over an active background-task veto (explicit human ask beats liveness)", () => {
+    const ev = mapClaudeHookToEvent(
+      "Stop",
+      { last_assistant_message: "Which config should I use?", background_tasks: [{ status: "running" }] },
+      TID,
+    );
+    expect(ev?.type).toBe("task.blocked");
+  });
+
+  it("background-task veto composes with the #761 turnId resolution — turnId is only relevant on the non-vetoed path", () => {
+    const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", last_assistant_message: "Done.", background_tasks: [] }, TID);
+    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
+  });
+});
+
+// #763: no source exists today for a crew turn killed by an API error — the
+// watchdog eventually reports it as a stall, which is the wrong story.
+// StopFailure carries error/error_details/last_assistant_message.
+describe("mapClaudeHookToEvent StopFailure (#763)", () => {
+  const TID = "task-abc";
+
+  it("maps StopFailure → task.turn.failed carrying the resolved turnId and the error", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { prompt_id: "p-1", error: "529 Overloaded" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "p-1", error: "529 Overloaded" });
+  });
+
+  it("StopFailure without prompt_id → turnId falls back to the constant", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { error: "network timeout" }, TID);
+    expect(ev).toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "network timeout" });
+  });
+
+  it("StopFailure with missing error → a generic placeholder, never throws", () => {
+    expect(mapClaudeHookToEvent("StopFailure", {}, TID))
+      .toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "unknown API error" });
+    expect(mapClaudeHookToEvent("StopFailure", null, TID))
+      .toEqual({ type: "task.turn.failed", id: TID, turnId: "hook-stop", error: "unknown API error" });
+  });
+
+  it("anti-#2576 invariant: StopFailure never emits task.done or task.failed", () => {
+    const ev = mapClaudeHookToEvent("StopFailure", { error: "x" }, TID);
+    expect(ev!.type).not.toBe("task.done");
+    expect(ev!.type).not.toBe("task.failed");
+  });
+});
+
+describe("redactApiError (#763)", () => {
+  it("truncates long error text to 300 chars plus an ellipsis", () => {
+    const scrubbed = redactApiError("x".repeat(500));
+    expect(scrubbed.length).toBeLessThanOrEqual(301);
+    expect(scrubbed.endsWith("…")).toBe(true);
+  });
+
+  it("scrubs an embedded Anthropic API key", () => {
+    const scrubbed = redactApiError("failed with key sk-ant-api03-abcdefghijklmnop");
+    expect(scrubbed).not.toContain("sk-ant-api03-abcdefghijklmnop");
+    expect(scrubbed).toContain("[redacted]");
+  });
+
+  it("scrubs an embedded GitHub token", () => {
+    const scrubbed = redactApiError("auth failed: ghp_abcdefghijklmnopqrstuvwx");
+    expect(scrubbed).not.toContain("ghp_abcdefghijklmnopqrstuvwx");
+  });
+
+  it("falls back to a generic label for a non-string/empty error", () => {
+    expect(redactApiError(undefined)).toBe("unknown API error");
+    expect(redactApiError(null)).toBe("unknown API error");
+    expect(redactApiError("")).toBe("unknown API error");
+    expect(redactApiError("   ")).toBe("unknown API error");
+  });
+
+  it("passes short, clean error text through unchanged", () => {
+    expect(redactApiError("529 Overloaded")).toBe("529 Overloaded");
   });
 });

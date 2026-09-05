@@ -195,6 +195,24 @@ describe("claude --messaging-socket-path (#667 slice 3)", () => {
     expect(promptFileIdx).toBeLessThan(mspIdx);
     expect(pluginDirIdx).toBeLessThan(mspIdx);
   });
+
+  // #759: assert --messaging-socket-path is literally the last argv token,
+  // not just "after" the other flags.
+  it("is the last argv token for the captain command", () => {
+    const roleFile = path.join(templatesDir, "captain.claude.md");
+    fs.writeFileSync(roleFile, "# captain");
+    const pluginDir = path.join(templatesDir, "..", "plugin");
+    fs.mkdirSync(pluginDir, { recursive: true });
+
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto", undefined, templatesDir,
+      "/tmp/cc-socks/squadrant-captain-demo.sock");
+
+    const tokens = cmd.trim().split(/\s+/);
+    const mspIdx = tokens.indexOf("--messaging-socket-path");
+    expect(mspIdx).toBeGreaterThan(-1);
+    expect(mspIdx).toBe(tokens.length - 2);
+  });
 });
 
 // ── thinking level → claude --effort ─────────────────────────────────────────
