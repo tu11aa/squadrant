@@ -54,6 +54,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   }
 
   const sideModel = sideRole?.model;
+  const sideThinking = sideRole?.thinking;
   const promptFile = path.join(
     TEMPLATES_DIR,
     `side.${input.role}.${agent.templateSuffix}.md`,
@@ -68,6 +69,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
       interactive: true,
       permissionMode: config.defaults.permissions?.crew ?? "auto",
       ...(sideModel ? { model: sideModel } : {}),
+      ...(sideThinking ? { thinking: sideThinking } : {}),
     });
 
   const sendFirstTurn = (pane: PaneRef, firstTurn: string, preLaunchScreen: string) =>
