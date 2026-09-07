@@ -1,5 +1,10 @@
 # cmux changelog review — 0.64.17 → 0.64.20
 
+> **Update (2026-09-04):** Superseded for CLI, store, and socket surfaces by
+> [`docs/specs/2026-09-04-cmux-0.64.22-compat-study.md`](2026-09-04-cmux-0.64.22-compat-study.md).
+> Specifically, §1 A1 and A6 below are superseded by rows 6 and 1–2 in the 0.64.22 study (both verified against Swift source).
+> This document remains authoritative for the Sparkle-updater hazard, the `feed.list` / `sessions list --json` findings (§2 B1/B2), and the #590/#564/#567 analysis.
+
 **Date:** 2026-07-24
 **Role:** research side-session
 **Baseline:** `packages/shared/src/lib/compat-manifest.ts:5` → cmux `{ min: "0.64.0", lastVerified: "0.64.17" }`
@@ -190,7 +195,7 @@ The bulk of 0.64.18/0.64.20 by volume: iOS app / TestFlight / App Store lanes / 
 
 ## 5. Recommended order
 
-1. **Do not upgrade yet.** Land a #567 remap-on-restart safety net first — cmux #1984 makes the upgrade itself the trigger.
+1. **Upgrade status (2026-09-04):** Upgraded to 0.64.22 per [`docs/specs/2026-09-04-cmux-0.64.22-compat-study.md`](2026-09-04-cmux-0.64.22-compat-study.md) — #567 full restore remains tracked under #567, but the 0.64.22 upgrade landed cleanly with all verification rows passing.
 2. **Adopt `feed.list` for delivery deferral (#484).** No upgrade needed; removes a failure class.
 3. **Fix #564 with `sessions list --json` surface targeting.** No upgrade needed.
 4. **Keep #590 on the launchd track.** cmux is exonerated; add signal-source logging.

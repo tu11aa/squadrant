@@ -87,7 +87,7 @@ function cmuxStdin(args: string[], input: string): Promise<string> {
   });
 }
 
-// Shape of `cmux workspace list --json` (cmux 0.64.16). Only the fields we
+// Shape of `cmux workspace list --json` (cmux 0.64.16, verified 0.64.22). Only the fields we
 // consume are typed; everything else in the payload is ignored.
 interface CmuxWorkspaceListJson {
   workspaces?: Array<{
@@ -98,7 +98,7 @@ interface CmuxWorkspaceListJson {
   }>;
 }
 
-// Shape of `cmux tree --json` (cmux 0.64.16). Surfaces nest as
+// Shape of `cmux tree --json` (cmux 0.64.16, verified 0.64.22). Surfaces nest as
 // windows[].workspaces[].panes[].surfaces[]; only consumed fields are typed.
 interface CmuxTreeJson {
   windows?: Array<{
@@ -554,7 +554,7 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async stop(ref: string): Promise<void> {
-      // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
+      // cmux 0.64.16+ (verified 0.64.22) refuses to close a pinned workspace. Unpin first so that
       // squadrant launch --fresh works even when the captain workspace is pinned.
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
@@ -566,7 +566,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
       // #295 / audit A1+B3: a crew tab must never steal focus from the captain.
-      // cmux 0.64.16's new-surface and new-pane both DEFAULT to --focus false,
+      // cmux 0.64.16+ (verified 0.64.22)'s new-surface and new-pane both DEFAULT to --focus false,
       // so we pass it explicitly (intent + resilience if the default changes)
       // and create the surface focus-neutrally. This REPLACES the old
       // snapshot-then-move-surface refocus dance, which depended on the fragile
@@ -629,7 +629,7 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // cmux 0.64.16's new-surface DEFAULTS to --focus false, so "background"
+      // cmux 0.64.16+ (verified 0.64.22)'s new-surface DEFAULTS to --focus false, so "background"
       // passes --focus false and the relay tab is created without ever stealing
       // focus from the captain — no snapshot-then-move-surface refocus dance
       // (audit A1+B3; the 0.64 freeform canvas broke the old tree-order==index

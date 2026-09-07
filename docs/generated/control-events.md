@@ -57,8 +57,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:452
   - packages/cli/src/squadrantd.ts:483
   - packages/core/src/daemon/reduce.ts:533
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:222
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:257
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
 - `task.blocked`
   - packages/agents/src/interactive/claude.ts:512
   - packages/agents/src/interactive/claude.ts:538
@@ -95,7 +95,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:481
   - packages/core/src/daemon/reduce.ts:632
   - packages/core/src/events/to-control-event.ts:24
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:243
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`
   - packages/agents/src/interactive/claude.ts:530
 - `task.delta`

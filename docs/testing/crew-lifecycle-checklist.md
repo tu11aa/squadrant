@@ -199,6 +199,12 @@ This run corrected the checklist methodology after the captain identified that t
 - **codex signal path verified intact.** PR #173's `--task-id` / `--project` injection in `developerInstructions` is working. The earlier apparent codex "failure" was a test error — a bare `squadrant crew signal done` (no `--task-id`) inside a codex crew, which correctly errors `SQUADRANT_CREW_TASK_ID unset`. The crew's self-signal via its own instructions works.
 - **Cross-reference issues:** #207 (relay as SPOF), #208 (captain polling defeats notification), #209 (cmux execFileSync hang), #210 (relay formatEntry drops idle events).
 
+## cmux upgrades (0.64.22+)
+
+When upgrading cmux, verify the runtime integration surfaces (see `docs/specs/2026-09-04-cmux-0.64.22-compat-study.md`):
+- [ ] **Row-5 stale `close-surface` check (#9422):** `cmux close-surface --workspace <ws> --surface surface:99999` fails closed (prints `Surface ref not found: surface:99999`, exits non-zero, closes nothing). `closePane` in squadrant cmux runtime swallows the error gracefully.
+- [ ] **Row-9 socket-policy reload check (#7988):** With daemon running and crew live, confirm `cmux capabilities | jq .access_mode` is `"automation"`; touching `~/.config/cmux/cmux.json` to reload config keeps daemon event stream connected and emitting `task.progress`.
+
 ## Agent upgrades (#667)
 
 Squadrant reads two agent-internal surfaces that are **not** promised-stable public
