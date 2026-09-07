@@ -14,10 +14,11 @@
 //     `task.progress` (B4/A3): a real-activity signal that refreshes the crew's
 //     liveness clock so the watchdog does not false-stall a crew mid long,
 //     screen-quiet tool call (#292).
-//   - `agent.hook.PostToolUse` (#542) → `task.progress` with the raw hook name
-//     as note, closing the tool-in-flight window PreToolUse opened. No
-//     run-state of its own (deriveRunState maps it to null); handled directly
-//     in handleLine so a real tool completion always clears `pendingTool`.
+//   - `agent.hook.PostToolUse` (#542, also mapped from push-notification in cmux 0.64.22) →
+//     `task.progress` with the raw hook name as note, closing the tool-in-flight
+//     window PreToolUse opened. No run-state of its own (deriveRunState maps it
+//     to null); handled directly in handleLine so a real tool completion always
+//     clears `pendingTool`.
 //
 // ADDITIVE & SAFE: this runs ALONGSIDE the existing relay-proxy/pane-reader path,
 // which stays as the fallback. Both emissions are liveness, NOT completion
@@ -52,8 +53,9 @@ export type RunState = "working" | "idle";
  * `Stop` is the existing turn-end signal (→ task.turn.completed). The "working"
  * hooks are the B4/A3 addition: they let the daemon keep a crew's liveness clock
  * fresh while it is mid (possibly long, screen-quiet) tool call, so the watchdog
- * does not false-stall it (#292). Only `PreToolUse` is live-confirmed in cmux
- * 0.64.16; `UserPromptSubmit` is mapped opportunistically (harmless if absent).
+ * does not false-stall it (#292). PreToolUse and Stop are live-confirmed;
+ * UserPromptSubmit and the cmux 0.64.22 push-notification → PostToolUse mapping
+ * are wired per upstream event definitions.
  */
 export function deriveRunState(eventName: string): RunState | null {
   switch (eventName) {

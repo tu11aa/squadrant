@@ -136,6 +136,12 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 
 Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `squadrant runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/runtimes/`) — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
 
+**cmux compatibility (verified on 0.64.22):**
+- Squadrant supports cmux `min: "0.64.0"`, with `lastVerified: "0.64.22"` (`packages/shared/src/lib/compat-manifest.ts`).
+- **Claude argv-truncation fix (cmux #8070):** cmux 0.64.19+ fixed the upstream issue where `launchCommand.arguments` was truncated at `--messaging-socket-path` in `claude-hook-sessions.json`. The squadrant flag-ordering workaround (placing `--messaging-socket-path` at the end of launch argv, #697/#759) and the `ps` argv-recovery fallback remain active to ensure safety on older cmux versions (retiring only when `min >= 0.64.19`).
+- **Stale surface closing (cmux #9422):** `cmux close-surface` fails closed (non-zero exit) on stale/unknown surfaces rather than falling back to the focused surface; squadrant's `closePane` catches and swallows the error gracefully.
+- **Access mode:** Squadrant operates with cmux socket control mode `automation` (`capabilities.access_mode: "automation"`). Live policy reload (#7988) maintains event subscriptions across configuration reloads.
+
 ### Workspace Abstraction
 
 Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `squadrant workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
