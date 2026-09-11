@@ -25,6 +25,7 @@ export * from "./session-freshness.js";
 export * from "./crew-protocol.js";
 export * from "./crew-lifecycle.js";
 export * from "./telegram/index.js";
+export * from "./router/index.js";
 export * from "./crew-routing.js";
 export * from "./restart-daemon.js";
 export * from "./group-dispatch.js";
