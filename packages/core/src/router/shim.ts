@@ -1,5 +1,6 @@
 // packages/core/src/router/shim.ts
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import type { RouterHealth, RouterShim, RouterShimOptions, RouterUpstream, RouterUsage } from "./types.js";
 export type { RouterShim } from "./types.js";
 import { resolveProject } from "./auth.js";
@@ -110,6 +111,26 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       log(`router upstream ${upstreamRes.status}: ${text.slice(0, 500)}`);
       const e = anthropicError(upstreamRes.status, "api_error", text.slice(0, 500) || "upstream error");
       writeJson(res, e.status, e.body);
+      return;
+    }
+
+    if (wantsStream && upstreamRes.body) {
+      res.writeHead(upstreamRes.status, {
+        "content-type": upstreamRes.headers.get("content-type") || "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const nodeStream = Readable.fromWeb(
+        upstreamRes.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+      );
+      nodeStream.on("error", () => {
+        try {
+          res.end();
+        } catch {
+          /* already closed */
+        }
+      });
+      nodeStream.pipe(res);
       return;
     }
 

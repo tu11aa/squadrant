@@ -150,6 +150,27 @@ describe("router shim integration", () => {
     expect(seen["anthropic-beta"]).toBe("configured");
   });
 
+  it("streams upstream SSE bytes through to the client byte-faithfully", async () => {
+    const sse = 'event: message_start\ndata: {"type":"message_start"}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(200, { "content-type": "text/event-stream" });
+      s.end(sse);
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", stream: true, messages: [] }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(await res.text()).toBe(sse);
+  });
+
   it("is safe to call start() and stop() more than once", async () => {
     upstream = await startMockUpstream((_q, s) => s.end("{}"));
     shim = createRouterShim({
