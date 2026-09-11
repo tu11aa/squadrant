@@ -12,6 +12,14 @@ async function startMockUpstream(
   return { url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) };
 }
 
+async function freePort(): Promise<number> {
+  const server: Server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  await new Promise<void>((r) => server.close(() => r()));
+  return port;
+}
+
 let shim: RouterShim | null = null;
 let upstream: { url: string; close: () => Promise<void> } | null = null;
 afterEach(async () => {
@@ -147,6 +155,7 @@ describe("router shim integration", () => {
     shim = createRouterShim({
       upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
       projectTokens: tokens,
+      port: await freePort(),
     });
     await Promise.all([shim.start(), shim.start()]);
     expect((await shim.health()).ready).toBe(true);

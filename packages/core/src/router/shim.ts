@@ -156,7 +156,10 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
         s.once("error", onStartupError);
         s.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => {
           s.off("error", onStartupError);
-          s.on("error", (err: Error) => log(`router server error: ${err.message}`));
+          s.on("error", (err: Error) => {
+            lastError = err instanceof Error ? err.message : String(err);
+            log(`router server error: ${lastError}`);
+          });
           server = s;
           const addr = s.address();
           boundPort = typeof addr === "object" && addr ? addr.port : 0;
@@ -170,6 +173,11 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       }
     },
     async stop() {
+      try {
+        await starting;
+      } catch {
+        /* ignore startup failure */
+      }
       const s = server;
       if (!s) return;
       server = undefined;
