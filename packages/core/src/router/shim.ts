@@ -123,7 +123,8 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       const nodeStream = Readable.fromWeb(
         upstreamRes.body as unknown as Parameters<typeof Readable.fromWeb>[0],
       );
-      nodeStream.on("error", () => {
+      nodeStream.on("error", (err) => {
+        log(`router upstream stream error: ${err instanceof Error ? err.message : String(err)}`);
         try {
           res.end();
         } catch {
@@ -131,6 +132,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
         }
       });
       nodeStream.pipe(res);
+      res.on("close", () => nodeStream.destroy());
       return;
     }
 

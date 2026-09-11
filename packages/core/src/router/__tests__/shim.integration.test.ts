@@ -185,6 +185,26 @@ describe("router shim integration", () => {
     expect(body.upstreamReachable).toBe(true);
   });
 
+  it("falls back to text/event-stream when the upstream omits a content-type", async () => {
+    const sse = 'data: {"type":"message_stop"}\n\n';
+    upstream = await startMockUpstream((_q, s) => {
+      s.end(sse);
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", stream: true, messages: [] }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(await res.text()).toBe(sse);
+  });
+
   it("is safe to call start() and stop() more than once", async () => {
     upstream = await startMockUpstream((_q, s) => s.end("{}"));
     shim = createRouterShim({
