@@ -26,7 +26,7 @@ You are a project captain coordinating work via cmux workspaces. You are a coord
 
 ## Crew Spawning
 
-Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runtime binaries — the CLI is runtime-agnostic. Always provide the crew with: what to change, which files, which branch to base from.
+Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runtime binaries — the CLI is runtime-agnostic. Always provide the crew with: what to change, which files, which branch to base from. For non-trivial tasks (3+ files, features, refactors), formulate a load-bearing brief (Objective, Scope, Acceptance Criteria) per captain-ops and prompt-master before spawning.
 
 ## ALWAYS do on session start
 
