@@ -78,9 +78,15 @@ Three `backend` modes behind one seam:
 
 | Mode | Claude points at | Protocol translation | Reasoning sanitize |
 |---|---|---|---|
-| `native` | CLI's own auth (unchanged) | n/a | n/a |
+| `native` **(global default)** | CLI's own auth (unchanged) | n/a | n/a |
 | `direct` | OpenRouter skin / CCR / LiteLLM / Anthropic | upstream | nobody (bug accepted) |
-| `proxy` **(default for `router`)** | squadrantd loopback shim | upstream | the shim |
+| `proxy` (default *when routing*) | squadrantd loopback shim | upstream | the shim |
+
+**Default is `native`.** The global default `backend` is `native`, so a user who stops paying
+for a router (or never configures one) reverts to a Claude subscription/API login with **zero
+config change and zero squadrant code in the path**. `proxy` and `direct` are opt-in: they only
+activate when `config.router` is present *and* the role/rule selects `backend:"router"`. No router
+config ⇒ behavior is byte-for-byte today's behavior.
 
 ```
  ┌──────────────┐   Anthropic Messages   ┌────────────────────┐   Anthropic Messages   ┌──────────────────┐
@@ -197,3 +203,5 @@ non-stream JSON rewriting.
 4. Thinking policy: normalize (placeholder signature), empirically validated, drop-as-fallback.
 5. `cache_control` passes through; only server-side tools / Anthropic-only fields are stripped.
 6. Streaming/tool-use passthrough; shim owns auth + cost capture.
+7. **Global default `backend` is `native`** — routing is opt-in; no router config means unchanged
+   Claude subscription/API behavior.
