@@ -1593,3 +1593,88 @@ ANTHROPIC_MODEL=<upstream model id>          # e.g. deepseek-v4.1-flash
 Upstream auth is **not** part of this env contract — it lives on the server side in
 `RouterUpstream.authHeader` (`"x-api-key"` for opencode-go) + `extraHeaders`
 (`{ "x-opencode-session": "<id>" }`). The client only holds the minted loopback token.
+
+---
+
+## Verification log
+
+Recorded 2026-09-11 on branch `develop` at commit `da91996` (Task 9.1 export commit).
+Baseline for the diffs is the U1 implementation start commit `918c497`.
+All commands run from the repo root.
+
+### 1. Only the one export changed in pre-existing production files
+
+```bash
+$ git diff --stat 918c497..HEAD -- ':!packages/core/src/router' ':!packages/core/src/index.ts'
+(no output)
+$ echo $?
+0
+```
+
+**Result:** PASS — empty output; U1 changed no pre-existing production file other than
+`packages/core/src/index.ts`.
+
+### 2. Daemon host is NOT wired (deferred to U2)
+
+```bash
+$ grep -n "createRouterShim\|router/index" packages/cli/src/squadrantd.ts
+(no output)
+$ echo $?
+1
+```
+
+**Result:** PASS — no matches (grep exit 1). `squadrantd.ts` remains unwired; U1 is inert.
+
+### 3. No driver / `SpawnOptions` change (deferred to U3)
+
+```bash
+$ git diff --stat 918c497..HEAD -- packages/agents
+(no output)
+$ echo $?
+0
+```
+
+**Result:** PASS — empty output; no driver or `SpawnOptions` changes.
+
+### 4. Full suite
+
+```bash
+$ pnpm test
+```
+
+Captured summary:
+
+```
+ Test Files  233 passed (233)
+      Tests  3090 passed (3090)
+   Start at  17:23:09
+   Duration  22.72s (transform 1.37s, setup 0ms, collect 8.11s, tests 14.78s, environment 16ms, prepare 5.84s)
+```
+
+**Result:** PASS — 233/233 files, 3090/3090 tests. **No flaky failures observed** this run;
+the known-flaky relay-proxy tests were green, so no baseline comparison was needed.
+
+### Task 9.1 local gates
+
+```bash
+$ pnpm exec tsc -b packages/core --force
+(exit 0)
+
+$ pnpm vitest run packages/core/src/router/
+ Test Files  5 passed (5)
+      Tests  26 passed (26)
+```
+
+**Result:** PASS.
+
+### Summary
+
+| # | Check | Expected | Observed |
+|---|-------|----------|----------|
+| 1 | diff `918c497..HEAD` excl. router + index.ts | empty | empty ✅ |
+| 2 | grep `squadrantd.ts` | no output | no output ✅ |
+| 3 | diff `packages/agents` | empty | empty ✅ |
+| 4 | `pnpm test` | pass | 233 files / 3090 tests pass ✅ |
+
+No unexpected output; U1 is confined to `packages/core/src/router/**` plus the single
+`packages/core/src/index.ts` export line, and remains unwired.
