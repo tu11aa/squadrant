@@ -68,6 +68,44 @@ describe("router shim integration", () => {
     expect(json.content[0].text).toBe("ok");
   });
 
+  it("forwards the sanitized body (strips Anthropic-only fields + server tools) upstream", async () => {
+    let received: Record<string, unknown> | undefined;
+    upstream = await startMockUpstream((req, s) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        received = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        s.writeHead(200, { "content-type": "application/json" });
+        s.end("{}");
+      });
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({
+        model: "m",
+        container: "c",
+        context_management: {},
+        mcp_servers: [],
+        tools: [
+          { type: "custom", name: "mcp__foo", input_schema: {} },
+          { type: "web_search_20250305", name: "web_search" },
+        ],
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(received?.container).toBeUndefined();
+    expect(received?.context_management).toBeUndefined();
+    expect(received?.mcp_servers).toBeUndefined();
+    expect((received?.tools as Array<{ type: string }>).map((t) => t.type)).toEqual(["custom"]);
+  });
+
   it("uses configured authHeader + extraHeaders and forwards anthropic-* headers", async () => {
     let seen: Record<string, string | string[] | undefined> = {};
     upstream = await startMockUpstream((req, s) => {
