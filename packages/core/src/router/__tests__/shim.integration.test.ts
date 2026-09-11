@@ -148,9 +148,11 @@ describe("router shim integration", () => {
       upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
       projectTokens: tokens,
     });
-    await shim.start();
-    await shim.start();
+    await Promise.all([shim.start(), shim.start()]);
+    expect((await shim.health()).ready).toBe(true);
+    expect(shim.url()).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     await shim.stop();
     await shim.stop();
+    expect((await shim.health()).ready).toBe(false);
   });
 });

@@ -51,6 +51,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
   const fetchImpl = opts.fetch ?? fetch;
   const log = opts.log ?? (() => {});
   let server: Server | undefined;
+  let starting: Promise<void> | undefined;
   let boundPort = 0;
   let lastError: string | undefined;
   let upstreamReachable = true;
@@ -145,14 +146,28 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
   return {
     async start() {
       if (server) return;
-      const s = createServer(handler);
-      await new Promise<void>((resolve, reject) => {
-        s.once("error", reject);
-        s.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => resolve());
+      if (starting) return starting;
+      starting = new Promise<void>((resolve, reject) => {
+        const s = createServer(handler);
+        const onStartupError = (err: Error): void => {
+          s.off("error", onStartupError);
+          reject(err);
+        };
+        s.once("error", onStartupError);
+        s.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => {
+          s.off("error", onStartupError);
+          s.on("error", (err: Error) => log(`router server error: ${err.message}`));
+          server = s;
+          const addr = s.address();
+          boundPort = typeof addr === "object" && addr ? addr.port : 0;
+          resolve();
+        });
       });
-      server = s;
-      const addr = s.address();
-      boundPort = typeof addr === "object" && addr ? addr.port : 0;
+      try {
+        await starting;
+      } finally {
+        starting = undefined;
+      }
     },
     async stop() {
       const s = server;
