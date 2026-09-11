@@ -76,16 +76,17 @@ describe("generic role templates — audit", () => {
 
   it("captain.claude.md lists prompt-master skill", () => {
     const body = readTemplate("captain.claude.md");
-    expect(body).toMatch(/squadrant:prompt-master/);
     const availableSkills = body.split("## Available Skills")[1] ?? "";
-    expect(availableSkills).toMatch(/quadrant:prompt-master/);
+    expect(availableSkills).toMatch(/squadrant:prompt-master/);
+    const crewSpawningSection =
+      (body.split("## Crew Spawning")[1] ?? body.split("## Core Rules")[1] ?? "").split(/##\s+/)[0] ?? "";
+    expect(crewSpawningSection).toMatch(/prompt-master/);
   });
 
   it("captain.generic.md references prompt-master guidance and has no forbidden tokens", () => {
     const body = readTemplate("captain.generic.md");
     const crewSpawningSection = body.split("## Crew Spawning")[1]?.split(/##\s+/)[0] ?? "";
     expect(crewSpawningSection).toMatch(/prompt-master/);
-    expect(body).toMatch(/prompt-master/);
     expect(findForbidden(body)).toEqual([]);
   });
 });
