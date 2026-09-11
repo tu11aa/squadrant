@@ -4,7 +4,7 @@
 
 **Goal:** Build a daemon-internal, loopback Anthropic-Messages reverse proxy (`RouterShim`) that forwards Claude Code traffic to any Anthropic-compatible upstream, sanitizing reasoning-replay and Anthropic-only fields, and recording usage/cost.
 
-**Architecture:** A `node:http` server inside `@squadrant/core` (`packages/core/src/router/`). It authenticates a daemon-minted bearer token, forwards `POST /v1/messages` to a configured upstream (OpenRouter's Anthropic skin by default), passes SSE through byte-for-byte while teeing usage, normalizes `thinking` block signatures, strips Anthropic server-side tools/fields for non-Anthropic upstreams, and re-emits errors as the Anthropic error envelope. It is inert until U2 wires config and U3 injects env.
+**Architecture:** A `node:http` server inside `@squadrant/core` (`packages/core/src/router/`). It authenticates a daemon-minted bearer token, forwards `POST /v1/messages` to a configured upstream (opencode-go by default), passes SSE through byte-for-byte while teeing usage, normalizes `thinking` block signatures, strips Anthropic server-side tools/fields for non-Anthropic upstreams, and re-emits errors as the Anthropic error envelope. It is inert until U2 wires config and U3 injects env.
 
 **Tech Stack:** TypeScript (Node 24), `node:http`, `node:stream`, global `fetch`, vitest. No new runtime dependencies.
 
@@ -28,7 +28,7 @@ All new files live under `packages/core/src/router/`:
 
 | File | Responsibility |
 |---|---|
-| `types.ts` | Public types: `RouterUpstream`, `RouterShimOptions`, `RouterShim`, `RouterUsage`, `RouterHealth`, `BackendMode`, `ThinkingPolicy` |
+| `types.ts` | Public types: `RouterUpstream` (incl. `authHeader` + `extraHeaders`), `RouterShimOptions`, `RouterShim`, `RouterUsage`, `RouterHealth`, `BackendMode`, `ThinkingPolicy` |
 | `auth.ts` | Mint/parse/verify the per-project bearer token |
 | `errors.ts` | Build the Anthropic error envelope |
 | `sanitize.ts` | Outbound request stripping + thinking-block normalization (request and response) |
@@ -51,24 +51,29 @@ Modified: `packages/core/src/index.ts` (one line: `export * from "./router/index
 
 > **This phase blocks Phase 6.** Do not implement signature normalization until the spike result is recorded below. The spike is throwaway and must be deleted after.
 
-**Environment assumptions:** `OPENROUTER_API_KEY` is exported in the shell. DeepSeek is reached through OpenRouter's Anthropic skin. Confirm the current model slug before starting:
+**Environment assumptions:** `OPENCODE_GO_KEY` is exported in the shell. The upstream is **opencode-go** (`https://opencode.ai/zen/go`), which speaks Anthropic Messages at `${base}/v1/messages`. Auth is the `x-api-key` header plus a **required** `x-opencode-session` header. The base URL must **NOT** contain `/v1` (Claude Code appends it; `/zen/go/v1` would become `/zen/go/v1/v1/messages` → 404). Verified live by the captain: raw HTTP → 200, `claude -p` → "pong".
 
-- [ ] **Step 0.1: Confirm the DeepSeek model slug**
+- [ ] **Step 0.1: Smoke-test the opencode-go contract**
 
 Run:
 ```bash
-curl -s https://openrouter.ai/api/v1/models | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const m=JSON.parse(d).data.filter(x=>x.id.includes('deepseek'));m.slice(0,10).forEach(x=>console.log(x.id))})"
+curl -sS https://opencode.ai/zen/go/v1/messages \
+  -H "x-api-key: $OPENCODE_GO_KEY" \
+  -H "x-opencode-session: spike-$(date +%s)" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"deepseek-v4.1-flash","max_tokens":16,"messages":[{"role":"user","content":"say pong"}]}'
 ```
-Expected: a list including a DeepSeek chat/reasoning slug (e.g. `deepseek/deepseek-chat` or a versioned id). Record the exact slug used below.
+Expected: HTTP 200 with a JSON message whose `content[0].text` is roughly "pong". If this fails, fix the key/session header before proceeding.
 
 - [ ] **Step 0.2: Baseline repro (no shim) — confirm the turn-2 failure**
 
-Run Claude Code pointed straight at OpenRouter's Anthropic skin:
+Run Claude Code pointed straight at opencode-go:
 ```bash
-export ANTHROPIC_BASE_URL="https://openrouter.ai/api" \
-       ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY" \
-       ANTHROPIC_API_KEY="" \
-       ANTHROPIC_MODEL="<deepseek-slug-from-0.1>"
+export ANTHROPIC_BASE_URL="https://opencode.ai/zen/go" \
+       ANTHROPIC_API_KEY="$OPENCODE_GO_KEY" \
+       ANTHROPIC_CUSTOM_HEADERS="x-opencode-session: spike-baseline" \
+       ANTHROPIC_MODEL="deepseek-v4.1-flash"
 claude
 ```
 In the session, perform a **3-turn tool-use** conversation:
@@ -87,8 +92,9 @@ Create `scripts/spikes/router-thinking-spike.mjs`:
 // Anthropic Messages to an upstream and rewrites signatureless thinking blocks.
 import { createServer } from "node:http";
 
-const UPSTREAM = process.env.SPIKE_UPSTREAM ?? "https://openrouter.ai/api";
-const KEY = process.env.OPENROUTER_API_KEY;
+const UPSTREAM = process.env.SPIKE_UPSTREAM ?? "https://opencode.ai/zen/go";
+const KEY = process.env.OPENCODE_GO_KEY;
+const SESSION = process.env.SPIKE_SESSION ?? `spike-${Date.now()}`;
 const MODE = process.env.SPIKE_MODE ?? "normalize"; // "normalize" | "drop"
 const PLACEHOLDER = "squadrant-router";
 let requestSeen = 0;
@@ -122,7 +128,8 @@ const server = createServer(async (req, res) => {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${KEY}`,
+      "x-api-key": KEY,
+      "x-opencode-session": SESSION,
       "anthropic-version": req.headers["anthropic-version"] ?? "2023-06-01",
     },
     body: JSON.stringify(body),
@@ -149,9 +156,8 @@ SPIKE_MODE=normalize node scripts/spikes/router-thinking-spike.mjs
 Terminal B:
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8799" \
-       ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY" \
-       ANTHROPIC_API_KEY="" \
-       ANTHROPIC_MODEL="<deepseek-slug-from-0.1>"
+       ANTHROPIC_API_KEY="$OPENCODE_GO_KEY" \
+       ANTHROPIC_MODEL="deepseek-v4.1-flash"
 claude
 ```
 Repeat the same 3 turns. Expected: **all 3 turns complete, tools run in each turn.**
@@ -166,7 +172,8 @@ Fill this in (and mirror it into the spec's Decision 4 note):
 
 ```
 GATE RESULT (decision b)
-- model slug:
+- upstream: opencode-go https://opencode.ai/zen/go
+- model: deepseek-v4.1-flash
 - baseline error (Step 0.2):
 - normalize-mode result (Step 0.4): PASS / FAIL
 - drop-mode result (Step 0.5): PASS / FAIL / N/A
@@ -204,12 +211,20 @@ export type BackendMode = "native" | "direct" | "proxy";
 export type ThinkingPolicy = "normalize" | "drop-unsigned";
 
 export interface RouterUpstream {
-  /** Origin + optional base path, no trailing slash needed.
-   *  e.g. "https://openrouter.ai/api" or "http://127.0.0.1:3456". */
+  /** Origin + base path, WITH NO VERSION SEGMENT (`/v1` is appended by the
+   *  client automatically). e.g. "https://opencode.ai/zen/go" or
+   *  "http://127.0.0.1:3456". Never include `/v1`, or the request becomes
+   *  `/…/v1/v1/messages` and 404s. */
   baseUrl: string;
-  /** Upstream credential, sent as `Authorization: Bearer <key>`.
-   *  For OpenRouter this is an `sk-or-…` token. */
+  /** Upstream credential. Sent in the header named by `authHeader`. */
   apiKey: string;
+  /** Header used to send `apiKey`. `"Authorization"` → `Authorization: Bearer <key>`
+   *  (default); `"x-api-key"` → `x-api-key: <key>` (opencode-go). */
+  authHeader?: string;
+  /** Extra headers merged into every upstream request, e.g.
+   *  { "x-opencode-session": "<id>" } — required by opencode-go (missing ⇒ 400
+   *  MissingSessionID). */
+  extraHeaders?: Record<string, string>;
   /** true when the upstream is real Anthropic. When false/absent, Anthropic-only
    *  server tools + request fields are stripped (spec decision 5). */
   isAnthropic?: boolean;
@@ -482,6 +497,39 @@ describe("router shim integration", () => {
     const json = (await res.json()) as { content: Array<{ text: string }> };
     expect(json.content[0].text).toBe("ok");
   });
+
+  it("uses configured authHeader + extraHeaders and forwards anthropic-* headers", async () => {
+    let seen: Record<string, string | string[] | undefined> = {};
+    upstream = await startMockUpstream((req, s) => {
+      seen = req.headers;
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end("{}");
+    });
+    shim = createRouterShim({
+      upstream: {
+        baseUrl: upstream.url,
+        apiKey: "go-key",
+        authHeader: "x-api-key",
+        extraHeaders: { "x-opencode-session": "sess-1" },
+        isAnthropic: false,
+      },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer tok-1",
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(seen["x-api-key"]).toBe("go-key");
+    expect(seen["x-opencode-session"]).toBe("sess-1");
+    expect(seen["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
+    expect(seen["authorization"]).toBeUndefined();
+  });
 });
 ```
 
@@ -495,12 +543,12 @@ Expected: FAIL — cannot resolve `../shim.js`.
 ```ts
 // packages/core/src/router/shim.ts
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { RouterHealth, RouterShim, RouterShimOptions, RouterUsage } from "./types.js";
+import type { RouterHealth, RouterShim, RouterShimOptions, RouterUpstream, RouterUsage } from "./types.js";
 import { resolveProject } from "./auth.js";
 import { anthropicError } from "./errors.js";
 
 /** Append an Anthropic path to a base URL without dropping a base path
- *  (https://openrouter.ai/api + /v1/messages => https://openrouter.ai/api/v1/messages). */
+ *  (https://opencode.ai/zen/go + /v1/messages => https://opencode.ai/zen/go/v1/messages). */
 export function joinUrl(base: string, path: string): string {
   return base.replace(/\/+$/, "") + path;
 }
@@ -514,6 +562,32 @@ async function readBody(req: IncomingMessage): Promise<string> {
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+const DEFAULT_AUTH_HEADER = "Authorization";
+
+/** Build upstream request headers: content negotiation, configured auth
+ *  (authHeader + extraHeaders), and a whitelist of client `anthropic-*`
+ *  headers (so `anthropic-beta` rides along). */
+function buildUpstreamHeaders(
+  req: IncomingMessage,
+  upstream: RouterUpstream,
+  stream: boolean,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: stream ? "text/event-stream" : "application/json",
+  };
+  const authName = upstream.authHeader ?? DEFAULT_AUTH_HEADER;
+  headers[authName] =
+    authName.toLowerCase() === "authorization" ? `Bearer ${upstream.apiKey}` : upstream.apiKey;
+  for (const [k, v] of Object.entries(upstream.extraHeaders ?? {})) headers[k] = v;
+  for (const [k, v] of Object.entries(req.headers)) {
+    const key = k.toLowerCase();
+    if (key.startsWith("anthropic-") && typeof v === "string") headers[key] = v;
+  }
+  if (!headers["anthropic-version"]) headers["anthropic-version"] = "2023-06-01";
+  return headers;
 }
 
 export function createRouterShim(opts: RouterShimOptions): RouterShim {
@@ -554,12 +628,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     try {
       upstreamRes = await fetchImpl(upstreamUrl, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: body.stream === true ? "text/event-stream" : "application/json",
-          authorization: `Bearer ${opts.upstream.apiKey}`,
-          "anthropic-version": (req.headers["anthropic-version"] as string) ?? "2023-06-01",
-        },
+        headers: buildUpstreamHeaders(req, opts.upstream, body.stream === true),
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -640,7 +709,7 @@ export * from "./shim.js";
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm vitest run packages/core/src/router/__tests__/shim.integration.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -825,7 +894,7 @@ git commit -m "feat(#773): add /healthz readiness endpoint"
 import { describe, it, expect } from "vitest";
 import { sanitizeRequest } from "../sanitize.js";
 
-const openrouter = { baseUrl: "https://openrouter.ai/api", apiKey: "k", isAnthropic: false };
+const nonAnthropic = { baseUrl: "https://opencode.ai/zen/go", apiKey: "k", isAnthropic: false };
 const anthropic = { baseUrl: "https://api.anthropic.com", apiKey: "k", isAnthropic: true };
 
 describe("sanitizeRequest", () => {
@@ -842,7 +911,7 @@ describe("sanitizeRequest", () => {
       ],
       messages: [{ role: "user", content: "hi" }],
     };
-    const out = sanitizeRequest(body, openrouter, "normalize");
+    const out = sanitizeRequest(body, nonAnthropic, "normalize");
     expect(out.container).toBeUndefined();
     expect(out.context_management).toBeUndefined();
     expect(out.mcp_servers).toBeUndefined();
@@ -856,7 +925,7 @@ describe("sanitizeRequest", () => {
 
   it("leaves cache_control untouched", () => {
     const body = { system: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }] };
-    const out = sanitizeRequest(body, openrouter, "normalize");
+    const out = sanitizeRequest(body, nonAnthropic, "normalize");
     expect((out.system as Array<{ cache_control: unknown }>)[0].cache_control).toEqual({ type: "ephemeral" });
   });
 });
@@ -874,7 +943,8 @@ Expected: FAIL — cannot resolve `../sanitize.js`.
 import type { RouterUpstream, ThinkingPolicy } from "./types.js";
 
 // Anthropic executes these server-side; a third-party upstream cannot, and
-// OpenRouter rejects the request when they are present (#31380).
+// rejects the request when they are present (OpenRouter #31380; same class for
+// opencode-go).
 export const SERVER_TOOL_TYPE_RE = /^(bash|text_editor|str_replace_editor|computer|web_search|code_execution|memory)_\d+/;
 
 /** Request fields only real Anthropic understands. */
@@ -885,8 +955,8 @@ function isObj(v: unknown): v is Record<string, unknown> {
 }
 
 /** Strip the outbound request for a non-Anthropic upstream. cache_control is
- *  deliberately preserved — OpenRouter converts breakpoints to provider-native
- *  caching (spec decision 5). */
+ *  deliberately preserved — the upstream maps cache breakpoints to its own
+ *  provider-native caching (spec decision 5). */
 export function sanitizeRequest(
   body: Record<string, unknown>,
   upstream: RouterUpstream,
@@ -956,7 +1026,7 @@ describe("thinking normalization", () => {
     const body = {
       messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "" }] }],
     };
-    const out = sanitizeRequest(body, openrouter, "normalize") as {
+    const out = sanitizeRequest(body, nonAnthropic, "normalize") as {
       messages: Array<{ content: Array<{ signature: string }> }>;
     };
     expect(out.messages[0].content[0].signature).toBe("squadrant-router");
@@ -966,7 +1036,7 @@ describe("thinking normalization", () => {
     const body = {
       messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "sig" }] }],
     };
-    const out = sanitizeRequest(body, openrouter, "normalize") as {
+    const out = sanitizeRequest(body, nonAnthropic, "normalize") as {
       messages: Array<{ content: Array<{ signature: string }> }>;
     };
     expect(out.messages[0].content[0].signature).toBe("sig");
@@ -975,7 +1045,7 @@ describe("thinking normalization", () => {
   it("drops redacted_thinking blocks", () => {
     const out = sanitizeRequest(
       { messages: [{ role: "assistant", content: [{ type: "redacted_thinking", data: "x" }] }] },
-      openrouter,
+      nonAnthropic,
       "normalize",
     ) as { messages: Array<{ content: unknown[] }> };
     expect(out.messages[0].content).toEqual([]);
@@ -984,7 +1054,7 @@ describe("thinking normalization", () => {
   it("drop-unsigned policy removes unsigned thinking blocks", () => {
     const out = sanitizeRequest(
       { messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "" }] }] },
-      openrouter,
+      nonAnthropic,
       "drop-unsigned",
     ) as { messages: Array<{ content: unknown[] }> };
     expect(out.messages[0].content).toEqual([]);
@@ -1501,7 +1571,7 @@ git commit -m "docs(#773): record U1 native-unchanged verification"
 | Risk (from spec §Open questions) | Mitigation in this plan |
 |---|---|
 | Placeholder signature is rejected upstream | **Phase 0 blocking gate** decides `normalize` vs `drop-unsigned` before any Phase 6 code. Recorded SHIPPED POLICY drives the default. If neither passes, STOP and report. |
-| Upstream protocol drift (OpenRouter skin changes) | The mock-upstream integration tests pin the contract we depend on (SSE shape, `usage`, error envelope). Re-run **Phase 0** whenever the OpenRouter integration guide / Claude Code version changes; treat a Phase 0 failure as a signal to re-open decision (b). |
+| Upstream protocol drift (opencode-go contract changes) | The mock-upstream integration tests pin the contract we depend on (SSE shape, `usage`, error envelope). Re-run **Phase 0** whenever the opencode-go contract (`x-opencode-session`, auth header, model slug) or the Claude Code version changes; treat a Phase 0 failure as a signal to re-open decision (b). |
 | Byte-faithful streaming | `shim.integration.test.ts` asserts `res.text() === sse` exactly; the usage tee is byte-neutral by construction. |
 | `native` regression | Phase 9 proves U1 touches only new files + one export, and never wires the daemon. |
 | Port/socket leakage in tests | Every integration test starts the shim on port 0 and stops it in `afterEach`. |
@@ -1513,5 +1583,9 @@ Documented here for U3; **not implemented in U1**:
 ANTHROPIC_BASE_URL=http://127.0.0.1:<port>   # shim.url()
 ANTHROPIC_AUTH_TOKEN=<minted project token>  # mintToken(), keyed in projectTokens
 ANTHROPIC_API_KEY=""                         # explicitly empty — prevents Anthropic fallback
-ANTHROPIC_MODEL=<upstream model id>          # e.g. deepseek/deepseek-chat
+ANTHROPIC_MODEL=<upstream model id>          # e.g. deepseek-v4.1-flash
 ```
+
+Upstream auth is **not** part of this env contract — it lives on the server side in
+`RouterUpstream.authHeader` (`"x-api-key"` for opencode-go) + `extraHeaders`
+(`{ "x-opencode-session": "<id>" }`). The client only holds the minted loopback token.
