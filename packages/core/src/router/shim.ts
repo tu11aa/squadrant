@@ -36,14 +36,13 @@ function buildUpstreamHeaders(
     "content-type": "application/json",
     accept: stream ? "text/event-stream" : "application/json",
   };
-  const authName = upstream.authHeader ?? DEFAULT_AUTH_HEADER;
-  headers[authName] =
-    authName.toLowerCase() === "authorization" ? `Bearer ${upstream.apiKey}` : upstream.apiKey;
-  for (const [k, v] of Object.entries(upstream.extraHeaders ?? {})) headers[k] = v;
   for (const [k, v] of Object.entries(req.headers)) {
     const key = k.toLowerCase();
     if (key.startsWith("anthropic-") && typeof v === "string") headers[key] = v;
   }
+  for (const [k, v] of Object.entries(upstream.extraHeaders ?? {})) headers[k.toLowerCase()] = v;
+  const authName = (upstream.authHeader ?? DEFAULT_AUTH_HEADER).toLowerCase();
+  headers[authName] = authName === "authorization" ? `Bearer ${upstream.apiKey}` : upstream.apiKey;
   if (!headers["anthropic-version"]) headers["anthropic-version"] = "2023-06-01";
   return headers;
 }
@@ -73,20 +72,27 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       return;
     }
 
-    let body: Record<string, unknown>;
+    let parsed: unknown;
     try {
-      body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      parsed = JSON.parse(await readBody(req));
     } catch {
       const e = anthropicError(400, "invalid_request_error", "malformed JSON body");
       writeJson(res, e.status, e.body);
       return;
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      const e = anthropicError(400, "invalid_request_error", "request body must be a JSON object");
+      writeJson(res, e.status, e.body);
+      return;
+    }
+    const body = parsed as Record<string, unknown>;
+    const wantsStream = body.stream === true;
 
     let upstreamRes: Response;
     try {
       upstreamRes = await fetchImpl(upstreamUrl, {
         method: "POST",
-        headers: buildUpstreamHeaders(req, opts.upstream, body.stream === true),
+        headers: buildUpstreamHeaders(req, opts.upstream, wantsStream),
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -107,9 +113,9 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     }
 
     const text = await upstreamRes.text();
-    let parsed: Record<string, unknown>;
+    let upstreamBody: Record<string, unknown>;
     try {
-      parsed = JSON.parse(text) as Record<string, unknown>;
+      upstreamBody = JSON.parse(text) as Record<string, unknown>;
     } catch {
       const e = anthropicError(502, "api_error", "upstream returned non-JSON");
       writeJson(res, e.status, e.body);
@@ -117,12 +123,20 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     }
     void emitUsage;
     void project;
-    writeJson(res, upstreamRes.status, parsed);
+    writeJson(res, upstreamRes.status, upstreamBody);
   }
 
   function handler(req: IncomingMessage, res: ServerResponse): void {
     if (req.method === "POST" && req.url === "/v1/messages") {
-      void handleMessages(req, res);
+      void handleMessages(req, res).catch((err) => {
+        log(`router internal error: ${err instanceof Error ? err.message : String(err)}`);
+        if (!res.headersSent) {
+          const e = anthropicError(502, "api_error", "router internal error");
+          writeJson(res, e.status, e.body);
+        } else {
+          res.end();
+        }
+      });
       return;
     }
     writeJson(res, 404, anthropicError(404, "not_found_error", "not found").body);
@@ -131,18 +145,22 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
   return {
     async start() {
       if (server) return;
-      server = createServer(handler);
+      const s = createServer(handler);
       await new Promise<void>((resolve, reject) => {
-        server!.once("error", reject);
-        server!.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => resolve());
+        s.once("error", reject);
+        s.listen(opts.port ?? 0, opts.host ?? "127.0.0.1", () => resolve());
       });
-      const addr = server.address();
+      server = s;
+      const addr = s.address();
       boundPort = typeof addr === "object" && addr ? addr.port : 0;
     },
     async stop() {
-      if (!server) return;
-      await new Promise<void>((resolve) => server!.close(() => resolve()));
+      const s = server;
+      if (!s) return;
       server = undefined;
+      boundPort = 0;
+      s.closeAllConnections?.();
+      await new Promise<void>((resolve) => s.close(() => resolve()));
     },
     url() {
       return `http://${opts.host ?? "127.0.0.1"}:${boundPort}`;

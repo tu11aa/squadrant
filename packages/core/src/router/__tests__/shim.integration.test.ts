@@ -92,4 +92,65 @@ describe("router shim integration", () => {
     expect(seen["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
     expect(seen["authorization"]).toBeUndefined();
   });
+
+  it("rejects a non-object JSON body with 400 without marking upstream unreachable", async () => {
+    upstream = await startMockUpstream((_q, s) => s.end("{}"));
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: "null",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.type).toBe("invalid_request_error");
+    expect((await shim.health()).upstreamReachable).toBe(true);
+  });
+
+  it("does not let client headers override configured extraHeaders", async () => {
+    let seen: Record<string, string | string[] | undefined> = {};
+    upstream = await startMockUpstream((req, s) => {
+      seen = req.headers;
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end("{}");
+    });
+    shim = createRouterShim({
+      upstream: {
+        baseUrl: upstream.url,
+        apiKey: "go-key",
+        authHeader: "x-api-key",
+        extraHeaders: { "x-opencode-session": "sess-1", "anthropic-beta": "configured" },
+        isAnthropic: false,
+      },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer tok-1",
+        "x-opencode-session": "evil",
+        "anthropic-beta": "evil",
+      },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(seen["x-opencode-session"]).toBe("sess-1");
+    expect(seen["anthropic-beta"]).toBe("configured");
+  });
+
+  it("is safe to call start() and stop() more than once", async () => {
+    upstream = await startMockUpstream((_q, s) => s.end("{}"));
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    await shim.start();
+    await shim.stop();
+    await shim.stop();
+  });
 });
