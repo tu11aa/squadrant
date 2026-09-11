@@ -119,6 +119,13 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       } catch {
         /* keep raw text */
       }
+      if (upstreamRes.status >= 500) {
+        upstreamReachable = false;
+        lastError = message || "upstream error";
+        const e = anthropicError(502, "api_error", lastError);
+        writeJson(res, e.status, e.body);
+        return;
+      }
       const e = anthropicError(upstreamRes.status, "api_error", message || "upstream error");
       writeJson(res, e.status, e.body);
       return;

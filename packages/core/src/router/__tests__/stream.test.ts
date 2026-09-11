@@ -36,6 +36,19 @@ describe("createUsageTee", () => {
     expect(seen[0].outputTokens).toBe(3);
   });
 
+  it("decodes a multi-byte codepoint split across chunk boundaries without corrupting the scan", async () => {
+    const seen: RouterUsage[] = [];
+    const tee = createUsageTee("p", (u) => seen.push(u));
+    const payload = Buffer.from(
+      'data: {"type":"message_delta","text":"é","usage":{"output_tokens":4}}\n\n',
+    );
+    const at = payload.indexOf(Buffer.from("é"));
+    expect(at).toBeGreaterThan(-1);
+    const out = await collect(Readable.from([payload.subarray(0, at + 1), payload.subarray(at + 1)]).pipe(tee));
+    expect(out.equals(payload)).toBe(true);
+    expect(seen[0].outputTokens).toBe(4);
+  });
+
   it("emits a trailing data: line with no terminating newline at flush", async () => {
     const seen: RouterUsage[] = [];
     const tee = createUsageTee("p", (u) => seen.push(u));

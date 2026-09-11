@@ -140,6 +140,26 @@ describe("router shim integration", () => {
     expect(seen["authorization"]).toBeUndefined();
   });
 
+  it("sends the default Authorization: Bearer <apiKey> upstream header", async () => {
+    let seen: Record<string, string | string[] | undefined> = {};
+    upstream = await startMockUpstream((req, s) => {
+      seen = req.headers;
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end("{}");
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(seen["authorization"]).toBe("Bearer k");
+  });
+
   it("rejects a non-object JSON body with 400 without marking upstream unreachable", async () => {
     upstream = await startMockUpstream((_q, s) => s.end("{}"));
     shim = createRouterShim({
@@ -178,6 +198,48 @@ describe("router shim integration", () => {
     expect(json.error.type).toBe("api_error");
     expect(json.error.message).toContain("thinking must be passed back");
     expect(json.error.message).toBe("thinking must be passed back");
+  });
+
+  it("maps an upstream 5xx to a 502 envelope and flips upstreamReachable false", async () => {
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(500, { "content-type": "application/json" });
+      s.end(JSON.stringify({ error: { message: "boom" } }));
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(res.status).toBe(502);
+    const json = (await res.json()) as { error: { type: string; message: string } };
+    expect(json.error.type).toBe("api_error");
+    expect(json.error.message).toBe("boom");
+    expect((await shim.health()).upstreamReachable).toBe(false);
+  });
+
+  it("keeps a 4xx status pass-through without poisoning upstreamReachable", async () => {
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(400, { "content-type": "application/json" });
+      s.end(JSON.stringify({ error: { message: "bad" } }));
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.type).toBe("api_error");
+    expect((await shim.health()).upstreamReachable).toBe(true);
   });
 
   it("returns a 502 Anthropic envelope when the upstream is unreachable", async () => {

@@ -3,9 +3,6 @@
 // squadrant never speaks the OpenAI protocol (spec decision 1).
 export type BackendMode = "native" | "direct" | "proxy";
 
-/** Decision (b): how to treat an assistant thinking block with no signature. */
-export type ThinkingPolicy = "normalize" | "drop-unsigned";
-
 export interface RouterUpstream {
   /** Origin + base path, WITH NO VERSION SEGMENT (`/v1` is appended by the
    *  client automatically). e.g. "https://opencode.ai/zen/go" or
@@ -49,8 +46,6 @@ export interface RouterShimOptions {
   port?: number;
   /** Default "127.0.0.1". */
   host?: string;
-  /** Default "normalize". */
-  thinkingPolicy?: ThinkingPolicy;
   /** Injectable fetch for tests. */
   fetch?: typeof fetch;
   /** Best-effort usage/cost sink. Must never throw. */

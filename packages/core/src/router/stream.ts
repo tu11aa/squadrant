@@ -1,5 +1,6 @@
 // packages/core/src/router/stream.ts
 import { Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import type { RouterUsage } from "./types.js";
 
 function num(v: unknown): number | undefined {
@@ -89,14 +90,16 @@ function scan(bufRef: { value: string }, acc: RouterUsage): boolean {
 export function createUsageTee(project: string, onUsage: (u: RouterUsage) => void): Transform {
   const buf = { value: "" };
   const acc: RouterUsage = { project };
+  const decoder = new StringDecoder("utf8");
   let sawUsage = false;
   return new Transform({
     transform(chunk: Buffer, _enc, cb) {
-      buf.value += chunk.toString("utf8");
+      buf.value += decoder.write(chunk);
       sawUsage = scan(buf, acc) || sawUsage;
       cb(null, chunk);
     },
     flush(cb) {
+      buf.value += decoder.end();
       // Drain an unterminated final line (no trailing newline).
       if (buf.value.trim() !== "") {
         buf.value += "\n";
