@@ -63,14 +63,21 @@ owns the translation?** The answer determined below is deliberately narrow, beca
    placeholder `signature` when empty, preserving `text`; `redacted_thinking` and unrecognized
    reasoning artifacts are stripped. Validate live (see §7); if upstream rejects the placeholder,
    fall back to "drop unsigned thinking + provider-native empty reasoning."
-5. **(c) Caching passes through untouched.** `cache_control` is OpenRouter's job to convert.
+   **Empirical result (2026-09-11, opencode-go `deepseek-v4.1-flash`): the bug does NOT
+   reproduce** — the upstream returns a non-empty `signature` on thinking blocks and multi-turn
+   tool-use replay succeeds (intra-invocation agentic loop and cross-invocation `-c`). The
+   sanitizer is therefore not required for U1's upstream and Phase 6 is skipped. Revisit only if
+   the upstream contract changes.
+5. **(c) Caching passes through untouched.** `cache_control` is the upstream's job to convert.
    Only Anthropic *server-side* tools (`bash_20250124`, `text_editor_*`, `computer_*`,
    `web_search_*`) and Anthropic-only request fields (`container`, `context_management`,
-   `mcp_servers`, betas) are stripped for non-Anthropic upstreams; custom/MCP tool definitions
-   pass untouched.
+   `mcp_servers`) are stripped for non-Anthropic upstreams; custom/MCP tool definitions pass
+   untouched. The `anthropic-beta` **header** is deliberately forwarded (whitelisted) — only the
+   body-form fields listed here are stripped.
 6. **(d) Streaming and tool-use pass through; auth and cost are owned by the shim.** No SSE
    reassembly (the Anthropic seam is already Anthropic-shaped). Client bearer is swapped for the
-   upstream key. `usage` (+ OpenRouter `usage.cost`) is captured; no local price table in v1.
+   upstream auth header. `usage` (plus the top-level `cost` the upstream returns — observed as a
+   numeric string on opencode-go) is captured; no local price table in v1.
 
 ## Architecture
 
