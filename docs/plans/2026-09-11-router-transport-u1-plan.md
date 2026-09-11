@@ -171,14 +171,18 @@ If Step 0.4 still 400s, restart the spike with `SPIKE_MODE=drop` and repeat. Exp
 Fill this in (and mirror it into the spec's Decision 4 note):
 
 ```
-GATE RESULT (decision b)
+GATE RESULT (decision b) — RECORDED 2026-09-11
 - upstream: opencode-go https://opencode.ai/zen/go
 - model: deepseek-v4.1-flash
-- baseline error (Step 0.2):
-- normalize-mode result (Step 0.4): PASS / FAIL
-- drop-mode result (Step 0.5): PASS / FAIL / N/A
-- SHIPPED POLICY (exactly one): "normalize" | "drop-unsigned"
+- baseline error (Step 0.2): NONE — bug did NOT reproduce
+- intra-invocation (3 tool turns) + cross-invocation (`-c`) replay: both HTTP 200
+- normalize-mode result (Step 0.4): N/A (bug absent)
+- drop-mode result (Step 0.5): N/A (bug absent)
+- SHIPPED POLICY: none — opencode-go returns a non-empty thinking `signature`
+  (observed = message id). **Phase 6 SKIPPED** per the Step 0.2 skip clause.
 ```
+
+Marked steps: 0.1 ✅ 0.2 ✅ 0.3–0.5 skipped (no bug to fix) 0.6 ✅ 0.7 ✅
 
 - [ ] **Step 0.7: Delete the spike + commit the result**
 
@@ -188,7 +192,7 @@ git add docs/specs/2026-09-11-router-transport-u1-design.md docs/plans/2026-09-1
 git commit -m "docs(#773): record U1 thinking-spike gate result"
 ```
 
-**Gate rule:** Phase 6's first code step must set the default `thinkingPolicy` to the SHIPPED POLICY recorded in Step 0.6. If neither mode passed, STOP — report to the captain; do not invent a third workaround.
+**Gate rule:** If a bug was reproduced, Phase 6's first code step must set the default `thinkingPolicy` to the SHIPPED POLICY recorded in Step 0.6. If no bug reproduced (this run), skip Phase 6. If a bug reproduced and neither mode passed, STOP — report to the captain; do not invent a third workaround.
 
 ---
 
