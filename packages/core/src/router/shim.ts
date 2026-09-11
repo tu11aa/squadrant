@@ -5,6 +5,7 @@ import type { RouterHealth, RouterShim, RouterShimOptions, RouterUpstream, Route
 export type { RouterShim } from "./types.js";
 import { resolveProject } from "./auth.js";
 import { anthropicError } from "./errors.js";
+import { sanitizeRequest } from "./sanitize.js";
 
 /** Append an Anthropic path to a base URL without dropping a base path
  *  (https://opencode.ai/zen/go + /v1/messages => https://opencode.ai/zen/go/v1/messages). */
@@ -89,13 +90,14 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     }
     const body = parsed as Record<string, unknown>;
     const wantsStream = body.stream === true;
+    const sanitized = sanitizeRequest(body, opts.upstream);
 
     let upstreamRes: Response;
     try {
       upstreamRes = await fetchImpl(upstreamUrl, {
         method: "POST",
         headers: buildUpstreamHeaders(req, opts.upstream, wantsStream),
-        body: JSON.stringify(body),
+        body: JSON.stringify(sanitized),
       });
     } catch (err) {
       upstreamReachable = false;
