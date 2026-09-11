@@ -87,6 +87,16 @@ describe("canonical-source", () => {
     expect(src!.instructions).toContain("Brove rules");
   });
 
+  it("readProjectLevelSource strips squadrant markers so projected blocks are not re-ingested", async () => {
+    const driver = memDriver({
+      "AGENTS.md": "# Brove rules\nuse design tokens\n\n<!-- squadrant:start -->\n## Stale Projected Content\n<!-- squadrant:end -->",
+    });
+    const src = await readProjectLevelSource(driver);
+    expect(src).not.toBeNull();
+    expect(src!.instructions).toBe("# Brove rules\nuse design tokens");
+    expect(src!.instructions).not.toContain("Stale Projected Content");
+  });
+
   it("readProjectLevelSource inlines project-local plugin/skills if present", async () => {
     const driver = memDriver({
       "AGENTS.md": "# Brove",
