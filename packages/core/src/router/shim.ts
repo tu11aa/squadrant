@@ -6,6 +6,7 @@ export type { RouterShim } from "./types.js";
 import { resolveProject } from "./auth.js";
 import { anthropicError } from "./errors.js";
 import { sanitizeRequest } from "./sanitize.js";
+import { createUsageTee, usageFromJson } from "./stream.js";
 
 /** Append an Anthropic path to a base URL without dropping a base path
  *  (https://opencode.ai/zen/go + /v1/messages => https://opencode.ai/zen/go/v1/messages). */
@@ -133,7 +134,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
           /* already closed */
         }
       });
-      nodeStream.pipe(res);
+      nodeStream.pipe(createUsageTee(project, emitUsage)).pipe(res);
       res.on("close", () => nodeStream.destroy());
       return;
     }
@@ -147,8 +148,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       writeJson(res, e.status, e.body);
       return;
     }
-    void emitUsage;
-    void project;
+    emitUsage(usageFromJson(project, upstreamBody));
     writeJson(res, upstreamRes.status, upstreamBody);
   }
 

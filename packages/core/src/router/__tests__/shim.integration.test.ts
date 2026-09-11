@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createRouterShim, type RouterShim } from "../shim.js";
+import type { RouterUsage } from "../types.js";
 
 async function startMockUpstream(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
@@ -207,6 +208,32 @@ describe("router shim integration", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
     expect(await res.text()).toBe(sse);
+  });
+
+  it("tees usage/cost from a streamed response to onUsage", async () => {
+    const sse =
+      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2},"cost":"0.0004"}\n\n';
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(200, { "content-type": "text/event-stream" });
+      s.end(sse);
+    });
+    const usages: RouterUsage[] = [];
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+      onUsage: (u) => usages.push(u),
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", stream: true, messages: [] }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(sse);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(usages).toHaveLength(1);
+    expect(usages[0]).toMatchObject({ project: "proj-a", outputTokens: 2, costUsd: 0.0004 });
   });
 
   it("serves GET /healthz reporting readiness after start()", async () => {
