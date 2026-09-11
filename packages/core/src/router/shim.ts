@@ -112,7 +112,14 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     if (!upstreamRes.ok) {
       const text = await upstreamRes.text();
       log(`router upstream ${upstreamRes.status}: ${text.slice(0, 500)}`);
-      const e = anthropicError(upstreamRes.status, "api_error", text.slice(0, 500) || "upstream error");
+      let message = text.slice(0, 500);
+      try {
+        const parsedErr = JSON.parse(text) as { error?: { message?: string } };
+        message = parsedErr.error?.message ?? message;
+      } catch {
+        /* keep raw text */
+      }
+      const e = anthropicError(upstreamRes.status, "api_error", message || "upstream error");
       writeJson(res, e.status, e.body);
       return;
     }

@@ -157,6 +157,45 @@ describe("router shim integration", () => {
     expect((await shim.health()).upstreamReachable).toBe(true);
   });
 
+  it("maps an upstream error status to an Anthropic envelope using the structured error.message", async () => {
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(400, { "content-type": "application/json" });
+      s.end(JSON.stringify({ error: { message: "thinking must be passed back" } }));
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { type: string; error: { type: string; message: string } };
+    expect(json.type).toBe("error");
+    expect(json.error.type).toBe("api_error");
+    expect(json.error.message).toContain("thinking must be passed back");
+    expect(json.error.message).toBe("thinking must be passed back");
+  });
+
+  it("returns a 502 Anthropic envelope when the upstream is unreachable", async () => {
+    shim = createRouterShim({
+      upstream: { baseUrl: "http://127.0.0.1:1", apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(res.status).toBe(502);
+    const json = (await res.json()) as { error: { type: string } };
+    expect(json.error.type).toBe("api_error");
+  });
+
   it("does not let client headers override configured extraHeaders", async () => {
     let seen: Record<string, string | string[] | undefined> = {};
     upstream = await startMockUpstream((req, s) => {
