@@ -35,6 +35,24 @@ describe("createUsageTee", () => {
     await collect(Readable.from([a, b]).pipe(tee));
     expect(seen[0].outputTokens).toBe(3);
   });
+
+  it("emits a trailing data: line with no terminating newline at flush", async () => {
+    const seen: RouterUsage[] = [];
+    const tee = createUsageTee("p", (u) => seen.push(u));
+    const src = Buffer.from('data: {"usage":{"output_tokens":9}}');
+    await collect(Readable.from([src]).pipe(tee));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].outputTokens).toBe(9);
+  });
+
+  it("does not emit for a stream with no usage fields", async () => {
+    const seen: RouterUsage[] = [];
+    const tee = createUsageTee("p", (u) => seen.push(u));
+    const src = Buffer.from('data: {"type":"message_start"}\n\ndata: {"type":"message_stop"}\n\n');
+    await collect(Readable.from([src]).pipe(tee));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toHaveLength(0);
+  });
 });
 
 describe("usageFromJson", () => {
@@ -44,5 +62,9 @@ describe("usageFromJson", () => {
       cost: "0.002",
     });
     expect(u).toMatchObject({ project: "p", inputTokens: 5, outputTokens: 6, cacheReadTokens: 100, costUsd: 0.002 });
+  });
+
+  it("returns undefined when the body has no usage fields", () => {
+    expect(usageFromJson("p", { id: "msg_1" })).toBeUndefined();
   });
 });

@@ -11,63 +11,115 @@ function num(v: unknown): number | undefined {
   return undefined;
 }
 
-function absorb(evt: unknown, acc: RouterUsage): void {
-  if (typeof evt !== "object" || evt === null) return;
+/** Merge any usage/cost fields from one event into `acc`. Returns true when at
+ *  least one field was populated. */
+function absorb(evt: unknown, acc: RouterUsage): boolean {
+  if (typeof evt !== "object" || evt === null) return false;
   const e = evt as Record<string, unknown>;
   const message =
     typeof e.message === "object" && e.message !== null
       ? (e.message as Record<string, unknown>)
       : undefined;
   const usage = (e.usage ?? message?.usage) as Record<string, unknown> | undefined;
+  let saw = false;
   if (usage) {
-    acc.inputTokens = num(usage.input_tokens) ?? acc.inputTokens;
-    acc.outputTokens = num(usage.output_tokens) ?? acc.outputTokens;
-    acc.cacheReadTokens = num(usage.cache_read_input_tokens) ?? acc.cacheReadTokens;
-    acc.cacheWriteTokens = num(usage.cache_creation_input_tokens) ?? acc.cacheWriteTokens;
-    if (usage.cost !== undefined) acc.costUsd = num(usage.cost) ?? acc.costUsd;
+    const input = num(usage.input_tokens);
+    if (input !== undefined) {
+      acc.inputTokens = input;
+      saw = true;
+    }
+    const output = num(usage.output_tokens);
+    if (output !== undefined) {
+      acc.outputTokens = output;
+      saw = true;
+    }
+    const read = num(usage.cache_read_input_tokens);
+    if (read !== undefined) {
+      acc.cacheReadTokens = read;
+      saw = true;
+    }
+    const write = num(usage.cache_creation_input_tokens);
+    if (write !== undefined) {
+      acc.cacheWriteTokens = write;
+      saw = true;
+    }
+    if (usage.cost !== undefined) {
+      const cost = num(usage.cost);
+      if (cost !== undefined) {
+        acc.costUsd = cost;
+        saw = true;
+      }
+    }
   }
-  if (e.cost !== undefined) acc.costUsd = num(e.cost) ?? acc.costUsd;
+  if (e.cost !== undefined) {
+    const cost = num(e.cost);
+    if (cost !== undefined) {
+      acc.costUsd = cost;
+      saw = true;
+    }
+  }
+  return saw;
+}
+
+/** Consume newline-terminated `data:` lines from `bufRef.value` into `acc`.
+ *  Returns true when any usage field was populated. */
+function scan(bufRef: { value: string }, acc: RouterUsage): boolean {
+  let saw = false;
+  let idx: number;
+  while ((idx = bufRef.value.indexOf("\n")) !== -1) {
+    const line = bufRef.value.slice(0, idx).trim();
+    bufRef.value = bufRef.value.slice(idx + 1);
+    if (line.startsWith("data:")) {
+      const payload = line.slice(5).trim();
+      if (payload && payload !== "[DONE]") {
+        try {
+          if (absorb(JSON.parse(payload), acc)) saw = true;
+        } catch {
+          /* non-JSON keep-alive */
+        }
+      }
+    }
+  }
+  return saw;
 }
 
 /** Pass-through Transform that scans SSE `data:` lines for usage/cost and calls
- *  onUsage once at flush. Bytes are never modified. */
+ *  onUsage once at flush. Bytes are never modified. Emits only when at least one
+ *  usage field was populated. */
 export function createUsageTee(project: string, onUsage: (u: RouterUsage) => void): Transform {
-  let buf = "";
+  const buf = { value: "" };
   const acc: RouterUsage = { project };
+  let sawUsage = false;
   return new Transform({
     transform(chunk: Buffer, _enc, cb) {
-      buf += chunk.toString("utf8");
-      let idx: number;
-      while ((idx = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (line.startsWith("data:")) {
-          const payload = line.slice(5).trim();
-          if (payload && payload !== "[DONE]") {
-            try {
-              absorb(JSON.parse(payload), acc);
-            } catch {
-              /* non-JSON keep-alive */
-            }
-          }
-        }
-      }
+      buf.value += chunk.toString("utf8");
+      sawUsage = scan(buf, acc) || sawUsage;
       cb(null, chunk);
     },
     flush(cb) {
-      try {
-        onUsage(acc);
-      } catch {
-        /* best-effort */
+      // Drain an unterminated final line (no trailing newline).
+      if (buf.value.trim() !== "") {
+        buf.value += "\n";
+        sawUsage = scan(buf, acc) || sawUsage;
+      }
+      if (sawUsage) {
+        try {
+          onUsage(acc);
+        } catch {
+          /* best-effort */
+        }
       }
       cb();
     },
   });
 }
 
-/** Extract usage from a non-streaming response body. */
-export function usageFromJson(project: string, body: Record<string, unknown>): RouterUsage {
+/** Extract usage from a non-streaming response body. Returns undefined when no
+ *  usage field was populated. */
+export function usageFromJson(
+  project: string,
+  body: Record<string, unknown>,
+): RouterUsage | undefined {
   const acc: RouterUsage = { project };
-  absorb({ usage: body.usage, cost: body.cost }, acc);
-  return acc;
+  return absorb({ usage: body.usage, cost: body.cost }, acc) ? acc : undefined;
 }

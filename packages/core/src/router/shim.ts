@@ -134,7 +134,11 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
           /* already closed */
         }
       });
-      nodeStream.pipe(createUsageTee(project, emitUsage)).pipe(res);
+      const tee = createUsageTee(project, emitUsage);
+      tee.on("error", (err) => {
+        log(`router usage tee error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      nodeStream.pipe(tee).pipe(res);
       res.on("close", () => nodeStream.destroy());
       return;
     }
@@ -148,7 +152,8 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       writeJson(res, e.status, e.body);
       return;
     }
-    emitUsage(usageFromJson(project, upstreamBody));
+    const usage = usageFromJson(project, upstreamBody);
+    if (usage) emitUsage(usage);
     writeJson(res, upstreamRes.status, upstreamBody);
   }
 
