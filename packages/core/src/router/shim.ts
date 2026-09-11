@@ -161,6 +161,10 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       });
       return;
     }
+    if (req.method === "GET" && req.url === "/healthz") {
+      writeJson(res, 200, { ready: server?.listening === true, upstreamReachable, lastError } satisfies RouterHealth);
+      return;
+    }
     writeJson(res, 404, anthropicError(404, "not_found_error", "not found").body);
   }
 

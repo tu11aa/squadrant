@@ -171,6 +171,20 @@ describe("router shim integration", () => {
     expect(await res.text()).toBe(sse);
   });
 
+  it("serves GET /healthz reporting readiness after start()", async () => {
+    upstream = await startMockUpstream((_q, s) => s.end("{}"));
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/healthz`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ready: boolean; upstreamReachable: boolean };
+    expect(body.ready).toBe(true);
+    expect(body.upstreamReachable).toBe(true);
+  });
+
   it("is safe to call start() and stop() more than once", async () => {
     upstream = await startMockUpstream((_q, s) => s.end("{}"));
     shim = createRouterShim({
