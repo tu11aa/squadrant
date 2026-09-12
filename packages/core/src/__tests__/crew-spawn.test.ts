@@ -1005,6 +1005,38 @@ describe("runCrewSpawn", () => {
         expect.objectContaining({ model: "opencode-go/deepseek-v4.1-flash" }),
       );
     });
+
+    it("applies the role backend when the role's agent matches the resolved agent", async () => {
+      const config = makeConfig({
+        router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+        roles: { crew: { agent: "claude", backend: "proxy" } },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "plain work" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "proxy" });
+    });
+
+    it("ignores the role backend when the role's agent does not match the resolved agent", async () => {
+      const config = makeConfig({
+        router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+        roles: { crew: { agent: "claude", backend: "proxy" } },
+        crewRouting: { rules: [{ match: "daemon", agent: "opencode", tier: "standard" }] },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "fix daemon bug" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+    });
   });
 
   // ── thinking level → claude --effort ──────────────────────────────────────

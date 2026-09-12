@@ -25,10 +25,10 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
   crewSessionName,
+  resolveRouterModel,
   type ThinkingLevel,
   type BackendMode,
 } from "@squadrant/shared";
-import { resolveRouterModel } from "@squadrant/shared";
 import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
