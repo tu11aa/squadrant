@@ -911,6 +911,100 @@ describe("runCrewSpawn", () => {
         expect.objectContaining({ model: "opus" }),
       );
     });
+
+    it("applies the rule backend and reports it via onBackendResolved", async () => {
+      const config = {
+        ...makeConfig(),
+        defaults: {
+          ...makeConfig().defaults,
+          router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+          crewRouting: {
+            rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy", model: "flash" }],
+          },
+        },
+      } as unknown as SquadrantConfig;
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "proxy" });
+    });
+
+    it("prefers an explicit backend over the rule", async () => {
+      const config = {
+        ...makeConfig(),
+        defaults: {
+          ...makeConfig().defaults,
+          router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+          crewRouting: { rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy" }] },
+        },
+      } as unknown as SquadrantConfig;
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon", backend: "native" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+    });
+
+    it("defaults to native when neither rule nor role sets a backend", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "plain work" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+    });
+
+    it("throws when a proxy backend is selected without defaults.router", async () => {
+      const config = {
+        ...makeConfig(),
+        defaults: {
+          ...makeConfig().defaults,
+          crewRouting: { rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy" }] },
+        },
+      } as unknown as SquadrantConfig;
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps),
+      ).rejects.toThrow(/defaults\.router is not configured/);
+    });
+
+    it("expands a model alias for the resolved agent", async () => {
+      const config = {
+        ...makeConfig(),
+        defaults: {
+          ...makeConfig().defaults,
+          router: {
+            kind: "opencode-go",
+            baseUrl: "https://opencode.ai/zen/go",
+            apiKey: "k",
+            models: { flash: { upstream: "deepseek-v4.1-flash", agents: { opencode: "opencode-go/deepseek-v4.1-flash" } } },
+          },
+          crewRouting: { rules: [{ match: "daemon", agent: "opencode", tier: "standard", model: "flash" }] },
+        },
+      } as unknown as SquadrantConfig;
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "fix daemon bug" }, config, deps);
+
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "opencode-go/deepseek-v4.1-flash" }),
+      );
+    });
   });
 
   // ── thinking level → claude --effort ──────────────────────────────────────

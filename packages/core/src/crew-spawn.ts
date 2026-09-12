@@ -26,7 +26,10 @@ import {
   TERMINAL_STATES,
   crewSessionName,
   type ThinkingLevel,
+  type BackendMode,
 } from "@squadrant/shared";
+import { resolveRouterModel } from "@squadrant/shared";
+import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 
@@ -134,6 +137,8 @@ export interface CrewSpawnInput {
   approval?: boolean;
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model. */
   model?: string;
+  /** U2 backend override for this spawn — takes precedence over rule/role. */
+  backend?: BackendMode;
   /** Per-spawn thinking level override — takes precedence over
    *  defaults.roles.crew.thinking. Claude-only (→ `--effort <level>`). */
   thinking?: ThinkingLevel;
@@ -192,6 +197,8 @@ export interface CrewSpawnDeps {
    *  undefined when nothing resolved one (e.g. opencode falling through to its
    *  own global config default), not just when an explicit flag was anthropic. */
   onModelResolved?(o: { agentName: string; model: string | undefined }): void;
+  /** Optional: called once the effective backend is resolved (before spawn). */
+  onBackendResolved?(o: { backend: BackendMode }): void;
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
@@ -420,6 +427,12 @@ export async function runCrewSpawn(
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
   }
 
+  const crewRoleCfg = config.defaults.roles?.crew;
+  const roleBackend = crewRoleCfg && crewRoleCfg.agent === agent.name ? crewRoleCfg.backend : undefined;
+  const backend = resolveBackend(input.backend, route?.backend, roleBackend);
+  assertBackendUsable({ backend, agent: agent.name, router: config.defaults.router });
+  deps.onBackendResolved?.({ backend });
+
   // Codex: route through the interactive control-plane daemon (PR #98) instead
   // of the print-mode CLI path. The dispatched task is driven via the
   // crew-attach renderer running in the captain tab, so 'crew send' / 'crew
@@ -455,7 +468,11 @@ export async function runCrewSpawn(
   // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
-  const crewModel = input.model ?? route?.model ?? configModel;
+  const crewModel = resolveRouterModel(
+    input.model ?? route?.model ?? configModel,
+    agent.name,
+    config.defaults.router,
+  );
   // Thinking level is claude-only, so — unlike model — it has no routing-rule
   // source; explicit flag beats defaults.roles.crew.thinking, else omitted.
   const crewThinking = input.thinking ?? config.defaults.roles?.crew?.thinking;
