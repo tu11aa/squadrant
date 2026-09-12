@@ -390,9 +390,9 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       if (rotationTimer) clearInterval(rotationTimer);
       try { ctx.cmuxEventsBridge.stop(); } catch { /* best-effort */ }
       try { ctx.telegramBridge?.stop(); } catch { /* best-effort */ }
-      try { await ctx.routerService?.stop(); } catch { /* best-effort */ }
       try { ctx.codexDriver.stop?.(); } catch { /* best-effort */ }
       for (const kill of ctx.activeHeadlessKills) kill();
+      try { await ctx.routerService?.stop(); } catch { /* best-effort */ }
       return new Promise<void>((resolve) => server.close(() => { log(`exit-complete pid=${process.pid}`); resolve(); }));
     },
     tickDelivery: deliveryTick,
