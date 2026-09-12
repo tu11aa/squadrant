@@ -78,7 +78,10 @@ export function createRouterService(
       await shim.stop();
       started = false;
     },
-    url: () => shim.url(),
+    url: () => {
+      if (!started) throw new Error("router service not started");
+      return shim.url();
+    },
     health: () => shim.health(),
     credentialsFor(project, backend) {
       if (!upstream.apiKey) {

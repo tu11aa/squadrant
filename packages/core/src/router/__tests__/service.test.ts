@@ -63,6 +63,31 @@ describe("createRouterService", () => {
     expect(() => service!.credentialsFor("proj-a", "direct")).toThrow(/credential is missing/);
   });
 
+  it("throws for url() before start", () => {
+    const cfg: RouterConfig = { kind: "opencode-go", baseUrl: "https://go.test", apiKey: "k" };
+    service = createRouterService(cfg, ["proj-a"]);
+    expect(() => service!.url()).toThrow(/not started/);
+  });
+
+  it("returns a usable loopback url after start", async () => {
+    upstream = await mockUpstream();
+    const cfg: RouterConfig = { kind: "opencode-go", baseUrl: upstream.url, apiKey: "k" };
+    service = createRouterService(cfg, ["proj-a"]);
+    await service.start();
+    const url = service.url();
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(url.endsWith(":0")).toBe(false);
+  });
+
+  it("throws for url() after stop", async () => {
+    upstream = await mockUpstream();
+    const cfg: RouterConfig = { kind: "opencode-go", baseUrl: upstream.url, apiKey: "k" };
+    service = createRouterService(cfg, ["proj-a"]);
+    await service.start();
+    await service.stop();
+    expect(() => service!.url()).toThrow(/not started/);
+  });
+
   it("throws for a project with no minted token", async () => {
     upstream = await mockUpstream();
     const cfg: RouterConfig = { kind: "opencode-go", baseUrl: upstream.url, apiKey: "k" };
