@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -272,6 +272,16 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         log,
       }))
     ) : undefined);
+
+  // ── Router shim (opt-in #774) ─────────────────────────────────────────────
+  // Built only when config.defaults.router exists. Skipped under vitest (tests
+  // inject opts.routerService); absent config ⇒ undefined ⇒ zero behavior change.
+  const cfg = loadConfig();
+  const routerCfg = cfg.defaults.router;
+  ctx.routerService = opts.routerService
+    ?? (shouldBuildRouterService(routerCfg, !!process.env.VITEST) && routerCfg
+      ? createRouterService(routerCfg, Object.keys(cfg.projects), { log })
+      : undefined);
 
   // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────
   // Skipped under vitest (would shell out to the real `squadrant` CLI); tests

@@ -5,3 +5,4 @@ export * from "./errors.js";
 export * from "./sanitize.js";
 export * from "./stream.js";
 export * from "./shim.js";
+export * from "./service.js";

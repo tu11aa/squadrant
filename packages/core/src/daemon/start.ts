@@ -219,6 +219,15 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       catch (e) { log(`telegram bridge start failed: ${(e as Error).message}`); }
     }
 
+    // Router shim (opt-in #774). Constructed by the host only when
+    // config.defaults.router is present; starting it is best-effort — a bind
+    // failure must not take the daemon down.
+    if (ctx.routerService) {
+      void ctx.routerService.start()
+        .then(() => log(`router: listening ${ctx.routerService!.url()}`))
+        .catch((e) => log(`router service start failed: ${(e as Error).message}`));
+    }
+
     // #348: cmux socket auto-config on boot.
     const autoConfigSafe = !!opts.runCmuxAutoConfig || !process.env.VITEST;
     if (autoConfigSafe) {
@@ -355,7 +364,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   }
 
   return {
-    stop(reason = "requested"): Promise<void> {
+    async stop(reason = "requested"): Promise<void> {
       // #589/#590: capture signal-source evidence (ppid, whether launchd is
       // the parent, process uptime) and the in-flight delivery state BEFORE
       // any async teardown — Node gives no siginfo for who sent a signal, so
@@ -383,6 +392,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       try { ctx.telegramBridge?.stop(); } catch { /* best-effort */ }
       try { ctx.codexDriver.stop?.(); } catch { /* best-effort */ }
       for (const kill of ctx.activeHeadlessKills) kill();
+      try { await ctx.routerService?.stop(); } catch { /* best-effort */ }
       return new Promise<void>((resolve) => server.close(() => { log(`exit-complete pid=${process.pid}`); resolve(); }));
     },
     tickDelivery: deliveryTick,

@@ -2,6 +2,7 @@
 export * from "./config.js";
 export * from "./project-config.js";
 export * from "./effort.js";
+export * from "./router-model.js";
 export * from "./types/runtime.js";
 export * from "./types/liveness.js";
 export * from "./types/control.js";

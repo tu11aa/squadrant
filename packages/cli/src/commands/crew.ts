@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
-import type { PanePlacement } from "@squadrant/shared";
+import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
+import type { PanePlacement, BackendMode } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
@@ -70,6 +70,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     // #627 item B: warn (don't block) when a fallback crew silently resolves to
     // an Anthropic model — less catastrophic than a captain on the same path,
     // and more often intentional, so it just needs to be visible.
+    onBackendResolved: ({ backend }) => {
+      if (backend !== "native") console.log(chalk.dim(`backend: ${backend}`));
+    },
     onModelResolved: ({ agentName, model }) => {
       const effectiveModel = model ?? (agentName === "opencode" ? readGlobalOpencodeModel() : undefined);
       if (isBlockedFallback(agentName, effectiveModel)) {
@@ -194,17 +197,22 @@ crewCommand
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
   .option("--thinking <level>", `Override crew thinking level for this spawn (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over config defaults.roles.crew.thinking`)
+  .option("--backend <mode>", "Backend seam for this spawn: native|direct|proxy (claude only); takes precedence over rule/role")
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string; backend?: string },
       cmd: Command,
     ) => {
       try {
         // Fail fast on a typo rather than letting the claude CLI warn and
         // silently fall back to its default effort.
         const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
+        const rawBackend = opts.backend;
+        if (rawBackend !== undefined && !isBackendMode(rawBackend)) {
+          throw new Error(`Invalid --backend '${rawBackend}'. Valid values: native, direct, proxy`);
+        }
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
@@ -220,6 +228,7 @@ crewCommand
           ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
           ...(thinking ? { thinking } : {}),
+          backend: rawBackend as BackendMode | undefined,
           // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
           // into the isolated worktree root for relative-path access.
           ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
