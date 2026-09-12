@@ -1,8 +1,8 @@
 # Router/Config U2 (schema & routing semantics) Implementation Plan
 
-> **Status: DRAFT — pending U2 spec approval.** Written ahead of the spec-approval gate at the
-> operator's request. Do not execute until `docs/specs/2026-09-11-router-config-u2-design.md` is
-> approved; if the spec changes, re-derive the affected tasks before starting.
+> **Status: APPROVED — executing.** Spec `docs/specs/2026-09-11-router-config-u2-design.md` reviewed
+> and approved by the captain; base branch = `develop` (U1/#780 merged). If the spec changes,
+> re-derive the affected tasks before proceeding.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
