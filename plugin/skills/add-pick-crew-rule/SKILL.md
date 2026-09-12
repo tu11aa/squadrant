@@ -46,7 +46,7 @@ not a defined alias is used verbatim, so existing configs keep working.
    - `tier` is a non-empty string
    - `match` is a valid regex (test it mentally against a sample task string)
    - `agent` is one of `claude`, `codex`, `gemini`, `opencode`
-   - `model` is only set for claude rules (`opus` or `sonnet`); omit for other agents
+   - `model` may be a squadrant alias (see `defaults.router.models`) or a literal upstream id; aliases expand per agent
 
 4. Insert the rule at the correct position — **rules are evaluated in order**.
    Higher-priority / more specific tiers (e.g. "extreme") belong before broader ones
