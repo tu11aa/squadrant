@@ -2,6 +2,7 @@ const DAEMON_CACHED_PREFIXES = [
   "telegram.",
   "defaults.taskTimeoutMs",
   "defaults.cmuxEventsBridge",
+  "defaults.router",
   "projects.",
 ];
 
