@@ -15,6 +15,7 @@ import type { Socket } from "node:net";
 import type { PaneRef } from "@squadrant/shared";
 import type { AgentDriver, OpencodeBridge, CmuxEventsBridge, DaemonSurfaceDriver } from "../interfaces.js";
 import type { TelegramBridge } from "../telegram/bridge.js";
+import type { RouterService } from "../router/service.js";
 import type { AttachFrame } from "../protocol.js";
 import type { LifecycleSource } from "../lifecycle-source.js";
 import { LivenessRegistry } from "./liveness-registry.js";
@@ -62,6 +63,8 @@ export interface SquadrantdOpts {
    *  builds the real one only when config.telegram is present (and not under vitest,
    *  since pushLifecycle is composed onto notify and would hit the network). */
   telegramBridge?: TelegramBridge;
+  /** Inject a fake router service for tests. */
+  routerService?: RouterService;
   /** B4: registered LifecycleSource instances (cmux-store/native-hook/codex-appserver),
    *  for aggregating per-source health into the snapshot. Empty in tests unless injected. */
   lifecycleSources?: LifecycleSource[];
@@ -146,6 +149,8 @@ export interface DaemonContext {
   cmuxEventsBridge: CmuxEventsBridge;
   /** Resolved Telegram bridge — undefined when config.telegram is absent. */
   telegramBridge?: TelegramBridge;
+  /** Resolved router shim service (opt-in #774) — undefined when config.router is absent. */
+  routerService?: RouterService;
   /** Resolved out-of-band fault-alert function (#579/#484 Gap 1) — ALWAYS a
    *  real function, never undefined: defaults to a no-op here (core has no
    *  notifier implementation to fall back to) but squadrantd.ts (the host)
@@ -222,6 +227,7 @@ export function buildContext(opts: SquadrantdOpts): DaemonContext {
     opencodeBridge: null as unknown as OpencodeBridge,
     cmuxEventsBridge: null as unknown as CmuxEventsBridge,
     telegramBridge: undefined,
+    routerService: undefined,
     notifyFault: opts.notifyFault ?? (() => {}),
     lifecycleSources: opts.lifecycleSources ?? [],
     broadcast: () => {},
