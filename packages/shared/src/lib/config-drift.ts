@@ -130,8 +130,7 @@ export function detectDrift(user: SquadrantConfig, def: SquadrantConfig): DriftI
       items.push({ path: "defaults.router.kind", kind: "invalid", severity: "warn", current: router.kind, note: "unknown router kind" });
     }
     try {
-      // eslint-disable-next-line no-new
-      new URL(router.baseUrl);
+      void new URL(router.baseUrl);
     } catch {
       items.push({ path: "defaults.router.baseUrl", kind: "invalid", severity: "warn", current: router.baseUrl, note: "not an absolute URL" });
     }
