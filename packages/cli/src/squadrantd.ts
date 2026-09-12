@@ -274,12 +274,13 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     ) : undefined);
 
   // ── Router shim (opt-in #774) ─────────────────────────────────────────────
-  // Built only when config.router exists. Skipped under vitest (tests inject
-  // opts.routerService); absent config ⇒ undefined ⇒ zero behavior change.
-  const routerCfg = loadConfig().defaults.router;
+  // Built only when config.defaults.router exists. Skipped under vitest (tests
+  // inject opts.routerService); absent config ⇒ undefined ⇒ zero behavior change.
+  const cfg = loadConfig();
+  const routerCfg = cfg.defaults.router;
   ctx.routerService = opts.routerService
     ?? (shouldBuildRouterService(routerCfg, !!process.env.VITEST) && routerCfg
-      ? createRouterService(routerCfg, Object.keys(loadConfig().projects), { log })
+      ? createRouterService(routerCfg, Object.keys(cfg.projects), { log })
       : undefined);
 
   // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────

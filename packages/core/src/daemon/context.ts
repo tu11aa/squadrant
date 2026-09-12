@@ -149,7 +149,7 @@ export interface DaemonContext {
   cmuxEventsBridge: CmuxEventsBridge;
   /** Resolved Telegram bridge — undefined when config.telegram is absent. */
   telegramBridge?: TelegramBridge;
-  /** Resolved router shim service (opt-in #774) — undefined when config.router is absent. */
+  /** Resolved router shim service (opt-in #774) — undefined when config.defaults.router is absent. */
   routerService?: RouterService;
   /** Resolved out-of-band fault-alert function (#579/#484 Gap 1) — ALWAYS a
    *  real function, never undefined: defaults to a no-op here (core has no
