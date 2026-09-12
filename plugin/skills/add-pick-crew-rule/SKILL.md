@@ -20,10 +20,10 @@ Each rule has the shape:
 
 Rules are evaluated in order; the **first match wins**.
 
-`backend` is meaningful only for `agent: "claude"`:
+`direct`/`proxy` are claude-only; `native` is valid for any agent:
 - `native` (default) — the CLI's own auth; no router needed.
-- `direct` — point Claude at `defaults.router.baseUrl` directly.
-- `proxy` — point Claude at the squadrant loopback shim.
+- `direct` — point Claude at `defaults.router.baseUrl` directly (env injection lands in U3).
+- `proxy` — point Claude at the squadrant loopback shim (env injection lands in U3).
 
 A rule with `backend: "direct"` or `"proxy"` **requires `defaults.router`** to be configured;
 otherwise the spawn fails with a hard error and `squadrant config check` flags it.
@@ -46,7 +46,8 @@ not a defined alias is used verbatim, so existing configs keep working.
    - `tier` is a non-empty string
    - `match` is a valid regex (test it mentally against a sample task string)
    - `agent` is one of `claude`, `codex`, `gemini`, `opencode`
-   - `model` may be a squadrant alias (see `defaults.router.models`) or a literal upstream id; aliases expand per agent
+   - `backend` (optional) is one of `native`, `direct`, `proxy`; `direct`/`proxy` are claude-only and require `defaults.router` (only matters when `agent` is `claude`)
+   - `model` applies to claude/opencode (codex does not consume it): may be a squadrant alias (see `defaults.router.models`) or a literal upstream id; aliases expand per agent
 
 4. Insert the rule at the correct position — **rules are evaluated in order**.
    Higher-priority / more specific tiers (e.g. "extreme") belong before broader ones
@@ -83,7 +84,7 @@ Read → filter out the rule by `tier` or `match` → write back.
 ## Precedence reminder
 
 - Explicit `--agent` / `--model` / `--backend` on `squadrant crew spawn` **always** override routing.
-- `backend` precedence: `--backend` > rule `backend` > `defaults.roles.<role>.backend` > `native`.
+- `backend` precedence: `--backend` > rule `backend` > `defaults.roles.<role>.backend` > `native`. `defaults.roles.<role>.backend` applies only when the role's agent matches the resolved agent, and U2 only consumes `defaults.roles.crew`.
 - Passing `--agent` or `--model` suppresses the rule entirely (including its `backend`).
 - If no rule matches, the spawn falls through to `defaults.roles.crew` behavior.
 
