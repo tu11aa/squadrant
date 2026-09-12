@@ -87,6 +87,16 @@ describe("resolveCrewRoute", () => {
     expect(result?.tier).toBe("daily");
     expect(result?.agent).toBe("opencode");
   });
+
+  it("returns the rule's backend when present", () => {
+    const config = makeConfig({
+      crewRouting: {
+        rules: [{ tier: "hard", match: "refactor", agent: "claude", backend: "proxy", model: "flash" }],
+      },
+    });
+    const result = resolveCrewRoute("refactor the auth module", config);
+    expect(result).toMatchObject({ agent: "claude", backend: "proxy", model: "flash", tier: "hard" });
+  });
 });
 
 // Regression: shipped default ruleset ordering (extreme → hard → mobile → daily)
