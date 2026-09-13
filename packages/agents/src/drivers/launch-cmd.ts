@@ -85,9 +85,11 @@ export function buildAgentCmd(
     }
 
     // #697: must come AFTER --append-system-prompt-file and --plugin-dir —
-    // cmux truncates launchCommand.arguments at --messaging-socket-path when
-    // storing it, so anything after it (including the template flag) is lost
-    // and role classification breaks. Match the crew path (drivers/claude.ts).
+    // cmux <=0.64.18 truncated launchCommand.arguments at --messaging-socket-path
+    // when storing it in claude-hook-sessions.json. Fixed upstream in cmux 0.64.19+
+    // (#8070), but this flag-ordering workaround is kept for backward compat with
+    // min: "0.64.0" and retires only when min is bumped >= 0.64.19.
+    // Match the crew path (drivers/claude.ts).
     if (messagingSocketPath) {
       cmd += ` --messaging-socket-path ${messagingSocketPath}`;
     }
