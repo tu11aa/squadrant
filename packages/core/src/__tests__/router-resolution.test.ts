@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveBackend, assertBackendUsable, shouldBuildRouterService } from "../router-resolution.js";
-import type { RouterConfig } from "@squadrant/shared";
+import type { BackendMode, RouterConfig } from "@squadrant/shared";
 
 const router: RouterConfig = { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go" };
 
@@ -28,6 +28,11 @@ describe("assertBackendUsable", () => {
     expect(() => assertBackendUsable({ backend: "proxy", agent: "claude", router: undefined })).toThrow(
       /defaults\.router is not configured/,
     );
+  });
+  it("rejects an unknown backend value at runtime (hand-edited config)", () => {
+    expect(() =>
+      assertBackendUsable({ backend: "proxxy" as unknown as BackendMode, agent: "claude", router }),
+    ).toThrow(/unknown backend/);
   });
 });
 
