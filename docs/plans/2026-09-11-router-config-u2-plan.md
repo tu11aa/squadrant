@@ -1,8 +1,8 @@
 # Router/Config U2 (schema & routing semantics) Implementation Plan
 
-> **Status: DRAFT — pending U2 spec approval.** Written ahead of the spec-approval gate at the
-> operator's request. Do not execute until `docs/specs/2026-09-11-router-config-u2-design.md` is
-> approved; if the spec changes, re-derive the affected tasks before starting.
+> **Status: APPROVED — executing.** Spec `docs/specs/2026-09-11-router-config-u2-design.md` reviewed
+> and approved by the captain; base branch = `develop` (U1/#780 merged). If the spec changes,
+> re-derive the affected tasks before proceeding.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -661,19 +661,23 @@ non-claude routing rule does not inherit a claude-only role backend:
 (`deps.onBackendResolved` fires for every agent/backend, including `native` — the CLI decides
 whether to print it.)
 
-- [ ] **Step 6: Expand the model alias (router backends only)**
+- [ ] **Step 6: Expand the model alias**
 
 Replace the existing `const crewModel = input.model ?? route?.model ?? configModel;` line (currently ~line 458) with:
 
 ```ts
-  const rawModel = input.model ?? route?.model ?? configModel;
-  const crewModel = backend === "native"
-    ? rawModel
-    : resolveRouterModel(rawModel, agent.name, config.defaults.router);
+  const crewModel = resolveRouterModel(
+    input.model ?? route?.model ?? configModel,
+    agent.name,
+    config.defaults.router,
+  );
 ```
 
-Alias expansion is gated on a router backend: a native spawn must keep whatever literal id the
-operator configured (e.g. an opencode `provider/model`), never an upstream-specific alias target.
+Alias expansion is **unconditional** (operator decision, 2026-09-11): the alias layer is
+per-harness by design — `claude` → `upstream`, `opencode` → `agents.opencode` — and a native
+opencode role must be able to use `model: "flash"` → `opencode-go/deepseek-v4.1-flash`. A native
+`claude` role that names a router alias is a config error (validate later), not something this
+helper silently rewrites. Non-alias literals still pass through unchanged.
 
 (Leave the pre-existing `const crewRole` and `configModel` lines above it untouched.)
 

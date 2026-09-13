@@ -1,7 +1,7 @@
 // packages/core/src/router/types.ts
 // U1 public surface. The seam is "any endpoint that speaks Anthropic Messages";
 // squadrant never speaks the OpenAI protocol (spec decision 1).
-export type BackendMode = "native" | "direct" | "proxy";
+export type { BackendMode } from "@squadrant/shared";
 
 export interface RouterUpstream {
   /** Origin + base path, WITH NO VERSION SEGMENT (`/v1` is appended by the

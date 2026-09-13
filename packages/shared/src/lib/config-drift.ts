@@ -1,3 +1,4 @@
+import { isBackendMode, isRouterKind, type RouterConfig, type BackendMode } from "../config.js";
 import type { SquadrantConfig } from "../config.js";
 
 export type DriftKind = "missing" | "deprecated" | "changed-default" | "invalid";
@@ -121,6 +122,53 @@ export function detectDrift(user: SquadrantConfig, def: SquadrantConfig): DriftI
       });
     }
   }
+
+  // ── U2 router validation ────────────────────────────────────────────────
+  const router = user.defaults?.router as RouterConfig | undefined;
+  if (router) {
+    if (typeof router.kind === "string" && !isRouterKind(router.kind)) {
+      items.push({ path: "defaults.router.kind", kind: "invalid", severity: "warn", current: router.kind, note: "unknown router kind" });
+    }
+    try {
+      void new URL(router.baseUrl);
+    } catch {
+      items.push({ path: "defaults.router.baseUrl", kind: "invalid", severity: "warn", current: router.baseUrl, note: "not an absolute URL" });
+    }
+    if (router.port !== undefined && (!Number.isInteger(router.port) || router.port < 0 || router.port > 65535)) {
+      items.push({ path: "defaults.router.port", kind: "invalid", severity: "warn", current: router.port, note: "port must be an integer 0..65535" });
+    }
+    if (router.apiKey !== undefined && router.apiKeyEnv !== undefined) {
+      items.push({ path: "defaults.router.apiKey", kind: "invalid", severity: "warn", note: "apiKey and apiKeyEnv are mutually exclusive" });
+    }
+    for (const [alias, a] of Object.entries(router.models ?? {})) {
+      for (const agentName of Object.keys(a.agents ?? {})) {
+        if (!(agentName in agents)) {
+          items.push({ path: `defaults.router.models.${alias}.agents.${agentName}`, kind: "invalid", severity: "warn", current: agentName, note: "unknown agent in model alias" });
+        }
+      }
+    }
+  }
+
+  const checkBackend = (path: string, backend: BackendMode | undefined, agentName: string | undefined) => {
+    if (backend === undefined) return;
+    if (!isBackendMode(backend)) {
+      items.push({ path, kind: "invalid", severity: "warn", current: backend, note: "unknown backend; expected native|direct|proxy" });
+      return;
+    }
+    if (backend !== "native") {
+      if (agentName !== "claude") {
+        items.push({ path, kind: "invalid", severity: "warn", current: backend, note: `backend '${backend}' is claude-only (agent '${agentName ?? "?"}')` });
+      } else if (!router) {
+        items.push({ path, kind: "invalid", severity: "warn", current: backend, note: `backend '${backend}' requires defaults.router` });
+      }
+    }
+  };
+
+  for (const [role, asn] of Object.entries((user.defaults?.roles ?? {}) as Record<string, { agent?: string; backend?: BackendMode }>)) {
+    checkBackend(`defaults.roles.${role}.backend`, asn?.backend, asn?.agent);
+  }
+  const rules = (user.defaults?.crewRouting?.rules ?? []) as Array<{ agent?: string; backend?: BackendMode }>;
+  rules.forEach((rule, i) => checkBackend(`defaults.crewRouting.rules.${i}.backend`, rule.backend, rule.agent));
 
   return items;
 }

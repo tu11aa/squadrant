@@ -83,6 +83,76 @@ describe("detectDrift \u2014 invalid", () => {
     const inv = items.find((i) => i.kind === "invalid" && i.path === "defaults.roles.captain.agent");
     expect(inv).toBeDefined();
   });
+
+  it("flags an unknown router kind", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "bogus", baseUrl: "https://x.test" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.kind")).toBe(true);
+  });
+
+  it("flags both apiKey and apiKeyEnv set", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "opencode-go", baseUrl: "https://x.test", apiKey: "k", apiKeyEnv: "K" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.apiKey")).toBe(true);
+  });
+
+  it("flags a non-claude role backend", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).crew = { agent: "opencode", backend: "proxy" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.roles.crew.backend")).toBe(true);
+  });
+
+  it("flags a router backend selected with no defaults.router", () => {
+    const u = userConfig();
+    (u.defaults.roles as any).crew = { agent: "claude", backend: "proxy" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.roles.crew.backend")).toBe(true);
+  });
+
+  it("does NOT seed or flag defaults.router as missing drift", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "opencode-go", baseUrl: "https://x.test", apiKey: "k" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "missing" && i.path.startsWith("defaults.router"))).toBe(false);
+    // structural guarantee: the default config never seeds a router block (so --fix cannot add one)
+    expect(getDefaultConfig().defaults.router).toBeUndefined();
+  });
+
+  it("flags a router baseUrl that is not an absolute URL", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "opencode-go", baseUrl: "not-a-url" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.baseUrl")).toBe(true);
+  });
+
+  it("flags a router port out of range", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "opencode-go", baseUrl: "https://x.test", port: 70000 };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.port")).toBe(true);
+  });
+
+  it("flags a model alias that references an unknown agent", () => {
+    const u = userConfig();
+    (u.defaults as any).router = {
+      kind: "opencode-go",
+      baseUrl: "https://x.test",
+      models: { flash: { upstream: "m", agents: { aider: "a/m" } } },
+    };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.models.flash.agents.aider")).toBe(true);
+  });
+
+  it("flags a routing rule with a non-claude backend", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { kind: "opencode-go", baseUrl: "https://x.test", apiKey: "k" };
+    (u.defaults as any).crewRouting = { rules: [{ tier: "x", match: "y", agent: "codex", backend: "proxy" }] };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.crewRouting.rules.0.backend")).toBe(true);
+  });
 });
 
 describe("applySafeFixes", () => {

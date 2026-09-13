@@ -29,11 +29,58 @@ export interface PermissionConfig {
 
 export type ModelAlias = "opus" | "sonnet" | "haiku";
 
+/** U1 backend seam. `native` is the global default; routing is opt-in. */
+export type BackendMode = "native" | "direct" | "proxy";
+
+export function isBackendMode(v: string): v is BackendMode {
+  return v === "native" || v === "direct" || v === "proxy";
+}
+
+/** Recognized upstream shapes; drives auth/isAnthropic defaults + validation. */
+export type RouterKind = "opencode-go" | "openrouter" | "ccr" | "litellm" | "custom";
+
+export const ROUTER_KINDS: readonly RouterKind[] = ["opencode-go", "openrouter", "ccr", "litellm", "custom"];
+
+export function isRouterKind(v: string): v is RouterKind {
+  return (ROUTER_KINDS as readonly string[]).includes(v);
+}
+
+/** A squadrant model alias, expanded per harness at spawn time. */
+export interface RouterModelAlias {
+  /** Id the configured upstream expects (e.g. "deepseek-v4.1-flash"). */
+  upstream: string;
+  /** Per-harness override (e.g. { opencode: "opencode-go/deepseek-v4.1-flash" }). */
+  agents?: Record<string, string>;
+}
+
+export interface RouterConfig {
+  kind: RouterKind;
+  /** Origin + base path, WITH NO VERSION SEGMENT — the client appends "/v1/messages"
+   *  automatically; never include "/v1". */
+  baseUrl: string;
+  /** Inline credential. Mutually exclusive with apiKeyEnv. */
+  apiKey?: string;
+  /** Env var holding the credential. */
+  apiKeyEnv?: string;
+  /** Credential header. "Authorization" (Bearer, default) | "x-api-key". */
+  authHeader?: string;
+  /** Static headers merged into every upstream request (e.g. x-opencode-session). */
+  extraHeaders?: Record<string, string>;
+  /** Loopback bind port; 0 (default) = ephemeral. */
+  port?: number;
+  /** true for a real-Anthropic upstream (disables U1 stripping). */
+  isAnthropic?: boolean;
+  /** Optional alias table consumed by resolveRouterModel. */
+  models?: Record<string, RouterModelAlias>;
+}
+
 export interface CrewRoutingRule {
   tier: string;
   match: string;
   agent: string;
   model?: string;
+  /** U2 backend seam. Unset ⇒ falls through to the role default. */
+  backend?: BackendMode;
 }
 
 export interface CrewRoutingConfig {
@@ -87,6 +134,8 @@ export function parseThinkingLevel(v: string): ThinkingLevel {
 export interface RoleAssignment {
   agent: string;
   model?: string;
+  /** U2 backend seam. Unset ⇒ "native". `direct`/`proxy` are claude-only. */
+  backend?: BackendMode;
   /** Per-role thinking level → claude `--effort <level>`. Unset ⇒ flag omitted. */
   thinking?: ThinkingLevel;
 }
@@ -174,6 +223,9 @@ export interface SquadrantConfig {
     /** #317 global crew tokenomics dial. Absent ⇒ "balance" (today's behavior).
      *  Biases the captain toward stronger ("max") or cheaper ("low") crew models. */
     effort?: "max" | "balance" | "low";
+    /** U2: optional router upstream. Absent ⇒ the shim is never constructed and
+     *  every backend resolves to `native` (zero behavior change). */
+    router?: RouterConfig;
     /** #536 startup npm-registry update check. Default true (absent ⇒ enabled);
      *  set false to opt out. NO_UPDATE_NOTIFIER env var also opts out. */
     updateCheck?: boolean;
