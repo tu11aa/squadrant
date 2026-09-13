@@ -91,6 +91,13 @@ describe("detectDrift \u2014 invalid", () => {
     expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.kind")).toBe(true);
   });
 
+  it("flags a router with no kind", () => {
+    const u = userConfig();
+    (u.defaults as any).router = { baseUrl: "https://x.test" };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.some((i) => i.kind === "invalid" && i.path === "defaults.router.kind")).toBe(true);
+  });
+
   it("flags both apiKey and apiKeyEnv set", () => {
     const u = userConfig();
     (u.defaults as any).router = { kind: "opencode-go", baseUrl: "https://x.test", apiKey: "k", apiKeyEnv: "K" };

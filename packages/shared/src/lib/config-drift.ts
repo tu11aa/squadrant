@@ -126,8 +126,9 @@ export function detectDrift(user: SquadrantConfig, def: SquadrantConfig): DriftI
   // ── U2 router validation ────────────────────────────────────────────────
   const router = user.defaults?.router as RouterConfig | undefined;
   if (router) {
-    if (typeof router.kind === "string" && !isRouterKind(router.kind)) {
-      items.push({ path: "defaults.router.kind", kind: "invalid", severity: "warn", current: router.kind, note: "unknown router kind" });
+    const kind = (router as { kind?: unknown }).kind;
+    if (typeof kind !== "string" || !isRouterKind(kind)) {
+      items.push({ path: "defaults.router.kind", kind: "invalid", severity: "warn", current: kind, note: "missing or unknown router kind; expected opencode-go|openrouter|ccr|litellm|custom" });
     }
     try {
       void new URL(router.baseUrl);
