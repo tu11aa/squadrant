@@ -66,7 +66,14 @@ import {
   type CrewSpawnDeps,
   type ResolvedAgent,
 } from "../crew-spawn.js";
-import type { SquadrantConfig, RuntimeDriver, PaneRef, ControlEvent, TaskRecord } from "@squadrant/shared";
+import type {
+  SquadrantConfig,
+  RouterConfig,
+  RuntimeDriver,
+  PaneRef,
+  ControlEvent,
+  TaskRecord,
+} from "@squadrant/shared";
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 
@@ -1111,6 +1118,127 @@ describe("runCrewSpawn", () => {
       expect(line).not.toContain("ANTHROPIC_");
       expect(line).not.toContain("CMUX_PRESERVE");
       expect(deps.routerCredentials).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── U4: native multi-CLI coexistence & harness/backend split (#776) ────────
+  // Pins the U4 acceptance criteria on top of U2 (#774) + U3 (#775). No new
+  // production behavior — these lock the contract so a later change cannot
+  // regress harness/backend independence.
+
+  describe("native multi-CLI coexistence (#776)", () => {
+    const router: RouterConfig = { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" };
+
+    it("routes { agent: codex, backend: native } to native codex without touching the router", async () => {
+      const config = makeConfig({
+        router,
+        crewRouting: { rules: [{ tier: "quota", match: "quota work", agent: "codex", backend: "native" }] },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("codex");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.onBackendResolved = vi.fn();
+      deps.routerCredentials = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "quota work" }, config, deps);
+
+      expect(deps.resolveAgent).toHaveBeenCalledWith("codex");
+      expect(deps.dispatchCrew).toHaveBeenCalledWith(expect.objectContaining({ provider: "codex" }));
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+      expect(deps.routerCredentials).not.toHaveBeenCalled();
+    });
+
+    it("selects a non-claude harness from a rule while a router is configured (option, not lock-in)", async () => {
+      const config = makeConfig({
+        router,
+        crewRouting: { rules: [{ tier: "cheap", match: "cheap work", agent: "gemini" }] },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("gemini");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.onBackendResolved = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "cheap work" }, config, deps);
+
+      expect(deps.resolveAgent).toHaveBeenCalledWith("gemini");
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+    });
+
+    it("hard-errors when a rule pairs a non-claude harness with a router backend", async () => {
+      const config = makeConfig({
+        router,
+        crewRouting: { rules: [{ tier: "routed", match: "route me", agent: "opencode", backend: "proxy" }] },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "route me" }, config, deps),
+      ).rejects.toThrow(/claude-only/);
+    });
+
+    it("stays native when defaults.router exists but no rule or role selects a backend", async () => {
+      const config = makeConfig({
+        router,
+        crewRouting: { rules: [{ tier: "hard", match: "refactor", agent: "claude" }] },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.onBackendResolved = vi.fn();
+      deps.routerCredentials = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
+
+      expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+      expect(deps.routerCredentials).not.toHaveBeenCalled();
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).not.toContain("ANTHROPIC_");
+    });
+
+    it("carries no ANTHROPIC env for a native opencode spawn with a router configured", async () => {
+      const config = makeConfig({ router });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.routerCredentials = vi.fn();
+
+      await runCrewSpawn(
+        { project: PROJECT, task: "do work", agent: "opencode", agentExplicit: true },
+        config,
+        deps,
+      );
+
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).not.toContain("ANTHROPIC_");
+      expect(line).not.toContain("CMUX_PRESERVE");
+      expect(deps.routerCredentials).not.toHaveBeenCalled();
+    });
+
+    it("carries no ANTHROPIC env for native codex and gemini spawns", async () => {
+      for (const harness of ["codex", "gemini"] as const) {
+        const config = makeConfig({ router });
+        const runtime = makeRuntime();
+        const agent = makeAgent(harness);
+        const deps = makeSpawnDeps(runtime, agent);
+        deps.resolveAgent = vi.fn().mockReturnValue(agent);
+        deps.routerCredentials = vi.fn();
+
+        await runCrewSpawn(
+          { project: PROJECT, task: "do work", agent: harness, agentExplicit: true },
+          config,
+          deps,
+        );
+
+        const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+        expect(line).not.toContain("ANTHROPIC_");
+        expect(deps.routerCredentials).not.toHaveBeenCalled();
+      }
     });
   });
 
