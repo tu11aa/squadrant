@@ -1623,6 +1623,15 @@ describe("sanitizeForCmuxSend", () => {
   it("handles empty string", () => {
     expect(sanitizeForCmuxSend("")).toBe("");
   });
+
+  // #775: spawn env values are ANSI-C quoted, and a value may need an embedded
+  // newline (ANTHROPIC_CUSTOM_HEADERS is newline-separated). The `\n` escape form
+  // is destroyed by the rule above, so callers must emit `\x0a` — which this
+  // sanitizer must leave byte-for-byte intact or the header silently vanishes.
+  it("leaves an ANSI-C \\x escape for an embedded newline intact (#775)", () => {
+    const line = "ANTHROPIC_CUSTOM_HEADERS=$'a: 1\\x0ab: 2'";
+    expect(sanitizeForCmuxSend(line)).toBe(line);
+  });
 });
 
 // #258 Approach B: deliver-only-when-empty. No 250ms stability double-read.

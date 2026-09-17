@@ -74,7 +74,9 @@ describe("renderEnvAssignments", () => {
 
   it("keeps a newline inside a value from becoming a command separator", () => {
     const line = renderEnvAssignments({ ANTHROPIC_CUSTOM_HEADERS: "a: 1\nb: 2" });
-    expect(line).toBe("ANTHROPIC_CUSTOM_HEADERS=$'a: 1\\nb: 2'");
+    // `\x0a` (not `\n`) — cmux's sanitizeForCmuxSend() would collapse a literal
+    // `\n` escape to a space and silently drop every header but the first.
+    expect(line).toBe("ANTHROPIC_CUSTOM_HEADERS=$'a: 1\\x0ab: 2'");
     expect(line).not.toContain("\n");
   });
 

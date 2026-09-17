@@ -43,15 +43,21 @@ export async function fetchRouterCredentials(
     call: (req: unknown) => Promise<unknown>;
     approveKey?: (key: string, opts: { log: (m: string) => void }) => EnsureApprovedResult;
     log?: (m: string) => void;
+    warn?: (m: string) => void;
   },
 ): Promise<RouterCredentials> {
   const log = deps.log ?? ((m: string) => console.log(chalk.dim(m)));
+  const warn = deps.warn ?? ((m: string) => console.error(chalk.yellow(m)));
   const creds = (await deps.call(buildRouterCredentialsRequest(project, backend))) as RouterCredentials;
   if (creds.backend === "direct" && creds.apiKey) {
     const approve = deps.approveKey ?? ensureClaudeApiKeyApproved;
     const result = approve(creds.apiKey, { log });
     if (!result.changed && result.reason) {
-      log(`claude: routed key pre-approval skipped — ${result.reason}`);
+      // Precondition 3 requires a VISIBLE surface, not a silent skip: an
+      // unapproved key makes claude report "Not logged in" (or prompt).
+      warn(
+        `claude: routed key pre-approval skipped — ${result.reason}. If claude reports "Not logged in", approve the key in ~/.claude.json`,
+      );
     }
   }
   return creds;

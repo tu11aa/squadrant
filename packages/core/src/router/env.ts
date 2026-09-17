@@ -69,6 +69,10 @@ function ansiCQuote(value: string): string {
   const escaped = value
     .replace(/\\/g, "\\\\")
     .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n");
+    // `\x0a`, NOT `\n`: the line is delivered through cmux, whose
+    // sanitizeForCmuxSend() replaces literal `\n`/`\r`/`\t` escapes with a space
+    // (cmux.ts `\\[nrt]`). `\x0a` is not matched, decodes to a newline in both
+    // zsh and bash, and is unambiguous (2 hex digits max).
+    .replace(/\n/g, "\\x0a");
   return `$'${escaped}'`;
 }

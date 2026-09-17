@@ -29,16 +29,16 @@ describe("fetchRouterCredentials", () => {
     expect(approveKey).toHaveBeenCalledWith("sk-live", expect.objectContaining({ log }));
   });
 
-  it("logs why pre-approval was skipped instead of failing silently", async () => {
+  it("warns visibly when pre-approval was skipped instead of failing silently", async () => {
     const call = vi.fn().mockResolvedValue({
       backend: "direct",
       baseUrl: "https://x",
       apiKey: "sk-live",
     });
     const approveKey = vi.fn().mockReturnValue({ changed: false, reason: "no ~/.claude.json yet" });
-    const log = vi.fn();
-    await fetchRouterCredentials("proj", "direct", { call, approveKey, log });
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("no ~/.claude.json yet"));
+    const warn = vi.fn();
+    await fetchRouterCredentials("proj", "direct", { call, approveKey, warn });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("no ~/.claude.json yet"));
   });
 
   it("does not pre-approve for a proxy backend (no real key in the env)", async () => {

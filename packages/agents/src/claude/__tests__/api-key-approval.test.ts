@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureClaudeApiKeyApproved } from "../api-key-approval.js";
@@ -32,6 +32,8 @@ describe("ensureClaudeApiKeyApproved", () => {
     expect(doc.customApiKeyResponses.rejected).toEqual([]);
     expect(doc.customApiKeyResponses.approved).toEqual([SUFFIX]);
     expect(doc.other).toBe(1); // unrelated fields preserved
+    // Atomic write leaves no temp file behind.
+    expect(readdirSync(dir)).toEqual([".claude.json"]);
   });
 
   it("adds an unlisted key to approved (avoids the interactive prompt)", () => {

@@ -58,9 +58,14 @@ export function ensureClaudeApiKeyApproved(
     rejected: rejected.filter((s) => s !== suffix),
   };
 
+  const tmp = `${file}.squadrant-tmp`;
   try {
-    fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+    // Atomic write: a crash mid-write must not truncate the live ~/.claude.json
+    // (claude stores its own state there), and the original file mode is preserved.
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", { mode: fs.statSync(file).mode & 0o777 });
+    fs.renameSync(tmp, file);
   } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* best-effort */ }
     return {
       changed: false,
       reason: `could not write ~/.claude.json: ${(e as Error).message} — the routed key may be refused as "Not logged in"`,
