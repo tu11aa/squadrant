@@ -160,3 +160,24 @@ describe("OpencodeHttpChannel — probe (shadow mode must never deliver)", () =>
     expect(await ch.probe(TASK)).toEqual({ status: "unsupported" });
   });
 });
+
+describe("OpencodeHttpChannel — sessionFor (#786)", () => {
+  it("uses the injected session id instead of the project-wide newest heuristic", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.endsWith("/session")) {
+        // a crew worktree session is NEWER — the heuristic would pick it
+        return { ok: true, json: async () => [
+          { id: "ses_crew", directory: "/p/.worktrees/wt1", time: { updated: 999 } },
+          { id: "ses_captain", directory: "/p", time: { updated: 1 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({ portFor: () => 1234, sessionFor: () => "ses_captain", fetchImpl });
+    expect(await ch.send("proj", "hi")).toEqual({ status: "accepted", via: "opencode-http" });
+    expect(seen.some((u) => u.includes("/session/ses_crew/"))).toBe(false);
+    expect(seen.some((u) => u.includes("/session/ses_captain/prompt_async"))).toBe(true);
+  });
+});

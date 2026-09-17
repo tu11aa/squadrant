@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1892,5 +1892,22 @@ describe("showDiff source mapping (#599)", () => {
     await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", lastTurn: true });
     const args = argvOf(execFileMock.mock.calls[0]);
     expect(args).toContain("--last-turn");
+  });
+});
+
+describe("classifyOpencodeStartupSurface (#786)", () => {
+  it("is loading while the opencode splash marker is present", () => {
+    expect(classifyOpencodeStartupSurface("  Ask anything, / for commands, @ for context...  "))
+      .toBe("loading");
+  });
+  it("is idle once the splash is gone", () => {
+    expect(classifyOpencodeStartupSurface("Build · DeepSeek V4.1 Flash\n  ~/me/squadrant:develop"))
+      .toBe("idle");
+  });
+  it("never reports working (opencode has no reliable working marker)", () => {
+    expect(classifyOpencodeStartupSurface("anything")).not.toBe("working");
+  });
+  it("treats an empty screen as loading", () => {
+    expect(classifyOpencodeStartupSurface("")).toBe("loading");
   });
 });

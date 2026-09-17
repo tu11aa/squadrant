@@ -26,7 +26,13 @@ export function createOpencodeDriver(): AgentDriver {
       // given, bind the embedded HTTP server on it so the daemon's SSE bridge
       // can subscribe to /event for turn-end detection (the bare TUI uses an
       // ephemeral unix socket with no reachable /event endpoint).
-      if (opts.interactive) return opts.port ? `opencode --port ${opts.port}` : "opencode";
+      // #786: resume is always explicit (--session), never -c (spec §2 test 9).
+      if (opts.interactive) {
+        let cmd = "opencode";
+        if (opts.sessionId) cmd += ` --session ${opts.sessionId}`;
+        if (opts.port) cmd += ` --port ${opts.port}`;
+        return cmd;
+      }
       let cmd = `opencode run "${opts.prompt.replace(/"/g, '\\"')}"`;
       if (opts.jsonOutput) cmd += " --format json";
       if (opts.model) cmd += ` -m ${opts.model}`;

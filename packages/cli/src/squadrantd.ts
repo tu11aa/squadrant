@@ -29,7 +29,7 @@ import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
-import { buildCaptainChannelWithRetry } from "./lib/captain-channel-factory.js";
+import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 // Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
@@ -305,8 +305,20 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       // setup) used to log once and latch the daemon into pane-only delivery
       // for its entire process lifetime. Retry with backoff instead of a
       // one-shot .catch — never take the daemon down with us either way.
-      void buildCaptainChannelWithRetry({ log })
-        .then((ch) => { ctx.captainChannel = ch; })
+      // #786: build BOTH agent channels (claude peer + opencode http) and the
+      // agent resolver, so captain-bound delivery routes by the captain's agent.
+      void buildCaptainChannelsWithRetry({
+        stateRoot: join(homedir(), ".config", "squadrant", "state"),
+        configAgent: loadConfig().defaults.roles?.captain?.agent,
+        log,
+      })
+        .then(({ channels, agentFor }) => {
+          ctx.captainChannels = channels;
+          ctx.captainAgentFor = agentFor;
+          // Keep the claude channel on the legacy field so any other consumer of
+          // ctx.captainChannel keeps working.
+          ctx.captainChannel = channels.claude;
+        })
         // The retry loop itself only stops by resolving; this only guards a
         // throwing `log` from escaping as an unhandled rejection.
         .catch((e) => log(`captain-channel: unexpected retry-loop error: ${(e as Error).message}`));

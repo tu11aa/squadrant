@@ -18,6 +18,7 @@ export class CmuxTimeoutError extends Error {
 }
 
 import { DeferDelivery } from "@squadrant/core";
+import { screenHasSplashMarker } from "@squadrant/core";
 
 /** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
 export function isInsideCmux(): boolean {
@@ -387,6 +388,20 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
   if (CC_WORKING_RE.test(screen)) return "working";
   if (CC_INITIALIZED_RE.test(screen)) return "idle";
   return "loading";
+}
+
+/**
+ * #786: startup readiness for an opencode TUI. The claude classifier above reads a
+ * live opencode pane as "loading" forever (no ⏵⏵/Ctx Used chrome), so
+ * deliverStartupPrompt would send blind after its 30s timeout and never confirm.
+ * opencode has no reliable "working" marker, so this reports only loading/idle;
+ * deliverStartupPrompt's phase 3 then confirms the turn by screen change.
+ * Marker reuse mirrors the crew path (#499/#656): a stable substring, matched
+ * case/whitespace/ellipsis-insensitively.
+ */
+export function classifyOpencodeStartupSurface(screen: string): "loading" | "idle" {
+  if (!screen) return "loading";
+  return screenHasSplashMarker(screen, "Ask anything") ? "loading" : "idle";
 }
 
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a

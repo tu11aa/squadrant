@@ -49,6 +49,10 @@ export interface SpawnOptions {
   // launch as `opencode --port <N>` so the daemon's SSE bridge can subscribe
   // to the crew's /event stream for reliable turn-end detection.
   port?: number;
+  // opencode: an explicit session to resume (`--session <id>`). Absent ⇒ a fresh
+  // session. `-c` is deliberately NOT used — inside one repo it resumes the newest
+  // session project-wide, so a crew worktree session can win (spec §2 test 9).
+  sessionId?: string;
   // #667 slice 3: claude's UDS session inbox path. Naming it at spawn is what
   // lets the daemon address the session without reverse-engineering the
   // pid-derived default. Absent ⇒ flag omitted ⇒ no behaviour change.

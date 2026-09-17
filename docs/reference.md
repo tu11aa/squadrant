@@ -173,6 +173,22 @@ The next step past lifecycle sources: use each agent's **native control API** as
 - Implementation: `@squadrant/core/src/captain-channel.ts`, `control-channel.ts`, `lifecycle-source.ts`.
 - Design doc: [`specs/2026-08-13-agent-control-channel-design.md`](specs/2026-08-13-agent-control-channel-design.md). Diagram: [`diagrams/2026-08-13-agent-control-channel.html`](diagrams/2026-08-13-agent-control-channel.html).
 
+#### Running an opencode captain
+
+An opencode captain must be **launched by squadrant** — a manually opened
+`opencode -c` has no reachable control API (it binds no TCP port), so lifecycle
+notifications cannot be delivered to it. squadrant then:
+
+1. boots the captain as `opencode --session <id> --port <N>` (resume is explicit;
+   `-c` is never used — inside one repo it also resumes crew-worktree sessions), and
+2. records its address (`port` + `sessionId`) in
+   `~/.config/squadrant/state/<project>/captain.json`, which the daemon uses to
+   deliver over opencode's HTTP API (`POST /session/<id>/prompt_async`).
+
+If a captain is not deliverable, the daemon raises a single actionable
+`CAPTAIN NOT DELIVERABLE` alert (notifier + Telegram + dashboard) and keeps the
+notifications queued. Relaunch with `squadrant launch <project>` to clear it.
+
 ### Crew Spawn (Interactive Sub-Sessions)
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).

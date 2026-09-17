@@ -28,7 +28,7 @@ import { captainSocketPath as coreCaptainSocketPath } from "@squadrant/core";
 import { captainSessionName as coreCaptainSessionName } from "@squadrant/shared";
 import {
   deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
-  resolveCaptainSocketPath, resolveCaptainSessionName,
+  resolveCaptainSocketPath, resolveCaptainSessionName, pickResumeSessionId, isOpencodeCaptainDir,
 } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
@@ -355,5 +355,20 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
       send: vi.fn(async () => {}),
     };
     await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBeUndefined();
+  });
+});
+
+describe("opencode captain launch helpers (#786)", () => {
+  it("resolves a resume id only from a record of the same agent", () => {
+    expect(pickResumeSessionId({ agent: "opencode", sessionId: "ses_a" }, "opencode")).toBe("ses_a");
+    expect(pickResumeSessionId({ agent: "claude" }, "opencode")).toBeUndefined();
+    expect(pickResumeSessionId(null, "opencode")).toBeUndefined();
+  });
+
+  it("treats a non-git project dir as not launchable as an opencode captain", () => {
+    execFileMock.mockImplementationOnce(() => { throw new Error("not a git repo"); });
+    expect(isOpencodeCaptainDir("/tmp/definitely-not-a-repo-xyz")).toBe(false);
+    execFileMock.mockReturnValueOnce("abc1234");
+    expect(isOpencodeCaptainDir(process.cwd())).toBe(true);
   });
 });
