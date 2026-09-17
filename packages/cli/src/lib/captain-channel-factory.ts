@@ -12,8 +12,9 @@ import fs from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
-import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath, CLAUDE_SESSIONS_DIR } from "@squadrant/agents";
-import { captainSocketPath, CC_SOCKS_DIR, ensureSocksDir } from "@squadrant/core";
+import { ClaudePeerChannel, ClaudeReceiptListener, writeLine, readClaudeStatusBySocketPath, CLAUDE_SESSIONS_DIR, OpencodeHttpChannel } from "@squadrant/agents";
+import { captainSocketPath, CC_SOCKS_DIR, ensureSocksDir, readCaptainAddress } from "@squadrant/core";
+import type { ControlChannel } from "@squadrant/core";
 
 let shared: ClaudeReceiptListener | undefined;
 
@@ -156,18 +157,34 @@ export interface CaptainChannelRetryOpts {
   maxDelayMs?: number;
 }
 
-/**
- * #712: a bind failure at daemon boot (e.g. a transient `listen EACCES` on the
- * shared socket directory) used to be logged once and never retried, latching
- * the daemon into pane-only delivery for its entire process lifetime even
- * though the very next attempt — a manual restart — bound fine.
- *
- * Retries with capped exponential backoff FOREVER rather than giving up after
- * N tries: there is no safe bound to stop at, since giving up re-enters the
- * exact permanent degradation this fix exists to remove.
- */
-export async function buildCaptainChannelWithRetry(opts: CaptainChannelRetryOpts = {}): Promise<ClaudePeerChannel> {
-  const build = opts.build ?? buildCaptainChannel;
+/** #786: one channel per agent that has one. `agentFor` lets the daemon choose. */
+export async function buildCaptainChannels(opts: {
+  stateRoot: string;
+  configAgent?: string;
+}): Promise<{ channels: Record<string, ControlChannel>; agentFor: (project: string) => string | undefined }> {
+  const claude = await buildCaptainChannel();
+  const opencode = new OpencodeHttpChannel({
+    portFor: (project) => readCaptainAddress(opts.stateRoot, project)?.port,
+    sessionFor: (project) => readCaptainAddress(opts.stateRoot, project)?.sessionId,
+  });
+  return {
+    channels: { claude, opencode },
+    agentFor: (project) => resolveCaptainAgent(opts.stateRoot, project, opts.configAgent),
+  };
+}
+
+/** #786: the record wins — `--agent` is a CLI flag that never reaches config. */
+export function resolveCaptainAgent(
+  stateRoot: string,
+  project: string,
+  configAgent: string | undefined,
+): string | undefined {
+  return readCaptainAddress(stateRoot, project)?.agent ?? configAgent;
+}
+
+/** #712: shared capped-exponential retry. Never gives up — giving up re-enters the
+ *  permanent pane-only degradation this exists to remove. */
+async function retryForever<T>(build: () => Promise<T>, opts: CaptainChannelRetryOpts = {}): Promise<T> {
   // unref: a pending backoff timer must not hold the daemon's event loop open on shutdown.
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { const t = setTimeout(r, ms); (t as { unref?: () => void }).unref?.(); }));
   const log = opts.log ?? ((m: string) => console.error(chalk.dim(m)));
@@ -184,4 +201,29 @@ export async function buildCaptainChannelWithRetry(opts: CaptainChannelRetryOpts
       delay = Math.min(delay * 2, maxDelayMs);
     }
   }
+}
+
+/**
+ * #712: a bind failure at daemon boot (e.g. a transient `listen EACCES` on the
+ * shared socket directory) used to be logged once and never retried, latching
+ * the daemon into pane-only delivery for its entire process lifetime even
+ * though the very next attempt — a manual restart — bound fine.
+ *
+ * Retries with capped exponential backoff FOREVER rather than giving up after
+ * N tries: there is no safe bound to stop at, since giving up re-enters the
+ * exact permanent degradation this fix exists to remove.
+ */
+export function buildCaptainChannelWithRetry(opts: CaptainChannelRetryOpts = {}): Promise<ClaudePeerChannel> {
+  return retryForever(opts.build ?? buildCaptainChannel, opts);
+}
+
+/** #786: the agent-aware variant — claude + opencode channels from the record,
+ *  plus an agent resolver. Same #712 retry policy. */
+export function buildCaptainChannelsWithRetry(
+  opts: CaptainChannelRetryOpts & { stateRoot: string; configAgent?: string },
+): Promise<{ channels: Record<string, ControlChannel>; agentFor: (project: string) => string | undefined }> {
+  return retryForever(
+    () => buildCaptainChannels({ stateRoot: opts.stateRoot, configAgent: opts.configAgent }),
+    opts,
+  );
 }
