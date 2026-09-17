@@ -294,10 +294,11 @@ Acceptance #3 is a regression guard, not a design goal.
 
 ## 9. Out of scope / follow-ups
 
-- **Crew misroute (new issue).** `OpencodeHttpChannel.resolveSession` picks the newest session
-  project-wide; a crew with a newer session in another directory of the same project could receive
-  another crew's message. `TaskRecord.cwd` exists (`packages/shared/src/types/control.ts:54`), so
-  directory-scoped resolution is wireable. File separately.
+- **Crew misroute (filed as [#787](https://github.com/tu11aa/squadrant/issues/787)).**
+  `OpencodeHttpChannel.resolveSession` picks the newest session project-wide; a crew with a newer
+  session in another directory of the same project could receive another crew's message.
+  `TaskRecord.cwd` exists (`packages/shared/src/types/control.ts:54`), so directory-scoped resolution
+  is wireable. Deliberately not bundled here (§2 tests 9/10 hold the raw evidence).
 - **Captain turn-end / SSE liveness** — captains only need delivery; turn-end detection for the
   captain role belongs to #628.
 - **`opencode` interactive ignores `model`** (`packages/agents/src/drivers/opencode.ts:29`) — the
