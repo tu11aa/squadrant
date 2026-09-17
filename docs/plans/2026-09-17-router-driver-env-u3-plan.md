@@ -1095,3 +1095,54 @@ Report the PR number + a summary via the completion protocol.
 **Type consistency:** `RouterEnvCredentials` (Task 1) is structurally a subset of `RouterCredentials` (U2 `service.ts`); `buildRouterEnv` accepts it directly. `resolveRouterCredentials` (Task 2) returns `RouterCredentials`; `CrewSpawnDeps.routerCredentials` (Task 4) returns `RouterCredentials`; `fetchRouterCredentials` (Task 6) returns `RouterCredentials`. `renderEnvAssignments` defined Task 1, used Task 4. `ensureClaudeApiKeyApproved` defined Task 5, consumed Task 6 as `approveKey`.
 
 **Out of scope (explicit):** side/captain/command/exploration spawner wiring; U7 permission gate; shim/config redesign; `PROTOCOL_VERSION` bump.
+
+---
+
+## Verification log
+
+Recorded 2026-09-17 on `feat/775-driver-env-injection`.
+
+**Baseline (develop, `c7f1406`)** — `pnpm build` then `pnpm test`:
+`Test Files 237 passed (237)` · `Tests 3139 passed (3139)` · 0 failures.
+(The suite requires a prior `pnpm build` in the worktree; without it,
+cross-package imports fail to resolve and ~115 files error at collection.)
+
+**After U3:**
+
+```
+$ pnpm build          # tsc -b (all six packages) + tsup
+ESM Build success
+
+$ pnpm test
+Test Files  242 passed (242)
+     Tests  3169 passed (3169)
+```
+
+- `pnpm lint` (root `tsc --noEmit`) reports only pre-existing `node_modules`
+  (`vite`/`vitest` d.ts) and `tsup.config.ts` errors — `grep -c '^packages/'` → `0`.
+  The authoritative per-package typecheck is `pnpm build`, which passes.
+- New test files (5): `router/__tests__/env.test.ts`,
+  `router/__tests__/credentials.test.ts`,
+  `daemon/__tests__/router-credentials.test.ts`,
+  `claude/__tests__/api-key-approval.test.ts`,
+  `cli/src/__tests__/crew-router-credentials.test.ts`.
+- Native-unchanged: the launch line for `backend: "native"` is
+  `${envPrefix}${routerPrefix} ${niceCrewCommand(cmd)}` with `routerPrefix === ""`,
+  byte-identical to `develop`'s `${envPrefix} ${niceCrewCommand(cmd)}`;
+  `deps.routerCredentials` is never called (asserted in
+  `crew-spawn.test.ts` → "injects nothing for a native claude spawn").
+- `docs/generated/control-events.md` regenerated — my `crew-spawn.ts` edit shifted
+  the embedded source line numbers (same as U2's `a38e718`).
+
+**Independent review finding, fixed before PR.** A review subagent found that
+`ANTHROPIC_CUSTOM_HEADERS` embeds a newline, and `sanitizeForCmuxSend()`
+(`packages/workspaces/src/runtimes/cmux.ts:144`) rewrites a literal `\n` escape to a
+space — so `$'…\n…'` reached the shell as a single header and every entry after the
+first was silently dropped in `direct` mode. Fixed by emitting `\x0a` (unmatched by
+`\\[nrt]`, decodes to a newline in both zsh and bash, 2-hex-digit unambiguous), with
+a regression case in the cmux sanitizer suite. Two smaller review items also fixed:
+the `~/.claude.json` rewrite is now atomic (temp + `renameSync`, original mode
+preserved, temp cleaned on failure), and a skipped key pre-approval now emits a
+visible warning rather than a dim log line (#775 precondition 3 requires a
+non-silent surface).
+
