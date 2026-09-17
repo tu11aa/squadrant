@@ -30,6 +30,8 @@ import {
   type BackendMode,
 } from "@squadrant/shared";
 import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
+import { buildRouterEnv, renderEnvAssignments } from "./router/env.js";
+import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 
@@ -199,6 +201,10 @@ export interface CrewSpawnDeps {
   onModelResolved?(o: { agentName: string; model: string | undefined }): void;
   /** Optional: called once the effective backend is resolved (before spawn). */
   onBackendResolved?(o: { backend: BackendMode }): void;
+  /** U3: CLI-edge — resolve router credentials for a routed claude spawn over
+   *  the daemon socket (the shim's port and minted token are daemon-internal).
+   *  Absent ⇒ a routed spawn fails loud instead of launching unauthenticated. */
+  routerCredentials?(o: { project: string; backend: "direct" | "proxy" }): Promise<RouterCredentials>;
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
@@ -488,6 +494,22 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
+    // U3: a routed spawn must carry the router env in its PROCESS environment at
+    // launch — a settings.json `env` block only reaches claude's child processes
+    // and does not satisfy the interactive auth gate (#775 precondition 1).
+    // `native` injects nothing.
+    let routerEnv: Record<string, string> = {};
+    if (backend !== "native") {
+      if (!deps.routerCredentials) {
+        throw new Error(
+          `backend '${backend}' requires router credentials, but the spawn path has no daemon credentials provider`,
+        );
+      }
+      routerEnv = buildRouterEnv(
+        await deps.routerCredentials({ project: input.project, backend }),
+        crewModel,
+      );
+    }
     ensureSocksDir();
     // Same directory as the crews' own sockets — receipts are only delivered
     // within one socket namespace, so our listener must live there too.
@@ -538,7 +560,13 @@ export async function runCrewSpawn(
     // Prefix the CLI command with env so the hook bridge + signal verb running
     // inside the crew's cmux tab can identify their task.
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${niceCrewCommand(cliCommand)}`);
+    // Render the router env OUTSIDE `nice`: the shell must process the
+    // assignments before exec, and `nice -n 10 FOO=bar cmd` is invalid (nice
+    // would try to exec the literal `FOO=bar`). Empty for `native`, so a native
+    // spawn's command line is byte-for-byte unchanged.
+    const routerPrefix =
+      Object.keys(routerEnv).length > 0 ? ` ${renderEnvAssignments(routerEnv)}` : "";
+    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix}${routerPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     // #730: spill an oversized first-turn to a temp file rather than risking a
     // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.

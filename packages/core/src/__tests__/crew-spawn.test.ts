@@ -927,6 +927,10 @@ describe("runCrewSpawn", () => {
       const agent = makeAgent("claude");
       const deps = makeSpawnDeps(runtime, agent);
       deps.onBackendResolved = vi.fn();
+      // #775: a routed spawn now requires daemon-resolved credentials.
+      deps.routerCredentials = vi
+        .fn()
+        .mockResolvedValue({ backend: "proxy", baseUrl: "http://127.0.0.1:1", token: "t" });
 
       await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
 
@@ -1015,6 +1019,10 @@ describe("runCrewSpawn", () => {
       const agent = makeAgent("claude");
       const deps = makeSpawnDeps(runtime, agent);
       deps.onBackendResolved = vi.fn();
+      // #775: a routed spawn now requires daemon-resolved credentials.
+      deps.routerCredentials = vi
+        .fn()
+        .mockResolvedValue({ backend: "proxy", baseUrl: "http://127.0.0.1:1", token: "t" });
 
       await runCrewSpawn({ project: PROJECT, task: "plain work" }, config, deps);
 
@@ -1036,6 +1044,73 @@ describe("runCrewSpawn", () => {
       await runCrewSpawn({ project: PROJECT, task: "fix daemon bug" }, config, deps);
 
       expect(deps.onBackendResolved).toHaveBeenCalledWith({ backend: "native" });
+    });
+  });
+
+  // ── U3 router env injection (#775) ────────────────────────────────────────
+
+  describe("router env injection (#775)", () => {
+    it("injects the router env prefix for a routed claude spawn", async () => {
+      const config = makeConfig({
+        router: {
+          kind: "opencode-go",
+          baseUrl: "https://opencode.ai/zen/go",
+          apiKey: "k",
+          models: { flash: { upstream: "deepseek-v4.1-flash" } },
+        },
+        crewRouting: {
+          rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy", model: "flash" }],
+        },
+      });
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+      const routerCredentials = vi.fn().mockResolvedValue({
+        backend: "proxy",
+        baseUrl: "http://127.0.0.1:53421",
+        token: "minted-tok",
+      });
+      deps.routerCredentials = routerCredentials;
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
+
+      expect(routerCredentials).toHaveBeenCalledWith({ project: PROJECT, backend: "proxy" });
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).toContain("ANTHROPIC_BASE_URL=$'http://127.0.0.1:53421'");
+      expect(line).toContain("ANTHROPIC_AUTH_TOKEN=$'minted-tok'");
+      expect(line).toContain("ANTHROPIC_API_KEY=$''");
+      expect(line).toContain("ANTHROPIC_MODEL=$'deepseek-v4.1-flash'");
+      expect(line).toContain("CMUX_PRESERVE_CLAUDE_AUTH_SELECTION_ENV=$'1'");
+      // The assignments must precede `nice` — `nice -n 10 FOO=bar cmd` is invalid.
+      expect(line.indexOf("ANTHROPIC_BASE_URL")).toBeLessThan(line.indexOf("nice -n"));
+    });
+
+    it("fails loud when a routed spawn has no credentials provider", async () => {
+      const config = makeConfig({
+        router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+        crewRouting: {
+          rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy" }],
+        },
+      });
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps),
+      ).rejects.toThrow(/no daemon credentials provider/);
+    });
+
+    it("injects nothing for a native claude spawn (byte-for-byte)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+      deps.routerCredentials = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).not.toContain("ANTHROPIC_");
+      expect(line).not.toContain("CMUX_PRESERVE");
+      expect(deps.routerCredentials).not.toHaveBeenCalled();
     });
   });
 
