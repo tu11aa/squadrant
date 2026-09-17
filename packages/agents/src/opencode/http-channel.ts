@@ -22,6 +22,10 @@ export interface OpencodeHttpChannelDeps {
   fetchImpl?: typeof fetch;
   /** taskId → the crew's opencode server port, or undefined if unknown. */
   portFor: (taskId: string) => number | undefined;
+  /** Optional deterministic session id for this task. Captains supply one from the
+   *  captain-address record; without it the channel falls back to resolveSession's
+   *  project-wide "newest" heuristic, which is unsafe across worktrees (#786 §2). */
+  sessionFor?: (taskId: string) => string | undefined;
   /** Per-request timeout (ms). Default 5000. */
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -41,12 +45,14 @@ export class OpencodeHttpChannel implements ControlChannel {
 
   private readonly fetchImpl: typeof fetch;
   private readonly portFor: (taskId: string) => number | undefined;
+  private readonly sessionFor?: (taskId: string) => string | undefined;
   private readonly timeoutMs: number;
   private readonly log?: (msg: string) => void;
 
   constructor(deps: OpencodeHttpChannelDeps) {
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.portFor = deps.portFor;
+    this.sessionFor = deps.sessionFor;
     this.timeoutMs = deps.timeoutMs ?? 5000;
     this.log = deps.log;
   }
@@ -55,7 +61,7 @@ export class OpencodeHttpChannel implements ControlChannel {
     const port = this.portFor(taskId);
     if (port == null) return { status: "unsupported" };
 
-    const sessionId = await this.resolveSession(taskId, port);
+    const sessionId = this.sessionFor?.(taskId) ?? await this.resolveSession(taskId, port);
     if (!sessionId) return { status: "gone" };
 
     let res: Response;
@@ -94,7 +100,7 @@ export class OpencodeHttpChannel implements ControlChannel {
   async probe(taskId: string): Promise<ProbeResult> {
     const port = this.portFor(taskId);
     if (port == null) return { status: "unsupported" };
-    const sessionId = await this.resolveSession(taskId, port);
+    const sessionId = this.sessionFor?.(taskId) ?? await this.resolveSession(taskId, port);
     return sessionId ? { status: "reachable", via: this.name } : { status: "gone" };
   }
 
