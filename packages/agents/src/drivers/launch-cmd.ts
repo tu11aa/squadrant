@@ -42,6 +42,9 @@ export function buildAgentCmd(
   /** Per-role thinking level → claude `--effort <level>`. Claude-only; the
    *  non-claude delegate path never forwards it. Absent ⇒ flag omitted. */
   thinking?: ThinkingLevel,
+  /** #786: interactive boot for the captain role on agents that support it
+   *  (opencode). Absent ⇒ today's headless delegate behaviour, unchanged. */
+  captainBoot?: { port?: number; sessionId?: string },
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -108,5 +111,9 @@ export function buildAgentCmd(
     model,
     autoApprove: true,
     promptFile: roleFile && fs.existsSync(roleFile) ? roleFile : undefined,
+    ...(captainBoot && role === "captain"
+      ? { interactive: true, ...(captainBoot.port ? { port: captainBoot.port } : {}),
+          ...(captainBoot.sessionId ? { sessionId: captainBoot.sessionId } : {}) }
+      : {}),
   });
 }
