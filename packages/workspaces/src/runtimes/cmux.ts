@@ -391,17 +391,29 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
 }
 
 /**
- * #786: startup readiness for an opencode TUI. The claude classifier above reads a
- * live opencode pane as "loading" forever (no ⏵⏵/Ctx Used chrome), so
+ * #786/#789: startup readiness for an opencode TUI. The claude classifier above
+ * reads a live opencode pane as "loading" forever (no ⏵⏵/Ctx Used chrome), so
  * deliverStartupPrompt would send blind after its 30s timeout and never confirm.
  * opencode has no reliable "working" marker, so this reports only loading/idle;
  * deliverStartupPrompt's phase 3 then confirms the turn by screen change.
- * Marker reuse mirrors the crew path (#499/#656): a stable substring, matched
- * case/whitespace/ellipsis-insensitively.
+ *
+ * #789 correction: readiness is POSITIVE — the marker's presence means the input
+ * box is up, not that the TUI is still cold. "Ask anything…" is the persistent
+ * EMPTY-SESSION input placeholder (it is drawn whenever the box is idle and
+ * empty, and never disappears on its own), so keying "loading" on its presence
+ * inverted the signal and left a cold captain at "loading" forever. Verified live
+ * 2026-09-17 (opencode 1.18.31): a prompt typed at the instant the marker rendered
+ * was accepted and created a session. The footer ("ctrl+p commands") renders at
+ * the same moment and is the only positive idle signal on a warm resume, where a
+ * transcript is on screen and the placeholder is not drawn. Neither marker on
+ * screen (boot logo only) means keystrokes would still be dropped → "loading".
+ * Matching mirrors the crew path (#499/#656): case/whitespace/ellipsis-insensitive.
  */
+const OC_IDLE_MARKERS = ["Ask anything", "ctrl+p commands"];
+
 export function classifyOpencodeStartupSurface(screen: string): "loading" | "idle" {
   if (!screen) return "loading";
-  return screenHasSplashMarker(screen, "Ask anything") ? "loading" : "idle";
+  return OC_IDLE_MARKERS.some((m) => screenHasSplashMarker(screen, m)) ? "idle" : "loading";
 }
 
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a

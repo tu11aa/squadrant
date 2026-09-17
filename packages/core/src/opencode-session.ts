@@ -10,7 +10,7 @@ import { sameDirectory, writeCaptainAddress } from "./captain-record.js";
 export interface OpencodeSessionRow {
   id: string;
   directory?: string;
-  time?: { updated?: number };
+  time?: { created?: number; updated?: number };
 }
 
 /** GET the session list, trying the legacy route then the /api route. Never throws. */
@@ -36,12 +36,26 @@ export async function listSessions(
   return [];
 }
 
-/** Newest session whose directory is the exact same directory. null when none. */
+/**
+ * Newest session whose directory is the exact same directory. null when none.
+ *
+ * `createdAfterMs` (#789) restricts the result to sessions CREATED at/after a
+ * timestamp — the captain's own session for a cold start. Without it, a stale
+ * session the operator already had in the captain's directory (the repo root!)
+ * can be "newer by updated" and get persisted as the captain's address: a silent
+ * misroute. A row with no `time.created` cannot be proven fresh, so it is excluded
+ * whenever the filter is active.
+ */
 export function newestSessionInDirectory(
   rows: OpencodeSessionRow[],
   directory: string,
+  createdAfterMs?: number,
 ): string | null {
-  const hits = rows.filter((r) => sameDirectory(r.directory, directory));
+  const hits = rows.filter(
+    (r) =>
+      sameDirectory(r.directory, directory) &&
+      (createdAfterMs === undefined || (r.time?.created ?? 0) >= createdAfterMs),
+  );
   if (hits.length === 0) return null;
   return hits.reduce((a, b) => ((b.time?.updated ?? 0) > (a.time?.updated ?? 0) ? b : a)).id;
 }
@@ -53,6 +67,7 @@ export function newestSessionInDirectory(
 export async function pollNewestSessionInDirectory(opts: {
   port: number;
   directory: string;
+  createdAfterMs?: number;
   timeoutMs?: number;
   intervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -63,7 +78,11 @@ export async function pollNewestSessionInDirectory(opts: {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const id = newestSessionInDirectory(await listSessions(opts.port, opts.fetchImpl), opts.directory);
+    const id = newestSessionInDirectory(
+      await listSessions(opts.port, opts.fetchImpl),
+      opts.directory,
+      opts.createdAfterMs,
+    );
     if (id) return id;
     if (Date.now() >= deadline) return null;
     await sleep(intervalMs);
@@ -74,24 +93,29 @@ export async function pollNewestSessionInDirectory(opts: {
  * Resolve the freshly-booted captain's session id and persist the captain address.
  * Bounded: on timeout nothing is written, which reads downstream as "not deliverable"
  * — the honest outcome (§5.2).
+ *
+ * `launchedAt` is the moment the captain was launched (ISO). It bounds resolution to
+ * sessions the captain itself created (#789) and is persisted verbatim so the record
+ * reflects the launch, not the resolution.
  */
 export async function resolveAndPersistOpencodeCaptain(opts: {
   stateRoot: string;
   project: string;
   port: number;
   directory: string;
+  launchedAt: string;
   timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
   fetchImpl?: typeof fetch;
 }): Promise<string | null> {
   const sessionId = await pollNewestSessionInDirectory({
-    port: opts.port, directory: opts.directory, timeoutMs: opts.timeoutMs,
-    sleep: opts.sleep, fetchImpl: opts.fetchImpl,
+    port: opts.port, directory: opts.directory, createdAfterMs: Date.parse(opts.launchedAt),
+    timeoutMs: opts.timeoutMs, sleep: opts.sleep, fetchImpl: opts.fetchImpl,
   });
   if (!sessionId) return null;
   writeCaptainAddress(opts.stateRoot, opts.project, {
     agent: "opencode", port: opts.port, sessionId,
-    directory: opts.directory, launchedAt: new Date().toISOString(),
+    directory: opts.directory, launchedAt: opts.launchedAt,
   });
   return sessionId;
 }
