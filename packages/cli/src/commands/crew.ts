@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
 import type { PanePlacement, BackendMode } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
 import {
@@ -13,9 +13,11 @@ import {
   runCrewClose as coreRunCrewClose,
   runCrewList as coreRunCrewList,
   runCrewAnswer as coreRunCrewAnswer,
+  buildRouterCredentialsRequest,
   type CrewSpawnInput,
   type ResolvedAgent,
   type CrewAnswerResult,
+  type RouterCredentials,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
@@ -28,6 +30,32 @@ export type { CrewSpawnInput };
 // ─── thin wrappers ────────────────────────────────────────────────────────────
 // Each function constructs CLI-edge deps (concrete drivers, daemon closures,
 // settings writers) and delegates the orchestration algorithm to @squadrant/core.
+
+/** U3 CLI edge: fetch router credentials from the daemon that owns the shim,
+ *  and — for `direct` (where the real upstream key rides in ANTHROPIC_API_KEY) —
+ *  reconcile it into `~/.claude.json`'s approved list first (#775 precondition 3).
+ *  A `proxy` spawn carries only the daemon-minted token, so there is no key to
+ *  pre-approve. */
+export async function fetchRouterCredentials(
+  project: string,
+  backend: "direct" | "proxy",
+  deps: {
+    call: (req: unknown) => Promise<unknown>;
+    approveKey?: (key: string, opts: { log: (m: string) => void }) => EnsureApprovedResult;
+    log?: (m: string) => void;
+  },
+): Promise<RouterCredentials> {
+  const log = deps.log ?? ((m: string) => console.log(chalk.dim(m)));
+  const creds = (await deps.call(buildRouterCredentialsRequest(project, backend))) as RouterCredentials;
+  if (creds.backend === "direct" && creds.apiKey) {
+    const approve = deps.approveKey ?? ensureClaudeApiKeyApproved;
+    const result = approve(creds.apiKey, { log });
+    if (!result.changed && result.reason) {
+      log(`claude: routed key pre-approval skipped — ${result.reason}`);
+    }
+  }
+  return creds;
+}
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: string; surfaceId: string; workspaceId: string }> {
   const config = loadConfig();
@@ -43,6 +71,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     // AgentDriver satisfies ResolvedAgent structurally; `role: any` in ResolvedAgent
     // bridges the Role vs string gap — only "crew" is ever passed at call sites.
     resolveAgent: (name) => (agents.get(name) as unknown as ResolvedAgent) ?? null,
+    routerCredentials: (o) => fetchRouterCredentials(o.project, o.backend, { call: squadrantdCall }),
     dispatchCrew: async (o) => {
       const req = buildDispatchRequest(o);
       return (await squadrantdCall(req)) as TaskRecord;
