@@ -7,6 +7,7 @@ import type { AttachFrame, AttachInbound } from "../protocol.js";
 import type { ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import type { DaemonContext } from "./context.js";
+import { resolveRouterCredentials } from "../router/credentials.js";
 
 export interface ServerHandlers {
   /** Build per-component health list (optionally filtered to one project). */
@@ -50,6 +51,21 @@ export function createServer(
       }
       if (msg.kind === "event") {
         return ctx.d.handle(msg);
+      }
+      // U3: a routed claude spawn cannot derive the shim port/token locally
+      // (they are daemon-internal), so it asks the daemon that owns the shim.
+      if (msg.kind === "router-credentials") {
+        const service = ctx.routerService;
+        if (!service) {
+          throw new Error(
+            "router backend selected but squadrantd has no router service — configure defaults.router and restart the daemon",
+          );
+        }
+        return resolveRouterCredentials(
+          service,
+          msg.project as string,
+          msg.backend as "direct" | "proxy",
+        );
       }
       return ctx.d.handle(msg);
     },
