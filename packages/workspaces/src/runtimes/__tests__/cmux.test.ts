@@ -400,6 +400,17 @@ describe("cmux driver", () => {
       .resolves.toBeUndefined();
   });
 
+  // #9422: cmux 0.64.22 close-surface fails closed on stale/unknown surface ref with
+  // "Error: Surface ref not found: surface:N" instead of falling back to focused surface.
+  // closePane must swallow this error cleanly.
+  it("closePane swallows cmux 0.64.22 'Surface ref not found' error (#9422)", async () => {
+    execFileMock.mockImplementation(() => {
+      throw new Error("Error: Surface ref not found: surface:99");
+    });
+    await expect(driver.closePane({ workspaceId: "workspace:1", surfaceId: "surface:99" }))
+      .resolves.toBeUndefined();
+  });
+
   it("sendToPane calls cmux send + send-key Enter scoped to surface", async () => {
     execFileMock.mockReturnValue("");
     await driver.sendToPane({ workspaceId: "workspace:1", surfaceId: "surface:9" }, "hello crew");

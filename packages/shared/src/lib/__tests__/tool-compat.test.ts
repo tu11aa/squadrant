@@ -84,7 +84,7 @@ describe("checkToolCompat", () => {
 
   // Manifest shape: all six tools should produce a null when version is in-range
   it("manifest tool entries for cmux/claude/node each have a min and are checkable", () => {
-    expect(checkToolCompat("cmux",  "cmux 0.64.17", { min: "0.64.0",  lastVerified: "0.64.17" })).toBeNull();
+    expect(checkToolCompat("cmux",  "cmux 0.64.22", { min: "0.64.0",  lastVerified: "0.64.22" })).toBeNull();
     expect(checkToolCompat("claude","claude 2.1.32", { min: "2.1.32" })).toBeNull();
     expect(checkToolCompat("node",  "22.0.0",        { min: "18.0.0", lastVerified: "24.6.0" })).toBeNull();
   });
