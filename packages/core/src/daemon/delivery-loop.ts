@@ -8,6 +8,8 @@ import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { stalePrefix } from "./down-alert.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
+import { readCaptainAddress, writeCaptainAddress } from "../captain-record.js";
+import { listSessions, newestSessionInDirectory } from "../opencode-session.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
 import type { Store } from "../store.js";
@@ -37,6 +39,8 @@ const STUCK_ALERT_TEXT: Record<DeliverDeferReason, (n: number) => string> = {
     `⚠️ DELIVERY STUCK: an in-progress draft (or ghost text) in your input box has blocked pending notification(s) for ${n}+ retries. Your input is never touched — this keeps retrying safely and will deliver automatically once you submit or clear it.`,
   "probe-failed": (n) =>
     `⚠️ DELIVERY STUCK: reading your captain pane failed (stale/dead surface reference or cmux unavailable) and has blocked pending notification(s) for ${n}+ retries. Delivery re-resolves the pane automatically; if this persists after a captain restart, bounce the daemon to refresh its surface references.`,
+  "no-channel": (n) =>
+    `⚠️ CAPTAIN NOT DELIVERABLE: this project's captain has no control channel (missing launch record, or a manually opened session). Crew notifications are queued and not lost, but cannot be delivered until the captain is launched by squadrant. Run \`squadrant launch <project>\` — a manually opened \`opencode -c\` cannot receive lifecycle notifications. (blocked for ${n}+ retries)`,
   stable: (n) =>
     `⚠️ DELIVERY STUCK: pending notification(s) have been blocked for ${n}+ retries. This keeps retrying safely and will deliver automatically once the blocker clears.`,
   unknown: (n) =>
@@ -264,7 +268,14 @@ export function createDelivery(
   const cmux = daemonCmux;
   const cfg = loadConfig();
   const deliveries = new Map<string, CaptainDelivery>();
-  const deliveryStats = (project: string): CaptainDeliveryStats | undefined => deliveries.get(project)?.stats();
+  const deliveryStats = (project: string): CaptainDeliveryStats | undefined => {
+    const s = deliveries.get(project)?.stats();
+    if (!s) return s;
+    // #786: no-channel is not a UI condition — nothing the operator does in the
+    // pane can clear it, so it reads as stuck from the FIRST defer (the alert and
+    // the health row both act on this within seconds, not after maxDefers).
+    return s.reason === "no-channel" ? { ...s, stuck: true } : s;
+  };
   // #589: last-known deferred entry per project, for the exit-marker snapshot.
   // Cleared on delivery; set/updated whenever a defer happens.
   const lastDeferred = new Map<string, { seq: number; deferCount: number }>();
@@ -395,26 +406,47 @@ export function createDelivery(
             if (prefix) deliverEntry = { ...entry, message: `${prefix}${entry.message}` };
           }
           const result = await d.deliver(deliverEntry, async (text, sendOpts) => {
-            // #667 slice 4: try the native channel first. A throw here must never
-            // break delivery — fall through to the pane, which is the behaviour that
-            // predates this slice.
-            let handledByChannel = false;
-            try {
-              const mode = ctx.captainChannelMode?.() ?? "off";
-              const r = await deliverToCaptain(project, text, {
-                channel: ctx.captainChannel,
-                mode,
-                log,
-              });
-              handledByChannel = r.handled;
-            } catch (e) {
-              log(`captain-channel ${project}: threw, falling back to pane — ${(e as Error).message}`);
+            const agent = ctx.captainAgentFor?.(project);
+            // #786: with no agent resolver, fall back to the legacy single channel —
+            // byte-for-byte the pre-#786 behaviour (existing tests rely on it).
+            const picked = ctx.captainAgentFor
+              ? (agent ? ctx.captainChannels?.[agent] : undefined)
+              : ctx.captainChannel;
+            const mode = ctx.captainChannelMode?.() ?? "off";
+
+            if (picked) {
+              // #667 slice 4: try the native channel first. A throw here must never
+              // break delivery — fall through to the pane, which is the behaviour that
+              // predates this slice.
+              try {
+                const r = await deliverToCaptain(project, text, { channel: picked, mode, log });
+                if (r.handled) return;
+              } catch (e) {
+                log(`captain-channel ${project}: threw, falling back to pane — ${(e as Error).message}`);
+              }
+              // Addressable but the channel reports gone/unsupported / is off.
+              if (agent === "opencode" && mode !== "off") {
+                // #786: the record's session id can go stale (captain relaunched).
+                // Re-resolve ONCE from the live server; if the address is unchanged
+                // there is nothing left to try — report it instead of scraping a
+                // pane whose box the claude-tuned detector can never see.
+                const rec = readCaptainAddress(stateRoot, project);
+                if (rec?.port) {
+                  const fresh = newestSessionInDirectory(await listSessions(rec.port), rec.directory);
+                  if (fresh && fresh !== rec.sessionId) {
+                    writeCaptainAddress(stateRoot, project, { ...rec, sessionId: fresh });
+                    return;   // retry on the next tick with the refreshed id
+                  }
+                }
+                throw new DeferDelivery(null, "no-channel");
+              }
+              // claude with a channel: fall through to the pane, unchanged.
+            } else if (ctx.captainAgentFor && (agent === "claude" || agent === "opencode")) {
+              // #786: the daemon knows the agent, and it needs a channel it does not
+              // have. Never guess at a pane.
+              if (mode !== "off") throw new DeferDelivery(null, "no-channel");
             }
-            if (handledByChannel) {
-              // Reached the captain (or a human gate in front of it). Advance the
-              // cursor and do NOT also write the pane.
-              return;
-            }
+
             try {
               return await cmux.send(surface!, text, sendOpts);
             } catch (e) {
@@ -454,7 +486,10 @@ export function createDelivery(
             // (first defer of this seq) and then every 30th tick (~30s cadence)
             // — enough resolution to correlate a later stuck/SIGTERM event
             // without adding meaningful volume.
-            const { maxDeferCount, stuck } = d.stats();
+            const { maxDeferCount } = d.stats();
+            // #786: use the derived value so no-channel backs off like the jam it
+            // is (relaunch heals it), instead of retrying every 1s tick forever.
+            const stuckNow = deliveryStats(project)?.stuck ?? false;
             if (maxDeferCount === 1 || maxDeferCount % 30 === 0) {
               log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=deferred project=${project} reason=${result.reason}`);
             }
@@ -464,9 +499,12 @@ export function createDelivery(
             // dropped — the cursor still hasn't advanced past it, so the very
             // next attempt (once nextAttemptAt passes) picks up right where this
             // left off and delivers the instant the blocker clears.
-            if (stuck) {
+            if (stuckNow) {
               const streak = (projectBackoff.get(project)?.streak ?? 0) + 1;
-              const backoffMs = Math.min(60_000, 1000 * 2 ** streak);
+              // #786: a no-channel captain is healed by a RELAUNCH, not by a pane
+              // change, so retry on a slower cadence than the UI-condition cap.
+              const cap = d.stats().reason === "no-channel" ? 300_000 : 60_000;
+              const backoffMs = Math.min(cap, 1000 * 2 ** streak);
               projectBackoff.set(project, { nextAttemptAt: Date.now() + backoffMs, streak });
             }
             break;
@@ -496,7 +534,10 @@ export function createDelivery(
         // as `detail` on the captain's ComponentHealth row (see liveness.ts),
         // so `squadrant doctor` / `squadrant status --detailed` show it too —
         // a third, pull-based, zero-configuration surface.
-        const stuck = d.stats().stuck;
+        const stats = d.stats();
+        // #786: no-channel is not a UI condition — nothing the operator does in the
+        // pane can clear it, so alert on the FIRST defer instead of after maxDefers.
+        const stuck = stats.stuck || stats.reason === "no-channel";
         if (stuck && !stuckNotified.has(project)) {
           stuckNotified.add(project);
           const { maxDeferCount, reason } = d.stats();

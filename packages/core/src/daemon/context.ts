@@ -165,6 +165,11 @@ export interface DaemonContext {
    *  as before this slice. core may not import @squadrant/agents. */
   captainChannel?: import("../control-channel.js").ControlChannel;
   captainChannelMode?: () => import("../control-channel.js").ControlChannelMode;
+  /** #786: per-agent captain channels (claude peer / opencode http). When absent,
+   *  behaviour is exactly as before: `captainChannel` only. */
+  captainChannels?: Record<string, import("../control-channel.js").ControlChannel>;
+  /** #786: the captain's agent for a project (launch record, else config). */
+  captainAgentFor?: (project: string) => string | undefined;
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */
