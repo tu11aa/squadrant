@@ -93,3 +93,22 @@ describe("opencode driver", () => {
     expect(result.output).toBe("plain response text");
   });
 });
+
+describe("opencode driver — interactive captain command (#786)", () => {
+  const d = createOpencodeDriver();
+
+  it("binds the port and resumes an explicit session", () => {
+    expect(d.buildCommand({ prompt: "x", workdir: "/tmp", role: "captain", interactive: true, port: 51220, sessionId: "ses_abc" }))
+      .toBe("opencode --session ses_abc --port 51220");
+  });
+
+  it("omits --session on a fresh start", () => {
+    expect(d.buildCommand({ prompt: "x", workdir: "/tmp", role: "captain", interactive: true, port: 51220 }))
+      .toBe("opencode --port 51220");
+  });
+
+  it("never uses -c (project-wide resume is unsafe — spec §2 test 9)", () => {
+    expect(d.buildCommand({ prompt: "x", workdir: "/tmp", role: "captain", interactive: true, port: 1, sessionId: "ses_a" }))
+      .not.toContain(" -c");
+  });
+});
