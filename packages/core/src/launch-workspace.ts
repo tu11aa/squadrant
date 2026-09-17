@@ -37,13 +37,21 @@ export interface StartupDeliveryOptions {
  * "working", so we re-send ONLY while it's still "idle" (keystrokes were dropped).
  * Re-sending strictly on observed-still-idle is what guards against duplicate
  * runs: a prompt that landed is never sent twice. Best-effort and never throws.
+ *
+ * #789: confirm-or-fail. Returns true only when the prompt is observed to land
+ * (the surface changed after a send) or a turn was already in flight. A prompt
+ * that never lands — the silent-empty-captain path this issue is about — returns
+ * false AND writes an actionable warning to stderr, so a launch can never end
+ * with an idle captain and no signal. The loading-timeout branch (unrecognized
+ * chrome) still sends at most once: a second blind prompt into an unreadable
+ * pane risks a duplicate turn, so it fails loud instead.
  */
 export async function deliverStartupPrompt(
   runtime: Pick<RuntimeDriver, "readScreen" | "send">,
   refId: string,
   prompt: string,
   opts: StartupDeliveryOptions = {},
-): Promise<void> {
+): Promise<boolean> {
   const classify = opts.classifyScreen ?? (() => "idle" as const);
   const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
   const settleMs = opts.settleMs ?? 2_500;
@@ -66,15 +74,12 @@ export async function deliverStartupPrompt(
 
     // A turn is already in flight (a prior attempt landed, or a resumed session
     // auto-continued). Never keystroke into it — that would queue a duplicate run.
-    if (state === "working") return;
+    if (state === "working") return true;
 
     // Phase 2 — deliver. We send on "idle" (input-ready) and, as a non-hanging
     // fallback, on a "loading" timeout (e.g. a non-Claude agent whose chrome we
     // don't recognize) so a launch is never left silently without its prompt.
     await runtime.send(refId, prompt).catch(() => { /* best-effort */ });
-
-    // Timed out waiting for chrome — sent blind once; nothing to confirm, stop.
-    if (state === "loading") return;
 
     // Phase 3 — confirm by whether the surface CHANGED, not by re-matching a
     // working-spinner. The old guard re-sent "while still idle", relying on
@@ -90,8 +95,19 @@ export async function deliverStartupPrompt(
     // Re-send only on no-change — robust to whatever the spinner renders as.
     await sleep(settleMs);
     const after = await read();
-    if (after !== preSend) return;
+    if (after !== preSend) return true;
+
+    // Never appeared ready: the single blind send is all we can safely do. A
+    // second blind send could duplicate a turn in a pane we cannot read, so fail
+    // loud instead of looping.
+    if (state === "loading") break;
   }
+
+  process.stderr.write(
+    `⚠️  Startup prompt not confirmed on ${refId} after ${maxAttempts} attempt(s) — ` +
+      `the agent may be idle with no startup prompt. Re-run launch, or send it manually.\n`,
+  );
+  return false;
 }
 
 // ─── bootWorkspace ───────────────────────────────────────────────────────────

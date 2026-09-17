@@ -432,7 +432,12 @@ export function createDelivery(
                 // pane whose box the claude-tuned detector can never see.
                 const rec = readCaptainAddress(stateRoot, project);
                 if (rec?.port) {
-                  const fresh = newestSessionInDirectory(await listSessions(rec.port), rec.directory);
+                  // #789: bound the re-resolve to sessions created at/after the
+                  // captain's launch, same as the initial resolution — otherwise a
+                  // pre-existing session in the repo root can be re-picked.
+                  const fresh = newestSessionInDirectory(
+                    await listSessions(rec.port), rec.directory, Date.parse(rec.launchedAt),
+                  );
                   if (fresh && fresh !== rec.sessionId) {
                     writeCaptainAddress(stateRoot, project, { ...rec, sessionId: fresh });
                     return;   // retry on the next tick with the refreshed id

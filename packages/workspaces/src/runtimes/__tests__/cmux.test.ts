@@ -1895,14 +1895,40 @@ describe("showDiff source mapping (#599)", () => {
   });
 });
 
-describe("classifyOpencodeStartupSurface (#786)", () => {
-  it("is loading while the opencode splash marker is present", () => {
-    expect(classifyOpencodeStartupSurface("  Ask anything, / for commands, @ for context...  "))
-      .toBe("loading");
+describe("classifyOpencodeStartupSurface (#786/#789)", () => {
+  // Real cold-start screen (opencode 1.18.31, empty session): the input box is
+  // up with its persistent placeholder and the footer is rendered. Verified live
+  // 2026-09-17 — a prompt typed the moment this rendered was accepted and created
+  // a session (docs/specs/2026-09-17-…-design.md §2 test 13).
+  const COLD_READY = [
+    "  ┃                                                                          ┃",
+    '  ┃  Ask anything… "Fix broken tests"                                        ┃',
+    "  ┃                                                                          ┃",
+    "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go                                 ",
+    "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "  tab agents  ctrl+p commands",
+  ].join("\n");
+  // Real warm-resume screen (session with a transcript): the placeholder is NOT
+  // rendered, but the TUI is idle and the footer is. Verified live: the footer
+  // renders at the same moment the placeholder does on a cold start.
+  const WARM_READY = [
+    "     ▣  Build · DeepSeek V4.1 Flash · 1m 32s",
+    "  ┃",
+    "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go · high     ~/me/squadrant:develop",
+    "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "   /Users/q3labsadmin/me/squadrant   513.3K (51%) · $7.41  ctrl+p commands    • OpenCode 1.18.31",
+  ].join("\n");
+  // Boot splash — logo only, no footer, no input box. Keystrokes are dropped here.
+  const BOOT_SPLASH = "  ▄     █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\n  ▀▀▀▀  █  █ █▄▄█ █▄▄█ █  █ █▀▀  █  █ █▄▄█ █▄▄█";
+
+  it("is idle when the empty-session input box placeholder is present (cold, ready)", () => {
+    expect(classifyOpencodeStartupSurface(COLD_READY)).toBe("idle");
   });
-  it("is idle once the splash is gone", () => {
-    expect(classifyOpencodeStartupSurface("Build · DeepSeek V4.1 Flash\n  ~/me/squadrant:develop"))
-      .toBe("idle");
+  it("is idle when the TUI footer is present even without the placeholder (warm resume)", () => {
+    expect(classifyOpencodeStartupSurface(WARM_READY)).toBe("idle");
+  });
+  it("is loading while the TUI is still on its boot splash", () => {
+    expect(classifyOpencodeStartupSurface(BOOT_SPLASH)).toBe("loading");
   });
   it("never reports working (opencode has no reliable working marker)", () => {
     expect(classifyOpencodeStartupSurface("anything")).not.toBe("working");

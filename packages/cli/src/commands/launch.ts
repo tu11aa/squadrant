@@ -235,6 +235,11 @@ export const launchCommand = new Command("launch")
       const captainBoot = isOpencodeCaptain
         ? { port: captainPort, sessionId: pickResumeSessionId(priorRecord, "opencode") }
         : undefined;
+      // #789: the launch instant bounds opencode session resolution — a session
+      // created before this is NOT the captain's own (the repo root holds the
+      // developer's sessions too), and it is persisted verbatim so the record
+      // reports when the captain was launched, not when it was resolved.
+      const launchedAt = new Date().toISOString();
 
       try {
         await launchOneWorkspace({
@@ -274,17 +279,20 @@ export const launchCommand = new Command("launch")
             console.log(chalk.green(`  ✔ Workspace '${name}' created`));
             if (!projectName) return;
             if (isOpencodeCaptain && captainPort) {
-              // #786: the session does not exist until the startup prompt starts a
-              // turn (spec §2 test 8), so this waits for it. Timeout ⇒ no record ⇒
-              // the daemon reports "not deliverable", never a silent no-box.
+              // #786/#789: the session does not exist until the startup prompt starts
+              // a turn (spec §2 test 8), so this waits for it — and only accepts a
+              // session CREATED at/after `launchedAt`, so a pre-existing session in
+              // the directory is never mistaken for the captain's (the silent
+              // misroute). Timeout ⇒ no record ⇒ the daemon reports "not
+              // deliverable", never a silent no-box.
               void resolveAndPersistOpencodeCaptain({
-                stateRoot, project: projectName, port: captainPort, directory: realpathOrSelf(cwd),
+                stateRoot, project: projectName, port: captainPort, directory: realpathOrSelf(cwd), launchedAt,
               }).catch(() => {});
             } else if (role === "captain") {
               // Claude (and any other agent): mark the launch so the daemon knows
               // the captain was squadrant-launched.
               writeCaptainAddress(stateRoot, projectName, {
-                agent: agentName, directory: realpathOrSelf(cwd), launchedAt: new Date().toISOString(),
+                agent: agentName, directory: realpathOrSelf(cwd), launchedAt,
               });
             }
           },
