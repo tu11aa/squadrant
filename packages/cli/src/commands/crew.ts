@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
-import type { PanePlacement } from "@squadrant/shared";
+import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
+import type { PanePlacement, BackendMode } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine } from "@squadrant/agents";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
 import {
@@ -13,9 +13,11 @@ import {
   runCrewClose as coreRunCrewClose,
   runCrewList as coreRunCrewList,
   runCrewAnswer as coreRunCrewAnswer,
+  buildRouterCredentialsRequest,
   type CrewSpawnInput,
   type ResolvedAgent,
   type CrewAnswerResult,
+  type RouterCredentials,
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
@@ -28,6 +30,38 @@ export type { CrewSpawnInput };
 // ─── thin wrappers ────────────────────────────────────────────────────────────
 // Each function constructs CLI-edge deps (concrete drivers, daemon closures,
 // settings writers) and delegates the orchestration algorithm to @squadrant/core.
+
+/** U3 CLI edge: fetch router credentials from the daemon that owns the shim,
+ *  and — for `direct` (where the real upstream key rides in ANTHROPIC_API_KEY) —
+ *  reconcile it into `~/.claude.json`'s approved list first (#775 precondition 3).
+ *  A `proxy` spawn carries only the daemon-minted token, so there is no key to
+ *  pre-approve. */
+export async function fetchRouterCredentials(
+  project: string,
+  backend: "direct" | "proxy",
+  deps: {
+    call: (req: unknown) => Promise<unknown>;
+    approveKey?: (key: string, opts: { log: (m: string) => void }) => EnsureApprovedResult;
+    log?: (m: string) => void;
+    warn?: (m: string) => void;
+  },
+): Promise<RouterCredentials> {
+  const log = deps.log ?? ((m: string) => console.log(chalk.dim(m)));
+  const warn = deps.warn ?? ((m: string) => console.error(chalk.yellow(m)));
+  const creds = (await deps.call(buildRouterCredentialsRequest(project, backend))) as RouterCredentials;
+  if (creds.backend === "direct" && creds.apiKey) {
+    const approve = deps.approveKey ?? ensureClaudeApiKeyApproved;
+    const result = approve(creds.apiKey, { log });
+    if (!result.changed && result.reason) {
+      // Precondition 3 requires a VISIBLE surface, not a silent skip: an
+      // unapproved key makes claude report "Not logged in" (or prompt).
+      warn(
+        `claude: routed key pre-approval skipped — ${result.reason}. If claude reports "Not logged in", approve the key in ~/.claude.json`,
+      );
+    }
+  }
+  return creds;
+}
 
 export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: string; surfaceId: string; workspaceId: string }> {
   const config = loadConfig();
@@ -43,6 +77,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     // AgentDriver satisfies ResolvedAgent structurally; `role: any` in ResolvedAgent
     // bridges the Role vs string gap — only "crew" is ever passed at call sites.
     resolveAgent: (name) => (agents.get(name) as unknown as ResolvedAgent) ?? null,
+    routerCredentials: (o) => fetchRouterCredentials(o.project, o.backend, { call: squadrantdCall }),
     dispatchCrew: async (o) => {
       const req = buildDispatchRequest(o);
       return (await squadrantdCall(req)) as TaskRecord;
@@ -70,6 +105,9 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     // #627 item B: warn (don't block) when a fallback crew silently resolves to
     // an Anthropic model — less catastrophic than a captain on the same path,
     // and more often intentional, so it just needs to be visible.
+    onBackendResolved: ({ backend }) => {
+      if (backend !== "native") console.log(chalk.dim(`backend: ${backend}`));
+    },
     onModelResolved: ({ agentName, model }) => {
       const effectiveModel = model ?? (agentName === "opencode" ? readGlobalOpencodeModel() : undefined);
       if (isBlockedFallback(agentName, effectiveModel)) {
@@ -194,17 +232,22 @@ crewCommand
   .option("--task-file <path>", "Read task prompt from file instead of positional arg ('-' for stdin)")
   .option("--model <alias>", "Override crew model for this spawn (e.g. sonnet, opus); takes precedence over config defaults.roles.crew.model")
   .option("--thinking <level>", `Override crew thinking level for this spawn (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over config defaults.roles.crew.thinking`)
+  .option("--backend <mode>", "Backend seam for this spawn: native|direct|proxy (claude only); takes precedence over rule/role")
   .action(
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string },
+      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string; backend?: string },
       cmd: Command,
     ) => {
       try {
         // Fail fast on a typo rather than letting the claude CLI warn and
         // silently fall back to its default effort.
         const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
+        const rawBackend = opts.backend;
+        if (rawBackend !== undefined && !isBackendMode(rawBackend)) {
+          throw new Error(`Invalid --backend '${rawBackend}'. Valid values: native, direct, proxy`);
+        }
         const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
         const pane = await runCrewSpawn({
@@ -220,6 +263,7 @@ crewCommand
           ...(opts.shared ? { shared: true } : {}),
           ...(opts.model ? { model: opts.model } : {}),
           ...(thinking ? { thinking } : {}),
+          backend: rawBackend as BackendMode | undefined,
           // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
           // into the isolated worktree root for relative-path access.
           ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),

@@ -515,6 +515,19 @@ export function isReadOnlyCrewCommand(argv: readonly string[]): boolean {
 }
 
 /**
+ * #669: read-only, file-backed introspection commands. They read the state
+ * root / agent registries and must work with the daemon down — so, like the
+ * read-only crew subcommands, they must never trigger a daemon reconcile or
+ * print the foreign-install banner.
+ */
+export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami"]);
+
+/** Pure: is this invocation one of the read-only top-level commands above? */
+export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
+  return argv[2] !== undefined && READ_ONLY_TOP_LEVEL_COMMANDS.has(argv[2]);
+}
+
+/**
  * Idempotent & cheap. Never throws fatally. Writes/reloads the plist ONLY when
  * its content actually changed, and ONLY when authorized (see below).
  *

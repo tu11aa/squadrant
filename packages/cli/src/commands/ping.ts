@@ -5,13 +5,14 @@
 // Reuses the same delivery mechanism as `squadrant runtime send`.
 
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_CONFIG_PATH, resolveCaptainChannelMode } from "@squadrant/shared";
-import { appendCaptainMessage, deliverToCaptain, type DeliveryOutcome, describeOutcome } from "@squadrant/core";
+import { appendCaptainMessage, deliverToCaptain, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
 import { requireDaemon } from "../lib/require-daemon.js";
-import { buildCaptainChannel } from "../lib/captain-channel-factory.js";
+import { buildCaptainChannels } from "../lib/captain-channel-factory.js";
 
 /** Pure so it is testable without a socket. */
 export function formatPingResult(project: string, outcome?: DeliveryOutcome): string {
@@ -41,8 +42,15 @@ export async function runPing(project: string, message: string): Promise<Deliver
   await needRef(resolved);
   
   const mode = resolveCaptainChannelMode(config.defaults);
+  // #786: route by the captain's agent (launch record, else config) so an
+  // opencode captain is reached over its HTTP channel, not the claude socket.
+  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+  const { channels, agentFor } = mode === "off"
+    ? { channels: {} as Record<string, ControlChannel>, agentFor: () => undefined }
+    : await buildCaptainChannels({ stateRoot, configAgent: config.defaults.roles?.captain?.agent });
+  const channel = channels[agentFor(project) ?? ""];
   const { handled, outcome } = await deliverToCaptain(project, message, {
-    channel: mode === "off" ? undefined : await buildCaptainChannel(),
+    channel,
     mode,
     log: (m) => console.error(chalk.dim(m)),
   });

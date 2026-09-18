@@ -28,7 +28,7 @@ import { captainSocketPath as coreCaptainSocketPath } from "@squadrant/core";
 import { captainSessionName as coreCaptainSessionName } from "@squadrant/shared";
 import {
   deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
-  resolveCaptainSocketPath, resolveCaptainSessionName,
+  resolveCaptainSocketPath, resolveCaptainSessionName, pickResumeSessionId, isOpencodeCaptainDir,
 } from "../launch.js";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
@@ -253,7 +253,7 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   it("waits out the splash and sends only once the surface is input-ready", async () => {
     // loading (initial) → idle (ready) → working (confirm: landed)
     const rt = fakeRuntime([SPLASH, IDLE, WORKING]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(true);
     expect(rt.sends).toEqual(["GO"]);
     // It must NOT have sent while the screen was still the splash.
     expect(rt.send).toHaveBeenCalledTimes(1);
@@ -262,34 +262,51 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
   it("does NOT re-send when the first prompt landed (guards duplicate runs)", async () => {
     // idle (ready) → working (confirm: landed) — exactly one send.
     const rt = fakeRuntime([IDLE, WORKING]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(true);
     expect(rt.sends).toEqual(["GO"]);
   });
 
   it("re-sends (bounded) when the first keystrokes were dropped", async () => {
     // idle → (send) → still idle after settle (dropped) → idle → (send) → working.
     const rt = fakeRuntime([IDLE, IDLE, IDLE, WORKING]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(true);
     expect(rt.sends).toEqual(["GO", "GO"]);
   });
 
   it("never re-sends into an already-working session", async () => {
     const rt = fakeRuntime([WORKING]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(true);
     expect(rt.sends).toEqual([]);
   });
 
-  it("falls back to a single best-effort send if readiness never appears (no hang)", async () => {
-    // Unrecognized chrome forever (e.g. a non-Claude agent): time out, send once.
+  // #789: a startup prompt that never lands must FAIL LOUD, not leave an empty
+  // captain. The old loading-timeout branch blind-sent once and returned with no
+  // confirmation — the exact silent-empty-captain path this issue is about.
+  it("falls back to a single best-effort send if readiness never appears — and reports undelivered", async () => {
+    // Unrecognized chrome forever (e.g. a non-Claude agent): time out, send once,
+    // never confirmed → false.
     const rt = fakeRuntime([SPLASH]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(false);
     expect(rt.sends).toEqual(["GO"]);
   });
 
-  it("stops re-sending after maxAttempts even if it never lands", async () => {
+  it("warns on stderr when the startup prompt never lands", async () => {
+    const rt = fakeRuntime([SPLASH]);
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await deliverStartupPrompt(rt, "workspace:1", "GO", FAST);
+      const out = err.mock.calls.map((c) => String(c[0])).join("");
+      expect(out).toMatch(/startup prompt/i);
+      expect(out).toMatch(/workspace:1/);
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("stops re-sending after maxAttempts even if it never lands, and reports undelivered", async () => {
     // Stuck idle forever (every keystroke dropped): bounded to maxAttempts sends.
     const rt = fakeRuntime([IDLE]);
-    await deliverStartupPrompt(rt, "workspace:1", "GO", { ...FAST, maxAttempts: 3 });
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", { ...FAST, maxAttempts: 3 })).resolves.toBe(false);
     expect(rt.sends).toEqual(["GO", "GO", "GO"]);
   });
 
@@ -354,6 +371,21 @@ describe("deliverStartupPrompt (#292 deterministic startup delivery)", () => {
       readScreen: vi.fn(async () => { throw new Error("surface gone"); }),
       send: vi.fn(async () => {}),
     };
-    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBeUndefined();
+    await expect(deliverStartupPrompt(rt, "workspace:1", "GO", FAST)).resolves.toBe(false);
+  });
+});
+
+describe("opencode captain launch helpers (#786)", () => {
+  it("resolves a resume id only from a record of the same agent", () => {
+    expect(pickResumeSessionId({ agent: "opencode", sessionId: "ses_a" }, "opencode")).toBe("ses_a");
+    expect(pickResumeSessionId({ agent: "claude" }, "opencode")).toBeUndefined();
+    expect(pickResumeSessionId(null, "opencode")).toBeUndefined();
+  });
+
+  it("treats a non-git project dir as not launchable as an opencode captain", () => {
+    execFileMock.mockImplementationOnce(() => { throw new Error("not a git repo"); });
+    expect(isOpencodeCaptainDir("/tmp/definitely-not-a-repo-xyz")).toBe(false);
+    execFileMock.mockReturnValueOnce("abc1234");
+    expect(isOpencodeCaptainDir(process.cwd())).toBe(true);
   });
 });

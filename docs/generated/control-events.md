@@ -41,7 +41,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/driver.ts:119
   - packages/agents/src/headless-launcher.ts:42
   - packages/agents/src/opencode/sse-bridge.ts:118
-  - packages/core/src/crew-spawn.ts:760
+  - packages/core/src/crew-spawn.ts:819
   - packages/core/src/daemon/reduce.ts:406
   - packages/core/src/daemon/reduce.ts:461
   - packages/core/src/daemon/start.ts:87
@@ -53,20 +53,20 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:543
   - packages/agents/src/interactive/claude.ts:568
   - packages/cli/src/commands/hooks.ts:45
-  - packages/cli/src/squadrantd.ts:413
-  - packages/cli/src/squadrantd.ts:452
-  - packages/cli/src/squadrantd.ts:483
+  - packages/cli/src/squadrantd.ts:435
+  - packages/cli/src/squadrantd.ts:480
+  - packages/cli/src/squadrantd.ts:511
   - packages/core/src/daemon/reduce.ts:533
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:222
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:257
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
 - `task.blocked`
   - packages/agents/src/interactive/claude.ts:512
   - packages/agents/src/interactive/claude.ts:538
   - packages/agents/src/interactive/claude.ts:553
   - packages/cli/src/commands/crew-control.ts:212
-  - packages/cli/src/squadrantd.ts:416
-  - packages/cli/src/squadrantd.ts:455
-  - packages/cli/src/squadrantd.ts:486
+  - packages/cli/src/squadrantd.ts:438
+  - packages/cli/src/squadrantd.ts:483
+  - packages/cli/src/squadrantd.ts:514
   - packages/core/src/daemon/interactive-probe.ts:202
 - `task.review`
   - packages/cli/src/commands/crew-control.ts:216
@@ -90,12 +90,12 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/normalize.ts:42
   - packages/agents/src/interactive/claude.ts:521
   - packages/agents/src/opencode/sse-bridge.ts:214
-  - packages/cli/src/squadrantd.ts:411
-  - packages/cli/src/squadrantd.ts:450
-  - packages/cli/src/squadrantd.ts:481
+  - packages/cli/src/squadrantd.ts:433
+  - packages/cli/src/squadrantd.ts:478
+  - packages/cli/src/squadrantd.ts:509
   - packages/core/src/daemon/reduce.ts:632
   - packages/core/src/events/to-control-event.ts:24
-  - packages/workspaces/src/cmux-daemon/events-bridge.ts:243
+  - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`
   - packages/agents/src/interactive/claude.ts:530
 - `task.delta`
@@ -113,7 +113,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.reattached`
   - packages/agents/src/codex/driver.ts:222
 - `task.reopened`
-  - packages/core/src/crew-spawn.ts:755
+  - packages/core/src/crew-spawn.ts:814
 - `task.stalled`
   - packages/core/src/daemon/reduce.ts:642
   - packages/core/src/daemon/reduce.ts:644
@@ -128,19 +128,19 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.cancelled`
   - packages/cli/src/commands/shutdown.ts:83
   - packages/cli/src/commands/shutdown.ts:121
-  - packages/core/src/crew-spawn.ts:969
+  - packages/core/src/crew-spawn.ts:1028
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:573
   - packages/cli/src/commands/hooks.ts:49
-  - packages/core/src/crew-spawn.ts:553
-  - packages/core/src/crew-spawn.ts:617
+  - packages/core/src/crew-spawn.ts:612
+  - packages/core/src/crew-spawn.ts:676
   - packages/core/src/daemon/reduce.ts:386
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:563
-  - packages/cli/src/squadrantd.ts:406
-  - packages/cli/src/squadrantd.ts:445
-  - packages/cli/src/squadrantd.ts:476
+  - packages/cli/src/squadrantd.ts:428
+  - packages/cli/src/squadrantd.ts:473
+  - packages/cli/src/squadrantd.ts:504
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
   - packages/cli/src/commands/crew-control.ts:130

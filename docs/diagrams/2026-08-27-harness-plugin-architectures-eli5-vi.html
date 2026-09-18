@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bản dễ hiểu — harness, plugin, và vì sao một crew trông như bị treo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:      #faf6f0;
+    --paper-2:    #f3ece2;
+    --card:       #fffdfa;
+    --rule:       #e0d5c6;
+    --rule-soft:  #ece3d6;
+    --ink:        #2b2622;
+    --ink-soft:   #5c534a;
+    --ink-faint:  #8b8074;
+
+    --terracotta: #c05f3c;
+    --terracotta-w: #fbeae3;
+    --sage:       #5f8a68;
+    --sage-w:     #e8f0e7;
+    --ochre:      #b8860b;
+    --ochre-w:    #faf0d8;
+
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-body: 'Newsreader', Georgia, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 52px 28px 80px;
+    background: var(--paper);
+    background-image: radial-gradient(circle at 1px 1px, rgba(139,128,116,0.09) 1px, transparent 0);
+    background-size: 22px 22px;
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 18px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 820px; margin: 0 auto; }
+
+  /* ---------- lang switch ---------- */
+  .langbar {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 28px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .langbar a, .langbar span {
+    padding: 4px 11px;
+    border-radius: 5px;
+    border: 1px solid var(--rule);
+    text-decoration: none;
+    color: var(--ink-faint);
+    background: var(--card);
+  }
+  .langbar span.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .langbar a:hover { color: var(--terracotta); border-color: var(--terracotta); }
+
+  /* ---------- header ---------- */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+    color: var(--terracotta);
+    margin: 0 0 16px;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: 50px;
+    line-height: 1.14;
+    font-weight: 400;
+    letter-spacing: -0.008em;
+    margin: 0 0 18px;
+  }
+  h1 em { font-style: italic; color: var(--terracotta); }
+
+  .standfirst {
+    font-size: 21px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    margin: 0 0 12px;
+    max-width: 62ch;
+  }
+  .swap-note {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    border-left: 3px solid var(--rule);
+    padding: 6px 0 6px 14px;
+    margin: 26px 0 0;
+    line-height: 1.75;
+  }
+  .swap-note a { color: var(--terracotta); }
+
+  hr.big { border: none; border-top: 1px solid var(--rule); margin: 52px 0; }
+
+  /* ---------- pass headers ---------- */
+  .pass { display: flex; align-items: baseline; gap: 16px; margin: 0 0 8px; }
+  .pass .n {
+    font-family: var(--font-mono);
+    font-size: 12px; font-weight: 600; letter-spacing: 2px;
+    color: var(--paper); background: var(--ink);
+    border-radius: 4px; padding: 4px 9px; flex-shrink: 0;
+  }
+  .pass h2 {
+    font-family: var(--font-display);
+    font-size: 34px; font-weight: 400; line-height: 1.2;
+    margin: 0; letter-spacing: -0.004em;
+  }
+
+  h3 {
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600; letter-spacing: 2.2px;
+    text-transform: uppercase; color: var(--ink-faint);
+    margin: 40px 0 12px;
+  }
+
+  p { margin: 0 0 18px; max-width: 66ch; overflow-wrap: break-word; }
+  p.big { font-size: 22px; line-height: 1.55; color: var(--ink); }
+  b, strong { font-weight: 600; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.79em;
+    background: var(--paper-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: 1.5px 5px;
+    color: var(--ink-soft);
+  }
+
+  .gloss {
+    font-family: var(--font-mono);
+    font-size: 0.76em;
+    color: var(--ink-faint);
+  }
+
+  /* ---------- ticket rail ---------- */
+  .kitchen {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 30px 26px 26px;
+    margin: 26px 0 28px;
+    box-shadow: 0 1px 0 rgba(43,38,34,0.03), 0 10px 26px -18px rgba(43,38,34,0.28);
+  }
+  .kitchen-title {
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--ink-faint); margin: 0 0 26px;
+  }
+  .rail {
+    position: relative;
+    border-top: 3px solid var(--ink);
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .rail::before, .rail::after {
+    content: ''; position: absolute; top: -7px;
+    width: 11px; height: 11px; border-radius: 50%; background: var(--ink);
+  }
+  .rail::before { left: -5px; }
+  .rail::after { right: -5px; }
+
+  .ticket {
+    flex: 1 1 190px; min-width: 0; margin-top: -3px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--sage);
+    border-radius: 0 0 8px 8px;
+    padding: 14px 16px 16px;
+    font-size: 15px; line-height: 1.55; position: relative;
+  }
+  .ticket .lbl {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+    color: var(--ink-faint); display: block; margin-bottom: 6px;
+  }
+  .ticket .job { font-weight: 600; display: block; margin-bottom: 8px; }
+  .ticket .fate { font-family: var(--font-mono); font-size: 11px; color: var(--sage); }
+  .ticket.stuck {
+    border-top-color: var(--terracotta);
+    background: var(--terracotta-w);
+    border-color: #e9c6b7;
+  }
+  .ticket.stuck .fate { color: var(--terracotta); font-weight: 600; }
+  .ticket.stuck::after {
+    content: ''; position: absolute; left: 50%; top: 100%;
+    width: 1px; height: 26px;
+    background: repeating-linear-gradient(to bottom, var(--terracotta) 0 4px, transparent 4px 8px);
+  }
+  .stuck-caption {
+    margin: 40px 0 0; text-align: center;
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--terracotta); line-height: 1.8;
+  }
+
+  /* ---------- tables ---------- */
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--card);
+    margin: 24px 0;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 580px; font-size: 15px; }
+  caption {
+    caption-side: top; text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--ink-faint); padding: 16px 20px 2px;
+  }
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 14px 18px 9px;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td {
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--rule-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.who { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .yes { color: var(--sage); font-weight: 600; }
+  .no  { color: var(--terracotta); font-weight: 600; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--ochre);
+    border-radius: 0 10px 10px 0;
+    padding: 20px 24px;
+    margin: 26px 0;
+    font-size: 17px; line-height: 1.68;
+    color: var(--ink-soft);
+    max-width: 72ch;
+  }
+  .note .tag {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--ochre); display: block; margin-bottom: 9px;
+  }
+  .note strong { color: var(--ink); }
+  .note.break { border-left-color: var(--terracotta); }
+  .note.break .tag { color: var(--terracotta); }
+  .note.good { border-left-color: var(--sage); }
+  .note.good .tag { color: var(--sage); }
+
+  /* ---------- houses ---------- */
+  .houses {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px; margin: 26px 0;
+  }
+  .house {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 24px 24px 22px;
+    min-width: 0;
+  }
+  .house h4 {
+    font-family: var(--font-display);
+    font-size: 24px; font-weight: 400; margin: 0 0 2px;
+  }
+  .house .sub {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--ink-faint); margin: 0 0 18px;
+  }
+  .house p { font-size: 16px; margin-bottom: 12px; color: var(--ink-soft); }
+  .house p:last-child { margin-bottom: 0; }
+  .house .numbers {
+    display: flex; gap: 22px;
+    margin: 0 0 16px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .house .num b {
+    font-family: var(--font-mono);
+    font-size: 25px; font-weight: 600; display: block; line-height: 1.1;
+  }
+  .house .num span {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .house.a { border-top: 4px solid var(--ochre); }
+  .house.a .num b { color: var(--ochre); }
+  .house.b { border-top: 4px solid var(--sage); }
+  .house.b .num b { color: var(--sage); }
+
+  /* ---------- before/after ---------- */
+  .ba {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px; margin: 26px 0;
+  }
+  .ba-col {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 22px 24px;
+    min-width: 0;
+  }
+  .ba-col.now { border-top: 4px solid var(--terracotta); }
+  .ba-col.next { border-top: 4px solid var(--sage); }
+  .ba-col h4 {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    margin: 0 0 16px;
+  }
+  .ba-col.now h4 { color: var(--terracotta); }
+  .ba-col.next h4 { color: var(--sage); }
+  .ba-col ol { margin: 0; padding-left: 20px; font-size: 16px; color: var(--ink-soft); }
+  .ba-col li { margin-bottom: 11px; line-height: 1.6; }
+  .ba-col li:last-child { margin-bottom: 0; }
+  .ba-col li b { color: var(--ink); }
+
+  /* ---------- glossary ---------- */
+  .glossary {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 26px 28px;
+    margin: 30px 0;
+  }
+  .glossary h4 {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--ink-faint); margin: 0 0 18px;
+  }
+  .glossary dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 20px; }
+  .glossary dt {
+    font-family: var(--font-mono);
+    font-size: 13px; font-weight: 600; color: var(--ink); white-space: nowrap;
+  }
+  .glossary dd { margin: 0; font-size: 15.5px; color: var(--ink-soft); line-height: 1.55; }
+  @media (max-width: 620px) {
+    .glossary dl { grid-template-columns: 1fr; gap: 3px 0; }
+    .glossary dd { margin-bottom: 12px; }
+  }
+
+  /* ---------- takeaway ---------- */
+  .takeaway {
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 14px;
+    padding: 40px 40px 36px;
+    margin: 52px 0 0;
+  }
+  .takeaway .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 2.4px; text-transform: uppercase;
+    color: #c9a882; display: block; margin-bottom: 16px;
+  }
+  .takeaway p {
+    font-family: var(--font-display);
+    font-size: 28px; line-height: 1.35;
+    margin: 0 0 14px; color: var(--paper); max-width: 32ch;
+  }
+  .takeaway p:last-child { margin-bottom: 0; }
+  .takeaway .small {
+    font-family: var(--font-body);
+    font-size: 16px; color: #b8ada0; line-height: 1.68; max-width: 62ch;
+  }
+  .takeaway em { font-style: italic; color: #e8c9a8; }
+
+  footer {
+    margin-top: 48px; padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 12px; color: var(--ink-faint); line-height: 1.9;
+  }
+  footer a { color: var(--terracotta); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  .rise { opacity: 0; animation: rise .55s cubic-bezier(.22,.61,.36,1) forwards; animation-delay: calc(var(--i,0) * 60ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .rise { animation: none; opacity: 1; }
+    html { scroll-behavior: auto; }
+  }
+
+  @media (max-width: 700px) {
+    body { padding: 32px 20px 60px; font-size: 17px; }
+    h1 { font-size: 33px; }
+    .standfirst { font-size: 18.5px; }
+    .pass h2 { font-size: 26px; }
+    .pass { flex-direction: column; gap: 10px; }
+    .takeaway { padding: 30px 24px; }
+    .takeaway p { font-size: 23px; }
+    p.big { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="langbar rise" style="--i:0">
+    <a href="2026-08-27-harness-plugin-architectures-eli5.html">EN</a>
+    <span class="on">VI</span>
+    <a href="2026-08-27-harness-plugin-architectures-vi.html">Bản kỹ thuật →</a>
+  </div>
+
+  <p class="kicker rise" style="--i:1">Bản dễ hiểu · 2026-08-27</p>
+  <h1 class="rise" style="--i:2">Người đầu bếp đã xong việc,<br>và tấm phiếu <em>không ai gỡ xuống</em>.</h1>
+  <p class="standfirst rise" style="--i:3">
+    Vì sao squadrant cứ báo một crew bị treo trong khi nó hoàn toàn bình thường, hai harness
+    khác xử lý chuyện này ra sao, và một thứ nhỏ đáng để xây.
+  </p>
+  <p class="swap-note rise" style="--i:4">
+    Đây là cùng một nội dung với bản kỹ thuật, chỉ kể theo cách dễ hiểu hơn.<br>
+    Bản kỹ thuật tiếng Việt → <a href="2026-08-27-harness-plugin-architectures-vi.html">trang bản vẽ</a> ·
+    nghiên cứu đầy đủ (EN) → <a href="../specs/2026-08-27-harness-plugin-architecture-study.md">bản spec</a>
+  </p>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ PASS 1 ═══════════════════ -->
+  <div class="pass rise" style="--i:5">
+    <span class="n">01</span>
+    <h2>Chuyện cái bếp</h2>
+  </div>
+
+  <p class="big rise" style="--i:6">
+    Squadrant đứng ngoài quan sát các phiên làm việc của crew rồi đoán xem chúng đang làm gì —
+    và một trong những tín hiệu nó dùng để đoán đã bị vứt vào sọt rác.
+  </p>
+
+  <h3 class="rise" style="--i:7">Hãy tưởng tượng một cái bếp nhà hàng</h3>
+
+  <p class="rise" style="--i:8">
+    Một đầu bếp đang làm việc. Phía trên quầy ra món có một <b>thanh sắt treo phiếu</b>. Khi đầu
+    bếp bắt đầu làm một món, người phục vụ kẹp một tấm phiếu lên thanh đó. Khi món xong, người
+    phục vụ gỡ tấm phiếu xuống. Người quản lý <b>không bao giờ nhìn đầu bếp</b> — ông ta chỉ nhìn
+    cái thanh treo phiếu. Quy tắc của ông ta rất đơn giản: <b>nếu một tấm phiếu treo ở đó quá lâu,
+    nghĩa là đầu bếp bị kẹt, vậy thì quát nó.</b>
+  </p>
+
+  <div class="kitchen rise" style="--i:9">
+    <p class="kitchen-title">Thanh treo phiếu — mỗi phiếu là một việc đầu bếp đã bắt đầu</p>
+    <div class="rail">
+      <div class="ticket">
+        <span class="lbl">Phiếu 1</span>
+        <span class="job">Đọc một file</span>
+        <span class="fate">✓ đã gỡ xuống</span>
+      </div>
+      <div class="ticket">
+        <span class="lbl">Phiếu 2</span>
+        <span class="job">Chạy test</span>
+        <span class="fate">✓ đã gỡ xuống</span>
+      </div>
+      <div class="ticket stuck">
+        <span class="lbl">Phiếu 3</span>
+        <span class="job">Sửa một file</span>
+        <span class="fate">✗ vẫn còn treo</span>
+      </div>
+    </div>
+    <p class="stuck-caption">
+      Đầu bếp đã làm xong món này từ <b>nhiều tháng trước</b>.<br>
+      Sẽ chẳng bao giờ có ai gỡ tấm phiếu đó xuống cả.
+    </p>
+  </div>
+
+  <p class="rise" style="--i:10">
+    Ánh xạ sang thực tế như sau. Đầu bếp là một <b>phiên crew</b>. Phiếu được kẹp lên là
+    <code>PreToolUse</code> — "agent vừa bắt đầu dùng một tool". Phiếu được gỡ xuống là
+    <code>PostToolUse</code> — "tool đã chạy xong". Người quản lý là <b>watchdog</b>, và tiếng quát
+    của ông ta chính là <code>CREW STALLED</code>.
+  </p>
+
+  <h3 class="rise" style="--i:11">Vậy tại sao tấm phiếu không được gỡ xuống?</h3>
+
+  <p class="rise" style="--i:12">
+    Vì squadrant có tới <b>ba người phục vụ khác nhau</b> cùng báo cáo về một đầu bếp, và mỗi người
+    hô "xong rồi!" bằng một từ khác nhau. Danh sách từ mà người quản lý lắng nghe lại thiếu mất
+    một trong ba từ đó — nên tiếng hô của người phục vụ ấy được nghe thấy, đem đối chiếu với danh
+    sách, không tìm ra, và <b>bị lặng lẽ vứt xuống sàn</b>.
+  </p>
+
+  <div class="tablewrap rise" style="--i:13">
+    <table>
+      <caption>Ba người phục vụ, ba cách gọi cho cùng một sự việc</caption>
+      <thead>
+        <tr>
+          <th>Người phục vụ</th>
+          <th>Cách họ nói "bắt đầu"</th>
+          <th>Cách họ nói "xong"</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="who">Luồng cmux</td>
+          <td><code>agent.hook.PreToolUse</code><br><span class="yes">có kẹp phiếu lên</span></td>
+          <td><code>agent.hook.PostToolUse</code><br><span class="no">không có trong danh sách ← đây là lỗi</span></td>
+        </tr>
+        <tr>
+          <td class="who">Hook trong settings.json</td>
+          <td><code>pre-tool-use</code><br><span class="no">từ khác — không kẹp phiếu</span></td>
+          <td><span class="no">vốn không được thuê làm việc này</span></td>
+        </tr>
+        <tr>
+          <td class="who">Hook riêng của crew</td>
+          <td><span class="no">không báo cáo việc này</span></td>
+          <td><code>posttooluse</code><br><span class="yes">có trong danh sách</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="rise" style="--i:14">
+    Hãy đọc lại dòng đầu tiên. Người phục vụ duy nhất từng <b>kẹp phiếu lên</b> lại chính là người
+    mà từ "xong" của anh ta không được nhận ra. Nghĩa là mọi tấm phiếu anh ta treo lên đều chắc
+    chắn sẽ nằm đó mãi mãi. Rồi người quản lý quát những đầu bếp đang đứng chơi, chẳng làm gì sai.
+    Đó là issue <b>#542</b>, và nó đã chạy như vậy suốt nhiều tháng.
+  </p>
+
+  <div class="note break rise" style="--i:15">
+    <span class="tag">Chỗ mà ví dụ cái bếp không còn đúng nữa</span>
+    Trong một cái bếp thật, bạn sẽ <strong>nhìn thấy</strong> tấm phiếu bị kẹt — nó là vật thể treo
+    lù lù trước mặt mọi người. Còn tấm phiếu của squadrant chỉ là một biến trong bộ nhớ mà không ai
+    ghi lại. Không hề có cái thanh treo nào để mà nhìn. Đây không phải chi tiết phụ của lỗi —
+    <strong>đây chính là lỗi.</strong>
+  </div>
+
+  <div class="note rise" style="--i:16">
+    <span class="tag">Điều mọi người thường hiểu sai</span>
+    Nhìn qua thì đây giống một dòng code bị thiếu — "thêm PostToolUse vào danh sách là xong". Bản
+    vá đó đã ship sáng nay và nó đúng. Nhưng đúng cái hình dạng này sẽ quay lại với agent tiếp theo,
+    phiên bản cmux tiếp theo, tên hook tiếp theo, bởi vì <strong>không có thứ gì trong squadrant có
+    khả năng nhận ra rằng một thông điệp đã đến mà không ai dùng đến nó.</strong> Dòng code thiếu chỉ
+    là triệu chứng.
+  </div>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ PASS 2 ═══════════════════ -->
+  <div class="pass rise" style="--i:17">
+    <span class="n">02</span>
+    <h2>Hai ngôi nhà</h2>
+  </div>
+
+  <p class="big rise" style="--i:18">
+    Hai dự án khác đã giải quyết chuyện này rồi, theo hai hướng ngược nhau. Cứ hình dung chúng là
+    hai ngôi nhà mà bạn có thể chọn để ở.
+  </p>
+
+  <div class="houses">
+    <div class="house a rise" style="--i:19">
+      <h4>Bức tường nào cũng di động</h4>
+      <p class="sub">DeepSeek Harness — "mọi thứ đều là plugin"</p>
+      <div class="numbers">
+        <div class="num"><b>227</b><span>package</span></div>
+        <div class="num"><b>60+</b><span>loại sự kiện</span></div>
+      </div>
+      <p>
+        Không có gì cố định. Mọi bức tường đều là vách ngăn di động được — <b>kể cả tường chịu lực</b>.
+        Bếp, đường ống nước, cửa chính: tất cả đều thay được từ một file cấu hình. Bạn sắp xếp lại
+        cả ngôi nhà mà không cần động vào khung, vì thật ra chẳng có cái khung nào.
+      </p>
+      <p>
+        Cái giá phải trả: bạn cần đọc sách hướng dẫn mới biết mình đang đứng trong phòng nào. Có
+        hẳn một quyển sách giải thích hệ thống tường trước khi bạn được phép treo một cái kệ.
+      </p>
+    </div>
+
+    <div class="house b rise" style="--i:20">
+      <h4>Lõi bê tông nhỏ</h4>
+      <p class="sub">Pi — "chỉ có phần lõi harness"</p>
+      <div class="numbers">
+        <div class="num"><b>10</b><span>package</span></div>
+        <div class="num"><b>2</b><span>sự kiện nội bộ</span></div>
+      </div>
+      <p>
+        Một phần lõi nhỏ và cố định — bếp, đường ống, tường chịu lực — đổ bê tông và không bao giờ
+        dịch chuyển. Mọi thứ còn lại là <b>đồ đạc bạn khiêng vào</b>: một file, bỏ đúng thư mục, chạy.
+      </p>
+      <p>
+        Hệ thống truyền tin nội bộ của họ dài 102 dòng và chỉ mang đúng hai loại thông điệp. Chính
+        phần chú thích trong đó nói, đại ý: <em>đừng dùng tôi để nhớ mọi thứ — hãy đi đọc cuốn sổ.</em>
+      </p>
+    </div>
+  </div>
+
+  <p class="rise" style="--i:21">
+    Squadrant có sáu package và một người duy nhất bảo trì. Nó nên ở trong <b>ngôi nhà của Pi</b> —
+    một phần lõi nhỏ không dịch chuyển, còn plugin thì chỉ là những file rời.
+  </p>
+
+  <div class="note good rise" style="--i:22">
+    <span class="tag">Nhưng hãy mượn đúng một thứ này từ ngôi nhà lớn</span>
+    Nhà của DeepSeek có <strong>đầu báo khói ở mọi phòng</strong>. Không phải mấy bài test chạy trước
+    khi dọn vào ở — mà là chuông báo được đấu sẵn, kêu ngay lúc bạn đang nấu. Một trong số đó gần
+    như đúng nguyên văn: <em>"có một món đã bắt đầu mà không bao giờ kết thúc — bíp."</em> Đúng cái
+    chuông đó sẽ tóm được tấm phiếu bị kẹt của chúng ta <strong>ngay ngày đầu tiên, thay vì tháng
+    thứ tư</strong>.
+  </div>
+
+  <div class="note rise" style="--i:23">
+    <span class="tag">Điều mọi người thường hiểu sai</span>
+    "Mọi thứ đều là plugin" nghe có vẻ là lựa chọn cao cấp hơn, nên nghe như thứ đáng để bắt chước.
+    Không phải vậy — nó là lời giải đúng cho một bài toán mà squadrant không có (hàng trăm package,
+    một hệ sinh thái bên ngoài liên tục ship add-on). <strong>Sao chép sơ đồ mặt bằng của ngôi nhà lớn
+    sẽ tốn rất nhiều công mà chẳng sửa được gì. Sao chép mấy cái đầu báo khói thì rẻ, và sửa đúng cái
+    lỗi đang có.</strong>
+  </div>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ PASS 3 ═══════════════════ -->
+  <div class="pass rise" style="--i:24">
+    <span class="n">03</span>
+    <h2>Vậy chúng ta xây cái gì?</h2>
+  </div>
+
+  <p class="big rise" style="--i:25">
+    Một nguyên tắc duy nhất: <b>ghi lại những gì bạn thấy. Việc diễn giải để sau.</b>
+  </p>
+
+  <p class="rise" style="--i:26">
+    Hiện tại mỗi người phục vụ đều bị bắt phải tự phán đoán ngay tại chỗ — "cái này có quan trọng
+    không? có/không" — và "không" đồng nghĩa với việc thông tin biến mất vĩnh viễn. Thay vào đó, mọi
+    người phục vụ đều ghi những gì mình nghe được vào <b>một cuốn sổ chung, bằng một bộ từ vựng chung</b>.
+    Nếu ai đó nghe thấy điều mình không nhận ra, họ không vứt đi — họ ghi
+    <b>"nghe thấy cái gì đó: &lt;nguyên văn&gt;"</b> và dòng đó được đếm vào thống kê. Chỉ sau đó mới có
+    đúng một người đọc cuốn sổ và quyết định tất cả những thứ ấy nghĩa là gì.
+  </p>
+
+  <div class="ba">
+    <div class="ba-col now rise" style="--i:27">
+      <h4>Hiện tại đang chạy thế nào</h4>
+      <ol>
+        <li>Năm người quan sát khác nhau, mỗi người một kiểu viết tắt riêng.</li>
+        <li>Mỗi người <b>tự quyết ngay tại chỗ</b> xem thứ mình thấy có đáng kể hay không.</li>
+        <li>Thứ gì không nhận ra thì <b>bị bỏ đi, không để lại dấu vết</b>.</li>
+        <li>Phần sống sót được gộp vào một trạng thái, còn <b>bản thân thông điệp thì bị vứt bỏ</b>.</li>
+        <li>Nên khi có sự cố, <b>chẳng còn gì để quay lại đọc cả</b>.</li>
+      </ol>
+    </div>
+    <div class="ba-col next rise" style="--i:28">
+      <h4>Nếu làm lại thì sẽ thế nào</h4>
+      <ol>
+        <li>Vẫn năm người quan sát đó — nhưng mỗi người chỉ <b>dịch lại</b>, không phán xét.</li>
+        <li>Tất cả đi vào <b>một cuốn sổ, một bộ từ vựng</b>, đúng thứ tự.</li>
+        <li>Thứ không nhận ra được ghi là <b>"unknown"</b> và được đếm.</li>
+        <li>Chuông báo canh cuốn sổ: <b>đã-bắt-đầu-mà-chưa-bao-giờ-kết-thúc thì kêu</b>.</li>
+        <li>Cuốn sổ được giữ lại — nên bạn có thể <b>tua lại một ngày tồi tệ</b> và xem chính xác chuyện gì đã xảy ra.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note good rise" style="--i:29">
+    <span class="tag">Vì sao cuốn sổ mới là phần thưởng thật sự</span>
+    Một khi một ngày tồi tệ có thật đã được ghi lại, file đó <strong>trở thành một bài test vĩnh viễn</strong>.
+    Bạn đưa đúng bản ghi thật của con crew bị kẹt chạy lại qua code mới và kiểm tra xem nó có xử lý
+    đúng không — không phải một ví dụ do ai đó bịa ra, mà là <strong>đúng cái chuyện đã thật sự xảy ra.</strong>
+    Làm vậy cho #542, #704 và #492 thì ba lỗi đó không bao giờ có thể lặng lẽ quay lại được nữa.
+  </div>
+
+  <div class="note rise" style="--i:30">
+    <span class="tag">Và một thứ gần như miễn phí</span>
+    Tách rời khỏi tất cả những điều trên: một script nhỏ — chừng <strong>150 dòng</strong> — đọc codebase
+    rồi in ra một cái bảng "ai gửi loại thông điệp này" và "ai lắng nghe nó". Dòng nào có cột người
+    nghe trống rỗng chính là một cái lỗi mà bạn nhìn phát ra ngay. DeepSeek sinh ra đúng cái bảng này.
+    Nó sẽ làm #542 lộ diện <strong>mà không cần sửa một dòng code đang chạy nào.</strong>
+  </div>
+
+  <!-- ═══════════════════ GLOSSARY ═══════════════════ -->
+  <div class="glossary rise" style="--i:31">
+    <h4>Từ vựng — để đọc bản kỹ thuật cho dễ</h4>
+    <dl>
+      <dt>harness</dt>
+      <dd>Bộ khung chạy một AI agent: vòng lặp gọi model, gọi tool, giữ lịch sử hội thoại. Squadrant, Claude Code, Pi, dsh đều là harness.</dd>
+
+      <dt>crew</dt>
+      <dd>Một phiên agent làm việc do squadrant sinh ra để làm một task cụ thể. "Người đầu bếp".</dd>
+
+      <dt>hook</dt>
+      <dd>Điểm móc: agent tự động chạy một lệnh của bạn tại một thời điểm nhất định (trước khi gọi tool, sau khi gọi tool, khi kết thúc lượt…). "Người phục vụ hô lên".</dd>
+
+      <dt>event / sự kiện</dt>
+      <dd>Một mẩu tin báo "vừa có chuyện này xảy ra". Trong squadrant nó tên là <code>ControlEvent</code>.</dd>
+
+      <dt>watchdog</dt>
+      <dd>Bộ phận canh chừng: nếu quá lâu không thấy dấu hiệu sống thì kết luận là hỏng. "Người quản lý".</dd>
+
+      <dt>plugin</dt>
+      <dd>Một mẩu code cắm thêm vào từ bên ngoài mà không phải sửa phần lõi. "Đồ đạc khiêng vào nhà".</dd>
+
+      <dt>invariant</dt>
+      <dd>Một điều luôn-luôn-phải-đúng, được kiểm tra ngay lúc hệ thống đang chạy chứ không chỉ lúc test. "Đầu báo khói".</dd>
+
+      <dt>replay / tua lại</dt>
+      <dd>Chạy lại một bản ghi có thật qua code mới để xem kết quả có đúng không.</dd>
+    </dl>
+  </div>
+
+  <div class="takeaway rise" style="--i:32">
+    <span class="tag">Nếu chỉ nhớ được một điều</span>
+    <p>Squadrant không cần một plugin framework. Nó cần một cuốn sổ.</p>
+    <p class="small">
+      Một bản ghi được viết xuống, tua lại được, có chuông canh — về việc các agent của nó thật sự đã
+      làm gì — do đúng một module nhỏ sở hữu; cộng thêm một cái bảng sinh ra lúc build để chứng minh
+      mọi loại thông điệp đều có cả người gửi lẫn người nghe.
+      <em>Câu hỏi về framework chưa bao giờ là câu hỏi thật sự.</em>
+    </p>
+  </div>
+
+  <footer>
+    Cùng nội dung với <a href="2026-08-27-harness-plugin-architectures-vi.html">trang kỹ thuật (VI)</a>,
+    <a href="2026-08-27-harness-plugin-architectures-eli5.html">bản EN dễ hiểu</a>
+    và <a href="../specs/2026-08-27-harness-plugin-architecture-study.md">nghiên cứu đầy đủ (EN)</a>.<br>
+    Đọc trực tiếp từ source: <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> ·
+    <a href="https://github.com/badlogic/pi-mono">badlogic/pi-mono</a><br>
+    Tài liệu nghiên cứu — không sửa source, không mở issue.
+  </footer>
+
+</div>
+</body>
+</html>

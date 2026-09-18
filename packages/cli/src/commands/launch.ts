@@ -4,7 +4,7 @@
 // Workspace-boot orchestration lives in @squadrant/core (launch-workspace.ts, #367).
 
 import { Command } from "commander";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -17,9 +17,14 @@ import {
 } from "@squadrant/agents";
 import {
   RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
-  isInsideCmux, cmuxLocal, classifyStartupSurface,
+  isInsideCmux, cmuxLocal, classifyStartupSurface, classifyOpencodeStartupSurface, getFreePort,
 } from "@squadrant/workspaces";
-import { launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath } from "@squadrant/core";
+import {
+  launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
+  readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
+  discoverLiveOpencodeServer,
+  type CaptainAddress,
+} from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
 import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
@@ -74,6 +79,31 @@ export function resolveCaptainSocketPath(
 export function resolveCaptainSessionName(agentName: string, projectName: string | undefined): string | undefined {
   if (agentName !== "claude" || !projectName) return undefined;
   return captainSessionName(projectName);
+}
+
+/** #786: resume is explicit and agent-matched — never `-c` (spec §2 test 9).
+ *  #797: `fresh` (CLI --fresh, or the auto-fresh new-day/template reasons) must
+ *  suppress the resume id, otherwise `--fresh` still runs `opencode --session
+ *  <old>` and reopens the session it was meant to replace. */
+export function pickResumeSessionId(
+  record: Pick<CaptainAddress, "agent" | "sessionId"> | null,
+  agentName: string,
+  fresh = false,
+): string | undefined {
+  if (fresh) return undefined;
+  if (!record || record.agent !== agentName) return undefined;
+  return record.sessionId;
+}
+
+/** #786: opencode puts a commit-less directory in the shared `global` project
+ *  (resume spike §T1), so such a directory is not a valid opencode captain home. */
+export function isOpencodeCaptainDir(dir: string): boolean {
+  try {
+    execFileSync("git", ["-C", dir, "rev-parse", "--verify", "HEAD"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // #627 item B, review follow-up: the guard itself (isBlockedFallback) takes no
@@ -197,6 +227,28 @@ export const launchCommand = new Command("launch")
         ? runtimes.forProject(projectName, config)
         : runtimes.global(config);
 
+      const stateRoot = path.join(os.homedir(), ".config", "squadrant", "state");
+      const isOpencodeCaptain = role === "captain" && agentName === "opencode" && !!projectName;
+
+      if (isOpencodeCaptain && !isOpencodeCaptainDir(cwd)) {
+        console.error(chalk.red(`\n  ✘ '${projectName}' is not a git repo with a commit — an opencode captain needs a stable project identity. Run 'git commit' first.\n`));
+        hadFailure = true;
+        return;
+      }
+
+      const priorRecord = projectName ? readCaptainAddress(stateRoot, projectName) : null;
+      const captainPort = isOpencodeCaptain ? await getFreePort() : undefined;
+      // #797: the resume id is decided inside agentCmdFactory, where the RESOLVED
+      // forceFresh (CLI --fresh AND the auto-fresh new-day/template reasons) is
+      // known. Captured here so the persistence callbacks below persist the same
+      // id — without this the callbacks would have to re-derive forceFresh.
+      let opencodeResumeSessionId: string | undefined;
+      // #789: the launch instant bounds opencode session resolution — a session
+      // created before this is NOT the captain's own (the repo root holds the
+      // developer's sessions too), and it is persisted verbatim so the record
+      // reports when the captain was launched, not when it was resolved.
+      const launchedAt = new Date().toISOString();
+
       try {
         await launchOneWorkspace({
           workspaceName,
@@ -211,16 +263,23 @@ export const launchCommand = new Command("launch")
             if (captainChannelEnabled) {
               ensureSocksDir();
             }
+            // #797: resume only when not fresh — `--fresh` must start a NEW
+            // session, not reopen the one it replaced.
+            const captainBoot = isOpencodeCaptain
+              ? { port: captainPort, sessionId: pickResumeSessionId(priorRecord, "opencode", forceFresh) }
+              : undefined;
+            opencodeResumeSessionId = captainBoot?.sessionId;
             return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
               resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
               resolveCaptainSessionName(agentName, projectName),
-              thinking);
+              thinking,
+              captainBoot);
           },
           initialPrompt,
           runtime,
           navigate,
           pinToTop,
-          classifyScreen: classifyStartupSurface,
+          classifyScreen: agentName === "opencode" ? classifyOpencodeStartupSurface : classifyStartupSurface,
           selectWorkspace: (id) => cmuxLocal(["select-workspace", "--workspace", id]),
           getCurrentWorkspace: () => {
             try {
@@ -229,8 +288,51 @@ export const launchCommand = new Command("launch")
           },
           onFreshReason: (reason) => console.log(chalk.cyan(`  ↻ ${reason}`)),
           onStoppingStale: (name) => console.log(chalk.yellow(`  Closing stale workspace '${name}' for fresh start`)),
-          onAlreadyExists: (name) => console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`)),
-          onCreated: (name) => console.log(chalk.green(`  ✔ Workspace '${name}' created`)),
+          onAlreadyExists: (name) => {
+            console.log(chalk.yellow(`  Workspace '${name}' already exists — switching to it`));
+            if (!projectName || !isOpencodeCaptain) return;
+            // #797: an existing workspace is NOT respawned, so the port we
+            // allocated above was never bound. Refresh the record from the LIVE
+            // server for this captain's directory (matched by its own session id
+            // first) — otherwise a stale port survives the relaunch forever.
+            const live = discoverLiveOpencodeServer({
+              directory: realpathOrSelf(cwd),
+              sessionId: priorRecord?.sessionId,
+            });
+            if (!live) return;
+            const sessionId = live.sessionId ?? priorRecord?.sessionId;
+            // Nothing changed ⇒ leave the record (and its original launchedAt) be.
+            if (priorRecord && priorRecord.port === live.port && priorRecord.sessionId === sessionId) return;
+            writeCaptainAddress(stateRoot, projectName, {
+              agent: "opencode", port: live.port,
+              ...(sessionId ? { sessionId } : {}),
+              directory: realpathOrSelf(cwd), launchedAt,
+            });
+          },
+          onCreated: (name) => {
+            console.log(chalk.green(`  ✔ Workspace '${name}' created`));
+            if (!projectName) return;
+            if (isOpencodeCaptain && captainPort) {
+              // #786/#789: the session does not exist until the startup prompt starts
+              // a turn (spec §2 test 8), so on a COLD start this waits for it — and
+              // only accepts a session CREATED at/after `launchedAt`, so a
+              // pre-existing session in the directory is never mistaken for the
+              // captain's (the silent misroute). Timeout ⇒ no record ⇒ the daemon
+              // reports "not deliverable", never a silent no-box.
+              // #797: on a RESUME the session id is already known, so it is
+              // persisted immediately (the created-after gate must not reject it).
+              void resolveAndPersistOpencodeCaptain({
+                stateRoot, project: projectName, port: captainPort, directory: realpathOrSelf(cwd), launchedAt,
+                sessionId: opencodeResumeSessionId,
+              }).catch(() => {});
+            } else if (role === "captain") {
+              // Claude (and any other agent): mark the launch so the daemon knows
+              // the captain was squadrant-launched.
+              writeCaptainAddress(stateRoot, projectName, {
+                agent: agentName, directory: realpathOrSelf(cwd), launchedAt,
+              });
+            }
+          },
         });
       } catch (err) {
         console.error(chalk.red(`  ✘ Failed: ${(err as Error).message}`));

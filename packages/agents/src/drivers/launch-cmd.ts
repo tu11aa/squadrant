@@ -42,6 +42,9 @@ export function buildAgentCmd(
   /** Per-role thinking level → claude `--effort <level>`. Claude-only; the
    *  non-claude delegate path never forwards it. Absent ⇒ flag omitted. */
   thinking?: ThinkingLevel,
+  /** #786: interactive boot for the captain role on agents that support it
+   *  (opencode). Absent ⇒ today's headless delegate behaviour, unchanged. */
+  captainBoot?: { port?: number; sessionId?: string },
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -85,9 +88,11 @@ export function buildAgentCmd(
     }
 
     // #697: must come AFTER --append-system-prompt-file and --plugin-dir —
-    // cmux truncates launchCommand.arguments at --messaging-socket-path when
-    // storing it, so anything after it (including the template flag) is lost
-    // and role classification breaks. Match the crew path (drivers/claude.ts).
+    // cmux <=0.64.18 truncated launchCommand.arguments at --messaging-socket-path
+    // when storing it in claude-hook-sessions.json. Fixed upstream in cmux 0.64.19+
+    // (#8070), but this flag-ordering workaround is kept for backward compat with
+    // min: "0.64.0" and retires only when min is bumped >= 0.64.19.
+    // Match the crew path (drivers/claude.ts).
     if (messagingSocketPath) {
       cmd += ` --messaging-socket-path ${messagingSocketPath}`;
     }
@@ -106,5 +111,9 @@ export function buildAgentCmd(
     model,
     autoApprove: true,
     promptFile: roleFile && fs.existsSync(roleFile) ? roleFile : undefined,
+    ...(captainBoot && role === "captain"
+      ? { interactive: true, ...(captainBoot.port ? { port: captainBoot.port } : {}),
+          ...(captainBoot.sessionId ? { sessionId: captainBoot.sessionId } : {}) }
+      : {}),
   });
 }

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall, isVersionUpgrade, isReadOnlyCrewCommand, READ_ONLY_CREW_SUBCOMMANDS, decideForeignInstall, printForeignInstallError, printVersionUpgradeNotice } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall, isVersionUpgrade, isReadOnlyCrewCommand, READ_ONLY_CREW_SUBCOMMANDS, isReadOnlyTopLevelCommand, READ_ONLY_TOP_LEVEL_COMMANDS, decideForeignInstall, printForeignInstallError, printVersionUpgradeNotice } from "../launchd.js";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -267,6 +267,24 @@ describe("isReadOnlyCrewCommand (#752)", () => {
 
   it("handles a bare `crew` invocation with no subcommand", () => {
     expect(isReadOnlyCrewCommand(["node", "squadrant", "crew"])).toBe(false);
+  });
+});
+
+describe("isReadOnlyTopLevelCommand (#669)", () => {
+  it("recognizes sessions/whoami as read-only", () => {
+    for (const cmd of READ_ONLY_TOP_LEVEL_COMMANDS) {
+      expect(isReadOnlyTopLevelCommand(["node", "squadrant", cmd])).toBe(true);
+    }
+  });
+
+  it("does not treat mutating top-level commands as read-only", () => {
+    expect(isReadOnlyTopLevelCommand(["node", "squadrant", "launch"])).toBe(false);
+    expect(isReadOnlyTopLevelCommand(["node", "squadrant", "crew", "spawn"])).toBe(false);
+    expect(isReadOnlyTopLevelCommand(["node", "squadrant", "heal", "daemon"])).toBe(false);
+  });
+
+  it("handles a bare invocation with no subcommand", () => {
+    expect(isReadOnlyTopLevelCommand(["node", "squadrant"])).toBe(false);
   });
 });
 

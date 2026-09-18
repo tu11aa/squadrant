@@ -18,6 +18,7 @@ guided first run — come back here when you need the details.
   - [Notifier Abstraction](#notifier-abstraction)
   - [Lifecycle Sources](#lifecycle-sources)
   - [Control/Captain Channel (#667)](#controlcaptain-channel-667)
+  - [Agent Session Introspection (#669)](#agent-session-introspection-669)
   - [Crew Spawn (Interactive Sub-Sessions)](#crew-spawn-interactive-sub-sessions)
   - [Answering a Crew's Open Prompt (#592)](#answering-a-crews-open-prompt-592)
   - [Effort Dial (Tokenomics)](#effort-dial-tokenomics)
@@ -62,6 +63,8 @@ guided first run — come back here when you need the details.
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
+| `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
+| `squadrant whoami [--json]` | Show the agent session calling the command (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
 | `squadrant shutdown [project]` | Graceful shutdown |
 | `squadrant effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
 | `squadrant retro` | Generate a retro (weekly/sprint summary) from daily logs and git (zero tokens) |
@@ -136,6 +139,12 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 
 Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each project may override the global default via its `runtime` field. Bash scripts call `squadrant runtime <op>` to talk to the configured runtime instead of any specific binary. New runtimes (tmux, Docker, SSH) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/runtimes/`) — see `docs/specs/archive/2026-04-20-plugin-system-runtime-design.md`.
 
+**cmux compatibility (verified on 0.64.22):**
+- Squadrant supports cmux `min: "0.64.0"`, with `lastVerified: "0.64.22"` (`packages/shared/src/lib/compat-manifest.ts`).
+- **Claude argv-truncation fix (cmux #8070):** cmux 0.64.19+ fixed the upstream issue where `launchCommand.arguments` was truncated at `--messaging-socket-path` in `claude-hook-sessions.json`. The squadrant flag-ordering workaround (placing `--messaging-socket-path` at the end of launch argv, #697/#759) and the `ps` argv-recovery fallback remain active to ensure safety on older cmux versions (retiring only when `min >= 0.64.19`).
+- **Stale surface closing (cmux #9422):** `cmux close-surface` fails closed (non-zero exit) on stale/unknown surfaces rather than falling back to the focused surface; squadrant's `closePane` catches and swallows the error gracefully.
+- **Access mode:** Squadrant operates with cmux socket control mode `automation` (`capabilities.access_mode: "automation"`). Live policy reload (#7988) maintains event subscriptions across configuration reloads.
+
 ### Workspace Abstraction
 
 Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `squadrant workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
@@ -166,6 +175,55 @@ The next step past lifecycle sources: use each agent's **native control API** as
 - **`captainChannel`** (`off` / `shadow` / `on`) — `on` routes captain-bound delivery over the native peer socket, bypassing the pane-defer machine entirely. `shadow` probes but never sends: it logs and discards the probe result, provides no liveness of its own, and falls back to pane delivery — which re-enters draft/ghost/modal/`no-box` deferral. Prefer `on`; `shadow` is a verification aid, not a safe fallback. (Crew wrapper/receipt text visible in `on` mode is a sender-identity artifact tracked separately in #711, not an inherent property of the channel.)
 - Implementation: `@squadrant/core/src/captain-channel.ts`, `control-channel.ts`, `lifecycle-source.ts`.
 - Design doc: [`specs/2026-08-13-agent-control-channel-design.md`](specs/2026-08-13-agent-control-channel-design.md). Diagram: [`diagrams/2026-08-13-agent-control-channel.html`](diagrams/2026-08-13-agent-control-channel.html).
+
+#### Running an opencode captain
+
+An opencode captain must be **launched by squadrant** — a manually opened
+`opencode -c` has no reachable control API (it binds no TCP port), so lifecycle
+notifications cannot be delivered to it. squadrant then:
+
+1. boots the captain as `opencode --session <id> --port <N>` (resume is explicit;
+   `-c` is never used — inside one repo it also resumes crew-worktree sessions), and
+2. records its address (`port` + `sessionId`) in
+   `~/.config/squadrant/state/<project>/captain.json`, which the daemon uses to
+   deliver over opencode's HTTP API (`POST /session/<id>/prompt_async`).
+
+If a captain is not deliverable, the daemon raises a single actionable
+`CAPTAIN NOT DELIVERABLE` alert (notifier + Telegram + dashboard) and keeps the
+notifications queued. Relaunch with `squadrant launch <project>` to clear it.
+
+### Agent Session Introspection (#669)
+
+Two read-only commands answer *"what agent sessions are live, and which one am I?"* without hand-rolled `ps`/`env` incantations. Both are **file reads only** — they never boot, touch, or depend on the daemon, so they work with it down, and they are excluded from the `ensureDaemon` gate exactly like the read-only `crew` subcommands.
+
+**`squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]`** — a union across the agents that can enumerate their own sessions, one optional `listSessions()` method on the `AgentDriver` seam:
+
+| Agent | Source | Status |
+|---|---|---|
+| `claude` | `~/.claude/sessions/<pid>.json` | live — `idle`/`busy`/`shell`/`waiting`, reconciled with `kill(pid,0)` → `stale` when dead; missing status → `unknown` |
+| `opencode` | `state/<project>/captain.json` (captain record) | captain only — `recorded` (the record carries no status; opencode crew sessions have no persisted registry) |
+| `codex` / `gemini` | — | unsupported |
+
+Rows are `{ agent, id, pid, cwd, status, address }`. `address` is the native control address: a claude UDS socket path, or `http://127.0.0.1:<port>` for opencode. `--json` is the stable contract; the table is for humans. Requesting `--agent codex` explicitly exits non-zero rather than printing an empty list.
+
+**`squadrant whoami [--json]`** — resolves the *calling* session from positive signals only (never `pgrep`, which silently omits the invoking process):
+
+- `role` — `SQUADRANT_CREW_TASK_ID` ⇒ `crew`, else `SQUADRANT_ROLE` (e.g. `captain`), else `unknown`.
+- `project` — the crew's `SQUADRANT_CREW_PROJECT`, else the longest registered project path that is a prefix of the cwd.
+- `agent` / `sessionId` / `address`:
+  - **claude** — self-identifies from `$CLAUDE_CODE_MESSAGING_SOCKET`, confirmed against the registry for the session id.
+  - **opencode captain** — the captain record's `sessionId` + `port`.
+  - **crew** — the task record's `sessionId` and socket/port.
+
+```json
+{ "project": "squadrant", "role": "captain", "agent": "opencode",
+  "sessionId": "ses_f4d5…", "address": "http://127.0.0.1:49526",
+  "source": "captain-record" }
+```
+
+An opencode captain whose record exists but whose session id is not resolved yet (cold start) returns `sessionId: null` with a `note`, exit 0. When nothing identifies the caller, `source` is `"none"` and the command exits 1 with a clear message — never a stack trace.
+
+Design: [`#669`](https://github.com/tu11aa/squadrant/issues/669).
 
 ### Crew Spawn (Interactive Sub-Sessions)
 
@@ -266,6 +324,8 @@ Auto-launch boots a captain when the **daemon is already running**. Waking a *sl
 Squadrant rules (Karpathy principles, captain-ops) and per-project AGENTS.md emit to each supported agent's canonical path via `squadrant projection emit`. User-level projection pushes squadrant's skills to `~/.cursor/rules/squadrant-global.mdc`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`. Project-level projection pushes a managed project's own `AGENTS.md` into `{project}/CLAUDE.md`, `{project}/.cursor/rules/squadrant.mdc`, `{project}/GEMINI.md` — zero squadrant-global content leaks into the project repo. Shared files use `<!-- squadrant:start --> ... <!-- squadrant:end -->` markers; dedicated files overwrite. See `docs/specs/archive/2026-04-24-plugin-system-projection-design.md`.
 
 The user-level projection now also inlines `templates/captain.generic.md` and `templates/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the squadrant marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/archive/2026-05-05-multi-agent-template-parity-plan.md` (#45).
+
+opencode additionally gets squadrant's skills projected as **loadable skill dirs**, not just inlined markdown. On every `squadrant` invocation and on daemon boot, the shipped `plugin/skills/<name>/SKILL.md` files are synced (copy-if-changed + prune) into the **user-scope** opencode skills dir `~/.config/opencode/skills/<name>/SKILL.md`, so `skill <name>` resolves in an opencode captain/crew/side session — parity with claude's `--plugin-dir`. User-scope is deliberate: it serves every project and every opencode session without writing into managed project repos (where it would drift), and it is reconciled from the shipped source on every run so an install/update can't leave it stale. Each synced dir carries a `.squadrant-managed` marker — only marked dirs are refreshed or pruned, and a name collision with a user-authored opencode skill is reported as a skip rather than clobbered. Skills without loadable frontmatter (`handback`, `takeover`) are not projected. ([#791](https://github.com/tu11aa/squadrant/issues/791))
 
 ### Obsidian Vaults (Hub-and-Spoke)
 

@@ -20,6 +20,8 @@ export { ClaudePeerChannel } from "./claude/peer-channel.js";
 export type { ClaudePeerChannelDeps } from "./claude/peer-channel.js";
 export { ClaudeReceiptListener } from "./claude/receipt-listener.js";
 export type { PeerReceipt } from "./claude/receipt-listener.js";
+export { ensureClaudeApiKeyApproved } from "./claude/api-key-approval.js";
+export type { EnsureApprovedResult } from "./claude/api-key-approval.js";
 export { buildUserEnvelope, writeLine } from "./claude/peer-wire.js";
 export type { PeerUserEnvelope, WireResult } from "./claude/peer-wire.js";
 export { parseRegistryDir, toLifecycleSnapshot, CLAUDE_SESSIONS_DIR, readClaudeStatus, readClaudeStatusByCwd, readClaudeStatusBySocketPath } from "./claude/registry.js";

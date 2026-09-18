@@ -1,11 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { runAdapterConformance } from "@squadrant/core";
+import {
+  runAdapterConformance,
+  freshTrace,
+  checkFact,
+  type AgentFact,
+  type RawFact,
+} from "@squadrant/core";
 import { createOpencodeFactAdapter } from "../fact-adapter.js";
 
 const make = () => {
   let n = 1;
   return createOpencodeFactAdapter({ nextRequestId: () => n++ });
 };
+
+const mkFact = (raw: RawFact, at: number): AgentFact => ({
+  ...raw,
+  seq: 1,
+  taskId: "task-1",
+  at,
+  source: "opencode-sse",
+  origin: "agent",
+});
 
 describe("opencode fact adapter", () => {
   it("declares its identity and trust rank", () => {
@@ -54,6 +69,24 @@ describe("opencode fact adapter", () => {
     expect(make().translate({ type: "permission.replied" })).toEqual([{ kind: "activity" }]);
   });
 
+  it("server.connected is connection liveness, not an unknown frame", () => {
+    expect(make().translate({ type: "server.connected", properties: {} }))
+      .toEqual([{ kind: "activity" }]);
+  });
+
+  it("server.heartbeat is connection liveness, not an unknown frame", () => {
+    expect(make().translate({ type: "server.heartbeat" }))
+      .toEqual([{ kind: "activity" }]);
+  });
+
+  it("a server.heartbeat cannot mask a tool-in-flight stall", () => {
+    const trace = freshTrace();
+    checkFact(trace, mkFact({ kind: "tool.opened", tool: "bash" }, 0), {});
+    const [beat] = make().translate({ type: "server.heartbeat" });
+    const violations = checkFact(trace, mkFact(beat, 61_000), { stallBudgetMs: 60_000 });
+    expect(violations.map((violation) => violation.code)).toContain("I3");
+  });
+
   it("an unrecognised frame becomes unknown carrying its type", () => {
     expect(make().translate({ type: "session.error" }))
       .toEqual([{ kind: "unknown", name: "session.error" }]);
@@ -75,6 +108,8 @@ describe("opencode fact adapter — conformance", () => {
     { type: "session.idle", properties: { sessionID: "ses_1" } },
     { type: "permission.asked", properties: { id: "p", sessionID: "s", permission: "bash" } },
     { type: "permission.replied" },
+    { type: "server.connected", properties: {} },
+    { type: "server.heartbeat" },
   ])) {
     it(c.name, () => c.run());
   }

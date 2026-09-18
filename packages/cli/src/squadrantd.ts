@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -23,13 +23,13 @@ export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
-         ClaudePeerRegistrySource, createOpencodeFactAdapter } from "@squadrant/agents";
+         ClaudePeerRegistrySource, createOpencodeFactAdapter, syncShippedOpencodeSkills } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
-import { buildCaptainChannelWithRetry } from "./lib/captain-channel-factory.js";
+import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 // Bundled CLI bin sits next to this daemon entry (dist/index.js · dist/squadrantd.js).
@@ -273,6 +273,16 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       }))
     ) : undefined);
 
+  // ── Router shim (opt-in #774) ─────────────────────────────────────────────
+  // Built only when config.defaults.router exists. Skipped under vitest (tests
+  // inject opts.routerService); absent config ⇒ undefined ⇒ zero behavior change.
+  const cfg = loadConfig();
+  const routerCfg = cfg.defaults.router;
+  ctx.routerService = opts.routerService
+    ?? (shouldBuildRouterService(routerCfg, !!process.env.VITEST) && routerCfg
+      ? createRouterService(routerCfg, Object.keys(cfg.projects), { log })
+      : undefined);
+
   // ── Out-of-band fault-alert channel (#579/#484 Gap 1) ─────────────────────
   // Skipped under vitest (would shell out to the real `squadrant` CLI); tests
   // inject opts.notifyFault, or fall back to buildContext()'s no-op default.
@@ -295,8 +305,20 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       // setup) used to log once and latch the daemon into pane-only delivery
       // for its entire process lifetime. Retry with backoff instead of a
       // one-shot .catch — never take the daemon down with us either way.
-      void buildCaptainChannelWithRetry({ log })
-        .then((ch) => { ctx.captainChannel = ch; })
+      // #786: build BOTH agent channels (claude peer + opencode http) and the
+      // agent resolver, so captain-bound delivery routes by the captain's agent.
+      void buildCaptainChannelsWithRetry({
+        stateRoot: join(homedir(), ".config", "squadrant", "state"),
+        configAgent: loadConfig().defaults.roles?.captain?.agent,
+        log,
+      })
+        .then(({ channels, agentFor }) => {
+          ctx.captainChannels = channels;
+          ctx.captainAgentFor = agentFor;
+          // Keep the claude channel on the legacy field so any other consumer of
+          // ctx.captainChannel keeps working.
+          ctx.captainChannel = channels.claude;
+        })
         // The retry loop itself only stops by resolving; this only guards a
         // throwing `log` from escaping as an unhandled rejection.
         .catch((e) => log(`captain-channel: unexpected retry-loop error: ${(e as Error).message}`));
@@ -425,6 +447,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     // owned hooks into ~/.claude/settings.json (idempotent, namespaced per D4).
     try { nativeHookSource.install(); }
     catch (e) { log(`native hook install failed: ${(e as Error).message}`); }
+
+    // #791: same self-heal guarantee for opencode's global skills dir — refresh
+    // the projected squadrant skills on boot so a version update is reflected
+    // before any opencode captain/crew session starts and scans for skills.
+    try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
+    catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
     const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
     const hookDeps: LifecycleSourceDeps = {
       resolve: (hint) => {

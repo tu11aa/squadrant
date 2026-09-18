@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The plain-language version — harnesses, plugins, and why a crew looked stuck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:      #faf6f0;
+    --paper-2:    #f3ece2;
+    --card:       #fffdfa;
+    --rule:       #e0d5c6;
+    --rule-soft:  #ece3d6;
+    --ink:        #2b2622;
+    --ink-soft:   #5c534a;
+    --ink-faint:  #8b8074;
+
+    --terracotta: #c05f3c;
+    --terracotta-w: #fbeae3;
+    --sage:       #5f8a68;
+    --sage-w:     #e8f0e7;
+    --ochre:      #b8860b;
+    --ochre-w:    #faf0d8;
+
+    --font-display: 'Instrument Serif', Georgia, serif;
+    --font-body: 'Newsreader', Georgia, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 52px 28px 80px;
+    background: var(--paper);
+    background-image: radial-gradient(circle at 1px 1px, rgba(139,128,116,0.09) 1px, transparent 0);
+    background-size: 22px 22px;
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 18px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 820px; margin: 0 auto; }
+
+  .langbar {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 28px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+  .langbar a, .langbar span {
+    padding: 4px 11px;
+    border-radius: 5px;
+    border: 1px solid var(--rule);
+    text-decoration: none;
+    color: var(--ink-faint);
+    background: var(--card);
+  }
+  .langbar span.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .langbar a:hover { color: var(--terracotta); border-color: var(--terracotta); }
+
+  /* ---------- header ---------- */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+    color: var(--terracotta);
+    margin: 0 0 16px;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: 58px;
+    line-height: 1.06;
+    font-weight: 400;
+    letter-spacing: -0.012em;
+    margin: 0 0 18px;
+  }
+  h1 em { font-style: italic; color: var(--terracotta); }
+
+  .standfirst {
+    font-size: 21px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin: 0 0 12px;
+    max-width: 62ch;
+  }
+  .swap-note {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    border-left: 3px solid var(--rule);
+    padding: 6px 0 6px 14px;
+    margin: 26px 0 0;
+    line-height: 1.6;
+  }
+  .swap-note a { color: var(--terracotta); }
+
+  hr.big {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 52px 0;
+  }
+
+  /* ---------- pass headers ---------- */
+  .pass {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin: 0 0 8px;
+  }
+  .pass .n {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: var(--paper);
+    background: var(--ink);
+    border-radius: 4px;
+    padding: 4px 9px;
+    flex-shrink: 0;
+  }
+  .pass h2 {
+    font-family: var(--font-display);
+    font-size: 38px;
+    font-weight: 400;
+    line-height: 1.14;
+    margin: 0;
+    letter-spacing: -0.008em;
+  }
+
+  h3 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2.2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 40px 0 12px;
+  }
+
+  p { margin: 0 0 18px; max-width: 66ch; overflow-wrap: break-word; }
+  p.big { font-size: 22px; line-height: 1.5; color: var(--ink); }
+  b, strong { font-weight: 600; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.79em;
+    background: var(--paper-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: 1.5px 5px;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- the ticket rail illustration ---------- */
+  .kitchen {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 30px 26px 26px;
+    margin: 26px 0 28px;
+    box-shadow: 0 1px 0 rgba(43,38,34,0.03), 0 10px 26px -18px rgba(43,38,34,0.28);
+  }
+  .kitchen-title {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 26px;
+  }
+  .rail {
+    position: relative;
+    border-top: 3px solid var(--ink);
+    padding-top: 0;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .rail::before, .rail::after {
+    content: '';
+    position: absolute;
+    top: -7px;
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--ink);
+  }
+  .rail::before { left: -5px; }
+  .rail::after { right: -5px; }
+
+  .ticket {
+    flex: 1 1 190px;
+    min-width: 0;
+    margin-top: -3px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--sage);
+    border-radius: 0 0 8px 8px;
+    padding: 14px 16px 16px;
+    font-size: 15px;
+    line-height: 1.5;
+    position: relative;
+  }
+  .ticket .lbl {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .ticket .job { font-weight: 600; display: block; margin-bottom: 8px; }
+  .ticket .fate {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--sage);
+  }
+  .ticket.stuck {
+    border-top-color: var(--terracotta);
+    background: var(--terracotta-w);
+    border-color: #e9c6b7;
+  }
+  .ticket.stuck .fate { color: var(--terracotta); font-weight: 600; }
+  .ticket.stuck::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 100%;
+    width: 1px; height: 26px;
+    background: repeating-linear-gradient(to bottom, var(--terracotta) 0 4px, transparent 4px 8px);
+  }
+  .stuck-caption {
+    margin: 40px 0 0;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--terracotta);
+    line-height: 1.7;
+  }
+  .stuck-caption b { color: var(--terracotta); }
+
+  /* ---------- waiters table ---------- */
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--card);
+    margin: 24px 0;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 15px; }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 16px 20px 2px;
+  }
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 14px 18px 9px;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td {
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--rule-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.who { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .yes { color: var(--sage); font-weight: 600; }
+  .no  { color: var(--terracotta); font-weight: 600; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--ochre);
+    border-radius: 0 10px 10px 0;
+    padding: 20px 24px;
+    margin: 26px 0;
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    max-width: 72ch;
+  }
+  .note .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ochre);
+    display: block;
+    margin-bottom: 9px;
+  }
+  .note strong { color: var(--ink); }
+  .note.break { border-left-color: var(--terracotta); }
+  .note.break .tag { color: var(--terracotta); }
+  .note.good { border-left-color: var(--sage); }
+  .note.good .tag { color: var(--sage); }
+
+  /* ---------- two houses ---------- */
+  .houses {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+    margin: 26px 0;
+  }
+  .house {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 24px 24px 22px;
+    min-width: 0;
+  }
+  .house h4 {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 400;
+    margin: 0 0 2px;
+  }
+  .house .sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin: 0 0 18px;
+  }
+  .house p { font-size: 16px; margin-bottom: 12px; color: var(--ink-soft); }
+  .house p:last-child { margin-bottom: 0; }
+  .house .numbers {
+    display: flex;
+    gap: 22px;
+    margin: 0 0 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .house .num b {
+    font-family: var(--font-mono);
+    font-size: 25px;
+    font-weight: 600;
+    display: block;
+    line-height: 1.1;
+  }
+  .house .num span {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .house.a { border-top: 4px solid var(--ochre); }
+  .house.a .num b { color: var(--ochre); }
+  .house.b { border-top: 4px solid var(--sage); }
+  .house.b .num b { color: var(--sage); }
+
+  /* ---------- before / after ---------- */
+  .ba {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+    margin: 26px 0;
+  }
+  .ba-col {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 22px 24px;
+    min-width: 0;
+  }
+  .ba-col.now { border-top: 4px solid var(--terracotta); }
+  .ba-col.next { border-top: 4px solid var(--sage); }
+  .ba-col h4 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 0 0 16px;
+  }
+  .ba-col.now h4 { color: var(--terracotta); }
+  .ba-col.next h4 { color: var(--sage); }
+  .ba-col ol { margin: 0; padding-left: 20px; font-size: 16px; color: var(--ink-soft); }
+  .ba-col li { margin-bottom: 11px; line-height: 1.55; }
+  .ba-col li:last-child { margin-bottom: 0; }
+  .ba-col li b { color: var(--ink); }
+
+  /* ---------- takeaway ---------- */
+  .takeaway {
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 14px;
+    padding: 40px 40px 36px;
+    margin: 52px 0 0;
+  }
+  .takeaway .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+    color: #c9a882;
+    display: block;
+    margin-bottom: 16px;
+  }
+  .takeaway p {
+    font-family: var(--font-display);
+    font-size: 30px;
+    line-height: 1.28;
+    margin: 0 0 14px;
+    color: var(--paper);
+    max-width: 30ch;
+  }
+  .takeaway p:last-child { margin-bottom: 0; }
+  .takeaway .small {
+    font-family: var(--font-body);
+    font-size: 16px;
+    color: #b8ada0;
+    line-height: 1.6;
+    max-width: 60ch;
+  }
+  .takeaway em { font-style: italic; color: #e8c9a8; }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    line-height: 1.85;
+  }
+  footer a { color: var(--terracotta); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  .rise { opacity: 0; animation: rise .55s cubic-bezier(.22,.61,.36,1) forwards; animation-delay: calc(var(--i,0) * 60ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .rise { animation: none; opacity: 1; }
+    html { scroll-behavior: auto; }
+  }
+
+  @media (max-width: 700px) {
+    body { padding: 32px 20px 60px; font-size: 17px; }
+    h1 { font-size: 38px; }
+    .standfirst { font-size: 18.5px; }
+    .pass h2 { font-size: 28px; }
+    .pass { flex-direction: column; gap: 10px; }
+    .takeaway { padding: 30px 24px; }
+    .takeaway p { font-size: 24px; }
+    p.big { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="langbar rise" style="--i:0">
+    <span class="on">EN</span>
+    <a href="2026-08-27-harness-plugin-architectures-eli5-vi.html">VI</a>
+    <a href="2026-08-27-harness-plugin-architectures.html">Technical version &rarr;</a>
+  </div>
+
+  <p class="kicker rise" style="--i:0">Plain-language version · 2026-08-27</p>
+  <h1 class="rise" style="--i:1">A cook who was finished,<br>and a ticket <em>nobody took down</em>.</h1>
+  <p class="standfirst rise" style="--i:2">
+    Why squadrant kept saying a crew was stuck when it wasn't, what two other agent
+    harnesses do about it, and the one small thing worth building.
+  </p>
+  <p class="swap-note rise" style="--i:3">
+    This is the same content as the technical page, told simply.<br>
+    Detailed version → <a href="2026-08-27-harness-plugin-architectures.html">the blueprint page</a> ·
+    full study → <a href="../specs/2026-08-27-harness-plugin-architecture-study.md">the spec</a>
+  </p>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ PASS 1 ═══════════════════ -->
+  <div class="pass rise" style="--i:4">
+    <span class="n">01</span>
+    <h2>The kitchen</h2>
+  </div>
+
+  <p class="big rise" style="--i:5">
+    Squadrant watches its worker sessions from the outside and guesses what they're doing —
+    and one of the signals it was guessing from was being thrown in the bin.
+  </p>
+
+  <h3 class="rise" style="--i:6">Picture a restaurant kitchen</h3>
+
+  <p class="rise" style="--i:7">
+    A cook is working. Above the pass hangs a metal <b>rail</b>. When the cook starts a dish,
+    a waiter clips a ticket onto the rail. When the cook finishes it, a waiter takes that
+    ticket down. The manager never watches the cook — he only looks at the rail. His rule is
+    simple: <b>if a ticket has been hanging there too long, the cook must be stuck, so shout at him.</b>
+  </p>
+
+  <div class="kitchen rise" style="--i:8">
+    <p class="kitchen-title">The rail — one ticket per job the cook started</p>
+    <div class="rail">
+      <div class="ticket">
+        <span class="lbl">Ticket 1</span>
+        <span class="job">Read a file</span>
+        <span class="fate">✓ taken down</span>
+      </div>
+      <div class="ticket">
+        <span class="lbl">Ticket 2</span>
+        <span class="job">Run the tests</span>
+        <span class="fate">✓ taken down</span>
+      </div>
+      <div class="ticket stuck">
+        <span class="lbl">Ticket 3</span>
+        <span class="job">Edit a file</span>
+        <span class="fate">✗ still hanging</span>
+      </div>
+    </div>
+    <p class="stuck-caption">
+      The cook finished this dish <b>months ago</b>.<br>
+      Nobody was ever going to take that ticket down.
+    </p>
+  </div>
+
+  <p class="rise" style="--i:9">
+    Here's the mapping. The cook is a <b>crew session</b>. A ticket going up is
+    <code>PreToolUse</code> — "the agent started using a tool." A ticket coming down is
+    <code>PostToolUse</code> — "the tool finished." The manager is the <b>watchdog</b>, and
+    his shout is <code>CREW STALLED</code>.
+  </p>
+
+  <h3 class="rise" style="--i:10">So why didn't the ticket come down?</h3>
+
+  <p class="rise" style="--i:11">
+    Because squadrant has <b>three different waiters</b> reporting on the same cook, and each
+    one shouts "done!" in a different word. The manager's list of words to listen for was
+    missing one of them — so that waiter's "done" was heard, checked against the list, found
+    absent, and <b>silently dropped on the floor</b>.
+  </p>
+
+  <div class="tablewrap rise" style="--i:12">
+    <table>
+      <caption>Three waiters, three words for the same event</caption>
+      <thead>
+        <tr>
+          <th>Waiter</th>
+          <th>How they say "started"</th>
+          <th>How they say "done"</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="who">The cmux feed</td>
+          <td><code>agent.hook.PreToolUse</code><br><span class="yes">puts the ticket up</span></td>
+          <td><code>agent.hook.PostToolUse</code><br><span class="no">wasn't on the list ← the bug</span></td>
+        </tr>
+        <tr>
+          <td class="who">The settings.json hooks</td>
+          <td><code>pre-tool-use</code><br><span class="no">different word — no ticket</span></td>
+          <td><span class="no">never hired for this job at all</span></td>
+        </tr>
+        <tr>
+          <td class="who">The crew's own hook</td>
+          <td><span class="no">doesn't report this</span></td>
+          <td><code>posttooluse</code><br><span class="yes">on the list</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="rise" style="--i:13">
+    Read the top row again. The only waiter who ever <b>put a ticket up</b> was the one whose
+    word for "done" wasn't recognised. So every ticket that waiter hung was guaranteed to
+    stay there forever. The manager then shouted at cooks who had been standing around doing
+    nothing wrong. That's issue <b>#542</b>, and it ran for months.
+  </p>
+
+  <div class="note break rise" style="--i:14">
+    <span class="tag">Where the kitchen story breaks</span>
+    In a real kitchen you'd <strong>see</strong> the stuck ticket — it's a physical object hanging
+    in front of everyone. Squadrant's ticket was a field in memory that nobody ever wrote down.
+    There was no rail to look at. That's not a detail of the bug — <strong>it is the bug.</strong>
+  </div>
+
+  <div class="note rise" style="--i:15">
+    <span class="tag">The thing people get wrong</span>
+    This looks like a missing line of code — "just add PostToolUse to the list." That fix
+    shipped this morning and it's correct. But the same shape will come back with the next
+    agent, the next cmux version, the next hook name, because <strong>nothing in squadrant can
+    notice that a message arrived and nobody used it.</strong> The missing line is a symptom.
+  </div>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ PASS 2 ═══════════════════ -->
+  <div class="pass rise" style="--i:16">
+    <span class="n">02</span>
+    <h2>Two houses</h2>
+  </div>
+
+  <p class="big rise" style="--i:17">
+    Two other projects have already solved this, in opposite ways. Think of them as two
+    houses you could live in.
+  </p>
+
+  <div class="houses">
+    <div class="house a rise" style="--i:18">
+      <h4>Every wall moves</h4>
+      <p class="sub">DeepSeek Harness — "everything is a plugin"</p>
+      <div class="numbers">
+        <div class="num"><b>227</b><span>packages</span></div>
+        <div class="num"><b>60+</b><span>typed events</span></div>
+      </div>
+      <p>
+        Nothing is fixed. Every wall is a movable partition — <b>even the load-bearing ones</b>.
+        The kitchen, the plumbing, the front door: all swappable from a config file. You can
+        rearrange the whole house without touching the frame, because there is no frame.
+      </p>
+      <p>
+        The price: you need the manual to know what room you're standing in. There's a whole
+        book explaining the wall system before you can hang a shelf.
+      </p>
+    </div>
+
+    <div class="house b rise" style="--i:19">
+      <h4>Small concrete core</h4>
+      <p class="sub">Pi — "core harness only"</p>
+      <div class="numbers">
+        <div class="num"><b>10</b><span>packages</span></div>
+        <div class="num"><b>2</b><span>internal events</span></div>
+      </div>
+      <p>
+        A small fixed core — kitchen, plumbing, load-bearing walls — poured in concrete and
+        never moved. Everything else is <b>furniture you carry in</b>: one file, drop it in the
+        right folder, it works.
+      </p>
+      <p>
+        Their internal message system is 102 lines and carries exactly two messages. Its own
+        comment says, roughly: <em>don't use me to remember things — go read the notebook.</em>
+      </p>
+    </div>
+  </div>
+
+  <p class="rise" style="--i:20">
+    Squadrant is six packages maintained by one person. It should live in <b>Pi's house</b> —
+    a small core that doesn't move, and plugins that are just files.
+  </p>
+
+  <div class="note good rise" style="--i:21">
+    <span class="tag">But borrow this one thing from the big house</span>
+    DeepSeek's house has <strong>smoke detectors in every room</strong>. Not tests that run before you
+    move in — alarms that are wired in and live while you're cooking. One of them is literally:
+    <em>"a dish was started and never finished — beep."</em> That's the alarm that would have
+    caught our stuck ticket on <strong>day one instead of month four</strong>.
+  </div>
+
+  <div class="note rise" style="--i:22">
+    <span class="tag">The thing people get wrong</span>
+    "Everything is a plugin" sounds like the more advanced choice, so it sounds like the one to
+    copy. It isn't — it's the right answer to a problem squadrant doesn't have (hundreds of
+    packages, an outside ecosystem shipping add-ons). <strong>Copying the big house's floor plan
+    would cost a lot and fix nothing. Copying its smoke detectors is cheap and fixes the actual bug.</strong>
+  </div>
+
+  <hr class="big">
+
+  <!-- ═══════════════════ WHAT TO BUILD ═══════════════════ -->
+  <div class="pass rise" style="--i:23">
+    <span class="n">03</span>
+    <h2>So what do we build?</h2>
+  </div>
+
+  <p class="big rise" style="--i:24">
+    One rule: <b>write down what you saw. Decide later what it meant.</b>
+  </p>
+
+  <p class="rise" style="--i:25">
+    Right now each waiter is asked to interpret on the spot — "is this important? yes/no" —
+    and "no" means the message is gone forever. Instead, every waiter writes what they heard
+    into <b>one shared notebook, in one shared vocabulary</b>. If a waiter hears something they
+    don't recognise, they don't bin it — they write <b>"heard something: &lt;the exact words&gt;"</b>
+    and that line gets counted. Only afterwards does one single person read the notebook and
+    decide what it all means.
+  </p>
+
+  <div class="ba">
+    <div class="ba-col now rise" style="--i:26">
+      <h4>How it works now</h4>
+      <ol>
+        <li>Five different watchers, each with their own shorthand.</li>
+        <li>Each one <b>decides on the spot</b> whether what it saw matters.</li>
+        <li>Anything it doesn't recognise is <b>dropped, with no trace</b>.</li>
+        <li>What survives is folded into a status and <b>the message itself is thrown away</b>.</li>
+        <li>So when something goes wrong, <b>there is nothing to go back and read</b>.</li>
+      </ol>
+    </div>
+    <div class="ba-col next rise" style="--i:27">
+      <h4>How it would work</h4>
+      <ol>
+        <li>Same five watchers — but each only <b>translates</b>, never judges.</li>
+        <li>Everything goes into <b>one notebook, one vocabulary</b>, in order.</li>
+        <li>Unrecognised things are written down as <b>"unknown"</b> and counted.</li>
+        <li>Alarms watch the notebook: <b>started-but-never-finished beeps</b>.</li>
+        <li>The notebook is kept — so you can <b>replay a bad day</b> and see exactly what happened.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note good rise" style="--i:28">
+    <span class="tag">Why the notebook is the real prize</span>
+    Once a real bad day is written down, that file <strong>becomes a permanent test</strong>. You feed
+    the actual recording of the stuck crew back through the new code and check it does the right
+    thing — not a made-up example someone invented, <strong>the real thing that actually happened.</strong>
+    Do that for #542, #704 and #492 and those three bugs can never quietly come back.
+  </div>
+
+  <div class="note rise" style="--i:29">
+    <span class="tag">And one thing that's nearly free</span>
+    Separately from all of the above: a small script — maybe <strong>150 lines</strong> — that reads the
+    codebase and prints a table of "who sends this kind of message" and "who listens for it."
+    Any row with an empty listener column is a bug you can see at a glance. DeepSeek generates
+    exactly this table. It would have made #542 visible <strong>without changing a single line of
+    running code.</strong>
+  </div>
+
+  <div class="takeaway rise" style="--i:30">
+    <span class="tag">If you remember one thing</span>
+    <p>Squadrant doesn't need a plugin framework. It needs a notebook.</p>
+    <p class="small">
+      A written-down, replayable, alarm-checked record of what its agents actually did — owned by
+      one small module — plus a build-time table proving every kind of message has both someone
+      sending it and someone listening. <em>The framework question was never the real question.</em>
+    </p>
+  </div>
+
+  <footer>
+    Same material as <a href="2026-08-27-harness-plugin-architectures.html">the technical page</a>
+    and <a href="../specs/2026-08-27-harness-plugin-architecture-study.md">the full study</a>.<br>
+    Studied from source: <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> ·
+    <a href="https://github.com/badlogic/pi-mono">badlogic/pi-mono</a><br>
+    Research artifact — no source edited, no issues filed.
+  </footer>
+
+</div>
+</body>
+</html>

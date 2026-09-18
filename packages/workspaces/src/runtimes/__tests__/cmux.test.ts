@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -397,6 +397,17 @@ describe("cmux driver", () => {
   it("closePane swallows errors (already closed is fine)", async () => {
     execFileMock.mockImplementation(() => { throw new Error("not found"); });
     await expect(driver.closePane({ workspaceId: "workspace:1", surfaceId: "surface:9" }))
+      .resolves.toBeUndefined();
+  });
+
+  // #9422: cmux 0.64.22 close-surface fails closed on stale/unknown surface ref with
+  // "Error: Surface ref not found: surface:N" instead of falling back to focused surface.
+  // closePane must swallow this error cleanly.
+  it("closePane swallows cmux 0.64.22 'Surface ref not found' error (#9422)", async () => {
+    execFileMock.mockImplementation(() => {
+      throw new Error("Error: Surface ref not found: surface:99");
+    });
+    await expect(driver.closePane({ workspaceId: "workspace:1", surfaceId: "surface:99" }))
       .resolves.toBeUndefined();
   });
 
@@ -1623,6 +1634,15 @@ describe("sanitizeForCmuxSend", () => {
   it("handles empty string", () => {
     expect(sanitizeForCmuxSend("")).toBe("");
   });
+
+  // #775: spawn env values are ANSI-C quoted, and a value may need an embedded
+  // newline (ANTHROPIC_CUSTOM_HEADERS is newline-separated). The `\n` escape form
+  // is destroyed by the rule above, so callers must emit `\x0a` — which this
+  // sanitizer must leave byte-for-byte intact or the header silently vanishes.
+  it("leaves an ANSI-C \\x escape for an embedded newline intact (#775)", () => {
+    const line = "ANTHROPIC_CUSTOM_HEADERS=$'a: 1\\x0ab: 2'";
+    expect(sanitizeForCmuxSend(line)).toBe(line);
+  });
 });
 
 // #258 Approach B: deliver-only-when-empty. No 250ms stability double-read.
@@ -1872,5 +1892,48 @@ describe("showDiff source mapping (#599)", () => {
     await driver.showDiff!({ workspaceId: "workspace:1", cwd: "/repo", base: "develop", lastTurn: true });
     const args = argvOf(execFileMock.mock.calls[0]);
     expect(args).toContain("--last-turn");
+  });
+});
+
+describe("classifyOpencodeStartupSurface (#786/#789)", () => {
+  // Real cold-start screen (opencode 1.18.31, empty session): the input box is
+  // up with its persistent placeholder and the footer is rendered. Verified live
+  // 2026-09-17 — a prompt typed the moment this rendered was accepted and created
+  // a session (docs/specs/2026-09-17-…-design.md §2 test 13).
+  const COLD_READY = [
+    "  ┃                                                                          ┃",
+    '  ┃  Ask anything… "Fix broken tests"                                        ┃',
+    "  ┃                                                                          ┃",
+    "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go                                 ",
+    "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "  tab agents  ctrl+p commands",
+  ].join("\n");
+  // Real warm-resume screen (session with a transcript): the placeholder is NOT
+  // rendered, but the TUI is idle and the footer is. Verified live: the footer
+  // renders at the same moment the placeholder does on a cold start.
+  const WARM_READY = [
+    "     ▣  Build · DeepSeek V4.1 Flash · 1m 32s",
+    "  ┃",
+    "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go · high     ~/me/squadrant:develop",
+    "  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "   /Users/q3labsadmin/me/squadrant   513.3K (51%) · $7.41  ctrl+p commands    • OpenCode 1.18.31",
+  ].join("\n");
+  // Boot splash — logo only, no footer, no input box. Keystrokes are dropped here.
+  const BOOT_SPLASH = "  ▄     █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\n  ▀▀▀▀  █  █ █▄▄█ █▄▄█ █  █ █▀▀  █  █ █▄▄█ █▄▄█";
+
+  it("is idle when the empty-session input box placeholder is present (cold, ready)", () => {
+    expect(classifyOpencodeStartupSurface(COLD_READY)).toBe("idle");
+  });
+  it("is idle when the TUI footer is present even without the placeholder (warm resume)", () => {
+    expect(classifyOpencodeStartupSurface(WARM_READY)).toBe("idle");
+  });
+  it("is loading while the TUI is still on its boot splash", () => {
+    expect(classifyOpencodeStartupSurface(BOOT_SPLASH)).toBe("loading");
+  });
+  it("never reports working (opencode has no reliable working marker)", () => {
+    expect(classifyOpencodeStartupSurface("anything")).not.toBe("working");
+  });
+  it("treats an empty screen as loading", () => {
+    expect(classifyOpencodeStartupSurface("")).toBe("loading");
   });
 });

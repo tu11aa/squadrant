@@ -25,8 +25,13 @@ import {
   worktreeDirtyFiles,
   TERMINAL_STATES,
   crewSessionName,
+  resolveRouterModel,
   type ThinkingLevel,
+  type BackendMode,
 } from "@squadrant/shared";
+import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
+import { buildRouterEnv, renderEnvAssignments } from "./router/env.js";
+import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
 
@@ -134,6 +139,8 @@ export interface CrewSpawnInput {
   approval?: boolean;
   /** Per-spawn model override — takes precedence over defaults.roles.crew.model. */
   model?: string;
+  /** U2 backend override for this spawn — takes precedence over rule/role. */
+  backend?: BackendMode;
   /** Per-spawn thinking level override — takes precedence over
    *  defaults.roles.crew.thinking. Claude-only (→ `--effort <level>`). */
   thinking?: ThinkingLevel;
@@ -192,6 +199,12 @@ export interface CrewSpawnDeps {
    *  undefined when nothing resolved one (e.g. opencode falling through to its
    *  own global config default), not just when an explicit flag was anthropic. */
   onModelResolved?(o: { agentName: string; model: string | undefined }): void;
+  /** Optional: called once the effective backend is resolved (before spawn). */
+  onBackendResolved?(o: { backend: BackendMode }): void;
+  /** U3: CLI-edge — resolve router credentials for a routed claude spawn over
+   *  the daemon socket (the shim's port and minted token are daemon-internal).
+   *  Absent ⇒ a routed spawn fails loud instead of launching unauthenticated. */
+  routerCredentials?(o: { project: string; backend: "direct" | "proxy" }): Promise<RouterCredentials>;
   /** #466: optional — when provided, called with task.first-turn.confirmed after
    *  positively confirmed delivery so the daemon can stamp firstTurnConfirmedAt. */
   emitEvent?(project: string, event: ControlEvent): Promise<void>;
@@ -261,15 +274,28 @@ async function pollFirstTurnConfirmedAt(
 }
 
 /** Resolves `true` the instant EITHER promise reports true (early-exit hint),
- *  `false` only once BOTH have settled false. A fast false from one side never
- *  short-circuits the result — the other side is always given its full run. */
-function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>): Promise<boolean> {
+ *  `false` once BOTH have settled false — or the overall `deadlineMs` elapses.
+ *  A fast false from one side never short-circuits the result — the other side
+ *  is always given its full run, but #798: a side that never settles at all (the
+ *  screen-scrape hanging against an idle claude tab) can no longer hold the
+ *  await open forever. On expiry the caller falls through to the non-delivery
+ *  warning instead of hanging. */
+function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>, deadlineMs: number): Promise<boolean> {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), deadlineMs);
     let settledFalseCount = 0;
     const onSettle = (ok: boolean) => {
-      if (ok) { resolve(true); return; }
+      if (done) return;
+      if (ok) { finish(true); return; }
       settledFalseCount++;
-      if (settledFalseCount === 2) resolve(false);
+      if (settledFalseCount === 2) finish(false);
     };
     a.then(onSettle, () => onSettle(false));
     b.then(onSettle, () => onSettle(false));
@@ -420,6 +446,12 @@ export async function runCrewSpawn(
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
   }
 
+  const crewRoleCfg = config.defaults.roles?.crew;
+  const roleBackend = crewRoleCfg && crewRoleCfg.agent === agent.name ? crewRoleCfg.backend : undefined;
+  const backend = resolveBackend(input.backend, route?.backend, roleBackend);
+  assertBackendUsable({ backend, agent: agent.name, router: config.defaults.router });
+  deps.onBackendResolved?.({ backend });
+
   // Codex: route through the interactive control-plane daemon (PR #98) instead
   // of the print-mode CLI path. The dispatched task is driven via the
   // crew-attach renderer running in the captain tab, so 'crew send' / 'crew
@@ -455,7 +487,11 @@ export async function runCrewSpawn(
   // fall back to the agent's own default to avoid passing an invalid model arg.
   const crewRole = config.defaults.roles?.crew;
   const configModel = crewRole && crewRole.agent === agent.name ? crewRole.model : undefined;
-  const crewModel = input.model ?? route?.model ?? configModel;
+  const crewModel = resolveRouterModel(
+    input.model ?? route?.model ?? configModel,
+    agent.name,
+    config.defaults.router,
+  );
   // Thinking level is claude-only, so — unlike model — it has no routing-rule
   // source; explicit flag beats defaults.roles.crew.thinking, else omitted.
   const crewThinking = input.thinking ?? config.defaults.roles?.crew?.thinking;
@@ -471,6 +507,22 @@ export async function runCrewSpawn(
   // keeps the daemon's heartbeat fresh; `squadrant crew signal done` emits
   // terminal state.
   if (agentName === "claude") {
+    // U3: a routed spawn must carry the router env in its PROCESS environment at
+    // launch — a settings.json `env` block only reaches claude's child processes
+    // and does not satisfy the interactive auth gate (#775 precondition 1).
+    // `native` injects nothing.
+    let routerEnv: Record<string, string> = {};
+    if (backend !== "native") {
+      if (!deps.routerCredentials) {
+        throw new Error(
+          `backend '${backend}' requires router credentials, but the spawn path has no daemon credentials provider`,
+        );
+      }
+      routerEnv = buildRouterEnv(
+        await deps.routerCredentials({ project: input.project, backend }),
+        crewModel,
+      );
+    }
     ensureSocksDir();
     // Same directory as the crews' own sockets — receipts are only delivered
     // within one socket namespace, so our listener must live there too.
@@ -521,7 +573,13 @@ export async function runCrewSpawn(
     // Prefix the CLI command with env so the hook bridge + signal verb running
     // inside the crew's cmux tab can identify their task.
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} ${niceCrewCommand(cliCommand)}`);
+    // Render the router env OUTSIDE `nice`: the shell must process the
+    // assignments before exec, and `nice -n 10 FOO=bar cmd` is invalid (nice
+    // would try to exec the literal `FOO=bar`). Empty for `native`, so a native
+    // spawn's command line is byte-for-byte unchanged.
+    const routerPrefix =
+      Object.keys(routerEnv).length > 0 ? ` ${renderEnvAssignments(routerEnv)}` : "";
+    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix}${routerPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     // #730: spill an oversized first-turn to a temp file rather than risking a
     // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
@@ -543,6 +601,7 @@ export async function runCrewSpawn(
       ? await firstTrueOrBothFalse(
           scrapeDelivered,
           pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id, scrapeDelivered, cancelHookPoll),
+          FIRST_TURN_HOOK_CONFIRM_MAX_MS,
         )
       : await scrapeDelivered;
     cancelHookPoll.stopped = true;

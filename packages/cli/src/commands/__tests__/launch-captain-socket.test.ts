@@ -45,6 +45,9 @@ vi.mock("@squadrant/workspaces", () => ({
   isInsideCmux: vi.fn(() => true),
   cmuxLocal: vi.fn(() => ""),
   classifyStartupSurface: vi.fn(),
+  // #786: launch.ts now imports these from the workspaces barrel.
+  classifyOpencodeStartupSurface: vi.fn(),
+  getFreePort: vi.fn(async () => 51220),
 }));
 
 vi.mock("@squadrant/core", () => ({
@@ -61,6 +64,11 @@ vi.mock("@squadrant/core", () => ({
     return `/tmp/cc-socks/squadrant-captain-${project}.sock`;
   },
   deliverStartupPrompt: vi.fn(),
+  // #786: launch.ts now imports these from @squadrant/core.
+  readCaptainAddress: vi.fn(() => null),
+  writeCaptainAddress: vi.fn(),
+  realpathOrSelf: (p: string) => p,
+  resolveAndPersistOpencodeCaptain: vi.fn(async () => null),
 }));
 
 vi.mock("@squadrant/shared", async () => {

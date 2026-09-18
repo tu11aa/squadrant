@@ -8,7 +8,7 @@ export function mergeWithMarkers(existing: string | null, generated: string): st
   if (!existing) return block;
 
   const startIdx = existing.indexOf(MARKER_START);
-  const endIdx = existing.indexOf(MARKER_END);
+  const endIdx = existing.lastIndexOf(MARKER_END);
 
   if (startIdx === -1 && endIdx === -1) {
     const sep = existing.endsWith("\n") ? "\n" : "\n\n";

@@ -49,4 +49,10 @@ describe("mergeWithMarkers", () => {
     const out = mergeWithMarkers(null, "hello\n\n\n");
     expect(out).toBe(`${MARKER_START}\nhello\n${MARKER_END}\n`);
   });
+
+  it("handles multiple marker blocks by replacing from first start to last end", () => {
+    const existing = `before\n${MARKER_START}\nOLD1\n${MARKER_END}\n${MARKER_START}\nOLD2\n${MARKER_END}\nafter\n`;
+    const out = mergeWithMarkers(existing, "NEW");
+    expect(out).toBe(`before\n${MARKER_START}\nNEW\n${MARKER_END}\nafter\n`);
+  });
 });

@@ -1,5 +1,8 @@
 # cmux Compatibility & Opportunity Audit — 0.62.0 → 0.64.16
 
+> **Historical document.** For the successor audit covering 0.64.18 → 0.64.22, see
+> [`docs/specs/2026-09-04-cmux-0.64.22-compat-study.md`](../specs/2026-09-04-cmux-0.64.22-compat-study.md).
+
 **Date:** 2026-06-15
 **cmux window audited:** 0.62.0 (2026-03-12) → 0.64.16 (2026-06-15) — 24 releases, ~3 months
 **Sources:** `manaflow-ai/cmux` `CHANGELOG.md` + `docs/cli-contract.md` (raw from `main`)

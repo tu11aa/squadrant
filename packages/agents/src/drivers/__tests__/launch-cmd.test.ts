@@ -7,6 +7,7 @@ import path from "node:path";
 import { CapabilityRegistry } from "../registry.js";
 import { buildAgentCmd } from "../launch-cmd.js";
 import { createClaudeDriver } from "../claude.js";
+import { createOpencodeDriver } from "../opencode.js";
 import type { AgentDriver, AgentProbeResult } from "../types.js";
 
 function mockDriver(name: string, templateSuffix = name): AgentDriver {
@@ -240,5 +241,22 @@ describe("buildAgentCmd — thinking level", () => {
     expect(opencode.buildCommand).toHaveBeenCalledWith(
       expect.not.objectContaining({ thinking: expect.anything() }),
     );
+  });
+});
+
+// ── #786: opencode captain interactive boot ──────────────────────────────────
+
+describe("buildAgentCmd — opencode captain interactive boot (#786)", () => {
+  const registry = new CapabilityRegistry({ opencode: createOpencodeDriver() });
+
+  it("passes interactive + port, and resumes by session id", () => {
+    const cmd = buildAgentCmd("opencode", registry, "captain", false, "auto", undefined, undefined, undefined, undefined, undefined,
+      { port: 51220, sessionId: "ses_abc" });
+    expect(cmd).toBe("opencode --session ses_abc --port 51220");
+  });
+
+  it("stays headless for a non-captain role when no interactive boot is requested", () => {
+    const cmd = buildAgentCmd("opencode", registry, "crew", true, "auto");
+    expect(cmd).toBe('opencode run "You are a squadrant crew. Read your instructions from crew and begin."');
   });
 });

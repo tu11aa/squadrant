@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult } from "./types.js";
+import type { AgentDriver, AgentProbeResult, AgentSession, SpawnOptions, AgentResult } from "./types.js";
+import { listClaudeSessions } from "../sessions/claude-sessions.js";
 
 export function createClaudeDriver(): AgentDriver {
   return {
@@ -65,9 +66,11 @@ export function createClaudeDriver(): AgentDriver {
       cmd += ` --plugin-dir ${pluginDir}`;
 
       // #697/#759: must come AFTER --plugin-dir (and be the last flag for
-      // interactive sessions) — cmux <=0.64.18 truncates launchCommand.arguments
+      // interactive sessions) — cmux <=0.64.18 truncated launchCommand.arguments
       // at --messaging-socket-path when storing it, so anything after it
-      // (including --plugin-dir) is lost and role classification breaks.
+      // (including --plugin-dir) was lost and role classification broke.
+      // Fixed upstream in cmux 0.64.19+ (#8070), but kept for backward compat
+      // with min: "0.64.0" (retires only when min >= 0.64.19).
       // Match the captain/command path (launch-cmd.ts).
       if (opts.messagingSocketPath) {
         cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
@@ -98,6 +101,11 @@ export function createClaudeDriver(): AgentDriver {
       } catch {
         // process may already be gone
       }
+    },
+
+    // #669: registry-backed session introspection (read-only).
+    async listSessions(): Promise<AgentSession[]> {
+      return listClaudeSessions();
     },
   };
 }

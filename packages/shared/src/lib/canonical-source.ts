@@ -84,7 +84,15 @@ export async function readProjectLevelSource(
   driver: WorkspaceDriver,
 ): Promise<ProjectionSource | null> {
   if (!(await driver.exists("AGENTS.md"))) return null;
-  const instructions = await driver.read("AGENTS.md");
+  const raw = await driver.read("AGENTS.md");
+  const startIdx = raw.indexOf("<!-- squadrant:start -->");
+  const endIdx = raw.lastIndexOf("<!-- squadrant:end -->");
+  let instructions = raw;
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    const before = raw.slice(0, startIdx);
+    const after = raw.slice(endIdx + "<!-- squadrant:end -->".length);
+    instructions = `${before}${after}`.trim();
+  }
   const skills = await readSkills(driver, "plugin/skills");
   return { instructions, skills };
 }

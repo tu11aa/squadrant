@@ -47,8 +47,10 @@ vi.mock("../../lib/require-daemon.js", () => ({
 }));
 
 const buildCaptainChannel = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const buildCaptainChannels = vi.hoisted(() => vi.fn().mockResolvedValue({ channels: {}, agentFor: () => undefined }));
 vi.mock("../../lib/captain-channel-factory.js", () => ({
   buildCaptainChannel,
+  buildCaptainChannels,
 }));
 
 import { runPing, formatPingResult } from "../ping.js";
@@ -137,6 +139,27 @@ describe("runPing", () => {
         source: "cli",
       })
     );
+  });
+
+  it("#786: with the channel on, ping sends through the AGENT-selected channel", async () => {
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    resolveCaptainChannelMode.mockReturnValue("on");
+    const opencodeChannel = { name: "opencode-http", agent: "opencode" };
+    buildCaptainChannels.mockResolvedValue({
+      channels: { claude: { name: "claude-peer", agent: "claude" }, opencode: opencodeChannel },
+      agentFor: () => "opencode",
+    });
+    deliverToCaptain.mockResolvedValue({ handled: true, outcome: { status: "accepted", via: "opencode-http" } });
+
+    await runPing("projA", "hello opencode captain");
+
+    expect(deliverToCaptain).toHaveBeenCalledWith(
+      "projA",
+      "hello opencode captain",
+      expect.objectContaining({ mode: "on", channel: opencodeChannel })
+    );
+    // handled ⇒ the mailbox fallback must not double-enqueue.
+    expect(appendCaptainMessage).not.toHaveBeenCalled();
   });
 });
 

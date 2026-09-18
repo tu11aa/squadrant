@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiến trúc plugin của harness — DeepSeek Harness · Pi · squadrant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:            #0b1119;
+    --bg-grid:       rgba(107, 143, 181, 0.055);
+    --surface:       #121b26;
+    --surface2:      #17222f;
+    --surface-elev:  #1d2a39;
+    --border:        #263446;
+    --border-soft:   #1c2836;
+    --text:          #dde6ef;
+    --text-dim:      #7f93a8;
+    --text-faint:    #5b6f85;
+
+    --gold:          #e0a458;
+    --gold-dim:      rgba(224, 164, 88, 0.13);
+    --teal:          #4fb8a8;
+    --teal-dim:      rgba(79, 184, 168, 0.13);
+    --coral:         #e07a5f;
+    --coral-dim:     rgba(224, 122, 95, 0.13);
+    --steel:         #6b8fb5;
+    --steel-dim:     rgba(107, 143, 181, 0.13);
+    --accent:        var(--gold);
+
+    --font-body: 'IBM Plex Sans', ui-sans-serif, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    padding: 40px;
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(var(--bg-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0 44px;
+  }
+  .main { min-width: 0; }
+
+  /* ============ TOC ============ */
+  .toc {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    padding: 14px 0;
+    grid-row: 1 / -1;
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto;
+  }
+  .toc::-webkit-scrollbar { width: 3px; }
+  .toc::-webkit-scrollbar-thumb { background: var(--surface-elev); border-radius: 2px; }
+
+  .toc-title {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-faint);
+    padding: 0 0 10px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .toc a {
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 5px 9px;
+    border-radius: 5px;
+    border-left: 2px solid transparent;
+    transition: color .15s, background .15s, border-color .15s;
+    line-height: 1.4;
+    margin-bottom: 1px;
+  }
+  .toc a:hover { color: var(--text); background: var(--surface2); }
+  .toc a.active { color: var(--text); border-left-color: var(--accent); background: var(--surface); }
+
+  /* ============ LANG ============ */
+  .langbar {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 26px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+  .langbar a, .langbar span {
+    padding: 4px 11px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+    color: var(--text-dim);
+    background: var(--surface);
+  }
+  .langbar span.on { background: var(--gold); color: #22190c; border-color: var(--gold); font-weight: 600; }
+  .langbar a:hover { color: var(--teal); border-color: var(--teal); }
+
+  /* ============ TYPE ============ */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: 38px;
+    line-height: 1.18;
+    letter-spacing: -0.018em;
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  h1 .thin { color: var(--text-dim); font-weight: 400; }
+
+  .subtitle {
+    font-size: 17px;
+    color: var(--text-dim);
+    margin: 0 0 22px;
+    max-width: 76ch;
+    line-height: 1.6;
+  }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 42px; }
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 9px;
+  }
+  .chip b { color: var(--text); font-weight: 500; }
+
+  .sec-head {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2.2px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 0 0 10px;
+    margin: 64px 0 26px;
+    border-bottom: 1px solid var(--border);
+    scroll-margin-top: 20px;
+  }
+  .sec-head .num { color: var(--gold); margin-right: 10px; }
+  .sec-head:first-of-type { margin-top: 0; }
+
+  h3 { font-size: 17px; font-weight: 600; margin: 34px 0 12px; letter-spacing: -0.006em; }
+
+  p { margin: 0 0 14px; max-width: 86ch; overflow-wrap: break-word; }
+  .lede { color: var(--text-dim); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    background: var(--surface2);
+    color: var(--gold);
+    padding: 1.5px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border-soft);
+    overflow-wrap: break-word;
+  }
+
+  /* ============ CARDS ============ */
+  .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(285px, 1fr)); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(345px, 1fr)); gap: 16px; }
+  .ve-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    min-width: 0;
+  }
+  .ve-card.elev {
+    background: linear-gradient(180deg, var(--surface-elev), var(--surface));
+    border-color: #31435a;
+  }
+  .ve-card h4 { margin: 0 0 4px; font-size: 15.5px; font-weight: 600; letter-spacing: -0.004em; }
+  .ve-card .who { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); margin: 0 0 14px; }
+  .ve-card p { font-size: 13.5px; color: var(--text-dim); margin: 0 0 10px; }
+  .ve-card p:last-child { margin-bottom: 0; }
+  .ve-card ul { margin: 0; padding-left: 17px; font-size: 13.5px; color: var(--text-dim); }
+  .ve-card li { margin-bottom: 7px; }
+  .ve-card li:last-child { margin-bottom: 0; }
+  .ve-card li b, .ve-card p b { color: var(--text); font-weight: 600; }
+
+  .rule-gold  { border-top: 3px solid var(--gold); }
+  .rule-teal  { border-top: 3px solid var(--teal); }
+  .rule-steel { border-top: 3px solid var(--steel); }
+  .rule-coral { border-top: 3px solid var(--coral); }
+
+  .stat {
+    font-family: var(--font-mono);
+    font-size: 30px; font-weight: 600;
+    letter-spacing: -0.02em; line-height: 1;
+    display: block; margin-bottom: 4px;
+  }
+  .stat.gold  { color: var(--gold); }
+  .stat.teal  { color: var(--teal); }
+  .stat.steel { color: var(--steel); }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  /* ============ CALLOUT ============ */
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: 0 9px 9px 0;
+    padding: 16px 20px;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--text-dim);
+    margin: 22px 0;
+    max-width: 92ch;
+  }
+  .callout strong { color: var(--text); }
+  .callout.coral { border-left-color: var(--coral); }
+  .callout.teal  { border-left-color: var(--teal); }
+  .callout .lbl {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase;
+    color: var(--gold); display: block; margin-bottom: 7px;
+  }
+  .callout.coral .lbl { color: var(--coral); }
+  .callout.teal  .lbl { color: var(--teal); }
+
+  /* ============ TABLES ============ */
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    margin: 18px 0 8px;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 680px; font-size: 13.2px; }
+  caption {
+    caption-side: top; text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--text-faint); padding: 14px 18px 0;
+  }
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10.5px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: bottom;
+    white-space: nowrap;
+  }
+  th.col-dsh  { color: var(--steel); }
+  th.col-pi   { color: var(--teal); }
+  th.col-sq   { color: var(--gold); }
+  td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--text-dim);
+    vertical-align: top;
+    overflow-wrap: break-word;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface2); }
+  td.axis { color: var(--text); font-weight: 500; }
+  td.sq { color: #eadfce; background: rgba(224,164,88,0.045); }
+  tbody tr:hover td.sq { background: rgba(224,164,88,0.085); }
+  td b { color: var(--text); font-weight: 600; }
+  td code { font-size: 11.5px; }
+
+  .num-cell { font-family: var(--font-mono); text-align: right; white-space: nowrap; }
+  .spelling code { background: var(--surface-elev); }
+  .ok   { color: var(--teal); }
+  .bad  { color: var(--coral); }
+  .warn { color: var(--gold); }
+
+  /* ============ MERMAID ============ */
+  .diagram-shell { position: relative; margin: 20px 0 10px; }
+  .diagram-shell__hint {
+    font-family: var(--font-mono);
+    font-size: 10.5px; color: var(--text-faint); margin-bottom: 8px;
+  }
+  .mermaid-wrap {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 20px;
+    overflow: auto;
+    margin-bottom: 18px;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 400px;
+    cursor: grab;
+  }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .zoom-controls {
+    position: absolute; top: 8px; right: 8px;
+    display: flex; gap: 2px; z-index: 10;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px;
+  }
+  .zoom-controls button {
+    width: 28px; height: 28px;
+    border: none; background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono); font-size: 13px;
+    cursor: pointer; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+  }
+  .zoom-controls button:hover { background: var(--border); color: var(--text); }
+  .mermaid-viewport { position: relative; overflow: hidden; width: 100%; height: 100%; min-height: 300px; }
+  .mermaid-canvas { position: absolute; top: 0; left: 0; }
+  .zoom-label {
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+    padding: 0 6px; display: flex; align-items: center; white-space: nowrap;
+  }
+  .mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 15px !important; }
+  .mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; }
+  .mermaid .node rect, .mermaid .node circle, .mermaid .node polygon { stroke-width: 1.5px !important; }
+  .mermaid .edge-pattern-solid { stroke-width: 1.5px !important; }
+  .mermaid .cluster rect { rx: 8px; }
+
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .legend-item {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+  }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ============ STEPS ============ */
+  ol.steps { counter-reset: step; list-style: none; padding: 0; margin: 18px 0 0; }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 18px 42px;
+    border-left: 1px solid var(--border);
+    margin-left: 12px;
+    font-size: 13.8px;
+    color: var(--text-dim);
+    max-width: 88ch;
+  }
+  ol.steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute; left: -13px; top: -2px;
+    width: 25px; height: 25px;
+    background: var(--surface-elev);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    color: var(--gold);
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps li b { color: var(--text); font-weight: 600; }
+  ol.steps li .risk {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--teal); background: var(--teal-dim);
+    border-radius: 3px; padding: 1.5px 6px; margin-left: 8px;
+  }
+
+  /* ============ GLOSSARY ============ */
+  .glossary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin: 24px 0;
+  }
+  .glossary h4 {
+    font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--text-faint); margin: 0 0 16px;
+  }
+  .glossary dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 9px 22px; }
+  .glossary dt {
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600;
+    color: var(--gold); white-space: nowrap;
+  }
+  .glossary dd { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.6; }
+  @media (max-width: 640px) {
+    .glossary dl { grid-template-columns: 1fr; gap: 3px 0; }
+    .glossary dd { margin-bottom: 12px; }
+  }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    line-height: 1.9;
+  }
+  footer a { color: var(--steel); text-decoration: none; }
+  footer a:hover { color: var(--teal); }
+
+  .animate { opacity: 0; animation: rise .5s cubic-bezier(.22,.61,.36,1) forwards; animation-delay: calc(var(--i,0) * 55ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .animate { animation: none; opacity: 1; }
+    html { scroll-behavior: auto; }
+  }
+
+  @media (max-width: 1000px) {
+    body { padding: 0 20px 40px; }
+    .wrap { grid-template-columns: 1fr; }
+    .toc {
+      position: sticky; top: 0; z-index: 200;
+      max-height: none;
+      display: flex; gap: 4px; align-items: center;
+      overflow-x: auto;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      margin: 0 -20px;
+      grid-row: auto;
+    }
+    .toc::-webkit-scrollbar { display: none; }
+    .toc-title { display: none; }
+    .toc a {
+      white-space: nowrap; flex-shrink: 0;
+      border-left: none; border-bottom: 2px solid transparent;
+      border-radius: 4px 4px 0 0; padding: 6px 10px; font-size: 10.5px;
+    }
+    .toc a.active { border-left: none; border-bottom-color: var(--accent); }
+    .main { padding-top: 24px; }
+    .sec-head { scroll-margin-top: 56px; }
+    h1 { font-size: 27px; }
+    .subtitle { font-size: 15.5px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <nav class="toc" id="toc">
+    <div class="toc-title">Mục lục</div>
+    <a href="#s1">1. Cái lỗi</a>
+    <a href="#s2">2. Hai harness</a>
+    <a href="#s3">3. Squadrant hôm nay</a>
+    <a href="#s4">4. Module đề xuất</a>
+    <a href="#s5">5. So sánh 3 cột</a>
+    <a href="#s6">6. Ranh giới plugin</a>
+    <a href="#s7">7. Invariant</a>
+    <a href="#s8">8. Đừng sao chép</a>
+    <a href="#s9">9. Thứ tự triển khai</a>
+    <a href="#s10">10. Từ vựng</a>
+  </nav>
+
+  <div class="main">
+
+    <div class="langbar animate" style="--i:0">
+      <a href="2026-08-27-harness-plugin-architectures.html">EN</a>
+      <span class="on">VI</span>
+      <a href="2026-08-27-harness-plugin-architectures-eli5-vi.html">Bản dễ hiểu →</a>
+    </div>
+
+    <p class="eyebrow animate" style="--i:1">Nghiên cứu · 2026-08-27 · side-session</p>
+    <h1 class="animate" style="--i:2">Mọi thứ đều là plugin,<br><span class="thin">hay chỉ một phần lõi harness?</span></h1>
+    <p class="subtitle animate" style="--i:3">
+      DeepSeek Harness và Pi thật sự làm gì với plugin, sự kiện, và việc chứng minh độ tin cậy —
+      và module theo dõi sự kiện nhỏ nhất mà squadrant nên tự xây, thay vì tiếp tục tin vào cmux events.
+    </p>
+    <div class="meta-row animate" style="--i:4">
+      <span class="chip"><b>deepseek-ai/deepseek-harness</b> · 227 package · Cordis</span>
+      <span class="chip"><b>badlogic/pi-mono</b> · 10 package · không framework</span>
+      <span class="chip"><b>squadrant</b> · 6 package · 1 người bảo trì</span>
+      <span class="chip">đọc từ source, không chỉ từ README</span>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 1 -->
+    <div class="sec-head animate" id="s1" style="--i:5"><span class="num">01</span>Cái lỗi khởi nguồn cho việc này</div>
+
+    <p class="lede animate" style="--i:6">
+      #542 đã bắn <code>CREW STALLED</code> sai vào những crew hoàn toàn bình thường suốt nhiều tháng.
+      Events-bridge của cmux mở một cửa sổ "đang-chạy-tool" khi thấy <code>PreToolUse</code>, nhưng
+      <code>deriveRunState()</code> lại không có nhánh nào cho <code>PostToolUse</code> — và nhánh mặc
+      định của nó là <code>return null</code>, tức là <em>âm thầm vứt bỏ</em>. Cửa sổ đó không bao giờ đóng lại.
+    </p>
+
+    <div class="callout coral animate" style="--i:7">
+      <span class="lbl">Khiếm khuyết thật sự</span>
+      Đây không phải lỗi gõ nhầm. <strong>Squadrant không có chỗ nào để quan sát được sự kiện "một dữ
+      kiện đã đến mà không ai tiêu thụ nó".</strong> Việc ghép cặp <code>pendingTool</code> — thứ mà
+      watchdog dùng để phân biệt một tool call bị treo với một lượt suy nghĩ im lặng — đang được khoá
+      bằng <strong>so sánh chuỗi trên <code>ControlEvent.note</code></strong>, giữa ba nguồn độc lập
+      viết cùng một dữ kiện theo ba cách khác nhau.
+    </div>
+
+    <div class="table-scroll animate" style="--i:8">
+      <table class="spelling">
+        <caption>Cùng một hook, ba nguồn, ba cách viết — đã kiểm chứng trong source</caption>
+        <thead>
+          <tr>
+            <th>Dữ kiện</th>
+            <th>Nguồn 1 — cmux events-bridge</th>
+            <th>Nguồn 2 — native hook (settings.json)</th>
+            <th>Nguồn 3 — crew <code>_hook</code></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="axis">PreToolUse</td>
+            <td><code>"agent.hook.PreToolUse"</code><br><span class="ok">→ mở cửa sổ</span></td>
+            <td><code>"pre-tool-use"</code><br><span class="warn">→ <b>không</b> mở</span></td>
+            <td><span class="bad">null trừ khi là AskUserQuestion</span></td>
+          </tr>
+          <tr>
+            <td class="axis">PostToolUse</td>
+            <td><code>"agent.hook.PostToolUse"</code><br><span class="warn">→ đóng cửa sổ <b>(vừa thêm hôm nay bởi #542)</b></span></td>
+            <td><span class="bad">hook này không hề được cài</span></td>
+            <td><code>"posttooluse"</code><br><span class="ok">→ đóng cửa sổ</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="animate" style="--i:9">
+      Hãy đọc lại dòng đầu. Một cửa sổ do nguồn&nbsp;1 mở ra thì chỉ nguồn&nbsp;1 mới đóng được —
+      mà nguồn 1 lại không có nhánh <code>PostToolUse</code>. <b>#542 là hệ quả tất yếu của cấu trúc.</b>
+      Chính memory của operator đã nói thẳng điều này từ trước:
+      <em>"verify with ps/git before acting on ANY crew signal."</em>
+      Khi bạn không thể tin tín hiệu, thì chính tầng tín hiệu mới là chỗ hỏng.
+    </p>
+
+    <!-- ══════════════════════════════════════════ 2 -->
+    <div class="sec-head animate" id="s2" style="--i:10"><span class="num">02</span>Hai harness, hai lời giải ngược nhau</div>
+
+    <div class="grid-2">
+      <div class="ve-card rule-steel animate" style="--i:11">
+        <h4>DeepSeek Harness <code>dsh</code></h4>
+        <p class="who">deepseek-ai/deepseek-harness · "Everything is a Plugin."</p>
+        <p><b>Không có phần lõi đặc quyền nào cả.</b> Agent loop, model adapter, tool registry và session log đều là plugin được gắn cạnh nhau trong một cây cấu hình. Bên dưới là <b>Cordis</b>, và Cordis chỉ sở hữu đúng bốn ý tưởng:</p>
+        <ul>
+          <li><b>Context = kho service.</b> Plugin chiếm một khoá như <code>ctx.tools</code>; bên tiêu thụ tra theo khoá, không bao giờ import trực tiếp.</li>
+          <li><b>Khai báo phụ thuộc bằng <code>inject</code>.</b> Thứ tự nạp được <em>suy ra</em>, không phải xếp tay.</li>
+          <li><b>Sự kiện có kiểu</b> qua declaration merging, mỗi sự kiện gắn một chế độ dispatch và chế độ đó là một phần của hợp đồng công khai.</li>
+          <li><b>Mọi đăng ký đều là hiệu ứng đảo ngược được</b> — gỡ plugin ra thì mọi thứ tự tháo sạch.</li>
+        </ul>
+        <p style="margin-top:12px"><code>dsh --profile web --dump-config</code> in ra đúng cái cây mà máy đang boot, và <b>mọi dòng đều vá được</b>. Đồ thị khởi động là dữ liệu, không phải một hàm <code>main()</code>.</p>
+      </div>
+
+      <div class="ve-card rule-teal animate" style="--i:12">
+        <h4>Pi <code>pi-mono</code></h4>
+        <p class="who">badlogic/pi-mono · "core harness only"</p>
+        <p><b>Một phần lõi thật, nhỏ, có tên</b> — <code>pi-agent-core</code> sở hữu vòng lặp, tool dispatch, cây hội thoại và compaction. Extension nằm hoàn toàn bên ngoài nó:</p>
+        <ul>
+          <li><b>Một plugin là một file <code>.ts</code></b> export một factory mặc định nhận vào <code>ExtensionAPI</code>. Nạp bằng jiti, không cần build.</li>
+          <li><b>Không framework.</b> Không DI, không service registry. Thứ tự <em>chính là</em> thứ tự nạp.</li>
+          <li><b>Veto/biến đổi viết tay theo từng loại sự kiện</b> — gấp một message chuyển tiếp, dừng sớm khi gặp <code>cancel</code>, hoặc giành quyền quyết định hẳn.</li>
+          <li><b>Non-goal tuyên bố rõ ràng.</b> "Pi không có hệ thống phân quyền tích hợp… hãy đóng container hoặc sandbox Pi."</li>
+        </ul>
+        <p style="margin-top:12px">Bus sự kiện nội bộ của Pi dài <b>102 dòng và có hai sự kiện</b> (<code>run_start</code>, <code>run_end</code>). Trạng thái nằm trong cây session; bus chỉ là thông báo.</p>
+      </div>
+    </div>
+
+    <div class="grid-3" style="margin-top:16px">
+      <div class="ve-card animate" style="--i:13">
+        <span class="stat steel">227</span>
+        <span class="stat-label">package của dsh</span>
+        <p style="margin-top:12px">…gồm cả một DI framework được vendor vào và một trình sinh đồ thị tài liệu dài 1487 dòng. Đúng đắn ở quy mô mà squadrant sẽ không bao giờ chạm tới.</p>
+      </div>
+      <div class="ve-card animate" style="--i:14">
+        <span class="stat teal">10</span>
+        <span class="stat-label">package của pi</span>
+        <p style="margin-top:12px">Người mới đọc <b>một</b> file types (<code>extensions/types.ts</code>) là nắm được toàn bộ hợp đồng.</p>
+      </div>
+      <div class="ve-card animate" style="--i:15">
+        <span class="stat gold">102</span>
+        <span class="stat-label">dòng trong bus của pi</span>
+        <p style="margin-top:12px">Hai sự kiện. Chính chú thích của nó từ chối làm mô hình trạng thái: <em>"dùng lane hoặc session watch"</em> nếu cần replay và snapshot.</p>
+      </div>
+    </div>
+
+    <div class="callout animate" style="--i:16">
+      <span class="lbl">Kết luận</span>
+      Squadrant là một daemon 6 package do một người bảo trì.
+      <strong>Hãy sao chép hình dạng của Pi. Hãy sao chép cơ chế của dsh.</strong>
+      Cụ thể: từ dsh lấy runtime invariant, bảng producer/consumer sinh tự động, và quy tắc "muốn bền thì phải ghi log";
+      từ Pi lấy kiểu seam-tự-mang-theo-bộ-test-tuân-thủ.
+    </div>
+
+    <!-- ══════════════════════════════════════════ 3 -->
+    <div class="sec-head animate" id="s3" style="--i:17"><span class="num">03</span>Squadrant hôm nay — chỗ rò rỉ của việc theo dõi sự kiện</div>
+
+    <p class="lede animate" style="--i:18">
+      Năm đường độc lập cùng sinh ra "sự thật" về vòng đời. Vấn đề không phải là có năm đường —
+      mà là <b>mỗi đường tự phân loại ngay tại cửa vào</b>, thành một chuỗi trần, và một bộ phân loại
+      trả về <code>null</code> sẽ vứt dữ kiện đi mà không để lại dấu vết nào.
+    </p>
+
+    <section class="diagram-shell animate" style="--i:19">
+      <p class="diagram-shell__hint">Ctrl/Cmd + lăn chuột để zoom · kéo để di chuyển · nhấp đúp để vừa khung · ⛶ mở toàn màn hình</p>
+      <div class="mermaid-wrap">
+        <div class="zoom-controls">
+          <button type="button" data-action="zoom-in" title="Phóng to">+</button>
+          <button type="button" data-action="zoom-out" title="Thu nhỏ">&minus;</button>
+          <button type="button" data-action="zoom-fit" title="Vừa khung">&#8634;</button>
+          <button type="button" data-action="zoom-one" title="Tỉ lệ 1:1">1:1</button>
+          <button type="button" data-action="zoom-expand" title="Mở toàn màn hình">&#x26F6;</button>
+          <span class="zoom-label">Đang tải…</span>
+        </div>
+        <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+      </div>
+      <script type="text/plain" class="diagram-source">
+flowchart TD
+  subgraph SRC["tín hiệu thô (không đồng nhất, khác nhau theo agent)"]
+    A1["luồng cmux events<br/>agent.hook.*"]
+    A2["hook trong ~/.claude/settings.json<br/>squadrant hooks claude &lt;sub&gt;"]
+    A3["cầu nối crew _hook<br/>claude.ts"]
+    A4["file store của cmux<br/>+ quét pid"]
+    A5["cạo màn hình pane<br/>crew-pane-reader"]
+  end
+
+  subgraph CLS["mỗi adapter tự phân loại tại cửa vào — CHỖ RÒ RỈ"]
+    B1["deriveRunState()<br/>working · idle · <b>null = VỨT BỎ</b>"]
+    B2["mapHookSub()<br/>note: 'pre-tool-use'"]
+    B3["mapClaudeHookToEvent()<br/>note: event.toLowerCase()"]
+    B4["snapshot()<br/>origin: 'scan'"]
+    B5["regex trên text terminal"]
+  end
+
+  C["applyEvent(project, event)<br/>cửa vào duy nhất — điểm tốt"]
+  D["reduce() + state-machine<br/>nextPendingTool so khớp<br/>CHUỖI note"]
+  E["TaskRecord<br/>chỉ là kết quả gộp. sự kiện bị bỏ."]
+  F["watchdog evaluateStall()"]
+  G["CREW STALLED / IDLE / BLOCKED"]
+
+  X(["#542: PostToolUse<br/>bị vứt lặng lẽ ở đây"])
+  Y(["#704: text cạo được<br/>giết nhầm một crew còn sống"])
+  Z(["không có gì để tua lại,<br/>không có gì để đối chiếu"])
+
+  A1 --> B1
+  A2 --> B2
+  A3 --> B3
+  A4 --> B4
+  A5 --> B5
+
+  B1 --> C
+  B2 --> C
+  B3 --> C
+  B4 --> C
+  B5 --> C
+
+  B1 -.-> X
+  B5 -.-> Y
+  C --> D --> E --> F --> G
+  E -.-> Z
+
+  classDef src fill:#1d2a39,stroke:#6b8fb5,color:#dde6ef
+  classDef cls fill:#2a2119,stroke:#e0a458,color:#f0e2cd
+  classDef core fill:#152a28,stroke:#4fb8a8,color:#d6f0eb
+  classDef bug fill:#2e1c18,stroke:#e07a5f,color:#f5d9d1
+
+  class A1,A2,A3,A4,A5 src
+  class B1,B2,B3,B4,B5 cls
+  class C,D,E,F,G core
+  class X,Y,Z bug
+      </script>
+    </section>
+
+    <div class="legend animate" style="--i:20">
+      <div class="legend-item"><div class="legend-swatch" style="background:#6b8fb5"></div> nguồn tín hiệu thô</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e0a458"></div> phân loại tại adapter (chỗ rò rỉ)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#4fb8a8"></div> lõi daemon</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e07a5f"></div> lỗi đã ship</div>
+    </div>
+
+    <div class="grid-2" style="margin-top:18px">
+      <div class="ve-card rule-teal animate" style="--i:21">
+        <h4>Những thứ squadrant vốn đã làm đúng</h4>
+        <ul>
+          <li><b>Một union sự kiện có kiểu</b> — <code>ControlEvent</code>, 26 biến thể phân biệt bằng discriminant.</li>
+          <li><b>Một cửa vào duy nhất</b> — <code>applyEvent()</code>, được canh bằng tập kiểu đầy đủ và ném lỗi ngay tại biên socket.</li>
+          <li><b>Một port cho các nguồn</b> — <code>LifecycleSource</code> với bộ reducer hoà giải 4 quy tắc đã ghi rõ.</li>
+          <li><b>Biên nhận native thay cho cạo màn hình</b> — control/captain channel của #667, đã cut over cho <code>claude</code>.</li>
+        </ul>
+      </div>
+      <div class="ve-card rule-coral animate" style="--i:22">
+        <h4>Bốn lỗ hổng cộng dồn</h4>
+        <ul>
+          <li><b>Không có log sự kiện bền.</b> <code>TaskRecord</code> chỉ là kết quả gộp; sự kiện bị vứt đi. Không có gì để tua lại, không có gì để đối chiếu.</li>
+          <li><b>Phân loại ngay tại cửa vào.</b> <code>null</code> nghĩa là "vứt" và không phân biệt được với "không liên quan".</li>
+          <li><b>Không có tầng invariant.</b> Không gì khẳng định rằng một cửa sổ đã mở thì rốt cuộc phải được đóng.</li>
+          <li><b>Không có bảng producer/consumer.</b> Một sự kiện không có ai nghe thì hoàn toàn vô hình.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 4 -->
+    <div class="sec-head animate" id="s4" style="--i:23"><span class="num">04</span>Đề xuất — <code>@squadrant/events</code></div>
+
+    <p class="lede animate" style="--i:24">
+      Một ý tưởng duy nhất: <b>tách dữ kiện khỏi phán quyết</b>. Adapter dịch khung tin thô thành một
+      <code>AgentFact</code> có kiểu, mang theo xuất xứ của nó, và <em>không bao giờ</em> là <code>null</code> —
+      một khung tin không nhận ra được sẽ thành <code>{ kind: "unknown", raw }</code> và <b>được đếm</b>.
+      Chỉ riêng tính chất đó đã là toàn bộ cách chữa cho lớp lỗi #542.
+    </p>
+
+    <section class="diagram-shell animate" style="--i:25">
+      <p class="diagram-shell__hint">Ctrl/Cmd + lăn chuột để zoom · kéo để di chuyển · nhấp đúp để vừa khung · ⛶ mở toàn màn hình</p>
+      <div class="mermaid-wrap">
+        <div class="zoom-controls">
+          <button type="button" data-action="zoom-in" title="Phóng to">+</button>
+          <button type="button" data-action="zoom-out" title="Thu nhỏ">&minus;</button>
+          <button type="button" data-action="zoom-fit" title="Vừa khung">&#8634;</button>
+          <button type="button" data-action="zoom-one" title="Tỉ lệ 1:1">1:1</button>
+          <button type="button" data-action="zoom-expand" title="Mở toàn màn hình">&#x26F6;</button>
+          <span class="zoom-label">Đang tải…</span>
+        </div>
+        <div class="mermaid-viewport"><div class="mermaid mermaid-canvas"></div></div>
+      </div>
+      <script type="text/plain" class="diagram-source">
+flowchart TD
+  subgraph ADPT["FactAdapter — một seam. mỗi nguồn một file, không biết gì về daemon"]
+    P1["cmux-events.ts"]
+    P2["claude-native-hook.ts"]
+    P3["crew-hook.ts"]
+    P4["control-channel.ts"]
+    P5["scan.ts"]
+    P6["pane.ts<br/>origin: 'inferred'"]
+  end
+
+  V["AgentFact<br/>seq · taskId · at · source · origin<br/>tool.started{callId} · tool.ended{callId}<br/>turn.ended · receipt · <b>unknown{raw}</b>"]
+
+  L["log.ts — chỉ ghi thêm, theo từng crew<br/>seq liên tục từ 0<br/>ghi JSONL + vòng đệm giới hạn"]
+
+  INV["invariant.ts — THUẦN<br/>I1 seq phải tăng nghiêm ngặt<br/>I2 tool.ended phải trỏ tới callId đang mở<br/>I3 turn.ended khi còn call mở = VI PHẠM<br/>I5 inferred không tự kết liễu crew<br/>I6 tỉ lệ unknown &gt; 0 = báo động"]
+
+  R["reduce.ts — THUẦN<br/>(CrewTrace, AgentFact)<br/>→ { trace, emits: ControlEvent[] }"]
+
+  S["source.ts<br/>MỘT facade LifecycleSource"]
+
+  D["daemon — không đổi<br/>reduceLifecycle → applyEvent<br/>→ state-machine → watchdog"]
+
+  FX["fixtures/*.jsonl<br/>542-stale-pending-tool<br/>704-pane-error-text<br/>492-idle-flood<br/>happy-path-claude"]
+  CF["conformance.ts — được export<br/>mọi adapter tự chứng minh<br/>KHÔNG cần daemon"]
+
+  P1 --> V
+  P2 --> V
+  P3 --> V
+  P4 --> V
+  P5 --> V
+  P6 --> V
+
+  V --> L
+  L --> INV
+  L --> R
+  R --> S --> D
+
+  L -. "SQUADRANT_FACT_LOG=1 ghi song song" .-> FX
+  FX -. "replay.spec.ts khẳng định đúng chuỗi<br/>ControlEvent + danh sách vi phạm" .-> R
+  CF -. "cổng chặn: pnpm test fail<br/>nếu adapter thiếu fixture" .-> P1
+
+  classDef adpt fill:#1d2a39,stroke:#6b8fb5,color:#dde6ef
+  classDef vocab fill:#2a2119,stroke:#e0a458,color:#f0e2cd
+  classDef pure fill:#152a28,stroke:#4fb8a8,color:#d6f0eb
+  classDef proof fill:#241f2c,stroke:#9b8bc4,color:#e2dcef
+
+  class P1,P2,P3,P4,P5,P6 adpt
+  class V,L vocab
+  class INV,R,S,D pure
+  class FX,CF proof
+      </script>
+    </section>
+
+    <div class="legend animate" style="--i:26">
+      <div class="legend-item"><div class="legend-swatch" style="background:#6b8fb5"></div> adapter (cắm thêm được)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e0a458"></div> từ vựng + log</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#4fb8a8"></div> lõi thuần (không bao giờ cắm thêm)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#9b8bc4"></div> bộ máy chứng minh</div>
+    </div>
+
+    <div class="grid-3" style="margin-top:18px">
+      <div class="ve-card animate" style="--i:27">
+        <h4>Ba lựa chọn có chủ đích</h4>
+        <ul>
+          <li><b><code>callId</code> trên tool.started/ended.</b> Ghép cặp bằng id tường minh, không phải so chuỗi — đúng cách dsh làm trong session invariant với <code>pendingCalls: Set&lt;CallId&gt;</code>. Một id tự sinh thì trung thực về việc nó yếu; một id thiếu hẳn thì không.</li>
+          <li><b><code>unknown</code> cũng là một dữ kiện.</b> Adapter chỉ dịch; không bao giờ vừa phân loại vừa vứt bỏ.</li>
+          <li><b><code>origin: "inferred"</code></b> là thứ mới, dành cho việc cạo màn hình — để reducer xếp kết luận cạo được ở mức yếu nhất. Đó chính là #704.</li>
+        </ul>
+      </div>
+      <div class="ve-card animate" style="--i:28">
+        <h4>Nó <em>không</em> phải là gì</h4>
+        <ul>
+          <li><b>Không phải plugin framework.</b> Không DI, không service registry, không Cordis.</li>
+          <li><b>Không thay thế</b> <code>ControlEvent</code> hay state machine — nó đứng trước <code>applyEvent</code>.</li>
+          <li><b>Không phải transport mới.</b> Nó tiêu thụ đúng những nguồn đang có.</li>
+          <li><b>Không cut over một phát.</b> Chạy shadow trước, từng nguồn một, dựa trên bằng chứng — đúng cách #667 đã làm.</li>
+        </ul>
+      </div>
+      <div class="ve-card animate" style="--i:29">
+        <h4>Cắm vào thế nào</h4>
+        <p>Hợp đồng của daemon không đổi. <code>createEventsSource()</code> hiện thực đúng interface <code>LifecycleSource</code> đang có — <code>start</code> / <code>stop</code> / <code>snapshot</code> / <code>health</code>.</p>
+        <p><code>reduceLifecycle</code> với 4 quy tắc hiện tại <b>được giữ nguyên</b>. Cái thay đổi là nó nhận dữ kiện từ một chỗ duy nhất đã kiểm chứng trước, thay vì từ năm adapter mỗi cái tự quyết giữ lại gì.</p>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 5 -->
+    <div class="sec-head animate" id="s5" style="--i:30"><span class="num">05</span>So sánh ba chiều</div>
+
+    <div class="table-scroll animate" style="--i:31">
+      <table>
+        <caption>Các trục kiến trúc — cột vàng là phần đề xuất</caption>
+        <thead>
+          <tr>
+            <th>Trục</th>
+            <th class="col-dsh">DeepSeek Harness</th>
+            <th class="col-pi">Pi</th>
+            <th class="col-sq">squadrant — đề xuất</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="axis">Phần lõi</td>
+            <td>Không có lõi đặc quyền. Cordis nằm dưới; đến cả agent loop cũng là plugin.</td>
+            <td>Một lõi thật, nhỏ, có tên (<code>pi-agent-core</code>).</td>
+            <td class="sq">Daemon + cửa vào <code>applyEvent</code> + state machine + watchdog + <b>module events mới</b>.</td>
+          </tr>
+          <tr>
+            <td class="axis">Đơn vị plugin</td>
+            <td>Một plugin Cordis gắn trong cây cấu hình.</td>
+            <td>Một file <code>.ts</code> có export mặc định.</td>
+            <td class="sq">Một <code>FactAdapter</code> — mỗi nguồn một file đã biên dịch.</td>
+          </tr>
+          <tr>
+            <td class="axis">Nối dây / thứ tự</td>
+            <td>Khoá service qua <code>inject</code>; thứ tự được <em>suy ra</em>.</td>
+            <td>Thứ tự nạp, rồi thứ tự đăng ký. Không có ưu tiên.</td>
+            <td class="sq">Mảng adapter tường minh. Thứ tự không quan trọng — reducer hoà giải theo <code>origin</code>.</td>
+          </tr>
+          <tr>
+            <td class="axis">Kiểu của sự kiện</td>
+            <td>Declaration merging, gắn thẻ <code>@mode</code>, <b>bảng producer/consumer sinh tự động</b>.</td>
+            <td>Union chuỗi trần, được tài liệu hoá thành một sơ đồ vòng đời có chú thích khả năng từng điểm móc.</td>
+            <td class="sq">Union phân biệt <code>AgentFact</code> + <code>ControlEvent</code>, cộng thêm một <b>bảng sinh tự động</b> (~150 dòng).</td>
+          </tr>
+          <tr>
+            <td class="axis">Chế độ dispatch</td>
+            <td>Bốn chế độ, là hợp đồng công khai: <code>emit</code> / <code>waterfall</code> / <code>parallel</code> / <code>serial</code>.</td>
+            <td>Viết tay theo từng loại sự kiện: gấp, huỷ, hoặc giành quyền quyết định.</td>
+            <td class="sq">Không cần. Adapter chỉ phát; một reducer thuần quyết định.</td>
+          </tr>
+          <tr>
+            <td class="axis">Cô lập lỗi</td>
+            <td>Chặn lỗi theo từng listener, ghi log. Được đặt tên thành quy tắc trong <code>defensive-patterns.md</code>.</td>
+            <td>try/catch theo từng handler → tập listener <code>ExtensionError</code>, hiện lên TUI.</td>
+            <td class="sq">Chặn lỗi theo từng adapter: adapter ném lỗi thì cho ra <code>unknown</code> + một vi phạm, không bao giờ giết cả nguồn.</td>
+          </tr>
+          <tr>
+            <td class="axis">Trạng thái bền</td>
+            <td>Log <code>SessionEvent</code> chỉ-ghi-thêm. "Đã lộ ra cho model thì phải có trong log", được một runtime invariant khẳng định.</td>
+            <td>Cây entry JSONL (<code>id</code>/<code>parentId</code>), có version và tự migrate.</td>
+            <td class="sq">Log dữ kiện chỉ-ghi-thêm theo từng crew, <code>seq</code> liên tục từ 0. Tua lại được, đối chiếu được.</td>
+          </tr>
+          <tr>
+            <td class="axis">Cách chứng minh</td>
+            <td><b>Runtime invariant</b> theo từng package + coverage 100% mỗi file + các tầng snapshot không cần key.</td>
+            <td><b>Bộ test tuân thủ đi kèm từng seam</b> + harness provider giả + regression đặt tên <code>&lt;issue&gt;-&lt;slug&gt;</code>.</td>
+            <td class="sq">Cả ba, thu hẹp lại: invariant cho reducer, conformance cho <code>FactAdapter</code>, fixture JSONL để replay.</td>
+          </tr>
+          <tr>
+            <td class="axis">Hook bên ngoài</td>
+            <td>Một <b>thư viện</b> (<code>hook-protocol</code>) + các <b>plugin cầu nối</b> theo từng phương ngữ, đổ về cùng một bề mặt native.</td>
+            <td>Sự kiện extension chính là bề mặt; không có giao thức hook ngoài.</td>
+            <td class="sq">Giống dsh: mỗi phương ngữ là một cầu nối đổ về <code>AgentFact</code>. Không phương ngữ nào rò qua khỏi adapter.</td>
+          </tr>
+          <tr>
+            <td class="axis">Cách lắp ghép</td>
+            <td>Vá YAML theo tầng chồng lên một cây plugin in ra được.</td>
+            <td><code>settings.json</code> + tự quét từ các thư mục tin cậy.</td>
+            <td class="sq"><code>config.json</code> + <code>projects/&lt;name&gt;.json</code> deep-merge — <b>vốn đã có sẵn</b>.</td>
+          </tr>
+          <tr>
+            <td class="axis">Chi phí nhập môn</td>
+            <td class="num-cell">227 package + một quyển primer</td>
+            <td class="num-cell">10 package + một file types</td>
+            <td class="sq num-cell">1 package mới, ~6 file</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 6 -->
+    <div class="sec-head animate" id="s6" style="--i:32"><span class="num">06</span>Ranh giới plugin cho squadrant</div>
+
+    <div class="grid-2">
+      <div class="ve-card elev rule-teal animate" style="--i:33">
+        <h4>Thuộc về lõi — vĩnh viễn</h4>
+        <p>Cả hai harness đều đặt phần chuyển trạng thái vào lõi và chỉ cho plugin quan sát hoặc chú thích. Bộ ba <code>reduce</code> / <code>state-machine</code> / <code>watchdog</code> của squadrant <b>chính là sản phẩm</b>.</p>
+        <ul>
+          <li>Reducer và state machine</li>
+          <li>Watchdog và việc đánh giá stall</li>
+          <li>Từ vựng <code>ControlEvent</code></li>
+          <li>Cửa vào <code>applyEvent</code> + bộ kiểm kiểu tại biên socket</li>
+          <li>Log dữ kiện mới, các invariant, và reducer thuần</li>
+        </ul>
+        <p style="margin-top:12px"><b>Điểm mở rộng đúng là <em>dữ kiện nào đi vào</em>, chứ không phải <em>chúng có nghĩa gì</em>.</b></p>
+      </div>
+      <div class="ve-card elev rule-gold animate" style="--i:34">
+        <h4>Trở thành plugin</h4>
+        <p>Mọi <code>FactAdapter</code>. Thêm gemini, thêm codex app-server, hay thêm một phiên bản cmux mới, đáng lẽ chỉ nên là <b>một file cộng một lần chạy conformance</b>, không đụng gì tới daemon.</p>
+        <ul>
+          <li>Fact adapter (theo agent, theo transport)</li>
+          <li>Notifier, runtime, workspace — ba khe cắm vốn đã có</li>
+          <li>Skill và luật routing cho crew</li>
+        </ul>
+        <p style="margin-top:12px">Đó là cách hiện thực hoá định hướng multi-agent: câu hỏi <em>"cái này có chạy được cho agent không phải Claude không?"</em> trở thành một bài test, không còn là một câu hỏi lúc review.</p>
+      </div>
+    </div>
+
+    <div class="callout teal animate" style="--i:35">
+      <span class="lbl">Việc rẻ nhất nên làm trước — độc lập với mọi thứ ở trên</span>
+      <strong>Một bảng producer/consumer cho <code>ControlEvent</code>, sinh tự động.</strong> Bản của dsh dài 1487 dòng
+      vì nó phải phân giải một chương trình TypeScript 227 package. Bản tương đương cho squadrant — duyệt
+      <code>packages/*/src</code> tìm literal <code>type: "task.…"</code>, gom theo bên phát và theo nhánh reducer —
+      chắc khoảng <b>150 dòng</b>, và nó làm cho "biến thể này không ai phát" và "biến thể này không ai nghe"
+      hiện ra ở mỗi lần build. <strong>Nó chặn được #542 tiếp theo mà không cần sửa một dòng code đang chạy nào.</strong>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 7 -->
+    <div class="sec-head animate" id="s7" style="--i:36"><span class="num">07</span>Các invariant — phần xứng đáng với công sức bỏ ra</div>
+
+    <p class="lede animate" style="--i:37">
+      Học theo tinh thần của <code>dsh-session/invariant.ts</code>, nơi duy trì một vết theo từng session
+      (<code>openTurn</code>, <code>openStep</code>, <code>pendingCalls</code>) và kiểm tra mọi sự kiện ứng viên
+      <em>trước khi commit</em>. Bản tương đương của squadrant giữ một <code>CrewTrace</code> cho mỗi crew.
+    </p>
+
+    <div class="table-scroll animate" style="--i:38">
+      <table>
+        <caption>Tám invariant, mỗi cái ứng với một lỗi đã thật sự xảy ra</caption>
+        <thead>
+          <tr><th style="width:52px">#</th><th>Invariant</th><th>Bắt được cái gì</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="axis">I1</td><td><code>seq</code> tăng nghiêm ngặt theo từng crew</td><td>Khung tin bị mất hoặc đảo thứ tự — <b>cả lớp</b> lỗi #542, ở dạng tổng quát</td></tr>
+          <tr><td class="axis">I2</td><td><code>tool.ended</code> phải trỏ tới một <code>callId</code> đang nằm trong <code>pendingCalls</code></td><td>Ghép cặp sai; đóng bằng cách viết khác</td></tr>
+          <tr><td class="axis">I3</td><td><code>turn.ended</code> khi <code>pendingCalls</code> chưa rỗng là một <b>vi phạm</b>, không phải một lần veto</td><td><b>Đúng #542.</b> Hiện tại tình huống này âm thầm veto lượt-kết-thúc mãi mãi, không tín hiệu nào</td></tr>
+          <tr><td class="axis">I4</td><td>Một mục trong <code>pendingCalls</code> cũ hơn ngân sách stall → vi phạm <em>trước khi</em> watchdog kết liễu crew</td><td><code>CREW STALLED</code> sai</td></tr>
+          <tr><td class="axis">I5</td><td>Một dữ kiện <code>origin:"inferred"</code> không bao giờ tự mình sinh ra <code>ControlEvent</code> kết liễu</td><td><b>#704</b> — text lỗi cạo từ pane đã giết một crew còn sống</td></tr>
+          <tr><td class="axis">I6</td><td>Tỉ lệ dữ kiện <code>unknown</code> &gt; 0 trong một cửa sổ → cảnh báo lớn kèm tên nguồn + khung tin thô</td><td>Mọi lỗi mất-khung-tin trong tương lai, <b>ngay lần đầu tiên</b></td></tr>
+          <tr><td class="axis">I7</td><td>Hai nguồn mâu thuẫn về liveness trong vòng N ms → vi phạm mang theo cả hai</td><td>Phiên 2026-08-13 "ba tín hiệu vòng đời đều sai trong cùng một session"</td></tr>
+          <tr><td class="axis">I8</td><td>Mọi <code>ControlEvent</code> phát ra đều tái tạo được bằng cách replay tiền tố của log</td><td>"Đã lộ ra thì phải có trong log" của dsh, phiên bản squadrant</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout coral animate" style="--i:39">
+      <span class="lbl">Vì sao I3 mới là cái quan trọng nhất</span>
+      Hiện tại, <code>turn.ended</code> đến khi <code>pendingTool</code> đã cũ chính là con đường <em>bình thường</em>
+      dẫn vào lỗi: veto của #492 chặn lượt-kết-thúc, mãi mãi, và im lặng. Dưới I3 nó trở thành
+      <strong>một vi phạm có tên, được đếm, nhìn thấy được ngay lần đầu xảy ra</strong>.
+      #542 đáng lẽ đã lộ ra trong vòng một giờ-crew thay vì sau nhiều tháng.
+    </div>
+
+    <div class="grid-3" style="margin-top:16px">
+      <div class="ve-card rule-steel animate" style="--i:40">
+        <h4>Khi vi phạm thì sao</h4>
+        <p>Theo dsh: một vi phạm sẽ <b>ném lỗi</b> trong test và chế độ shadow; còn trên production thì ghi log mức warn kèm dữ kiện + vết, và tăng một bộ đếm hiện lên trong snapshot của daemon và trên dashboard web. Cấu hình là <code>{ enabled, strict }</code>.</p>
+      </div>
+      <div class="ve-card rule-steel animate" style="--i:41">
+        <h4>Replay từ fixture</h4>
+        <p><code>SQUADRANT_FACT_LOG=1</code> ghi song song mọi dữ kiện ra JSONL. Bắt được một con crew bị treo thật một lần là có ngay một fixture regression vĩnh viễn — <b>byte thật, không phải mock nặn tay</b>. Quy ước đặt tên lấy từ Pi: <code>&lt;issue&gt;-&lt;slug&gt;.jsonl</code>.</p>
+      </div>
+      <div class="ve-card rule-steel animate" style="--i:42">
+        <h4>Một quy tắc cưỡng chế duy nhất</h4>
+        <p>Mọi <code>FactAdapter</code> bắt buộc phải export một fixture conformance, và <code>pnpm test</code> fail nếu thiếu. <b>Đó là toàn bộ tầng quản trị</b> — đủ nhỏ để sống sót, khác với một cơ chế cần cả đội mới giữ nổi.</p>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ 8 -->
+    <div class="sec-head animate" id="s8" style="--i:43"><span class="num">08</span>Những gì <em>không</em> nên sao chép</div>
+
+    <div class="grid-2">
+      <div class="ve-card rule-coral animate" style="--i:44">
+        <h4>Từ DeepSeek Harness</h4>
+        <ul>
+          <li><b>Cordis / DI + phân giải theo khoá service.</b> 227 package thì cần gắn theo thứ tự phụ thuộc; 6 package thì không. Nó mua về khả năng suy ra thứ tự nạp mà ES import vốn đã cho squadrant miễn phí, và bắt mọi người đóng góp phải học một framework.</li>
+          <li><b>"Mọi thứ đều là plugin", kể cả vòng lặp.</b> Làm cho mọi báo cáo lỗi trở nên vô phương trả lời — <em>lúc đó bạn đang boot cái cây nào?</em></li>
+          <li><b>Phân tầng profile/bundle/patch.</b> Giải bài toán phân phối ở quy mô hệ sinh thái. Squadrant có một người dùng và đã có config phân tầng theo project rồi.</li>
+          <li><b>Cổng coverage 100% mỗi file.</b> Trong một repo một người, nó biến thành test-đắp-cho-đủ. Hãy lấy <em>lý lẽ</em> — "một dòng chưa được cover thường là code chết" — chứ đừng lấy con số.</li>
+          <li><b>"Đừng tiết kiệm test gọi API thật."</b> Được biện minh thẳng bằng câu <em>"chúng tôi là DeepSeek."</em> Squadrant trả tiền theo giá lẻ.</li>
+        </ul>
+      </div>
+      <div class="ve-card rule-coral animate" style="--i:45">
+        <h4>Từ Pi</h4>
+        <ul>
+          <li><b>Không có hệ thống phân quyền.</b> Đúng với một CLI một người dùng; sai với một daemon sinh ra crew ghi vào repo thật. Luồng phê duyệt, <code>--permission-mode auto</code>, và cổng chặn ghi memory của #556 đều đang gánh việc.</li>
+          <li><b>Tự nạp file <code>.ts</code> bất kỳ từ thư mục làm việc.</b> Pi có chặn bằng project trust mà vẫn cảnh báo to. Squadrant chạy một daemon có socket, có Telegram đi vào, và có sẵn lỗ hổng #321 về quyền thành viên — đừng thêm một bề mặt thực thi code không xác thực thứ hai.</li>
+          <li><b>jiti / nạp TypeScript lúc chạy.</b> Sẽ mở lại đúng lớp lỗi phân giải module mà repo đã học hai lần (#344 phần mở rộng NodeNext, #363 <code>package.json</code> tương đối theo dist).</li>
+          <li><b>Lấy bản spec 2941 dòng làm khuôn mẫu.</b> Bản của Pi dài như vậy là xứng đáng vì nó đặc tả cả một storage engine. Module của squadrant chỉ là một reducer cộng một bộ từ vựng.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout animate" style="--i:46">
+      <span class="lbl">Cảnh báo ở tầng cao hơn</span>
+      Cả hai harness đều có <em>nguyên một đội</em> bảo trì cái bộ máy giữ cho bộ máy an toàn —
+      <code>verify-package-invariants</code> và các catalog sinh tự động của dsh, các bộ test tuân thủ và
+      kỷ luật đặt tên regression của Pi.
+      <strong>Sao chép một cơ chế mà không sao chép phần cưỡng chế của nó thì chỉ nhận chi phí, không nhận lợi ích.</strong>
+      Nếu module events có invariant mà chẳng có gì kiểm tra rằng adapter mới phải đăng ký một cái, thì
+      trong vòng hai tháng nó sẽ thoái hoá thành mấy dòng assert bị comment lại — đúng như #653/#654 đã
+      phát hiện ra rằng luật của captain chưa bao giờ đến được system prompt.
+    </div>
+
+    <!-- ══════════════════════════════════════════ 9 -->
+    <div class="sec-head animate" id="s9" style="--i:47"><span class="num">09</span>Thứ tự triển khai — từng bước nhỏ, chứng minh được</div>
+
+    <ol class="steps animate" style="--i:48">
+      <li><b><code>fact.ts</code> + <code>log.ts</code> + bộ conformance được export.</b> Chưa nối dây gì cả. <span class="risk">rủi ro bằng không</span></li>
+      <li><b>Adapter, mỗi PR một cái</b>, kèm unit test và conformance. Vẫn chưa nối dây. <span class="risk">rủi ro bằng không</span></li>
+      <li><b>Bật <code>SQUADRANT_FACT_LOG=1</code> sau một cờ.</b> Thu fixture thật cho #542, #704, #492 và một ca chạy trơn tru.</li>
+      <li><b><code>reduce.ts</code> + <code>invariant.ts</code>, cả hai đều thuần</b>; <code>replay.spec.ts</code> xanh trên đám fixture đó. <span class="risk">phần đáng giá nhất</span></li>
+      <li><b>Chế độ shadow.</b> <code>createEventsSource</code> được đăng ký, chạy tính toán, ghi log mọi chỗ lệch với phán quyết đang chạy, nhưng không phát ra gì.</li>
+      <li><b>Cut over <code>claude</code> trước</b> — agent đã được chứng minh. Các agent còn lại để trong shadow, đúng như <code>controlChannel</code> đang làm hôm nay.</li>
+      <li><b>Xoá các đường phát trực tiếp</b> khỏi <code>CmuxEventsBridge</code> và pane reader — <em>chỉ sau khi</em> fixture đã chứng minh bản thay thế.</li>
+    </ol>
+
+    <div class="callout teal animate" style="--i:49">
+      <span class="lbl">Phần thưởng thật sự</span>
+      Chỉ riêng bước 4 — một reducer thuần cộng với replay từ fixture — <strong>đã cho phép nghỉ hưu quy tắc memory
+      "verify with ps/git before acting on ANY crew signal"</strong> cho mọi trường hợp được phủ. Không phải vì quy tắc
+      đó sai, mà vì cuối cùng thì tín hiệu đã trở thành thứ tua lại và kiểm chứng được.
+    </div>
+
+    <div class="callout animate" style="--i:50">
+      <span class="lbl">Tóm trong một câu</span>
+      <strong>Squadrant không cần một plugin framework.</strong> Nó cần một bản ghi bền, tua lại được, có invariant canh —
+      về việc các agent của nó thật sự đã làm gì — do đúng một module nhỏ sở hữu; cộng thêm một bảng sinh lúc build
+      chứng minh rằng mọi sự kiện đều có cả người phát lẫn người nghe.
+    </div>
+
+    <!-- ══════════════════════════════════════════ 10 -->
+    <div class="sec-head animate" id="s10" style="--i:51"><span class="num">10</span>Từ vựng — thuật ngữ giữ nguyên tiếng Anh</div>
+
+    <div class="glossary animate" style="--i:52">
+      <h4>Đọc bảng này một lần là theo được cả trang</h4>
+      <dl>
+        <dt>harness</dt>
+        <dd>Bộ khung chạy một AI agent: vòng lặp gọi model, gọi tool, giữ lịch sử hội thoại. squadrant, Claude Code, Pi, dsh đều là harness.</dd>
+
+        <dt>seam</dt>
+        <dd>Đường nối có hợp đồng rõ ràng, cho phép thay ruột mà không sửa phần còn lại. Trong dsh gọi là "capability seam"; trong squadrant là <code>AgentDriver</code>, <code>LifecycleSource</code>.</dd>
+
+        <dt>adapter</dt>
+        <dd>Mẩu code dịch từ định dạng bên ngoài sang từ vựng bên trong. Ở đây: khung tin thô → <code>AgentFact</code>.</dd>
+
+        <dt>reducer</dt>
+        <dd>Hàm nhận (trạng thái cũ, sự kiện) và trả về trạng thái mới. "Thuần" nghĩa là không đọc đồng hồ, không đụng ổ đĩa — nên test được tuyệt đối.</dd>
+
+        <dt>invariant</dt>
+        <dd>Một điều luôn-luôn-phải-đúng, được kiểm tra ngay lúc hệ thống đang chạy chứ không chỉ lúc test.</dd>
+
+        <dt>conformance suite</dt>
+        <dd>Bộ test đi kèm ngay trong package định nghĩa seam, để bất kỳ hiện thực nào cũng tự chạy và tự chứng minh mình tuân thủ.</dd>
+
+        <dt>fixture / replay</dt>
+        <dd>Bản ghi thật của một lần chạy, đem chạy lại qua code mới để đối chiếu kết quả.</dd>
+
+        <dt>shadow mode</dt>
+        <dd>Chạy song song code mới, tính ra kết quả nhưng không dùng, chỉ ghi log chỗ lệch — cho tới khi đủ bằng chứng mới cut over.</dd>
+
+        <dt>waterfall / veto</dt>
+        <dd>Kiểu dispatch mà mỗi listener nhận thêm một hàm <code>next()</code>: gọi <code>next()</code> để chuyển tiếp, không gọi thì dừng luôn (veto).</dd>
+
+        <dt>watchdog</dt>
+        <dd>Bộ phận canh chừng: quá lâu không thấy dấu hiệu sống thì kết luận là hỏng.</dd>
+      </dl>
+    </div>
+
+    <footer class="animate" style="--i:53">
+      Bản dễ hiểu tiếng Việt: <a href="2026-08-27-harness-plugin-architectures-eli5-vi.html">trang ELI5 (VI)</a> ·
+      bản gốc tiếng Anh: <a href="2026-08-27-harness-plugin-architectures.html">trang kỹ thuật (EN)</a><br>
+      Nghiên cứu đầy đủ (EN): <a href="../specs/2026-08-27-harness-plugin-architecture-study.md">docs/specs/2026-08-27-harness-plugin-architecture-study.md</a><br>
+      Đọc từ bản clone read-only (<code>--depth 50</code>, 2026-08-27):
+      <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> ·
+      <a href="https://github.com/badlogic/pi-mono">badlogic/pi-mono</a><br>
+      Bằng chứng phía squadrant: <code>events-bridge.ts:58-68,229</code> · commit <code>15ea2fe</code> ·
+      <code>state-machine.ts nextPendingTool</code> · <code>native-hook-source.ts:18-32</code> ·
+      <code>claude.ts:372-376</code> · <code>reduce.ts:288,323-325</code> · <code>lifecycle-source.ts:70-126</code><br>
+      Tài liệu nghiên cứu — không sửa source, không mở issue.
+    </footer>
+
+  </div><!-- /main -->
+</div><!-- /wrap -->
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs';
+
+  const config = {
+    fitPadding: 28, minHeight: 380, maxHeightPx: 980, maxHeightVh: 0.84,
+    maxInitialZoom: 1.8, minZoom: 0.08, maxZoom: 6.5, zoomStep: 0.14, readabilityFloor: 0.58
+  };
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+  let activeDrag = null;
+  addEventListener('mousemove', (e) => activeDrag?.onMove(e));
+  addEventListener('mouseup', () => { activeDrag?.onEnd(); activeDrag = null; });
+
+  mermaid.registerLayoutLoaders(elkLayouts);
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    look: 'classic',
+    layout: 'elk',
+    themeVariables: {
+      fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
+      fontSize: '15px',
+      background: '#121b26',
+      primaryColor: '#1d2a39',
+      primaryBorderColor: '#6b8fb5',
+      primaryTextColor: '#dde6ef',
+      secondaryColor: '#152a28',
+      secondaryBorderColor: '#4fb8a8',
+      secondaryTextColor: '#d6f0eb',
+      tertiaryColor: '#2a2119',
+      tertiaryBorderColor: '#e0a458',
+      tertiaryTextColor: '#f0e2cd',
+      lineColor: '#5b7490',
+      textColor: '#dde6ef',
+      clusterBkg: '#0f1720',
+      clusterBorder: '#263446',
+      edgeLabelBackground: '#121b26',
+      noteBkgColor: '#2a2119',
+      noteTextColor: '#f0e2cd',
+      noteBorderColor: '#e0a458'
+    }
+  });
+
+  function initDiagram(shell) {
+    const wrap = shell.querySelector('.mermaid-wrap');
+    const viewport = shell.querySelector('.mermaid-viewport');
+    const canvas = shell.querySelector('.mermaid-canvas');
+    const source = shell.querySelector('.diagram-source');
+    const label = shell.querySelector('.zoom-label');
+    if (!wrap || !viewport || !canvas || !source || !label) {
+      console.error('initDiagram: missing required elements in', shell);
+      return;
+    }
+
+    let zoom = 1, fitMode = 'contain', panX = 0, panY = 0, svgW = 0, svgH = 0;
+    let sx = 0, sy = 0, spx = 0, spy = 0, touchDist = 0, touchCx = 0, touchCy = 0;
+
+    function constrainPan() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight;
+      const rW = svgW * zoom, rH = svgH * zoom, pad = config.fitPadding;
+      panX = (rW + pad * 2 <= vpW) ? (vpW - rW) / 2 : clamp(panX, vpW - rW - pad, pad);
+      panY = (rH + pad * 2 <= vpH) ? (vpH - rH) / 2 : clamp(panY, vpH - rH - pad, pad);
+    }
+    function applyTransform() {
+      const svg = canvas.querySelector('svg');
+      if (!svg || !svgW) return;
+      constrainPan();
+      svg.style.width = (svgW * zoom) + 'px';
+      svg.style.height = (svgH * zoom) + 'px';
+      canvas.style.transform = `translate(${panX}px, ${panY}px)`;
+      label.textContent = Math.round(zoom * 100) + '% — ' + fitMode;
+    }
+    function canPan() {
+      const rW = svgW * zoom, rH = svgH * zoom;
+      return rW + config.fitPadding * 2 > viewport.clientWidth
+          || rH + config.fitPadding * 2 > viewport.clientHeight;
+    }
+    function computeSmartFit() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight;
+      const aW = Math.max(80, vpW - config.fitPadding * 2);
+      const aH = Math.max(80, vpH - config.fitPadding * 2);
+      const contain = Math.min(aW / svgW, aH / svgH);
+      let z = contain, mode = 'contain';
+      if (contain < config.readabilityFloor) {
+        const chartR = svgH / svgW, vpR = vpH / Math.max(vpW, 1);
+        if (chartR >= vpR) { z = aW / svgW; mode = 'width-priority'; }
+        else { z = aH / svgH; mode = 'height-priority'; }
+      }
+      return { zoom: clamp(z, config.minZoom, config.maxInitialZoom), mode };
+    }
+    function fitDiagram() {
+      if (!svgW) return;
+      const fit = computeSmartFit();
+      zoom = fit.zoom; fitMode = fit.mode;
+      panX = (viewport.clientWidth - svgW * zoom) / 2;
+      panY = (viewport.clientHeight - svgH * zoom) / 2;
+      applyTransform();
+    }
+    function setOneToOne() {
+      zoom = clamp(1, config.minZoom, config.maxZoom);
+      fitMode = '1:1';
+      panX = (viewport.clientWidth - svgW * zoom) / 2;
+      panY = (viewport.clientHeight - svgH * zoom) / 2;
+      applyTransform();
+    }
+    function zoomAround(factor, cx, cy) {
+      const next = clamp(zoom * factor, config.minZoom, config.maxZoom);
+      const ratio = next / zoom;
+      panX = cx - ratio * (cx - panX);
+      panY = cy - ratio * (cy - panY);
+      zoom = next; fitMode = 'custom';
+      applyTransform();
+    }
+    function readSvgNaturalSize(svg) {
+      let w = 0, h = 0;
+      if (svg.viewBox?.baseVal?.width > 0) { w = svg.viewBox.baseVal.width; h = svg.viewBox.baseVal.height; }
+      if (!w) { w = parseFloat(svg.getAttribute('width')) || 0; h = parseFloat(svg.getAttribute('height')) || 0; }
+      if (!w) { const b = svg.getBBox(); w = b.width; h = b.height; }
+      if (!w) { const r = svg.getBoundingClientRect(); w = r.width || 1000; h = r.height || 700; }
+      if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      return { w, h };
+    }
+    function setAdaptiveHeight() {
+      if (!svgW) return;
+      const usableW = Math.max(280, wrap.getBoundingClientRect().width - 2);
+      const idealH = (svgH / svgW) * usableW + config.fitPadding * 2;
+      const maxVp = Math.floor(innerHeight * config.maxHeightVh);
+      const hardMax = Math.min(config.maxHeightPx, Math.max(config.minHeight + 40, maxVp));
+      wrap.style.height = Math.round(clamp(idealH, config.minHeight, hardMax)) + 'px';
+    }
+    function openInNewTab() {
+      const svg = canvas.querySelector('svg');
+      if (!svg) return;
+      const clone = svg.cloneNode(true);
+      clone.style.width = ''; clone.style.height = '';
+      const html = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Sơ đồ</title><style>
+      body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+      background:#0b1119;padding:40px;box-sizing:border-box}
+      svg{max-width:100%;max-height:90vh;height:auto}
+      </style></head><body>${clone.outerHTML}</body></html>`;
+      open(URL.createObjectURL(new Blob([html], { type: 'text/html' })), '_blank');
+    }
+    async function render() {
+      try {
+        const code = source.textContent.trim();
+        if (!code) { label.textContent = 'Lỗi: nguồn rỗng'; return; }
+        const id = 'diagram-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const { svg } = await mermaid.render(id, code);
+        const parsed = new DOMParser().parseFromString(svg, 'text/html');
+        const parsedSvg = parsed.body.querySelector('svg');
+        if (!parsedSvg) { label.textContent = 'Lỗi: không có SVG'; return; }
+        canvas.replaceChildren(document.adoptNode(parsedSvg));
+        const svgNode = canvas.querySelector('svg');
+        if (!svgNode) { label.textContent = 'Lỗi: không có SVG'; return; }
+        const size = readSvgNaturalSize(svgNode);
+        svgW = size.w; svgH = size.h;
+        svgNode.removeAttribute('width');
+        svgNode.removeAttribute('height');
+        svgNode.style.maxWidth = 'none';
+        svgNode.style.display = 'block';
+        setAdaptiveHeight();
+        fitDiagram();
+      } catch (err) {
+        console.error('Mermaid render failed:', err);
+        label.textContent = 'Lỗi: ' + (err.message || 'render thất bại');
+      }
+    }
+
+    const actions = {
+      'zoom-in': () => zoomAround(1 + config.zoomStep, viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-out': () => zoomAround(1 / (1 + config.zoomStep), viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-fit': fitDiagram,
+      'zoom-one': setOneToOne,
+      'zoom-expand': openInNewTab
+    };
+    Object.entries(actions).forEach(([action, handler]) => {
+      wrap.querySelector(`[data-action="${action}"]`)?.addEventListener('click', handler);
+    });
+
+    viewport.addEventListener('dblclick', fitDiagram);
+    viewport.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const rect = viewport.getBoundingClientRect();
+        const factor = e.deltaY < 0 ? 1 + config.zoomStep : 1 / (1 + config.zoomStep);
+        zoomAround(factor, e.clientX - rect.left, e.clientY - rect.top);
+        return;
+      }
+      if (canPan()) {
+        e.preventDefault();
+        panX -= e.deltaX; panY -= e.deltaY;
+        applyTransform();
+      }
+    }, { passive: false });
+
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.zoom-controls') || !canPan()) return;
+      wrap.classList.add('is-panning');
+      sx = e.clientX; sy = e.clientY; spx = panX; spy = panY;
+      e.preventDefault();
+      activeDrag = {
+        onMove: (ev) => { panX = spx + (ev.clientX - sx); panY = spy + (ev.clientY - sy); applyTransform(); },
+        onEnd: () => { wrap.classList.remove('is-panning'); }
+      };
+    });
+
+    viewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY; spx = panX; spy = panY;
+      } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchDist = Math.sqrt(dx * dx + dy * dy);
+        const r = viewport.getBoundingClientRect();
+        touchCx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+        touchCy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+      }
+    }, { passive: true });
+
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && canPan()) {
+        if (touchDist > 0) {
+          sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+          spx = panX; spy = panY; touchDist = 0;
+        }
+        e.preventDefault();
+        panX = spx + (e.touches[0].clientX - sx);
+        panY = spy + (e.touches[0].clientY - sy);
+        applyTransform();
+      } else if (e.touches.length === 2 && touchDist > 0) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        zoomAround(d / touchDist, touchCx, touchCy);
+        touchDist = d;
+      }
+    }, { passive: false });
+
+    new ResizeObserver(() => { if (svgW) { setAdaptiveHeight(); fitDiagram(); } }).observe(wrap);
+    render();
+  }
+
+  document.querySelectorAll('.diagram-shell').forEach(initDiagram);
+</script>
+
+<script>
+(function () {
+  const toc = document.getElementById('toc');
+  const links = toc.querySelectorAll('a');
+  const sections = [];
+  links.forEach(link => {
+    const id = link.getAttribute('href').slice(1);
+    const el = document.getElementById(id);
+    if (el) sections.push({ id, el, link });
+  });
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const match = sections.find(s => s.el === entry.target);
+        if (match) {
+          match.link.classList.add('active');
+          if (window.innerWidth <= 1000) {
+            match.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+          }
+        }
+      }
+    });
+  }, { rootMargin: '-10% 0px -80% 0px' });
+  sections.forEach(s => observer.observe(s.el));
+  links.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const id = link.getAttribute('href').slice(1);
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        history.replaceState(null, '', '#' + id);
+      }
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

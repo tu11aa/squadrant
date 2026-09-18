@@ -250,6 +250,28 @@ describe("squadrant side spawn", () => {
     );
   });
 
+  it("uses the side thinking level from config", async () => {
+    loadConfig.mockReturnValue({
+      ...baseConfig,
+      defaults: {
+        ...baseConfig.defaults,
+        roles: { side: { agent: "claude", model: "opus", thinking: "low" } },
+      },
+    });
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude --model opus --effort low");
+
+    const promise = runSideSpawn({ project: "brove", topic: "research topic", role: "research" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    expect(buildCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ thinking: "low" }),
+    );
+  });
+
   it("sends topic + context block as first turn (includes spokeVault)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });

@@ -18,6 +18,7 @@ export class CmuxTimeoutError extends Error {
 }
 
 import { DeferDelivery } from "@squadrant/core";
+import { screenHasSplashMarker } from "@squadrant/core";
 
 /** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
 export function isInsideCmux(): boolean {
@@ -87,7 +88,7 @@ function cmuxStdin(args: string[], input: string): Promise<string> {
   });
 }
 
-// Shape of `cmux workspace list --json` (cmux 0.64.16). Only the fields we
+// Shape of `cmux workspace list --json` (cmux 0.64.16, verified 0.64.22). Only the fields we
 // consume are typed; everything else in the payload is ignored.
 interface CmuxWorkspaceListJson {
   workspaces?: Array<{
@@ -98,7 +99,7 @@ interface CmuxWorkspaceListJson {
   }>;
 }
 
-// Shape of `cmux tree --json` (cmux 0.64.16). Surfaces nest as
+// Shape of `cmux tree --json` (cmux 0.64.16, verified 0.64.22). Surfaces nest as
 // windows[].workspaces[].panes[].surfaces[]; only consumed fields are typed.
 interface CmuxTreeJson {
   windows?: Array<{
@@ -389,6 +390,32 @@ export function classifyStartupSurface(screen: string): "loading" | "idle" | "wo
   return "loading";
 }
 
+/**
+ * #786/#789: startup readiness for an opencode TUI. The claude classifier above
+ * reads a live opencode pane as "loading" forever (no ⏵⏵/Ctx Used chrome), so
+ * deliverStartupPrompt would send blind after its 30s timeout and never confirm.
+ * opencode has no reliable "working" marker, so this reports only loading/idle;
+ * deliverStartupPrompt's phase 3 then confirms the turn by screen change.
+ *
+ * #789 correction: readiness is POSITIVE — the marker's presence means the input
+ * box is up, not that the TUI is still cold. "Ask anything…" is the persistent
+ * EMPTY-SESSION input placeholder (it is drawn whenever the box is idle and
+ * empty, and never disappears on its own), so keying "loading" on its presence
+ * inverted the signal and left a cold captain at "loading" forever. Verified live
+ * 2026-09-17 (opencode 1.18.31): a prompt typed at the instant the marker rendered
+ * was accepted and created a session. The footer ("ctrl+p commands") renders at
+ * the same moment and is the only positive idle signal on a warm resume, where a
+ * transcript is on screen and the placeholder is not drawn. Neither marker on
+ * screen (boot logo only) means keystrokes would still be dropped → "loading".
+ * Matching mirrors the crew path (#499/#656): case/whitespace/ellipsis-insensitive.
+ */
+const OC_IDLE_MARKERS = ["Ask anything", "ctrl+p commands"];
+
+export function classifyOpencodeStartupSurface(screen: string): "loading" | "idle" {
+  if (!screen) return "loading";
+  return OC_IDLE_MARKERS.some((m) => screenHasSplashMarker(screen, m)) ? "idle" : "loading";
+}
+
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a
 // SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
 // lands as a newline instead of a submit, stranding the payload in the input box.
@@ -554,7 +581,7 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async stop(ref: string): Promise<void> {
-      // cmux 0.64.16 refuses to close a pinned workspace. Unpin first so that
+      // cmux 0.64.16+ (verified 0.64.22) refuses to close a pinned workspace. Unpin first so that
       // squadrant launch --fresh works even when the captain workspace is pinned.
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
@@ -566,7 +593,7 @@ export function createCmuxDriver(): RuntimeDriver {
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
       // #295 / audit A1+B3: a crew tab must never steal focus from the captain.
-      // cmux 0.64.16's new-surface and new-pane both DEFAULT to --focus false,
+      // cmux 0.64.16+ (verified 0.64.22)'s new-surface and new-pane both DEFAULT to --focus false,
       // so we pass it explicitly (intent + resilience if the default changes)
       // and create the surface focus-neutrally. This REPLACES the old
       // snapshot-then-move-surface refocus dance, which depended on the fragile
@@ -629,7 +656,7 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // cmux 0.64.16's new-surface DEFAULTS to --focus false, so "background"
+      // cmux 0.64.16+ (verified 0.64.22)'s new-surface DEFAULTS to --focus false, so "background"
       // passes --focus false and the relay tab is created without ever stealing
       // focus from the captain — no snapshot-then-move-surface refocus dance
       // (audit A1+B3; the 0.64 freeform canvas broke the old tree-order==index

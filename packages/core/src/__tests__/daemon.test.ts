@@ -1,6 +1,6 @@
 // packages/core/src/__tests__/daemon.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDaemon, crewTag } from "../daemon/reduce.js";
@@ -113,6 +113,21 @@ describe("daemon handler", () => {
     store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
     const d = createDaemon({ store, now: () => 1000 });
     await d.sweep();
+    expect(store.get("p", "s1")?.state).toBe("stalled");
+  });
+
+  // #795: a captain-address sidecar (captain.json, no id/project) in the records
+  // dir must not abort the whole sweep — the body still runs and reaps a stalled
+  // task, proving the sweep did real work rather than merely not throwing.
+  it("sweep: resolves and still reaps a stalled task when a captain.json sidecar is present (#795)", async () => {
+    const store = createStore(dir);
+    store.put(rec("s1", { mode: "headless", state: "working", lastHeartbeat: 0, heartbeatBudgetMs: 100 }));
+    writeFileSync(
+      join(dir, "p", "captain.json"),
+      JSON.stringify({ agent: "opencode", directory: "/tmp/x", launchedAt: "2026-01-01T00:00:00.000Z" }),
+    );
+    const d = createDaemon({ store, now: () => 1000 });
+    await expect(d.sweep()).resolves.toBeUndefined();
     expect(store.get("p", "s1")?.state).toBe("stalled");
   });
 
