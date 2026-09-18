@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
-import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand } from "@squadrant/core";
+import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand, isReadOnlyTopLevelCommand } from "@squadrant/core";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -39,6 +39,8 @@ import { telegramCommand } from "./commands/telegram.js";
 import { hooksCommand } from "./commands/hooks.js";
 import { workCommand } from "./commands/work.js";
 import { handoffCommand } from "./commands/handoff.js";
+import { sessionsCommand } from "./commands/sessions.js";
+import { whoamiCommand } from "./commands/whoami.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -102,7 +104,13 @@ if (process.argv[2] !== "config") {
 // reconciled — skip ensureDaemon entirely so they can never print the
 // #670/#752 foreign-install banner, even when run inside a captain session
 // (SQUADRANT_ROLE=captain would otherwise authorize the mutating path here).
-if (!process.env.SQUADRANT_DAEMON_SKIP && !isReadOnlyCrewCommand(process.argv)) {
+// #669: `sessions` / `whoami` are also pure file reads — same treatment, so
+// they work with the daemon down and never boot it as a side effect.
+if (
+  !process.env.SQUADRANT_DAEMON_SKIP &&
+  !isReadOnlyCrewCommand(process.argv) &&
+  !isReadOnlyTopLevelCommand(process.argv)
+) {
   ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]) });
 }
 
@@ -148,6 +156,8 @@ program.addCommand(telegramCommand);
 program.addCommand(hooksCommand());
 program.addCommand(workCommand);
 program.addCommand(handoffCommand);
+program.addCommand(sessionsCommand);
+program.addCommand(whoamiCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

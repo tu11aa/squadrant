@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult } from "./types.js";
+import type { AgentDriver, AgentProbeResult, AgentSession, SpawnOptions, AgentResult } from "./types.js";
+import { listClaudeSessions } from "../sessions/claude-sessions.js";
 
 export function createClaudeDriver(): AgentDriver {
   return {
@@ -100,6 +101,11 @@ export function createClaudeDriver(): AgentDriver {
       } catch {
         // process may already be gone
       }
+    },
+
+    // #669: registry-backed session introspection (read-only).
+    async listSessions(): Promise<AgentSession[]> {
+      return listClaudeSessions();
     },
   };
 }

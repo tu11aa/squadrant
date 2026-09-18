@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import type { AgentDriver, AgentProbeResult, SpawnOptions, AgentResult } from "./types.js";
+import type { AgentDriver, AgentProbeResult, AgentSession, SpawnOptions, AgentResult } from "./types.js";
+import { listOpencodeSessions } from "../sessions/opencode-sessions.js";
 
 export function createOpencodeDriver(): AgentDriver {
   return {
@@ -50,6 +51,11 @@ export function createOpencodeDriver(): AgentDriver {
 
     async stop(pid: number): Promise<void> {
       try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+    },
+
+    // #669: captain-record-backed session introspection (read-only).
+    async listSessions(): Promise<AgentSession[]> {
+      return listOpencodeSessions();
     },
   };
 }

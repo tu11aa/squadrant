@@ -18,6 +18,7 @@ guided first run — come back here when you need the details.
   - [Notifier Abstraction](#notifier-abstraction)
   - [Lifecycle Sources](#lifecycle-sources)
   - [Control/Captain Channel (#667)](#controlcaptain-channel-667)
+  - [Agent Session Introspection (#669)](#agent-session-introspection-669)
   - [Crew Spawn (Interactive Sub-Sessions)](#crew-spawn-interactive-sub-sessions)
   - [Answering a Crew's Open Prompt (#592)](#answering-a-crews-open-prompt-592)
   - [Effort Dial (Tokenomics)](#effort-dial-tokenomics)
@@ -62,6 +63,8 @@ guided first run — come back here when you need the details.
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
+| `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
+| `squadrant whoami [--json]` | Show the agent session calling the command (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
 | `squadrant shutdown [project]` | Graceful shutdown |
 | `squadrant effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
 | `squadrant retro` | Generate a retro (weekly/sprint summary) from daily logs and git (zero tokens) |
@@ -188,6 +191,39 @@ notifications cannot be delivered to it. squadrant then:
 If a captain is not deliverable, the daemon raises a single actionable
 `CAPTAIN NOT DELIVERABLE` alert (notifier + Telegram + dashboard) and keeps the
 notifications queued. Relaunch with `squadrant launch <project>` to clear it.
+
+### Agent Session Introspection (#669)
+
+Two read-only commands answer *"what agent sessions are live, and which one am I?"* without hand-rolled `ps`/`env` incantations. Both are **file reads only** — they never boot, touch, or depend on the daemon, so they work with it down, and they are excluded from the `ensureDaemon` gate exactly like the read-only `crew` subcommands.
+
+**`squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]`** — a union across the agents that can enumerate their own sessions, one optional `listSessions()` method on the `AgentDriver` seam:
+
+| Agent | Source | Status |
+|---|---|---|
+| `claude` | `~/.claude/sessions/<pid>.json` | live — `idle`/`busy`/`shell`/`waiting`, reconciled with `kill(pid,0)` → `stale` when dead; missing status → `unknown` |
+| `opencode` | `state/<project>/captain.json` (captain record) | captain only — `recorded` (the record carries no status; opencode crew sessions have no persisted registry) |
+| `codex` / `gemini` | — | unsupported |
+
+Rows are `{ agent, id, pid, cwd, status, address }`. `address` is the native control address: a claude UDS socket path, or `http://127.0.0.1:<port>` for opencode. `--json` is the stable contract; the table is for humans. Requesting `--agent codex` explicitly exits non-zero rather than printing an empty list.
+
+**`squadrant whoami [--json]`** — resolves the *calling* session from positive signals only (never `pgrep`, which silently omits the invoking process):
+
+- `role` — `SQUADRANT_CREW_TASK_ID` ⇒ `crew`, else `SQUADRANT_ROLE` (e.g. `captain`), else `unknown`.
+- `project` — the crew's `SQUADRANT_CREW_PROJECT`, else the longest registered project path that is a prefix of the cwd.
+- `agent` / `sessionId` / `address`:
+  - **claude** — self-identifies from `$CLAUDE_CODE_MESSAGING_SOCKET`, confirmed against the registry for the session id.
+  - **opencode captain** — the captain record's `sessionId` + `port`.
+  - **crew** — the task record's `sessionId` and socket/port.
+
+```json
+{ "project": "squadrant", "role": "captain", "agent": "opencode",
+  "sessionId": "ses_f4d5…", "address": "http://127.0.0.1:49526",
+  "source": "captain-record" }
+```
+
+An opencode captain whose record exists but whose session id is not resolved yet (cold start) returns `sessionId: null` with a `note`, exit 0. When nothing identifies the caller, `source` is `"none"` and the command exits 1 with a clear message — never a stack trace.
+
+Design: [`#669`](https://github.com/tu11aa/squadrant/issues/669).
 
 ### Crew Spawn (Interactive Sub-Sessions)
 
