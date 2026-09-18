@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newestSessionInDirectory, listSessions, resolveAndPersistOpencodeCaptain } from "../opencode-session.js";
+import {
+  newestSessionInDirectory, listSessions, resolveAndPersistOpencodeCaptain,
+  parseLiveOpencodeServers, discoverLiveOpencodeServer,
+} from "../opencode-session.js";
 import { readCaptainAddress } from "../captain-record.js";
 
 const rows = [
@@ -91,5 +94,74 @@ describe("resolveAndPersistOpencodeCaptain (#789)", () => {
     });
     expect(id).toBeNull();
     expect(readCaptainAddress(stateRoot, "proj")).toBeNull();
+  });
+
+  // #797 issue 4: a RESUME reuses the prior record's session id, so there is
+  // nothing to resolve — and the #789 created-after gate must NOT reject it (a
+  // resumed session necessarily predates `launchedAt`, which is why a stale
+  // port previously survived every relaunch).
+  it("persists the caller's known session id immediately on resume — no created-after gate", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "sq-797-"));
+    const id = await resolveAndPersistOpencodeCaptain({
+      stateRoot, project: "proj", port: 61099, directory: "/tmp/proj", launchedAt,
+      sessionId: "ses_resumed",
+      // Would return the stale session if the poll ran — proving the known id
+      // path short-circuits before resolution.
+      timeoutMs: 0, sleep: async () => {}, fetchImpl: fetchRows([
+        { id: "ses_stale", directory: "/tmp/proj", time: { created: launchedMs - 3_600_000, updated: launchedMs + 99_999 } },
+      ]),
+    });
+    expect(id).toBe("ses_resumed");
+    expect(readCaptainAddress(stateRoot, "proj")).toMatchObject({
+      agent: "opencode", port: 61099, sessionId: "ses_resumed", directory: "/tmp/proj", launchedAt,
+    });
+  });
+});
+
+// #797 issue 1: when the recorded port is dead, the self-heal must find the
+// captain's live server — matching by its own session id first, then by the
+// project directory — instead of dialing the dead port forever.
+describe("parseLiveOpencodeServers / discoverLiveOpencodeServer (#797)", () => {
+  const PS = [
+    "  101 opencode --port 49526",
+    "  202 opencode --session ses_cap --port 61099",
+    "  303 opencode --port=63122",
+    "  404 node /usr/local/bin/opencode --port 64000",
+    "  505 vim --port 12345",
+    "  606 opencode",
+    "  707 opencode run \"not a server\"",
+  ].join("\n");
+
+  it("keeps only opencode server lines that carry --port, with or without --session", () => {
+    expect(parseLiveOpencodeServers(PS)).toEqual([
+      { pid: 101, port: 49526 },
+      { pid: 202, port: 61099, sessionId: "ses_cap" },
+      { pid: 303, port: 63122 },
+    ]);
+  });
+
+  it("matches by the record's session id first, regardless of directory", () => {
+    const live = discoverLiveOpencodeServer({
+      directory: "/tmp/nope",
+      sessionId: "ses_cap",
+      psOutput: () => PS,
+      cwdOf: () => null,
+    });
+    expect(live).toEqual({ pid: 202, port: 61099, sessionId: "ses_cap" });
+  });
+
+  it("falls back to matching the process cwd against the record directory", () => {
+    const live = discoverLiveOpencodeServer({
+      directory: "/tmp/proj",
+      psOutput: () => PS,
+      cwdOf: (pid) => (pid === 101 ? "/tmp/proj" : "/tmp/other"),
+    });
+    expect(live).toEqual({ pid: 101, port: 49526 });
+  });
+
+  it("returns null when nothing matches", () => {
+    expect(discoverLiveOpencodeServer({
+      directory: "/tmp/proj", psOutput: () => PS, cwdOf: () => "/tmp/other",
+    })).toBeNull();
   });
 });
