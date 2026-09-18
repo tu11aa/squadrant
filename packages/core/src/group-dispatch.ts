@@ -4,10 +4,13 @@
 // CLI-edge concerns (shelling out to `squadrant launch`) are injected via bootCaptain.
 
 import { randomUUID } from "node:crypto";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, resolveHome, DAEMON_SOCK_PATH, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, DAEMON_SOCK_PATH, CONFIG_DIR, type SquadrantConfig } from "@squadrant/shared";
 import { sendRequest } from "./protocol.js";
+import { readCaptainAddress } from "./captain-record.js";
+import { captainSocketPath } from "./captain-channel.js";
 import type { TaskRecord, Provider, Mode } from "@squadrant/shared";
 
 // #288: cold captain boot takes 45-90s; 120s gives the full chain comfortable headroom.
@@ -24,10 +27,84 @@ export function resolveCurrentProject(config: SquadrantConfig): string | null {
   return null;
 }
 
+/** Probe a project's captain control channel directly (#799). Injectable so
+ *  callers/tests can substitute a fake; defaults to the real local probe. */
+export type CaptainChannelProbe = (project: string) => Promise<boolean>;
+
+/** #799: the surface-derived captain row lags — an opencode captain whose
+ *  workspace was closed/never seen reads `stopped` even though its HTTP
+ *  control channel is up and delivering. Probe the recorded address directly:
+ *  a live opencode port, or a claude peer socket that accepts a connection. */
+export async function probeCaptainChannel(
+  project: string,
+  opts: {
+    stateRoot?: string;
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    /** Injected for tests; defaults to a real UDS connect. */
+    socketAccepts?: (socketPath: string) => Promise<boolean>;
+  } = {},
+): Promise<boolean> {
+  const stateRoot = opts.stateRoot ?? join(CONFIG_DIR, "state");
+  const addr = readCaptainAddress(stateRoot, project);
+  if (!addr) return false;
+  if (addr.agent === "opencode") {
+    if (addr.port == null) return false;
+    return httpReachable(addr.port, opts.fetchImpl ?? fetch, opts.timeoutMs ?? 5000);
+  }
+  // claude (and any other socket-addressable agent): the peer socket answers.
+  try {
+    return await (opts.socketAccepts ?? socketAccepts)(captainSocketPath(project));
+  } catch {
+    return false;
+  }
+}
+
+/** GET either opencode session route; an OK response means the port is live.
+ *  Mirrors opencode-session.ts's legacy-then-/api fallback (never throws). */
+async function httpReachable(
+  port: number,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+): Promise<boolean> {
+  for (const path of ["/session", "/api/session"]) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(`http://127.0.0.1:${port}${path}`, { signal: ac.signal });
+      if (res.ok) return true;
+    } catch {
+      // transport failure — try the next route
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  return false;
+}
+
+/** True when a UDS at `socketPath` accepts a connection. A stale socket file
+ *  with no listener errors (ECONNREFUSED) → false. */
+function socketAccepts(socketPath: string, timeoutMs = 2000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const sock = createConnection(socketPath);
+    const done = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      sock.destroy();
+      resolve(v);
+    };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
 /** Check via the daemon health endpoint whether a project's captain is up. */
 export async function isCaptainAlive(
   project: string,
   sockPath: string = DAEMON_SOCK_PATH,
+  channelAlive: CaptainChannelProbe = probeCaptainChannel,
 ): Promise<boolean> {
   try {
     const health = (await sendRequest(sockPath, { kind: "health", project }, 5000)) as Array<{
@@ -36,8 +113,17 @@ export async function isCaptainAlive(
     const captain = health?.find((h) => h.kind === "captain" && h.project === project);
     // Captain rows only ever report "alive" | "stopped" | "unknown" (see
     // liveness.ts projectHealth) — "stopped" means the workspace was closed
-    // (down), so it must NOT count as alive.
-    return captain?.state === "alive";
+    // (down), so it must NOT count as alive on its own.
+    if (captain?.state === "alive") return true;
+  } catch {
+    // Daemon unreachable — fall through to the channel probe rather than
+    // declaring the captain down.
+  }
+  // #799: a reachable control channel is ground truth that the captain is up,
+  // even when the surface-derived row is stale. A genuinely down captain has no
+  // live channel, so it still reports not-alive here.
+  try {
+    return await channelAlive(project);
   } catch {
     return false;
   }
@@ -50,10 +136,11 @@ export async function waitForWarmup(
   sockPath: string = DAEMON_SOCK_PATH,
   timeoutMs = GROUP_DISPATCH_WARMUP_TIMEOUT_MS,
   pollMs = GROUP_DISPATCH_WARMUP_POLL_MS,
+  channelAlive?: CaptainChannelProbe,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isCaptainAlive(project, sockPath)) return true;
+    if (await isCaptainAlive(project, sockPath, channelAlive)) return true;
     await new Promise((r) => setTimeout(r, pollMs));
   }
   return false;
@@ -70,6 +157,9 @@ export interface GroupDispatchOpts {
   warmupPollMs?: number;
   /** CLI-edge: shells out to launch the target captain. Injected by the command handler. */
   bootCaptain?: (project: string) => Promise<void>;
+  /** #799: overrides the captain control-channel probe (defaults to the local
+   *  probe). Tests inject a fake; production uses the real address probe. */
+  channelAlive?: CaptainChannelProbe;
 }
 
 /**
@@ -104,7 +194,9 @@ export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRe
 
   // Ensure target captain is up. Same-group boots via the injected callback;
   // cross-group does not auto-boot — fail fast with a clear next step instead.
-  const alive = await isCaptainAlive(opts.toProject, sockPath);
+  // #799: "up" is channel-aware — a reachable control channel counts even when
+  // the surface-derived health row is stale.
+  const alive = await isCaptainAlive(opts.toProject, sockPath, opts.channelAlive);
   if (!alive) {
     if (!sameGroup) {
       throw new Error(
@@ -121,6 +213,7 @@ export async function dispatchToSibling(opts: GroupDispatchOpts): Promise<TaskRe
       sockPath,
       opts.warmupTimeoutMs,
       opts.warmupPollMs,
+      opts.channelAlive,
     );
     if (!warmed) {
       throw new Error(
