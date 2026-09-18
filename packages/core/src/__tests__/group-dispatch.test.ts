@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const sendRequestMock = vi.hoisted(() => vi.fn());
 
@@ -11,9 +14,11 @@ vi.mock("@squadrant/shared", () => ({
   loadConfig,
   resolveHome: (p: string) => p,
   DAEMON_SOCK_PATH: "/tmp/mock.sock",
+  CONFIG_DIR: "/tmp/squadrant",
 }));
 
-import { dispatchToSibling, isCaptainAlive } from "../group-dispatch.js";
+import { dispatchToSibling, isCaptainAlive, probeCaptainChannel } from "../group-dispatch.js";
+import { writeCaptainAddress } from "../captain-record.js";
 
 const makeConfig = (overrides: Record<string, any> = {}) => {
   const projects: Record<string, any> = {
@@ -80,6 +85,26 @@ describe("dispatchToSibling", () => {
       fromProject: "projA",
       toProject: "projC",
       task: "do something",
+    });
+
+    expect((result as any).originProject).toBe("projA");
+    expect((result as any).project).toBe("projC");
+  });
+
+  it("dispatches to a cross-group project when the captain row is stale but the channel is reachable (#799)", async () => {
+    sendRequestMock.mockImplementation((_sock: string, msg: any) => {
+      if (msg?.kind === "health") {
+        return [{ kind: "captain", project: "projC", state: "stopped", lastSeenMs: Date.now() }];
+      }
+      if (msg?.kind === "dispatch") return msg.record;
+      return undefined;
+    });
+
+    const result = await dispatchToSibling({
+      fromProject: "projA",
+      toProject: "projC",
+      task: "transfer handoff",
+      channelAlive: async () => true,
     });
 
     expect((result as any).originProject).toBe("projA");
@@ -239,5 +264,60 @@ describe("isCaptainAlive", () => {
   it("returns false when there is no captain row at all", async () => {
     sendRequestMock.mockResolvedValue([]);
     expect(await isCaptainAlive("projA")).toBe(false);
+  });
+
+  // ── #799: channel-aware fallback when the row is stale ────────────────────
+  it("returns true when the row is stale 'stopped' but the control channel is reachable (#799)", async () => {
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projA", state: "stopped", lastSeenMs: Date.now() },
+    ]);
+    expect(await isCaptainAlive("projA", "/tmp/mock.sock", async () => true)).toBe(true);
+  });
+
+  it("returns false for a genuinely down captain with no reachable channel (#799)", async () => {
+    sendRequestMock.mockResolvedValue([
+      { kind: "captain", project: "projA", state: "stopped", lastSeenMs: Date.now() },
+    ]);
+    expect(await isCaptainAlive("projA", "/tmp/mock.sock", async () => false)).toBe(false);
+  });
+});
+
+// ── probeCaptainChannel (#799) ───────────────────────────────────────────────
+describe("probeCaptainChannel", () => {
+  let dir: string;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    dir = mkdtempSync(join(tmpdir(), "sq-probe-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("reports alive for a recorded opencode captain whose HTTP port answers", async () => {
+    writeCaptainAddress(join(dir, "state"), "proj", {
+      agent: "opencode", port: 1234, directory: "/p", launchedAt: "x",
+    });
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => [] }) as unknown as Response);
+    expect(await probeCaptainChannel("proj", { stateRoot: join(dir, "state"), fetchImpl })).toBe(true);
+  });
+
+  it("reports not-alive when the recorded opencode port does not answer", async () => {
+    writeCaptainAddress(join(dir, "state"), "proj", {
+      agent: "opencode", port: 1234, directory: "/p", launchedAt: "x",
+    });
+    const fetchImpl = vi.fn(async () => { throw new Error("ECONNREFUSED"); });
+    expect(await probeCaptainChannel("proj", { stateRoot: join(dir, "state"), fetchImpl })).toBe(false);
+  });
+
+  it("reports not-alive when there is no captain record (closed workspace / down)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true }) as unknown as Response);
+    expect(await probeCaptainChannel("proj", { stateRoot: join(dir, "state"), fetchImpl })).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports alive for a claude captain whose peer socket accepts", async () => {
+    writeCaptainAddress(join(dir, "state"), "proj", {
+      agent: "claude", directory: "/p", launchedAt: "x",
+    });
+    const socketAccepts = vi.fn(async () => true);
+    expect(await probeCaptainChannel("proj", { stateRoot: join(dir, "state"), socketAccepts })).toBe(true);
   });
 });
