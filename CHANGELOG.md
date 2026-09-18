@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-18
+
+### Added
+
+- **Headline: squadrant roles can now run on opencode — captain, command, crew, side, and exploration (#786, #791, #793).** This cycle makes opencode a first-class role agent end to end. An opencode captain is now delivered to over opencode's **native HTTP control API** (`POST /session/{id}/prompt_async`) instead of pane scraping, launched with a bound `--port` and resumed by explicit `--session <id>` (`-c` is never used), and persisted as a captain-address record at `<stateRoot>/<project>/captain.json`; a captain that cannot be reached produces **one actionable `no-channel` alert within seconds** rather than an unbounded `no-box` deferral (#786). Squadrant's shipped skills are projected verbatim into opencode's global skills dir (`~/.config/opencode/skills/<name>/SKILL.md`), so `skill captain-ops` resolves exactly as it does under claude's `--plugin-dir` — synced on install/update and daemon boot, and foreign-safe via a `.squadrant-managed` marker (#791, #793).
+- **`squadrant sessions` + `squadrant whoami` — read-only, daemon-independent agent session introspection (#669, #794).** `whoami` resolves the calling session from positive signals only (role/project env, `CLAUDE_CODE_MESSAGING_SOCKET`, opencode `captain.json`) and prints project/role/agent/session/address; `sessions` lists registered agent sessions with `--agent`/`--project`/`--live-only` filters. Both degrade to a clear `source: "none"` (exit 1) instead of throwing.
+- **prompt-master skill suite + load-bearing crew task briefs (#779).** Vendors the `prompt-master` skill and folds it into the captain role templates, with a "load-bearing crew brief" grammar (objective / context / target state / scope / constraints / acceptance criteria) so captains hand crews structured, verifiable first turns.
+- **Router backend — the opencode-go transport epic (#772, #773, #774, #775, #776).** An experimental, **opt-in, off-by-default** backend that lets the Claude Code harness route to an Anthropic-Messages upstream (opencode-go) through a daemon-internal loopback shim (`POST /v1/messages`, byte-faithful SSE, `/healthz`, per-project minted bearer auth, usage/cost tee). U1–U4 deliver the transport (#773), the `defaults.router` config schema and per-role/per-rule `backend` selection (#774), driver env-injection plumbing (#775), and native multi-CLI coexistence pins (#776). Every role resolves to `native` unless a `backend` is explicitly set — nothing changes for existing installs unless opted in.
+
+### Changed
+
+- **`defaults.roles.side.thinking` is now honored on side spawn (#770).** Side sessions previously ignored the configured thinking/`--effort` value; the spawn now passes it through.
+- **cmux 0.64.22 adoption (#764, #771).** Post-upgrade compatibility updates: verification checklist, `compat-manifest` `lastVerified` bump, and upgrade-gated capability adoption.
+
+### Fixed
+
+- **opencode captain cold start: the startup prompt is now delivered and a stale session is no longer persisted (#789, #790).** Positive readiness (a splash-based classifier) plus launch-bounded session resolution replace the previous always-`loading` read and stale-session write.
+- **opencode captain-address record is durable and self-correcting (#797, #802).** A stale port no longer produces a permanent `no-channel`: the record re-resolves a dead port, `--fresh` is honored, and the record is refreshed.
+- **Cross-project dispatch gate is channel-aware (#799, #801).** Dispatch no longer reads a stale `stopped` captain row and blocks a healthy captain channel.
+- **Crew spawn no longer hangs on an unconfirmed first turn (#798, #800).** The first-turn confirmation await is bounded, so a delivery that never confirms can no longer wedge `crew spawn`.
+- **Task store drops non-`TaskRecord` sidecars (#792, #795, #796).** The daemon sweep no longer aborts every tick when a `captain.json` is present in the records dir, and `crew tasks` no longer throws when there are no crews.
+- **opencode connection-liveness frames are recognised, and a locked cmux store file is retried (#803, #804, #805).** `server.connected`/`server.heartbeat` frames no longer surface as I5 noise, and the cmux store re-scans a locked file instead of silently skipping an update.
+
 ## [0.19.5] - 2026-09-05
 
 ### Fixed
