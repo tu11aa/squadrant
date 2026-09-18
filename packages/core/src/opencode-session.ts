@@ -5,6 +5,7 @@
 // Why directory-exact: opencode scopes GET /session by project (the repo's root commit
 // hash), which every worktree shares, so "newest session" can be a crew worktree's.
 // Verified live — docs/specs/2026-09-17-…-design.md §2 tests 9/10.
+import { execFileSync } from "node:child_process";
 import { sameDirectory, writeCaptainAddress } from "./captain-record.js";
 
 export interface OpencodeSessionRow {
@@ -34,6 +35,87 @@ export async function listSessions(
     }
   }
   return [];
+}
+
+/** One live opencode server found in the process table (#797). */
+export interface LiveOpencodeServer {
+  pid: number;
+  port: number;
+  /** `--session <id>` when the server was resumed into an existing session. */
+  sessionId?: string;
+}
+
+/**
+ * Parse `ps -axo pid=,command=` output into the live opencode HTTP servers it
+ * describes. Pure (no I/O) so the matching rules are unit-testable without a
+ * process table.
+ *
+ * A captain/crew boots as `opencode [--session <id>] --port <n>`; a line whose
+ * executable is not `opencode`, or that has no `--port`, is ignored (the bare
+ * TUI listens on an ephemeral unix socket, not TCP).
+ */
+export function parseLiveOpencodeServers(psOutput: string): LiveOpencodeServer[] {
+  const out: LiveOpencodeServer[] = [];
+  for (const line of psOutput.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const command = m[2].trim();
+    const exe = command.split(/\s+/)[0] ?? "";
+    if (!/(^|\/)opencode$/.test(exe)) continue;
+    const portRaw = command.match(/--port[= ](\d+)/)?.[1];
+    if (!portRaw) continue;
+    const sessionId = command.match(/--session[= ](\S+)/)?.[1];
+    out.push({ pid, port: Number(portRaw), ...(sessionId ? { sessionId } : {}) });
+  }
+  return out;
+}
+
+function defaultPsOutput(): string {
+  try {
+    return execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf-8", timeout: 2000 });
+  } catch {
+    return "";
+  }
+}
+
+function defaultCwdOf(pid: number): string | null {
+  try {
+    const out = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], { encoding: "utf-8", timeout: 2000 });
+    const line = out.split("\n").find((l) => l.startsWith("n"));
+    return line ? line.slice(1) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Discover the live opencode server for a captain (#797). Best-effort — null
+ * when the process table is unreadable or nothing matches.
+ *
+ * Match order:
+ *  1. a server resumed into exactly `sessionId` (the record's own session)
+ *  2. a server whose process cwd is `directory`
+ *
+ * Unlike a self-identifying `pgrep`, this only ever looks for an address the
+ * caller already knows belongs to the captain it is healing (its session id or
+ * its project directory) — it never guesses a role.
+ */
+export function discoverLiveOpencodeServer(opts: {
+  directory: string;
+  sessionId?: string;
+  /** Injectable process-table reader (tests). Default: `ps`. */
+  psOutput?: () => string;
+  /** Injectable cwd lookup (tests). Default: `lsof`. */
+  cwdOf?: (pid: number) => string | null;
+}): LiveOpencodeServer | null {
+  const servers = parseLiveOpencodeServers((opts.psOutput ?? defaultPsOutput)());
+  if (opts.sessionId) {
+    const bySession = servers.find((s) => s.sessionId === opts.sessionId);
+    if (bySession) return bySession;
+  }
+  const cwdOf = opts.cwdOf ?? defaultCwdOf;
+  return servers.find((s) => sameDirectory(cwdOf(s.pid) ?? undefined, opts.directory)) ?? null;
 }
 
 /**
@@ -104,10 +186,25 @@ export async function resolveAndPersistOpencodeCaptain(opts: {
   port: number;
   directory: string;
   launchedAt: string;
+  /**
+   * #797: the session id when this launch RESUMED one (it came from the prior
+   * record), so there is nothing to resolve. Persisted immediately — the #789
+   * created-after gate must NOT apply to a resume, because a resumed session
+   * necessarily predates `launchedAt`; gating it is why a stale port survived
+   * every relaunch. Absent ⇒ a cold start, resolved by poll (with the gate).
+   */
+  sessionId?: string;
   timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
   fetchImpl?: typeof fetch;
 }): Promise<string | null> {
+  if (opts.sessionId) {
+    writeCaptainAddress(opts.stateRoot, opts.project, {
+      agent: "opencode", port: opts.port, sessionId: opts.sessionId,
+      directory: opts.directory, launchedAt: opts.launchedAt,
+    });
+    return opts.sessionId;
+  }
   const sessionId = await pollNewestSessionInDirectory({
     port: opts.port, directory: opts.directory, createdAfterMs: Date.parse(opts.launchedAt),
     timeoutMs: opts.timeoutMs, sleep: opts.sleep, fetchImpl: opts.fetchImpl,

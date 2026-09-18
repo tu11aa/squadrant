@@ -9,7 +9,7 @@ import { stalePrefix } from "./down-alert.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
 import { readCaptainAddress, writeCaptainAddress } from "../captain-record.js";
-import { listSessions, newestSessionInDirectory } from "../opencode-session.js";
+import { listSessions, newestSessionInDirectory, discoverLiveOpencodeServer } from "../opencode-session.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
 import type { Store } from "../store.js";
@@ -427,10 +427,11 @@ export function createDelivery(
               // Addressable but the channel reports gone/unsupported / is off.
               if (agent === "opencode" && mode !== "off") {
                 // #786: the record's session id can go stale (captain relaunched).
-                // Re-resolve ONCE from the live server; if the address is unchanged
-                // there is nothing left to try — report it instead of scraping a
-                // pane whose box the claude-tuned detector can never see.
+                // Re-resolve the address, then retry ONCE against it. If nothing
+                // can be re-resolved, fall through to the pane rather than a
+                // permanent no-channel defer (#797).
                 const rec = readCaptainAddress(stateRoot, project);
+                let healed = false;
                 if (rec?.port) {
                   // #789: bound the re-resolve to sessions created at/after the
                   // captain's launch, same as the initial resolution — otherwise a
@@ -440,10 +441,39 @@ export function createDelivery(
                   );
                   if (fresh && fresh !== rec.sessionId) {
                     writeCaptainAddress(stateRoot, project, { ...rec, sessionId: fresh });
-                    return;   // retry on the next tick with the refreshed id
+                    healed = true;
                   }
                 }
-                throw new DeferDelivery(null, "no-channel");
+                // #797: the recorded PORT can be dead too (opencode restarted on
+                // a different port). Re-resolving only the session id dials the
+                // same dead port forever. Discover the live server for this
+                // captain's directory (or its own session id) and rewrite the
+                // address, then retry.
+                if (!healed && rec) {
+                  const live = discoverLiveOpencodeServer({ directory: rec.directory, sessionId: rec.sessionId });
+                  if (live && (live.port !== rec.port || (live.sessionId && live.sessionId !== rec.sessionId))) {
+                    writeCaptainAddress(stateRoot, project, {
+                      ...rec, port: live.port, sessionId: live.sessionId ?? rec.sessionId,
+                    });
+                    log(`captain-channel ${project}: re-resolved opencode address → port ${live.port}`);
+                    healed = true;
+                  }
+                }
+                if (healed) {
+                  // Retry with the refreshed address — the channel re-reads the
+                  // captain record, so this dials the new port/session.
+                  try {
+                    const retry = await deliverToCaptain(project, text, { channel: picked, mode, log });
+                    if (retry.handled) return;
+                  } catch (e) {
+                    log(`captain-channel ${project}: retry after re-resolve threw — ${(e as Error).message}`);
+                  }
+                  log(`captain-channel ${project}: re-resolved address still unreachable — falling back to pane`);
+                } else {
+                  // Nothing left to try over the channel — scrape the pane instead
+                  // of declaring the captain permanently undeliverable (#797).
+                  log(`captain-channel ${project}: no live opencode server — falling back to pane`);
+                }
               }
               // claude with a channel: fall through to the pane, unchanged.
             } else if (ctx.captainAgentFor && (agent === "claude" || agent === "opencode")) {
