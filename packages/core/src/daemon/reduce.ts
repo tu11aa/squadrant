@@ -496,7 +496,7 @@ export function createDaemon(deps: DaemonDeps) {
       // #457: Per-project overflow prune — keep only the most-recent K terminal
       // records. Bounds accumulation for short-lived sessions where many tasks
       // finish before the 7-day TTL expires.
-      const projects = new Set(store.listAll().map((r) => r.project));
+      const projects = new Set(store.listAll().map((r) => r.project).filter((p): p is string => Boolean(p))); // #795 belt-and-braces
       for (const project of projects) {
         const terminal = store.list(project)
           .filter((r) => TERMINAL_STATES.has(r.state))

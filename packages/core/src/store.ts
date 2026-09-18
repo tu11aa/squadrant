@@ -34,6 +34,22 @@ function safeSegment(kind: "project" | "id", s: unknown): string {
   return s;
 }
 
+/**
+ * #795/#792: `state/<project>/` is shared by task records and non-record
+ * sidecars (e.g. captain.json, captain-record.ts). `list()` must only return
+ * entries shaped like a TaskRecord, or a sidecar poisons every downstream
+ * consumer — the sweep's project Set (`undefined` project → store.list throws)
+ * and `crew tasks` (`undefined` id → `.slice` TypeError). Requiring non-empty
+ * `id` + `project` drops no legitimate record: `put()` funnels every write
+ * through safeSegment() for both, so a stored record always carries them.
+ */
+function isTaskRecord(r: unknown): r is TaskRecord {
+  if (typeof r !== "object" || r === null) return false;
+  const rec = r as { id?: unknown; project?: unknown };
+  return typeof rec.id === "string" && rec.id.length > 0
+    && typeof rec.project === "string" && rec.project.length > 0;
+}
+
 export function createStore(root: string): Store {
   const rootResolved = resolve(root);
 
@@ -103,10 +119,10 @@ export function createStore(root: string): Store {
       return readdirSync(d)
         .filter((n) => n.endsWith(".json"))
         .map((n) => {
-          try { return JSON.parse(readFileSync(join(d, n), "utf-8")) as TaskRecord; }
+          try { return JSON.parse(readFileSync(join(d, n), "utf-8")) as unknown; }
           catch { return undefined; }
         })
-        .filter((r): r is TaskRecord => r !== undefined);
+        .filter(isTaskRecord);
     },
     listAll() {
       if (!existsSync(root)) return [];

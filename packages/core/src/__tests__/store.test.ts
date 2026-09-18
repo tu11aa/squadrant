@@ -64,6 +64,49 @@ describe("store", () => {
     expect(s.listAll().map((r) => r.id).sort()).toEqual(["t1", "t2"]);
   });
 
+  // #795/#792: a non-TaskRecord JSON sidecar (the captain-address record,
+  // captain-record.ts) lives in the SAME project dir as task records. list()
+  // must exclude anything not shaped like a TaskRecord, or the daemon sweep
+  // (undefined project poisons its Set) and `crew tasks` (undefined id) both
+  // choke on it.
+  describe("non-record sidecar resilience (#795/#792)", () => {
+    const captainJson = JSON.stringify({
+      agent: "opencode", directory: "/tmp/x", launchedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    it("list() excludes a captain.json and still returns well-formed records unchanged", () => {
+      const s = createStore(dir);
+      s.put(rec("t1"));
+      writeFileSync(join(dir, "proj", "captain.json"), captainJson);
+      const listed = s.list("proj");
+      expect(listed.map((r) => r.id)).toEqual(["t1"]);
+      expect(listed[0].state).toBe("submitted");
+    });
+
+    it("list() excludes a JSON object that has an id but no project", () => {
+      const s = createStore(dir);
+      s.put(rec("t1"));
+      writeFileSync(join(dir, "proj", "id-only.json"), JSON.stringify({ id: "id-only", state: "working" }));
+      expect(s.list("proj").map((r) => r.id)).toEqual(["t1"]);
+    });
+
+    it("list() excludes a JSON object that has a project but no id", () => {
+      const s = createStore(dir);
+      s.put(rec("t1"));
+      writeFileSync(join(dir, "proj", "project-only.json"), JSON.stringify({ project: "proj", state: "working" }));
+      expect(s.list("proj").map((r) => r.id)).toEqual(["t1"]);
+    });
+
+    it("listAll() excludes sidecars across projects", () => {
+      const s = createStore(dir);
+      s.put({ ...rec("t1"), project: "p1" });
+      s.put({ ...rec("t2"), project: "p2" });
+      writeFileSync(join(dir, "p1", "captain.json"), captainJson);
+      writeFileSync(join(dir, "p2", "captain.json"), captainJson);
+      expect(s.listAll().map((r) => r.id).sort()).toEqual(["t1", "t2"]);
+    });
+  });
+
   // #595: store.put() was the one chokepoint with zero state-machine awareness —
   // every caller relied on its OWN pre-check against TERMINAL_STATES, so a
   // future/racing writer that skipped that check could silently clobber a
