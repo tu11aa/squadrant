@@ -274,15 +274,28 @@ async function pollFirstTurnConfirmedAt(
 }
 
 /** Resolves `true` the instant EITHER promise reports true (early-exit hint),
- *  `false` only once BOTH have settled false. A fast false from one side never
- *  short-circuits the result — the other side is always given its full run. */
-function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>): Promise<boolean> {
+ *  `false` once BOTH have settled false — or the overall `deadlineMs` elapses.
+ *  A fast false from one side never short-circuits the result — the other side
+ *  is always given its full run, but #798: a side that never settles at all (the
+ *  screen-scrape hanging against an idle claude tab) can no longer hold the
+ *  await open forever. On expiry the caller falls through to the non-delivery
+ *  warning instead of hanging. */
+function firstTrueOrBothFalse(a: Promise<boolean>, b: Promise<boolean>, deadlineMs: number): Promise<boolean> {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), deadlineMs);
     let settledFalseCount = 0;
     const onSettle = (ok: boolean) => {
-      if (ok) { resolve(true); return; }
+      if (done) return;
+      if (ok) { finish(true); return; }
       settledFalseCount++;
-      if (settledFalseCount === 2) resolve(false);
+      if (settledFalseCount === 2) finish(false);
     };
     a.then(onSettle, () => onSettle(false));
     b.then(onSettle, () => onSettle(false));
@@ -588,6 +601,7 @@ export async function runCrewSpawn(
       ? await firstTrueOrBothFalse(
           scrapeDelivered,
           pollFirstTurnConfirmedAt(deps.getTaskRecord, input.project, rec.id, scrapeDelivered, cancelHookPoll),
+          FIRST_TURN_HOOK_CONFIRM_MAX_MS,
         )
       : await scrapeDelivered;
     cancelHookPoll.stopped = true;

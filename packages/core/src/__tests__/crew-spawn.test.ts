@@ -509,6 +509,56 @@ describe("runCrewSpawn", () => {
       }
     });
 
+    // #798: a scrape that NEVER settles (claude tab idle at the `❯` prompt, no
+    // delivery) must not hold the first-turn await open forever. The overall
+    // deadline falls through to the non-delivery warning and returns.
+    it("does not hang when sendFirstTurn never settles — warns at the overall deadline (#798)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        // The scrape never resolves — the exact live hang from #798.
+        deps.sendFirstTurn = vi.fn().mockReturnValue(new Promise(() => {}));
+        // The hook never confirms either.
+        deps.getTaskRecord = vi.fn().mockResolvedValue({ id: "task-001" } as TaskRecord);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        await vi.advanceTimersByTimeAsync(181_000);
+        await promise; // must resolve (never hang)
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).toMatch(/first turn.*not.*delivered|not.*delivered.*first turn/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // #798: the overall deadline must not change the confirmed path — a scrape
+    // success still resolves immediately, with no warning.
+    it("still resolves on a confirmed first turn without waiting for the deadline (#798)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config = makeConfig();
+        const runtime = makeRuntime();
+        const agent = makeAgent("claude");
+        const deps = makeSpawnDeps(runtime, agent);
+        deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: true });
+        deps.getTaskRecord = vi.fn().mockResolvedValue({ id: "task-001" } as TaskRecord);
+
+        const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const promise = runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+        await promise; // resolves via microtasks, no timer advance
+        const stderrOutput = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(stderrOutput).not.toMatch(/not.*delivered/i);
+        stderrSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     // #472: when hooks are installed (writeSettingsLocal succeeds), the scrape must
     // NOT emit task.first-turn.confirmed — UserPromptSubmit hook is the sole source.
     it("does NOT emit task.first-turn.confirmed from scrape when hooks installed (#472)", async () => {
