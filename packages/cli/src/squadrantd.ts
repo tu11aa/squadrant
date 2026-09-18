@@ -23,7 +23,7 @@ export { discoverCaptainSurface } from "@squadrant/core";
 import type { AttachFrame } from "@squadrant/core";
 import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
-         ClaudePeerRegistrySource, createOpencodeFactAdapter } from "@squadrant/agents";
+         ClaudePeerRegistrySource, createOpencodeFactAdapter, syncShippedOpencodeSkills } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
@@ -447,6 +447,12 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     // owned hooks into ~/.claude/settings.json (idempotent, namespaced per D4).
     try { nativeHookSource.install(); }
     catch (e) { log(`native hook install failed: ${(e as Error).message}`); }
+
+    // #791: same self-heal guarantee for opencode's global skills dir — refresh
+    // the projected squadrant skills on boot so a version update is reflected
+    // before any opencode captain/crew session starts and scans for skills.
+    try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
+    catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
     const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
     const hookDeps: LifecycleSourceDeps = {
       resolve: (hint) => {

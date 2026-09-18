@@ -54,8 +54,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:568
   - packages/cli/src/commands/hooks.ts:45
   - packages/cli/src/squadrantd.ts:435
-  - packages/cli/src/squadrantd.ts:474
-  - packages/cli/src/squadrantd.ts:505
+  - packages/cli/src/squadrantd.ts:480
+  - packages/cli/src/squadrantd.ts:511
   - packages/core/src/daemon/reduce.ts:533
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
@@ -65,8 +65,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:553
   - packages/cli/src/commands/crew-control.ts:212
   - packages/cli/src/squadrantd.ts:438
-  - packages/cli/src/squadrantd.ts:477
-  - packages/cli/src/squadrantd.ts:508
+  - packages/cli/src/squadrantd.ts:483
+  - packages/cli/src/squadrantd.ts:514
   - packages/core/src/daemon/interactive-probe.ts:202
 - `task.review`
   - packages/cli/src/commands/crew-control.ts:216
@@ -91,8 +91,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:521
   - packages/agents/src/opencode/sse-bridge.ts:214
   - packages/cli/src/squadrantd.ts:433
-  - packages/cli/src/squadrantd.ts:472
-  - packages/cli/src/squadrantd.ts:503
+  - packages/cli/src/squadrantd.ts:478
+  - packages/cli/src/squadrantd.ts:509
   - packages/core/src/daemon/reduce.ts:632
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
@@ -139,8 +139,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:563
   - packages/cli/src/squadrantd.ts:428
-  - packages/cli/src/squadrantd.ts:467
-  - packages/cli/src/squadrantd.ts:498
+  - packages/cli/src/squadrantd.ts:473
+  - packages/cli/src/squadrantd.ts:504
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
   - packages/cli/src/commands/crew-control.ts:130
