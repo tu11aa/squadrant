@@ -60,6 +60,13 @@ export function createOpencodeFactAdapter(deps: OpencodeFactAdapterDeps): FactAd
 
       if (type === "permission.replied") return [{ kind: "activity" }];
 
+      // opencode ≥1.18 connection-liveness frames: `server.connected` (SSE
+      // connect) and `server.heartbeat` (periodic keepalive). Neither is a task
+      // event — map to the liveness-only fact so they are not I5 noise (#803).
+      if (type === "server.connected" || type === "server.heartbeat") {
+        return [{ kind: "activity" }];
+      }
+
       return [{ kind: "unknown", name: type }];
     },
   };
