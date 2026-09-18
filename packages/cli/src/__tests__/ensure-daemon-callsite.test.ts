@@ -61,3 +61,11 @@ it("index.ts skips ensureDaemon for read-only crew subcommands via isReadOnlyCre
   expect(idx).toMatch(/!isReadOnlyCrewCommand\(process\.argv\)/);
   expect(idx.indexOf("isReadOnlyCrewCommand")).toBeLessThan(idx.indexOf("ensureDaemon(undefined"));
 });
+
+// #669: `sessions` / `whoami` are pure file reads and must work with the
+// daemon down — so they too must be excluded from the ensureDaemon gate.
+it("index.ts skips ensureDaemon for read-only sessions/whoami via isReadOnlyTopLevelCommand", () => {
+  const idx = read("index.ts");
+  expect(idx).toMatch(/!isReadOnlyTopLevelCommand\(process\.argv\)/);
+  expect(idx.indexOf("isReadOnlyTopLevelCommand")).toBeLessThan(idx.indexOf("ensureDaemon(undefined"));
+});

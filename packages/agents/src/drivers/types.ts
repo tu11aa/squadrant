@@ -74,6 +74,26 @@ export interface AgentResult {
   filesChanged?: string[];
 }
 
+/**
+ * #669: one live agent session, normalized across agents.
+ *
+ * The shape is the one squadrant already models in its task/liveness records —
+ * not a speculative abstraction. `address` is the agent's native control
+ * address (claude: UDS socket path; opencode: loopback HTTP origin).
+ */
+export interface AgentSession {
+  /** Stable session id (claude `sessionId` / opencode `ses_…`). */
+  id: string;
+  pid?: number;
+  cwd?: string;
+  /** Agent-reported, reconciled: idle|busy|shell|waiting|unknown|stale|recorded. */
+  status: string;
+  /** claude: UDS socket path; opencode: http://127.0.0.1:<port>. */
+  address?: string;
+  /** Squadrant project, when the source can name one (opencode captain records). */
+  project?: string;
+}
+
 export interface AgentDriver {
   name: string;
   templateSuffix: string;
@@ -82,6 +102,13 @@ export interface AgentDriver {
   buildCommand(opts: SpawnOptions): string;
   parseOutput(raw: string): AgentResult;
   stop(pid: number): Promise<void>;
+
+  /**
+   * #669: read-only introspection of this agent's live sessions. Optional —
+   * an agent that cannot enumerate its sessions omits it and is reported as
+   * "unsupported". Pure read; never delivers or mutates state.
+   */
+  listSessions?(): Promise<AgentSession[]>;
 }
 
 export interface RoleRequirements {
