@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createStore } from "@squadrant/core";
 import { tailLines, formatTaskLine, filterTasks, formatCompactTasks } from "../crew-output.js";
 import type { TaskRecord, TaskState } from "@squadrant/shared";
 
@@ -206,5 +210,38 @@ describe("formatCompactTasks", () => {
   it("prints clear message for empty list even with JSON", () => {
     const out = formatCompactTasks([], { compact: false });
     expect(out).toContain("no tasks");
+  });
+});
+
+// ─── #792: record-less sidecar must not reach the formatters ─────
+
+describe("record-less sidecar resilience (#792)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-crewout-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("formatTaskLine / filterTasks do not throw when captain.json is in the state dir", () => {
+    const store = createStore(dir);
+    const record: TaskRecord = {
+      id: "abc12345-def6-7890-abcd-ef1234567890", name: "my-crew", project: "testproj",
+      provider: "claude", mode: "interactive", state: "working" as TaskState,
+      task: "Implement the feature", createdAt: 1000, lastHeartbeat: 2000,
+      lastEvent: "task.started", heartbeatBudgetMs: 300000,
+      attempts: [{ attemptId: "att1", startedAt: 1000, lastHeartbeatAt: 1500 }],
+    };
+    store.put(record);
+    writeFileSync(
+      join(dir, "testproj", "captain.json"),
+      JSON.stringify({ agent: "opencode", directory: "/tmp/x", launchedAt: "2026-01-01T00:00:00.000Z" }),
+    );
+
+    // The store must filter the sidecar so `crew tasks` never sees an id-less record.
+    const records = store.list("testproj");
+    expect(records.map((r) => r.id)).toEqual([record.id]);
+
+    const filtered = filterTasks(records, { id: "abc12345" });
+    expect(filtered).toHaveLength(1);
+    expect(() => filtered.map((r) => formatTaskLine(r))).not.toThrow();
+    expect(() => formatCompactTasks(records, {})).not.toThrow();
   });
 });
