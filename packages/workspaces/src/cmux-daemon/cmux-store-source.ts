@@ -39,6 +39,10 @@ export interface CmuxStoreSourceOpts {
   stateDir?: string;
   /** Debounce delay between a watch event and the next scan (ms). Default 50. */
   debounceMs?: number;
+  /** Delay before re-scanning a locked store file (ms). Default 50. */
+  lockRetryMs?: number;
+  /** Max re-scan attempts for a locked store file before giving up. Default 3. */
+  maxLockRetries?: number;
   /** Returns true if the given pid is alive. Default: process.kill(pid, 0). */
   isPidAlive?: (pid: number) => boolean;
   /**
@@ -86,6 +90,8 @@ export class CmuxStoreSource implements LifecycleSource {
 
   private readonly stateDir: string;
   private readonly debounceMs: number;
+  private readonly lockRetryMs: number;
+  private readonly maxLockRetries: number;
   private readonly isPidAlive: (pid: number) => boolean;
   private readonly listFiles: (dir: string) => string[];
   private readonly readFile: (path: string) => string | undefined;
@@ -98,6 +104,10 @@ export class CmuxStoreSource implements LifecycleSource {
   private deps?: LifecycleSourceDeps;
   private stopWatcher?: () => void;
   private debounceTimer?: ReturnType<typeof setTimeout>;
+  /** filename → pending lock-retry timer (one per locked file). */
+  private lockRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** filename → re-scan attempts used in the current lock episode. */
+  private lockRetryCounts = new Map<string, number>();
   /** taskId → last reported snapshot (for snapshot() liveness floor). */
   private cache = new Map<string, LifecycleSnapshot>();
   private active = false;
@@ -109,6 +119,8 @@ export class CmuxStoreSource implements LifecycleSource {
       process.env.CMUX_AGENT_HOOK_STATE_DIR ??
       join(homedir(), ".cmuxterm");
     this.debounceMs = opts.debounceMs ?? 50;
+    this.lockRetryMs = opts.lockRetryMs ?? 50;
+    this.maxLockRetries = opts.maxLockRetries ?? 3;
     this.isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
     this.listFiles = opts.listFiles ?? defaultListFiles;
     this.readFile = opts.readFile ?? defaultReadFile;
@@ -139,6 +151,11 @@ export class CmuxStoreSource implements LifecycleSource {
       this.cancelTimer(this.debounceTimer);
       this.debounceTimer = undefined;
     }
+    for (const timer of this.lockRetryTimers.values()) {
+      this.cancelTimer(timer);
+    }
+    this.lockRetryTimers.clear();
+    this.lockRetryCounts.clear();
     this.stopWatcher?.();
     this.stopWatcher = undefined;
     this.deps = undefined;
@@ -180,11 +197,14 @@ export class CmuxStoreSource implements LifecycleSource {
     const filePath = join(this.stateDir, filename);
     const lockPath = `${filePath}.lock`;
 
-    // Skip files that cmux is currently writing.
+    // cmux's lock is transient. Rather than dropping the scan until some
+    // unrelated event re-triggers one, schedule a bounded short re-scan so the
+    // update lands once the lock clears (#804).
     if (this.fileExists(lockPath)) {
-      this.log(`cmux-store: skipping ${filename} (locked)`);
+      this.scheduleLockRetry(filename);
       return;
     }
+    this.clearLockRetry(filename);
 
     const raw = this.readFile(filePath);
     if (!raw) return;
@@ -200,6 +220,32 @@ export class CmuxStoreSource implements LifecycleSource {
     for (const session of Object.values(parsed.sessions ?? {})) {
       this.processSession(session, deps);
     }
+  }
+
+  /** Bounded, one-timer-per-file retry for a file cmux currently has locked. */
+  private scheduleLockRetry(filename: string): void {
+    if (this.lockRetryTimers.has(filename)) return;
+    const attempts = this.lockRetryCounts.get(filename) ?? 0;
+    if (attempts >= this.maxLockRetries) return;
+    // Log once per lock episode — a retry that finds the lock still held is
+    // expected, not a new warning.
+    if (attempts === 0) this.log(`cmux-store: skipping ${filename} (locked)`);
+    this.lockRetryCounts.set(filename, attempts + 1);
+    const timer = this.scheduleTimer(() => {
+      this.lockRetryTimers.delete(filename);
+      this.scanFile(filename);
+    }, this.lockRetryMs);
+    this.lockRetryTimers.set(filename, timer);
+  }
+
+  /** A successful (unlocked) scan ends the lock episode. */
+  private clearLockRetry(filename: string): void {
+    const timer = this.lockRetryTimers.get(filename);
+    if (timer !== undefined) {
+      this.cancelTimer(timer);
+      this.lockRetryTimers.delete(filename);
+    }
+    this.lockRetryCounts.delete(filename);
   }
 
   private processSession(session: StoreSession, deps: LifecycleSourceDeps): void {

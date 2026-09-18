@@ -279,6 +279,89 @@ describe("CmuxStoreSource — lock file", () => {
   });
 });
 
+describe("CmuxStoreSource — locked file re-scan (#804)", () => {
+  it("re-scans a locked file once the lock clears so the update is not lost", () => {
+    vi.useFakeTimers();
+    const { deps, reports } = makeDeps();
+    let locked = true;
+    let content = makeStoreFile({ [CREW_SESSION_ID]: makeSession({ agentLifecycle: "idle" }) });
+    const src = new CmuxStoreSource({
+      stateDir: "/fake/.cmuxterm",
+      debounceMs: 10,
+      lockRetryMs: 25,
+      maxLockRetries: 3,
+      listFiles: () => [STORE_FILENAME],
+      readFile: () => content,
+      fileExists: (path) => path.endsWith(".lock") && locked,
+      isPidAlive: () => true,
+      watchDir: () => () => {},
+      log: () => {},
+    });
+    src.start(deps);
+    expect(reports).toHaveLength(0);
+
+    // cmux releases the lock; the file's lifecycle has advanced meanwhile.
+    locked = false;
+    content = makeStoreFile({ [CREW_SESSION_ID]: makeSession({ agentLifecycle: "running" }) });
+    vi.advanceTimersByTime(50);
+    vi.useRealTimers();
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ state: "running" });
+  });
+
+  it("logs the locked skip at most once per lock episode", () => {
+    vi.useFakeTimers();
+    const { deps } = makeDeps();
+    const logs: string[] = [];
+    const src = new CmuxStoreSource({
+      stateDir: "/fake/.cmuxterm",
+      debounceMs: 10,
+      lockRetryMs: 25,
+      maxLockRetries: 3,
+      listFiles: () => [STORE_FILENAME],
+      readFile: () => makeStoreFile({ [CREW_SESSION_ID]: makeSession() }),
+      fileExists: (path) => path.endsWith(".lock"),
+      isPidAlive: () => true,
+      watchDir: () => () => {},
+      log: (msg) => logs.push(msg),
+    });
+    src.start(deps);
+    vi.advanceTimersByTime(500);
+    vi.useRealTimers();
+
+    expect(logs.filter((msg) => msg.includes("locked"))).toHaveLength(1);
+  });
+
+  it("gives up after a bounded number of retries for a permanently locked file", () => {
+    vi.useFakeTimers();
+    const { deps, reports } = makeDeps();
+    let scheduled = 0;
+    const src = new CmuxStoreSource({
+      stateDir: "/fake/.cmuxterm",
+      debounceMs: 10,
+      lockRetryMs: 25,
+      maxLockRetries: 2,
+      listFiles: () => [STORE_FILENAME],
+      readFile: () => makeStoreFile({ [CREW_SESSION_ID]: makeSession() }),
+      fileExists: (path) => path.endsWith(".lock"),
+      isPidAlive: () => true,
+      watchDir: () => () => {},
+      scheduleTimer: (fn, ms) => {
+        scheduled += 1;
+        return setTimeout(fn, ms);
+      },
+      log: () => {},
+    });
+    src.start(deps);
+    vi.advanceTimersByTime(1000);
+    vi.useRealTimers();
+
+    expect(scheduled).toBe(2);
+    expect(reports).toHaveLength(0);
+  });
+});
+
 describe("CmuxStoreSource — resilience", () => {
   it("does not throw or emit when the store file is malformed JSON", () => {
     const { deps, reports } = makeDeps();
