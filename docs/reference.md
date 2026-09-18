@@ -325,6 +325,8 @@ Squadrant rules (Karpathy principles, captain-ops) and per-project AGENTS.md emi
 
 The user-level projection now also inlines `templates/captain.generic.md` and `templates/crew.generic.md` as `## Captain Role` / `## Crew Role` sections inside the squadrant marker block, so non-Claude agents (Codex, Gemini, Cursor) load the same role descriptions Claude Code loads via `--append-system-prompt-file`. See `docs/specs/archive/2026-05-05-multi-agent-template-parity-plan.md` (#45).
 
+opencode additionally gets squadrant's skills projected as **loadable skill dirs**, not just inlined markdown. On every `squadrant` invocation and on daemon boot, the shipped `plugin/skills/<name>/SKILL.md` files are synced (copy-if-changed + prune) into the **user-scope** opencode skills dir `~/.config/opencode/skills/<name>/SKILL.md`, so `skill <name>` resolves in an opencode captain/crew/side session — parity with claude's `--plugin-dir`. User-scope is deliberate: it serves every project and every opencode session without writing into managed project repos (where it would drift), and it is reconciled from the shipped source on every run so an install/update can't leave it stale. Each synced dir carries a `.squadrant-managed` marker — only marked dirs are refreshed or pruned, and a name collision with a user-authored opencode skill is reported as a skip rather than clobbered. Skills without loadable frontmatter (`handback`, `takeover`) are not projected. ([#791](https://github.com/tu11aa/squadrant/issues/791))
+
 ### Obsidian Vaults (Hub-and-Spoke)
 
 - **Hub vault** (`~/squadrant-hub`) — cross-project dashboard + hub wiki

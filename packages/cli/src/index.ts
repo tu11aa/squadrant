@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand, isReadOnlyTopLevelCommand } from "@squadrant/core";
+import { syncShippedOpencodeSkills } from "@squadrant/agents";
 import { doctorCommand } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { projectsCommand } from "./commands/projects.js";
@@ -56,6 +57,22 @@ ensureRuntimeSynced({
   sourceRoot: join(__dirname, ".."),
   runtimeRoot: join(homedir(), ".config", "squadrant"),
 });
+
+// #791: project squadrant's skills into opencode's global skills dir so opencode
+// captains/crews/side sessions can load them by name (parity with claude's
+// --plugin-dir). User-scope only, reconciled on every invocation so an install
+// or update can't leave the projection stale. Never throws. Skipped under vitest
+// so a test that spawns the built CLI never writes into the developer's real
+// ~/.config/opencode.
+if (!process.env.VITEST) {
+  try {
+    syncShippedOpencodeSkills({ pkgRoot: join(__dirname, "..") });
+  } catch (err) {
+    process.stderr.write(
+      `squadrant: opencode skills sync skipped: ${(err as Error).message}\n`,
+    );
+  }
+}
 
 // Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
