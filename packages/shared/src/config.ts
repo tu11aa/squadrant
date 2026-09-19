@@ -293,6 +293,10 @@ export function getDefaultConfig(): SquadrantConfig {
       // Audit C2: OFF by design — cmux hibernation is global-only and would
       // hibernate the captain. See the field doc above.
       cmuxAgentHibernation: false,
+      // #667: fresh installs ship native delivery for both proven agents.
+      // Existing configs without the block still resolve to "off" (the
+      // resolver fallback is the safety net).
+      controlChannel: { claude: "on", opencode: "on" },
       crewRouting: {
         rules: [
           { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },

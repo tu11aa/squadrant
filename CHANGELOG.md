@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-09-19
+
+### Changed
+
+- **`controlChannel` now ships `on` by default for both `claude` and `opencode`, so fresh installs get native agent delivery out of the box instead of pane-scraping (#667).** The resolver fallback is unchanged: an absent or invalid value still resolves to `off`, so a config typo can never silently take the delivery path.
+
 ## [0.20.2] - 2026-09-19
 
 ### Fixed
