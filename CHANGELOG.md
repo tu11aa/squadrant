@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-09-19
+
+### Fixed
+
+- **opencode `crew send` no longer misroutes to the wrong session: session resolution is now scoped to the crew's own directory (realpath-exact) and gated on the crew's `createdAt`, so it can never target a sibling crew's / the captain's session, nor a stale prior-crew session in a reused worktree dir (#787, #789).**
+
 ## [0.20.1] - 2026-09-19
 
 ### Fixed
