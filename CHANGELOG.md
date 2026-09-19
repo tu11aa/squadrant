@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-09-19
+
+### Fixed
+
+- **opencode captains now launch with an auto-approving `OPENCODE_CONFIG`, so they no longer block on tool-approval prompts (#808).**
+- **opencode sessions now use a least-privilege `external_directory` allow-list (trusted tmp/AI/config/memory dirs allowed; unknown external paths human-gated) instead of allowing all external paths (#809).**
+
 ## [0.20.0] - 2026-09-18
 
 ### Added
