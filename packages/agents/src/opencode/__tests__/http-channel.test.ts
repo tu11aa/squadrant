@@ -27,6 +27,25 @@ function channel(routes: Parameters<typeof stubFetch>[0], portFor?: () => number
   return { ch, fetchImpl };
 }
 
+/** A channel with directory + created-after wired, serving one session list. */
+function channelWithCreatedAfter(
+  sessions: unknown[],
+  createdAfterMs: number | undefined,
+  directory = "/p",
+) {
+  const fetchImpl = stubFetch({
+    "/session?": { status: 200, body: sessions },
+    "/prompt_async": { status: 204 },
+  });
+  const ch = new OpencodeHttpChannel({
+    fetchImpl: fetchImpl as unknown as typeof fetch,
+    portFor: () => PORT,
+    directoryFor: () => directory,
+    createdAfterFor: () => createdAfterMs,
+  });
+  return { ch, fetchImpl };
+}
+
 describe("OpencodeHttpChannel — identity", () => {
   it("is named opencode-http and serves the opencode provider", () => {
     const { ch } = channel({});
@@ -179,5 +198,115 @@ describe("OpencodeHttpChannel — sessionFor (#786)", () => {
     expect(await ch.send("proj", "hi")).toEqual({ status: "accepted", via: "opencode-http" });
     expect(seen.some((u) => u.includes("/session/ses_crew/"))).toBe(false);
     expect(seen.some((u) => u.includes("/session/ses_captain/prompt_async"))).toBe(true);
+  });
+});
+
+describe("OpencodeHttpChannel — directory-scoped resolution (#787)", () => {
+  it("targets the session in the crew's directory, never a newer sibling in another directory", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/session?") || url.includes("/api/session?")) {
+        // project-scoped list: a sibling worktree session is NEWER than the crew's own
+        return { ok: true, json: async () => [
+          { id: "ses_crew", directory: "/p/.worktrees/wt1", time: { updated: 999 } },
+          { id: "ses_main", directory: "/p", time: { updated: 1 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({
+      portFor: () => 1234,
+      // the crew runs in the repo root; the newer session belongs to a sibling worktree
+      directoryFor: () => "/p",
+      fetchImpl,
+    });
+    expect(await ch.send("task", "hi")).toEqual({ status: "accepted", via: "opencode-http" });
+    expect(seen.some((u) => u.includes("/ses_crew/"))).toBe(false);
+    expect(seen.some((u) => u.includes("/ses_main/prompt_async"))).toBe(true);
+  });
+
+  it("returns gone when no session matches the crew's directory (never a wrong-directory fallback)", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/session?") || url.includes("/api/session?")) {
+        return { ok: true, json: async () => [
+          { id: "ses_other", directory: "/p/.worktrees/wt9", time: { updated: 9 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({ portFor: () => 1234, directoryFor: () => "/p", fetchImpl });
+    expect(await ch.send("task", "hi")).toEqual({ status: "gone" });
+    expect(seen.some((u) => u.includes("prompt_async"))).toBe(false);
+  });
+
+  it("falls back to project-wide newest when the directory is unknown (captain path unchanged)", async () => {
+    const { ch, fetchImpl } = channel({
+      "/session?": { status: 200, body: [
+        { id: "ses_old", directory: "/p/.worktrees/wt1", time: { updated: 1 } },
+        { id: "ses_new", directory: "/p", time: { updated: 9 } },
+      ] },
+      "/prompt_async": { status: 204 },
+    });
+    await ch.send(TASK, "hello");
+    const call = fetchImpl.mock.calls.find((c) => String(c[0]).includes("/prompt_async"))!;
+    expect(String(call[0])).toContain("ses_new");
+  });
+});
+
+describe("OpencodeHttpChannel — created-after freshness gate (#787 + #789)", () => {
+  const CREW_CREATED_AT = 5000;
+
+  it("never selects a stale session in the right directory (created before the crew)", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/session?") || url.includes("/api/session?")) {
+        // same directory, but the stale session is NEWER by updated — a reused
+        // worktree dir holding a prior crew's session. Must not be selected.
+        return { ok: true, json: async () => [
+          { id: "ses_stale", directory: "/p/.worktrees/wt1", time: { created: 1000, updated: 9999 } },
+          { id: "ses_live", directory: "/p/.worktrees/wt1", time: { created: 6000, updated: 6001 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({
+      portFor: () => 1234,
+      directoryFor: () => "/p/.worktrees/wt1",
+      createdAfterFor: () => CREW_CREATED_AT,
+      fetchImpl,
+    });
+    expect(await ch.send("task", "hi")).toEqual({ status: "accepted", via: "opencode-http" });
+    expect(seen.some((u) => u.includes("/ses_stale/"))).toBe(false);
+    expect(seen.some((u) => u.includes("/ses_live/prompt_async"))).toBe(true);
+  });
+
+  it("accepts a session created exactly at the crew's createdAt (inclusive floor)", async () => {
+    const { ch, fetchImpl } = channelWithCreatedAfter(
+      [{ id: "ses_at", directory: "/p", time: { created: CREW_CREATED_AT, updated: 1 } }],
+      CREW_CREATED_AT,
+    );
+    expect(await ch.send(TASK, "hello")).toEqual({ status: "accepted", via: "opencode-http" });
+    const call = fetchImpl.mock.calls.find((c) => String(c[0]).includes("/prompt_async"))!;
+    expect(String(call[0])).toContain("ses_at");
+  });
+
+  it("returns gone when only stale same-directory sessions exist (no wrong session fallback)", async () => {
+    const { ch } = channelWithCreatedAfter(
+      [{ id: "ses_stale", directory: "/p", time: { created: 1000, updated: 9999 } }],
+      CREW_CREATED_AT,
+    );
+    expect(await ch.send(TASK, "hello")).toEqual({ status: "gone" });
+  });
+
+  it("excludes a session with no time.created while the filter is active", async () => {
+    const { ch } = channelWithCreatedAfter(
+      [{ id: "ses_nocreated", directory: "/p", time: { updated: 9999 } }],
+      CREW_CREATED_AT,
+    );
+    expect(await ch.send(TASK, "hello")).toEqual({ status: "gone" });
   });
 });
