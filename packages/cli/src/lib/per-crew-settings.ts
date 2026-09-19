@@ -271,7 +271,57 @@ export function writePerCrewOpencodeConfig(o: {
       websearch: "allow",
       task: "allow",
       lsp: "allow",
-      external_directory: { "**": "allow" },
+      // unlike most permission keys, external_directory defaults to "ask" in
+      // opencode. The catch-all is deliberately "ask" (not "allow") so unknown
+      // external paths stay human-gated — least privilege. Trusted AI/config/
+      // memory/tmp dirs are allow-listed explicitly below; each dir is listed
+      // both as the bare path AND as `<dir>/**`, so the directory itself is
+      // reachable, not only its contents.
+      //
+      // Ordering: opencode evaluates patterns last-match-wins, so the catch-all
+      // goes FIRST and the specific allows follow. If a future version resolves
+      // first-match instead, the failure mode is over-prompting (visible, safe)
+      // rather than a silent allow-all (invisible, unsafe).
+      external_directory: {
+        "**": "ask",
+        "/tmp": "allow",
+        "/tmp/**": "allow",
+        "/private/tmp": "allow",
+        "/private/tmp/**": "allow",
+        "/var/folders": "allow",
+        "/var/folders/**": "allow",
+        "~/.config/squadrant": "allow",
+        "~/.config/squadrant/**": "allow",
+        "~/.config/opencode": "allow",
+        "~/.config/opencode/**": "allow",
+        "~/.config/cmux": "allow",
+        "~/.config/cmux/**": "allow",
+        "~/.opencode": "allow",
+        "~/.opencode/**": "allow",
+        "~/.local/share/opencode": "allow",
+        "~/.local/share/opencode/**": "allow",
+        "~/.local/share/claude": "allow",
+        "~/.local/share/claude/**": "allow",
+        "~/.cache/opencode": "allow",
+        "~/.cache/opencode/**": "allow",
+        "~/.claude": "allow",
+        "~/.claude/**": "allow",
+        "~/.claude.json": "allow",
+        "~/squadrant-hub": "allow",
+        "~/squadrant-hub/**": "allow",
+        "~/.claude-mem": "allow",
+        "~/.claude-mem/**": "allow",
+        "~/.agents": "allow",
+        "~/.agents/**": "allow",
+        "~/.cmuxterm": "allow",
+        "~/.cmuxterm/**": "allow",
+        "~/.codex": "allow",
+        "~/.codex/**": "allow",
+        "~/.cursor": "allow",
+        "~/.cursor/**": "allow",
+        "~/.gemini": "allow",
+        "~/.gemini/**": "allow",
+      },
     },
   };
   writeFileSync(file, JSON.stringify(config, null, 2));
