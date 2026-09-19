@@ -23,6 +23,34 @@ the internal packages (`@squadrant/*`) from their build outputs.
 - Open your PR back into **`develop`**.
 - **`main` is release-only** — never PR a feature straight to `main`.
 
+## Releasing
+
+Releases follow GitFlow: cut `release/vX.Y.Z` from `develop`, bump `package.json` + `CHANGELOG.md`, then PR into `main`. A push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which tags `vX.Y.Z` (from `package.json`), creates a GitHub Release from the CHANGELOG, and publishes to npm.
+
+### npm publishing — use staged publishing
+
+npm is retiring long-lived tokens that bypass 2FA for publishing:
+
+- Since **August 2026**, bypass-2FA granular access tokens (GATs) can no longer perform account, org, or package **governance** actions (create/delete tokens, change maintainers or package access, configure trusted publishing) — those now require an interactive 2FA challenge.
+- **Around January 2027**, bypass-2FA tokens lose **direct `npm publish`** entirely. Their remaining surface is reading private packages and **staging** a publish.
+
+Automated publishing therefore moves to **staged publishing** (requires npm CLI ≥ 11.15.0, Node ≥ 22.14.0):
+
+1. **CI stages** — `npm stage publish` uploads the tarball to a staging area. It never prompts for 2FA and works with any token type (including a bypass-2FA GAT or an OIDC trust token).
+2. **A maintainer approves, with 2FA** — the version becomes installable only after approval:
+   - CLI: `npm stage list` → `npm stage view <stage-id>` → `npm stage approve <stage-id>`
+   - or the **Staged Packages** tab on npmjs.com
+
+A package must **already exist** on the registry before it can be staged — staged publishing cannot create a brand-new package. The approval step requires a human 2FA challenge regardless of which token (or OIDC identity) staged the upload.
+
+**Alternative — Trusted Publishing (OIDC):** register a trusted publisher for the package (GitHub repo + workflow name), give the publish job `permissions: id-token: write`, and use `actions/setup-node` with `registry-url`. This removes the stored token entirely. If the package requires proof-of-presence, still route the publish through `npm stage publish` — the approval step remains a human 2FA challenge.
+
+**Do not** rely on a long-lived `NPM_TOKEN` secret for direct `npm publish` — that path is being removed. Until the workflow is migrated to `npm stage publish` (or OIDC), a release can be published locally with an interactive OTP:
+
+```bash
+npm publish --access public --otp=<code>
+```
+
 ## Run tests + lint locally before opening a PR
 
 **There is no PR-time CI.** Tests only run on push to `main`, so broken tests have

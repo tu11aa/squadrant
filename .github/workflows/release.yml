@@ -10,6 +10,7 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -47,18 +48,6 @@ jobs:
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Detect npm token
-        id: npmtok
-        if: steps.check.outputs.should_release == 'true'
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Install dependencies
         if: steps.check.outputs.should_release == 'true'
         run: pnpm install --frozen-lockfile
@@ -84,6 +73,45 @@ jobs:
             echo "Release ${{ steps.ver.outputs.tag }}" > release_notes.md
           fi
 
+      # npm only falls back to Trusted Publishing (OIDC) when NO auth token is
+      # configured. actions/setup-node with registry-url writes a
+      # `//registry.npmjs.org/:_authToken=...` line into .npmrc, and an empty
+      # value makes npm treat auth as present, skipping OIDC and failing with
+      # ENEEDAUTH/E404. Strip that line so the OIDC path is taken.
+      # Ref: actions/setup-node#1551
+      - name: Strip poisoned npm auth config
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          [ -f "$npmrc" ] && sed -i '/_authToken/d' "$npmrc" || true
+
+      - name: Install latest npm
+        if: steps.check.outputs.should_release == 'true'
+        run: npm install -g npm@latest
+
+      # Publish before tagging: the first OIDC publish is the risky step, so a
+      # publish failure must leave no tag behind — otherwise the re-run sees the
+      # tag and skips (should_release=false), stranding the release.
+      - name: Publish to npm
+        if: steps.check.outputs.should_release == 'true'
+        run: npm publish --access public
+
+      - name: Verify npm publish
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          for i in 1 2 3 4 5; do
+            PUBLISHED=$(curl -fsSL "https://registry.npmjs.org/squadrant/$VERSION" | node -p "JSON.parse(require('fs').readFileSync(0)).version" 2>/dev/null || true)
+            if [ "$PUBLISHED" = "$VERSION" ]; then
+              echo "✓ squadrant@$VERSION confirmed live on npm"
+              exit 0
+            fi
+            echo "registry not yet showing $VERSION (attempt $i/5), retrying…"
+            sleep 10
+          done
+          echo "::error::squadrant@$VERSION did NOT appear on the npm registry after publish"
+          exit 1
+
       - name: Create and push tag
         if: steps.check.outputs.should_release == 'true'
         run: |
@@ -99,25 +127,3 @@ jobs:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
           body_path: release_notes.md
-
-      - name: Publish to npm
-        if: steps.check.outputs.should_release == 'true' && steps.npmtok.outputs.has_token == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
-
-      - name: Verify npm publish
-        if: steps.check.outputs.should_release == 'true' && steps.npmtok.outputs.has_token == 'true'
-        run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          for i in 1 2 3 4 5; do
-            PUBLISHED=$(curl -fsSL "https://registry.npmjs.org/squadrant/$VERSION" | node -p "JSON.parse(require('fs').readFileSync(0)).version" 2>/dev/null || true)
-            if [ "$PUBLISHED" = "$VERSION" ]; then
-              echo "✓ squadrant@$VERSION confirmed live on npm"
-              exit 0
-            fi
-            echo "registry not yet showing $VERSION (attempt $i/5), retrying…"
-            sleep 10
-          done
-          echo "::error::squadrant@$VERSION did NOT appear on the npm registry after publish"
-          exit 1
