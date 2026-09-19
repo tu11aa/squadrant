@@ -1,6 +1,6 @@
 // Tests for the #667 controlChannel rollout flag.
 import { describe, it, expect } from "vitest";
-import { resolveControlChannelMode } from "../config.js";
+import { getDefaultConfig, resolveControlChannelMode } from "../config.js";
 
 describe("resolveControlChannelMode", () => {
   it("an absent controlChannel block means off for every agent", () => {
@@ -27,5 +27,12 @@ describe("resolveControlChannelMode", () => {
     const cfg = { claude: "on" as const, opencode: "off" as const };
     expect(resolveControlChannelMode(cfg, "claude")).toBe("on");
     expect(resolveControlChannelMode(cfg, "opencode")).toBe("off");
+  });
+
+  it("the shipped default turns the channel on for claude and opencode", () => {
+    // Fresh installs get native delivery for both proven agents.
+    const cfg = getDefaultConfig().defaults.controlChannel;
+    expect(resolveControlChannelMode(cfg, "claude")).toBe("on");
+    expect(resolveControlChannelMode(cfg, "opencode")).toBe("on");
   });
 });
