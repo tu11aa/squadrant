@@ -16,6 +16,7 @@
 // message would land in the wrong one with nothing to indicate it. prompt_async is
 // addressed by session id and 404s on a wrong id — prefer the detectable failure.
 import type { ControlChannel, DeliveryOutcome, ProbeResult } from "@squadrant/core";
+import { newestSessionInDirectory } from "@squadrant/core";
 
 export interface OpencodeHttpChannelDeps {
   /** Injectable for tests; defaults to global fetch. */
@@ -26,6 +27,10 @@ export interface OpencodeHttpChannelDeps {
    *  captain-address record; without it the channel falls back to resolveSession's
    *  project-wide "newest" heuristic, which is unsafe across worktrees (#786 §2). */
   sessionFor?: (taskId: string) => string | undefined;
+  /** taskId → the directory the crew runs in (TaskRecord.cwd). When supplied,
+   *  resolveSession restricts candidates to sessions open in that exact directory
+   *  (realpath-normalized) instead of the project-wide newest (#787). */
+  directoryFor?: (taskId: string) => string | undefined;
   /** Per-request timeout (ms). Default 5000. */
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -33,6 +38,7 @@ export interface OpencodeHttpChannelDeps {
 
 interface OpencodeSession {
   id: string;
+  directory?: string;
   time?: { updated?: number };
 }
 
@@ -46,6 +52,7 @@ export class OpencodeHttpChannel implements ControlChannel {
   private readonly fetchImpl: typeof fetch;
   private readonly portFor: (taskId: string) => number | undefined;
   private readonly sessionFor?: (taskId: string) => string | undefined;
+  private readonly directoryFor?: (taskId: string) => string | undefined;
   private readonly timeoutMs: number;
   private readonly log?: (msg: string) => void;
 
@@ -53,6 +60,7 @@ export class OpencodeHttpChannel implements ControlChannel {
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.portFor = deps.portFor;
     this.sessionFor = deps.sessionFor;
+    this.directoryFor = deps.directoryFor;
     this.timeoutMs = deps.timeoutMs ?? 5000;
     this.log = deps.log;
   }
@@ -113,11 +121,18 @@ export class OpencodeHttpChannel implements ControlChannel {
    * are tried. This is a capability probe, NOT a version comparison — the honest
    * check is "does this route answer", and neither path is a promised-stable
    * contract. Re-run the smoke suite when opencode is upgraded.
+   *
+   * #787: when the crew's directory is known, resolve by EXACT directory
+   * (realpath-normalized) and never fall back to the project-wide newest.
+   * GET /session is project-scoped (shared by every worktree of the repo), so
+   * "newest" can be a sibling crew's — prompt_async at that id would run the
+   * message in the wrong session.
    */
   private async resolveSession(taskId: string, port: number): Promise<string | undefined> {
     const cached = this.sessionByTask.get(taskId);
     if (cached) return cached;
 
+    const directory = this.directoryFor?.(taskId);
     for (const path of ["/session?", "/api/session?"]) {
       let res: Response;
       try {
@@ -133,13 +148,15 @@ export class OpencodeHttpChannel implements ControlChannel {
         continue;
       }
       if (!Array.isArray(sessions) || sessions.length === 0) continue;
-      // A crew pane may hold several sessions; the most recently updated is the
-      // one the operator is looking at.
-      const newest = sessions.reduce((a, b) =>
-        (b.time?.updated ?? 0) > (a.time?.updated ?? 0) ? b : a);
-      if (!newest?.id) continue;
-      this.sessionByTask.set(taskId, newest.id);
-      return newest.id;
+      // With a known directory: the newest session IN that directory, or none.
+      // Without one: the project-wide newest, the one the operator is looking at.
+      const resolved = directory
+        ? newestSessionInDirectory(sessions, directory)
+        : sessions.reduce((a, b) =>
+            (b.time?.updated ?? 0) > (a.time?.updated ?? 0) ? b : a).id;
+      if (!resolved) continue;
+      this.sessionByTask.set(taskId, resolved);
+      return resolved;
     }
     return undefined;
   }

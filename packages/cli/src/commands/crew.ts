@@ -139,6 +139,10 @@ export async function runCrewSend(project: string, name: string, message: string
   const controlChannels = [
     new OpencodeHttpChannel({
       portFor: (taskId) => tasks.find((t) => t.id === taskId)?.serverPort,
+      // #787: scope resolution to the crew's own worktree (TaskRecord.cwd).
+      // opencode's GET /session is project-scoped, so without this the channel
+      // can target a newer sibling crew's / the captain's session.
+      directoryFor: (taskId) => tasks.find((t) => t.id === taskId)?.cwd,
       log: (m) => console.error(chalk.dim(m)),
     }),
     new ClaudePeerChannel({

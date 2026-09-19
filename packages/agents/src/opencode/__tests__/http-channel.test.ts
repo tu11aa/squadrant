@@ -181,3 +181,58 @@ describe("OpencodeHttpChannel — sessionFor (#786)", () => {
     expect(seen.some((u) => u.includes("/session/ses_captain/prompt_async"))).toBe(true);
   });
 });
+
+describe("OpencodeHttpChannel — directory-scoped resolution (#787)", () => {
+  it("targets the session in the crew's directory, never a newer sibling in another directory", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/session?") || url.includes("/api/session?")) {
+        // project-scoped list: a sibling worktree session is NEWER than the crew's own
+        return { ok: true, json: async () => [
+          { id: "ses_crew", directory: "/p/.worktrees/wt1", time: { updated: 999 } },
+          { id: "ses_main", directory: "/p", time: { updated: 1 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({
+      portFor: () => 1234,
+      // the crew runs in the repo root; the newer session belongs to a sibling worktree
+      directoryFor: () => "/p",
+      fetchImpl,
+    });
+    expect(await ch.send("task", "hi")).toEqual({ status: "accepted", via: "opencode-http" });
+    expect(seen.some((u) => u.includes("/ses_crew/"))).toBe(false);
+    expect(seen.some((u) => u.includes("/ses_main/prompt_async"))).toBe(true);
+  });
+
+  it("returns gone when no session matches the crew's directory (never a wrong-directory fallback)", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("/session?") || url.includes("/api/session?")) {
+        return { ok: true, json: async () => [
+          { id: "ses_other", directory: "/p/.worktrees/wt9", time: { updated: 9 } },
+        ] } as unknown as Response;
+      }
+      return { status: 204 } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const ch = new OpencodeHttpChannel({ portFor: () => 1234, directoryFor: () => "/p", fetchImpl });
+    expect(await ch.send("task", "hi")).toEqual({ status: "gone" });
+    expect(seen.some((u) => u.includes("prompt_async"))).toBe(false);
+  });
+
+  it("falls back to project-wide newest when the directory is unknown (captain path unchanged)", async () => {
+    const { ch, fetchImpl } = channel({
+      "/session?": { status: 200, body: [
+        { id: "ses_old", directory: "/p/.worktrees/wt1", time: { updated: 1 } },
+        { id: "ses_new", directory: "/p", time: { updated: 9 } },
+      ] },
+      "/prompt_async": { status: 204 },
+    });
+    await ch.send(TASK, "hello");
+    const call = fetchImpl.mock.calls.find((c) => String(c[0]).includes("/prompt_async"))!;
+    expect(String(call[0])).toContain("ses_new");
+  });
+});
