@@ -84,6 +84,14 @@ vi.mock("node:fs", async () => {
   return { ...actual, existsSync: vi.fn(() => true), mkdirSync: vi.fn() };
 });
 
+// The opencode-captain launch now writes a per-captain allow-all config at the
+// CLI edge. node:fs above mocks mkdirSync to a no-op, so stub the writer to keep
+// this test off the real filesystem; readGlobalOpencodeModel is preserved.
+vi.mock("../../lib/per-crew-settings.js", async () => {
+  const actual = await vi.importActual<typeof import("../../lib/per-crew-settings.js")>("../../lib/per-crew-settings.js");
+  return { ...actual, writePerCrewOpencodeConfig: vi.fn(() => "/tmp/fake-captain-opencode.json") };
+});
+
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "abc1234"), // isOpencodeCaptainDir: git rev-parse succeeds
   execSync: vi.fn(() => ""),

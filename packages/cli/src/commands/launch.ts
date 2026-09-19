@@ -29,7 +29,7 @@ import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
 import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
 import { isBlockedFallback, anthropicRefusalMessage } from "../lib/model-guard.js";
-import { readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
+import { readGlobalOpencodeModel, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
 
 // Re-export for test-import stability (launch.test.ts imports from ../launch.js).
 export { deliverStartupPrompt } from "@squadrant/core";
@@ -236,6 +236,19 @@ export const launchCommand = new Command("launch")
         return;
       }
 
+      // An opencode crew gets an allow-all per-task config + OPENCODE_CONFIG
+      // prefix (crew-spawn.ts) so it never blocks on a tool approval. The
+      // captain path goes through buildAgentCmd's interactive branch instead,
+      // which ignores autoApprove and returns a bare `opencode …` command — so
+      // the captain inherited only the global config (no `permission` block)
+      // and prompted on every bash/edit. Mirror the crew mechanism at the CLI
+      // edge: write an allow-all captain config and prefix the command. No
+      // gateBash — the captain must stay fully autonomous.
+      let captainOpencodeConfigPath: string | undefined;
+      if (isOpencodeCaptain && projectName) {
+        captainOpencodeConfigPath = writePerCrewOpencodeConfig({ stateRoot, project: projectName, taskId: "captain" });
+      }
+
       const priorRecord = projectName ? readCaptainAddress(stateRoot, projectName) : null;
       const captainPort = isOpencodeCaptain ? await getFreePort() : undefined;
       // #797: the resume id is decided inside agentCmdFactory, where the RESOLVED
@@ -269,11 +282,14 @@ export const launchCommand = new Command("launch")
               ? { port: captainPort, sessionId: pickResumeSessionId(priorRecord, "opencode", forceFresh) }
               : undefined;
             opencodeResumeSessionId = captainBoot?.sessionId;
-            return buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
+            const baseCmd = buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
               resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
               resolveCaptainSessionName(agentName, projectName),
               thinking,
               captainBoot);
+            return captainOpencodeConfigPath
+              ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${baseCmd}`
+              : baseCmd;
           },
           initialPrompt,
           runtime,
