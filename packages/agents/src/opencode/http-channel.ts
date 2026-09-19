@@ -31,6 +31,11 @@ export interface OpencodeHttpChannelDeps {
    *  resolveSession restricts candidates to sessions open in that exact directory
    *  (realpath-normalized) instead of the project-wide newest (#787). */
   directoryFor?: (taskId: string) => string | undefined;
+  /** taskId → the crew's createdAt (TaskRecord.createdAt). When supplied,
+   *  resolveSession additionally requires a candidate session to have been CREATED
+   *  at/after this time, so a reused worktree dir cannot resolve a prior crew's
+   *  session the live TUI is not showing (#787 + #789 semantics). */
+  createdAfterFor?: (taskId: string) => number | undefined;
   /** Per-request timeout (ms). Default 5000. */
   timeoutMs?: number;
   log?: (msg: string) => void;
@@ -39,7 +44,7 @@ export interface OpencodeHttpChannelDeps {
 interface OpencodeSession {
   id: string;
   directory?: string;
-  time?: { updated?: number };
+  time?: { created?: number; updated?: number };
 }
 
 export class OpencodeHttpChannel implements ControlChannel {
@@ -53,6 +58,7 @@ export class OpencodeHttpChannel implements ControlChannel {
   private readonly portFor: (taskId: string) => number | undefined;
   private readonly sessionFor?: (taskId: string) => string | undefined;
   private readonly directoryFor?: (taskId: string) => string | undefined;
+  private readonly createdAfterFor?: (taskId: string) => number | undefined;
   private readonly timeoutMs: number;
   private readonly log?: (msg: string) => void;
 
@@ -61,6 +67,7 @@ export class OpencodeHttpChannel implements ControlChannel {
     this.portFor = deps.portFor;
     this.sessionFor = deps.sessionFor;
     this.directoryFor = deps.directoryFor;
+    this.createdAfterFor = deps.createdAfterFor;
     this.timeoutMs = deps.timeoutMs ?? 5000;
     this.log = deps.log;
   }
@@ -127,12 +134,18 @@ export class OpencodeHttpChannel implements ControlChannel {
    * GET /session is project-scoped (shared by every worktree of the repo), so
    * "newest" can be a sibling crew's — prompt_async at that id would run the
    * message in the wrong session.
+   *
+   * #789: opencode creates a session lazily (nothing exists until the first turn),
+   * so a reused worktree dir can hold a prior crew's session. When the crew's
+   * createdAt is known, also require the candidate to have been created at/after
+   * it — otherwise a send resolves a stale session the live TUI is not showing.
    */
   private async resolveSession(taskId: string, port: number): Promise<string | undefined> {
     const cached = this.sessionByTask.get(taskId);
     if (cached) return cached;
 
     const directory = this.directoryFor?.(taskId);
+    const createdAfterMs = this.createdAfterFor?.(taskId);
     for (const path of ["/session?", "/api/session?"]) {
       let res: Response;
       try {
@@ -148,10 +161,11 @@ export class OpencodeHttpChannel implements ControlChannel {
         continue;
       }
       if (!Array.isArray(sessions) || sessions.length === 0) continue;
-      // With a known directory: the newest session IN that directory, or none.
-      // Without one: the project-wide newest, the one the operator is looking at.
+      // With a known directory: the newest session IN that directory (optionally
+      // gated on created-after), or none. Without one: the project-wide newest,
+      // the one the operator is looking at.
       const resolved = directory
-        ? newestSessionInDirectory(sessions, directory)
+        ? newestSessionInDirectory(sessions, directory, createdAfterMs)
         : sessions.reduce((a, b) =>
             (b.time?.updated ?? 0) > (a.time?.updated ?? 0) ? b : a).id;
       if (!resolved) continue;
