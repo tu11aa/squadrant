@@ -146,6 +146,13 @@ describe("matchTier1Deny — canonical dangerous commands (#782)", () => {
 
   it.each([
     "rm -rf /",
+    "rm -fr /",
+    "rm -Rf /",
+    "rm -r -f /",
+    "rm -f -r /",
+    "rm --recursive --force /",
+    "rm --force --recursive /",
+    "rm -rf / --no-preserve-root",
     "rm -rf ~",
     "rm -rf $HOME",
     "sudo rm -rf /tmp/x",
@@ -163,11 +170,21 @@ describe("matchTier1Deny — canonical dangerous commands (#782)", () => {
     expect(deny(cmd)).not.toBeNull();
   });
 
+  it("is flag-order agnostic — the canonical `rm -fr /` is denied (regression, #782)", () => {
+    // The original r-then-f regex MISSED all three of these.
+    expect(deny("rm -fr /")).not.toBeNull();
+    expect(deny("rm -r -f /")).not.toBeNull();
+    expect(deny("rm --recursive --force /")).not.toBeNull();
+  });
+
   it.each([
     "git status",
     "npm test",
     "rm -rf node_modules",
     "rm -rf /tmp/build-cache",
+    "rm -rf ./build",
+    "rm -f file.txt",
+    "rm --force /tmp/one-file",
     "git push origin feature/x",
     "curl https://example.com/api",
     "cat package.json",

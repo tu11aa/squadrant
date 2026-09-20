@@ -70,7 +70,11 @@ const MAX_PAYLOAD_CHARS = 2000;
 // canonical danger at ~0 ms, and an operator who disagrees can override it
 // wholesale via defaults.gate.deny. Each regex is compiled with the `i` flag.
 export const DEFAULT_GATE_DENY_RULES: readonly GateDenyRule[] = [
-  { match: "\\brm\\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\\s+(?:/|~|\\$HOME|/\\*|~\\*|\\.)\\s*(?:$|[;&|])", reason: "recursive force-delete of the filesystem root or home" },
+  // Flag-order-agnostic: both recursive and force must be present, in any order,
+  // as a combined short flag (-rf/-fr/-Rf), separated short flags (-r -f), or the
+  // long form (--recursive/--force). A single r-then-f pattern misses `rm -fr /`
+  // — the canonical destructive command.
+  { match: "\\brm\\b(?=[^;&|\\n]*(?:-[a-zA-Z]*r[a-zA-Z]*\\b|--recursive\\b))(?=[^;&|\\n]*(?:-[a-zA-Z]*f[a-zA-Z]*\\b|--force\\b))[^;&|\\n]*?\\s(?:/|~|\\$HOME|/\\*|~\\*|\\.)(?:\\s+--?[^\\s;&|]+)*\\s*(?:$|[;&|])", reason: "recursive force-delete of the filesystem root or home" },
   { match: "(?:^|[;&|]\\s*)sudo\\b", reason: "privilege escalation via sudo" },
   { match: ":\\(\\s*\\)\\s*\\{", reason: "fork bomb" },
   { match: "\\b(?:curl|wget)\\b[^|;]*\\|\\s*(?:sh|bash|zsh|dash)\\b", reason: "piping a downloaded script into a shell" },
