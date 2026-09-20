@@ -96,6 +96,7 @@ vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings: vi.fn(),
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig: vi.fn(),
+  writeRouterSettings: vi.fn(),
 }));
 
 

@@ -6,6 +6,7 @@ import {
   writePerCrewSettings,
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
+  writeRouterSettings,
   healStaleCockpitRefs,
   CREW_PERMISSION_ALLOWLIST,
   mergeCrewPermissions,
@@ -78,6 +79,40 @@ describe("writePerCrewSettings", () => {
     const out = writePerCrewSettings({ stateRoot: deep, project: "x", taskId: "y" });
     expect(fs.existsSync(out)).toBe(true);
     expect(fs.statSync(path.dirname(out)).isDirectory()).toBe(true);
+  });
+});
+
+// #772: a routed claude spawn carries its router env in a per-spawn settings
+// file passed via --settings, which outranks ~/.claude/settings.json's env
+// block (and therefore any defaults.claudeEnv overlay).
+describe("writeRouterSettings (#772)", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-router-settings-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes { env } to <stateRoot>/<project>/<taskId>/router-settings.json", () => {
+    const out = writeRouterSettings({
+      stateRoot: tmp,
+      project: "alpha",
+      taskId: "tid-1",
+      env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:53421", ANTHROPIC_AUTH_TOKEN: "t" },
+    });
+    expect(out).toBe(path.join(tmp, "alpha", "tid-1", "router-settings.json"));
+    expect(JSON.parse(fs.readFileSync(out, "utf-8"))).toEqual({
+      env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:53421", ANTHROPIC_AUTH_TOKEN: "t" },
+    });
+  });
+
+  it("creates intermediate directories", () => {
+    const deep = path.join(tmp, "missing", "deeper");
+    const out = writeRouterSettings({ stateRoot: deep, project: "x", taskId: "y", env: { A: "1" } });
+    expect(fs.existsSync(out)).toBe(true);
   });
 });
 
