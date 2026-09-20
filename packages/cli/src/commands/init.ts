@@ -12,10 +12,21 @@ import {
   resolveHome,
   readUserLevelSource,
   loadConfig,
+  isProviderPresetId,
+  detectProviderPresetId,
+  applyProviderPreset,
+  PROVIDER_PRESETS,
+  DEFAULT_ROUTER_KIND,
+  DEFAULT_ROUTER_BASE_URL,
+  isRouterKind,
+  type ProviderPresetId,
+  type RouterConfig,
+  type SquadrantConfig,
 } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { ensureRuntimeSynced } from "@squadrant/shared";
 import { ensureGlobalOpencodeConfig, DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH } from "../lib/per-crew-settings.js";
+import { detectClaudeAuth, type ClaudeAuthStatus } from "../lib/claude-auth.js";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -60,10 +71,82 @@ function promptLine(question: string): Promise<string> {
   });
 }
 
+interface InitOptions {
+  hub: string;
+  preset?: string;
+  routerKind?: string;
+  routerBaseUrl?: string;
+  routerApiKeyEnv?: string;
+}
+
+/** #826: resolve the router block for preset C: reuse an existing block, else
+ *  take --router-* flags, else prompt (TTY), else fall back to the documented
+ *  opencode-go upstream. Never returns undefined — preset C always writes a router. */
+async function resolveRouter(
+  config: SquadrantConfig,
+  opts: InitOptions,
+  isTTY: boolean,
+): Promise<RouterConfig> {
+  if (config.defaults?.router) return config.defaults.router;
+
+  let kind = opts.routerKind;
+  let baseUrl = opts.routerBaseUrl;
+  let apiKeyEnv = opts.routerApiKeyEnv;
+
+  if (isTTY && (!kind || !baseUrl)) {
+    const k = await promptLine(chalk.cyan(`    Router kind [${DEFAULT_ROUTER_KIND}]: `));
+    kind = kind ?? (k || DEFAULT_ROUTER_KIND);
+    const b = await promptLine(chalk.cyan(`    Router base URL [${DEFAULT_ROUTER_BASE_URL}]: `));
+    baseUrl = baseUrl ?? (b || DEFAULT_ROUTER_BASE_URL);
+    const e = await promptLine(chalk.cyan("    Env var holding the API key (optional): "));
+    apiKeyEnv = apiKeyEnv ?? (e || undefined);
+  }
+
+  const resolvedKind = kind && isRouterKind(kind) ? kind : DEFAULT_ROUTER_KIND;
+  const resolvedBase = baseUrl || DEFAULT_ROUTER_BASE_URL;
+  if (!isTTY && !opts.routerBaseUrl) {
+    console.log(chalk.dim(`    - no router flags given; defaulting to ${resolvedKind} (${resolvedBase})`));
+    console.log(chalk.dim("      set a credential: squadrant config set defaults.router.apiKeyEnv <VAR>"));
+  }
+  return { kind: resolvedKind, baseUrl: resolvedBase, ...(apiKeyEnv ? { apiKeyEnv } : {}) };
+}
+
+/** One provider question (#826). Returns the operator's preset choice. */
+async function askProvider(
+  current: ProviderPresetId,
+  auth: ClaudeAuthStatus,
+): Promise<ProviderPresetId> {
+  console.log(chalk.bold("\n    Choose your provider:"));
+  for (const p of PROVIDER_PRESETS) {
+    const currentTag = p.id === current ? chalk.dim(" (current)") : "";
+    console.log(`      ${chalk.cyan(`${p.id})`)} ${p.label}${currentTag}`);
+    console.log(chalk.dim(`         ${p.summary}`));
+  }
+  if (!auth.authenticated) {
+    console.log(chalk.yellow("\n    ⚠ No Anthropic credential detected — preset a will not work; consider b or c."));
+  }
+  const answer = (await promptLine(chalk.cyan(`\n    Provider [a/b/c/d] (default ${current}): `))).toLowerCase();
+  if (!answer) return current;
+  if (isProviderPresetId(answer)) return answer;
+  console.log(chalk.yellow(`    ⚠ Unknown choice '${answer}' — keeping '${current}'.`));
+  return current;
+}
+
+/** Warn (never block) when preset A is chosen without a detectable Anthropic credential. */
+function warnIfNoAnthropic(preset: ProviderPresetId, auth: ClaudeAuthStatus): void {
+  if (preset !== "a" || auth.authenticated) return;
+  console.log(chalk.yellow("    ⚠ No Anthropic credential detected (`claude auth status`)."));
+  console.log(chalk.dim("      Preset A (Claude Pro/Max or an API key) may not work — consider preset b or c."));
+}
+
 export const initCommand = new Command("init")
-  .description("Guided first-time setup: hub vault, agents, plugins, projects (re-run-safe)")
+  .description("Guided first-time setup: provider, hub vault, agents, plugins, projects (re-run-safe)")
   .option("--hub <path>", "Hub vault path", "~/squadrant-hub")
-  .action(async (opts: { hub: string }) => {
+  .option("--preset <id>", "provider preset: a|b|c|d (non-interactive)")
+  .option("--router-kind <kind>", "router kind for --preset c (opencode-go|openrouter|ccr|litellm|custom)")
+  .option("--router-base-url <url>", "router base URL for --preset c")
+  .option("--router-api-key-env <env>", "env var holding the router credential for --preset c")
+  .action(async (opts: InitOptions) => {
     const hubPath = resolveHome(opts.hub);
     const pkgRoot = findPackageRoot();
     const configDir = path.join(os.homedir(), ".config", "squadrant");
@@ -71,11 +154,24 @@ export const initCommand = new Command("init")
 
     console.log(chalk.bold("\nSquadrant Init\n"));
 
-    // Non-TTY: print step checklist + next-commands and exit without blocking
-    if (!isTTY) {
+    // Validate an explicit --preset before doing anything.
+    let explicitPreset: ProviderPresetId | undefined;
+    if (opts.preset !== undefined) {
+      const candidate = opts.preset.toLowerCase();
+      if (!isProviderPresetId(candidate)) {
+        console.error(chalk.red(`  ✘ Unknown --preset '${opts.preset}'. Valid values: a, b, c, d`));
+        process.exitCode = 1;
+        return;
+      }
+      explicitPreset = candidate;
+    }
+
+    // Non-TTY without --preset: print step checklist + next-commands and exit without blocking
+    if (!isTTY && !explicitPreset) {
       console.log("  Run these steps to get started:\n");
-      console.log(chalk.bold("  1/5  Hub vault"));
+      console.log(chalk.bold("  1/5  Hub vault + provider"));
       console.log(chalk.cyan(`       squadrant init --hub ${opts.hub}`));
+      console.log(chalk.dim("       Choose a provider: squadrant init --preset a|b|c|d"));
       console.log(chalk.bold("\n  2/5  Agent + projection setup"));
       console.log("       (handled automatically by: " + chalk.cyan("squadrant init") + ")");
       console.log(chalk.bold("\n  3/5  Plugins — open Claude Code and run:"));
@@ -106,16 +202,53 @@ export const initCommand = new Command("init")
       return;
     }
 
-    // ── 1/5  Hub vault ──────────────────────────────────────────────────────
+    // ── 1/5  Hub vault + provider preset (#826) ─────────────────────────────
     stepHeader(1, 5, "Hub vault");
 
-    if (fs.existsSync(DEFAULT_CONFIG_PATH)) {
+    const configExists = fs.existsSync(DEFAULT_CONFIG_PATH);
+    let config: SquadrantConfig;
+    if (configExists) {
       console.log(chalk.yellow("    ⚠ Config already exists, skipping creation"));
+      config = loadConfig();
     } else {
-      const config = getDefaultConfig();
+      config = getDefaultConfig();
       config.hubVault = hubPath;
+    }
+
+    // Ask ONE provider question (interactive), or apply --preset non-interactively.
+    const auth = detectClaudeAuth();
+    let chosenPreset: ProviderPresetId | undefined = explicitPreset;
+    if (!chosenPreset && isTTY) {
+      chosenPreset = await askProvider(detectProviderPresetId(config), auth);
+    }
+
+    let appliedChanges: string[] = [];
+    if (chosenPreset) {
+      const label = PROVIDER_PRESETS.find((p) => p.id === chosenPreset)?.label ?? chosenPreset;
+      const router = chosenPreset === "c" ? await resolveRouter(config, opts, isTTY) : undefined;
+      const overwrite = !configExists || explicitPreset !== undefined;
+      const result = applyProviderPreset(config, chosenPreset, { router, overwrite });
+      appliedChanges = result.changes;
+      config = result.config;
+
+      console.log(chalk.bold(`\n    Provider: ${chosenPreset.toUpperCase()} — ${label}`));
+      if (appliedChanges.length) {
+        console.log("    Will change:");
+        for (const change of appliedChanges) console.log(chalk.dim(`      - ${change}`));
+      } else {
+        console.log(chalk.dim("    - provider config already set (unchanged)"));
+      }
+      // Interactive already showed the hint above the question; only the
+      // non-interactive path needs the standalone warning.
+      if (!isTTY) warnIfNoAnthropic(chosenPreset, auth);
+    }
+
+    if (!configExists) {
       saveConfig(config);
       console.log(chalk.green(`    ✔ Config created at ${DEFAULT_CONFIG_PATH}`));
+    } else if (appliedChanges.length) {
+      saveConfig(config);
+      console.log(chalk.green(`    ✔ Config updated at ${DEFAULT_CONFIG_PATH}`));
     }
 
     const hubTemplate = path.join(pkgRoot, "obsidian", "hub");

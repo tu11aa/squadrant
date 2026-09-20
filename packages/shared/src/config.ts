@@ -299,6 +299,16 @@ export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.
 export const CONFIG_DIR = path.dirname(DEFAULT_CONFIG_PATH);
 export const DAEMON_SOCK_PATH = path.join(CONFIG_DIR, "squadrant.sock");
 
+/** #826: the shipped default crew-routing rules. Exported so the provider
+ *  presets reuse the same match strings for preset A instead of duplicating
+ *  them. Treat as immutable — callers clone before mutating. */
+export const DEFAULT_CREW_ROUTING_RULES: readonly CrewRoutingRule[] = [
+  { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
+  { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
+  { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
+  { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
+];
+
 export function getDefaultConfig(): SquadrantConfig {
   return {
     commandName: "\u{1F3DB}\u{FE0F} command",
@@ -340,12 +350,7 @@ export function getDefaultConfig(): SquadrantConfig {
       // resolver fallback is the safety net).
       controlChannel: { claude: "on", opencode: "on" },
       crewRouting: {
-        rules: [
-          { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
-          { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
-          { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
-          { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
-        ],
+        rules: DEFAULT_CREW_ROUTING_RULES.map((r) => ({ ...r })),
       },
     },
     metrics: {
