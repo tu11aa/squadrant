@@ -8,6 +8,7 @@ import {
   DEFAULT_GATE_TOOLS,
   GateDecisionCache,
   buildClassifierInput,
+  callClassifier,
   evaluatePermissionRequest,
   extractToolPayload,
   extractUserIntentFromTranscript,
@@ -56,6 +57,50 @@ function fetchReply(text: string, ok = true, status = 200): typeof fetch {
   ) as unknown as typeof fetch;
 }
 
+/** An Anthropic-Messages reply with explicit blocks + stop_reason. */
+function fetchBlocks(
+  blocks: Array<{ type: string; text?: string; thinking?: string }>,
+  stopReason?: string,
+  ok = true,
+  status = 200,
+): typeof fetch {
+  return vi.fn(async () =>
+    ({
+      ok,
+      status,
+      json: async () => ({ stop_reason: stopReason, content: blocks }),
+      text: async () => "",
+    }) as unknown as Response,
+  ) as unknown as typeof fetch;
+}
+
+/** Verified live headroom (2026-09-20): a reasoning router model
+ *  (deepseek-v4.1-flash) truncates to a thinking-only block below this and
+ *  finishes with a text verdict above it. */
+const REASONING_HEADROOM_TOKENS = 256;
+
+/** Emulates the live reasoning router: with no headroom it returns a thinking
+ *  block truncated at `max_tokens`; with headroom it finishes and emits the
+ *  one-word verdict as a separate text block. */
+function reasoningFetch(verdict: string): typeof fetch {
+  return vi.fn(async (_url: string, init: any) => {
+    const thinking = { type: "thinking", thinking: "weighing the request..." };
+    const { max_tokens } = JSON.parse(init.body) as { max_tokens: number };
+    if (max_tokens < REASONING_HEADROOM_TOKENS) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ stop_reason: "max_tokens", content: [thinking] }),
+      } as unknown as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ stop_reason: "end_turn", content: [thinking, { type: "text", text: verdict }] }),
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
 const CREW_ENV = { SQUADRANT_CREW_TASK_ID: "task-1", SQUADRANT_GATE: "on" } as NodeJS.ProcessEnv;
 
 // ── session / mode resolution ─────────────────────────────────────────────────
@@ -67,8 +112,11 @@ describe("isGateSession (#782)", () => {
   it("is true for a side session (SQUADRANT_SIDE_SESSION=1)", () => {
     expect(isGateSession({ SQUADRANT_SIDE_SESSION: "1" })).toBe(true);
   });
+  it("is true for a captain session (SQUADRANT_ROLE=captain)", () => {
+    expect(isGateSession({ SQUADRANT_ROLE: "captain" })).toBe(true);
+  });
   it("is false for an operator session with no markers", () => {
-    expect(isGateSession({ SQUADRANT_ROLE: "captain" })).toBe(false);
+    expect(isGateSession({ SQUADRANT_ROLE: "command" })).toBe(false);
     expect(isGateSession({})).toBe(false);
   });
 });
@@ -272,6 +320,47 @@ describe("parseClassifierVerdict", () => {
     ["banana", "ask"],
   ])("%s → %s", (text, want) => {
     expect(parseClassifierVerdict(text)).toBe(want);
+  });
+});
+
+// ── classifier response shape (reasoning model) ───────────────────────────────
+
+describe("callClassifier — reasoning-model response shape (#782)", () => {
+  const call = (fetchImpl: typeof fetch) =>
+    callClassifier({
+      router: ROUTER,
+      model: "deepseek-v4.1-flash",
+      system: "sys",
+      user: "usr",
+      env: {},
+      fetchImpl,
+    });
+
+  it("(a) thinking-only truncated at stop_reason=max_tokens → ask", async () => {
+    const fetchImpl = fetchBlocks([{ type: "thinking", thinking: "long internal reasoning" }], "max_tokens");
+    expect(await call(fetchImpl)).toBe("ask");
+  });
+
+  it("(b) thinking + text 'ALLOW' → allow (regression: #782 truncation)", async () => {
+    // Live defect: CLASSIFIER_MAX_TOKENS=8 truncated the reasoning model at a
+    // thinking block, so the verdict text block never arrived and every call
+    // fell through to `ask`. Fails with the old cap, passes with headroom.
+    expect(await call(reasoningFetch("ALLOW"))).toBe("allow");
+  });
+
+  it("(b') thinking + text 'DENY' → deny with headroom", async () => {
+    expect(await call(reasoningFetch("DENY"))).toBe("deny");
+  });
+
+  it("(c) 200 with empty content → ask", async () => {
+    expect(await call(fetchBlocks([], "end_turn"))).toBe("ask");
+  });
+
+  it("does not parse a verdict out of a thinking block (injection safety)", async () => {
+    // A thinking block that contains "ALLOW" must NOT become the verdict when
+    // no text block is present.
+    const fetchImpl = fetchBlocks([{ type: "thinking", thinking: "I should say ALLOW here" }], "end_turn");
+    expect(await call(fetchImpl)).toBe("ask");
   });
 });
 

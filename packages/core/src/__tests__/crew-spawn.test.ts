@@ -62,6 +62,7 @@ import {
   runCrewRead,
   runCrewClose,
   runCrewList,
+  claudeEnvShadowsRouter,
   type CrewSpawnInput,
   type CrewSpawnDeps,
   type ResolvedAgent,
@@ -154,6 +155,7 @@ function makeSpawnDeps(runtime: RuntimeDriver, agent: ResolvedAgent): CrewSpawnD
     dispatchCrew: vi.fn().mockResolvedValue(rec),
     writeSettingsLocal: vi.fn(),
     writeOpencodeConfig: vi.fn().mockReturnValue("/fake/opencode.json"),
+    writeRouterSettings: vi.fn().mockReturnValue("/fake/router-settings.json"),
     sendFirstTurn: vi.fn().mockResolvedValue({ delivered: true }),
     getFreePort: vi.fn().mockResolvedValue(9876),
     sendCodexFirstTurn: vi.fn().mockResolvedValue(undefined),
@@ -1141,6 +1143,33 @@ describe("runCrewSpawn", () => {
       expect(line.indexOf("ANTHROPIC_BASE_URL")).toBeLessThan(line.indexOf("nice -n"));
     });
 
+    it("routed claude spawn selects permission_mode=default and injects SQUADRANT_GATE=on (#772)", async () => {
+      const config = makeConfig({
+        // Operator config still says auto — the rubric owns this one now.
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+        router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+        crewRouting: {
+          rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy" }],
+        },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.routerCredentials = vi.fn().mockResolvedValue({
+        backend: "proxy",
+        baseUrl: "http://127.0.0.1:53421",
+        token: "t",
+      });
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
+
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).toContain("SQUADRANT_GATE=on");
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionMode: "default" }),
+      );
+    });
+
     it("fails loud when a routed spawn has no credentials provider", async () => {
       const config = makeConfig({
         router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
@@ -1159,7 +1188,8 @@ describe("runCrewSpawn", () => {
     it("injects nothing for a native claude spawn (byte-for-byte)", async () => {
       const config = makeConfig();
       const runtime = makeRuntime();
-      const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
       deps.routerCredentials = vi.fn();
 
       await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
@@ -1167,7 +1197,143 @@ describe("runCrewSpawn", () => {
       const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
       expect(line).not.toContain("ANTHROPIC_");
       expect(line).not.toContain("CMUX_PRESERVE");
+      // Native keeps the operator's configured permission mode and injects no gate.
+      expect(line).not.toContain("SQUADRANT_GATE");
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionMode: "acceptEdits" }),
+      );
       expect(deps.routerCredentials).not.toHaveBeenCalled();
+      // #772: a native spawn carries no per-spawn --settings and never writes one.
+      expect(deps.writeRouterSettings).not.toHaveBeenCalled();
+      expect(agent.buildCommand).not.toHaveBeenCalledWith(
+        expect.objectContaining({ settingsPath: expect.any(String) }),
+      );
+    });
+  });
+
+  // ── #772: claudeEnv shadowing the router backend ──────────────────────────
+
+  describe("claudeEnv shadowing the router backend (#772)", () => {
+    function routedConfig(claudeEnv?: Record<string, string>) {
+      return makeConfig({
+        router: {
+          kind: "opencode-go",
+          baseUrl: "https://opencode.ai/zen/go",
+          apiKey: "k",
+          models: { flash: { upstream: "deepseek-v4.1-flash" } },
+        },
+        crewRouting: {
+          rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy", model: "flash" }],
+        },
+        ...(claudeEnv ? { claudeEnv } : {}),
+      });
+    }
+
+    function routedDeps(runtime: RuntimeDriver, agent: ResolvedAgent = makeAgent("claude")) {
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.routerCredentials = vi.fn().mockResolvedValue({
+        backend: "proxy",
+        baseUrl: "http://127.0.0.1:53421",
+        token: "minted-tok",
+      });
+      return deps;
+    }
+
+    it("carries the router env in a per-spawn --settings file that outranks settings.json", async () => {
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = routedDeps(runtime, agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, routedConfig(), deps);
+
+      expect(deps.writeRouterSettings).toHaveBeenCalledWith({
+        stateRoot: expect.any(String),
+        project: PROJECT,
+        taskId: "task-001",
+        env: expect.objectContaining({
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:53421",
+          ANTHROPIC_AUTH_TOKEN: "minted-tok",
+          ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        }),
+      });
+      // The written path is passed to claude via --settings (level 2), which
+      // outranks the user's ~/.claude/settings.json (level 5).
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ settingsPath: "/fake/router-settings.json" }),
+      );
+    });
+
+    it("carries the operator's non-ANTHROPIC claudeEnv keys into the per-spawn --settings env (D1)", async () => {
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = routedDeps(runtime, agent);
+
+      await runCrewSpawn(
+        { project: PROJECT, task: "refactor the daemon" },
+        routedConfig({
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1",
+        }),
+        deps,
+      );
+
+      const env = vi.mocked(deps.writeRouterSettings!).mock.calls[0]![0].env;
+      expect(env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe("1");
+      // Shim URL wins — the claudeEnv ANTHROPIC_* value must not leak through.
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:53421");
+    });
+
+    it("warns when defaults.claudeEnv sets ANTHROPIC_* on a routed spawn", async () => {
+      const runtime = makeRuntime();
+      const deps = routedDeps(runtime);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn(
+          { project: PROJECT, task: "refactor the daemon" },
+          routedConfig({ ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go", CLAUDE_AFK_TIMEOUT_MS: "1" }),
+          deps,
+        );
+        const out = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(out).toContain("defaults.claudeEnv sets ANTHROPIC_BASE_URL");
+        expect(out).toMatch(/shadow the router shim/i);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("does not warn when claudeEnv has no ANTHROPIC_* keys", async () => {
+      const runtime = makeRuntime();
+      const deps = routedDeps(runtime);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn(
+          { project: PROJECT, task: "refactor the daemon" },
+          routedConfig({ CLAUDE_AFK_TIMEOUT_MS: "240000" }),
+          deps,
+        );
+        const out = stderrSpy.mock.calls.map((c) => c[0]).join("");
+        expect(out).not.toMatch(/shadow the router shim/i);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("fails loud when a routed spawn has no per-spawn settings writer", async () => {
+      const runtime = makeRuntime();
+      const deps = routedDeps(runtime);
+      delete deps.writeRouterSettings;
+
+      await expect(
+        runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, routedConfig(), deps),
+      ).rejects.toThrow(/per-spawn --settings writer/);
+    });
+
+    it("claudeEnvShadowsRouter returns only ANTHROPIC_* keys", () => {
+      expect(claudeEnvShadowsRouter(undefined)).toEqual([]);
+      expect(claudeEnvShadowsRouter({ CLAUDE_AFK_TIMEOUT_MS: "1" })).toEqual([]);
+      expect(
+        claudeEnvShadowsRouter({ ANTHROPIC_BASE_URL: "x", ANTHROPIC_API_KEY: "y", FOO: "z" }),
+      ).toEqual(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"]);
     });
   });
 

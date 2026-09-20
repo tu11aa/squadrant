@@ -18,7 +18,7 @@ import type { CapabilityRegistry } from "./registry.js";
  * @param registry      - populated CapabilityRegistry
  * @param role          - "captain" | "command" | "crew" | …
  * @param fresh         - true → new session; false → continue last session
- * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions"
+ * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions" | "default"
  * @param model         - optional model override
  * @param templatesDir  - resolved path to ~/.config/squadrant/templates
  * @param thinking      - optional thinking level → claude `--effort`
@@ -45,6 +45,9 @@ export function buildAgentCmd(
   /** #786: interactive boot for the captain role on agents that support it
    *  (opencode). Absent ⇒ today's headless delegate behaviour, unchanged. */
   captainBoot?: { port?: number; sessionId?: string },
+  /** #772: per-spawn `--settings` file carrying the router env for a routed
+   *  captain. Native captains pass nothing ⇒ no flag, byte-for-byte unchanged. */
+  settingsPath?: string,
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -61,6 +64,13 @@ export function buildAgentCmd(
       cmd += " --permission-mode auto";
     } else if (permissionMode === "bypassPermissions") {
       cmd += " --dangerously-skip-permissions";
+    } else if (permissionMode === "default") {
+      // #772 D2: a routed captain selects "default" so the U7 gate owns
+      // PermissionRequest. Emitting no flag here would let
+      // ~/.claude/settings.json's permissions.defaultMode=auto win and the gate
+      // would yield (fail-closed). Native configs default to "auto", so this
+      // branch is routed-only in practice.
+      cmd += " --permission-mode default";
     }
 
     if (model) {
@@ -69,6 +79,13 @@ export function buildAgentCmd(
 
     if (thinking) {
       cmd += ` --effort ${thinking}`;
+    }
+
+    // #772: command-line --settings outranks every file-based settings source,
+    // so this is what keeps a routed captain pointed at the shim when
+    // defaults.claudeEnv sets ANTHROPIC_*. Absent for native ⇒ no flag.
+    if (settingsPath) {
+      cmd += ` --settings ${settingsPath}`;
     }
 
     if (templatesDir) {

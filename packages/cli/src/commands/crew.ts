@@ -22,7 +22,7 @@ import {
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { tailLines } from "./crew-output.js";
-import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
+import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 
 export type { CrewSpawnInput };
@@ -84,6 +84,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     },
     writeSettingsLocal: (cwd) => writePerCrewSettingsLocal({ projectCwd: cwd }),
     writeOpencodeConfig: writePerCrewOpencodeConfig,
+    writeRouterSettings,
     sendFirstTurn: (pane, firstTurn, preLaunchScreen, opts) =>
       sendFirstTurnWhenReady(runtime, pane, firstTurn, preLaunchScreen, opts),
     getFreePort,

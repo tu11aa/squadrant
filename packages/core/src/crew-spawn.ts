@@ -29,11 +29,14 @@ import {
   type ThinkingLevel,
   type BackendMode,
 } from "@squadrant/shared";
-import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
-import { buildRouterEnv, renderEnvAssignments } from "./router/env.js";
+import { resolveBackend, assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
+import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } from "./router/env.js";
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+
+// Re-exported for test-import stability (crew-spawn.test.ts imports it here).
+export { claudeEnvShadowsRouter };
 
 /**
  * Where claude sessions' UDS inboxes live. Squadrant's own receipt listener MUST
@@ -117,6 +120,10 @@ export interface ResolvedAgent {
     port?: number;
     messagingSocketPath?: string;
     sessionName?: string;
+    /** #772: per-spawn `--settings` file whose `env` block outranks the user's
+     *  `~/.claude/settings.json` (used to carry the router env for a routed
+     *  spawn so `defaults.claudeEnv` cannot shadow it). */
+    settingsPath?: string;
   }): string;
 }
 
@@ -183,6 +190,13 @@ export interface CrewSpawnDeps {
   writeSettingsLocal(projectCwd: string): void;
   /** CLI-edge: write opencode permission config for an interactive crew. */
   writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean }): string;
+  /** #772: CLI-edge — write a per-spawn `--settings` file carrying the router
+   *  `env` block. Required for a routed claude spawn: a settings-file `env`
+   *  outranks the inherited process env, and command-line `--settings` outranks
+   *  `~/.claude/settings.json`, so this is the only mechanism that keeps a routed
+   *  session pointed at the shim when `defaults.claudeEnv` sets ANTHROPIC_*.
+   *  Absent on a routed spawn ⇒ the spawn fails loud (never silently bypasses). */
+  writeRouterSettings?(opts: { stateRoot: string; project: string; taskId: string; env: Record<string, string> }): string;
   /** CLI-edge: deliver the first turn once the agent pane is ready. Returns
    *  { delivered: true } when positively confirmed, { delivered: false } when
    *  all retry paths exhausted without confirmation (#466). */
@@ -510,9 +524,22 @@ export async function runCrewSpawn(
     // U3: a routed spawn must carry the router env in its PROCESS environment at
     // launch — a settings.json `env` block only reaches claude's child processes
     // and does not satisfy the interactive auth gate (#775 precondition 1).
-    // `native` injects nothing.
+    // #772: the process env alone is NOT sufficient. A settings-file `env` block
+    // is applied after process start and OVERRIDES the inherited value, so an
+    // operator's defaults.claudeEnv ANTHROPIC_* in ~/.claude/settings.json
+    // silently shadows the shim and bypasses routing. A per-spawn `--settings`
+    // file (written below, once the task id exists) sits above every file-based
+    // settings source, so it is what actually wins. `native` injects nothing.
     let routerEnv: Record<string, string> = {};
     if (backend !== "native") {
+      // #772: never silently bypass the shim. Without a per-spawn settings writer
+      // there is no way to outrank defaults.claudeEnv, so fail loud rather than
+      // launch a routed session that quietly talks to the wrong upstream.
+      if (!deps.writeRouterSettings) {
+        throw new Error(
+          `backend '${backend}' requires a per-spawn --settings writer to outrank defaults.claudeEnv, but the spawn path has none — refusing to launch a routed session that would silently bypass the router shim`,
+        );
+      }
       if (!deps.routerCredentials) {
         throw new Error(
           `backend '${backend}' requires router credentials, but the spawn path has no daemon credentials provider`,
@@ -522,6 +549,14 @@ export async function runCrewSpawn(
         await deps.routerCredentials({ project: input.project, backend }),
         crewModel,
       );
+      // #772: surface the conflict explicitly — the operator should know their
+      // claudeEnv would have shadowed the shim and that we are overriding it.
+      const shadowed = claudeEnvShadowsRouter(config.defaults.claudeEnv);
+      if (shadowed.length > 0) {
+        process.stderr.write(
+          `⚠️  backend '${backend}' selected but defaults.claudeEnv sets ${shadowed.join(", ")} — these would shadow the router shim. Overriding via a per-spawn --settings env block (outranks ~/.claude/settings.json).\n`,
+        );
+      }
     }
     ensureSocksDir();
     // Same directory as the crews' own sockets — receipts are only delivered
@@ -537,6 +572,21 @@ export async function runCrewSpawn(
       name,
       messagingSocketPath,
     });
+    // #772: carry the router env in a per-spawn `--settings` file that outranks
+    // the user's ~/.claude/settings.json env. Written after dispatch so it is
+    // keyed by the real task id. Empty for `native` ⇒ no flag, byte-for-byte
+    // unchanged. The dep is guaranteed present for a routed spawn (checked above).
+    // #772 D1: the per-spawn --settings env block replaces ~/.claude/settings.json's
+    // env wholesale, so fold in the operator's non-ANTHROPIC claudeEnv keys —
+    // ANTHROPIC_* still comes from the router env so the shim wins.
+    const routerSettingsPath = Object.keys(routerEnv).length > 0
+      ? deps.writeRouterSettings!({
+          stateRoot: STATE_ROOT,
+          project: input.project,
+          taskId: rec.id,
+          env: mergeClaudeEnvRouterSettings(routerEnv, config.defaults.claudeEnv),
+        })
+      : undefined;
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
     // hooks — does not clobber the user's own personal hooks (#134).
@@ -559,20 +609,29 @@ export async function runCrewSpawn(
       messagingSocketPath,
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
-      permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
+      // #772: a router-backed crew MUST use 'default' — 'auto' makes the built-in
+      // Sonnet-5 classifier own PermissionRequest and the gate yields, which is
+      // exactly the fail-closed dead end U7 exists to fix. The rubric owns the
+      // permission mode for a routed spawn; the operator's config cannot override
+      // it back into the broken path.
+      permissionMode: backend !== "native" ? "default" : (config.defaults.permissions?.crew ?? "acceptEdits"),
       // #708: self-describing name so ListAgents/the registry can tell this
       // crew apart from an unrelated session instead of an auto-derived cwd
       // basename (only the claude driver reads this — other agents ignore it).
       sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
       ...(crewThinking ? { thinking: crewThinking } : {}),
+      ...(routerSettingsPath ? { settingsPath: routerSettingsPath } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
     // Prefix the CLI command with env so the hook bridge + signal verb running
     // inside the crew's cmux tab can identify their task.
-    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
+    // #772: a router-backed crew injects SQUADRANT_GATE=on so the U7 gate owns
+    // PermissionRequest instead of yielding to the built-in classifier.
+    const gateEnv = backend !== "native" ? " SQUADRANT_GATE=on" : "";
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}${gateEnv}`;
     // Render the router env OUTSIDE `nice`: the shell must process the
     // assignments before exec, and `nice -n 10 FOO=bar cmd` is invalid (nice
     // would try to exec the literal `FOO=bar`). Empty for `native`, so a native

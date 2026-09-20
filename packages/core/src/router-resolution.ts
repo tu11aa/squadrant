@@ -33,3 +33,15 @@ export function assertBackendUsable(o: { backend: BackendMode; agent: string; ro
 export function shouldBuildRouterService(router: RouterConfig | undefined, isVitest: boolean): boolean {
   return !!router && !isVitest;
 }
+
+/**
+ * #772: the subset of `defaults.claudeEnv` that shadows a routed spawn's auth
+ * and routing. Claude Code applies a settings-file `env` block after process
+ * start, overriding the inherited process env — so any ANTHROPIC_* the operator
+ * pinned in `~/.claude/settings.json` silently points a routed session back at
+ * the user's upstream instead of the router shim. Pure; returns [] when none.
+ */
+export function claudeEnvShadowsRouter(claudeEnv: Record<string, string> | undefined): string[] {
+  if (!claudeEnv) return [];
+  return Object.keys(claudeEnv).filter((key) => key.startsWith("ANTHROPIC_"));
+}

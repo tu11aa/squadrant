@@ -133,11 +133,13 @@ vi.mock("../crew-control.js", () => ({
 const writePerCrewSettings = vi.hoisted(() => vi.fn());
 const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
 const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
+const writeRouterSettings = vi.hoisted(() => vi.fn());
 const readGlobalOpencodeModel = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
   writePerCrewSettingsLocal,
   writePerCrewOpencodeConfig,
+  writeRouterSettings,
   readGlobalOpencodeModel,
 }));
 
@@ -197,6 +199,8 @@ describe("squadrant crew spawn", () => {
     writePerCrewSettings.mockReset();
     writePerCrewSettingsLocal.mockReset();
     writePerCrewSettingsLocal.mockReturnValue("/tmp/brove/.claude/settings.local.json");
+    writeRouterSettings.mockReset();
+    writeRouterSettings.mockReturnValue("/tmp/per-crew/router-settings.json");
     writePerCrewOpencodeConfig.mockReset();
     writePerCrewOpencodeConfig.mockReturnValue("/tmp/per-crew/opencode.json");
     addWorktree.mockReset();

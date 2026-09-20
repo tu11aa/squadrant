@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-09-20
+
+Patch fixes to the opencode-go router backend epic (#772, refs #782).
+
+### Fixed
+
+- **The Tier-2 classifier no longer starves a reasoning model into an empty verdict (#772, #782, #821).** `CLASSIFIER_MAX_TOKENS` was 8 — a reasoning model spent that budget on a thinking block and was cut off at `stop_reason=max_tokens` before emitting the one-word verdict as a text block, so the gate asked on every call. Raised to the live-verified 256; a `max_tokens`/no-text outcome now explicitly asks, and a thinking block is never parsed as a verdict.
+- **Router env is carried via per-spawn `--settings` so `defaults.claudeEnv` can no longer shadow the shim (#772, #782, #822).** A settings-file `env` block is applied after process start and overrode the per-spawn process env, so a routed claude crew never reached the shim (`--backend proxy/direct` was silently neutered and the U5 cost footer stayed empty). The router env is now written to a per-spawn `router-settings.json` and passed on the claude command line (`--settings` outranks every file-based source); native spawns stay byte-for-byte unchanged, and a routed spawn with no settings writer fails loud rather than launching against the wrong upstream.
+- **Router-backed claude captains are now gate-able, and `launch` honors `roles.captain.backend` plus a `--backend native|direct|proxy` flag (#772, #782, #823).** Captains carry `SQUADRANT_ROLE=captain` and were excluded from `isGateSession`; routed crews and captains now select `permission_mode=default` and inject `SQUADRANT_GATE=on` so the U7 gate owns `PermissionRequest`, and `launch` carries the router env in the same per-spawn settings file. A routed captain launch fails loud when the credentials fetch or settings writer is missing. Native claude is byte-for-byte unchanged, and plain operator sessions remain untouched.
+- **The router shim no longer 404s Claude's model probe, so a routed captain stops falling into "issue with the selected model" auto mode (#772, #782, #824).** The shim matched `req.url === "/v1/messages"` exactly, but Claude Code sends `POST /v1/messages?beta=true`, so the real request 404'd; it now matches on the pathname only and serves minimal valid `GET /v1/models` and `POST /v1/messages/count_tokens` responses instead of 404ing. The per-spawn `--settings` env also carries the operator's non-`ANTHROPIC` `claudeEnv` keys (a settings `env` block replaces the user file's wholesale), and a routed launch emits an explicit `--permission-mode default` so `settings.json`'s `permissions.defaultMode=auto` cannot make the gate yield.
+
 ## [0.21.0] - 2026-09-20
 
 Completes the **harness/provider decoupling epic (#772)**: the opt-in router backend can now gate permissions and report cost, and is fully documented. The backward-compat guarantee holds throughout — with no `defaults.router` config there is zero behavior change, and every role resolves to `native` unless explicitly opted in.

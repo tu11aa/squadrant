@@ -9,8 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, THINKING_LEVELS } from "@squadrant/shared";
-import type { ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
+import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
+import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd,
@@ -22,14 +22,16 @@ import {
 import {
   launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
   readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
-  discoverLiveOpencodeServer,
-  type CaptainAddress,
+  discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments,
+  type CaptainAddress, type CaptainRouteSetup,
 } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
 import type { CaptainEntry } from "./launch-interactive.js";
-import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
+import { resolveLaunchAgent, resolveLaunchBackend } from "../lib/launch-agent-resolve.js";
 import { isBlockedFallback, anthropicRefusalMessage } from "../lib/model-guard.js";
-import { readGlobalOpencodeModel, writePerCrewOpencodeConfig } from "../lib/per-crew-settings.js";
+import { readGlobalOpencodeModel, writePerCrewOpencodeConfig, writeRouterSettings } from "../lib/per-crew-settings.js";
+import { fetchRouterCredentials } from "./crew.js";
+import { squadrantdCall } from "./crew-control.js";
 
 // Re-export for test-import stability (launch.test.ts imports from ../launch.js).
 export { deliverStartupPrompt } from "@squadrant/core";
@@ -152,11 +154,19 @@ export const launchCommand = new Command("launch")
   .option("--agent <name>", "Override captain agent for this launch (claude|codex|gemini|opencode); takes precedence over defaults.roles.captain.agent")
   .option("--model <name>", "Override captain model for this launch; takes precedence over defaults.roles.captain.model")
   .option("--thinking <level>", `Override captain thinking level for this launch (${THINKING_LEVELS.join("|")}) → claude --effort; takes precedence over defaults.roles.captain.thinking`)
-  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string; thinking?: string }) => {
+  .option("--backend <mode>", "Override captain backend for this launch (native|direct|proxy); takes precedence over defaults.roles.captain.backend")
+  .action(async (project: string | undefined, opts: { fresh?: boolean; keep?: boolean; all?: boolean; headless?: boolean; agent?: string; model?: string; thinking?: string; backend?: string }) => {
     if (opts.fresh && opts.keep) {
       console.error(chalk.red("\n  ✘ --fresh and --keep are mutually exclusive\n"));
       process.exit(1);
     }
+
+    // Fail fast on a typo rather than booting the wrong upstream.
+    if (opts.backend !== undefined && !isBackendMode(opts.backend)) {
+      console.error(chalk.red(`\n  ✘ Invalid --backend value '${opts.backend}'. Valid values: native, direct, proxy\n`));
+      process.exit(1);
+    }
+    const backendOverride: BackendMode | undefined = opts.backend;
 
     // Fail fast on a typo rather than letting the claude CLI warn and fall
     // back to its default effort — a silently-ignored flag is worse than an error.
@@ -198,6 +208,10 @@ export const launchCommand = new Command("launch")
         roleConfig,
         config.defaults.models?.[role as keyof ModelRoutingConfig],
       );
+      // #772 follow-up: resolve the launch backend the same way crew spawn does
+      // (explicit --backend > roles.<role>.backend > native; role backend only
+      // when the resolved agent is claude, since direct/proxy are claude-only).
+      const backend = resolveLaunchBackend({ backendOverride, agentName, roleConfig });
 
       // #627 item B: refuse to boot a fallback agent that silently depends on
       // the provider it's meant to survive losing. For opencode, an omitted
@@ -249,6 +263,38 @@ export const launchCommand = new Command("launch")
         captainOpencodeConfigPath = writePerCrewOpencodeConfig({ stateRoot, project: projectName, taskId: "captain" });
       }
 
+      // #772 follow-up: a router-backed captain must run the U7 permission gate
+      // instead of the built-in auto-mode classifier (hardcoded to Claude Sonnet
+      // 5, fails CLOSED on a router that does not serve it → "bash denied by auto
+      // mode"). prepareCaptainRoute picks permission_mode=default + SQUADRANT_GATE=on
+      // and writes the per-spawn --settings file carrying the router env, and
+      // fails LOUD if the credentials fetch or settings writer is missing rather
+      // than launching a routed captain that silently bypasses the shim. Native
+      // is byte-for-byte unchanged. Captains only — command/side have their own paths.
+      let route: CaptainRouteSetup | undefined;
+      if (role === "captain") {
+        try {
+          route = await prepareCaptainRoute({
+            backend,
+            agentName,
+            configuredPermissionMode: permissionMode,
+            project: projectName ?? "",
+            model,
+            stateRoot,
+            config,
+            deps: {
+              routerCredentials: (o) => fetchRouterCredentials(o.project, o.backend, { call: squadrantdCall }),
+              writeRouterSettings,
+            },
+            warn: (m) => console.error(chalk.yellow(`  ⚠ ${m}`)),
+          });
+        } catch (err) {
+          console.error(chalk.red(`  ✘ ${(err as Error).message}`));
+          hadFailure = true;
+          return;
+        }
+      }
+
       const priorRecord = projectName ? readCaptainAddress(stateRoot, projectName) : null;
       const captainPort = isOpencodeCaptain ? await getFreePort() : undefined;
       // #797: the resume id is decided inside agentCmdFactory, where the RESOLVED
@@ -282,14 +328,24 @@ export const launchCommand = new Command("launch")
               ? { port: captainPort, sessionId: pickResumeSessionId(priorRecord, "opencode", forceFresh) }
               : undefined;
             opencodeResumeSessionId = captainBoot?.sessionId;
-            const baseCmd = buildAgentCmd(agentName, registry, role, forceFresh, permissionMode, model, TEMPLATES_DIR,
+            const baseCmd = buildAgentCmd(agentName, registry, role, forceFresh,
+              route?.permissionMode ?? permissionMode,
+              route?.model ?? model,
+              TEMPLATES_DIR,
               resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
               resolveCaptainSessionName(agentName, projectName),
               thinking,
-              captainBoot);
+              captainBoot,
+              route?.settingsPath);
+            // Routed ⇒ prepend the router env + SQUADRANT_GATE=on so the gate owns
+            // PermissionRequest. Empty for native ⇒ command byte-for-byte unchanged.
+            const gatePrefix = route && Object.keys(route.env).length > 0
+              ? `${renderEnvAssignments(route.env)} `
+              : "";
+            const cmd = `${gatePrefix}${baseCmd}`;
             return captainOpencodeConfigPath
-              ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${baseCmd}`
-              : baseCmd;
+              ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${cmd}`
+              : cmd;
           },
           initialPrompt,
           runtime,

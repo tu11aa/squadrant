@@ -337,6 +337,88 @@ describe("router shim integration", () => {
     expect(usages[0]).toMatchObject({ project: "proj-a", model: "m", outputTokens: 2, costUsd: 0.0004 });
   });
 
+  // #772: Claude Code POSTs `/v1/messages?beta=true` (query string), so an
+  // exact `req.url === "/v1/messages"` match 404s the real request and surfaces
+  // as "There's an issue with the selected model (…)".
+  it("forwards POST /v1/messages even when a query string is present", async () => {
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end(JSON.stringify({ id: "msg_q", content: [{ type: "text", text: "ok" }] }));
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages?beta=true`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { content: Array<{ text: string }> };
+    expect(json.content[0].text).toBe("ok");
+  });
+
+  it("serves GET /v1/models with a minimal Anthropic list including the configured model", async () => {
+    upstream = await startMockUpstream((_q, s) => s.end("{}"));
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+      models: ["deepseek-v4.1-flash"],
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/models`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: Array<{ type: string; id: string; display_name: string }>;
+      has_more: boolean;
+    };
+    expect(body.has_more).toBe(false);
+    expect(body.data.map((m) => m.id)).toContain("deepseek-v4.1-flash");
+    expect(body.data[0]!.type).toBe("model");
+    expect(body.data[0]!.display_name).toBeTruthy();
+  });
+
+  it("advertises on GET /v1/models a model observed from a proxied request", async () => {
+    upstream = await startMockUpstream((_q, s) => {
+      s.writeHead(200, { "content-type": "application/json" });
+      s.end("{}");
+    });
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    await fetch(`${shim.url()}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "seen-model", messages: [] }),
+    });
+    const res = await fetch(`${shim.url()}/v1/models`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((m) => m.id)).toContain("seen-model");
+  });
+
+  it("serves POST /v1/messages/count_tokens with a minimal valid count (never 404)", async () => {
+    upstream = await startMockUpstream((_q, s) => s.end("{}"));
+    shim = createRouterShim({
+      upstream: { baseUrl: upstream.url, apiKey: "k", isAnthropic: false },
+      projectTokens: tokens,
+    });
+    await shim.start();
+    const res = await fetch(`${shim.url()}/v1/messages/count_tokens`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer tok-1" },
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "hello world" }] }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { input_tokens: number };
+    expect(typeof body.input_tokens).toBe("number");
+    expect(body.input_tokens).toBeGreaterThan(0);
+  });
+
   it("serves GET /healthz reporting readiness after start()", async () => {
     upstream = await startMockUpstream((_q, s) => s.end("{}"));
     shim = createRouterShim({

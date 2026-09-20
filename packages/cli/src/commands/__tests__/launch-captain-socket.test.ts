@@ -69,6 +69,11 @@ vi.mock("@squadrant/core", () => ({
   writeCaptainAddress: vi.fn(),
   realpathOrSelf: (p: string) => p,
   resolveAndPersistOpencodeCaptain: vi.fn(async () => null),
+  // #772: native passthrough — these tests exercise socket/session wiring, not router routing.
+  prepareCaptainRoute: vi.fn(async (o: { model?: string; configuredPermissionMode: string }) => ({
+    backend: "native" as const, model: o.model, permissionMode: o.configuredPermissionMode, env: {},
+  })),
+  renderEnvAssignments: vi.fn(() => ""),
 }));
 
 vi.mock("@squadrant/shared", async () => {
