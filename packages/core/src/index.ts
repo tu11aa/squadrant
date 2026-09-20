@@ -28,6 +28,7 @@ export * from "./telegram/index.js";
 export * from "./router/index.js";
 export * from "./crew-routing.js";
 export * from "./router-resolution.js";
+export * from "./captain-router.js";
 export * from "./permission-gate.js";
 export * from "./restart-daemon.js";
 export * from "./group-dispatch.js";

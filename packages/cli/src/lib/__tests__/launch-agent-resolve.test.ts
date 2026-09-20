@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveLaunchAgent } from "../launch-agent-resolve.js";
+import { resolveLaunchAgent, resolveLaunchBackend } from "../launch-agent-resolve.js";
 
 describe("resolveLaunchAgent", () => {
   it("falls back to config exactly as today when no CLI flags are passed", () => {
@@ -53,5 +53,33 @@ describe("resolveLaunchAgent", () => {
   it("leaves thinking undefined when neither flag nor config sets it (no built-in default)", () => {
     const result = resolveLaunchAgent({}, { agent: "claude", model: "sonnet" }, undefined);
     expect(result.thinking).toBeUndefined();
+  });
+});
+
+describe("resolveLaunchBackend (#772)", () => {
+  it("defaults to native when nothing selects a backend", () => {
+    expect(resolveLaunchBackend({ agentName: "claude", roleConfig: { agent: "claude" } })).toBe("native");
+  });
+
+  it("honors defaults.roles.captain.backend when the resolved agent is claude", () => {
+    expect(
+      resolveLaunchBackend({ agentName: "claude", roleConfig: { agent: "claude", backend: "proxy" } }),
+    ).toBe("proxy");
+  });
+
+  it("an explicit --backend flag wins over defaults.roles.captain.backend", () => {
+    expect(
+      resolveLaunchBackend({
+        backendOverride: "direct",
+        agentName: "claude",
+        roleConfig: { agent: "claude", backend: "proxy" },
+      }),
+    ).toBe("direct");
+  });
+
+  it("ignores the role backend for a non-claude resolved agent (direct/proxy are claude-only)", () => {
+    expect(
+      resolveLaunchBackend({ agentName: "opencode", roleConfig: { agent: "opencode", backend: "proxy" } }),
+    ).toBe("native");
   });
 });

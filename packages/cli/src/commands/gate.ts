@@ -17,7 +17,7 @@ import { Command } from "commander";
 import { sendRequest } from "@squadrant/core";
 import {
   GateDecisionCache,
-  SIDE_SESSION_ENV,
+  isGateSession,
   evaluatePermissionRequest,
   formatPermissionDecision,
   readUserIntent,
@@ -65,11 +65,12 @@ export async function runGatePermissionRequest(deps: GateHookDeps): Promise<Gate
 
   const taskId = env.SQUADRANT_CREW_TASK_ID;
   const project = env.SQUADRANT_CREW_PROJECT;
-  const isSide = env[SIDE_SESSION_ENV] === "1";
 
-  // Not a squadrant crew/side session (an operator's own claude): never touch it.
-  if (!taskId && !isSide) {
-    return { decision: "yield", reason: "not a squadrant crew/side session" };
+  // Not a squadrant crew/side/captain session (an operator's own claude): never
+  // touch it. Single source of truth is isGateSession — the same predicate
+  // evaluatePermissionRequest uses, so the two can never disagree (#772).
+  if (!isGateSession(env)) {
+    return { decision: "yield", reason: "not a squadrant crew/side/captain session" };
   }
 
   const stdout = deps.stdout ?? (() => {});

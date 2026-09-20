@@ -112,10 +112,15 @@ const FILE_PATH_FIELD_BY_TOOL: Readonly<Record<string, string>> = {
 
 // ── env / config resolution (pure) ────────────────────────────────────────────
 
-/** A squadrant crew or side claude session — never the operator's own session.
- *  Mirrors the #556 captain-memory-write gate's positive-marker approach. */
+/** A squadrant crew, side, or captain claude session — never the operator's own
+ *  session. Mirrors the #556 captain-memory-write gate's positive-marker
+ *  approach. Captains carry `SQUADRANT_ROLE=captain` (set in
+ *  launch-workspace.ts), which is what makes a router-backed captain gate-able
+ *  instead of falling through to the built-in auto-mode classifier. */
 export function isGateSession(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.SQUADRANT_CREW_TASK_ID) || env[SIDE_SESSION_ENV] === "1";
+  return Boolean(env.SQUADRANT_CREW_TASK_ID)
+    || env[SIDE_SESSION_ENV] === "1"
+    || env.SQUADRANT_ROLE === "captain";
 }
 
 /** Env override > config > default `auto` (no-op). An invalid env value is
@@ -505,7 +510,7 @@ export interface EvaluateGateInput {
  */
 export async function evaluatePermissionRequest(input: EvaluateGateInput): Promise<GateEvaluation> {
   if (!isGateSession(input.env)) {
-    return { decision: "yield", reason: "not a squadrant crew/side session" };
+    return { decision: "yield", reason: "not a squadrant crew/side/captain session" };
   }
 
   const gate = input.config.defaults.gate;

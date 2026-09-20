@@ -45,6 +45,9 @@ export function buildAgentCmd(
   /** #786: interactive boot for the captain role on agents that support it
    *  (opencode). Absent ⇒ today's headless delegate behaviour, unchanged. */
   captainBoot?: { port?: number; sessionId?: string },
+  /** #772: per-spawn `--settings` file carrying the router env for a routed
+   *  captain. Native captains pass nothing ⇒ no flag, byte-for-byte unchanged. */
+  settingsPath?: string,
 ): string {
   const driver = registry.getDriver(agentName);
 
@@ -69,6 +72,13 @@ export function buildAgentCmd(
 
     if (thinking) {
       cmd += ` --effort ${thinking}`;
+    }
+
+    // #772: command-line --settings outranks every file-based settings source,
+    // so this is what keeps a routed captain pointed at the shim when
+    // defaults.claudeEnv sets ANTHROPIC_*. Absent for native ⇒ no flag.
+    if (settingsPath) {
+      cmd += ` --settings ${settingsPath}`;
     }
 
     if (templatesDir) {

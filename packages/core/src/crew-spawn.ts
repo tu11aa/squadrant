@@ -29,11 +29,14 @@ import {
   type ThinkingLevel,
   type BackendMode,
 } from "@squadrant/shared";
-import { resolveBackend, assertBackendUsable } from "./router-resolution.js";
+import { resolveBackend, assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
 import { buildRouterEnv, renderEnvAssignments } from "./router/env.js";
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+
+// Re-exported for test-import stability (crew-spawn.test.ts imports it here).
+export { claudeEnvShadowsRouter };
 
 /**
  * Where claude sessions' UDS inboxes live. Squadrant's own receipt listener MUST
@@ -60,18 +63,6 @@ export const CC_SOCKS_DIR = "/tmp/cc-socks";
 export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if ((fs.statSync(dir).mode & 0o777) !== 0o700) fs.chmodSync(dir, 0o700);
-}
-
-/**
- * #772: the subset of `defaults.claudeEnv` that shadows a routed spawn's auth
- * and routing. Claude Code applies a settings-file `env` block after process
- * start, overriding the inherited process env — so any ANTHROPIC_* the operator
- * pinned in `~/.claude/settings.json` silently points a routed session back at
- * the user's upstream instead of the router shim. Pure; returns [] when none.
- */
-export function claudeEnvShadowsRouter(claudeEnv: Record<string, string> | undefined): string[] {
-  if (!claudeEnv) return [];
-  return Object.keys(claudeEnv).filter((key) => key.startsWith("ANTHROPIC_"));
 }
 
 /**
@@ -610,7 +601,12 @@ export async function runCrewSpawn(
       messagingSocketPath,
       // Permission mode is config-driven so squadrant can default crews to 'auto'
       // or keep the semi-automatic 'acceptEdits' gate. Falls back to 'acceptEdits'.
-      permissionMode: config.defaults.permissions?.crew ?? "acceptEdits",
+      // #772: a router-backed crew MUST use 'default' — 'auto' makes the built-in
+      // Sonnet-5 classifier own PermissionRequest and the gate yields, which is
+      // exactly the fail-closed dead end U7 exists to fix. The rubric owns the
+      // permission mode for a routed spawn; the operator's config cannot override
+      // it back into the broken path.
+      permissionMode: backend !== "native" ? "default" : (config.defaults.permissions?.crew ?? "acceptEdits"),
       // #708: self-describing name so ListAgents/the registry can tell this
       // crew apart from an unrelated session instead of an auto-derived cwd
       // basename (only the claude driver reads this — other agents ignore it).
@@ -624,7 +620,10 @@ export async function runCrewSpawn(
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
     // Prefix the CLI command with env so the hook bridge + signal verb running
     // inside the crew's cmux tab can identify their task.
-    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
+    // #772: a router-backed crew injects SQUADRANT_GATE=on so the U7 gate owns
+    // PermissionRequest instead of yielding to the built-in classifier.
+    const gateEnv = backend !== "native" ? " SQUADRANT_GATE=on" : "";
+    const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}${gateEnv}`;
     // Render the router env OUTSIDE `nice`: the shell must process the
     // assignments before exec, and `nice -n 10 FOO=bar cmd` is invalid (nice
     // would try to exec the literal `FOO=bar`). Empty for `native`, so a native

@@ -118,6 +118,19 @@ describe("runGatePermissionRequest (#782)", () => {
     expect(events).toHaveLength(0);
   });
 
+  it("router-backed captain session runs the gate (SQUADRANT_ROLE=captain) and prints the decision", async () => {
+    const { deps, out, events } = harness({
+      env: { SQUADRANT_ROLE: "captain", SQUADRANT_GATE: "on" },
+      fetchImpl: fetchReply("ALLOW"),
+    });
+    const res = await runGatePermissionRequest(deps);
+    expect(res.decision).toBe("allow");
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0]!).hookSpecificOutput.decision.behavior).toBe("allow");
+    // A captain has no crew task record — never emit task.blocked.
+    expect(events).toHaveLength(0);
+  });
+
   it("side session ask → normal dialog, but no task.blocked (no task record)", async () => {
     const { deps, out, events } = harness({
       env: { SQUADRANT_SIDE_SESSION: "1", SQUADRANT_GATE: "on" },
