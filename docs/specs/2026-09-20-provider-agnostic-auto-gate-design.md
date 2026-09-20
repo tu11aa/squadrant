@@ -124,8 +124,10 @@ access (e.g. `jevapi.org` / `tokenra.io`) are **not** official TypeSafe surfaces
   claude path imports `CONFIG_DIR`/`isGateMode`/`isGatePolicy`/`resolveRouterModel`/config
   types from `@squadrant/shared` (`permission-gate.ts:20-28`) and
   `deriveTranscriptPath`/`mapClaudeHookToEvent` from `@squadrant/agents`
-  (`gate.ts:29`), and core re-exports `SIDE_SESSION_ENV` (`core/index.ts:32`). Extraction
-  therefore requires three explicit **bridge interfaces** on the standalone side:
+  (`gate.ts:29`), and core re-exports `SIDE_SESSION_ENV` through the permission-gate barrel
+  (`core/index.ts:32` → `export * from "./permission-gate.js"`; the constant is defined at
+  `permission-gate.ts:61`). Extraction therefore requires three explicit **bridge
+  interfaces** on the standalone side:
   1. **config** — the adapter receives a resolved policy config (squadrant projects
      `defaults.gate` onto it), so the package never reads squadrant's config file directly;
   2. **userIntent** — a supplied `userIntent` string (or `undefined`), so the package never
@@ -339,33 +341,44 @@ a precedence. Default posture: **threshold-gated auto-resolve, fail-open-to-ask*
 | `reviewSeverity` | 1.0 | severity Score at/above which the outcome is at least `ask` |
 | `severityBlock` | 2.0 | severity Score that upgrades a review to a block |
 
-**Rules — evaluated top-down, first match wins. Precedence is `deny > ask > allow`.**
+**Rules — evaluated top-down, first match wins. Precedence is `deny > allow > ask`, with a
+final `ask` catch-all so an outcome is always defined and a silent `allow` is impossible.**
 
 - **deny** if any of:
   - `P(deny) ≥ denyThreshold`, or
   - `destructive.noul ≥ actionThreshold ∧ severity ≥ severityBlock`, or
-  - `secrets.noul ≥ actionThreshold ∧ scopeEscape.noul ≥ actionThreshold`, or
-  - `scopeEscape.noul ≥ actionThreshold ∧ severity ≥ severityBlock`, or
+  - `secrets.noul ≥ actionThreshold ∧ scope_escape.noul ≥ actionThreshold`, or
+  - `scope_escape.noul ≥ actionThreshold ∧ severity ≥ severityBlock`, or
   - a Tier-1 static deny rule matches.
-- **ask** if any of:
-  - `confidence` is absent, or `confidence < minConfidence`, or
-  - `P(allow) < allowThreshold`, or
-  - any hazard Noul falls in `[reviewThreshold, actionThreshold)`, or
-  - `severity ≥ reviewSeverity` and no deny rule fired, or
-  - the classifier failed / returned no usable assessment.
 - **allow** only if all of:
   - `P(allow) ≥ allowThreshold`, and
   - `confidence ≥ minConfidence`, and
   - `destructive.noul < reviewThreshold`, and
   - `secrets.noul < reviewThreshold`, and
-  - `scopeEscape.noul < reviewThreshold`, and
+  - `scope_escape.noul < reviewThreshold`, and
   - `intent_match` is absent **or** `intent_match.noul ≥ intentThreshold`, and
   - `severity < reviewSeverity`.
+- **ask — the catch-all**, which fires whenever the deny rule did not match and the allow
+  rule did not pass. Its explicit triggers are:
+  - `confidence` is absent, or `confidence < minConfidence`, or
+  - `P(allow) < allowThreshold`, or
+  - **any hazard Noul `≥ reviewThreshold`** — this deliberately covers both the review band
+    `[reviewThreshold, actionThreshold)` **and** a hazard at/above `actionThreshold` that
+    did not satisfy a deny rule (the previous band-only wording left such a case undefined),
+    or
+  - `severity ≥ reviewSeverity`, or
+  - the classifier failed / returned no usable assessment.
 
-`scope-risk` used in the deny rule is defined as `scopeEscape.noul ≥ actionThreshold`.
+**Generative-fallback rule.** The rules above require probabilities/confidence, which a
+generative classifier does not produce, so they can never honor its verdict. An explicit
+rule therefore runs **after** the Tier-1 deny check and **before** the ask catch-all: if
+`fallbackAcceptsVerdict: true` **and** the active classifier is generative **and** its
+verdict is `allow` or `deny`, that verdict is returned. With the default `false` this rule
+is skipped and the outcome is the ask catch-all.
+
 Every hazard the battery collects is consumed by at least one rule — there is no
-collected-but-ignored question. `severity` is collected but the allow rule vetoes on
-`reviewSeverity` as well as `severityBlock`.
+collected-but-ignored question. `severity` is consumed by both the deny rules and the allow
+rule's `reviewSeverity` veto.
 
 **Asymmetry (deliberate).** Auto-*allow* is the dangerous direction, so it gets the
 highest bar plus a confidence floor and hazard vetoes. Auto-*deny* is recoverable but U7's
@@ -374,15 +387,11 @@ danger degrades to `ask`. Named policies `strict` / `balanced` / `permissive` ad
 knobs together; per-hazard overrides are allowed and are defined **per question** (never a
 single shared threshold carried across Choice and Noul — see jaggedness §2.2).
 
-**Generative fallback.** The generative classifier yields only `allow|deny|ask` with no
-probabilities/confidence. Under the fallback the policy treats `confidence` as absent and
-`probabilities` as empty, so **every** rule above degrades to `ask` unless an explicit
-`fallbackAcceptsVerdict: true` (default **false**) is set, in which case a decisive
-`allow`/`deny` verdict is honored but only when no Tier-1 rule fires. This keeps the
-fallback from **weakening** the gate relative to U7. **Consequence to state plainly:** with
-the default `false`, a generative fallback *always asks* — it is a safety net, not an
-auto-resolver. The "works with any provider" pitch therefore means *works, but asks* unless
-Jev is available.
+**Generative fallback — consequence.** Because the fallback rule above is gated on
+`fallbackAcceptsVerdict`, the default `false` makes a generative classifier *always ask*: it
+is a safety net, not an auto-resolver. This keeps the fallback from **weakening** the gate
+relative to U7. The "works with any provider" pitch therefore means *works, but asks* unless
+Jev is available (or an operator opts in with `fallbackAcceptsVerdict: true`).
 
 **Version pinning / `policyVersion`.** `policyVersion` is a `sha256` of the **resolved**
 policy config — the named policy, every threshold, every per-hazard veto, and the
@@ -474,9 +483,9 @@ Explicit **positive** session markers; **never** the operator's own interactive 
   `permission.asked` / `permission.replied`; answer the crew's server with
   `POST /session/{sessionID}/permissions/{permissionID}` `{response:"once"|"reject"}`.
 - **Output:** `once` (allow) / `reject` (deny); "ask" = leave pending (the human prompt).
-- **Install:** merge a `permission` block (`bash: "ask"`, and whichever other tools are in
-  scope) into opencode config, and start `auto-gate opencode watch`. See the supervision and
-  port-discovery gaps below.
+- **Install:** merge a `permission` block into opencode config — `bash: "ask"` **and**
+  `edit: "ask"` (opencode's `edit` covers edit/write/patch) for whichever tools are in scope
+  — and start `auto-gate opencode watch`. See the supervision and port-discovery gaps below.
 - **Port discovery (required, currently undefined).** The SSE bridge needs the crew's
   server port. squadrant knows it because *it* launches `opencode --port <N>`
   (`sse-bridge.ts:3,58-80`). A standalone `auto-gate opencode watch` has **no defined way**
@@ -558,7 +567,8 @@ optional for squadrant users.
 {
   // Standalone default is "on" (deliberate — a user who installs a gate wants
   // it on). This DIFFERS from squadrant's defaults.gate.mode default of "auto"
-  // (shared/config.ts:112), which is a no-op; squadrant keeps its own default.
+  // (documented at shared/config.ts:112-113; applied at permission-gate.ts:131),
+  // which is a no-op; squadrant keeps its own default.
   "mode": "on",                       // on | off | auto
   "agents": {                         // per-agent enable; unset agents are not gated
     "claude": { "enabled": true },
@@ -598,9 +608,11 @@ optional for squadrant users.
   },
   "tools": ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"],
   // Per-agent tool-name normalization: the canonical scope list above is
-  // claude-shaped; each adapter maps its own names onto it (opencode bash→Bash).
+  // claude-shaped; each adapter maps its own names onto it. opencode's `edit`
+  // permission covers edit/write/patch (there is no separate `write` tool), so
+  // `edit` maps onto the canonical Edit/Write/MultiEdit set.
   "toolAliases": {
-    "opencode": { "bash": "Bash", "edit": "Edit", "write": "Write" }
+    "opencode": { "bash": "Bash", "edit": "Edit" }
   },
   "deny": ["^\\s*sudo\\b"],            // optional; REPLACES the built-in Tier-1 set
   "cache": true,
