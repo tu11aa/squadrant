@@ -10,6 +10,7 @@ import type { ComponentHealth } from "./liveness.js";
 import type { MailboxStats } from "./mailbox.js";
 import type { CaptainDeliveryStats } from "./delivery/captain-delivery.js";
 import type { TelegramBridgeHealth } from "./telegram/bridge.js";
+import type { ProjectUsage } from "./router/usage-ledger.js";
 export type { MailboxStats };
 
 /** B3: Telegram bridge status. `configured: false` when no bridge is set up
@@ -77,6 +78,8 @@ export interface ProjectDataPlane {
   store: StoreStats;
   /** B1: read-only captain-delivery deferral visibility (#484/#466-class stalls). */
   deferral: CaptainDeliveryStats;
+  /** U5: routed model+cost accumulated for the project (absent when never routed). */
+  routerUsage?: ProjectUsage;
 }
 
 export interface DaemonSnapshot {
@@ -110,6 +113,8 @@ export interface DaemonSnapshotInputs {
     corruptCount: number;
     /** Omitted when the caller has no CaptainDelivery instance for this project yet. */
     deferral?: CaptainDeliveryStats;
+    /** U5: routed model+cost accumulated for the project. */
+    routerUsage?: ProjectUsage;
   }>;
   results: ResultArtifacts;
 }
@@ -149,6 +154,7 @@ export function assembleDaemonSnapshot(input: DaemonSnapshotInputs, now: number)
         },
         store: { byState: p.storeByState, corruptCount: p.corruptCount },
         deferral: p.deferral ?? { maxDeferCount: 0, stuck: false },
+        ...(p.routerUsage ? { routerUsage: p.routerUsage } : {}),
       })),
       results: input.results,
     },

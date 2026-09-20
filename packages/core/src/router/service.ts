@@ -2,6 +2,7 @@
 import type { RouterConfig } from "@squadrant/shared";
 import { mintToken } from "./auth.js";
 import { createRouterShim } from "./shim.js";
+import { createUsageLedger, type ProjectUsage } from "./usage-ledger.js";
 import type { RouterHealth, RouterShim, RouterUpstream } from "./types.js";
 
 export interface RouterCredentials {
@@ -21,6 +22,8 @@ export interface RouterService {
   url(): string;
   health(): Promise<RouterHealth>;
   credentialsFor(project: string, backend: "direct" | "proxy"): RouterCredentials;
+  /** U5: accumulated routed usage/cost for a project, or undefined if none yet. */
+  usage(project: string): ProjectUsage | undefined;
 }
 
 /** Map the config block to the shim's input shape, deriving kind-based defaults. */
@@ -59,11 +62,13 @@ export function createRouterService(
     projectTokens.set(t, p);
   }
 
+  const ledger = createUsageLedger();
   const shim: RouterShim = createRouterShim({
     upstream,
     projectTokens,
     port: router.port ?? 0,
     log,
+    onUsage: (u) => ledger.record(u),
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
   });
 
@@ -99,5 +104,6 @@ export function createRouterService(
       }
       return { backend, baseUrl: shim.url(), token };
     },
+    usage: (project) => ledger.project(project),
   };
 }

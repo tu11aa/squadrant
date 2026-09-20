@@ -182,4 +182,34 @@ describe("assembleDaemonSnapshot", () => {
     const snap = assembleDaemonSnapshot(inputs(), NOW);
     expect(snap.tier0.lifecycleSources).toEqual([]);
   });
+
+  it("U5: passes per-project router usage through when the caller supplies it", () => {
+    const routerUsage = {
+      project: "squadrant",
+      requests: 3,
+      costUsd: 0.05,
+      models: { "deepseek/deepseek-chat": { requests: 3, costUsd: 0.05, inputTokens: 10, outputTokens: 5 } },
+    };
+    const snap = assembleDaemonSnapshot(
+      inputs({
+        projects: [
+          {
+            project: "squadrant",
+            mailbox: { maxSeq: 12, sizeBytes: 1300, oldestEntryAgeMs: 60_000, rotationCount: 0 },
+            lastAckedSeq: 12,
+            storeByState: { working: 3 },
+            corruptCount: 0,
+            routerUsage,
+          },
+        ],
+      }),
+      NOW,
+    );
+    expect(snap.tier2.projects[0].routerUsage).toEqual(routerUsage);
+  });
+
+  it("U5: omits router usage when the caller has none (project never routed)", () => {
+    const snap = assembleDaemonSnapshot(inputs(), NOW);
+    expect(snap.tier2.projects[0].routerUsage).toBeUndefined();
+  });
 });

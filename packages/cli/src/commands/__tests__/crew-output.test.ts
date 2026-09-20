@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createStore } from "@squadrant/core";
 import { tailLines, formatTaskLine, filterTasks, formatCompactTasks } from "../crew-output.js";
 import type { TaskRecord, TaskState } from "@squadrant/shared";
+import type { ProjectUsage } from "@squadrant/core";
 
 // ─── tailLines ───────────────────────────────────────────────────
 
@@ -210,6 +211,34 @@ describe("formatCompactTasks", () => {
   it("prints clear message for empty list even with JSON", () => {
     const out = formatCompactTasks([], { compact: false });
     expect(out).toContain("no tasks");
+  });
+
+  describe("U5 router usage footer", () => {
+    const usage: ProjectUsage = {
+      project: "p",
+      requests: 3,
+      costUsd: 0.0123,
+      models: {
+        "m-a": { requests: 2, costUsd: 0.01, inputTokens: 0, outputTokens: 0 },
+        "m-b": { requests: 1, costUsd: 0.0023, inputTokens: 0, outputTokens: 0 },
+      },
+    };
+
+    it("appends a total + per-model cost footer when usage is supplied", () => {
+      const out = formatCompactTasks(records, { usage });
+      expect(out).toContain("router: $0.0123 total · 3 reqs");
+      expect(out).toContain("  m-a  $0.0100 · 2 reqs");
+      expect(out).toContain("  m-b  $0.0023 · 1 req");
+    });
+
+    it("omits the footer when no usage is supplied", () => {
+      expect(formatCompactTasks(records, {})).not.toContain("router:");
+    });
+
+    it("omits the footer when usage has no requests yet", () => {
+      const empty: ProjectUsage = { project: "p", requests: 0, costUsd: 0, models: {} };
+      expect(formatCompactTasks(records, { usage: empty })).not.toContain("router:");
+    });
   });
 });
 

@@ -68,6 +68,21 @@ describe("createUsageTee", () => {
   });
 });
 
+describe("model capture", () => {
+  it("records the request model on the streamed usage", async () => {
+    const seen: RouterUsage[] = [];
+    const tee = createUsageTee("p", (u) => seen.push(u), "deepseek/deepseek-chat");
+    const src = Buffer.from('data: {"usage":{"output_tokens":3}}\n\n');
+    await collect(Readable.from([src]).pipe(tee));
+    expect(seen[0]).toMatchObject({ project: "p", model: "deepseek/deepseek-chat", outputTokens: 3 });
+  });
+
+  it("records the request model on the non-stream usage", () => {
+    const u = usageFromJson("p", { usage: { output_tokens: 3 } }, "google/gemini-2.5-flash");
+    expect(u).toMatchObject({ project: "p", model: "google/gemini-2.5-flash", outputTokens: 3 });
+  });
+});
+
 describe("usageFromJson", () => {
   it("extracts usage + top-level string cost (opencode-go shape)", () => {
     const u = usageFromJson("p", {
