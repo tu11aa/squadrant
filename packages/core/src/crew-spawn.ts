@@ -63,6 +63,18 @@ export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
 }
 
 /**
+ * #772: the subset of `defaults.claudeEnv` that shadows a routed spawn's auth
+ * and routing. Claude Code applies a settings-file `env` block after process
+ * start, overriding the inherited process env — so any ANTHROPIC_* the operator
+ * pinned in `~/.claude/settings.json` silently points a routed session back at
+ * the user's upstream instead of the router shim. Pure; returns [] when none.
+ */
+export function claudeEnvShadowsRouter(claudeEnv: Record<string, string> | undefined): string[] {
+  if (!claudeEnv) return [];
+  return Object.keys(claudeEnv).filter((key) => key.startsWith("ANTHROPIC_"));
+}
+
+/**
  * #730: the first-turn task text for a claude crew is delivered by pasting it
  * into the crew's cmux pane, then confirming submit once the input box stops
  * changing (confirmedSendToPane / sendFirstTurnWhenReady in
@@ -117,6 +129,10 @@ export interface ResolvedAgent {
     port?: number;
     messagingSocketPath?: string;
     sessionName?: string;
+    /** #772: per-spawn `--settings` file whose `env` block outranks the user's
+     *  `~/.claude/settings.json` (used to carry the router env for a routed
+     *  spawn so `defaults.claudeEnv` cannot shadow it). */
+    settingsPath?: string;
   }): string;
 }
 
@@ -183,6 +199,13 @@ export interface CrewSpawnDeps {
   writeSettingsLocal(projectCwd: string): void;
   /** CLI-edge: write opencode permission config for an interactive crew. */
   writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean }): string;
+  /** #772: CLI-edge — write a per-spawn `--settings` file carrying the router
+   *  `env` block. Required for a routed claude spawn: a settings-file `env`
+   *  outranks the inherited process env, and command-line `--settings` outranks
+   *  `~/.claude/settings.json`, so this is the only mechanism that keeps a routed
+   *  session pointed at the shim when `defaults.claudeEnv` sets ANTHROPIC_*.
+   *  Absent on a routed spawn ⇒ the spawn fails loud (never silently bypasses). */
+  writeRouterSettings?(opts: { stateRoot: string; project: string; taskId: string; env: Record<string, string> }): string;
   /** CLI-edge: deliver the first turn once the agent pane is ready. Returns
    *  { delivered: true } when positively confirmed, { delivered: false } when
    *  all retry paths exhausted without confirmation (#466). */
@@ -510,9 +533,22 @@ export async function runCrewSpawn(
     // U3: a routed spawn must carry the router env in its PROCESS environment at
     // launch — a settings.json `env` block only reaches claude's child processes
     // and does not satisfy the interactive auth gate (#775 precondition 1).
-    // `native` injects nothing.
+    // #772: the process env alone is NOT sufficient. A settings-file `env` block
+    // is applied after process start and OVERRIDES the inherited value, so an
+    // operator's defaults.claudeEnv ANTHROPIC_* in ~/.claude/settings.json
+    // silently shadows the shim and bypasses routing. A per-spawn `--settings`
+    // file (written below, once the task id exists) sits above every file-based
+    // settings source, so it is what actually wins. `native` injects nothing.
     let routerEnv: Record<string, string> = {};
     if (backend !== "native") {
+      // #772: never silently bypass the shim. Without a per-spawn settings writer
+      // there is no way to outrank defaults.claudeEnv, so fail loud rather than
+      // launch a routed session that quietly talks to the wrong upstream.
+      if (!deps.writeRouterSettings) {
+        throw new Error(
+          `backend '${backend}' requires a per-spawn --settings writer to outrank defaults.claudeEnv, but the spawn path has none — refusing to launch a routed session that would silently bypass the router shim`,
+        );
+      }
       if (!deps.routerCredentials) {
         throw new Error(
           `backend '${backend}' requires router credentials, but the spawn path has no daemon credentials provider`,
@@ -522,6 +558,14 @@ export async function runCrewSpawn(
         await deps.routerCredentials({ project: input.project, backend }),
         crewModel,
       );
+      // #772: surface the conflict explicitly — the operator should know their
+      // claudeEnv would have shadowed the shim and that we are overriding it.
+      const shadowed = claudeEnvShadowsRouter(config.defaults.claudeEnv);
+      if (shadowed.length > 0) {
+        process.stderr.write(
+          `⚠️  backend '${backend}' selected but defaults.claudeEnv sets ${shadowed.join(", ")} — these would shadow the router shim. Overriding via a per-spawn --settings env block (outranks ~/.claude/settings.json).\n`,
+        );
+      }
     }
     ensureSocksDir();
     // Same directory as the crews' own sockets — receipts are only delivered
@@ -537,6 +581,13 @@ export async function runCrewSpawn(
       name,
       messagingSocketPath,
     });
+    // #772: carry the router env in a per-spawn `--settings` file that outranks
+    // the user's ~/.claude/settings.json env. Written after dispatch so it is
+    // keyed by the real task id. Empty for `native` ⇒ no flag, byte-for-byte
+    // unchanged. The dep is guaranteed present for a routed spawn (checked above).
+    const routerSettingsPath = Object.keys(routerEnv).length > 0
+      ? deps.writeRouterSettings!({ stateRoot: STATE_ROOT, project: input.project, taskId: rec.id, env: routerEnv })
+      : undefined;
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing
     // hooks — does not clobber the user's own personal hooks (#134).
@@ -566,6 +617,7 @@ export async function runCrewSpawn(
       sessionName: crewSessionName(input.project, name),
       ...(crewModel ? { model: crewModel } : {}),
       ...(crewThinking ? { thinking: crewThinking } : {}),
+      ...(routerSettingsPath ? { settingsPath: routerSettingsPath } : {}),
     });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);

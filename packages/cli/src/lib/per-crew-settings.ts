@@ -160,6 +160,34 @@ export function writePerCrewSettings(o: {
 }
 
 /**
+ * #772: write a per-spawn `--settings` file carrying the router `env` block.
+ *
+ * Claude Code applies a settings file's `env` after process start, and a
+ * file-based `env` value OVERRIDES the inherited process env (verified: the
+ * `defaults.claudeEnv` overlay in `~/.claude/settings.json` shadows a routed
+ * spawn's process-env ANTHROPIC_*, silently pointing claude back at the user's
+ * upstream and bypassing the router shim). Command-line `--settings` sits ABOVE
+ * every file-based settings source in Claude Code's precedence ladder, so
+ * passing the router env here is what actually wins over `~/.claude/settings.json`
+ * for a routed spawn. The cmux wrapper folds this file into its own single
+ * combined `--settings`, so it survives cmux's launch interception.
+ *
+ * Returns the absolute path to the written file.
+ */
+export function writeRouterSettings(o: {
+  stateRoot: string;
+  project: string;
+  taskId: string;
+  env: Record<string, string>;
+}): string {
+  const dir = join(o.stateRoot, o.project, o.taskId);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "router-settings.json");
+  writeFileSync(file, JSON.stringify({ env: o.env }, null, 2));
+  return file;
+}
+
+/**
  * Write squadrant hooks into `<projectCwd>/.claude/settings.local.json` so they
  * are auto-loaded by Claude Code as a project-local settings source (level 3
  * in the precedence hierarchy). Unlike the per-crew settings.json passed via
