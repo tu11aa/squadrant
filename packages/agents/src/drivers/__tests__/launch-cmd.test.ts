@@ -82,6 +82,22 @@ describe("buildAgentCmd — claude driver", () => {
     expect(cmd).toContain("--model claude-opus-4-8");
   });
 
+  it("appends --settings when a per-spawn settings path is provided (#772)", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd(
+      "claude", r, "captain", true, "default",
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      "/state/proj/captain/router-settings.json",
+    );
+    expect(cmd).toContain("--settings /state/proj/captain/router-settings.json");
+  });
+
+  it("omits --settings when no settings path is provided (native unchanged)", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "auto");
+    expect(cmd).not.toContain("--settings");
+  });
+
   it("appends --append-system-prompt-file when role template exists", () => {
     const roleFile = path.join(templatesDir, "captain.claude.md");
     fs.writeFileSync(roleFile, "# captain");

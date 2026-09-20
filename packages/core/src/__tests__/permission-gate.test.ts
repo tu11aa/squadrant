@@ -112,8 +112,11 @@ describe("isGateSession (#782)", () => {
   it("is true for a side session (SQUADRANT_SIDE_SESSION=1)", () => {
     expect(isGateSession({ SQUADRANT_SIDE_SESSION: "1" })).toBe(true);
   });
+  it("is true for a captain session (SQUADRANT_ROLE=captain)", () => {
+    expect(isGateSession({ SQUADRANT_ROLE: "captain" })).toBe(true);
+  });
   it("is false for an operator session with no markers", () => {
-    expect(isGateSession({ SQUADRANT_ROLE: "captain" })).toBe(false);
+    expect(isGateSession({ SQUADRANT_ROLE: "command" })).toBe(false);
     expect(isGateSession({})).toBe(false);
   });
 });

@@ -1143,6 +1143,33 @@ describe("runCrewSpawn", () => {
       expect(line.indexOf("ANTHROPIC_BASE_URL")).toBeLessThan(line.indexOf("nice -n"));
     });
 
+    it("routed claude spawn selects permission_mode=default and injects SQUADRANT_GATE=on (#772)", async () => {
+      const config = makeConfig({
+        // Operator config still says auto — the rubric owns this one now.
+        permissions: { command: "auto", captain: "auto", crew: "auto" },
+        router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
+        crewRouting: {
+          rules: [{ match: "refactor", agent: "claude", tier: "hard", backend: "proxy" }],
+        },
+      });
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.routerCredentials = vi.fn().mockResolvedValue({
+        backend: "proxy",
+        baseUrl: "http://127.0.0.1:53421",
+        token: "t",
+      });
+
+      await runCrewSpawn({ project: PROJECT, task: "refactor the daemon" }, config, deps);
+
+      const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
+      expect(line).toContain("SQUADRANT_GATE=on");
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionMode: "default" }),
+      );
+    });
+
     it("fails loud when a routed spawn has no credentials provider", async () => {
       const config = makeConfig({
         router: { kind: "opencode-go", baseUrl: "https://opencode.ai/zen/go", apiKey: "k" },
@@ -1170,6 +1197,11 @@ describe("runCrewSpawn", () => {
       const line = vi.mocked(runtime.sendToPane).mock.calls[0]![1] as string;
       expect(line).not.toContain("ANTHROPIC_");
       expect(line).not.toContain("CMUX_PRESERVE");
+      // Native keeps the operator's configured permission mode and injects no gate.
+      expect(line).not.toContain("SQUADRANT_GATE");
+      expect(agent.buildCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionMode: "acceptEdits" }),
+      );
       expect(deps.routerCredentials).not.toHaveBeenCalled();
       // #772: a native spawn carries no per-spawn --settings and never writes one.
       expect(deps.writeRouterSettings).not.toHaveBeenCalled();
