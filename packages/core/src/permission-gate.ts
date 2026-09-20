@@ -63,7 +63,11 @@ export const SIDE_SESSION_ENV = "SQUADRANT_SIDE_SESSION";
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX_ENTRIES = 500;
 const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
-const CLASSIFIER_MAX_TOKENS = 8;
+// Headroom so a REASONING router model can finish its thinking block and still
+// emit the one-word verdict as a separate text block. At 8 the response was
+// truncated at stop_reason=max_tokens with only a thinking block, so the gate
+// never saw a verdict and asked on every call (#782). 256 is live-verified.
+const CLASSIFIER_MAX_TOKENS = 256;
 const MAX_PAYLOAD_CHARS = 2000;
 
 // The built-in Tier-1 deny set. Aggressive by design (decision 5): it must catch
@@ -368,10 +372,25 @@ export async function callClassifier(o: {
       o.log?.(`gate: classifier HTTP ${res.status} — asking`);
       return "ask";
     }
-    const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+    const data = (await res.json()) as {
+      stop_reason?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    };
+    // A reasoning model can exhaust `max_tokens` inside its thinking block, so
+    // the verdict text never arrives. Ask explicitly rather than let the empty
+    // text fall through. The thinking block is never parsed — a verdict may only
+    // come from a text block (injection safety).
+    if (data?.stop_reason === "max_tokens") {
+      o.log?.("gate: classifier exhausted max_tokens before a verdict — asking");
+      return "ask";
+    }
     const text = Array.isArray(data?.content)
       ? data.content.filter((b) => b?.type === "text" && typeof b.text === "string").map((b) => b.text).join(" ")
       : "";
+    if (!text.trim()) {
+      o.log?.("gate: classifier returned no text verdict — asking");
+      return "ask";
+    }
     return parseClassifierVerdict(text);
   } catch (e) {
     o.log?.(`gate: classifier unavailable (${(e as Error).message}) — asking`);
