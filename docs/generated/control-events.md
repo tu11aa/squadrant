@@ -52,7 +52,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:518
   - packages/agents/src/interactive/claude.ts:543
   - packages/agents/src/interactive/claude.ts:568
-  - packages/cli/src/commands/hooks.ts:45
+  - packages/cli/src/commands/hooks.ts:46
   - packages/cli/src/squadrantd.ts:436
   - packages/cli/src/squadrantd.ts:481
   - packages/cli/src/squadrantd.ts:512
@@ -131,7 +131,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:1028
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:573
-  - packages/cli/src/commands/hooks.ts:49
+  - packages/cli/src/commands/hooks.ts:50
   - packages/core/src/crew-spawn.ts:612
   - packages/core/src/crew-spawn.ts:676
   - packages/core/src/daemon/reduce.ts:386

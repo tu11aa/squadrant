@@ -355,6 +355,8 @@ describe("squadrant side spawn", () => {
     // First sendToPane call is the CLI launch — must cd into the scratch worktree
     const launchCall = sendToPane.mock.calls[0];
     expect(launchCall?.[1]).toContain("cd '/tmp/brove/.worktrees/brove-side-1'");
+    // #782: the side session is marked so the permission gate can identify it.
+    expect(launchCall?.[1]).toContain("SQUADRANT_SIDE_SESSION=1");
   });
 
   it("debug first turn includes scratch worktree path in context block", async () => {

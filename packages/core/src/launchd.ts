@@ -519,8 +519,12 @@ export function isReadOnlyCrewCommand(argv: readonly string[]): boolean {
  * root / agent registries and must work with the daemon down — so, like the
  * read-only crew subcommands, they must never trigger a daemon reconcile or
  * print the foreign-install banner.
+ *
+ * #782: `gate` is a hook-driven command (Claude invokes it on every permission
+ * prompt). It must be as cheap as possible and must never reconcile the daemon;
+ * its ask path only best-effort-sends to an already-running daemon.
  */
-export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami"]);
+export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami", "gate"]);
 
 /** Pure: is this invocation one of the read-only top-level commands above? */
 export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
