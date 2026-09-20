@@ -18,7 +18,7 @@ import type { CapabilityRegistry } from "./registry.js";
  * @param registry      - populated CapabilityRegistry
  * @param role          - "captain" | "command" | "crew" | …
  * @param fresh         - true → new session; false → continue last session
- * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions"
+ * @param permissionMode - "acceptEdits" | "auto" | "bypassPermissions" | "default"
  * @param model         - optional model override
  * @param templatesDir  - resolved path to ~/.config/squadrant/templates
  * @param thinking      - optional thinking level → claude `--effort`
@@ -64,6 +64,13 @@ export function buildAgentCmd(
       cmd += " --permission-mode auto";
     } else if (permissionMode === "bypassPermissions") {
       cmd += " --dangerously-skip-permissions";
+    } else if (permissionMode === "default") {
+      // #772 D2: a routed captain selects "default" so the U7 gate owns
+      // PermissionRequest. Emitting no flag here would let
+      // ~/.claude/settings.json's permissions.defaultMode=auto win and the gate
+      // would yield (fail-closed). Native configs default to "auto", so this
+      // branch is routed-only in practice.
+      cmd += " --permission-mode default";
     }
 
     if (model) {

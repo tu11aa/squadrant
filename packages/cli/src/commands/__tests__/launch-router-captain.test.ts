@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   home: "",
   roleAgent: "claude",
   roleBackend: undefined as "native" | "direct" | "proxy" | undefined,
+  claudeEnv: undefined as Record<string, string> | undefined,
 }));
 
 // Redirect home so the real writeRouterSettings writes into a throwaway dir.
@@ -112,6 +113,7 @@ vi.mock("@squadrant/shared", async () => {
         },
         models: {},
         router: ROUTER,
+        ...(hoisted.claudeEnv ? { claudeEnv: hoisted.claudeEnv } : {}),
       },
     }),
     resolveHome: (p: string) => p,
@@ -142,6 +144,7 @@ describe("router-backed captain launch (#772)", () => {
   beforeEach(() => {
     hoisted.roleAgent = "claude";
     hoisted.roleBackend = undefined;
+    hoisted.claudeEnv = undefined;
     buildAgentCmdMock.mockClear();
     launchOneWorkspaceMock.mockClear();
     fetchRouterCredentialsMock.mockClear();
@@ -174,6 +177,20 @@ describe("router-backed captain launch (#772)", () => {
     expect(written.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:53421");
     expect(written.env.ANTHROPIC_AUTH_TOKEN).toBe("minted-tok");
     expect(written.env.ANTHROPIC_MODEL).toBe("deepseek-v4.1-flash");
+  });
+
+  it("carries non-ANTHROPIC claudeEnv keys into the written --settings env, keeping the shim URL (D1)", async () => {
+    hoisted.roleBackend = "proxy";
+    hoisted.claudeEnv = {
+      ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+      CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1",
+    };
+    await runLaunchAndGetCmd();
+
+    const written = JSON.parse(readFileSync(SETTINGS_PATH(), "utf-8"));
+    expect(written.env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe("1");
+    // Shim wins — claudeEnv's ANTHROPIC_* must not leak through.
+    expect(written.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:53421");
   });
 
   it("--backend proxy overrides an unset role backend", async () => {

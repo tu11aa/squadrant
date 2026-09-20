@@ -1263,6 +1263,26 @@ describe("runCrewSpawn", () => {
       );
     });
 
+    it("carries the operator's non-ANTHROPIC claudeEnv keys into the per-spawn --settings env (D1)", async () => {
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = routedDeps(runtime, agent);
+
+      await runCrewSpawn(
+        { project: PROJECT, task: "refactor the daemon" },
+        routedConfig({
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1",
+        }),
+        deps,
+      );
+
+      const env = vi.mocked(deps.writeRouterSettings!).mock.calls[0]![0].env;
+      expect(env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe("1");
+      // Shim URL wins — the claudeEnv ANTHROPIC_* value must not leak through.
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:53421");
+    });
+
     it("warns when defaults.claudeEnv sets ANTHROPIC_* on a routed spawn", async () => {
       const runtime = makeRuntime();
       const deps = routedDeps(runtime);

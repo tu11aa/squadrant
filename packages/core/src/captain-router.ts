@@ -19,7 +19,7 @@
 
 import { resolveRouterModel, type BackendMode, type SquadrantConfig } from "@squadrant/shared";
 import { assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
-import { buildRouterEnv } from "./router/env.js";
+import { buildRouterEnv, mergeClaudeEnvRouterSettings } from "./router/env.js";
 import type { RouterCredentials } from "./router/service.js";
 
 export interface CaptainRouterDeps {
@@ -88,11 +88,14 @@ export async function prepareCaptainRoute(o: {
     );
   }
 
+  // #772 D1: a --settings env block replaces ~/.claude/settings.json's env
+  // wholesale, so carry the operator's non-ANTHROPIC claudeEnv keys rather than
+  // silently dropping them (ANTHROPIC_* stays router-owned).
   const settingsPath = o.deps.writeRouterSettings({
     stateRoot: o.stateRoot,
     project: o.project,
     taskId: "captain",
-    env: routerEnv,
+    env: mergeClaudeEnvRouterSettings(routerEnv, o.config.defaults.claudeEnv),
   });
 
   return {

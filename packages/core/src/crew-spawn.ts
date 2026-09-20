@@ -30,7 +30,7 @@ import {
   type BackendMode,
 } from "@squadrant/shared";
 import { resolveBackend, assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
-import { buildRouterEnv, renderEnvAssignments } from "./router/env.js";
+import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } from "./router/env.js";
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
@@ -576,8 +576,16 @@ export async function runCrewSpawn(
     // the user's ~/.claude/settings.json env. Written after dispatch so it is
     // keyed by the real task id. Empty for `native` ⇒ no flag, byte-for-byte
     // unchanged. The dep is guaranteed present for a routed spawn (checked above).
+    // #772 D1: the per-spawn --settings env block replaces ~/.claude/settings.json's
+    // env wholesale, so fold in the operator's non-ANTHROPIC claudeEnv keys —
+    // ANTHROPIC_* still comes from the router env so the shim wins.
     const routerSettingsPath = Object.keys(routerEnv).length > 0
-      ? deps.writeRouterSettings!({ stateRoot: STATE_ROOT, project: input.project, taskId: rec.id, env: routerEnv })
+      ? deps.writeRouterSettings!({
+          stateRoot: STATE_ROOT,
+          project: input.project,
+          taskId: rec.id,
+          env: mergeClaudeEnvRouterSettings(routerEnv, config.defaults.claudeEnv),
+        })
       : undefined;
     // Write squadrant hooks to <cwd>/.claude/settings.local.json so they are
     // auto-loaded as a project-local settings source. Merges with any existing

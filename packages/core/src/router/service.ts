@@ -46,7 +46,7 @@ export function resolveRouterUpstream(router: RouterConfig, env: NodeJS.ProcessE
 export function createRouterService(
   router: RouterConfig,
   projects: string[],
-  deps: { log?: (m: string) => void; fetch?: typeof fetch } = {},
+  deps: { log?: (m: string) => void; fetch?: typeof fetch; models?: string[] } = {},
 ): RouterService {
   const log = deps.log ?? (() => {});
   const upstream = resolveRouterUpstream(router);
@@ -62,12 +62,20 @@ export function createRouterService(
     projectTokens.set(t, p);
   }
 
+  // #772: advertise the model ids Claude Code may probe via GET /v1/models —
+  // configured role models plus every alias table's upstream id.
+  const models = [
+    ...(deps.models ?? []),
+    ...Object.values(router.models ?? {}).map((m) => m.upstream),
+  ];
+
   const ledger = createUsageLedger();
   const shim: RouterShim = createRouterShim({
     upstream,
     projectTokens,
     port: router.port ?? 0,
     log,
+    models,
     onUsage: (u) => ledger.record(u),
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
   });
