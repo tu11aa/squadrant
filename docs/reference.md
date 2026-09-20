@@ -13,6 +13,7 @@ guided first run — come back here when you need the details.
   - [Roles](#roles)
   - [Model Routing](#model-routing)
   - [Thinking Level (per-role)](#thinking-level-per-role)
+  - [Router Backend (Harness/Provider Decoupling)](#router-backend-harnessprovider-decoupling)
   - [Runtime Abstraction](#runtime-abstraction)
   - [Workspace Abstraction](#workspace-abstraction)
   - [Notifier Abstraction](#notifier-abstraction)
@@ -134,6 +135,149 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 - An invalid level fails fast with the list of valid values, rather than being passed through for the claude CLI to warn about and silently ignore.
 
 > **Not the same thing as [`defaults.effort`](#effort-dial-tokenomics).** `defaults.effort` (`max|balance|low`, set via `squadrant effort`) is the *crew tokenomics dial* — a global, captain-discretion signal about how aggressively to spend tokens. `defaults.roles.<role>.thinking` is a per-role reasoning-depth setting emitted as a CLI flag. They share the word `max` and nothing else; changing one does not affect the other.
+
+### Router Backend (Harness/Provider Decoupling)
+
+Squadrant separates the **harness** (the agent CLI that owns the terminal, hooks, permissions, and lifecycle) from the **backend** (where the model actually comes from). On every role and routing rule, `agent` selects the harness (`claude` | `codex` | `opencode` | `gemini`) and the optional `backend` selects the provider ([#772](https://github.com/tu11aa/squadrant/issues/772)):
+
+| `backend` | What it means |
+|---|---|
+| `native` **(default)** | The harness uses its own auth (a subscription or the CLI's own API login). No router code runs. |
+| `direct` | The `claude` harness points straight at an Anthropic-Messages upstream (`ANTHROPIC_BASE_URL` + credential). No shim. |
+| `proxy` | The `claude` harness points at squadrant's loopback shim in `squadrantd`, which swaps auth, strips Anthropic-only fields for non-Anthropic upstreams, and exposes health + cost. |
+
+`direct`/`proxy` are **claude-only** — they speak the Anthropic Messages seam, so a non-claude harness always runs `native` (a non-claude `direct`/`proxy` is rejected at spawn and flagged by `squadrant config check`). An absent `backend` is `native`, even when `defaults.router` exists.
+
+The seam is *"any endpoint that speaks Anthropic Messages"* — squadrant never translates to the OpenAI protocol; that is the upstream's job (OpenRouter's Anthropic skin, or a local router such as CCR / LiteLLM). See the [transport design](specs/2026-09-11-router-transport-u1-design.md) and [config design](specs/2026-09-11-router-config-u2-design.md).
+
+#### Config block
+
+`defaults.router` is a **single optional global block** — one upstream per machine. Roles and rules vary only `backend` + `model`; there is no per-rule upstream override.
+
+```jsonc
+{
+  "defaults": {
+    "router": {
+      "kind": "openrouter",        // opencode-go | openrouter | ccr | litellm | custom
+      "baseUrl": "https://openrouter.ai/api",  // origin + base path, NO "/v1"
+      "apiKey": "sk-or-...",       // inline credential…
+      "apiKeyEnv": "OPENROUTER_API_KEY",  // …or the env var holding it (mutually exclusive)
+      "authHeader": "Authorization",      // "Authorization" (Bearer, default) | "x-api-key"
+      "extraHeaders": {},          // static headers on every upstream request
+      "port": 0,                   // loopback bind port; 0 = ephemeral
+      "isAnthropic": false,        // true only for a real-Anthropic upstream
+      "models": {                  // optional alias table (see "Model ids" below)
+        "sonnet": { "upstream": "anthropic/claude-sonnet-5" }
+      }
+    },
+    "roles": {
+      "crew": { "agent": "claude", "backend": "proxy", "model": "sonnet" }
+    },
+    "crewRouting": {
+      "rules": [
+        { "tier": "hard", "match": "refactor|implement|feature",
+          "agent": "claude", "backend": "proxy", "model": "sonnet" }
+      ]
+    }
+  }
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `kind` | yes | One of `opencode-go` \| `openrouter` \| `ccr` \| `litellm` \| `custom`. Drives auth / `isAnthropic` defaults. |
+| `baseUrl` | yes | Origin + base path **without** `/v1` (the client appends `/v1/messages`; including `/v1` yields `/v1/v1/messages` → 404). |
+| `apiKey` / `apiKeyEnv` | one | Inline credential (config is written `0600`) or the name of the env var holding it. Mutually exclusive. The env var must be visible to the **daemon** process. |
+| `authHeader` | no | `Authorization` → `Authorization: Bearer <key>` (default); `x-api-key` → `x-api-key: <key>` (the `opencode-go` default). |
+| `extraHeaders` | no | Static headers merged into every upstream request, e.g. `{ "x-opencode-session": "squadrant" }` (required by opencode-go). |
+| `port` | no | Loopback bind port; `0` (default) = ephemeral. |
+| `isAnthropic` | no | `true` for a real-Anthropic upstream — disables the shim's server-tool / field stripping. |
+| `models` | no | Optional alias table (see [Model ids](#model-ids-and-the-alias-layer)). |
+
+**Precedence** (highest first): explicit `--backend` flag → matching rule's `backend` → `defaults.roles.<role>.backend` → `native`. A rule's `agent`/`model`/`backend` is a unit: passing `--agent` or `--model` suppresses the rule entirely (the existing [#275](https://github.com/tu11aa/squadrant/issues/275) contract); `--backend` overrides only the backend.
+
+**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES`).
+
+#### How to set up a router (OpenRouter)
+
+OpenRouter ships a native Anthropic Messages endpoint (the "Anthropic skin"), so the `claude` harness can use it directly. The walkthrough below routes **crew** through the shim; adjust `roles`/`crewRouting` to route other roles too (only `crew` is wired to the router spawn path today).
+
+1. **Create an OpenRouter API key** at [openrouter.ai/keys](https://openrouter.ai/keys) and export it where the daemon can read it:
+   ```bash
+   export OPENROUTER_API_KEY=sk-or-...
+   ```
+   Prefer `apiKeyEnv` over inlining the key in `config.json`.
+2. **Add the router + role block** to `~/.config/squadrant/config.json`:
+   ```jsonc
+   {
+     "defaults": {
+       "router": {
+         "kind": "openrouter",
+         "baseUrl": "https://openrouter.ai/api",
+         "apiKeyEnv": "OPENROUTER_API_KEY",
+         "port": 0,
+         "isAnthropic": false,
+         "models": {
+           "sonnet": { "upstream": "anthropic/claude-sonnet-5" }
+         }
+       },
+       "roles": {
+         "crew": { "agent": "claude", "backend": "proxy", "model": "sonnet" }
+       }
+     }
+   }
+   ```
+   Or set it one key at a time (the `defaults.router…` writes restart the daemon; `defaults.roles…` is read at spawn time):
+   ```bash
+   squadrant config set defaults.router.kind openrouter
+   squadrant config set defaults.router.baseUrl https://openrouter.ai/api
+   squadrant config set defaults.router.apiKeyEnv OPENROUTER_API_KEY
+   squadrant config set defaults.roles.crew.agent claude
+   squadrant config set defaults.roles.crew.backend proxy
+   squadrant config set defaults.roles.crew.model sonnet
+   ```
+3. **Bounce the daemon** if you edited the file directly (`squadrant shutdown` then relaunch) — the shim is constructed at boot.
+4. **Verify** with the [release checklist](#release-verification-checklist): `squadrant config check` is clean, the shim's `/healthz` is ready, and a routed crew reports the router model.
+5. **Spawn a crew** — `squadrant crew spawn <project> "<task>"` — and confirm it runs on the router model.
+
+Use the model id exactly as your upstream spells it (check the upstream's model list); the `models` alias table bridges differing spellings.
+
+**Alternatives to OpenRouter** (same shape, different `kind`/`baseUrl`):
+
+- **CCR** ([claude-code-router](https://github.com/musistudio/claude-code-router)) — `kind: "ccr"`, `baseUrl` at the local CCR endpoint (e.g. `http://127.0.0.1:3456`); `authHeader` defaults to `Authorization`. CCR already translates protocols, so `direct` can work, but `proxy` adds the shim's health / auth / cost.
+- **LiteLLM** — `kind: "litellm"`, `baseUrl` at the LiteLLM proxy (e.g. `http://127.0.0.1:4000`), credential in `Authorization` (a LiteLLM virtual key). Same `direct`-vs-`proxy` choice.
+- **`custom`** — any other Anthropic-Messages-compatible endpoint; set `baseUrl`/`authHeader`/`extraHeaders` explicitly.
+
+#### Model ids and the alias layer
+
+A `model` value is looked up in `defaults.router.models`. If it names an alias, it expands per harness (`models.<alias>.agents.<harness>` ?? `models.<alias>.upstream`); **anything else passes through literally** — this is what keeps existing configs working unchanged.
+
+> **Known gap (U6).** With no `models` map, a harness-specific literal such as `opencode-go/deepseek-v4.1-flash` is injected as `ANTHROPIC_MODEL` verbatim. That spelling is correct for the **native opencode** harness but is **not** a model id the opencode-go upstream serves (it expects `deepseek-v4.1-flash`), so a *routed claude* spawn using that literal asks the upstream for a model it does not have. Bridge the two spellings with an alias:
+>
+> ```jsonc
+> "models": {
+>   "flash": { "upstream": "deepseek-v4.1-flash",
+>              "agents": { "opencode": "opencode-go/deepseek-v4.1-flash" } }
+> }
+> ```
+>
+> then set `"model": "flash"` on the role/rule. A kind-derived default alias table (auto-normalizing `opencode-go/…` → `…` for the claude harness) was considered and deliberately **not** added: it would be new behavior outside the U2 schema and could silently rewrite an operator's literal id. Follow-up under epic [#772](https://github.com/tu11aa/squadrant/issues/772).
+
+#### Backward compatibility & migration
+
+- **No `config.router` ⇒ zero behavior change.** The shim is never constructed, every backend resolves to `native`, nothing is injected, and `loadConfig` performs no router backfill or migration. Existing `roles.*.model` / `rules[].model` literals pass through the alias resolver unchanged.
+- **The native default is explicit:** an absent `backend` is `native`, for every role and rule. A machine with no router config behaves byte-for-byte as it did before this feature.
+- **Migration/upgrade for existing users: nothing to do.** The feature is opt-in and additive; new fields are all optional, so there is no schema-version bump and no config rewrite. If you were routing by hand via `defaults.claudeEnv` (`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`), that workaround keeps working but routes **every** Claude session (captain included) with no per-role control — `defaults.router` + a role/rule `backend` replaces it with per-role scope. Migrating off `claudeEnv` is optional cleanup.
+
+#### Release verification checklist
+
+- [ ] **Native path unchanged** — a `native` crew (or any config without `defaults.router`) carries none of the router env vars (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`); the spawn command is byte-for-byte the pre-router command. `pnpm test` crew-spawn + router suites green.
+- [ ] **Routed crew end-to-end** (the U1 live acceptance):
+  - [ ] the shim's `GET /healthz` reports ready (`ready: true`, `upstreamReachable: true`) before the spawn gate opens;
+  - [ ] a routed crew reports the **router** model (the resolved upstream id, not the alias or the CLI default);
+  - [ ] `Bash` runs inside the routed crew (tool use works through the shim).
+- [ ] **`squadrant config check`** clean for the router block and backend selections.
+- [ ] **Credential missing fails loud** — a routed spawn with no `apiKey`/`apiKeyEnv` surfaces the documented error (`defaults.router credential is missing …`), not an upstream `401`.
 
 ### Runtime Abstraction
 
@@ -401,3 +545,5 @@ opencode additionally gets squadrant's skills projected as **loadable skill dirs
 ```
 
 The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `users` is the per-user-id allowlist for **control** actions and `remoteControl` (default `false`) is the master opt-in for auto-launch + the General command channel — both must be set for any remote control to act (fail-closed, [#321](https://github.com/tu11aa/squadrant/issues/321)). `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
+
+The `defaults.router` block is also **optional** — omit it and every role/rule stays on the `native` backend, so behavior is unchanged. When present, roles and routing rules select `backend: "direct"` or `"proxy"` to route the `claude` harness through an Anthropic-Messages upstream. Full schema, the OpenRouter walkthrough, CCR/LiteLLM alternatives, and the backward-compat guarantee are in [Router Backend (Harness/Provider Decoupling)](#router-backend-harnessprovider-decoupling).
