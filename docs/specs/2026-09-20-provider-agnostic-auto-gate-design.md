@@ -106,15 +106,20 @@ access (e.g. `jevapi.org` / `tokenra.io`) are **not** official TypeSafe surfaces
 
 **Standalone-first npm package; squadrant consumes it** (operator decision).
 
-- The gate ships as its own package (working name **`@q3/auto-gate`**), publishable and
-  installable by any agent/user: `npm i -g @q3/auto-gate` / `npx @q3/auto-gate`.
-- It exposes a `gate` bin: `gate decide`, `gate install`, `gate uninstall`, `gate doctor`,
-  `gate test`, `gate stats`.
+- The gate ships as its own package **`@squadrant/auto-gate`**, in its own repo, publishable
+  and installable by any agent/user: `npm i -g @squadrant/auto-gate` /
+  `npx @squadrant/auto-gate`. It is *named* under the squadrant scope (the eventual home)
+  but *homed* in its own repo, so it can be installed and versioned independently of
+  squadrant. The existing `squadrant` package will also move into the squadrant org when the
+  org exists.
+- It exposes an `auto-gate` bin: `auto-gate decide`, `auto-gate install`,
+  `auto-gate uninstall`, `auto-gate doctor`, `auto-gate test`, `auto-gate stats`.
 - `@squadrant/core` depends on the core module and keeps `squadrant gate claude
   permission-request` as a **thin wrapper** — the claude path and its U7 acceptance
   criteria are preserved byte-for-byte.
-- Monorepo-local alternative (`@squadrant/gate`) was rejected: it would delay the stated
-  "any agent can install it" goal and entangle distribution with squadrant's release cycle.
+- The rejected alternative was homing it **inside the squadrant monorepo workspace** (a
+  package built and released on squadrant's cycle): it would delay the stated "any agent can
+  install it" goal and entangle the gate's release with squadrant's.
 - A pure skill/plugin (no runtime) was rejected: thresholds, cache, and a shared classifier
   need a process.
 
@@ -357,7 +362,7 @@ Explicit **positive** session markers; **never** the operator's own interactive 
   nothing** (no `ask` behavior exists). On `ask`/yield, fall back to the #560
   `task.blocked` signal.
 - **Install:** idempotent, non-clobbering merge into `~/.claude/settings.json` (reuse U7's
-  installer shape; namespaced command `auto-gate hook claude`).
+  installer shape; namespaced command `auto-gate decide --agent claude`).
 - **Coexistence:** if squadrant's managed `squadrant gate claude permission-request` is
   present, the standalone installer **defers** rather than adding a second owner — two
   handlers cannot coordinate and a duplicate auto-approval could race a blocked-signal
@@ -392,7 +397,7 @@ Explicit **positive** session markers; **never** the operator's own interactive 
 - **Idempotent, non-clobbering, marker-based.** The installer records each entry it wrote
   (command string / config key) so `uninstall` reverses **only its own** entries and never
   a user's or another tool's hook.
-- **`gate doctor`** reports which agents are detected, which hooks are installed, whether
+- **`auto-gate doctor`** reports which agents are detected, which hooks are installed, whether
   they are owned by `auto-gate` or another manager, and any drift.
 - **Backups** before every settings write; a malformed settings file is never blind-reset.
 
@@ -452,7 +457,7 @@ audit log. v1 non-goal: credential pools.
   **Never** raw secrets; payload logged redacted/hashed.
 - Diagnostics go to **stderr only** — hook stdout is machine-parsed and a stray byte breaks
   the decision parse (the U7 lesson about provider probes and hook-output purity).
-- `gate stats` summarizes decisions/costs/cache-hit rate.
+- `auto-gate stats` summarizes decisions/costs/cache-hit rate.
 
 ### Security
 - Minimal, redacted state to Jev; local-only Tier-1 tier runs even with the network down.
@@ -500,7 +505,7 @@ audit log. v1 non-goal: credential pools.
    supporting. Third-party resellers are not official.
 2. **Claude-hook single ownership** — when squadrant *and* the standalone gate are both
    installed, who owns `PermissionRequest`? Proposed: first-owner-wins with a defer rule
-   (squadrant's entry wins), surfaced by `gate doctor`.
+   (squadrant's entry wins), surfaced by `auto-gate doctor`.
 3. **opencode subscriber lifecycle** — a long-lived subscriber outside the daemon is
    heavier than a hook; how is it supervised? Does a future `permission.ask` plugin hook
    land upstream?
@@ -520,7 +525,7 @@ audit log. v1 non-goal: credential pools.
 
 ## 16. Decisions already made — do not re-litigate
 
-1. **Standalone-first** npm package (`@q3/auto-gate`); squadrant consumes it; the claude
+1. **Standalone-first** npm package (`@squadrant/auto-gate`); squadrant consumes it; the claude
    wrapper preserves U7 byte-for-byte.
 2. **`GateClassifier` returns an assessment, not a decision**; the policy engine owns
    thresholds. Agent-agnostic from day one, even though v1 ships only claude + opencode.
