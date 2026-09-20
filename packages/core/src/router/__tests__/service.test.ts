@@ -105,6 +105,22 @@ describe("createRouterService", () => {
     expect(() => service!.credentialsFor("proj-zzz", "proxy")).toThrow(/no token for project 'proj-zzz'/);
   });
 
+  it("advertises configured model-alias upstream ids on GET /v1/models (#772)", async () => {
+    upstream = await mockUpstream();
+    const cfg: RouterConfig = {
+      kind: "opencode-go",
+      baseUrl: upstream.url,
+      apiKey: "k",
+      models: { flash: { upstream: "deepseek-v4.1-flash" } },
+    };
+    service = createRouterService(cfg, ["proj-a"]);
+    await service.start();
+    const res = await fetch(`${service.url()}/v1/models`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((m) => m.id)).toContain("deepseek-v4.1-flash");
+  });
+
   it("accumulates routed model + cost per project from the shim tee", async () => {
     upstream = await usageUpstream();
     const cfg: RouterConfig = { kind: "opencode-go", baseUrl: upstream.url, apiKey: "k" };

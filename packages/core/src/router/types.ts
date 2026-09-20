@@ -44,6 +44,12 @@ export interface RouterShimOptions {
   upstream: RouterUpstream;
   /** Bearer token -> project id. Minted by the daemon; never logged. */
   projectTokens: Map<string, string>;
+  /** #772: model ids advertised on `GET /v1/models`. Claude Code probes that
+   *  endpoint when it does not recognize `ANTHROPIC_MODEL`; a 404 there surfaces
+   *  as "There's an issue with the selected model (…)". Models seen on proxied
+   *  `/v1/messages` requests are added automatically, so an unset list still
+   *  advertises the model actually in use. */
+  models?: string[];
   /** 0 => ephemeral port (default). */
   port?: number;
   /** Default "127.0.0.1". */

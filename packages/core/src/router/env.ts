@@ -45,6 +45,30 @@ export function buildRouterEnv(
   return env;
 }
 
+/**
+ * #772 D1: fold the operator's non-ANTHROPIC_* `defaults.claudeEnv` keys into a
+ * routed spawn's per-spawn `--settings` env.
+ *
+ * Claude Code treats a settings file's `env` block as ONE key, so the
+ * command-line `--settings` env REPLACES `~/.claude/settings.json`'s env
+ * wholesale rather than merging key-by-key. A routed spawn therefore silently
+ * drops every non-ANTHROPIC key the operator pinned there (AFK timers,
+ * window-enforcement flags, …); this carries them through.
+ *
+ * ANTHROPIC_* keys are intentionally EXCLUDED: those must come from the router
+ * env so the shim (not the user's upstream) wins. Pure; returns a fresh object.
+ */
+export function mergeClaudeEnvRouterSettings(
+  routerEnv: Record<string, string>,
+  claudeEnv: Record<string, string> | undefined,
+): Record<string, string> {
+  const merged: Record<string, string> = { ...routerEnv };
+  for (const [key, value] of Object.entries(claudeEnv ?? {})) {
+    if (!key.startsWith("ANTHROPIC_")) merged[key] = value;
+  }
+  return merged;
+}
+
 /** `ANTHROPIC_CUSTOM_HEADERS` is one `Name: Value` pair per line. */
 export function formatCustomHeaders(
   headers: Record<string, string> | undefined,

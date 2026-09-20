@@ -78,6 +78,28 @@ describe("prepareCaptainRoute (#772)", () => {
     });
   });
 
+  it("routed: carries the operator's non-ANTHROPIC claudeEnv keys into the --settings env (D1)", async () => {
+    const input = baseInput({
+      backend: "proxy",
+      config: makeConfig({
+        router: ROUTER,
+        claudeEnv: {
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1",
+          CLAUDE_AFK_TIMEOUT_MS: "240000",
+        },
+      }),
+    });
+    await prepareCaptainRoute(input);
+
+    const env = vi.mocked(input.deps.writeRouterSettings!).mock.calls[0]![0].env;
+    expect(env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe("1");
+    expect(env.CLAUDE_AFK_TIMEOUT_MS).toBe("240000");
+    // The shim wins — claudeEnv's ANTHROPIC_BASE_URL must NOT leak through.
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:53421");
+    expect(env.ANTHROPIC_BASE_URL).not.toBe("https://opencode.ai/zen/go");
+  });
+
   it("routed: expands a router.models alias for the captain model", async () => {
     const input = baseInput({
       backend: "proxy",

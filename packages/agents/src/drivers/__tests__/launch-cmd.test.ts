@@ -70,6 +70,15 @@ describe("buildAgentCmd — claude driver", () => {
     expect(cmd).toContain("--permission-mode auto");
   });
 
+  // #772 D2: a routed captain selects "default" so the U7 gate owns
+  // PermissionRequest. Without an explicit flag, ~/.claude/settings.json's
+  // permissions.defaultMode=auto wins and the gate yields (fail-closed).
+  it("appends --permission-mode default so it overrides settings defaultMode (#772 D2)", () => {
+    const r = makeRegistry({ claude: mockDriver("claude") });
+    const cmd = buildAgentCmd("claude", r, "captain", true, "default");
+    expect(cmd).toContain("--permission-mode default");
+  });
+
   it("uses --dangerously-skip-permissions for bypassPermissions", () => {
     const r = makeRegistry({ claude: mockDriver("claude") });
     const cmd = buildAgentCmd("claude", r, "captain", true, "bypassPermissions");

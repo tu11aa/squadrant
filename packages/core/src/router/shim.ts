@@ -25,6 +25,34 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** The pathname of a request URL, ignoring any query string. Claude Code sends
+ *  `POST /v1/messages?beta=true`, so an exact `req.url` match would 404 the real
+ *  request (#772). */
+function pathnameOf(url: string | undefined): string {
+  if (!url) return "";
+  const q = url.indexOf("?");
+  return q === -1 ? url : url.slice(0, q);
+}
+
+/** #772: a minimal, valid Anthropic `GET /v1/models` list. Claude Code probes
+ *  this when it does not recognize `ANTHROPIC_MODEL`; a 404 there surfaces as
+ *  "There's an issue with the selected model (…)" even though the model is
+ *  served fine. `id` is what Claude matches against, so it must be exact. */
+function modelsList(ids: string[]): Record<string, unknown> {
+  const data = ids.map((id) => ({
+    type: "model",
+    id,
+    display_name: id,
+    created_at: "1970-01-01T00:00:00Z",
+  }));
+  return {
+    data,
+    has_more: false,
+    first_id: ids[0] ?? null,
+    last_id: ids[ids.length - 1] ?? null,
+  };
+}
+
 const DEFAULT_AUTH_HEADER = "Authorization";
 
 /** Build upstream request headers: content negotiation, configured auth
@@ -59,6 +87,9 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
   let lastError: string | undefined;
   let upstreamReachable = true;
   const upstreamUrl = joinUrl(opts.upstream.baseUrl, "/v1/messages");
+  // #772: ids advertised on GET /v1/models — configured aliases plus whatever
+  // model a proxied request has actually used.
+  const advertisedModels = new Set<string>(opts.models ?? []);
 
   function emitUsage(u: RouterUsage): void {
     try {
@@ -92,6 +123,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     const body = parsed as Record<string, unknown>;
     const wantsStream = body.stream === true;
     const model = typeof body.model === "string" ? body.model : undefined;
+    if (model) advertisedModels.add(model);
     const sanitized = sanitizeRequest(body, opts.upstream);
 
     let upstreamRes: Response;
@@ -172,8 +204,25 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     writeJson(res, upstreamRes.status, upstreamBody);
   }
 
+  /** #772: the upstream does not serve count_tokens, and a 404 there makes
+   *  Claude Code treat the model as unavailable. Answer synthetically with a
+   *  rough chars/4 estimate so context accounting stays sane without a
+   *  round-trip. Loopback-only + synthetic ⇒ no token check. */
+  async function handleCountTokens(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let text: string;
+    try {
+      text = await readBody(req);
+    } catch {
+      const e = anthropicError(400, "invalid_request_error", "malformed request body");
+      writeJson(res, e.status, e.body);
+      return;
+    }
+    writeJson(res, 200, { input_tokens: Math.max(1, Math.ceil(text.length / 4)) });
+  }
+
   function handler(req: IncomingMessage, res: ServerResponse): void {
-    if (req.method === "POST" && req.url === "/v1/messages") {
+    const path = pathnameOf(req.url);
+    if (req.method === "POST" && path === "/v1/messages") {
       void handleMessages(req, res).catch((err) => {
         log(`router internal error: ${err instanceof Error ? err.message : String(err)}`);
         if (!res.headersSent) {
@@ -185,7 +234,19 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       });
       return;
     }
-    if (req.method === "GET" && req.url === "/healthz") {
+    // #772: Claude Code probes these when it does not recognize the model.
+    // Serving them (never 404) stops the "issue with the selected model" error.
+    if (req.method === "POST" && path === "/v1/messages/count_tokens") {
+      void handleCountTokens(req, res).catch(() => {
+        if (!res.headersSent) writeJson(res, 502, anthropicError(502, "api_error", "router internal error").body);
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/v1/models") {
+      writeJson(res, 200, modelsList([...advertisedModels]));
+      return;
+    }
+    if (req.method === "GET" && path === "/healthz") {
       writeJson(res, 200, { ready: server?.listening === true, upstreamReachable, lastError } satisfies RouterHealth);
       return;
     }
