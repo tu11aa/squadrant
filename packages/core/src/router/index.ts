@@ -6,5 +6,6 @@ export * from "./sanitize.js";
 export * from "./stream.js";
 export * from "./shim.js";
 export * from "./service.js";
+export * from "./usage-ledger.js";
 export * from "./env.js";
 export * from "./credentials.js";

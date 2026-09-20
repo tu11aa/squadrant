@@ -67,6 +67,10 @@ export function createServer(
           msg.backend as "direct" | "proxy",
         );
       }
+      // U5: read-only per-project routed usage/cost accumulated by the shim tee.
+      if (msg.kind === "router-usage") {
+        return ctx.routerService?.usage(msg.project as string) ?? null;
+      }
       return ctx.d.handle(msg);
     },
     onAttach: (conn, frame) => {

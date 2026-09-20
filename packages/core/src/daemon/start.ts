@@ -150,6 +150,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
           storeByState: storeStats.byState,
           corruptCount: storeStats.corruptCount,
           deferral: deliveryStats(project),
+          routerUsage: ctx.routerService?.usage(project),
         };
       }),
     );
