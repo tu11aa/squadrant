@@ -141,15 +141,17 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 
 A fresh install must not assume the operator has an Anthropic credential. `squadrant init` asks **one** provider question — or takes `--preset <a|b|c|d>` non-interactively — and writes the matching `defaults` blocks ([#826](https://github.com/tu11aa/squadrant/issues/826)). Preset A (all-claude + `auto`) remains the default and preserves back-compat.
 
+A preset writes **both** `roles` **and** `defaults.crewRouting.rules` — otherwise the shipped rules (`extreme`/`hard` → `claude`) would silently override a non-claude `roles.crew` for most tasks. Every tier resolves to the same agent family as `roles`.
+
 | Preset | Provider | Writes |
 |---|---|---|
-| **A** *(default)* | Claude Code (Pro/Max subscription or API key) | `roles` = all `claude` (command/captain/side = `opus`, crew = `sonnet`, exploration = `haiku`); `permissions` command/captain/crew = `auto` |
-| **B** | opencode (no Anthropic subscription) | `roles` = all `opencode`, model `opencode-go/deepseek-v4.1-flash`; `permissions` = `auto`; router/gate absent |
-| **C** | Claude harness + router backend (advanced) | `roles` = `claude` with `backend: "proxy"`; `defaults.router`; `defaults.gate.mode = "on"`; `permissions` command/captain/crew = `default` |
-| **D** | Codex (ChatGPT Pro) | `roles` = all `codex` |
+| **A** *(default)* | Claude Code (Pro/Max subscription or API key) | `roles` = all `claude` (command/captain/side = `opus`, crew = `sonnet`, exploration = `haiku`); `permissions` command/captain/crew = `auto`; `crewRouting` = the shipped rules (`extreme`/`hard` → `claude` opus/sonnet, `mobile` → `codex`, `daily` → `opencode`) |
+| **B** | opencode (no Anthropic subscription) | `roles` = all `opencode`, model `opencode-go/deepseek-v4.1-flash`; `permissions` = `auto`; `crewRouting` = `extreme`/`hard`/`daily` → `opencode` (same model), `mobile` → `codex`; router/gate absent |
+| **C** | Claude harness + router backend (advanced) | `roles` = `claude` with `backend: "proxy"`; `crewRouting` = `extreme`/`hard` → `claude` + `backend: "proxy"` + the router model, `daily` → `opencode`, `mobile` → `codex`; `defaults.router`; `defaults.gate.mode = "on"`; `permissions` command/captain/crew = `default` |
+| **D** | Codex (ChatGPT Pro) | `roles` = all `codex`; `crewRouting` = every tier → `codex` |
 
 - **Non-interactive:** `squadrant init --preset <a|b|c|d>`. Invalid ids fail fast before any write.
-- **Re-run-safe:** on an existing config, init fills only a wholly-absent `roles`/`permissions` block and **never** clobbers `router`/`gate`. Pass `--preset <id>` explicitly to overwrite the preset-owned blocks. Unrelated sections (`defaults.effort`, `projects`, `telegram`, …) are never touched.
+- **Re-run-safe:** on an existing config, init fills only a wholly-absent `roles`/`permissions`/`crewRouting` block and **never** clobbers `router`/`gate`. Pass `--preset <id>` explicitly to overwrite the preset-owned blocks (`roles`, `permissions`, `crewRouting`, and for C `router` + `gate`). Unrelated sections (`defaults.effort`, `projects`, `telegram`, …) are never touched.
 - **Credential detection:** init probes `claude auth status` (JSON). With no Anthropic credential it **warns** and suggests B or C — it never silently keeps/claims A. A probe that is missing, errors, or returns unreadable output degrades to "not authenticated".
 - **Preset C needs a router:** interactive init prompts for `kind` / `baseUrl` / `apiKeyEnv`; non-interactively supply `--router-kind`, `--router-base-url`, `--router-api-key-env` (defaults to the documented `opencode-go` upstream at `https://opencode.ai/zen/go`). Auto mode is **not available** on a router backend — the [U7 permission gate](#router-backend-harnessprovider-decoupling) replaces it, which is why preset C writes `permission_mode=default`.
 

@@ -6,7 +6,12 @@ import {
   providerPresetDefaults,
   applyProviderPreset,
 } from "../provider-preset.js";
-import { getDefaultConfig, type RouterConfig, type SquadrantConfig } from "../config.js";
+import {
+  getDefaultConfig,
+  DEFAULT_CREW_ROUTING_RULES,
+  type RouterConfig,
+  type SquadrantConfig,
+} from "../config.js";
 
 const ROUTER: RouterConfig = {
   kind: "opencode-go",
@@ -58,6 +63,7 @@ describe("providerPresetDefaults — A (Claude Code Pro/Max)", () => {
     expect(d.permissions).toEqual({ command: "auto", captain: "auto", crew: "auto" });
     expect(d.router).toBeUndefined();
     expect(d.gate).toBeUndefined();
+    expect(d.crewRouting.rules).toEqual(DEFAULT_CREW_ROUTING_RULES);
   });
 });
 
@@ -70,6 +76,14 @@ describe("providerPresetDefaults — B (opencode)", () => {
     expect(d.permissions).toEqual({ command: "auto", captain: "auto", crew: "auto" });
     expect(d.router).toBeUndefined();
     expect(d.gate).toBeUndefined();
+    // No tier may resolve back to claude — that would break a non-Anthropic setup.
+    expect(d.crewRouting.rules.some((r) => r.agent === "claude")).toBe(false);
+    for (const tier of ["extreme", "hard", "daily"]) {
+      const rule = d.crewRouting.rules.find((r) => r.tier === tier)!;
+      expect(rule.agent).toBe("opencode");
+      expect(rule.model).toBe("opencode-go/deepseek-v4.1-flash");
+    }
+    expect(d.crewRouting.rules.find((r) => r.tier === "mobile")!.agent).toBe("codex");
   });
 });
 
@@ -86,6 +100,18 @@ describe("providerPresetDefaults — C (claude harness + router)", () => {
     // Auto mode fails closed on a router backend — the gate replaces it.
     expect(d.permissions.captain).toBe("default");
     expect(d.permissions.crew).toBe("default");
+    // Every claude rule must carry the proxy backend — a native claude rule
+    // would demand an Anthropic credential the operator does not have.
+    for (const rule of d.crewRouting.rules) {
+      if (rule.agent === "claude") {
+        expect(rule.backend).toBe("proxy");
+        expect(rule.model).toBe("deepseek-v4.1-flash");
+      }
+    }
+    expect(d.crewRouting.rules.find((r) => r.tier === "extreme")!.agent).toBe("claude");
+    expect(d.crewRouting.rules.find((r) => r.tier === "hard")!.agent).toBe("claude");
+    expect(d.crewRouting.rules.find((r) => r.tier === "daily")!.agent).toBe("opencode");
+    expect(d.crewRouting.rules.find((r) => r.tier === "mobile")!.agent).toBe("codex");
   });
 
   it("throws a clear error when no router config is supplied", () => {
@@ -102,6 +128,8 @@ describe("providerPresetDefaults — D (Codex)", () => {
     expect(d.router).toBeUndefined();
     expect(d.gate).toBeUndefined();
     expect(d.permissions).toEqual({});
+    expect(d.crewRouting.rules.every((r) => r.agent === "codex")).toBe(true);
+    expect(d.crewRouting.rules.every((r) => r.model === undefined)).toBe(true);
   });
 });
 
@@ -134,6 +162,12 @@ describe("applyProviderPreset — fresh config (overwrite)", () => {
     expect("router" in next.defaults).toBe(false);
     expect("gate" in next.defaults).toBe(false);
   });
+
+  it("replaces the claude-targeted default routing rules for preset B", () => {
+    const { config: next, changes } = applyProviderPreset(getDefaultConfig(), "b", { overwrite: true });
+    expect(next.defaults.crewRouting?.rules.some((r) => r.agent === "claude")).toBe(false);
+    expect(changes).toContain("defaults.crewRouting");
+  });
 });
 
 describe("applyProviderPreset — existing config (re-run-safe)", () => {
@@ -156,6 +190,7 @@ describe("applyProviderPreset — existing config (re-run-safe)", () => {
     expect(next.defaults.router).toEqual(ROUTER);
     expect(next.defaults.gate).toEqual({ mode: "on" });
     expect(next.defaults.permissions).toEqual(before.defaults.permissions);
+    expect(next.defaults.crewRouting).toEqual(before.defaults.crewRouting);
     expect(changes).toEqual([]);
   });
 
@@ -177,6 +212,8 @@ describe("applyProviderPreset — existing config (re-run-safe)", () => {
     expect(next.telegram).toEqual(before.telegram);
     expect(next.projects).toEqual(before.projects);
     expect(next.defaults.maxCrew).toBe(before.defaults.maxCrew);
+    // Routing rules are preset-owned — a plain re-run must not rewrite them.
+    expect(next.defaults.crewRouting).toEqual(before.defaults.crewRouting);
   });
 
   it("does not mutate the input config object", () => {

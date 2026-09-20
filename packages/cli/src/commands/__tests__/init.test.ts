@@ -22,6 +22,14 @@ const { saveConfigMock, getDefaultConfigMock, loadConfigMock, mockDefaultConfig 
         exploration: { agent: "claude", model: "haiku" },
         side: { agent: "claude", model: "opus" },
       },
+      crewRouting: {
+        rules: [
+          { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
+          { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
+          { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
+          { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
+        ],
+      },
     },
     metrics: { enabled: true, path: "/tmp/metrics.json" },
   });
@@ -416,6 +424,9 @@ describe("init — provider preset (#826)", () => {
     });
     expect(cfg.defaults.router).toBeUndefined();
     expect(cfg.defaults.gate).toBeUndefined();
+    // Routing rules must resolve to the same agent family as roles.
+    expect(cfg.defaults.crewRouting.rules.some((r: any) => r.agent === "claude")).toBe(false);
+    expect(cfg.defaults.crewRouting.rules.find((r: any) => r.tier === "hard").agent).toBe("opencode");
   });
 
   it("--preset c writes router + gate + manual permission modes", async () => {
@@ -440,6 +451,10 @@ describe("init — provider preset (#826)", () => {
     expect(cfg.defaults.permissions.crew).toBe("default");
     expect(cfg.defaults.roles.crew.agent).toBe("claude");
     expect(cfg.defaults.roles.crew.backend).toBe("proxy");
+    // Every claude routing rule must carry the proxy backend.
+    const claudeRules = cfg.defaults.crewRouting.rules.filter((r: any) => r.agent === "claude");
+    expect(claudeRules.length).toBeGreaterThan(0);
+    expect(claudeRules.every((r: any) => r.backend === "proxy")).toBe(true);
   });
 
   it("--preset d applies codex roles", async () => {

@@ -13,12 +13,15 @@
 //     roles/permissions/router/gate an operator already has, and never touch an
 //     unrelated section (effort, projects, telegram, …).
 
-import type {
-  GateConfig,
-  PermissionConfig,
-  RoleConfig,
-  RouterConfig,
-  SquadrantConfig,
+import {
+  DEFAULT_CREW_ROUTING_RULES,
+  type CrewRoutingConfig,
+  type CrewRoutingRule,
+  type GateConfig,
+  type PermissionConfig,
+  type RoleConfig,
+  type RouterConfig,
+  type SquadrantConfig,
 } from "./config.js";
 
 export type ProviderPresetId = "a" | "b" | "c" | "d";
@@ -74,8 +77,51 @@ export interface ProviderPresetDefaults {
   roles: RoleConfig;
   /** Partial — preset D (codex) leaves claude's permission modes alone. */
   permissions: Partial<PermissionConfig>;
+  /** Preset-owned routing rules: without these, the shipped defaults would
+   *  route the "hard"/"extreme" tiers back to `claude` and silently defeat
+   *  presets B/C/D. */
+  crewRouting: CrewRoutingConfig;
   router?: RouterConfig;
   gate?: GateConfig;
+}
+
+/** Literal opencode model a preset's routing rules target. */
+const OPENCODE_MODEL = "opencode-go/deepseek-v4.1-flash";
+
+/** Build the crew-routing rules for a preset from the canonical default set so
+ *  the match strings stay in one place. Every tier resolves to the same agent
+ *  family as the preset's roles. */
+function presetCrewRouting(id: ProviderPresetId): CrewRoutingRule[] {
+  const base = (tier: string): CrewRoutingRule => {
+    const found = DEFAULT_CREW_ROUTING_RULES.find((r) => r.tier === tier);
+    // Every preset tier is drawn from the canonical set, so this never throws.
+    return found ? { ...found } : { tier, match: "", agent: "claude" };
+  };
+  const codex = (tier: string): CrewRoutingRule => ({
+    tier: base(tier).tier,
+    match: base(tier).match,
+    agent: "codex",
+  });
+  switch (id) {
+    case "a":
+      return DEFAULT_CREW_ROUTING_RULES.map((r) => ({ ...r }));
+    case "b":
+      return [
+        { ...base("extreme"), agent: "opencode", model: OPENCODE_MODEL },
+        { ...base("hard"), agent: "opencode", model: OPENCODE_MODEL },
+        codex("mobile"),
+        { ...base("daily"), agent: "opencode", model: OPENCODE_MODEL },
+      ];
+    case "c":
+      return [
+        { ...base("extreme"), agent: "claude", backend: "proxy", model: ROUTER_PRESET_MODEL },
+        { ...base("hard"), agent: "claude", backend: "proxy", model: ROUTER_PRESET_MODEL },
+        codex("mobile"),
+        { ...base("daily"), agent: "opencode", model: OPENCODE_MODEL },
+      ];
+    case "d":
+      return ["extreme", "hard", "mobile", "daily"].map(codex);
+  }
 }
 
 /** The exact config blocks a preset wants to write. Pure. Throws for preset C
@@ -95,9 +141,10 @@ export function providerPresetDefaults(
           side: { agent: "claude", model: "opus" },
         },
         permissions: { command: "auto", captain: "auto", crew: "auto" },
+        crewRouting: { rules: presetCrewRouting("a") },
       };
     case "b": {
-      const opencode = { agent: "opencode", model: "opencode-go/deepseek-v4.1-flash" };
+      const opencode = { agent: "opencode", model: OPENCODE_MODEL };
       return {
         roles: {
           command: { ...opencode },
@@ -107,6 +154,7 @@ export function providerPresetDefaults(
           side: { ...opencode },
         },
         permissions: { command: "auto", captain: "auto", crew: "auto" },
+        crewRouting: { rules: presetCrewRouting("b") },
       };
     }
     case "c": {
@@ -128,6 +176,7 @@ export function providerPresetDefaults(
         // router upstream — every claude session must use a manual mode so the
         // U7 gate owns the prompt.
         permissions: { command: "default", captain: "default", crew: "default" },
+        crewRouting: { rules: presetCrewRouting("c") },
         router,
         gate: { mode: "on" },
       };
@@ -143,6 +192,7 @@ export function providerPresetDefaults(
           side: { ...codex },
         },
         permissions: {},
+        crewRouting: { rules: presetCrewRouting("d") },
       };
     }
   }
@@ -191,6 +241,16 @@ export function applyProviderPreset(
   } else if (next.defaults.roles === undefined) {
     next.defaults.roles = { ...preset.roles };
     changes.push("defaults.roles");
+  }
+
+  // crewRouting — block-level, same rule as roles. Without this a preset's
+  // roles are silently overridden by the shipped claude-targeted rules.
+  if (opts.overwrite) {
+    next.defaults.crewRouting = { rules: preset.crewRouting.rules.map((r) => ({ ...r })) };
+    changes.push("defaults.crewRouting");
+  } else if (next.defaults.crewRouting === undefined) {
+    next.defaults.crewRouting = { rules: preset.crewRouting.rules.map((r) => ({ ...r })) };
+    changes.push("defaults.crewRouting");
   }
 
   // permissions — partial merge; present keys are never clobbered on a re-run.
