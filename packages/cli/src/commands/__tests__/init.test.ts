@@ -5,11 +5,45 @@ import os from "node:os";
 
 // ── Hoisted mocks ────────────────────────────────────────────────────────────
 
-const saveConfigMock = vi.hoisted(() => vi.fn());
-const getDefaultConfigMock = vi.hoisted(() => vi.fn(() => ({ hubVault: "", projects: {} })));
-const loadConfigMock = vi.hoisted(() => vi.fn(() => ({ projects: {} })));
+const { saveConfigMock, getDefaultConfigMock, loadConfigMock, mockDefaultConfig } = vi.hoisted(() => {
+  const make = () => ({
+    commandName: "command",
+    hubVault: "",
+    projects: {},
+    defaults: {
+      maxCrew: 5,
+      worktreeDir: ".worktrees",
+      teammateMode: "in-process",
+      permissions: { command: "auto", captain: "auto", crew: "auto" },
+      roles: {
+        command: { agent: "claude", model: "opus" },
+        captain: { agent: "claude", model: "opus" },
+        crew: { agent: "claude", model: "sonnet" },
+        exploration: { agent: "claude", model: "haiku" },
+        side: { agent: "claude", model: "opus" },
+      },
+      crewRouting: {
+        rules: [
+          { tier: "extreme", match: "redesign|architect|rewrite|from scratch|deep reasoning", agent: "claude", model: "opus" },
+          { tier: "hard", match: "refactor|migrate|implement|feature|daemon|control-plane", agent: "claude", model: "sonnet" },
+          { tier: "mobile", match: "mobile|ios|swift|android|kotlin|react native", agent: "codex" },
+          { tier: "daily", match: "typo|rename|bump|docs|comment|lint|format", agent: "opencode" },
+        ],
+      },
+    },
+    metrics: { enabled: true, path: "/tmp/metrics.json" },
+  });
+  return {
+    mockDefaultConfig: make,
+    saveConfigMock: vi.fn(),
+    getDefaultConfigMock: vi.fn(() => make()),
+    loadConfigMock: vi.fn(() => make()),
+  };
+});
+
 const ensureRuntimeSyncedMock = vi.hoisted(() => vi.fn());
 const readUserLevelSourceMock = vi.hoisted(() => vi.fn(async () => ({ instructions: "", skills: [] })));
+const detectClaudeAuthMock = vi.hoisted(() => vi.fn(() => ({ authenticated: true })));
 
 const emitMock = vi.hoisted(() => vi.fn(async (_src: unknown, dest: { path: string }) => ({
   written: true,
@@ -24,6 +58,11 @@ const ensureGlobalOpencodeConfigMock = vi.hoisted(() =>
 vi.mock("../../lib/per-crew-settings.js", () => ({
   ensureGlobalOpencodeConfig: ensureGlobalOpencodeConfigMock,
   DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH: "/tmp/mock-opencode/opencode.json",
+}));
+
+vi.mock("../../lib/claude-auth.js", () => ({
+  detectClaudeAuth: detectClaudeAuthMock,
+  parseClaudeAuthStatus: vi.fn(),
 }));
 
 vi.mock("@squadrant/shared", async () => {
@@ -67,16 +106,27 @@ vi.mock("@squadrant/agents", () => ({
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 let output: string[];
-let originalStdin: PropertyDescriptor | undefined;
+let errorOutput: string[];
 
 function captureOutput() {
   output = [];
+  errorOutput = [];
   vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
     output.push(args.map(String).join(" "));
   });
+  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errorOutput.push(args.map(String).join(" "));
+  });
 }
 
-async function runInit(opts: { hub?: string; isTTY?: boolean } = {}) {
+async function runInit(opts: {
+  hub?: string;
+  isTTY?: boolean;
+  preset?: string;
+  routerKind?: string;
+  routerBaseUrl?: string;
+  routerApiKeyEnv?: string;
+} = {}) {
   const { initCommand } = await import("../init.js");
   // Override isTTY on process.stdin for this call
   Object.defineProperty(process.stdin, "isTTY", {
@@ -84,7 +134,13 @@ async function runInit(opts: { hub?: string; isTTY?: boolean } = {}) {
     configurable: true,
     writable: true,
   });
-  await initCommand.parseAsync(["node", "squadrant", ...(opts.hub ? ["--hub", opts.hub] : [])]);
+  const args = ["node", "squadrant"];
+  if (opts.hub) args.push("--hub", opts.hub);
+  if (opts.preset) args.push("--preset", opts.preset);
+  if (opts.routerKind) args.push("--router-kind", opts.routerKind);
+  if (opts.routerBaseUrl) args.push("--router-base-url", opts.routerBaseUrl);
+  if (opts.routerApiKeyEnv) args.push("--router-api-key-env", opts.routerApiKeyEnv);
+  await initCommand.parseAsync(args);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -292,5 +348,193 @@ describe("init — re-run-safe (TTY mode)", () => {
     const settingsCalls = (fs.writeFileSync as ReturnType<typeof vi.fn>).mock?.calls ?? [];
     const wrote = settingsCalls.some((args: unknown[]) => String(args[0]).endsWith("settings.json"));
     expect(wrote).toBe(false);
+  });
+});
+
+describe("init — provider preset (#826)", () => {
+  let tmpDir: string;
+
+  function freshFs() {
+    vi.spyOn(fs, "existsSync").mockImplementation(() => false);
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => "{}");
+    vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => []);
+  }
+
+  function existingFs(config: unknown) {
+    vi.spyOn(fs, "existsSync").mockImplementation(
+      (p) => String(p) === "/tmp/squadrant-test/config.json",
+    );
+    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readFileSync").mockImplementation((p) =>
+      String(p) === "/tmp/squadrant-test/config.json" ? JSON.stringify(config) : "{}",
+    );
+    vi.spyOn(fs, "copyFileSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => []);
+  }
+
+  function savedConfig(): Record<string, any> {
+    expect(saveConfigMock).toHaveBeenCalled();
+    return saveConfigMock.mock.calls[saveConfigMock.mock.calls.length - 1][0] as Record<string, any>;
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-init-preset-"));
+    captureOutput();
+    vi.clearAllMocks();
+    detectClaudeAuthMock.mockReturnValue({ authenticated: true });
+    vi.mock("node:readline", () => ({
+      default: {
+        createInterface: () => ({
+          question: (_q: string, cb: (a: string) => void) => cb(""),
+          close: vi.fn(),
+        }),
+      },
+    }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("--preset a on a fresh config writes the claude/auto default and no router/gate", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "a", hub: tmpDir });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.roles.crew).toEqual({ agent: "claude", model: "sonnet" });
+    expect(cfg.defaults.permissions.captain).toBe("auto");
+    expect(cfg.defaults.router).toBeUndefined();
+    expect(cfg.defaults.gate).toBeUndefined();
+  });
+
+  it("--preset b applies opencode roles non-interactively", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "b", hub: tmpDir });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.roles.crew).toEqual({
+      agent: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+    });
+    expect(cfg.defaults.router).toBeUndefined();
+    expect(cfg.defaults.gate).toBeUndefined();
+    // Routing rules must resolve to the same agent family as roles.
+    expect(cfg.defaults.crewRouting.rules.some((r: any) => r.agent === "claude")).toBe(false);
+    expect(cfg.defaults.crewRouting.rules.find((r: any) => r.tier === "hard").agent).toBe("opencode");
+  });
+
+  it("--preset c writes router + gate + manual permission modes", async () => {
+    freshFs();
+    await runInit({
+      isTTY: false,
+      preset: "c",
+      hub: tmpDir,
+      routerKind: "openrouter",
+      routerBaseUrl: "https://openrouter.ai/api",
+      routerApiKeyEnv: "OPENROUTER_API_KEY",
+    });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.router).toEqual({
+      kind: "openrouter",
+      baseUrl: "https://openrouter.ai/api",
+      apiKeyEnv: "OPENROUTER_API_KEY",
+    });
+    expect(cfg.defaults.gate).toEqual({ mode: "on" });
+    expect(cfg.defaults.permissions.captain).toBe("default");
+    expect(cfg.defaults.permissions.crew).toBe("default");
+    expect(cfg.defaults.roles.crew.agent).toBe("claude");
+    expect(cfg.defaults.roles.crew.backend).toBe("proxy");
+    // Every claude routing rule must carry the proxy backend.
+    const claudeRules = cfg.defaults.crewRouting.rules.filter((r: any) => r.agent === "claude");
+    expect(claudeRules.length).toBeGreaterThan(0);
+    expect(claudeRules.every((r: any) => r.backend === "proxy")).toBe(true);
+  });
+
+  it("--preset d applies codex roles", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "d", hub: tmpDir });
+    const cfg = savedConfig();
+    expect(cfg.defaults.roles.crew).toEqual({ agent: "codex" });
+  });
+
+  it("rejects an invalid --preset without writing config", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "z", hub: tmpDir });
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(errorOutput.join("\n")).toMatch(/unknown.*preset/i);
+  });
+
+  it("re-running init on an existing config does not clobber roles/router/gate", async () => {
+    const existing = mockDefaultConfig();
+    existing.defaults.roles = { crew: { agent: "opencode", model: "custom" } } as never;
+    existing.defaults.permissions = { command: "auto", captain: "default", crew: "default" } as never;
+    (existing.defaults as Record<string, unknown>).router = {
+      kind: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go",
+    };
+    (existing.defaults as Record<string, unknown>).gate = { mode: "on" };
+    loadConfigMock.mockReturnValue(existing as never);
+    existingFs(existing);
+
+    await runInit({ isTTY: true, hub: tmpDir });
+
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("--preset b explicitly overrides an existing preset-A config", async () => {
+    const existing = mockDefaultConfig();
+    loadConfigMock.mockReturnValue(existing as never);
+    existingFs(existing);
+
+    await runInit({ isTTY: false, preset: "b", hub: tmpDir });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.roles.crew.agent).toBe("opencode");
+  });
+
+  it("asks one provider question interactively and applies the default (A)", async () => {
+    freshFs();
+    await runInit({ isTTY: true, hub: tmpDir });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.roles.crew).toEqual({ agent: "claude", model: "sonnet" });
+    expect(output.join("\n")).toContain("Choose your provider");
+  });
+
+  it("warns when no Anthropic credential is detected for preset A", async () => {
+    freshFs();
+    detectClaudeAuthMock.mockReturnValue({ authenticated: false, reason: "unavailable" } as never);
+    await runInit({ isTTY: true, hub: tmpDir });
+
+    const text = output.join("\n");
+    expect(text).toMatch(/no anthropic credential/i);
+    // Still applies the chosen default rather than aborting.
+    expect(savedConfig().defaults.roles.crew.agent).toBe("claude");
+  });
+
+  it("--preset c without router flags defaults to the documented opencode-go upstream", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "c", hub: tmpDir });
+
+    const cfg = savedConfig();
+    expect(cfg.defaults.router).toEqual({
+      kind: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go",
+    });
+    expect(cfg.defaults.gate).toEqual({ mode: "on" });
+  });
+
+  it("prints exactly what will change before writing", async () => {
+    freshFs();
+    await runInit({ isTTY: false, preset: "b", hub: tmpDir });
+    const text = output.join("\n");
+    expect(text).toContain("defaults.roles");
   });
 });
