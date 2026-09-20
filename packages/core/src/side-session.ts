@@ -16,6 +16,7 @@ import {
   resolveWorktreeBase,
 } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
+import { SIDE_SESSION_ENV } from "./permission-gate.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -155,7 +156,9 @@ export async function runSideSpawn(
   const title = sideTitleFor(input.project, name);
   const pane = await runtime.newPane({ workspaceId: captain.id, direction, title });
 
-  await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${agentCmd}`);
+  // #782: mark the tab so the permission gate (commands/gate.ts) can identify a
+  // squadrant side session without a crew task id. Harmless for non-claude agents.
+  await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${SIDE_SESSION_ENV}=1 ${agentCmd}`);
   const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
 
   const firstTurn = buildSideFirstTurn(

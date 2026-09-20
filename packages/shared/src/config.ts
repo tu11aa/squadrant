@@ -83,6 +83,46 @@ export interface CrewRoutingRule {
   backend?: BackendMode;
 }
 
+/** U7 permission-gate mode. `on` = classify with the configured router model;
+ *  `off` = never touch the prompt; `auto` = yield to Claude's built-in
+ *  Sonnet-5 classifier. Unset ⇒ `auto` (zero behavior change). */
+export type GateMode = "on" | "off" | "auto";
+
+export const GATE_MODES: readonly GateMode[] = ["on", "off", "auto"];
+
+export function isGateMode(v: string): v is GateMode {
+  return (GATE_MODES as readonly string[]).includes(v);
+}
+
+/** How the gate treats a Tier-2 classifier `deny` verdict.
+ *  `deny-dangerous` (default) honors it; `ask-on-doubt` escalates it to a prompt. */
+export type GatePolicy = "deny-dangerous" | "ask-on-doubt";
+
+export const GATE_POLICIES: readonly GatePolicy[] = ["deny-dangerous", "ask-on-doubt"];
+
+export function isGatePolicy(v: string): v is GatePolicy {
+  return (GATE_POLICIES as readonly string[]).includes(v);
+}
+
+/** U7 hook-based permission gate (#782). Configures the custom `PermissionRequest`
+ *  classifier used on router backends where Claude's built-in auto mode fails
+ *  closed. Absent block ⇒ the gate is disabled (mode `auto`). Env vars
+ *  (`SQUADRANT_GATE*`) override every field at runtime. */
+export interface GateConfig {
+  /** Unset ⇒ "auto" (no-op). */
+  mode?: GateMode;
+  /** Router model alias or literal upstream id. Unset ⇒ crew role model. */
+  model?: string;
+  /** Unset ⇒ "deny-dangerous". */
+  policy?: GatePolicy;
+  /** Tool names the gate inspects. Unset ⇒ Bash,Write,Edit,MultiEdit,NotebookEdit. */
+  tools?: string[];
+  /** Enable the decision cache. Unset ⇒ true. */
+  cache?: boolean;
+  /** Tier-1 static deny regexes. When present, REPLACES the built-in set. */
+  deny?: string[];
+}
+
 export interface CrewRoutingConfig {
   rules: CrewRoutingRule[];
 }
@@ -223,6 +263,8 @@ export interface SquadrantConfig {
     /** #317 global crew tokenomics dial. Absent ⇒ "balance" (today's behavior).
      *  Biases the captain toward stronger ("max") or cheaper ("low") crew models. */
     effort?: "max" | "balance" | "low";
+    /** U7 hook-based permission gate (#782). Absent ⇒ disabled (mode "auto"). */
+    gate?: GateConfig;
     /** U2: optional router upstream. Absent ⇒ the shim is never constructed and
      *  every backend resolves to `native` (zero behavior change). */
     router?: RouterConfig;

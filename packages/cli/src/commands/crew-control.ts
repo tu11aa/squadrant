@@ -533,6 +533,11 @@ export function addControlPlaneCrewCommands(crew: Command): void {
       try {
         for await (const chunk of process.stdin) stdin += chunk;
       } catch { /* ignore */ }
+      // #782: the PermissionRequest event is owned by the global permission gate
+      // (`squadrant gate claude permission-request` → commands/gate.ts), which is
+      // reconciled into ~/.claude/settings.json on every daemon boot. Emitting a
+      // second decision / task.blocked here would race an auto-approval. No-op.
+      if (event === "PermissionRequest") { process.exit(0); }
       let payload: unknown = undefined;
       if (stdin.trim()) {
         try { payload = JSON.parse(stdin); } catch { /* ignore malformed */ }
