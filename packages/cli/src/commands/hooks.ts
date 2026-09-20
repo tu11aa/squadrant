@@ -17,6 +17,7 @@ import { loadConfig, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
+import { runGatePermissionRequest } from "./gate.js";
 
 const SOCK = DAEMON_SOCK_PATH;
 
@@ -140,6 +141,25 @@ export function hooksCommand(): Command {
       // side-effect-only — falls through to the same exit-0 hook contract.
       if (sub === "session-start" && process.env.SQUADRANT_ROLE === "captain") {
         recordCaptainSessionStart(payload);
+      }
+
+      // #782: the PermissionRequest event is owned by the permission gate — the
+      // single decision point for the prompt. On a router backend the built-in
+      // auto classifier fails closed, so the gate classifies with the configured
+      // router model: allow/deny emits `decision.behavior` (and suppresses the
+      // now-stale #560 task.blocked); ask/yield emits nothing to Claude and
+      // falls back to the existing task.blocked signal. Operator sessions and
+      // disabled/auto modes no-op inside the gate.
+      if (sub === "permission-request") {
+        await runGatePermissionRequest({
+          payload,
+          env: process.env,
+          stdout: (s) => process.stdout.write(s),
+          sendEvent: async (project, ev) => {
+            await sendToSock({ kind: "event", project, event: ev });
+          },
+        });
+        process.exit(0);
       }
 
       const taskId = process.env.SQUADRANT_CREW_TASK_ID;

@@ -35,7 +35,8 @@ export function formatInboundReceipt(project: string, outcome?: DeliveryOutcome)
   }
 }
 
-import { formatInbound, formatLifecycle, topicName } from "./format.js";
+import { formatInbound, formatLifecycle, formatUsageLine, topicName } from "./format.js";
+import type { ProjectUsage } from "../router/usage-ledger.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
 import { tierIncludes } from "./tiers.js";
@@ -94,6 +95,9 @@ export interface TelegramBridgeOptions {
   sendReply?: (threadId: number | undefined, text: string, replyMarkup?: unknown) => Promise<void>;
   /** #667 slice 4: native channel delivery. Injected by the daemon host. */
   deliverInbound?: (project: string, text: string) => Promise<{ handled: boolean; outcome?: import("../control-channel.js").DeliveryOutcome }>;
+  /** U5: routed usage/cost for a project. Appended to terminal (done/failed)
+   *  crew events. Injected by the daemon host; absent ⇒ unchanged output. */
+  usageFor?: (project: string) => ProjectUsage | undefined;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
@@ -170,7 +174,12 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     const active = live ?? resolved.active;
     if (!active) return;                                // muted → no topic create, no send
     if (!tierIncludes(resolved.crew, ev.type)) return; // tier filter
-    await sendToTopic(project, formatLifecycle(project, ev));
+    let text = formatLifecycle(project, ev);
+    if ((ev.type === "task.done" || ev.type === "task.failed") && opts.usageFor) {
+      const usage = opts.usageFor(project);
+      if (usage && usage.requests > 0) text += `\n${formatUsageLine(usage)}`;
+    }
+    await sendToTopic(project, text);
   }
 
   // Outbound, out-of-band, fault-class: bypasses BOTH the crew-tier filter AND

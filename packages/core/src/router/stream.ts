@@ -87,9 +87,13 @@ function scan(bufRef: { value: string }, acc: RouterUsage): boolean {
 /** Pass-through Transform that scans SSE `data:` lines for usage/cost and calls
  *  onUsage once at flush. Bytes are never modified. Emits only when at least one
  *  usage field was populated. */
-export function createUsageTee(project: string, onUsage: (u: RouterUsage) => void): Transform {
+export function createUsageTee(
+  project: string,
+  onUsage: (u: RouterUsage) => void,
+  model?: string,
+): Transform {
   const buf = { value: "" };
-  const acc: RouterUsage = { project };
+  const acc: RouterUsage = { project, ...(model ? { model } : {}) };
   const decoder = new StringDecoder("utf8");
   let sawUsage = false;
   return new Transform({
@@ -122,7 +126,8 @@ export function createUsageTee(project: string, onUsage: (u: RouterUsage) => voi
 export function usageFromJson(
   project: string,
   body: Record<string, unknown>,
+  model?: string,
 ): RouterUsage | undefined {
-  const acc: RouterUsage = { project };
+  const acc: RouterUsage = { project, ...(model ? { model } : {}) };
   return absorb({ usage: body.usage, cost: body.cost }, acc) ? acc : undefined;
 }

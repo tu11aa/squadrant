@@ -6,7 +6,7 @@ import { createTelegramBridge } from "../bridge.js";
 import { saveProjectOverride } from "@squadrant/shared";
 import { setNotify } from "../state.js";
 
-function harness(root: string, globalNotify?: any) {
+function harness(root: string, globalNotify?: any, usageFor?: (project: string) => any) {
   const sent: string[] = [];
   const client = {
     getUpdates: vi.fn(async () => []),
@@ -18,6 +18,7 @@ function harness(root: string, globalNotify?: any) {
     cfg: { supergroupId: -100, chats: [], notify: globalNotify } as any,
     stateRoot: root, configRoot: root, client: client as any,
     appendCaptainMessage: vi.fn(), log: vi.fn(),
+    ...(usageFor ? { usageFor } : {}),
   });
   return { bridge, sent, client };
 }
@@ -64,5 +65,39 @@ describe("deliverOutbound notify resolution", () => {
     // crew default alert_only includes task.done
     await flush();
     expect(sent.length).toBe(1);
+  });
+
+  describe("U5 router usage on terminal events", () => {
+    const usage = {
+      project: "p", requests: 2, costUsd: 0.02,
+      models: { m: { requests: 2, costUsd: 0.02, inputTokens: 0, outputTokens: 0 } },
+    };
+
+    it("appends the project's routed cost to a terminal event", async () => {
+      setNotify(root, "p", true);
+      const { bridge, sent } = harness(root, undefined, () => usage);
+      bridge.pushLifecycle("p", { type: "task.done", id: "t1", resultRef: "r", message: "ok" } as any);
+      await flush();
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain("CREW DONE");
+      expect(sent[0]).toContain("💰 $0.0200 · 2 reqs · m");
+    });
+
+    it("does not append usage to a non-terminal event", async () => {
+      setNotify(root, "p", true);
+      saveProjectOverride("p", { telegram: { notify: { crew: "all" } } }, root);
+      const { bridge, sent } = harness(root, undefined, () => usage);
+      bridge.pushLifecycle("p", { type: "task.progress", id: "t2", note: "n" } as any);
+      await flush();
+      expect(sent[0]).not.toContain("💰");
+    });
+
+    it("appends nothing when the project has no routed usage", async () => {
+      setNotify(root, "p", true);
+      const { bridge, sent } = harness(root, undefined, () => undefined);
+      bridge.pushLifecycle("p", { type: "task.done", id: "t3", resultRef: "r" } as any);
+      await flush();
+      expect(sent[0]).not.toContain("💰");
+    });
   });
 });

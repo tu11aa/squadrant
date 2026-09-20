@@ -25,6 +25,8 @@ export interface RouterUpstream {
 
 export interface RouterUsage {
   project: string;
+  /** Model id from the request body (`ANTHROPIC_MODEL`), when present. */
+  model?: string;
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;

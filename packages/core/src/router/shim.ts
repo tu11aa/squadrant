@@ -91,6 +91,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
     }
     const body = parsed as Record<string, unknown>;
     const wantsStream = body.stream === true;
+    const model = typeof body.model === "string" ? body.model : undefined;
     const sanitized = sanitizeRequest(body, opts.upstream);
 
     let upstreamRes: Response;
@@ -148,7 +149,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
           /* already closed */
         }
       });
-      const tee = createUsageTee(project, emitUsage);
+      const tee = createUsageTee(project, emitUsage, model);
       tee.on("error", (err) => {
         log(`router usage tee error: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -166,7 +167,7 @@ export function createRouterShim(opts: RouterShimOptions): RouterShim {
       writeJson(res, e.status, e.body);
       return;
     }
-    const usage = usageFromJson(project, upstreamBody);
+    const usage = usageFromJson(project, upstreamBody, model);
     if (usage) emitUsage(usage);
     writeJson(res, upstreamRes.status, upstreamBody);
   }

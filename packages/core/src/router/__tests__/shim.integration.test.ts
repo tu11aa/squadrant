@@ -334,7 +334,7 @@ describe("router shim integration", () => {
     expect(await res.text()).toBe(sse);
     await new Promise((r) => setTimeout(r, 50));
     expect(usages).toHaveLength(1);
-    expect(usages[0]).toMatchObject({ project: "proj-a", outputTokens: 2, costUsd: 0.0004 });
+    expect(usages[0]).toMatchObject({ project: "proj-a", model: "m", outputTokens: 2, costUsd: 0.0004 });
   });
 
   it("serves GET /healthz reporting readiness after start()", async () => {

@@ -53,6 +53,7 @@ function buildTelegramBridge(
   stateRoot: string,
   log: (m: string) => void,
   deliverInbound?: (project: string, text: string) => Promise<{ handled: boolean; outcome?: import("@squadrant/core").DeliveryOutcome }>,
+  usageFor?: (project: string) => import("@squadrant/core").ProjectUsage | undefined,
 ): TelegramBridge | undefined {
   const token = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -71,7 +72,7 @@ function buildTelegramBridge(
     client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
-    ensureCaptainAlive, runCommand, sendReply, deliverInbound,
+    ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor,
   });
 }
 
@@ -271,7 +272,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         mode: ctx.captainChannelMode?.() ?? "off",
         log,
       }))
-    ) : undefined);
+    , (project) => ctx.routerService?.usage(project)) : undefined);
 
   // ── Router shim (opt-in #774) ─────────────────────────────────────────────
   // Built only when config.defaults.router exists. Skipped under vitest (tests

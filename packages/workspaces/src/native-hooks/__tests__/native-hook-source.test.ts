@@ -96,7 +96,13 @@ describe("installClaudeHooks — basic installation", () => {
     ];
     for (const [ev, sub] of singleEntryExpectations) {
       const entry = result.hooks[ev][0];
-      expect(entry.hooks[0].command).toBe(`${HOOK_CMD} claude ${sub}`);
+      // #782: PermissionRequest is owned by the U7 gate; every other event is a
+      // lifecycle bridge under the configurable hook command.
+      const expected =
+        ev === "PermissionRequest"
+          ? `squadrant gate claude ${sub}`
+          : `${HOOK_CMD} claude ${sub}`;
+      expect(entry.hooks[0].command).toBe(expected);
     }
     // PreToolUse: catch-all (matcher "") and AskUserQuestion-specific (matcher "AskUserQuestion")
     const hasCmd = (entries: unknown[], cmd: string): boolean =>
@@ -156,6 +162,74 @@ describe("installClaudeHooks — idempotency (D4: re-run-safe)", () => {
     const result = JSON.parse(afterFirst);
     expect(result.hooks.Stop).toHaveLength(1);
     expect(result.hooks.SessionEnd).toHaveLength(1);
+  });
+});
+
+// ── installClaudeHooks — #782 permission-gate migration ───────────────────────
+
+describe("installClaudeHooks — #782 permission-gate migration", () => {
+  const commandsOf = (entries: unknown[]): string[] =>
+    entries.flatMap((e) =>
+      Array.isArray((e as Record<string, unknown>).hooks)
+        ? ((e as Record<string, unknown>).hooks as Array<Record<string, unknown>>)
+            .map((h) => h.command)
+            .filter((c): c is string => typeof c === "string")
+        : [],
+    );
+
+  it("migrates the legacy PermissionRequest hook to the gate command and logs it", () => {
+    const legacy = {
+      hooks: {
+        PermissionRequest: [
+          { matcher: "", hooks: [{ type: "command", command: `${HOOK_CMD} claude permission-request`, timeout: 10 }] },
+        ],
+      },
+    };
+    const log = vi.fn();
+    const { opts, written } = makeInstallOpts({ existingSettings: legacy });
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(commandsOf(result.hooks.PermissionRequest)).toEqual([
+      "squadrant gate claude permission-request",
+    ]);
+    expect(log.mock.calls.some(([m]) => /migrated/i.test(m))).toBe(true);
+  });
+
+  it("preserves an unrelated PermissionRequest hook while migrating", () => {
+    const existing = {
+      hooks: {
+        PermissionRequest: [
+          { matcher: "", hooks: [{ type: "command", command: "my-tool permission-hook" }] },
+          { matcher: "", hooks: [{ type: "command", command: `${HOOK_CMD} claude permission-request`, timeout: 10 }] },
+        ],
+      },
+    };
+    const { opts, written } = makeInstallOpts({ existingSettings: existing });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    const commands = commandsOf(result.hooks.PermissionRequest);
+    expect(commands).toContain("my-tool permission-hook");
+    expect(commands).toContain("squadrant gate claude permission-request");
+    expect(commands).not.toContain(`${HOOK_CMD} claude permission-request`);
+  });
+
+  it("is idempotent after migration (a second call writes nothing)", () => {
+    const legacy = {
+      hooks: {
+        PermissionRequest: [
+          { matcher: "", hooks: [{ type: "command", command: `${HOOK_CMD} claude permission-request` }] },
+        ],
+      },
+    };
+    const { opts, written } = makeInstallOpts({ existingSettings: legacy });
+    installClaudeHooks(opts);
+
+    const { opts: opts2, written: written2 } = makeInstallOpts({ existingRaw: written[0].content });
+    installClaudeHooks(opts2);
+    expect(written2).toHaveLength(0);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ControlEvent } from "@squadrant/shared";
-import { topicName, formatLifecycle, formatInbound, maskToken } from "../format.js";
+import { topicName, formatLifecycle, formatInbound, maskToken, formatUsageLine } from "../format.js";
+import type { ProjectUsage } from "../../router/usage-ledger.js";
 
 describe("topicName", () => {
   it("uses the project name as the topic title", () => {
@@ -89,5 +90,42 @@ describe("maskToken", () => {
 describe("formatInbound", () => {
   it("labels a reply so the captain can tell it came from Telegram", () => {
     expect(formatInbound("ship it")).toBe("📩 [from Telegram] ship it");
+  });
+});
+
+describe("formatUsageLine", () => {
+  const models = (entries: Record<string, { requests: number; costUsd: number }>): ProjectUsage["models"] =>
+    Object.fromEntries(
+      Object.entries(entries).map(([m, v]) => [m, { ...v, inputTokens: 0, outputTokens: 0 }]),
+    );
+
+  it("renders cost, request count and the top model by cost", () => {
+    const u: ProjectUsage = {
+      project: "p", requests: 3, costUsd: 0.0123,
+      models: models({ "m-a": { requests: 2, costUsd: 0.01 }, "m-b": { requests: 1, costUsd: 0.0023 } }),
+    };
+    expect(formatUsageLine(u)).toBe("💰 $0.0123 · 3 reqs · m-a +1");
+  });
+
+  it("names the top model and counts the rest", () => {
+    const u: ProjectUsage = {
+      project: "p", requests: 6, costUsd: 0.06,
+      models: models({
+        "m-a": { requests: 2, costUsd: 0.01 },
+        "m-b": { requests: 2, costUsd: 0.02 },
+        "m-c": { requests: 2, costUsd: 0.03 },
+      }),
+    };
+    expect(formatUsageLine(u)).toBe("💰 $0.0600 · 6 reqs · m-c +2");
+  });
+
+  it("omits the model suffix when every request is unattributed", () => {
+    const u: ProjectUsage = { project: "p", requests: 1, costUsd: 0.001, models: models({ unknown: { requests: 1, costUsd: 0.001 } }) };
+    expect(formatUsageLine(u)).toBe("💰 $0.0010 · 1 req");
+  });
+
+  it("singularises one request", () => {
+    const u: ProjectUsage = { project: "p", requests: 1, costUsd: 0.5, models: models({ m: { requests: 1, costUsd: 0.5 } }) };
+    expect(formatUsageLine(u)).toBe("💰 $0.5000 · 1 req · m");
   });
 });

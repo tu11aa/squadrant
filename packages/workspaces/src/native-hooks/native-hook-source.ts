@@ -38,6 +38,43 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
 
 const DEFAULT_HOOK_CMD = "squadrant hooks";
 
+/**
+ * #782: the PermissionRequest event is owned by the U7 permission gate — a
+ * first-class CLI path that classifies with the configured router model (no
+ * Anthropic credential). It is installed as its own command so the gate — not
+ * the lifecycle hook bridge — is what Claude invokes at the prompt. The legacy
+ * `squadrant hooks claude permission-request` entry is migrated out (see
+ * installClaudeHooks) so a prompt is never processed twice.
+ */
+const GATE_HOOK_CMD = "squadrant gate";
+
+/** The managed command for one event. PermissionRequest is gate-owned (#782). */
+function hookCommandFor(eventName: string, sub: string, hookCmd: string): string {
+  return eventName === "PermissionRequest"
+    ? `${GATE_HOOK_CMD} claude ${sub}`
+    : `${hookCmd} claude ${sub}`;
+}
+
+/**
+ * Remove every handler whose `command` exactly matches `command` from a hook
+ * event's entry list. Drops entries left with no handlers. Returns true if
+ * anything was removed. Used to migrate the pre-#782 PermissionRequest command.
+ */
+function removeCommandHandlers(entries: unknown[], command: string): boolean {
+  let removed = false;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as { hooks?: unknown[] };
+    if (!Array.isArray(entry?.hooks)) continue;
+    const before = entry.hooks.length;
+    entry.hooks = entry.hooks.filter(
+      (h) => (h as { command?: unknown })?.command !== command,
+    );
+    if (entry.hooks.length !== before) removed = true;
+    if (entry.hooks.length === 0) entries.splice(i, 1);
+  }
+  return removed;
+}
+
 // ── Hook installer ────────────────────────────────────────────────────────────
 
 export interface ClaudeHooksInstallOpts {
@@ -97,13 +134,25 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
 
   let changed = false;
   const repaired: string[] = [];
+  const migrated: string[] = [];
   for (const [eventName, sub, matcher] of CLAUDE_HOOK_EVENTS) {
     if (!Array.isArray(hooks[eventName])) {
       hooks[eventName] = [];
     }
     const entries = hooks[eventName] as unknown[];
-    const command = `${hookCmd} claude ${sub}`;
+    const command = hookCommandFor(eventName, sub, hookCmd);
     const hookMatcher = matcher ?? "";
+
+    // #782: migrate the legacy PermissionRequest handler (which the gate now
+    // supersedes) out of the settings file. Only when it differs from the
+    // desired command, so a hookCmd that already IS the gate is a no-op.
+    if (eventName === "PermissionRequest") {
+      const legacy = `${hookCmd} claude ${sub}`;
+      if (legacy !== command && removeCommandHandlers(entries, legacy)) {
+        changed = true;
+        migrated.push(`${eventName}/${sub}`);
+      }
+    }
 
     // Idempotency check: skip if our exact command is already registered.
     const alreadyPresent = entries.some(
@@ -129,6 +178,14 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   if (repaired.length > 0 && hadExistingSettings) {
     log(
       `native-hook: repaired ${repaired.length} missing squadrant hook(s) in ${settingsPath} [${repaired.join(", ")}] — WARNING: blocked-signalling or lifecycle tracking may have been broken until this run`,
+    );
+  }
+
+  // #782: one-line note when the legacy PermissionRequest hook was replaced by
+  // the permission gate. Informational — the migration itself is safe.
+  if (migrated.length > 0) {
+    log(
+      `native-hook: migrated ${migrated.length} PermissionRequest hook(s) to the U7 permission gate in ${settingsPath} [${migrated.join(", ")}]`,
     );
   }
 

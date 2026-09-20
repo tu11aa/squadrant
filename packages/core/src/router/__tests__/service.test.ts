@@ -11,6 +11,15 @@ async function mockUpstream(): Promise<{ url: string; close: () => Promise<void>
   return { url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) };
 }
 
+/** Upstream that returns a non-stream Anthropic body carrying usage + cost. */
+async function usageUpstream(): Promise<{ url: string; close: () => Promise<void> }> {
+  const body = JSON.stringify({ type: "message", usage: { input_tokens: 5, output_tokens: 7 }, cost: "0.0025" });
+  const server: Server = createServer((_q, s) => { s.writeHead(200, { "content-type": "application/json" }); s.end(body); });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  return { url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) };
+}
+
 describe("resolveRouterUpstream", () => {
   it("defaults authHeader by kind and resolves apiKeyEnv", () => {
     const go = resolveRouterUpstream({ kind: "opencode-go", baseUrl: "https://go.test", apiKeyEnv: "K" }, { K: "secret" } as NodeJS.ProcessEnv);
@@ -94,5 +103,27 @@ describe("createRouterService", () => {
     service = createRouterService(cfg, ["proj-a"]);
     await service.start();
     expect(() => service!.credentialsFor("proj-zzz", "proxy")).toThrow(/no token for project 'proj-zzz'/);
+  });
+
+  it("accumulates routed model + cost per project from the shim tee", async () => {
+    upstream = await usageUpstream();
+    const cfg: RouterConfig = { kind: "opencode-go", baseUrl: upstream.url, apiKey: "k" };
+    service = createRouterService(cfg, ["proj-a"]);
+    await service.start();
+    const creds = service.credentialsFor("proj-a", "proxy");
+    const res = await fetch(`${creds.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${creds.token}` },
+      body: JSON.stringify({ model: "deepseek/deepseek-chat", messages: [] }),
+    });
+    expect(res.status).toBe(200);
+    const usage = service.usage("proj-a");
+    expect(usage).toMatchObject({ project: "proj-a", requests: 1, costUsd: 0.0025 });
+    expect(usage!.models["deepseek/deepseek-chat"]).toMatchObject({
+      requests: 1,
+      costUsd: 0.0025,
+      inputTokens: 5,
+      outputTokens: 7,
+    });
   });
 });
