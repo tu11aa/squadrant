@@ -119,7 +119,14 @@ export async function runTelegramSend(opts: {
   return { chatId: opts.cfg.supergroupId, topicId };
 }
 
-/** Bind a project to a forum topic, creating it on first link. Idempotent. */
+/** Bind a project to a forum topic, creating it on first link. Idempotent, and
+ *  safe against a concurrent linker (#321): the existence check and the create
+ *  are not atomic, so `squadrant telegram link` racing the bridge's lazy create
+ *  on first delivery can both see "no topic" and both make one. The registry
+ *  write is the arbiter — whoever writes first wins, the loser adopts that topic
+ *  and deletes the one it just created. Without this a project ends up with two
+ *  live topics, only one of which the registry (and therefore every future
+ *  send) can ever find. */
 export async function runTelegramLink(opts: {
   project: string;
   cfg: TelegramConfig;
@@ -128,7 +135,18 @@ export async function runTelegramLink(opts: {
 }): Promise<{ topicId: number; created: boolean }> {
   const existing = loadState(opts.stateRoot).topics[topicKey(opts.project)];
   if (existing !== undefined) return { topicId: existing, created: false };
+
   const topicId = await opts.client.createForumTopic(opts.cfg.supergroupId, topicName(opts.project));
+  const winner = loadState(opts.stateRoot).topics[topicKey(opts.project)];
+  if (winner !== undefined) {
+    try {
+      await opts.client.deleteForumTopic?.(opts.cfg.supergroupId, topicId);
+    } catch {
+      // Best-effort cleanup: a stray empty topic is cosmetic, a wrong registry
+      // entry is not — never fail the link over the delete.
+    }
+    return { topicId: winner, created: false };
+  }
   setTopic(opts.stateRoot, opts.project, topicId);
   return { topicId, created: true };
 }

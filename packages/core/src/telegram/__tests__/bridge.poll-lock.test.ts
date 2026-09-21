@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { TelegramConfig } from "@squadrant/shared";
 import type { Update } from "@grammyjs/types";
-import { createTelegramBridge, telegramPollLockPath, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
+import { createTelegramBridge, pollBackoffMs, telegramPollLockPath, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
 import { TelegramApiError, type TelegramClient } from "../client.js";
 
 const CHAT = -100;
@@ -122,6 +122,32 @@ describe("abortable long-poll (#830)", () => {
     expect(c.getUpdates).toHaveBeenCalledTimes(1); // loop exited, no re-poll
     expect(log).not.toHaveBeenCalled();
     expect(bridge.health().polling).toBe(false);
+  });
+});
+
+describe("rate-limit back-off (#321)", () => {
+  it("uses the API's retry_after when it sent one, the cadence otherwise", () => {
+    expect(pollBackoffMs(new TelegramApiError(429, "too many", 7), 1000)).toBe(7000);
+    expect(pollBackoffMs(new TelegramApiError(429, "too many"), 1000)).toBe(1000);
+    expect(pollBackoffMs(new TelegramApiError(502, "bad gateway"), 1000)).toBe(1000);
+    expect(pollBackoffMs(new Error("boom"), 1000)).toBe(1000);
+  });
+
+  it("holds the poll loop for the hinted delay instead of re-polling on cadence", async () => {
+    // pollMs is 1 here, so a 100ms hinted delay is 100× the cadence — the call
+    // count below can only stay at 1 if the hint actually gated the loop.
+    const token = freshToken();
+    const getUpdates = vi.fn(async () => {
+      throw new TelegramApiError(429, "telegram getUpdates failed (429): Too Many Requests", 0.1);
+    });
+    const client = { ...parkedClient().client, getUpdates } as TelegramClient;
+    const bridge = createTelegramBridge(opts(token, client));
+    start(bridge);
+
+    await vi.waitFor(() => expect(getUpdates).toHaveBeenCalledTimes(1));
+    await tick(40);
+    expect(getUpdates).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(getUpdates.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 2000 });
   });
 });
 

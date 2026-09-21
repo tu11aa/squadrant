@@ -43,10 +43,11 @@ export function formatInboundReceipt(project: string, outcome?: DeliveryOutcome)
   }
 }
 
-import { formatInbound, formatLifecycle, formatUsageLine, topicName } from "./format.js";
+import { formatInbound, formatLifecycle, formatMediaReceipt, formatUsageLine, inboundBody, mediaKind } from "./format.js";
+import { runTelegramLink } from "./notify.js";
 import type { ProjectUsage } from "../router/usage-ledger.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
-import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, loadState, pruneTopics, saveState, setLastUserId, setNotify } from "./state.js";
 import { tierIncludes } from "./tiers.js";
 
 /** A Telegram callback_query (button tap). Narrowed to the fields the bridge uses. */
@@ -106,6 +107,12 @@ export interface TelegramBridgeOptions {
   /** U5: routed usage/cost for a project. Appended to terminal (done/failed)
    *  crew events. Injected by the daemon host; absent ⇒ unchanged output. */
   usageFor?: (project: string) => ProjectUsage | undefined;
+  /** #321: the projects that still exist, for the registry prune on start().
+   *  Injected by the daemon host from the real config file, and REQUIRED to
+   *  answer honestly: `undefined` means "I could not read the project list", and
+   *  the prune is skipped rather than deleting every link on the machine (which
+   *  is what a silent default-to-empty would do). Absent ⇒ never prunes. */
+  registeredProjects?: () => string[] | undefined;
   /** #838/#839: typing keep-alive + reply signal + watchdog. Injected by the
    *  daemon host. start()/stop() ride the bridge's own lifecycle so its boot pass
    *  (resume-or-clear persisted state) still runs while another daemon holds the
@@ -185,6 +192,16 @@ function acquirePollLock(token: string): (() => void) | null {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** How long to wait before the next poll after a failed one (#321). Telegram
+ *  answers a rate-limited call with 429 + `parameters.retry_after`; retrying on
+ *  our own cadence instead just earns another 429 and lengthens the block, so
+ *  the API's own number wins when it sent one. Every other failure — including
+ *  a 429 with no hint — keeps the configured cadence. */
+export function pollBackoffMs(err: unknown, pollMs: number): number {
+  if (err instanceof TelegramApiError && err.retryAfterSec !== undefined) return err.retryAfterSec * 1000;
+  return pollMs;
+}
+
 const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
 
 // Channel commands that may run in ANY topic (#cmds-anytopic). mute/unmute/notify
@@ -242,13 +259,11 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   }
 
   // Resolve (or lazily create) a project's topic and send raw text into it.
+  // Creation goes through runTelegramLink so a lazy create here and a
+  // `squadrant telegram link` racing it resolve to ONE topic (#321).
   async function sendToTopic(project: string, text: string): Promise<void> {
-    let threadId = loadState(stateRoot).topics[topicKey(project)];
-    if (threadId === undefined) {
-      threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
-      setTopic(stateRoot, project, threadId);
-    }
-    await client.sendMessage(cfg.supergroupId, threadId, text);
+    const { topicId } = await runTelegramLink({ project, cfg, client, stateRoot });
+    await client.sendMessage(cfg.supergroupId, topicId, text);
   }
 
   // Outbound: resolve active (live state wins over config default) + crew-tier
@@ -474,9 +489,23 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   // (append only). The append throws on delivery-infra failure so the caller can
   // decline to advance the offset (at-least-once); auto-launch failures are
   // contained and never block the append.
-  async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined, messageId?: number): Promise<void> {
+  async function handleProjectTopic(
+    text: string,
+    threadId: number,
+    fromId: number | undefined,
+    messageId?: number,
+    media?: { kind: string; hasCaption: boolean },
+  ): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
-    if (!resolved) return; // no project bound to this topic
+    if (!resolved) {
+      // #591: this used to return silently. The operator saw their message
+      // vanish — no reply, no log — while the offset advanced past it, so the
+      // drop was invisible from BOTH ends. An unbound topic is a setup mistake
+      // the operator can fix, so say so.
+      log(`telegram inbound in unbound topic thread=${threadId} — no project linked, message dropped`);
+      await reply(threadId, "⚠️ this topic isn't linked to a project — run: squadrant telegram link <project>");
+      return;
+    }
 
     if (isBareSpawn(text)) {
       // Guided /spawn — picker, never appended. Fail-closed like the toggles.
@@ -608,6 +637,14 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       );
     }
 
+    // #768: an attachment we cannot forward is NOT a delivery outcome, so this
+    // is additive to the receipts above and fires on every path — including
+    // `held`, where the operator is otherwise told only that the message is
+    // queued. Silence here is what made a dropped photo look sent.
+    if (media) {
+      await reply(threadId, formatMediaReceipt(media.kind, media.hasCaption));
+    }
+
     // `held` short-circuits both the ACK and the lifecycle handoff. Everything
     // else (accepted / queued / gone→mailbox / no channel) leaves the message
     // somewhere the captain will actually pick up.
@@ -623,13 +660,20 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; caption?: string; photo?: unknown[]; voice?: unknown; video_note?: unknown; video?: unknown; audio?: unknown; document?: unknown; animation?: unknown; sticker?: unknown; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
     }
     const m = u.message;
-    if (!m || m.text === undefined) return;
+    if (!m) return;
+    // #768: media arrives as photo/document/voice/… with the typed text (if any)
+    // in `caption`. The old `m.text === undefined` early return dropped the
+    // whole message — attachment AND caption — leaving the operator with no
+    // reply, no log, and no way to tell it had vanished.
+    const kind = mediaKind(m);
+    const text = m.text ?? m.caption;
+    if (text === undefined && kind === undefined) return; // nothing to act on
     if (!cfg.chats.includes(m.chat.id)) return; // not an allowlisted chat (coarse filter)
     // Passively capture the sender's user-id for setup auto-population (#user-id).
     if (m.from?.id !== undefined && loadState(stateRoot).lastUserId !== m.from.id) {
@@ -645,7 +689,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         await reply(threadId, "⛔ not authorized");
         return;
       }
-      const task = m.text.trim();
+      // `text` (not `m.text`) so a captioned photo can still carry the task;
+      // media with no caption cancels cleanly instead of throwing on undefined.
+      const task = (text ?? "").trim();
       if (!task) {
         await reply(threadId, "spawn cancelled — empty task");
         return;
@@ -655,16 +701,28 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return; // NOT appended as a captain message
     }
     if (m.message_thread_id === undefined) {
+      // The General topic keeps its v1 shape exactly: a caption is not a command.
+      if (m.text === undefined) return;
       await handleGeneral(m.text, m.from?.id);
       return;
     }
-    await handleProjectTopic(m.text, m.message_thread_id, m.from?.id, m.message_id);
+    // The captain message is the caption (or text) plus the #768 marker; the
+    // marker rides in the body rather than the receipt so the captain — not just
+    // the operator — knows the message was truncated.
+    await handleProjectTopic(
+      inboundBody(text, kind),
+      m.message_thread_id,
+      m.from?.id,
+      m.message_id,
+      kind === undefined ? undefined : { kind, hasCaption: text !== undefined },
+    );
   }
 
   async function pollLoop(): Promise<void> {
     while (running) {
       const ac = new AbortController();
       pollAbort = ac;
+      let waitMs = pollMs;
       try {
         const offset = loadState(stateRoot).offset;
         const updates = await client.getUpdates(offset, LONG_POLL_SEC, ac.signal);
@@ -690,10 +748,13 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         } else {
           log(`telegram inbound poll failed: ${msg}`);
         }
+        // #321: honor the API's own back-off hint on a rate limit instead of
+        // hammering it on our cadence and earning a longer block.
+        waitMs = pollBackoffMs(e, pollMs);
       } finally {
         pollAbort = null;
       }
-      if (running) await sleep(pollMs);
+      if (running) await sleep(waitMs);
     }
     running = false;
     releasePollLock?.();
@@ -708,6 +769,19 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         if (!releasePollLock) {
           log("telegram inbound poll disabled: another consumer already polls this bot token (single-consumer guard, #830)");
           return;
+        }
+      }
+      // #321 registry prune: a link outlives the project it points at. Runs on
+      // boot, from the instance that actually owns the poll slot. Injected
+      // (below) rather than read here: absent ⇒ no prune, so a bridge that
+      // cannot tell "unregistered" from "unreadable" never deletes a link.
+      const known = opts.registeredProjects?.();
+      if (known !== undefined) {
+        try {
+          const removed = pruneTopics(stateRoot, (p) => known.includes(p));
+          if (removed.length > 0) log(`telegram registry pruned ${removed.length} stale topic link(s): ${removed.join(", ")}`);
+        } catch (e) {
+          log(`telegram registry prune failed: ${(e as Error).message}`);
         }
       }
       running = true;

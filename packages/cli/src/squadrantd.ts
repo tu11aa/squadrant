@@ -99,6 +99,18 @@ function buildTelegramBridge(
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
     ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor, lifecycle,
+    // #321 registry prune. Read the file directly rather than via loadConfig():
+    // loadConfig swallows every failure and returns defaults, so an unreadable
+    // config would look like "no projects registered" and the prune would delete
+    // every link on the machine. `undefined` correctly means "don't prune".
+    registeredProjects: () => {
+      try {
+        const parsed = JSON.parse(readFileSync(join(dirname(stateRoot), "config.json"), "utf8")) as { projects?: Record<string, unknown> };
+        return Object.keys(parsed.projects ?? {});
+      } catch {
+        return undefined;
+      }
+    },
   });
 }
 
