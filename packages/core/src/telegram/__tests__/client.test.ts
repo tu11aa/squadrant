@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTelegramClient } from "../client.js";
+import { createTelegramClient, TelegramApiError } from "../client.js";
 
 interface Call {
   url: string;
@@ -52,6 +52,28 @@ describe("createTelegramClient.getUpdates", () => {
     expect(calls[0].url).toBe("https://api.telegram.org/botTKN/getUpdates");
     expect(calls[0].init?.method).toBe("POST");
     expect(bodyOf(calls[0])).toMatchObject({ offset: 5, timeout: 30 });
+  });
+});
+
+describe("createTelegramClient.getUpdates abort (#830)", () => {
+  it("threads an AbortSignal through to fetch", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: [] });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+    const ac = new AbortController();
+
+    await client.getUpdates(0, 5, ac.signal);
+
+    expect(calls[0].init?.signal).toBe(ac.signal);
+  });
+
+  it("throws a TelegramApiError carrying the numeric error_code", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 409, description: "Conflict: terminated by other getUpdates request" });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const err = await client.getUpdates(0).catch((e) => e);
+
+    expect(err).toBeInstanceOf(TelegramApiError);
+    expect((err as TelegramApiError).code).toBe(409);
   });
 });
 
