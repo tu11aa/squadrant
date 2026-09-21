@@ -6,23 +6,34 @@ const fastSleep = () => Promise.resolve();
 describe("ensureCaptainAlive", () => {
   it("returns alive immediately when captain is up", async () => {
     const launch = vi.fn();
-    const ensure = createEnsureCaptainAlive({ isAlive: async () => true, launch, sleep: fastSleep });
+    const ensure = createEnsureCaptainAlive({ isAlive: async () => "alive", launch, sleep: fastSleep });
     expect(await ensure("p")).toBe("alive");
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("boots on unknown (no signal) too — #517 boot-if-down behaviour is unchanged", async () => {
+    const launch = vi.fn(async () => {});
+    const ensure = createEnsureCaptainAlive({
+      isAlive: async () => "unknown", launch, sleep: fastSleep,
+      warmupTimeoutMs: 50, pollMs: 10, now: (() => { let t = 0; return () => (t += 20); })(),
+    });
+    // Never observed as definitively down → unknown, not timeout (#834).
+    expect(await ensure("p")).toBe("unknown");
+    expect(launch).toHaveBeenCalledTimes(1);
   });
 
   it("launches and returns launched when warmup succeeds", async () => {
     let alive = false;
     const launch = vi.fn(async () => { alive = true; });
-    const ensure = createEnsureCaptainAlive({ isAlive: async () => alive, launch, sleep: fastSleep });
+    const ensure = createEnsureCaptainAlive({ isAlive: async () => (alive ? "alive" : "dead"), launch, sleep: fastSleep });
     expect(await ensure("p")).toBe("launched");
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
-  it("returns timeout when warmup never completes", async () => {
+  it("returns timeout when warmup never completes and the captain is definitively down", async () => {
     let t = 0;
     const ensure = createEnsureCaptainAlive({
-      isAlive: async () => false, launch: async () => {}, sleep: fastSleep,
+      isAlive: async () => "dead", launch: async () => {}, sleep: fastSleep,
       warmupTimeoutMs: 50, pollMs: 10, now: () => (t += 20),
     });
     expect(await ensure("p")).toBe("timeout");
@@ -35,7 +46,7 @@ describe("ensureCaptainAlive", () => {
     // share one launch regardless.
     let alive = false;
     const launch = vi.fn(async () => { alive = true; });
-    const ensure = createEnsureCaptainAlive({ isAlive: async () => alive, launch, sleep: fastSleep });
+    const ensure = createEnsureCaptainAlive({ isAlive: async () => (alive ? "alive" : "dead"), launch, sleep: fastSleep });
     const [a, b] = await Promise.all([ensure("p"), ensure("p")]);
     expect(launch).toHaveBeenCalledTimes(1);
     expect([a, b].every((r) => r === "launched" || r === "alive")).toBe(true);

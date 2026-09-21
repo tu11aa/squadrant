@@ -542,6 +542,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         // stranding the message in the mailbox.
         if (r === "timeout") {
           await reply(threadId, `❌ couldn't reach ${resolved.project} captain — saved to mailbox, will deliver when you open the workspace.`);
+        } else if (r === "unknown") {
+          // #834: a transient/unobservable health state is NOT evidence the
+          // captain is dead. Stay quiet — the mailbox fallback below delivers.
         } else {
           await reply(threadId, `📨 delivered to ${resolved.project} captain`);
         }
@@ -559,7 +562,13 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     }
     
     if (!handled) {
+      // The channel declined (gone / unsupported / off). This append IS the pane
+      // fallback and its success is the FINAL verdict — the #332 delivery loop
+      // drains it into the captain. A pre-fallback `gone` outcome must never be
+      // rendered as terminal "not reachable", or the operator is told a message
+      // that is queued (and will deliver) failed (#834).
       await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
+      outcome = undefined;
     }
     
     const receipt = formatInboundReceipt(resolved.project, outcome);

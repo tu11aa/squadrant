@@ -96,6 +96,16 @@ export class ClaudePeerChannel implements ControlChannel {
     }
 
     // No receipt: the silent-accept path. Use T1 to confirm T0.
+    //
+    // A session that was ALREADY busy (or in a shell) before the send has no
+    // idle→busy flip left to observe. But claude queues peer messages behind the
+    // running turn, so the bytes are accepted and will be seen next turn. Report
+    // that honestly as `queued` instead of the alarming `accepted + unconfirmed`,
+    // which callers render as "no turn was observed yet" (#769).
+    if (statusBefore === "busy" || statusBefore === "shell") {
+      return { status: "queued", via: this.name };
+    }
+
     // We capture statusUpdatedAt before writing. After the window, if it advanced,
     // a transition definitively occurred (even if status is back to idle now).
     if (statusBefore === "idle") {
