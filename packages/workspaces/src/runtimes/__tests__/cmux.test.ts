@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1935,5 +1935,115 @@ describe("classifyOpencodeStartupSurface (#786/#789)", () => {
   });
   it("treats an empty screen as loading", () => {
     expect(classifyOpencodeStartupSurface("")).toBe("loading");
+  });
+});
+
+// #786: the agent-appropriate opencode delivery gate. Fixtures are real
+// `cmux read-screen` captures from opencode 1.18.31 (2026-09-21) — see the
+// live evidence recorded on parseOpencodeDraftFromScreen.
+describe("parseOpencodeDraftFromScreen (#786 agent-appropriate opencode gate)", () => {
+  const OC_BOTTOM = "  ╹" + "▀".repeat(40);
+  // Build an opencode input box from content lines. A blank content line renders
+  // as the ┃ border with only padding; a real line carries text.
+  const ocBox = (...content: string[]) =>
+    [
+      ...content.map((l) => (l === "" ? "  ┃" : `  ┃  ${l}`)),
+      OC_BOTTOM,
+    ].join("\n");
+
+  // Cold empty box: the empty-session placeholder is drawn (no transcript yet).
+  const COLD_EMPTY = [
+    "                              █▀▀█ █▀▀█ █▀▀█ █▀▀▄",
+    ocBox("", 'Ask anything… "What is the tech stack of this project?"', "", "Build · DeepSeek V4.1 Flash OpenCode Go"),
+    "                                                            tab agents  ctrl+p commands",
+  ].join("\n");
+  // Warm empty box: a transcript is on screen, so the placeholder is NOT drawn —
+  // only the persistent status footer inside the box remains.
+  const WARM_EMPTY = [
+    "     ▣  Build · DeepSeek V4.1 Flash · 4.3s",
+    ocBox("", "", "Build · DeepSeek V4.1 Flash OpenCode Go · high"),
+    "   /private/tmp/oc786cap   49.3K (5%) · $0.01  ctrl+p commands",
+  ].join("\n");
+  // A real typed draft — the text is a non-chrome content line.
+  const DRAFT = ocBox("", "DRAFT_ALPHA_1234", "", "Build · DeepSeek V4.1 Flash OpenCode Go");
+  // Mid-turn: the box is structurally empty, but opencode renders an interrupt
+  // hint below it. Pasting here is worse than deferring.
+  const MID_TURN = [
+    ocBox("", "", "", "Build · DeepSeek V4.1 Flash OpenCode Go"),
+    "   ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt        49.3K (5%) · $0.01  ctrl+p commands",
+  ].join("\n");
+
+  it("returns '' (deliverable) for a COLD empty box (placeholder present)", () => {
+    expect(parseOpencodeDraftFromScreen(COLD_EMPTY)).toBe("");
+  });
+  it("returns '' (deliverable) for a WARM empty box (no placeholder, footer only)", () => {
+    expect(parseOpencodeDraftFromScreen(WARM_EMPTY)).toBe("");
+  });
+  it("returns null when a real draft is present (never paste over it)", () => {
+    expect(parseOpencodeDraftFromScreen(DRAFT)).toBeNull();
+  });
+  it("returns null mid-turn even though the box is structurally empty", () => {
+    expect(parseOpencodeDraftFromScreen(MID_TURN)).toBeNull();
+  });
+  it("returns null when no opencode box is rendered at all", () => {
+    expect(parseOpencodeDraftFromScreen("just some transcript\nno box here")).toBeNull();
+    expect(parseOpencodeDraftFromScreen("")).toBeNull();
+  });
+});
+
+describe("sendToSurface agent-aware opencode gate (#786)", () => {
+  const driver = createCmuxDriver();
+  const surface = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+  const OC_BOTTOM = "  ╹" + "▀".repeat(40);
+  const WARM_EMPTY = ["  ┃", "  ┃", "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go", OC_BOTTOM].join("\n");
+  const DRAFT = ["  ┃", "  ┃  DRAFT_ALPHA_1234", "  ┃", "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go", OC_BOTTOM].join("\n");
+  const MID_TURN = [
+    ["  ┃", "  ┃", "  ┃  Build · DeepSeek V4.1 Flash OpenCode Go", OC_BOTTOM].join("\n"),
+    "   ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt    ctrl+p commands",
+  ].join("\n");
+
+  beforeEach(() => execFileMock.mockReset());
+  // Defensive: a mock reset can leave a 0-arg recorded invocation, so guard both
+  // the implementation and the argv readers against a non-array argument list.
+  const argv = (c: unknown[]): string[] => (Array.isArray(c[1]) ? (c[1] as string[]) : []);
+  const reads = (screen: string) =>
+    execFileMock.mockImplementation((...a: unknown[]) => {
+      const args = a[1] as string[] | undefined;
+      return Array.isArray(args) && args.includes("read-screen") ? screen : "";
+    });
+  const sendCalls = () => execFileMock.mock.calls.filter((c) => argv(c)[0] === "send");
+  const anyKeystroke = () =>
+    execFileMock.mock.calls.some((c) => argv(c)[0] === "send-key" || argv(c).includes("backspace"));
+
+  it("delivers to an opencode captain pane confirmed empty (not no-box)", async () => {
+    reads(WARM_EMPTY);
+    await driver.sendToSurface(surface, "crew done", { agent: "opencode" });
+    const sendCall = sendCalls()[0];
+    expect(sendCall).toBeDefined();
+    expect(argvOf(sendCall)).toContain("crew done");
+  });
+
+  it("defers with no keystroke when the opencode pane holds a draft", async () => {
+    reads(DRAFT);
+    await expect(driver.sendToSurface(surface, "crew done", { agent: "opencode" }))
+      .rejects.toBeInstanceOf(DeferDelivery);
+    expect(sendCalls().length).toBe(0);
+    expect(anyKeystroke()).toBe(false);
+  });
+
+  it("defers with no keystroke when the opencode pane is mid-turn", async () => {
+    reads(MID_TURN);
+    await expect(driver.sendToSurface(surface, "crew done", { agent: "opencode" }))
+      .rejects.toBeInstanceOf(DeferDelivery);
+    expect(sendCalls().length).toBe(0);
+    expect(anyKeystroke()).toBe(false);
+  });
+
+  it("claude path is byte-for-byte unchanged when agent is 'claude' (regression guard)", async () => {
+    reads(makeTestScreen("\u276F \u258C"));
+    await driver.sendToSurface(surface, "crew done", { agent: "claude" });
+    const sendCall = sendCalls()[0];
+    expect(sendCall).toBeDefined();
+    expect(argvOf(sendCall)).toContain("crew done");
   });
 });

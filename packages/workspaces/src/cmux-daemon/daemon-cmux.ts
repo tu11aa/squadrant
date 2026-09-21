@@ -42,7 +42,7 @@ export async function readCmuxLiveness(): Promise<RuntimeLivenessRecord[]> {
 export class DaemonCmux {
   constructor(private readonly driver: RuntimeDriver) {}
 
-  async send(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void> {
+  async send(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void> {
     try {
       await this.driver.sendToSurface(surface, text, opts);
     } catch (e) {

@@ -482,8 +482,13 @@ export function createDelivery(
               if (mode !== "off") throw new DeferDelivery(null, "no-channel");
             }
 
+            // #786: carry the captain's agent into the pane path so it picks the
+            // right input-box grammar — the opencode gate vs the claude parser.
+            // Absent/other → the claude parser, byte-for-byte unchanged.
+            const paneOpts = { ...sendOpts, agent };
+
             try {
-              return await cmux.send(surface!, text, sendOpts);
+              return await cmux.send(surface!, text, paneOpts);
             } catch (e) {
               // #713: probe-failed (#714) means the cmux invocation itself failed
               // — most likely a stale surface ref after a captain restart. The
@@ -505,7 +510,7 @@ export function createDelivery(
               }
               log(`delivery project=${project}: probe-failed on ${surface!.workspaceId}/${surface!.surfaceId} — re-resolved to ${next.workspaceId}/${next.surfaceId}, retrying`);
               surface = next;
-              return cmux.send(next, text, sendOpts);
+              return cmux.send(next, text, paneOpts);
             }
           });
           if ("delivered" in result) {

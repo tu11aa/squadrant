@@ -416,6 +416,64 @@ export function classifyOpencodeStartupSurface(screen: string): "loading" | "idl
   return OC_IDLE_MARKERS.some((m) => screenHasSplashMarker(screen, m)) ? "idle" : "loading";
 }
 
+// #786: agent-appropriate DELIVERY gate for an opencode TUI pane. opencode draws
+// its input box with a ┃ left border and a ╹▀▀… bottom rule — NOT the ─ HR
+// boundaries parseDraftFromScreen (claude-tuned) requires — so that parser
+// returns null for every opencode pane, which the delivery loop reports as
+// reason=no-box and defers forever (the #786 bug). This gate positively CONFIRMS
+// the box is empty and returns "" only then; EVERY other state — a typed draft,
+// a turn in flight, a modal/picker, or no box rendered — returns null so the
+// caller DEFERS. It never extracts or probes draft content, so no keystroke (not
+// even the #302 backspace) is ever injected into an opencode pane.
+//
+// Positive-empty evidence (live, opencode 1.18.31, 2026-09-21, cmux read-screen):
+//   cold empty : content lines blank + "Ask anything…" placeholder + status footer
+//   warm empty : same, but WITHOUT the placeholder (a transcript is on screen)
+//   draft      : the typed text is a non-chrome content line
+//   mid-turn   : a structurally-empty box BUT an "esc interrupt" hint is on screen
+// So the placeholder alone is insufficient (it is absent on a warm box — #789),
+// and the mid-turn hint is mandatory (pasting into a busy pane is worse than a
+// defer). Unrecognised chrome degrades to a defer, never a false delivery.
+const OC_BOX_BOTTOM_RE = /^\s*╹[▀]{6,}\s*$/;
+const OC_BOX_SIDE_RE = /^\s*┃/;
+// The persistent model/status footer drawn INSIDE the box on every frame
+// (e.g. "Build · DeepSeek V4.1 Flash OpenCode Go · high"). A renamed mode simply
+// fails to match → treated as content → defer (safe).
+const OC_BOX_STATUS_RE = /^Build\s*·/i;
+// opencode's in-flight turn hint; present only while a turn runs (verified live).
+const OC_BUSY_RE = /esc\s+interrupt/i;
+
+/**
+ * Agent-appropriate opencode delivery gate (#786). Three-state, mirroring
+ * parseDraftFromScreen's contract so sendToSurface can treat both uniformly:
+ *   ""   — the input box is POSITIVELY confirmed empty → caller may DELIVER.
+ *   null — anything else (draft, mid-turn, modal, box not rendered) → DEFER.
+ * Never returns a non-empty draft: the #302 probe must never fire on opencode.
+ */
+export function parseOpencodeDraftFromScreen(screen: string): string | null {
+  if (!screen) return null;
+  // A turn in flight renders an interrupt hint — never keystroke into a busy pane.
+  if (OC_BUSY_RE.test(screen)) return null;
+  const lines = screen.split(/\r?\n/);
+  // The LAST bottom rule is the live input box (a transcript may hold older ones).
+  let bottom = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (OC_BOX_BOTTOM_RE.test(lines[i])) { bottom = i; break; }
+  }
+  if (bottom === -1) return null; // box not rendered → cannot confirm empty
+  // Walk up the ┃-bordered content lines immediately above the bottom rule,
+  // peeling both vertical borders so a blank framed line reads as "".
+  const content: string[] = [];
+  for (let i = bottom - 1; i >= 0 && OC_BOX_SIDE_RE.test(lines[i]); i--) {
+    content.push(lines[i].replace(/^\s*┃\s*/, "").replace(/[\s┃│]+$/, ""));
+  }
+  if (content.length === 0) return null; // no bordered region → not confirmed
+  const hasDraft = content.some(
+    (l) => l !== "" && !OC_BOX_STATUS_RE.test(l) && !screenHasSplashMarker(l, "Ask anything"),
+  );
+  return hasDraft ? null : "";
+}
+
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a
 // SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
 // lands as a newline instead of a submit, stranding the payload in the input box.
@@ -679,7 +737,7 @@ export function createCmuxDriver(): RuntimeDriver {
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
-    async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void> {
+    async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void> {
       const ws = surface.workspaceId;
       const sf = surface.surfaceId;
       const deliver = async () => {
@@ -723,7 +781,13 @@ export function createCmuxDriver(): RuntimeDriver {
         process.stderr.write(`[squadrant] read-screen failed for ${ws}/${sf}: ${(e as Error).message}\n`);
         throw new DeferDelivery(null, "probe-failed");
       }
-      const draft = parseDraftFromScreen(screen);
+      // #786: pick the input-box grammar by the target's agent. The claude path
+      // is byte-for-byte unchanged — only an explicitly-opencode target uses the
+      // opencode gate. parseOpencodeDraftFromScreen never returns a draft, so an
+      // opencode defer can never reach the #302 backspace probe below.
+      const draft = opts?.agent === "opencode"
+        ? parseOpencodeDraftFromScreen(screen)
+        : parseDraftFromScreen(screen);
 
       // null = box not confirmed visible → never keystroke into an overlay (#268).
       if (draft === null) throw new DeferDelivery(null, "no-box");

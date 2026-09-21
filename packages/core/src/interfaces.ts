@@ -42,7 +42,9 @@ export interface DirectCmuxReader {
 export interface DaemonSurfaceDriver extends DirectCmuxReader {
   findWorkspaceId(name: string): Promise<string | null>;
   listSurfaces(wsId: string): Promise<PaneRef[]>;
-  send: (surface: PaneRef, text: string, opts?: { probe?: boolean }) => Promise<void>;
+  /** opts.agent selects the input-box grammar at the workspaces layer (#786);
+   *  "opencode" uses the agent-appropriate gate, anything else the claude path. */
+  send: (surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }) => Promise<void>;
   readPaneScreen(pane: PaneRef): Promise<string | null>;
   /** Ground-truth liveness from the runtime's own session store (§5.4).
    *  Optional — a runtime with no such store omits it. */
