@@ -1,10 +1,10 @@
-# Provider-agnostic auto permission gate (`@squadrant/auto-gate`) — Implementation Plan
+# Provider-agnostic auto permission gate (`@squadrant-ai/auto-gate`) — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the standalone, provider-agnostic permission gate described in the #828 design, in phases that each produce working, testable software.
 
-**Architecture:** A standalone npm package (`@squadrant/auto-gate`, own repo — §16.1) exposing a bin consumed by any agent and by squadrant. The core is a **classifier → assessment → policy engine → outcome** pipeline: a classifier (Jev, or a generative fallback) returns an *assessment*; a pure policy engine applies thresholds and owns the allow/deny/ask decision; a cache and an audit log wrap it. Per-agent adapters (claude `PermissionRequest` hook; opencode SSE subscriber) translate native events into one `GateRequest` and map the outcome back.
+**Architecture:** A standalone npm package (`@squadrant-ai/auto-gate`, own repo — §16.1) exposing a bin consumed by any agent and by squadrant. The core is a **classifier → assessment → policy engine → outcome** pipeline: a classifier (Jev, or a generative fallback) returns an *assessment*; a pure policy engine applies thresholds and owns the allow/deny/ask decision; a cache and an audit log wrap it. Per-agent adapters (claude `PermissionRequest` hook; opencode SSE subscriber) translate native events into one `GateRequest` and map the outcome back.
 
 **Tech Stack:** TypeScript (ESM), vitest, node ≥ 20. Plain `fetch` (no SDK). No runtime dependency on squadrant.
 
@@ -12,7 +12,7 @@
 
 **Prerequisite (DONE 2026-09-21):** the standalone repo exists — **`Squadrant-AI/auto-gate`** (private), cloned to **`~/me/auto-gate`**, default branch `main`, and registered with squadrant as project `auto-gate`. File paths below are relative to that repo root, not the squadrant monorepo.
 
-**Naming (resolved):** GitHub org `Squadrant-AI`; **npm org must be created as `squadrant` (lowercase)** so the package name `@squadrant/auto-gate` is publishable — npm scopes are lowercase and independent of the GitHub org name (`Squadrant-AI` would give `@squadrant-ai/*`). Publish is **deferred** until that scope exists; nothing in P1 needs it.
+**Naming (resolved):** GitHub org `Squadrant-AI`; **npm org must be created as `squadrant` (lowercase)** so the package name `@squadrant-ai/auto-gate` is publishable — npm scopes are lowercase and independent of the GitHub org name (`Squadrant-AI` would give `@squadrant-ai/*`). Publish is **deferred** until that scope exists; nothing in P1 needs it.
 
 ---
 
@@ -76,7 +76,7 @@ Expected: build clean; 1 test passing. **Record the passing count** — later ta
 - [ ] **Step 3: Commit**
 
 ```bash
-git add -A && git commit -m "chore: bootstrap @squadrant/auto-gate (typescript + vitest)"
+git add -A && git commit -m "chore: bootstrap @squadrant-ai/auto-gate (typescript + vitest)"
 ```
 
 ---
@@ -667,5 +667,5 @@ git commit -m "feat(core): scope predicate + public barrel (§10)"
 
 - **PR #832 is MERGED** (`d4c0a73`) — the §15 resolutions are normative on `develop`. ✅ Resolved.
 - **Repo home resolved:** `Squadrant-AI/auto-gate` (private), `~/me/auto-gate`, registered as squadrant project `auto-gate`. ✅
-- **npm scope not yet created.** Create the npm org `squadrant` (lowercase) before the first publish; `@squadrant/auto-gate` is unpublishable until then. Not on P1's critical path.
+- **npm scope not yet created.** Create the npm org `squadrant` (lowercase) before the first publish; `@squadrant-ai/auto-gate` is unpublishable until then. Not on P1's critical path.
 - **Deferred (separate op):** transferring `tu11aa/squadrant` → `Squadrant-AI/squadrant`. ⚠️ The npm **OIDC trusted publisher** must be updated to the new owner *before* the next release, or `release.yml` publish fails.

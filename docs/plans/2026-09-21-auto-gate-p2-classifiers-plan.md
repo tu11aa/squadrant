@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the Tier-2 classifier layer for `@squadrant/auto-gate` — a Jev client that turns a `GateRequest` into a `GateAssessment`, a generative fallback, and a null classifier — with **no live network in tests** and **fail-open-to-`ask` on every error path**.
+**Goal:** Implement the Tier-2 classifier layer for `@squadrant-ai/auto-gate` — a Jev client that turns a `GateRequest` into a `GateAssessment`, a generative fallback, and a null classifier — with **no live network in tests** and **fail-open-to-`ask` on every error path**.
 
 **Architecture:** A pure pipeline with one impure edge. `redact` → `buildQuestions`/`buildState` (pure) → `JevClient.classify` (the only I/O: one `fetch`) → `parseJevResponse` (pure) → `GateAssessment`. Every failure (401/422/429/529, timeout, unparseable, near-tie) resolves to an `ask` assessment — the classifier **never throws** (§5 contract). P1's policy engine consumes the assessment; P2 does not change policy.
 
