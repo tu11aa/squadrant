@@ -3,8 +3,9 @@
 import type { Update } from "@grammyjs/types";
 
 export interface TelegramClient {
-  /** Long-poll for updates. timeoutSec is the Bot API `timeout` (default 50s). */
-  getUpdates(offset: number, timeoutSec?: number): Promise<Update[]>;
+  /** Long-poll for updates. timeoutSec is the Bot API `timeout` (default 50s).
+   *  A signal cancels an in-flight long-poll cleanly (used by stop(), #830). */
+  getUpdates(offset: number, timeoutSec?: number, signal?: AbortSignal): Promise<Update[]>;
   sendMessage(chatId: number, threadId: number | undefined, text: string, replyMarkup?: unknown): Promise<void>;
   /** Answer a callback_query — REQUIRED on every tap path or the spinner hangs ~15s. */
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
@@ -27,21 +28,31 @@ interface TgResponse<T> {
   description?: string;
 }
 
+/** A Bot API rejection carrying its numeric `error_code`. Lets callers branch on
+ *  a specific code (e.g. 409 single-consumer conflict, #830) without parsing text. */
+export class TelegramApiError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(message);
+    this.name = "TelegramApiError";
+  }
+}
+
 export function createTelegramClient(opts: { token: string; fetch?: typeof fetch }): TelegramClient {
   const fetchImpl = opts.fetch ?? fetch;
   const base = `https://api.telegram.org/bot${opts.token}`;
 
-  async function call<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  async function call<T>(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const res = await fetchImpl(`${base}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     const json = (await res.json()) as TgResponse<T>;
     if (!res.ok || !json.ok) {
       const code = json.error_code ?? res.status;
       const desc = json.description ?? "unknown error";
-      throw new Error(`telegram ${method} failed (${code}): ${desc}`);
+      throw new TelegramApiError(code, `telegram ${method} failed (${code}): ${desc}`);
     }
     return json.result as T;
   }
@@ -51,8 +62,8 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       const r = await call<{ id: number; username: string }>("getMe", {});
       return { id: r.id, username: r.username };
     },
-    getUpdates(offset, timeoutSec = 50) {
-      return call<Update[]>("getUpdates", { offset, timeout: timeoutSec });
+    getUpdates(offset, timeoutSec = 50, signal) {
+      return call<Update[]>("getUpdates", { offset, timeout: timeoutSec }, signal);
     },
     async sendMessage(chatId, threadId, text, replyMarkup) {
       const body: Record<string, unknown> = { chat_id: chatId, text };
