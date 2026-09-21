@@ -328,6 +328,32 @@ describe("two-stage ACK + typing lifecycle (#838)", () => {
   it("does NOT ack `captain received` when delivery is held behind a modal (#546)", async () => {
     // The HELD receipt already told the operator the message is stuck. Acking it
     // would contradict that line and arm a watchdog for a turn nobody was given.
+    //
+    // `handled: true` is the PRODUCTION pair here: deliverToCaptain only falls
+    // back to the pane for gone/unsupported (`fallsBackToPane`), so held/queued/
+    // accepted all return handled: true. A held+handled:false pair is unreachable.
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({
+      lifecycle: { begin },
+      deliverInbound: vi.fn(async () => ({ handled: true, outcome: { status: "held", via: "claude-peer", reason: "permission-mode parity" } })),
+    } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies.some((t: string) => t === "✅ captain received")).toBe(false);
+    expect(bodies.some((t: string) => t.includes("HELD"))).toBe(true);
+    expect(begin).not.toHaveBeenCalled();
+    // held is handled:true → the pane fallback must NOT run.
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("regression (#837): held is still seen after the fallback clears the outcome", async () => {
+    // #837 sets `outcome = undefined` once the pane append succeeds, so a guard
+    // placed AFTER that block cannot see "held". This drives the unreachable-ish
+    // pair (held + handled:false) — the exact shape that composed with #837 to
+    // redden CI — and asserts the early capture still suppresses the ack.
     setTopic(stateRoot, "brove", 7);
     const begin = vi.fn();
     const d = deps({
@@ -338,8 +364,10 @@ describe("two-stage ACK + typing lifecycle (#838)", () => {
     await drained;
     const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
     expect(bodies.some((t: string) => t === "✅ captain received")).toBe(false);
-    expect(bodies.some((t: string) => t.includes("HELD"))).toBe(true);
     expect(begin).not.toHaveBeenCalled();
+    // The fallback DID run (handled:false), so the append happened and #837
+    // cleared the outcome — yet the ack is still correctly suppressed.
+    expect(d.appendCaptainMessage).toHaveBeenCalled();
     bridge.stop();
   });
 });

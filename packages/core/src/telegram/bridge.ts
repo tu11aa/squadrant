@@ -580,7 +580,17 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       handled = res.handled;
       outcome = res.outcome;
     }
-    
+
+    // #838 stage 2 — "captain received" must mean the message is genuinely with
+    // the captain. A `held` outcome is the one state where it is NOT: the message
+    // is sitting behind an open modal (the #546/#486 case) and no turn was ever
+    // given, so acking it would arm a typing/watchdog for a message nobody read.
+    // Captured HERE, before the fallback block below: #837 sets `outcome =
+    // undefined` when the pane append succeeds, and a guard that read `outcome`
+    // afterwards could not see "held" at all. Read it once, early, and never let
+    // the #837 clearing silently disarm this.
+    const deliveryHeld = outcome?.status === "held";
+
     if (!handled) {
       // The channel declined (gone / unsupported / off). This append IS the pane
       // fallback and its success is the FINAL verdict — the #332 delivery loop
@@ -590,7 +600,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
       outcome = undefined;
     }
-    
+
     const receipt = formatInboundReceipt(resolved.project, outcome);
     if (receipt && sendReply) {
       await sendReply(threadId, receipt).catch((e) =>
@@ -598,15 +608,10 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       );
     }
 
-    // #838 stage 2 — "captain received" must mean the message is genuinely with
-    // the captain. A `held` outcome is the one state where it is NOT: the message
-    // is sitting behind an open modal (the #546/#486 case), and the HELD receipt
-    // above already told the operator so. Acking it here would contradict that
-    // line AND arm a typing/watchdog for a message nobody has read yet — the
-    // watchdog would then warn about a captain that was never given the turn.
-    // Everything else (accepted / queued / gone→mailbox / no channel) leaves the
-    // message somewhere the captain will actually pick up.
-    if (outcome?.status === "held") return;
+    // `held` short-circuits both the ACK and the lifecycle handoff. Everything
+    // else (accepted / queued / gone→mailbox / no channel) leaves the message
+    // somewhere the captain will actually pick up.
+    if (deliveryHeld) return;
 
     // One short text — the failure receipts above are unchanged and additive —
     // then hand the typing keep-alive + watchdog to the lifecycle. `begin()` IS
