@@ -104,15 +104,33 @@ describe("explanatory titles + captions", () => {
 });
 
 describe("tabbed navigation", () => {
-  it("renders all five tabs as a tablist, live first", () => {
+  it("renders every tab as a tablist, live first", () => {
     const out = renderContent(full(daemon()));
     expect(out).toContain('role="tablist"');
-    for (const tab of ["live", "overview", "projects", "daemon", "environment"]) {
+    for (const tab of ["live", "overview", "projects", "daemon", "environment", "logs"]) {
       expect(out).toContain(`data-tab="${tab}"`);
       expect(out).toContain(`data-panel="${tab}"`);
     }
     expect(out).toContain("Live");
     expect(out).toContain("Environment");
+  });
+});
+
+describe("logs tab (#519)", () => {
+  it("renders a live-tail viewport and severity/pause/copy controls", () => {
+    const out = renderContent(full(daemon()));
+    expect(out).toContain('data-panel="logs"');
+    expect(out).toContain('data-log-view');
+    expect(out).toContain('data-log-sev="all"');
+    expect(out).toContain('data-log-sev="warn"');
+    expect(out).toContain('data-log-sev="error"');
+    expect(out).toContain('data-log-pause');
+    expect(out).toContain('data-log-copy');
+  });
+
+  it("wires the client to the /logs SSE stream", () => {
+    const html = renderHtml(full(daemon()));
+    expect(html).toContain("new EventSource('/logs')");
   });
 });
 
