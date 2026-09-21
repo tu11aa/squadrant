@@ -1,11 +1,13 @@
 // Daemon-internal Telegram subsystem (modeled on CmuxEventsBridge). Owns one
 // outbound hook (pushLifecycle) and one inbound getUpdates long-poll. Opt-in and
 // crash-contained: no send/poll error may escape into the daemon.
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import type { ControlEvent, CrewTier, NotifyConfig, TelegramConfig } from "@squadrant/shared";
 import { resolveNotify, loadProjectOverride, saveProjectOverride, loadConfig } from "@squadrant/shared";
-import type { TelegramClient } from "./client.js";
+import { TelegramApiError, type TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
@@ -104,6 +106,70 @@ export interface TelegramBridgeOptions {
 // a fast-returning poll can't busy-loop.
 const LONG_POLL_SEC = 50;
 
+// #830 single-consumer guard: getUpdates is single-consumer per bot token, so a
+// stray second poller makes both sides 409-storm. The lock lives in the OS temp
+// dir keyed by a token hash, so it works across processes (dev harnesses,
+// manually-started daemons) — not just within one daemon.
+const POLL_LOCK_STALE_MS = 2 * 60_000;
+// Consecutive 409s before the poll is declared terminal. The storm in #830 was
+// ~11.6k log lines from looping forever; a couple of retries absorb a transient
+// race, then we stop and log once.
+const CONFLICT_409_TERMINAL_AFTER = 3;
+
+/** Exclusive lockfile path for a bot token's single getUpdates consumer. */
+export function telegramPollLockPath(token: string): string {
+  const hash = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+  return path.join(os.tmpdir(), `squadrant-telegram-poll-${hash}.lock`);
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM ⇒ the pid exists but belongs to another user (still alive).
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** A lock is held iff its owner pid is alive, or (pid unreadable) it is younger
+ *  than the stale window. Missing/unreadable ⇒ free. */
+function lockIsHeld(file: string): boolean {
+  let pid: number | undefined;
+  let ageMs: number;
+  try {
+    const parsed = Number.parseInt(fs.readFileSync(file, "utf8").trim(), 10);
+    pid = Number.isFinite(parsed) ? parsed : undefined;
+    ageMs = Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return false;
+  }
+  if (pid !== undefined) return pidAlive(pid);
+  return ageMs < POLL_LOCK_STALE_MS;
+}
+
+/** Take the poll lock atomically (O_EXCL). Returns a release fn, or null when a
+ *  live consumer already holds it. A stale lock is reclaimed at most once. */
+function acquirePollLock(token: string): (() => void) | null {
+  const file = telegramPollLockPath(token);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(file, "wx");
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") return null;
+      if (attempt === 0 && !lockIsHeld(file)) {
+        try { fs.unlinkSync(file); } catch { /* raced with another reclaimer */ }
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
@@ -145,7 +211,12 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
+  // Same token resolution as the daemon host: a config token, else the env fallback.
+  const lockToken = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+  let releasePollLock: (() => void) | null = null;
+  let pollAbort: AbortController | null = null;
   let running = false;
+  let conflictCount = 0;
   let lastSuccessfulPollAt: number | null = null;
   let lastError: string | null = null;
   let lastErrorAt: number | null = null;
@@ -541,31 +612,61 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   async function pollLoop(): Promise<void> {
     while (running) {
+      const ac = new AbortController();
+      pollAbort = ac;
       try {
         const offset = loadState(stateRoot).offset;
-        const updates = await client.getUpdates(offset, LONG_POLL_SEC);
+        const updates = await client.getUpdates(offset, LONG_POLL_SEC, ac.signal);
+        conflictCount = 0;
         for (const u of updates) {
           await handleUpdate(u);
           persistOffset(u.update_id + 1);
         }
         lastSuccessfulPollAt = Date.now();
       } catch (e) {
-        lastError = (e as Error).message;
+        if (ac.signal.aborted) break; // stop() cancelled an in-flight long-poll — not an error
+        const msg = (e as Error).message;
+        lastError = msg;
         lastErrorAt = Date.now();
-        log(`telegram inbound poll failed: ${(e as Error).message}`);
+        // #830: repeated 409 means a second consumer holds the token's poll slot.
+        // Retrying forever is the 11.6k-line storm; log once and stop.
+        if (e instanceof TelegramApiError && e.code === 409) {
+          conflictCount += 1;
+          if (conflictCount >= CONFLICT_409_TERMINAL_AFTER) {
+            log(`telegram inbound poll stopped: repeated 409 conflict (another getUpdates consumer holds this token) — ${msg}`);
+            break;
+          }
+        } else {
+          log(`telegram inbound poll failed: ${msg}`);
+        }
+      } finally {
+        pollAbort = null;
       }
       if (running) await sleep(pollMs);
     }
+    running = false;
+    releasePollLock?.();
+    releasePollLock = null;
   }
 
   return {
     start() {
       if (running) return;
+      if (lockToken) {
+        releasePollLock = acquirePollLock(lockToken);
+        if (!releasePollLock) {
+          log("telegram inbound poll disabled: another consumer already polls this bot token (single-consumer guard, #830)");
+          return;
+        }
+      }
       running = true;
       void pollLoop();
     },
     stop() {
       running = false;
+      pollAbort?.abort();
+      releasePollLock?.();
+      releasePollLock = null;
     },
     pushLifecycle(project, ev) {
       // Fire-and-forget; all errors swallowed so outbound can never throw into

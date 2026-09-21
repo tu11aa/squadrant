@@ -7,7 +7,7 @@ import { createTelegramBridge, type TelegramBridge } from "../bridge.js";
 import type { TelegramClient } from "../client.js";
 import { loadState, setTopic, setNotify, isNotifyActive } from "../state.js";
 
-const cfg: TelegramConfig = { botToken: "T", supergroupId: -100500, chats: [-100111], pollMs: 1 };
+const cfg: TelegramConfig = { botToken: "T-bridge-core", supergroupId: -100500, chats: [-100111], pollMs: 1 };
 
 function freshRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "sq-tg-bridge-"));
@@ -254,7 +254,7 @@ describe("pushRaw (out-of-band system alert, #579/#484 DELIVERY STUCK)", () => {
 describe("auto-unmute + in-topic /mute /unmute", () => {
   const USER_ID = 42;
   const cfgWithControl: TelegramConfig = {
-    botToken: "T", supergroupId: -100500, chats: [-100111], pollMs: 1,
+    botToken: "T-bridge-core", supergroupId: -100500, chats: [-100111], pollMs: 1,
     remoteControl: true, users: [USER_ID],
   } as any; // TelegramConfig already has these fields; `as any` bypasses stale dist types
 
