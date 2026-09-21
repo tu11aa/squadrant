@@ -290,6 +290,40 @@ describe("inbound media (#768)", () => {
   });
 });
 
+describe("unbound project topic (#591)", () => {
+  it("logs and replies instead of swallowing the message", async () => {
+    // No setTopic → thread 4242 resolves to nothing.
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, [topicMsg("ship it", 4242)]);
+    await drained;
+
+    const logs = (d.log as any).mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(logs.some((t: string) => t.includes("unbound topic") && t.includes("4242"))).toBe(true);
+    expect(d.sendReply).toHaveBeenCalledWith(4242, expect.stringContaining("isn't linked to a project"));
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not react or start a lifecycle for an unbound topic", async () => {
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsgWithId("ship it", 4242, 556)]);
+    await drained;
+    expect(client.setMessageReaction).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not react when the topic IS bound", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsgWithId("ship it", 7, 556)]);
+    await drained;
+    expect(client.setMessageReaction).toHaveBeenCalledWith(CHAT, 556, "👍");
+    bridge.stop();
+  });
+});
+
 describe("/notify in a project topic", () => {
   const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
 

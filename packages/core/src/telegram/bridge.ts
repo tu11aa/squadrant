@@ -482,7 +482,15 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     media?: { kind: string; hasCaption: boolean },
   ): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
-    if (!resolved) return; // no project bound to this topic
+    if (!resolved) {
+      // #591: this used to return silently. The operator saw their message
+      // vanish — no reply, no log — while the offset advanced past it, so the
+      // drop was invisible from BOTH ends. An unbound topic is a setup mistake
+      // the operator can fix, so say so.
+      log(`telegram inbound in unbound topic thread=${threadId} — no project linked, message dropped`);
+      await reply(threadId, "⚠️ this topic isn't linked to a project — run: squadrant telegram link <project>");
+      return;
+    }
 
     if (isBareSpawn(text)) {
       // Guided /spawn — picker, never appended. Fail-closed like the toggles.
