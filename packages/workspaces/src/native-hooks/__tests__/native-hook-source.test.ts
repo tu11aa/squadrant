@@ -233,6 +233,114 @@ describe("installClaudeHooks — #782 permission-gate migration", () => {
   });
 });
 
+// ── installClaudeHooks — P6 foreign auto-gate handler (spec §15#5) ────────────
+
+describe("installClaudeHooks — P6 foreign auto-gate removal (conditional precedence)", () => {
+  const commandsOf = (entries: unknown[]): string[] =>
+    entries.flatMap((e) =>
+      Array.isArray((e as Record<string, unknown>).hooks)
+        ? ((e as Record<string, unknown>).hooks as Array<Record<string, unknown>>)
+            .map((h) => h.command)
+            .filter((c): c is string => typeof c === "string")
+        : [],
+    );
+  const foreignEntry = (command: string) => ({
+    matcher: "",
+    hooks: [{ type: "command", command }],
+  });
+  const FOREIGN_MARKED = "auto-gate decide --agent claude # auto-gate-managed";
+
+  it("(a) gate ON + foreign auto-gate present → foreign removed, ours installed + recorded", () => {
+    const log = vi.fn();
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    opts.gateMode = "on";
+    opts.log = log;
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    const commands = commandsOf(result.hooks.PermissionRequest);
+    expect(commands).not.toContain(FOREIGN_MARKED);
+    expect(commands).toContain("squadrant gate claude permission-request");
+    expect(recorded).toEqual([{ action: "removed-foreign-gate", command: FOREIGN_MARKED }]);
+    expect(log.mock.calls.some(([m]) => /foreign auto-gate/i.test(m) && /removed/i.test(m))).toBe(true);
+  });
+
+  it("(a2) gate ON detects a foreign handler by argv basename `auto-gate` (no marker)", () => {
+    const foreign = { matcher: "", hooks: [{ type: "command", command: "auto-gate decide --agent claude" }] };
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreign] } },
+    });
+    opts.gateMode = "on";
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).not.toContain("auto-gate decide --agent claude");
+    expect(commands).toContain("squadrant gate claude permission-request");
+  });
+
+  it("(b) gate OFF + foreign present → foreign left untouched (warned + recorded)", () => {
+    const log = vi.fn();
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    opts.gateMode = "off";
+    opts.log = log;
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain(FOREIGN_MARKED);
+    expect(commands).toContain("squadrant gate claude permission-request");
+    expect(recorded).toEqual([{ action: "left-foreign-gate", command: FOREIGN_MARKED }]);
+    expect(log.mock.calls.some(([m]) => /foreign auto-gate/i.test(m) && /left untouched/i.test(m))).toBe(true);
+  });
+
+  it("(b2) gate mode absent + foreign present → foreign left untouched", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    installClaudeHooks(opts);
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain(FOREIGN_MARKED);
+  });
+
+  it("(c) gate ON + no foreign handler → untouched (nothing recorded beyond our install)", () => {
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry("my-tool permission-hook")] } },
+    });
+    opts.gateMode = "on";
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    expect(recorded).toEqual([]);
+  });
+
+  it("(d) never removes a non-auto-gate handler (gate ON)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: {
+        hooks: {
+          PermissionRequest: [
+            foreignEntry("my-tool permission-hook"),
+            foreignEntry("my-auto-gate decide --agent claude"),
+          ],
+        },
+      },
+    });
+    opts.gateMode = "on";
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain("my-tool permission-hook");
+    expect(commands).toContain("my-auto-gate decide --agent claude");
+  });
+});
+
 describe("installClaudeHooks — non-clobbering (D4: preserves existing hooks)", () => {
   it("preserves existing non-squadrant hooks in the same event array", () => {
     const userHook = { matcher: "*", hooks: [{ type: "command", command: "my-tool hook-stop" }] };
