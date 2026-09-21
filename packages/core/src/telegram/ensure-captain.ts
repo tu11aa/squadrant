@@ -6,12 +6,17 @@
 //
 // Debounce: concurrent calls for the same project share ONE launch + poll loop
 // via an in-flight promise map, so a burst of inbound messages can't spawn N
-// captains. The map entry clears on resolution (alive | launched | timeout).
+// captains. The map entry clears on resolution (alive | launched | timeout | unknown).
 
-export type EnsureResult = "alive" | "launched" | "timeout";
+import type { CaptainAliveState } from "./control.js";
+
+// `unknown` is distinct from `timeout` (#834): a captain we never managed to
+// observe is NOT evidence that it is dead, so the caller must not cry
+// "not reachable". Only `timeout` (a definitively-down captain) warrants that.
+export type EnsureResult = "alive" | "launched" | "timeout" | "unknown";
 
 export interface EnsureCaptainDeps {
-  isAlive: (project: string) => Promise<boolean>; // liveness probe
+  isAlive: (project: string) => Promise<CaptainAliveState>; // liveness probe
   launch: (project: string) => Promise<void>;     // spawn `squadrant launch <project>`
   warmupTimeoutMs?: number;                        // default 120_000
   pollMs?: number;                                 // default 1_000
@@ -34,14 +39,19 @@ export function createEnsureCaptainAlive(
   const inFlight = new Map<string, Promise<EnsureResult>>();
 
   async function run(project: string): Promise<EnsureResult> {
-    if (await deps.isAlive(project)) return "alive";
+    const first = await deps.isAlive(project);
+    if (first === "alive") return "alive";
     await deps.launch(project);
     const deadline = now() + warmupTimeoutMs;
+    let last: CaptainAliveState = first;
     while (now() < deadline) {
-      if (await deps.isAlive(project)) return "launched";
+      last = await deps.isAlive(project);
+      if (last === "alive") return "launched";
       await sleep(pollMs);
     }
-    return "timeout";
+    // Only a captain we definitively saw as down is a `timeout`; a captain we
+    // never managed to observe stays `unknown` so the caller stays quiet (#834).
+    return last === "dead" ? "timeout" : "unknown";
   }
 
   return function ensure(project: string): Promise<EnsureResult> {

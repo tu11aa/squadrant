@@ -47,20 +47,38 @@ export function createRunCommand(cliBin: string): (argv: string[]) => Promise<st
   };
 }
 
-/** Pure: a captain counts alive ONLY in state "alive" — stopped (closed),
- *  gone (crashed), and unknown/missing all mean "not alive" → boot (#517). */
-export function isCaptainAliveFromHealth(rows: ComponentHealth[], project: string): boolean {
-  return rows.some((h) => h.kind === "captain" && h.project === project && h.state === "alive");
+/** Pure tri-state captain liveness (#834). `unknown` is NOT the same as dead:
+ *  a transient miss (e.g. the window after a daemon restart while the opencode
+ *  address re-resolves) must never be reported to the operator as unreachable. */
+export type CaptainAliveState = "alive" | "dead" | "unknown";
+
+/** Pure: classify a project's captain row.
+ *   - "alive"   — state "alive"
+ *   - "dead"    — state "gone" (crash) or "stopped" (workspace closed): definitively down
+ *   - "unknown" — missing row, or state "unknown"/"stale": no signal, treat as transient */
+export function captainAliveStateFromHealth(rows: ComponentHealth[], project: string): CaptainAliveState {
+  const row = rows.find((h) => h.kind === "captain" && h.project === project);
+  if (!row) return "unknown";
+  if (row.state === "alive") return "alive";
+  if (row.state === "gone" || row.state === "stopped") return "dead";
+  return "unknown";
 }
 
-/** Liveness probe via the daemon health endpoint (mirrors group.ts isCaptainAlive). */
-export function createIsCaptainAlive(sock: string): (project: string) => Promise<boolean> {
+/** Boolean view: a captain counts alive ONLY in state "alive" — stopped (closed),
+ *  gone (crashed), and unknown/missing all mean "not alive" → boot (#517). */
+export function isCaptainAliveFromHealth(rows: ComponentHealth[], project: string): boolean {
+  return captainAliveStateFromHealth(rows, project) === "alive";
+}
+
+/** Liveness probe via the daemon health endpoint (mirrors group.ts isCaptainAlive).
+ *  A probe failure is `unknown`, not `dead` — no signal is not evidence of death (#834). */
+export function createIsCaptainAlive(sock: string): (project: string) => Promise<CaptainAliveState> {
   return async (project: string) => {
     try {
       const health = (await sendRequest(sock, { kind: "health", project }, 5000)) as ComponentHealth[];
-      return isCaptainAliveFromHealth(health ?? [], project);
+      return captainAliveStateFromHealth(health ?? [], project);
     } catch {
-      return false;
+      return "unknown";
     }
   };
 }

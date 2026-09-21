@@ -154,6 +154,33 @@ describe("handleUpdate routing", () => {
     bridge.stop();
   });
 
+  it("#834: no 'not reachable' receipt when a gone channel falls back and delivers", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    // The channel reports the (transient) fast-fail `gone`; the bridge's mailbox
+    // fallback below is what actually delivers. The operator must not be told the
+    // message failed — the fallback IS the final verdict.
+    const d = deps({ deliverInbound: vi.fn(async () => ({ handled: false, outcome: { status: "gone" as const } })) });
+    const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    const receipts = vi.mocked(d.sendReply).mock.calls.map((c) => c[1]);
+    expect(receipts.some((t: string) => t.includes("not reachable"))).toBe(false);
+    // The fallback queued the message exactly once (no duplicate mailbox copy).
+    expect(d.appendCaptainMessage).toHaveBeenCalledTimes(1);
+    bridge.stop();
+  });
+
+  it("#834: a transient/unknown health state does not yield an 'unreachable' receipt", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const d = deps({ ensureCaptainAlive: vi.fn(async () => "unknown" as const) });
+    const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    const receipts = vi.mocked(d.sendReply).mock.calls.map((c) => c[1]);
+    expect(receipts.some((t: string) => t.includes("not reachable") || t.includes("couldn't reach"))).toBe(false);
+    bridge.stop();
+  });
+
   it("drops messages from non-allowlisted chats", async () => {
     const d = deps();
     const msg = { update_id: 1, message: { chat: { id: -999 }, text: "/status", from: { id: ALLOWED_USER } } as any };
@@ -316,5 +343,9 @@ describe("formatInboundReceipt (#667 slice 4)", () => {
   it("speaks up on an unconfirmed accept rather than implying delivery", () => {
     expect(formatInboundReceipt("demo", { status: "accepted", via: "claude-peer", confirmed: false }))
       .toBe("… Your message reached demo's session but no turn was observed yet");
+  });
+
+  it("stays silent on queued — a mid-turn captain will see it next turn (#769)", () => {
+    expect(formatInboundReceipt("demo", { status: "queued", via: "claude-peer" })).toBeUndefined();
   });
 });

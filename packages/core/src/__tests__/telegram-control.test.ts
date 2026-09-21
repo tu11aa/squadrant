@@ -16,6 +16,8 @@ import { createIsCaptainAlive, createLaunch } from "../telegram/control.js";
 // #517: Telegram auto-launch never fires because isAlive() misreports a down
 // captain as alive. Captain rows only ever report "alive" | "stopped" | "unknown"
 // (see liveness.ts projectHealth) — "stopped" means the workspace was closed.
+// #834: the probe is tri-state — "unknown" (no signal / transient) is NOT "dead",
+// so a boot can happen without the caller reporting the captain unreachable.
 describe("createIsCaptainAlive", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -23,35 +25,35 @@ describe("createIsCaptainAlive", () => {
 
   const isAlive = createIsCaptainAlive("/tmp/fake.sock");
 
-  it("returns true when the captain row reports state 'alive'", async () => {
+  it("returns 'alive' when the captain row reports state 'alive'", async () => {
     sendRequestMock.mockResolvedValue([
       { kind: "captain", project: "squadrant", state: "alive" },
     ]);
-    expect(await isAlive("squadrant")).toBe(true);
+    expect(await isAlive("squadrant")).toBe("alive");
   });
 
-  it("returns false when the captain workspace was closed (state 'stopped' = down)", async () => {
+  it("returns 'dead' when the captain workspace was closed (state 'stopped' = down)", async () => {
     sendRequestMock.mockResolvedValue([
       { kind: "captain", project: "squadrant", state: "stopped" },
     ]);
-    expect(await isAlive("squadrant")).toBe(false);
+    expect(await isAlive("squadrant")).toBe("dead");
   });
 
-  it("returns false when the captain state is unknown", async () => {
+  it("returns 'unknown' when the captain state is unknown — a transient miss, not death (#834)", async () => {
     sendRequestMock.mockResolvedValue([
       { kind: "captain", project: "squadrant", state: "unknown" },
     ]);
-    expect(await isAlive("squadrant")).toBe(false);
+    expect(await isAlive("squadrant")).toBe("unknown");
   });
 
-  it("returns false when there is no captain row at all", async () => {
+  it("returns 'unknown' when there is no captain row at all", async () => {
     sendRequestMock.mockResolvedValue([]);
-    expect(await isAlive("squadrant")).toBe(false);
+    expect(await isAlive("squadrant")).toBe("unknown");
   });
 
-  it("returns false when the health request throws", async () => {
+  it("returns 'unknown' when the health request throws — a failed probe is not evidence of death (#834)", async () => {
     sendRequestMock.mockRejectedValue(new Error("socket unreachable"));
-    expect(await isAlive("squadrant")).toBe(false);
+    expect(await isAlive("squadrant")).toBe("unknown");
   });
 });
 
