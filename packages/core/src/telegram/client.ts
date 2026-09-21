@@ -13,6 +13,10 @@ export interface TelegramClient {
   editMessageReplyMarkup(chatId: number, messageId: number, replyMarkup: unknown): Promise<void>;
   /** Returns the new topic's message_thread_id. */
   createForumTopic(chatId: number, name: string): Promise<number>;
+  /** Remove a forum topic — used to clean up the topic a lost link race created
+   *  (#321). Optional: a client that cannot delete still links correctly, it
+   *  just leaves the orphan topic behind. */
+  deleteForumTopic?(chatId: number, threadId: number): Promise<void>;
   /** Verify the bot token and return the bot identity. */
   getMe(): Promise<{ id: number; username: string }>;
   /** Register the bot's command menu with Telegram. */
@@ -30,12 +34,21 @@ interface TgResponse<T> {
   result?: T;
   error_code?: number;
   description?: string;
+  /** Structured error metadata. A 429 rate limit carries `retry_after`
+   *  (seconds) — the API's own back-off instruction (#321). */
+  parameters?: { retry_after?: number; migrate_to_chat_id?: number };
 }
 
 /** A Bot API rejection carrying its numeric `error_code`. Lets callers branch on
  *  a specific code (e.g. 409 single-consumer conflict, #830) without parsing text. */
 export class TelegramApiError extends Error {
-  constructor(readonly code: number, message: string) {
+  constructor(
+    readonly code: number,
+    message: string,
+    /** The API's `parameters.retry_after` in seconds, when it sent one (429
+     *  rate limits do). Undefined ⇒ the API gave no back-off hint. */
+    readonly retryAfterSec?: number,
+  ) {
     super(message);
     this.name = "TelegramApiError";
   }
@@ -56,7 +69,7 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
     if (!res.ok || !json.ok) {
       const code = json.error_code ?? res.status;
       const desc = json.description ?? "unknown error";
-      throw new TelegramApiError(code, `telegram ${method} failed (${code}): ${desc}`);
+      throw new TelegramApiError(code, `telegram ${method} failed (${code}): ${desc}`, json.parameters?.retry_after);
     }
     return json.result as T;
   }
@@ -86,6 +99,9 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
     async createForumTopic(chatId, name) {
       const r = await call<{ message_thread_id: number }>("createForumTopic", { chat_id: chatId, name });
       return r.message_thread_id;
+    },
+    async deleteForumTopic(chatId, threadId) {
+      await call<boolean>("deleteForumTopic", { chat_id: chatId, message_thread_id: threadId });
     },
     async setMyCommands(commands) {
       await call<boolean>("setMyCommands", { commands });

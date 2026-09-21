@@ -16,6 +16,7 @@ import {
   clearPending,
   markPendingWarned,
   notePaneScreen,
+  pruneTopics,
   type TelegramState,
 } from "../state.js";
 
@@ -177,6 +178,44 @@ describe("pending reply (#838/#839)", () => {
   it("notePaneScreen does nothing when no delivery is pending", () => {
     expect(notePaneScreen(root, "demo", "abc123", 2000)).toBeUndefined();
     expect(loadPending(root)).toEqual({});
+  });
+});
+
+describe("pruneTopics (#321)", () => {
+  it("drops links whose project is no longer kept", () => {
+    setTopic(root, "alive", 1);
+    setTopic(root, "dead", 2);
+    expect(pruneTopics(root, (p) => p === "alive")).toEqual(["dead::project"]);
+    expect(loadState(root).topics).toEqual({ "alive::project": 1 });
+  });
+
+  it("prunes an explicit scope with its project", () => {
+    setTopic(root, "dead", 2, "crew:t1");
+    expect(pruneTopics(root, () => false)).toEqual(["dead::crew:t1"]);
+    expect(loadState(root).topics).toEqual({});
+  });
+
+  it("keeps every scope of a project that survives", () => {
+    setTopic(root, "alive", 1);
+    setTopic(root, "alive", 2, "crew:t1");
+    expect(pruneTopics(root, (p) => p === "alive")).toEqual([]);
+    expect(loadState(root).topics).toEqual({ "alive::project": 1, "alive::crew:t1": 2 });
+  });
+
+  it("is a no-op write when nothing is stale", () => {
+    setTopic(root, "alive", 1);
+    const before = fs.readFileSync(path.join(root, "telegram-state.json"), "utf8");
+    expect(pruneTopics(root, () => true)).toEqual([]);
+    expect(fs.readFileSync(path.join(root, "telegram-state.json"), "utf8")).toBe(before);
+  });
+
+  it("preserves offset, notify and lastUserId", () => {
+    saveState(root, { offset: 7, topics: { "dead::project": 2 }, notify: { dead: true }, lastUserId: 9 });
+    pruneTopics(root, () => false);
+    const s = loadState(root);
+    expect(s.offset).toBe(7);
+    expect(s.notify).toEqual({ dead: true });
+    expect(s.lastUserId).toBe(9);
   });
 });
 

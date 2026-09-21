@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createTelegramBridge, type TelegramBridgeOptions } from "./bridge.js";
-import { setTopic } from "./state.js";
+import { loadState, setTopic } from "./state.js";
 import type { TelegramConfig } from "@squadrant/shared";
 import type { Update } from "@grammyjs/types";
 
@@ -286,6 +286,41 @@ describe("inbound media (#768)", () => {
     await drained;
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     expect(d.sendReply).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
+describe("registry prune on boot (#321)", () => {
+  const logs = (d: { log: unknown }) =>
+    ((d.log as any).mock.calls as unknown[][]).map((c) => c[0] as string).join("\n");
+
+  it("drops links to projects that are no longer registered", async () => {
+    setTopic(stateRoot, "brove", 7);
+    setTopic(stateRoot, "gone", 8);
+    const d = deps({ registeredProjects: () => ["brove"] });
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "brove::project": 7 });
+    expect(logs(d)).toContain("pruned");
+    bridge.stop();
+  });
+
+  it("prunes nothing when the project list could not be read", async () => {
+    setTopic(stateRoot, "gone", 8);
+    const d = deps({ registeredProjects: () => undefined });
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "gone::project": 8 });
+    expect(logs(d)).not.toContain("pruned");
+    bridge.stop();
+  });
+
+  it("prunes nothing when no project source is injected", async () => {
+    setTopic(stateRoot, "gone", 8);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "gone::project": 8 });
     bridge.stop();
   });
 });
