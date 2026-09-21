@@ -11,6 +11,11 @@ import {
   findProjectByThread,
   isNotifyActive,
   setNotify,
+  loadPending,
+  setPending,
+  clearPending,
+  markPendingWarned,
+  notePaneScreen,
   type TelegramState,
 } from "../state.js";
 
@@ -99,6 +104,79 @@ describe("notify state", () => {
     const s = loadState(dir);
     expect(s.topics).toEqual({ "squadrant::project": 7 });
     expect(s.notify).toEqual({ squadrant: true });
+  });
+});
+
+describe("pending reply (#838/#839)", () => {
+  it("is empty when the file is missing", () => {
+    expect(loadPending(root)).toEqual({});
+  });
+
+  it("setPending round-trips threadId + startedAt", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    expect(loadPending(root)).toEqual({ demo: { threadId: 7, startedAt: 1000 } });
+  });
+
+  it("setPending preserves offset, topics, notify, lastUserId", () => {
+    saveState(root, { offset: 7, topics: { "sq::project": 1 }, notify: { sq: true }, lastUserId: 9 });
+    setPending(root, "sq", { threadId: 1, startedAt: 5 });
+    const s = loadState(root);
+    expect(s.offset).toBe(7);
+    expect(s.topics).toEqual({ "sq::project": 1 });
+    expect(s.notify).toEqual({ sq: true });
+    expect(s.lastUserId).toBe(9);
+  });
+
+  it("clearPending removes the entry — the single captain-replied signal", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    clearPending(root, "demo");
+    expect(loadPending(root)).toEqual({});
+  });
+
+  it("clearPending for an unknown project does not write", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    const before = fs.readFileSync(path.join(root, "telegram-state.json"), "utf8");
+    clearPending(root, "other");
+    expect(fs.readFileSync(path.join(root, "telegram-state.json"), "utf8")).toBe(before);
+  });
+
+  it("markPendingWarned stamps warnedAt without dropping threadId/startedAt", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    markPendingWarned(root, "demo", 2000);
+    expect(loadPending(root).demo).toEqual({ threadId: 7, startedAt: 1000, warnedAt: 2000 });
+  });
+
+  it("markPendingWarned is a no-op when nothing is pending", () => {
+    markPendingWarned(root, "demo", 2000);
+    expect(loadPending(root)).toEqual({});
+  });
+
+  it("notePaneScreen records the hash and returns undefined on first sight", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    expect(notePaneScreen(root, "demo", "abc123", 2000)).toBeUndefined();
+    expect(loadPending(root).demo).toMatchObject({ paneHash: "abc123", paneChangedAt: 2000 });
+  });
+
+  it("notePaneScreen returns ms since the screen last CHANGED", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    notePaneScreen(root, "demo", "abc123", 2000);
+    // Same screen → age accumulates, changedAt stays put.
+    expect(notePaneScreen(root, "demo", "abc123", 9000)).toBe(7000);
+    expect(loadPending(root).demo?.paneChangedAt).toBe(2000);
+    // Changed screen → clock resets, age is undefined again.
+    expect(notePaneScreen(root, "demo", "def456", 10000)).toBeUndefined();
+    expect(loadPending(root).demo?.paneChangedAt).toBe(10000);
+  });
+
+  it("notePaneScreen preserves threadId, startedAt and warnedAt", () => {
+    setPending(root, "demo", { threadId: 9, startedAt: 1000, warnedAt: 1500 });
+    notePaneScreen(root, "demo", "abc123", 2000);
+    expect(loadPending(root).demo).toMatchObject({ threadId: 9, startedAt: 1000, warnedAt: 1500 });
+  });
+
+  it("notePaneScreen does nothing when no delivery is pending", () => {
+    expect(notePaneScreen(root, "demo", "abc123", 2000)).toBeUndefined();
+    expect(loadPending(root)).toEqual({});
   });
 });
 

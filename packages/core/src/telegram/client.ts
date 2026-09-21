@@ -19,6 +19,10 @@ export interface TelegramClient {
   setMyCommands(commands: Array<{ command: string; description: string }>): Promise<void>;
   /** Send a chat action (e.g. "typing") to show activity to the user. */
   sendChatAction(chatId: number, threadId: number | undefined, action: string): Promise<void>;
+  /** Attach an emoji reaction to a message (#838 stage-1 ACK). Optional: it is
+   *  best-effort (setMessageReaction needs Bot API 7.0+), so a client that
+   *  cannot react must not be able to fail delivery. */
+  setMessageReaction?(chatId: number, messageId: number, emoji: string): Promise<void>;
 }
 
 interface TgResponse<T> {
@@ -90,6 +94,13 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       const body: Record<string, unknown> = { chat_id: chatId, action };
       if (threadId !== undefined) body.message_thread_id = threadId;
       await call<unknown>("sendChatAction", body);
+    },
+    async setMessageReaction(chatId, messageId, emoji) {
+      await call<boolean>("setMessageReaction", {
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: [{ type: "emoji", emoji }],
+      });
     },
   };
 }

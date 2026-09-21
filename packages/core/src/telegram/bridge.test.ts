@@ -27,6 +27,7 @@ function drive(opts: Omit<TelegramBridgeOptions, "client">, updates: Array<Parti
     answerCallbackQuery: vi.fn(async () => {}),
     editMessageReplyMarkup: vi.fn(async () => {}),
     sendChatAction: vi.fn(async () => {}),
+    setMessageReaction: vi.fn(async () => {}),
   };
   const bridge = createTelegramBridge({ ...opts, client });
   bridge.start();
@@ -43,6 +44,10 @@ function generalMsg(text: string, fromId = ALLOWED_USER): Partial<Update> {
 function topicMsg(text: string, threadId: number, fromId = ALLOWED_USER): Partial<Update> {
   return { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: threadId, text, from: { id: fromId } } as any };
 }
+/** Same, but carrying a message_id — stage-1's reaction needs one. */
+function topicMsgWithId(text: string, threadId: number, messageId: number, fromId = ALLOWED_USER): Partial<Update> {
+  return { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: threadId, message_id: messageId, text, from: { id: fromId } } as any };
+}
 
 let stateRoot: string;
 beforeEach(() => { stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tg-bridge-")); });
@@ -56,6 +61,8 @@ function deps(over: Partial<TelegramBridgeOptions> = {}) {
     ensureCaptainAlive: vi.fn(async () => "alive" as const),
     runCommand: vi.fn(async () => "output"),
     sendReply: vi.fn(async () => {}),
+    // #838/#839: the bridge drives the lifecycle; tests assert on begin().
+    lifecycle: { begin: vi.fn(), start: vi.fn(), stop: vi.fn(), pending: vi.fn(() => ({})) },
     ...over,
   };
 }
@@ -249,6 +256,122 @@ describe("/notify in a project topic", () => {
   });
 });
 
+describe("two-stage ACK + typing lifecycle (#838)", () => {
+  const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+
+  it("stage 1 reacts on the inbound message and sends no extra message for it", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    expect(client.setMessageReaction).toHaveBeenCalledWith(CHAT, 555, "👍");
+    bridge.stop();
+  });
+
+  it("stage 2 sends exactly one `captain received` text and starts the typing lifecycle", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    expect(begin).toHaveBeenCalledWith("brove", 7);
+    // The one stage-2 text, plus the auto-launch "delivered" line — never the
+    // old per-message flood. Count only the stage-2 body here.
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies.filter((t: string) => t === "✅ captain received")).toHaveLength(1);
+    bridge.stop();
+  });
+
+  it("no longer fires the old single-shot sendChatAction from the bridge", async () => {
+    // The typing action is now owned by the lifecycle (keep-alive), so a bare
+    // fire-and-forget call here would double-drive it.
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    expect(client.sendChatAction).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("swallows a rejected reaction — a client that cannot react must not fail delivery", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    (client.setMessageReaction as any).mockRejectedValue(new Error("reaction not supported"));
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("omits the reaction when the update carries no message_id", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    expect(client.setMessageReaction).not.toHaveBeenCalled();
+    expect(d.appendCaptainMessage).toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not react or start a lifecycle for a command message", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("/status", 7, 555)]);
+    await drained;
+    expect(client.setMessageReaction).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does NOT ack `captain received` when delivery is held behind a modal (#546)", async () => {
+    // The HELD receipt already told the operator the message is stuck. Acking it
+    // would contradict that line and arm a watchdog for a turn nobody was given.
+    //
+    // `handled: true` is the PRODUCTION pair here: deliverToCaptain only falls
+    // back to the pane for gone/unsupported (`fallsBackToPane`), so held/queued/
+    // accepted all return handled: true. A held+handled:false pair is unreachable.
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({
+      lifecycle: { begin },
+      deliverInbound: vi.fn(async () => ({ handled: true, outcome: { status: "held", via: "claude-peer", reason: "permission-mode parity" } })),
+    } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies.some((t: string) => t === "✅ captain received")).toBe(false);
+    expect(bodies.some((t: string) => t.includes("HELD"))).toBe(true);
+    expect(begin).not.toHaveBeenCalled();
+    // held is handled:true → the pane fallback must NOT run.
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("regression (#837): held is still seen after the fallback clears the outcome", async () => {
+    // #837 sets `outcome = undefined` once the pane append succeeds, so a guard
+    // placed AFTER that block cannot see "held". This drives the unreachable-ish
+    // pair (held + handled:false) — the exact shape that composed with #837 to
+    // redden CI — and asserts the early capture still suppresses the ack.
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({
+      lifecycle: { begin },
+      deliverInbound: vi.fn(async () => ({ handled: false, outcome: { status: "held", via: "claude-peer", reason: "permission-mode parity" } })),
+    } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies.some((t: string) => t === "✅ captain received")).toBe(false);
+    expect(begin).not.toHaveBeenCalled();
+    // The fallback DID run (handled:false), so the append happened and #837
+    // cleared the outcome — yet the ack is still correctly suppressed.
+    expect(d.appendCaptainMessage).toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
 describe("channel commands in a project topic (#cmds-anytopic)", () => {
   const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
 
@@ -286,12 +409,17 @@ describe("channel commands in a project topic (#cmds-anytopic)", () => {
 });
 
 describe("typing indicator", () => {
-  it("fires sendChatAction('typing') for an inbound captain message", async () => {
+  it("hands the typing lifecycle to begin() instead of firing a single action", async () => {
+    // #838: the bridge no longer fires a one-shot sendChatAction — Telegram
+    // expires it in ~5s, so it carried no information. Ownership moved to the
+    // lifecycle's keep-alive (see inbound-lifecycle.test.ts).
     setTopic(stateRoot, "brove", 7);
-    const d = deps();
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
     const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsg("ship it", 7)]);
     await drained;
-    expect(client.sendChatAction).toHaveBeenCalledWith(CHAT, 7, "typing");
+    expect(client.sendChatAction).not.toHaveBeenCalled();
+    expect(begin).toHaveBeenCalledWith("brove", 7);
     expect(d.appendCaptainMessage).toHaveBeenCalled();
     bridge.stop();
   });
@@ -299,10 +427,12 @@ describe("typing indicator", () => {
   it("does NOT fire sendChatAction for a /notify command in a project topic", async () => {
     setTopic(stateRoot, "brove", 7);
     const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
-    const d = deps();
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
     const { bridge, client, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/notify", 7)]);
     await drained;
     expect(client.sendChatAction).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     bridge.stop();
   });
@@ -315,6 +445,17 @@ describe("typing indicator", () => {
     await drained;
     expect(client.sendChatAction).not.toHaveBeenCalled();
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not start a typing lifecycle for a /status channel command", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsg("/status", 7)]);
+    await drained;
+    expect(begin).not.toHaveBeenCalled();
     bridge.stop();
   });
 });

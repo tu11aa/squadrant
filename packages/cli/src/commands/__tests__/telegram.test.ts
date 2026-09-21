@@ -150,10 +150,20 @@ describe("runTelegramSend", () => {
     await expect(runTelegramSend({ project: "nope", message: "hi", cfg, client, stateRoot: root }))
       .rejects.toThrow('project "nope" is not linked — run: squadrant telegram link nope');
   });
+
+  it("clears the pending expectation — the captain replied (#838)", async () => {
+    const client = fakeClient();
+    fs.writeFileSync(
+      path.join(root, "telegram-state.json"),
+      JSON.stringify({ offset: 0, topics: { "demo::project": 42 }, pending: { demo: { threadId: 42, startedAt: 1 } } }),
+    );
+    await runTelegramSend({ project: "demo", message: "on it", cfg, client, stateRoot: root });
+    expect(loadPending(root).demo).toBeUndefined();
+  });
 });
 
 import { runTelegramNotifySet, runTelegramNotifyStatus, runNotifyConfirmation } from "../telegram.js";
-import { isNotifyActive, setTopic as setTopicDirect } from "@squadrant/core";
+import { isNotifyActive, setTopic as setTopicDirect, loadPending } from "@squadrant/core";
 
 describe("telegram notify CLI", () => {
   it("runTelegramNotifySet writes the flag", () => {
