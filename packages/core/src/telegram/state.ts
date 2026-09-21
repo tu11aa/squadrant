@@ -13,6 +13,12 @@ export interface PendingReply {
   startedAt: number;
   /** Epoch ms the watchdog already warned. Presence = "do not nag again". */
   warnedAt?: number;
+  /** #839: hash of the captain pane's last-seen screen + when it last CHANGED.
+   *  cmux exposes no activity timestamp, so the watchdog tracks output staleness
+   *  itself across its own polls — this is what makes "rendered but dead"
+   *  distinguishable from "quietly working" (see classifyCaptainPane). */
+  paneHash?: string;
+  paneChangedAt?: number;
 }
 
 export interface TelegramState {
@@ -116,6 +122,23 @@ export function markPendingWarned(stateRoot: string, project: string, at: number
   if (!p) return;
   s.pending![project] = { ...p, warnedAt: at };
   saveState(stateRoot, s);
+}
+
+/** Record the captain pane's screen hash for this pending delivery, preserving
+ *  the FIRST time that exact screen was seen. Returns how long the pane has been
+ *  on this screen (ms), or undefined on the first observation (nothing to age
+ *  against yet — a single sample must never read as stale).
+ *
+ *  Persisted so a daemon restart does not reset the staleness clock and hand a
+ *  dead captain a fresh 15 minutes of "it's working". */
+export function notePaneScreen(stateRoot: string, project: string, hash: string, at: number): number | undefined {
+  const s = loadState(stateRoot);
+  const p = s.pending?.[project];
+  if (!p) return undefined;
+  if (p.paneHash === hash && p.paneChangedAt !== undefined) return at - p.paneChangedAt;
+  s.pending![project] = { ...p, paneHash: hash, paneChangedAt: at };
+  saveState(stateRoot, s);
+  return undefined;
 }
 
 export function findProjectByThread(

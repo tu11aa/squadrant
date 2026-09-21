@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -85,7 +85,14 @@ function buildTelegramBridge(
         try { return loadConfig().projects[project]?.captainName ?? `${project}-captain`; }
         catch { return `${project}-captain`; }
       },
-      { log },
+      {
+        log,
+        // #839 staleness, measured for real: cmux has no pane activity
+        // timestamp, so the reader hashes the screen and asks the persisted
+        // pending store how long that exact screen has been up. Persisted, so a
+        // daemon restart cannot hand a dead captain a fresh 15 minutes.
+        noteScreen: (project, hash) => notePaneScreen(stateRoot, project, hash, Date.now()),
+      },
     ),
     log,
   });

@@ -161,8 +161,12 @@ const WORKING_RE = /esc to interrupt|\btokens?\b.*\b(used|left)\b|↓\s*[\d.]+\s
  *   unreadable  — we could not get a screen (null). NEVER reported as dead:
  *                 a probe we could not complete is the #834 false-negative class.
  *
- * `outputAgoMs` (time since the pane last changed) is used only as a tiebreak
- * for `no-session`, which is the one genuinely-destructive verdict.
+ * `outputAgoMs` (time since the pane last changed) is used ONLY as the tiebreak
+ * for `no-session`, which is the one genuinely-destructive verdict — and it is
+ * REQUIRED for that verdict to be reachable at all: with it undefined, every
+ * rendered pane with no modal and no visible turn reads `mid-turn`. A caller
+ * that cannot supply it should not expect `no-session` from a live surface
+ * (a missing workspace/pane is the other, independent path).
  */
 export function classifyCaptainPane(
   screen: string | null,
@@ -179,17 +183,48 @@ export function classifyCaptainPane(
   return stale ? { status: "no-session" } : { status: "mid-turn" };
 }
 
+/** Default pane-output staleness threshold: a captain whose screen has not moved
+ *  for this long, with no visible turn, is not working. */
+export const PANE_IDLE_AFTER_MS = 10 * 60_000;
+
+/** Cheap stable digest of a pane screen (FNV-1a). Not cryptographic — it only has
+ *  to answer "did this screen change since the last poll". */
+export function screenHash(screen: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < screen.length; i++) {
+    h ^= screen.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 /**
  * Build the #839 captain-pane classifier for the Telegram watchdog. Reads the
  * CAPTAIN's own surface (not a crew's) and classifies it.
+ *
+ * cmux exposes NO pane activity timestamp (`PaneRef` is id+s­title, and
+ * `listSurfaces` reads a tree without mtimes), so staleness is measured HERE by
+ * tracking the screen hash across the watchdog's own polls. Without this the
+ * `outputAgoMs` tiebreak in classifyCaptainPane would never be real: every
+ * rendered-but-dead pane would read "mid-turn (working)" — the false-comfort
+ * class #839 exists to kill.
+ *
  * @param getCaptainTitle  Resolves a project's captain workspace/surface title.
  * @param cmux  DirectCmuxReader (seam implemented by DaemonCmux in root).
+ * @param noteScreen  Records the screen hash and returns ms since it last
+ *                    CHANGED (undefined on first sight of a screen). Injected so
+ *                    the watchdog's persisted store owns the clock across restarts.
  */
 export function createCaptainPaneReader(
   cmux: DirectCmuxReader,
   getCaptainTitle: (project: string) => string,
-  opts: { log?: (msg: string) => void } = {},
+  opts: {
+    log?: (msg: string) => void;
+    noteScreen?: (project: string, hash: string) => number | undefined;
+    idleAfterMs?: number;
+  } = {},
 ): (project: string) => Promise<PaneReadResult> {
+  const idleAfterMs = opts.idleAfterMs ?? PANE_IDLE_AFTER_MS;
   return async (project) => {
     try {
       const wsId = await cmux.findWorkspaceId(getCaptainTitle(project));
@@ -200,7 +235,12 @@ export function createCaptainPaneReader(
         surfaces.find((s) => s.title === want) ?? surfaces[0];
       if (!pane) return { status: "no-session" };
       const screen = await cmux.readPaneScreen(pane);
-      return classifyCaptainPane(screen);
+      if (screen == null) return { status: "unreadable" };
+      // The stale-output tiebreak only applies to the ambiguous case: a rendered
+      // pane with no modal and no visible turn. locked/mid-turn short-circuit
+      // inside classifyCaptainPane, so hashing costs nothing for them.
+      const outputAgoMs = opts.noteScreen?.(project, screenHash(screen));
+      return classifyCaptainPane(screen, { outputAgoMs, idleAfterMs });
     } catch (e) {
       // A cmux outage must never be read as a dead captain (#834).
       opts.log?.(`captain pane read failed project=${project}: ${(e as Error).message}`);

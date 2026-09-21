@@ -15,6 +15,7 @@ import {
   setPending,
   clearPending,
   markPendingWarned,
+  notePaneScreen,
   type TelegramState,
 } from "../state.js";
 
@@ -147,6 +148,34 @@ describe("pending reply (#838/#839)", () => {
 
   it("markPendingWarned is a no-op when nothing is pending", () => {
     markPendingWarned(root, "demo", 2000);
+    expect(loadPending(root)).toEqual({});
+  });
+
+  it("notePaneScreen records the hash and returns undefined on first sight", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    expect(notePaneScreen(root, "demo", "abc123", 2000)).toBeUndefined();
+    expect(loadPending(root).demo).toMatchObject({ paneHash: "abc123", paneChangedAt: 2000 });
+  });
+
+  it("notePaneScreen returns ms since the screen last CHANGED", () => {
+    setPending(root, "demo", { threadId: 7, startedAt: 1000 });
+    notePaneScreen(root, "demo", "abc123", 2000);
+    // Same screen → age accumulates, changedAt stays put.
+    expect(notePaneScreen(root, "demo", "abc123", 9000)).toBe(7000);
+    expect(loadPending(root).demo?.paneChangedAt).toBe(2000);
+    // Changed screen → clock resets, age is undefined again.
+    expect(notePaneScreen(root, "demo", "def456", 10000)).toBeUndefined();
+    expect(loadPending(root).demo?.paneChangedAt).toBe(10000);
+  });
+
+  it("notePaneScreen preserves threadId, startedAt and warnedAt", () => {
+    setPending(root, "demo", { threadId: 9, startedAt: 1000, warnedAt: 1500 });
+    notePaneScreen(root, "demo", "abc123", 2000);
+    expect(loadPending(root).demo).toMatchObject({ threadId: 9, startedAt: 1000, warnedAt: 1500 });
+  });
+
+  it("notePaneScreen does nothing when no delivery is pending", () => {
+    expect(notePaneScreen(root, "demo", "abc123", 2000)).toBeUndefined();
     expect(loadPending(root)).toEqual({});
   });
 });
