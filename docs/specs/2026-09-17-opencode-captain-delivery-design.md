@@ -90,7 +90,7 @@ Corollary: the same latent misroute applies to `crew send` today (crews resolve 
 |---|---|---|
 | 1 | Is a plainly-opened `opencode -c` a captain? | **No, for delivery purposes.** A captain is a *squadrant-launched* session. A non-addressable captain becomes an explicit, loud "not deliverable" — never a silent `no-box` defer. |
 | 2 | Does opencode expose a native channel? | **Yes — HTTP, not a peer socket.** `opencode --port N` serves `POST /session/{id}/prompt_async` and `GET /session`. `OpencodeHttpChannel` already exists and is verified; wiring it is the clean fix. |
-| 3 | Extend `parseDraftFromScreen` to opencode's box grammar? | **Rejected.** It is the fragile path (false positives → keystrokes into a busy pane), unnecessary once the channel works, and it cannot fix the plainly-opened case. |
+| 3 | Extend `parseDraftFromScreen` to opencode's box grammar? | **Rejected for `parseDraftFromScreen`; superseded for the pane as a LAST RESORT (2026-09-21, #786 follow-up).** The shared claude parser stays byte-for-byte untouched. A separate, agent-appropriate opencode gate (`parseOpencodeDraftFromScreen`, `packages/workspaces/src/runtimes/cmux.ts`) now gates a last-resort pane fallback: it delivers **only** when the opencode box is POSITIVELY confirmed empty (the cold `Ask anything…` placeholder, or a warm structurally-empty `┃` box with no draft) and defers on EVERY other state — including a mid-turn pane (`esc interrupt`). It is not the fragile content regex this row rejected: no draft extraction, no #302 backspace probe, never a false-positive deliver. Decision #1 still stands (a plainly-opened `opencode -c` remains not-addressable → `no-channel`). See §6/§7. |
 | 4 | Adopt a plainly-opened session? | **Rejected.** Verified: no TCP listener, no server registry file, `opencode attach` requires an explicit URL. There is nothing to adopt. |
 | 5 | Fallback when no channel? | **Explicit "captain not deliverable" + one actionable out-of-band alert + cadence re-check.** The mailbox entry is never dropped. |
 | 6 | How is the address conveyed? | **Dedicated persisted captain-address record** (not `sessions.json`). |
@@ -212,19 +212,22 @@ if (channel) {
     if (r.handled) return                     // delivered / held at a human gate
     // returned because the channel reported gone/unsupported:
     if (agent === "opencode") {
-        re-read the record; if the address is unchanged → throw DeferDelivery(null, "no-channel")
-        // (a relaunch on a new port makes the next attempt succeed)
+        // #797: re-resolve/heal the address (dead port, stale session), then retry ONCE.
+        // If nothing resolves, fall through to the pane — never a permanent no-channel.
     }
-    // claude falls through to the pane, unchanged
+    // claude AND opencode fall through to the pane
 } else if (agent === "claude" || agent === "opencode") {
     // The agent has a control channel but we have no address for it.
     throw new DeferDelivery(null, "no-channel")
 }
-return cmux.send(surface, text, sendOpts)     // claude fallback; agents with no channel
+return cmux.send(surface, text, { ...sendOpts, agent })  // agent-aware pane gate (§6.1)
 ```
 
 - Opencode `404` from `prompt_async` (stale session id) triggers **one** re-resolve of the record
-  (directory-filtered, per §5.2) + retry. Still failing ⇒ `no-channel`.
+  (directory-filtered, per §5.2) + retry. Still failing ⇒ pane fallback (agent-aware, §6.1) — not a
+  permanent `no-channel` (#797).
+- The `agent` is threaded into `cmux.send` so the pane path selects the opencode gate for an
+  opencode captain and the claude parser for everyone else (§6.1).
 - Records are re-read with an mtime-cached reader so the 1s delivery tick does not stat the file
   needlessly.
 
@@ -253,14 +256,40 @@ Acceptance #3 is a regression guard, not a design goal.
 | State | Condition | Behaviour |
 |---|---|---|
 | addressable | record + channel + reachable | `channel.send`; cursor advances |
-| addressable, unreachable | record present; port/socket dead | opencode: re-read record once, then `no-channel` + alert. claude: existing pane fallback |
+| addressable, unreachable | record present; port/socket dead | opencode: re-resolve/heal the address once, then **LAST-RESORT pane delivery gated by the agent-appropriate opencode empty-box confirmation** (`agent: "opencode"`); if the box is not positively confirmed empty the attempt defers (no keystroke). claude: existing pane fallback |
 | not addressable | agent needs a channel, no record, channel mode ≠ off | `no-channel` + alert immediately + cadence re-check; mailbox retained |
 | agent without a channel | e.g. gemini captain | existing pane path (unchanged) |
 
+### 6.1 Opencode pane fallback — why the "never the pane" rule was relaxed (2026-09-21)
+
+The original rule (§3 #3, §6) was written when the pane fallback was the *only* route and opencode
+pane scraping was the fragile default. Two things changed it:
+
+1. **#797 (merged)** deliberately reintroduced the pane as the last resort for an opencode captain
+   whose HTTP server cannot be found — "fall back to the pane instead of a permanent `no-channel`".
+   That is the concrete fix that makes delivery actually *reach* a captain whose server died while
+   the TUI is alive, which is what the operator asked for.
+2. **The pane path was still claude-tuned**, so that fallback produced `reason=no-box` forever
+   (`parseDraftFromScreen` needs `─` HR boundaries; opencode draws its box with `┃`/`╹▀▀`). The
+   reversal therefore had to come with an **agent-appropriate gate**, not a loosened claude regex.
+
+The gate is deliberately **positive-confirmation only**: it returns deliverable `""` solely when the
+opencode input box is confirmed empty (cold placeholder, or a warm `┃`-bordered box whose content is
+blank/status/chrome), and returns defer for everything else — a typed draft, a mid-turn pane
+(`esc interrupt`), a modal/picker, or no box rendered. It never extracts draft text and never runs
+the #302 backspace probe, so **no keystroke is ever injected into a pane we are not certain is
+empty**. Unrecognised opencode chrome degrades to a defer, never a false delivery. This only helps
+the narrow "HTTP server unreachable but the TUI is alive" case; every other route (native channel,
+`no-channel` for a non-addressable captain) is unchanged, and the claude path is byte-for-byte
+untouched.
+
 ## 7. Rejected directions
 
-- **Extend `parseDraftFromScreen` for opencode's box** — fragile pane scraping, false-positive risk
-  (typing into a busy pane), does not help the plainly-opened case. Rejected.
+- **Extend `parseDraftFromScreen` for opencode's box** — the shared claude parser must stay
+  untouched. **Reconsidered 2026-09-21:** a *separate* agent-appropriate opencode gate (positive
+  empty-box confirmation only; no draft extraction, no backspace probe) is accepted as a last-resort
+  pane fallback — see §3 #3 and §6.1. Extending `parseDraftFromScreen` itself remains rejected, and
+  the gate still cannot help the plainly-opened case (decision #1).
 - **Adopt a plainly-opened `opencode -c`** — verified to have no TCP listener, and `opencode attach`
   requires an explicit URL (there is no server registry file; `--mdns` is a launch flag, so it does
   not help adoption either). Nothing to adopt. Rejected.

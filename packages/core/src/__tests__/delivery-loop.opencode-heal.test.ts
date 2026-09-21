@@ -26,6 +26,7 @@ import { createStore } from "../store.js";
 import { LivenessRegistry } from "../daemon/liveness-registry.js";
 import { appendCaptainMessage, readCursor } from "../mailbox.js";
 import { writeCaptainAddress, readCaptainAddress } from "../captain-record.js";
+import { DeferDelivery } from "../delivery/defer-delivery.js";
 import type { ControlChannel } from "../control-channel.js";
 
 async function seed(stateRoot: string, project: string) {
@@ -116,7 +117,7 @@ describe("opencode captain address self-heal (#797)", () => {
       probe: vi.fn(async () => ({ status: "gone" as const })),
     } as unknown as ControlChannel;
 
-    const paneSend = vi.fn(async () => {});
+    const paneSend = vi.fn(async (_s: unknown, _t: string, _o?: unknown) => {});
     const cmux = {
       listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
       findWorkspaceId: async () => "w1",
@@ -132,6 +133,56 @@ describe("opencode captain address self-heal (#797)", () => {
     await deliv.deliveryTick!();
 
     expect(paneSend).toHaveBeenCalledTimes(1);
+    // #786: the pane path must receive the captain's agent so it selects the
+    // opencode input-box gate rather than the claude parser.
+    expect(paneSend.mock.calls[0]![2]).toMatchObject({ agent: "opencode" });
     expect(deliv.deliveryStats(project)?.reason).not.toBe("no-channel");
+  });
+
+  it("defers loudly (cursor not advanced) when the server is unreachable and the pane is not confirmable", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-797-defer-"));
+    const project = "gamma";
+    const captainName = `${project}-captain`;
+    loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
+    const { store, livenessRegistry } = await seed(stateRoot, project);
+    writeCaptainAddress(stateRoot, project, {
+      agent: "opencode", port: 58525, sessionId: "ses_old",
+      directory: "/tmp/gamma", launchedAt: "2026-09-18T08:30:32.196Z",
+    });
+    discoverMock.mockReturnValue(null);
+
+    const channelSend = vi.fn(async () => ({ status: "gone" as const }));
+    const opencode: ControlChannel = {
+      name: "opencode-http", agent: "opencode",
+      send: channelSend,
+      probe: vi.fn(async () => ({ status: "gone" as const })),
+    } as unknown as ControlChannel;
+
+    // The pane path (with agent="opencode") reports the box is NOT confirmed
+    // empty (a draft / busy pane) — exactly what the opencode gate throws.
+    const paneSend = vi.fn(async () => { throw new DeferDelivery(null, "no-box"); });
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: paneSend,
+    };
+    const logs: string[] = [];
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+      captainChannelMode: () => "on",
+      captainChannels: { opencode },
+      captainAgentFor: () => "opencode",
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    // Attempted the pane, and the message is retained (cursor never advanced) —
+    // a defer, not a silent ack.
+    expect(paneSend).toHaveBeenCalledTimes(1);
+    const cursor = await readCursor({ stateRoot, project, subscriber: "captain" });
+    expect(cursor?.lastAckedSeq ?? 0).toBe(0);
+    // Loud, not silent: the server-unreachable fallback is logged.
+    expect(logs.some((l) => l.includes("no live opencode server — falling back to pane"))).toBe(true);
+    expect(logs.some((l) => l.includes("outcome=deferred"))).toBe(true);
   });
 });
