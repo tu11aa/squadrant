@@ -118,7 +118,8 @@ access (e.g. `jevapi.org` / `tokenra.io`) are **not** official TypeSafe surfaces
   squadrant. The existing `squadrant` package will also move into the squadrant org when the
   org exists.
 - It exposes an `auto-gate` bin: `auto-gate decide`, `auto-gate install`,
-  `auto-gate uninstall`, `auto-gate doctor`, `auto-gate test`, `auto-gate stats`.
+  `auto-gate uninstall`, `auto-gate doctor`, `auto-gate test`, `auto-gate stats`, and the
+  opencode rollout pair `auto-gate opencode run` / `auto-gate opencode watch` (§15 #1, #2).
 - `@squadrant/core` depends on the core module and keeps `squadrant gate claude
   permission-request` as a **thin wrapper**. "Thin" is a goal, not a given: the current
   claude path imports `CONFIG_DIR`/`isGateMode`/`isGatePolicy`/`resolveRouterModel`/config
@@ -229,6 +230,10 @@ interface GateRequest {
   toolPayload: string;        // bare executable payload (command / path+content)
   cwd: string;
   userIntent?: string | null; // last HUMAN message text, text blocks only
+  // Intent availability (§6.2.1, §15 #3): "available" = userIntent supplied;
+  // "pending" = the adapter supports intent but none is known yet (→ `ask`);
+  // "unsupported" = no intent source at all (omit intent_match).
+  intentSupport: "available" | "pending" | "unsupported";
   permissionMode?: string;    // agent's permission mode, if any
   sessionKind: "crew" | "side" | "captain" | "standalone";
   raw?: unknown;              // the adapter's original payload, for audit only
@@ -294,12 +299,15 @@ absent:
 | Agent | `userIntent` source | Notes |
 |---|---|---|
 | claude | last human user message from the transcript JSONL (U7's `extractUserIntentFromTranscript`) | verified, exists today |
-| opencode | **not available on `permission.asked`** — the frame carries only `{id, sessionID, permission, patterns}` (`sse-bridge.ts:218-238`). An adapter MAY reconstruct intent from preceding `message.*` frames on the same SSE stream, but that is a new decision to make. | **v1 decision required — see §15** |
+| opencode | **not available on `permission.asked`** — the frame carries only `{id, sessionID, permission, patterns}` (`sse-bridge.ts:218-238`). The adapter **reconstructs** intent from preceding `message.*` frames on the same SSE stream; when intent is expected but not yet known the outcome is `ask`. | resolved — §15 #3 |
 | codex / gemini (v2) | hook payload `prompt`/`transcript_path` as available | per-agent |
 
-**Consequence:** if an adapter cannot supply `userIntent`, `intent_match` is omitted from
-the battery and the allow rule's intent floor is skipped (not defaulted to pass). The
-opencode v1 decision (reconstruct from SSE vs ship intent-less) is tracked in §15.
+**Consequence:** an adapter either supplies `userIntent` or declares it unavailable. If it is
+**permanently unavailable** (a declared v2 codex/gemini gap), `intent_match` is omitted from the
+battery and the allow rule's intent floor is skipped. If it is **expected but not yet known**
+(opencode before the first human frame), the allow rule does **not** pass and the outcome is `ask` —
+never a silent auto-allow on unknown intent. See §15 #3 (resolved: reconstruct from SSE, ask when
+unknown).
 
 ### 6.3 Question battery (one request; mirrors TypeSafe's guardrails cookbook)
 - `decision` — **Choice** `["allow","deny","ask"]`. Criteria written as exact conditions:
@@ -356,7 +364,9 @@ final `ask` catch-all so an outcome is always defined and a silent `allow` is im
   - `destructive.noul < reviewThreshold`, and
   - `secrets.noul < reviewThreshold`, and
   - `scope_escape.noul < reviewThreshold`, and
-  - `intent_match` is absent **or** `intent_match.noul ≥ intentThreshold`, and
+  - `intent_match.noul ≥ intentThreshold` when the adapter supplies intent; omitted **only** when
+    the adapter declares intent permanently unavailable. Expected-but-unknown intent fails this
+    condition (→ `ask`, never a silent allow), and
   - `severity < reviewSeverity`.
 - **ask — the catch-all**, which fires whenever the deny rule did not match and the allow
   rule did not pass. Its explicit triggers are:
@@ -419,10 +429,12 @@ then `ask`. It never fails closed.
 ## 9. Cache
 
 - **Key:** `sha256(agent + "\n" + toolName + "\n" + cwd + "\n" + redactedPayload + "\n" +
-  sha256(redactedUserIntent ?? "") + "\n" + policyVersion + "\n" + classifierId + "\n" +
-  model)`. `redactedUserIntent` is included because `intent_match` can change the
-  outcome (§7); omitting it would let the same command reuse a stale `allow` under a
+  sha256(redactedUserIntent ?? "") + "\n" + policyVersion + "\n" + toolAliasesVersion + "\n" +
+  classifierId + "\n" + model)`. `redactedUserIntent` is included because `intent_match` can change
+  the outcome (§7); omitting it would let the same command reuse a stale `allow` under a
   different human intent.
+- **`toolAliasesVersion`** (§15 #6) participates so that changing the alias map invalidates
+  prior decisions.
 - **`policyVersion`** is the hash defined in §7; **`model`** is the resolved Jev model id.
 - **Only conclusive outcomes are cached** (`allow`/`deny`); `ask` and failures are not.
 - **TTL** 10 min, **max** 500 entries, atomic write (temp + rename), 0600.
@@ -473,10 +485,11 @@ Explicit **positive** session markers; **never** the operator's own interactive 
     its *own* legacy `squadrant hooks claude permission-request` command
     (`native-hook-source.ts:149-155`); the foreign-owner case is a **new required change**
     on the squadrant side, not just an `auto-gate` behavior.
-  - `auto-gate doctor` reports who owns the event. Precedence rule: **squadrant wins when
-    both are present** (it reconciles on every daemon boot), so a user who wants the
-    standalone gate under squadrant must disable squadrant's gate (`defaults.gate.mode:
-    "off"`).
+  - `auto-gate doctor` reports who owns the event. **Precedence rule (conditional):** squadrant
+    wins when both compete — but it removes a foreign entry **only while its own gate is enabled**
+    (`defaults.gate.mode === "on"` — NOT `"auto"`, which is a no-op); otherwise there is no
+    conflict, so the
+    foreign entry is left untouched (warned + recorded, never silent). See §15 #5.
 
 ### opencode
 - **Extension point:** native `permission` rules (`bash: "ask"`) + SSE
@@ -485,28 +498,27 @@ Explicit **positive** session markers; **never** the operator's own interactive 
 - **Output:** `once` (allow) / `reject` (deny); "ask" = leave pending (the human prompt).
 - **Install:** merge a `permission` block into opencode config — `bash: "ask"` **and**
   `edit: "ask"` (opencode's `edit` covers edit/write/patch) for whichever tools are in scope
-  — and start `auto-gate opencode watch`. See the supervision and port-discovery gaps below.
-- **Port discovery (required, currently undefined).** The SSE bridge needs the crew's
-  server port. squadrant knows it because *it* launches `opencode --port <N>`
-  (`sse-bridge.ts:3,58-80`). A standalone `auto-gate opencode watch` has **no defined way**
-  to learn the port — opencode does not advertise it. v1 must pick one: (a) a wrapper that
-  launches opencode with a known `--port` and injects it, or (b) discover the port from the
-  process table / a lockfile. **Unresolved — see §15.**
-- **Subscriber supervision (required).** The watcher is a long-lived process, unlike a
-  claude hook. It needs a defined lifecycle: who starts it, how it reconnects (the existing
-  bridge retries up to ~120 s — `sse-bridge.ts:29-42`), and what happens on crash. Under
-  squadrant the daemon can host it; standalone needs a documented supervision story
-  (launchd/systemd unit or an explicit `--foreground` contract). **Unresolved — see §15.**
-- **`userIntent` gap.** `permission.asked` carries no human message, so `intent_match` has
-  no input and the auto-allow path cannot fire (see §6.2.1). v1 must either reconstruct
-  intent from preceding `message.*` SSE frames or ship opencode **intent-less** (auto-allow
-  restricted to hazard-only rules, which will ask far more often). **Unresolved — see §15.**
-- **No-human hang risk.** "Leave pending" on `ask` assumes a human at the TUI. In an
-  unattended opencode crew there is no daemon-independent way to surface the prompt, so the
-  crew can hang. v1 must define the standalone equivalent of squadrant's #560 blocked
-  signal (a notify hook, a log + non-zero, or a timeout→deny). **Unresolved — see §15.**
-- **Tool scope.** opencode tool names are lowercase (`bash`, `edit`), not claude's
-  `Bash`/`Edit`. The `tools` scope list (§12) needs a per-agent normalization map.
+  — and start `auto-gate opencode watch`. Port discovery and supervision are **resolved** (§15 #1, #2).
+- **Port discovery — resolved: launcher-known port.** The port is *injected, never discovered*: the
+  `auto-gate opencode run` wrapper picks it and sets `AUTO_GATE_OPENCODE_PORT`; a user-started server
+  is attached with `auto-gate opencode watch --port N`. squadrant already injects the equivalent
+  because *it* launches `opencode --port <N>` (`sse-bridge.ts:3,58-80`). Process-table/lockfile
+  discovery is **deferred** (§15 #1).
+- **Subscriber supervision — resolved: foreground + wrapper-as-supervisor.** `watch --port N` runs in
+  the foreground and reconnects with backoff (existing bridge retries ~120 s — `sse-bridge.ts:29-42`);
+  an unrecoverable error exits non-zero. The `run` wrapper starts the watcher as a **sibling child of
+  the same launch**, so its lifetime tracks the crew. No self-daemonizing; crash fails open when
+  **attended** (the native prompt answers), while **unattended** the wrapper terminates rather than
+  hang (§15 #2, #4).
+- **`userIntent` — resolved: reconstruct from SSE, ask when unknown.** The adapter reconstructs
+  intent from preceding `message.*` SSE frames; when intent is expected but not yet known the
+  auto-allow path does **not** fire and the outcome is `ask` (see §6.2.1, §7, §15 #3).
+- **No-human `ask` — resolved: `onAsk` notification + timeout → deny.** Interactive TTY leaves the
+  native prompt pending; unattended fires the `onAsk` hook (the #560 analogue) and denies on timeout.
+  Audited + logged + notified, never silent (§15 #4).
+- **Tool scope — resolved: set-valued aliases.** opencode's lowercase names map onto the canonical
+  claude-shaped scope via a set-valued `toolAliases` map (§12, §15 #6) — `edit` →
+  `["Edit","Write","MultiEdit"]`.
 - **Caveat:** the `permission.ask` plugin hook is declared but never fired upstream
   (#7006/#19469 closed *not planned*), so a pure plugin is not a viable gate today. Track
   it: if it lands, the opencode adapter can move in-process.
@@ -547,7 +559,7 @@ Explicit **positive** session markers; **never** the operator's own interactive 
 - **Backups** before every settings write; a malformed settings file is never blind-reset.
 - **Rollback:** `uninstall` restores the pre-install config (backup) so the agent falls back
   to its native permission flow — claude to the normal dialog, opencode to the prior
-  `permission` block. The restore contract is an open question (§15).
+  `permission` block. The restore contract is an open question (§15 #14).
 
 ---
 
@@ -608,13 +620,23 @@ optional for squadrant users.
   },
   "tools": ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"],
   // Per-agent tool-name normalization: the canonical scope list above is
-  // claude-shaped; each adapter maps its own names onto it. opencode's `edit`
-  // permission covers edit/write/patch (there is no separate `write` tool), so
-  // `edit` maps onto the canonical Edit/Write/MultiEdit set.
+  // claude-shaped; each adapter maps its own names onto it. Aliases are
+  // SET-VALUED (native name -> set of canonical names). opencode's `edit`
+  // permission covers edit/write/patch (there is no separate `write` tool),
+  // so `edit` maps onto the canonical Edit/Write/MultiEdit set; therefore
+  // `tools: ["Write"]` still puts opencode's `edit` in scope. Bump
+  // `toolAliasesVersion` when the map changes (ratifiable, versioned).
+  "toolAliasesVersion": 1,
   "toolAliases": {
-    "opencode": { "bash": "Bash", "edit": "Edit" }
+    "opencode": { "bash": ["Bash"], "edit": ["Edit", "Write", "MultiEdit"] }
   },
   "deny": ["^\\s*sudo\\b"],            // optional; REPLACES the built-in Tier-1 set
+  // §15 #4: the unattended `ask` path. `onAsk` is a shell command run with
+  // AUTO_GATE_TOOL/PATTERNS/CWD/SESSION/GATE_ID in the env (null = notify nothing);
+  // after `timeoutMs` with no human answer the gate DENIES, audited as
+  // tier:"timeout", reason:"ask-timeout". Attendance is an explicit marker set by
+  // interactive launchers (AUTO_GATE_ATTENDED=1) — never TTY sniffing.
+  "ask": { "onAsk": null, "timeoutMs": 120000 },
   "cache": true,
   "audit": { "path": "~/.auto-gate/decisions.jsonl" }
 }
@@ -694,42 +716,122 @@ audit log. v1 non-goal: credential pools.
 
 ## 15. Open questions
 
-**Blocking v1 (must be decided before implementation):**
+**Blocking v1 — RESOLVED (2026-09-21).** Brainstormed and decided before implementation; these
+resolutions are **normative** and supersede any conflicting prose elsewhere in this document.
 
-1. **opencode port discovery** — a standalone `auto-gate opencode watch` has no defined way
-   to learn the crew's server port (squadrant only knows because it launches
-   `opencode --port <N>`). Wrapper-with-known-port vs process-table/lockfile discovery.
-2. **opencode subscriber supervision** — who starts the long-lived watcher, how it
-   reconnects, and what happens on crash, outside the squadrant daemon.
-3. **opencode `userIntent`** — `permission.asked` carries no human message, so `intent_match`
-   has no input. Reconstruct from preceding `message.*` SSE frames, or ship opencode
-   intent-less (auto-allow then rarely fires). See §6.2.1.
-4. **opencode `ask` with no human** — "leave pending" hangs an unattended crew. Define the
-   standalone equivalent of squadrant's #560 blocked signal (notify hook / log + non-zero /
-   timeout→deny).
-5. **Symmetric claude-hook ownership** — the protocol is specified in §11, but squadrant's
-   `installClaudeHooks` currently only migrates its *own* legacy command; detecting and
-   removing a foreign `auto-gate` entry is a required new change on the squadrant side.
-6. **Tool-name normalization** — the canonical `tools` scope is claude-shaped; opencode uses
-   lowercase names. The `toolAliases` map is proposed in §12 but needs to be ratified.
+1. **opencode port discovery — RESOLVED: launcher-known port (no discovery).**
+   The port is never *discovered*; it is *injected by whoever launches opencode*. The rollout wrapper
+   `auto-gate opencode run` picks the port and sets `AUTO_GATE_OPENCODE_PORT`; a server the user
+   started themselves is attached via `auto-gate opencode watch --port N`. squadrant injects the
+   equivalent env (it already computes the port). Rationale: the gate's value is determinism —
+   attaching to the wrong server means answering *another crew's* prompts, a security-relevant
+   failure, not a UX wart. Process-table / lockfile discovery is **deferred**.
+   **Details (normative):** precedence is explicit `--port N` > `AUTO_GATE_OPENCODE_PORT` > hard error
+   (`exit 4`) — there is **no default port**, since a fixed default would collide across concurrent
+   crews. The `run` wrapper allocates `N` by a short bind-probe on `:0`, passes `opencode --port N`,
+   and exports `AUTO_GATE_OPENCODE_PORT=N`. `auto-gate opencode run` / `watch` are added to the §3
+   bin contract.
+2. **opencode subscriber supervision — RESOLVED: foreground watcher + wrapper-as-supervisor.**
+   `auto-gate opencode watch --port N` runs in the **foreground**, reconnects itself, and exits
+   non-zero on an unrecoverable error. The `opencode run` wrapper starts the watcher as a **sibling
+   child of the same launch**, so its lifetime tracks the crew. **No self-daemonizing**; the installer
+   may *print* a sample launchd/systemd unit but must not write one.
+   **Details (normative):** reconnect backoff is 500 ms initial → ×2 → 30 s cap (the *existing* fleet
+   bridge is a fixed 500 ms × 240 attempts — `sse-bridge.ts:29-42` — and is not the model here).
+   "Unrecoverable" = the server is continuously unreachable for **120 s** (boot deadline) or the port
+   answers non-opencode. Exit codes: `0` clean shutdown, `3` unrecoverable, `4` config error. `run`
+   places opencode and the watcher in **one process group**: watcher exit ⇒ SIGTERM opencode and exit
+   with the watcher's code; opencode exit ⇒ SIGTERM the watcher. **Fails-open is refined by
+   attendance** (see #4): attended ⇒ the native prompt is the answerer when the watcher dies;
+   unattended ⇒ the wrapper terminates (never hang). This resolves the review's fails-open-vs-#4
+   contradiction.
+3. **opencode `userIntent` — RESOLVED: reconstruct from SSE, and `ask` when unknown.**
+   The adapter reconstructs intent from preceding `message.*` SSE frames on the same session. When
+   intent is **expected but not yet known** the allow rule does **not** pass and the outcome is `ask`
+   — never a silent auto-allow on unknown intent. This resolves the §6.2.1/§7 contradiction: "absent"
+   no longer satisfies the allow rule's intent floor unconditionally.
+   **Details (normative):** the adapter contract gains
+   `intentSupport: "available" | "pending" | "unsupported"` (the existing `userIntent?: string | null`
+   cannot distinguish "unknown" from "permanently unavailable"). Policy: `available` ⇒ require
+   `≥ intentThreshold`; `pending` ⇒ force `ask`; `unsupported` ⇒ omit `intent_match` (v2 codex/gemini
+   only). A "human frame" is a `message.*` / `message.part.*` frame whose role is `user` and which is
+   not a tool result; the **last** such frame per session wins, truncated by U7's existing rule.
+   `pending` is the initial state for any adapter that supports intent.
+4. **opencode `ask` with no human — RESOLVED: `onAsk` notification + timeout → deny.**
+   Attendance split: with a human present, `ask` leaves the native prompt pending (no timeout).
+   Unattended fires the `onAsk` hook — the standalone analogue of squadrant's #560 blocked signal —
+   and on timeout **denies**. The timeout-deny is always audited + logged + notified, **never silent**,
+   so §16.3 holds.
+   **Details (normative):** new config `ask: { onAsk: "<command string>", timeoutMs: 120000 }`.
+   `onAsk` runs as a shell command with `AUTO_GATE_TOOL`, `AUTO_GATE_PATTERNS`, `AUTO_GATE_CWD`,
+   `AUTO_GATE_SESSION`, `AUTO_GATE_GATE_ID` in the env; unset ⇒ no notification but the timeout still
+   applies. Attendance is an **explicit marker** (`AUTO_GATE_ATTENDED=1`, set by interactive
+   launchers), never TTY sniffing — the watcher's TTY is not the crew's TTY. The timeout→deny is
+   audited as `tier: "timeout"`, `reason: "ask-timeout"` (no classifier assessment).
+5. **Symmetric claude-hook ownership — RESOLVED: conditional precedence.**
+   `auto-gate install` detects squadrant's managed entry and defers. squadrant's `installClaudeHooks`
+   detects a foreign `auto-gate decide --agent claude` entry and removes it **only when squadrant's
+   own gate actually fires and it installs its own hook** — i.e. `defaults.gate.mode === "on"`
+   (`"auto"` is a documented no-op, §10/§12, so it must NOT trigger removal). Otherwise there is no
+   conflict and the foreign entry is **left untouched**.
+   **Details (normative):** the installer writes a trailing marker ` # auto-gate-managed` into its
+   hook command; detection matches the parsed argv basename `auto-gate` **or** the marker, so it
+   survives `npx @squadrant/auto-gate …` / `node <path> …` forms. Every removal is recorded as
+   `{ts, action: "removed-foreign-gate", command}` in the daemon log **and** the audit JSONL. If the
+   entry is present but not removable (malformed settings, shared matcher, write failure) the
+   installer writes **no** squadrant hook (avoiding a double owner), logs an error, and surfaces it as
+   `squadrant config check` drift. This honors the §11/§16.8 rule that squadrant wins when both
+   are present, without
+   the unconditional-clobber side effect.
+6. **Tool-name normalization — RESOLVED: set-valued aliases, claude-shaped canonical.**
+   The canonical scope stays claude-shaped (`Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`) so
+   U7's config contract survives (§16.1). Aliases are **set-valued** (native name → *set* of
+   canonical names), because opencode's `edit` permission covers edit/write/patch with no separate
+   `write`: `opencode: { bash: ["Bash"], edit: ["Edit","Write","MultiEdit"] }`. Scope match succeeds
+   when *any* canonical name in the set is in scope. (Fixes the §12 prose/example contradiction: the
+   prose was right, the 1:1 example was wrong.)
+   **Details (normative):** a native name with no alias entry is **out-of-scope** (the gate yields;
+   the agent's native permission flow applies) and `auto-gate doctor` warns on unmapped names observed
+   in practice. `toolAliasesVersion` is owned by the package and **joins the §9 cache key**, so
+   changing the alias map invalidates cached decisions (as originally written it had no consumer and
+   was decorative).
+7. **opencode single-owner of the permission event — RESOLVED: per-server lockfile.**
+   *(New blocking item found in review — it was not one of the original six.)* §16.8 mandates
+   single-owner of the permission event per agent, enforced symmetric. #1/#2 introduce an
+   `auto-gate opencode watch` subscriber that coexists with squadrant's own bridge
+   (`sse-bridge.ts:73-120`); both can subscribe to `permission.asked` and both can answer it, with no
+   protocol to prevent a race. **Resolution:** extend the single-owner protocol to opencode via a
+   **per-server lockfile keyed by `host:port`**. The lock owner is the only client permitted to
+   *answer* `permission.asked`; a non-owner may observe (and forward for audit/notify) but must never
+   post a decision. `auto-gate` acquires it before answering; squadrant's bridge does the same; the
+   loser yields (symmetric, mirroring #5).
+   **Details (normative):** the lock path is
+   `<os.tmpdir()>/auto-gate-opencode-<sha256(host:port).slice(0,16)>.lock`, mirroring the #830
+   Telegram poll-lock shape. Acquisition is atomic `open(path, "wx")` (`O_EXCL`) with the owner pid
+   written into the file. Staleness: a lock whose owner pid is dead (or unreadable and older than
+   2 min) is reclaimed at most once per attempt, then re-acquired. Contention is **permanent yield**,
+   not wait — a non-owner never retries in a loop; it degrades to observe-only and logs once. A
+   non-owner may still subscribe to the SSE stream for audit/notify but must never POST a decision;
+   if the owner disappears, the non-owner re-attempts acquisition on the **next** `permission.asked`
+   only. This makes both the happy path and stale-reclaim deterministically testable.
 
 **Non-blocking:**
 
-7. **Alternate Jev transports** — OpenRouter (`typesafe/jev-1.13`, `/api/alpha/decisions`)
+8. **Alternate Jev transports** — OpenRouter (`typesafe/jev-1.13`, `/api/alpha/decisions`)
    and Vercel AI Gateway (`typesafe-ai/jev`, `experimental_evaluate`) are **unverified**;
    confirm against official docs before supporting. Third-party resellers are not official.
-8. **codex seam** — hooks config (needs `approvalPolicy` off `"never"` + trust) vs answering
+9. **codex seam** — hooks config (needs `approvalPolicy` off `"never"` + trust) vs answering
    the app-server approval server-requests directly. Different adapter shapes; pick in v2.
-9. **gemini → Antigravity** — does the migration preserve `BeforeTool` hooks / the policy
-   engine?
-10. **Default model pin** — `jev-latest` (auto-upgrade) vs `jev-1.13.0` (reproducible). Ships
+10. **gemini → Antigravity** — does the migration preserve `BeforeTool` hooks / the policy
+    engine?
+11. **Default model pin** — `jev-latest` (auto-upgrade) vs `jev-1.13.0` (reproducible). Ships
     `jev-latest`; recommend pinning once thresholds are tuned.
-11. **Cost telemetry** — report `inputTokens` per decision and a running estimate? (No local
+12. **Cost telemetry** — report `inputTokens` per decision and a running estimate? (No local
     price table in v1.)
-12. **Cross-agent projection** — should `GateRequest`/`GateAssessment` live in
+13. **Cross-agent projection** — should `GateRequest`/`GateAssessment` live in
     `@squadrant/shared` for the multi-agent projection layer (issue #31), or stay owned by
     the standalone package with a thin re-export?
-13. **Uninstall/rollback** — after `auto-gate uninstall`, does the agent fall back cleanly to
+14. **Uninstall/rollback** — after `auto-gate uninstall`, does the agent fall back cleanly to
     its native permission flow (claude: dialog; opencode: whatever `permission` block was
     restored)? Define the restore contract.
 
@@ -758,6 +860,8 @@ audit log. v1 non-goal: credential pools.
    participates in the cache key.
 8. **Single-owner of the permission event per agent**, enforced **symmetric**: the
    standalone defers to squadrant, and squadrant must remove a foreign gate entry. Installers
-   are idempotent, non-clobbering, marker-based.
+   are idempotent, non-clobbering, marker-based. (squadrant's removal is **conditional** — it
+   applies only while squadrant's own gate is actually enabled, `mode === "on"`; see §15 #5. For
+   **opencode**, single-owner is enforced by a per-server `host:port` lockfile — see §15 #7.)
 9. **v1 targets claude + opencode**; codex and gemini adapters land in v2 behind the same
    interface.
