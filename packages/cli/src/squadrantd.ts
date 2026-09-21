@@ -279,7 +279,15 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   const cmuxStoreSource = new CmuxStoreSource({ log });
   // #615: opt-in env overlay — defaults.claudeEnv deep-merges into ~/.claude/settings.json
   // 'env' (e.g. AFK timeouts). Absent ⇒ installClaudeHooks writes nothing to env.
-  const nativeHookSource = new NativeHookSource({ log, hookInstall: { claudeEnv: loadConfig().defaults.claudeEnv } });
+  const nativeHookSource = new NativeHookSource({
+    log,
+    hookInstall: {
+      claudeEnv: loadConfig().defaults.claudeEnv,
+      // #P6 (§15#5): only an explicit gate mode "on" lets squadrant remove a
+      // foreign auto-gate PermissionRequest handler; auto/absent leaves it alone.
+      gateMode: loadConfig().defaults.gate?.mode,
+    },
+  });
 
   ctx.codexDriver = codexDriver;
   ctx.opencodeBridge = opencodeBridge;

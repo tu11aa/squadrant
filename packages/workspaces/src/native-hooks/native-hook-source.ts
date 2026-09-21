@@ -75,6 +75,55 @@ function removeCommandHandlers(entries: unknown[], command: string): boolean {
   return removed;
 }
 
+/**
+ * #P6 (§15#5): the standalone `auto-gate` package appends this marker to its
+ * PermissionRequest hook command. Detection matches the marker OR a parsed argv
+ * basename of `auto-gate`, so `auto-gate decide …` and `node …/auto-gate …`
+ * forms are recognized even without the marker (mirrors the package's own
+ * `isOurCommand`).
+ */
+const FOREIGN_AUTO_GATE_MARKER = "auto-gate-managed";
+
+function isForeignAutoGateCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  if (command.includes(FOREIGN_AUTO_GATE_MARKER)) return true;
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  return /(^|[/\\])auto-gate$/.test(first);
+}
+
+/** Commands of any foreign `auto-gate` handlers in a hook event's entry list. */
+function findForeignGateHandlers(entries: unknown[]): string[] {
+  const found: string[] = [];
+  for (const entry of entries) {
+    const hooks = (entry as { hooks?: unknown[] })?.hooks;
+    if (!Array.isArray(hooks)) continue;
+    for (const h of hooks) {
+      const cmd = (h as { command?: unknown })?.command;
+      if (isForeignAutoGateCommand(cmd)) found.push(cmd as string);
+    }
+  }
+  return found;
+}
+
+/** Remove foreign `auto-gate` handlers; returns the removed commands. */
+function removeForeignGateHandlers(entries: unknown[]): string[] {
+  const removed: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as { hooks?: unknown[] };
+    if (!Array.isArray(entry?.hooks)) continue;
+    entry.hooks = entry.hooks.filter((h) => {
+      const cmd = (h as { command?: unknown })?.command;
+      if (isForeignAutoGateCommand(cmd)) {
+        removed.push(cmd as string);
+        return false;
+      }
+      return true;
+    });
+    if (entry.hooks.length === 0) entries.splice(i, 1);
+  }
+  return removed;
+}
+
 // ── Hook installer ────────────────────────────────────────────────────────────
 
 export interface ClaudeHooksInstallOpts {
@@ -97,6 +146,15 @@ export interface ClaudeHooksInstallOpts {
    * squadrant config's defaults.claudeEnv.
    */
   claudeEnv?: Record<string, string>;
+  /**
+   * #P6 (§15#5): squadrant's own gate mode. A foreign `auto-gate`
+   * PermissionRequest handler is removed ONLY when this is "on" — `auto`/absent
+   * is squadrant's documented no-op, so there is no conflict and the foreign
+   * handler is left untouched (warned + recorded either way).
+   */
+  gateMode?: "on" | "off" | "auto";
+  /** #P6: records a gate-ownership action (the daemon log is the warn). */
+  recordGateAction?: (entry: { action: "removed-foreign-gate" | "left-foreign-gate"; command: string }) => void;
 }
 
 /**
@@ -151,6 +209,32 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
       if (legacy !== command && removeCommandHandlers(entries, legacy)) {
         changed = true;
         migrated.push(`${eventName}/${sub}`);
+      }
+
+      // #P6 (§15#5): squadrant wins the PermissionRequest event when its own
+      // gate is ON — remove a foreign standalone `auto-gate` handler so a prompt
+      // is never processed by two owners. When the gate is `auto`/`off` there is
+      // no conflict, so the foreign handler is left untouched. Warn + record
+      // either way.
+      const foreign = findForeignGateHandlers(entries);
+      if (foreign.length > 0) {
+        if (opts.gateMode === "on") {
+          const removed = removeForeignGateHandlers(entries);
+          if (removed.length > 0) changed = true;
+          for (const command of removed) {
+            log(
+              `native-hook: removed foreign auto-gate PermissionRequest handler in ${settingsPath} [#P6 §15#5]: ${command}`,
+            );
+            opts.recordGateAction?.({ action: "removed-foreign-gate", command });
+          }
+        } else {
+          for (const command of foreign) {
+            log(
+              `native-hook: foreign auto-gate PermissionRequest handler present in ${settingsPath} but squadrant's gate is '${opts.gateMode ?? "auto"}' (not 'on') — foreign entry left untouched [#P6 §15#5]: ${command}`,
+            );
+            opts.recordGateAction?.({ action: "left-foreign-gate", command });
+          }
+        }
       }
     }
 
