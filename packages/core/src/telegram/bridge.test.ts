@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createTelegramBridge, type TelegramBridgeOptions } from "./bridge.js";
-import { setTopic } from "./state.js";
+import { loadState, setTopic } from "./state.js";
 import type { TelegramConfig } from "@squadrant/shared";
 import type { Update } from "@grammyjs/types";
 
@@ -47,6 +47,22 @@ function topicMsg(text: string, threadId: number, fromId = ALLOWED_USER): Partia
 /** Same, but carrying a message_id — stage-1's reaction needs one. */
 function topicMsgWithId(text: string, threadId: number, messageId: number, fromId = ALLOWED_USER): Partial<Update> {
   return { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: threadId, message_id: messageId, text, from: { id: fromId } } as any };
+}
+
+/** A project-topic message carrying media (#768). Telegram puts the operator's
+ *  typed text in `caption`, not `text`, for these. */
+function mediaMsg(threadId: number, media: Record<string, unknown>, caption?: string, fromId = ALLOWED_USER): Partial<Update> {
+  return {
+    update_id: 1,
+    message: {
+      chat: { id: CHAT },
+      message_thread_id: threadId,
+      message_id: 556,
+      ...(caption === undefined ? {} : { caption }),
+      ...media,
+      from: { id: fromId },
+    } as any,
+  };
 }
 
 let stateRoot: string;
@@ -196,6 +212,149 @@ describe("handleUpdate routing", () => {
     expect(d.sendReply).not.toHaveBeenCalled();
     expect(d.runCommand).not.toHaveBeenCalled();
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
+describe("inbound media (#768)", () => {
+  const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+
+  it("forwards a captioned photo as the caption plus a not-forwarded marker", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] }, "look at this")]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "brove",
+        source: "telegram",
+        text: expect.stringContaining("look at this\n[photo attached - not forwarded]"),
+      }),
+    );
+    bridge.stop();
+  });
+
+  it("tells the operator the photo itself was not delivered", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] }, "look at this")]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 photo not forwarded — your caption reached the captain");
+    bridge.stop();
+  });
+
+  it("still forwards a marker-only captain message for a photo with no caption", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] })]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("[photo attached - not forwarded]") }),
+    );
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 photo not forwarded — the captain was told it arrived, nothing else was sent");
+    bridge.stop();
+  });
+
+  it("names the actual attachment rather than assuming a photo", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { document: { file_id: "d1" } }, "the spec")]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 document not forwarded — your caption reached the captain");
+    bridge.stop();
+  });
+
+  it("does not swallow a voice note with no caption", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { voice: { file_id: "v1" } })]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("[voice message attached - not forwarded]") }),
+    );
+    bridge.stop();
+  });
+
+  it("still drops a service message that has neither text nor media", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const msg = { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: 7, new_chat_member: {} } as any };
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [msg]);
+    await drained;
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    expect(d.sendReply).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
+describe("registry prune on boot (#321)", () => {
+  const logs = (d: { log: unknown }) =>
+    ((d.log as any).mock.calls as unknown[][]).map((c) => c[0] as string).join("\n");
+
+  it("drops links to projects that are no longer registered", async () => {
+    setTopic(stateRoot, "brove", 7);
+    setTopic(stateRoot, "gone", 8);
+    const d = deps({ registeredProjects: () => ["brove"] });
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "brove::project": 7 });
+    expect(logs(d)).toContain("pruned");
+    bridge.stop();
+  });
+
+  it("prunes nothing when the project list could not be read", async () => {
+    setTopic(stateRoot, "gone", 8);
+    const d = deps({ registeredProjects: () => undefined });
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "gone::project": 8 });
+    expect(logs(d)).not.toContain("pruned");
+    bridge.stop();
+  });
+
+  it("prunes nothing when no project source is injected", async () => {
+    setTopic(stateRoot, "gone", 8);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, []);
+    await drained;
+    expect(loadState(stateRoot).topics).toEqual({ "gone::project": 8 });
+    bridge.stop();
+  });
+});
+
+describe("unbound project topic (#591)", () => {
+  it("logs and replies instead of swallowing the message", async () => {
+    // No setTopic → thread 4242 resolves to nothing.
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: baseCfg, ...d }, [topicMsg("ship it", 4242)]);
+    await drained;
+
+    const logs = (d.log as any).mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(logs.some((t: string) => t.includes("unbound topic") && t.includes("4242"))).toBe(true);
+    expect(d.sendReply).toHaveBeenCalledWith(4242, expect.stringContaining("isn't linked to a project"));
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not react or start a lifecycle for an unbound topic", async () => {
+    const begin = vi.fn();
+    const d = deps({ lifecycle: { begin } } as any);
+    const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsgWithId("ship it", 4242, 556)]);
+    await drained;
+    expect(client.setMessageReaction).not.toHaveBeenCalled();
+    expect(begin).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("does not react when the topic IS bound", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, client, drained } = drive({ cfg: baseCfg, ...d }, [topicMsgWithId("ship it", 7, 556)]);
+    await drained;
+    expect(client.setMessageReaction).toHaveBeenCalledWith(CHAT, 556, "👍");
     bridge.stop();
   });
 });

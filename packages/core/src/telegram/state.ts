@@ -75,6 +75,25 @@ export function setTopic(
   saveState(stateRoot, s);
 }
 
+/** Drop registry entries whose project is no longer wanted (#321). A link
+ *  outlives the project it points at: unregister a project and its topic id
+ *  stays in the registry forever, so `telegram status` keeps listing a project
+ *  that is gone and outbound delivery keeps sending into a topic nobody owns.
+ *  `keep` decides what survives — the caller must be able to evaluate it, since
+ *  a predicate built from an unreadable config would read as "keep nothing".
+ *  Returns the registry keys removed. */
+export function pruneTopics(stateRoot: string, keep: (project: string) => boolean): string[] {
+  const s = loadState(stateRoot);
+  const removed = Object.keys(s.topics).filter((key) => {
+    const sep = key.indexOf("::");
+    return !keep(sep === -1 ? key : key.slice(0, sep));
+  });
+  if (removed.length === 0) return [];
+  for (const key of removed) delete s.topics[key];
+  saveState(stateRoot, s);
+  return removed;
+}
+
 export function isNotifyActive(stateRoot: string, project: string): boolean {
   return loadState(stateRoot).notify[project] === true;
 }

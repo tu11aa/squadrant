@@ -1,6 +1,16 @@
 import { describe, it, expect } from "vitest";
 import type { ControlEvent } from "@squadrant/shared";
-import { topicName, formatLifecycle, formatInbound, maskToken, formatUsageLine } from "../format.js";
+import {
+  topicName,
+  formatLifecycle,
+  formatInbound,
+  formatMediaReceipt,
+  inboundBody,
+  maskToken,
+  mediaKind,
+  mediaMarker,
+  formatUsageLine,
+} from "../format.js";
 import type { ProjectUsage } from "../../router/usage-ledger.js";
 
 describe("topicName", () => {
@@ -90,6 +100,47 @@ describe("maskToken", () => {
 describe("formatInbound", () => {
   it("labels a reply so the captain can tell it came from Telegram", () => {
     expect(formatInbound("ship it")).toBe("📩 [from Telegram] ship it");
+  });
+});
+
+describe("mediaKind / mediaMarker / inboundBody / formatMediaReceipt (#768)", () => {
+  it("names each attachment Telegram can send", () => {
+    expect(mediaKind({ photo: [{}] })).toBe("photo");
+    expect(mediaKind({ document: {} })).toBe("document");
+    expect(mediaKind({ voice: {} })).toBe("voice message");
+    expect(mediaKind({ video_note: {} })).toBe("video message");
+    expect(mediaKind({ video: {} })).toBe("video");
+    expect(mediaKind({ audio: {} })).toBe("audio file");
+    expect(mediaKind({ animation: {} })).toBe("animation");
+    expect(mediaKind({ sticker: {} })).toBe("sticker");
+  });
+
+  it("returns undefined for a plain text message", () => {
+    expect(mediaKind({})).toBeUndefined();
+    expect(mediaKind({ photo: undefined })).toBeUndefined();
+  });
+
+  it("renders the marker with the kind it was given", () => {
+    expect(mediaMarker("photo")).toBe("[photo attached - not forwarded]");
+    expect(mediaMarker("voice message")).toBe("[voice message attached - not forwarded]");
+  });
+
+  it("appends the marker below the caption so the caption reads as the message", () => {
+    expect(inboundBody("look at this", "photo")).toBe("look at this\n[photo attached - not forwarded]");
+  });
+
+  it("uses the marker alone when the media carried no caption", () => {
+    expect(inboundBody(undefined, "sticker")).toBe("[sticker attached - not forwarded]");
+  });
+
+  it("passes text through untouched when no media accompanied it", () => {
+    expect(inboundBody("ship it", undefined)).toBe("ship it");
+  });
+
+  it("tells the operator the attachment did not reach the captain", () => {
+    expect(formatMediaReceipt("photo", true)).toBe("📎 photo not forwarded — your caption reached the captain");
+    expect(formatMediaReceipt("voice message", false))
+      .toBe("📎 voice message not forwarded — the captain was told it arrived, nothing else was sent");
   });
 });
 
