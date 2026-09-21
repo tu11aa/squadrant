@@ -66,11 +66,17 @@ describe("ClaudePeerChannel.send", () => {
     expect(wire).toHaveBeenCalledTimes(1);   // the 30 s dedup rule
   });
 
-  it("treats an already-busy session as accepted-unconfirmed, never as a flip", async () => {
-    // Busy before AND after tells us nothing — refusing to claim confirmation
-    // here is the whole point of not inferring.
+  it("reports an already-busy session as QUEUED — a running turn will see it next (#769)", async () => {
+    // Busy before send: there is no idle→busy flip left to observe, but claude
+    // queues peer messages behind the running turn. Reporting `accepted +
+    // unconfirmed` here rendered as "no turn was observed yet" — a false negative.
     const ch = mk({ statusFor: vi.fn().mockReturnValue({ status: "busy", statusUpdatedAt: 1 }) });
-    expect(await ch.send("t1", "hi")).toEqual({ status: "accepted", via: "claude-peer", confirmed: false });
+    expect(await ch.send("t1", "hi")).toEqual({ status: "queued", via: "claude-peer" });
+  });
+
+  it("reports an already-shell session as QUEUED too (#769)", async () => {
+    const ch = mk({ statusFor: vi.fn().mockReturnValue({ status: "shell", statusUpdatedAt: 1 }) });
+    expect(await ch.send("t1", "hi")).toEqual({ status: "queued", via: "claude-peer" });
   });
 
   it("puts its own receipt address in from, and never a from-mode", async () => {
