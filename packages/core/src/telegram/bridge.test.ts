@@ -49,6 +49,22 @@ function topicMsgWithId(text: string, threadId: number, messageId: number, fromI
   return { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: threadId, message_id: messageId, text, from: { id: fromId } } as any };
 }
 
+/** A project-topic message carrying media (#768). Telegram puts the operator's
+ *  typed text in `caption`, not `text`, for these. */
+function mediaMsg(threadId: number, media: Record<string, unknown>, caption?: string, fromId = ALLOWED_USER): Partial<Update> {
+  return {
+    update_id: 1,
+    message: {
+      chat: { id: CHAT },
+      message_thread_id: threadId,
+      message_id: 556,
+      ...(caption === undefined ? {} : { caption }),
+      ...media,
+      from: { id: fromId },
+    } as any,
+  };
+}
+
 let stateRoot: string;
 beforeEach(() => { stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tg-bridge-")); });
 afterEach(() => { fs.rmSync(stateRoot, { recursive: true, force: true }); });
@@ -196,6 +212,80 @@ describe("handleUpdate routing", () => {
     expect(d.sendReply).not.toHaveBeenCalled();
     expect(d.runCommand).not.toHaveBeenCalled();
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+});
+
+describe("inbound media (#768)", () => {
+  const ctrlCfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+
+  it("forwards a captioned photo as the caption plus a not-forwarded marker", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] }, "look at this")]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "brove",
+        source: "telegram",
+        text: expect.stringContaining("look at this\n[photo attached - not forwarded]"),
+      }),
+    );
+    bridge.stop();
+  });
+
+  it("tells the operator the photo itself was not delivered", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] }, "look at this")]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 photo not forwarded — your caption reached the captain");
+    bridge.stop();
+  });
+
+  it("still forwards a marker-only captain message for a photo with no caption", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { photo: [{ file_id: "f1" }] })]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("[photo attached - not forwarded]") }),
+    );
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 photo not forwarded — the captain was told it arrived, nothing else was sent");
+    bridge.stop();
+  });
+
+  it("names the actual attachment rather than assuming a photo", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { document: { file_id: "d1" } }, "the spec")]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("📎 document not forwarded — your caption reached the captain");
+    bridge.stop();
+  });
+
+  it("does not swallow a voice note with no caption", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [mediaMsg(7, { voice: { file_id: "v1" } })]);
+    await drained;
+    expect(d.appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("[voice message attached - not forwarded]") }),
+    );
+    bridge.stop();
+  });
+
+  it("still drops a service message that has neither text nor media", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const d = deps();
+    const msg = { update_id: 1, message: { chat: { id: CHAT }, message_thread_id: 7, new_chat_member: {} } as any };
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [msg]);
+    await drained;
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    expect(d.sendReply).not.toHaveBeenCalled();
     bridge.stop();
   });
 });

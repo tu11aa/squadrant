@@ -43,7 +43,7 @@ export function formatInboundReceipt(project: string, outcome?: DeliveryOutcome)
   }
 }
 
-import { formatInbound, formatLifecycle, formatUsageLine, topicName } from "./format.js";
+import { formatInbound, formatLifecycle, formatMediaReceipt, formatUsageLine, inboundBody, mediaKind, topicName } from "./format.js";
 import type { ProjectUsage } from "../router/usage-ledger.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
@@ -474,7 +474,13 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   // (append only). The append throws on delivery-infra failure so the caller can
   // decline to advance the offset (at-least-once); auto-launch failures are
   // contained and never block the append.
-  async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined, messageId?: number): Promise<void> {
+  async function handleProjectTopic(
+    text: string,
+    threadId: number,
+    fromId: number | undefined,
+    messageId?: number,
+    media?: { kind: string; hasCaption: boolean },
+  ): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
     if (!resolved) return; // no project bound to this topic
 
@@ -608,6 +614,14 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       );
     }
 
+    // #768: an attachment we cannot forward is NOT a delivery outcome, so this
+    // is additive to the receipts above and fires on every path — including
+    // `held`, where the operator is otherwise told only that the message is
+    // queued. Silence here is what made a dropped photo look sent.
+    if (media) {
+      await reply(threadId, formatMediaReceipt(media.kind, media.hasCaption));
+    }
+
     // `held` short-circuits both the ACK and the lifecycle handoff. Everything
     // else (accepted / queued / gone→mailbox / no channel) leaves the message
     // somewhere the captain will actually pick up.
@@ -623,13 +637,20 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; caption?: string; photo?: unknown[]; voice?: unknown; video_note?: unknown; video?: unknown; audio?: unknown; document?: unknown; animation?: unknown; sticker?: unknown; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
     }
     const m = u.message;
-    if (!m || m.text === undefined) return;
+    if (!m) return;
+    // #768: media arrives as photo/document/voice/… with the typed text (if any)
+    // in `caption`. The old `m.text === undefined` early return dropped the
+    // whole message — attachment AND caption — leaving the operator with no
+    // reply, no log, and no way to tell it had vanished.
+    const kind = mediaKind(m);
+    const text = m.text ?? m.caption;
+    if (text === undefined && kind === undefined) return; // nothing to act on
     if (!cfg.chats.includes(m.chat.id)) return; // not an allowlisted chat (coarse filter)
     // Passively capture the sender's user-id for setup auto-population (#user-id).
     if (m.from?.id !== undefined && loadState(stateRoot).lastUserId !== m.from.id) {
@@ -645,7 +666,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         await reply(threadId, "⛔ not authorized");
         return;
       }
-      const task = m.text.trim();
+      // `text` (not `m.text`) so a captioned photo can still carry the task;
+      // media with no caption cancels cleanly instead of throwing on undefined.
+      const task = (text ?? "").trim();
       if (!task) {
         await reply(threadId, "spawn cancelled — empty task");
         return;
@@ -655,10 +678,21 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return; // NOT appended as a captain message
     }
     if (m.message_thread_id === undefined) {
+      // The General topic keeps its v1 shape exactly: a caption is not a command.
+      if (m.text === undefined) return;
       await handleGeneral(m.text, m.from?.id);
       return;
     }
-    await handleProjectTopic(m.text, m.message_thread_id, m.from?.id, m.message_id);
+    // The captain message is the caption (or text) plus the #768 marker; the
+    // marker rides in the body rather than the receipt so the captain — not just
+    // the operator — knows the message was truncated.
+    await handleProjectTopic(
+      inboundBody(text, kind),
+      m.message_thread_id,
+      m.from?.id,
+      m.message_id,
+      kind === undefined ? undefined : { kind, hasCaption: text !== undefined },
+    );
   }
 
   async function pollLoop(): Promise<void> {

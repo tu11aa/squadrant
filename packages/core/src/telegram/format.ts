@@ -36,6 +36,68 @@ export function formatInbound(text: string): string {
   return `📩 [from Telegram] ${text}`;
 }
 
+/** The Telegram attachment fields the bridge inspects (#768). Presence of any
+ *  one means the message carried media that cannot be forwarded into a captain
+ *  pane — only its text/caption can. */
+export interface InboundMedia {
+  photo?: unknown;
+  voice?: unknown;
+  video_note?: unknown;
+  video?: unknown;
+  audio?: unknown;
+  document?: unknown;
+  animation?: unknown;
+  sticker?: unknown;
+}
+
+/** Examined in this order; Telegram sets at most one of them. */
+const MEDIA_KINDS: Array<[keyof InboundMedia, string]> = [
+  ["photo", "photo"],
+  ["voice", "voice message"],
+  ["video_note", "video message"],
+  ["video", "video"],
+  ["audio", "audio file"],
+  ["document", "document"],
+  ["animation", "animation"],
+  ["sticker", "sticker"],
+];
+
+/** Name of the attachment an inbound message carried, or undefined for a plain
+ *  text message. */
+export function mediaKind(m: InboundMedia): string | undefined {
+  for (const [field, name] of MEDIA_KINDS) {
+    if (m[field] !== undefined) return name;
+  }
+  return undefined;
+}
+
+/** The line added to a captain message for content we deliberately do NOT
+ *  forward (#768). It names the attachment AND says it did not come through, so
+ *  the captain asks for it another way instead of assuming the message was
+ *  complete. */
+export function mediaMarker(kind: string): string {
+  return `[${kind} attached - not forwarded]`;
+}
+
+/** The captain-facing body of an inbound message: its text/caption, plus the
+ *  #768 marker when media accompanied it (a caption alone would otherwise read
+ *  as the whole message). Empty only when the caller passed neither — callers
+ *  guarantee at least one. */
+export function inboundBody(text: string | undefined, kind: string | undefined): string {
+  if (kind === undefined) return text ?? "";
+  const marker = mediaMarker(kind);
+  return text ? `${text}\n${marker}` : marker;
+}
+
+/** Operator-facing receipt for an attachment we did not forward (#768). A file
+ *  that never arrives must not look like one that did, so the line says exactly
+ *  what reached the captain and what did not. */
+export function formatMediaReceipt(kind: string, hasCaption: boolean): string {
+  return hasCaption
+    ? `📎 ${kind} not forwarded — your caption reached the captain`
+    : `📎 ${kind} not forwarded — the captain was told it arrived, nothing else was sent`;
+}
+
 /** One-line routed-cost summary for a project, appended to terminal crew events.
  *  Cost is accumulated per project (the router token is per-project, U1) and
  *  grouped by model; the top model by cost is named, with `+N` for the rest. */
