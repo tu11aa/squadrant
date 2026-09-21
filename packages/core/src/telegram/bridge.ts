@@ -11,7 +11,13 @@ import { TelegramApiError, type TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
+import type { InboundLifecycle } from "./inbound-lifecycle.js";
 import type { DeliveryOutcome } from "../control-channel.js";
+
+/** Stage-2 ACK text (#838 Option B). Deliberately ONE short line: stage 1 is the
+ *  attached reaction, so the operator sees both ends of the hop without this
+ *  path becoming the phone flood the original quiet-by-design rule avoided. */
+export const CAPTAIN_RECEIVED_ACK = "✅ captain received";
 
 /**
  * What to tell the phone about an inbound message's fate.
@@ -100,6 +106,13 @@ export interface TelegramBridgeOptions {
   /** U5: routed usage/cost for a project. Appended to terminal (done/failed)
    *  crew events. Injected by the daemon host; absent ⇒ unchanged output. */
   usageFor?: (project: string) => ProjectUsage | undefined;
+  /** #838/#839: typing keep-alive + reply signal + watchdog. Injected by the
+   *  daemon host. start()/stop() ride the bridge's own lifecycle so its boot pass
+   *  (resume-or-clear persisted state) still runs while another daemon holds the
+   *  poll lock — a stranded pending entry must never keep a phantom typing alive.
+   *  Absent ⇒ the bridge skips the stage-2 typing handoff (text + reaction still
+   *  fire). */
+  lifecycle?: InboundLifecycle;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
@@ -209,6 +222,7 @@ export function notifyToggle(text: string): boolean | null {
 
 export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridge {
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
+  const lifecycle = opts.lifecycle;
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
   // Same token resolution as the daemon host: a config token, else the env fallback.
@@ -460,7 +474,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   // (append only). The append throws on delivery-infra failure so the caller can
   // decline to advance the offset (at-least-once); auto-launch failures are
   // contained and never block the append.
-  async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined): Promise<void> {
+  async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined, messageId?: number): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
     if (!resolved) return; // no project bound to this topic
 
@@ -529,9 +543,15 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return;
     }
 
-    void client.sendChatAction(cfg.supergroupId, threadId, "typing").catch((e) => {
-      log(`telegram sendChatAction failed: ${(e as Error).message}`);
-    });
+    // #838 stage 1 — daemon received it. A reaction rides ON the operator's own
+    // message (no new message ⇒ zero extra noise), and is best-effort: a client
+    // without setMessageReaction, or a Bot API that rejects it, must never stop
+    // the delivery below.
+    if (messageId !== undefined) {
+      void Promise.resolve(client.setMessageReaction?.(cfg.supergroupId, messageId, "👍")).catch((e) =>
+        log(`telegram stage-1 reaction failed project=${resolved.project}: ${(e as Error).message}`),
+      );
+    }
     setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
       try {
@@ -577,11 +597,28 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         log(`telegram receipt failed project=${resolved.project}: ${(e as Error).message}`)
       );
     }
+
+    // #838 stage 2 — "captain received" must mean the message is genuinely with
+    // the captain. A `held` outcome is the one state where it is NOT: the message
+    // is sitting behind an open modal (the #546/#486 case), and the HELD receipt
+    // above already told the operator so. Acking it here would contradict that
+    // line AND arm a typing/watchdog for a message nobody has read yet — the
+    // watchdog would then warn about a captain that was never given the turn.
+    // Everything else (accepted / queued / gone→mailbox / no channel) leaves the
+    // message somewhere the captain will actually pick up.
+    if (outcome?.status === "held") return;
+
+    // One short text — the failure receipts above are unchanged and additive —
+    // then hand the typing keep-alive + watchdog to the lifecycle. `begin()` IS
+    // the shared signal: typing stops and the watchdog disarms when the captain
+    // replies (clearPending) — there is no second detector.
+    await reply(threadId, CAPTAIN_RECEIVED_ACK);
+    lifecycle?.begin(resolved.project, threadId);
   }
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
@@ -616,7 +653,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       await handleGeneral(m.text, m.from?.id);
       return;
     }
-    await handleProjectTopic(m.text, m.message_thread_id, m.from?.id);
+    await handleProjectTopic(m.text, m.message_thread_id, m.from?.id, m.message_id);
   }
 
   async function pollLoop(): Promise<void> {
@@ -669,10 +706,18 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         }
       }
       running = true;
+      // #838 §4 restart safety: the lifecycle's boot pass (resume or clear a
+      // persisted pending entry) is bound to the daemon, not to the poll loop —
+      // it must run even while another daemon holds the poll lock, or a stranded
+      // pending entry could keep a phantom typing alive forever.
+      try { lifecycle?.start(); }
+      catch (e) { log(`telegram lifecycle start failed: ${(e as Error).message}`); }
       void pollLoop();
     },
     stop() {
       running = false;
+      try { lifecycle?.stop(); }
+      catch (e) { log(`telegram lifecycle stop failed: ${(e as Error).message}`); }
       pollAbort?.abort();
       releasePollLock?.();
       releasePollLock = null;

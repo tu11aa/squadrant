@@ -7,6 +7,7 @@ export * from "./ensure-captain.js";
 export * from "./format.js";
 export * from "./state.js";
 export * from "./client.js";
+export * from "./inbound-lifecycle.js";
 export * from "./bridge.js";
 export * from "./setup.js";
 export * from "./notify.js";

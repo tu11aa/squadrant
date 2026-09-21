@@ -1,6 +1,6 @@
 import { resolveNotify, loadProjectOverride, saveProjectOverride, isQuieter } from "@squadrant/shared";
 import type { SquadrantConfig, TelegramConfig, NotifyConfig } from "@squadrant/shared";
-import { loadState, setNotify, topicKey, setTopic } from "./state.js";
+import { clearPending, loadState, setNotify, topicKey, setTopic } from "./state.js";
 import { topicName } from "./format.js";
 import type { TelegramClient } from "./client.js";
 
@@ -97,7 +97,12 @@ export async function runNotifyConfirmation(opts: {
   }
 }
 
-/** Send a message to a project's linked Telegram topic. */
+/** Send a message to a project's linked Telegram topic.
+ *
+ *  #838: this IS the captain-replied path — a captain pushing to its own topic
+ *  is the outbound half of the loop. Clearing the pending expectation stops the
+ *  typing keep-alive and disarms the #839 watchdog (one shared signal; the
+ *  lifecycle self-stops on its next tick, so no timer has to be reached here). */
 export async function runTelegramSend(opts: {
   project: string;
   message: string;
@@ -110,6 +115,7 @@ export async function runTelegramSend(opts: {
     throw new Error(`project "${opts.project}" is not linked — run: squadrant telegram link ${opts.project}`);
   }
   await opts.client.sendMessage(opts.cfg.supergroupId, topicId, opts.message);
+  clearPending(opts.stateRoot, opts.project);
   return { chatId: opts.cfg.supergroupId, topicId };
 }
 

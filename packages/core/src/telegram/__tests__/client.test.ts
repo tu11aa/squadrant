@@ -187,6 +187,22 @@ describe("createTelegramClient.sendChatAction", () => {
   });
 });
 
+describe("createTelegramClient.setMessageReaction (#838 stage-1 ACK)", () => {
+  it("POSTs chat_id, message_id and a single-emoji reaction", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.setMessageReaction!(-100, 42, "👍");
+
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/setMessageReaction");
+    expect(bodyOf(calls[0])).toEqual({
+      chat_id: -100,
+      message_id: 42,
+      reaction: [{ type: "emoji", emoji: "👍" }],
+    });
+  });
+});
+
 describe("createTelegramClient.setMyCommands", () => {
   it("POSTs commands array under the setMyCommands method and resolves", async () => {
     const { fn, calls } = fakeFetch({ ok: true, result: true });

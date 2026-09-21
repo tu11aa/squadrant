@@ -1,6 +1,7 @@
 import { loadConfig } from "@squadrant/shared";
-import type { RuntimeDriver, SquadrantConfig, TaskRecord } from "@squadrant/shared";
+import type { PaneRef, RuntimeDriver, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { DirectCmuxReader } from "./interfaces.js";
+import type { PaneReadResult } from "./telegram/inbound-lifecycle.js";
 
 const TAIL_LINES = 25;
 
@@ -117,6 +118,93 @@ export function createDirectSurfaceLivenessProbe(
       );
     } catch {
       return "unknown";
+    }
+  };
+}
+
+// ── #839: classify a SILENT captain from a real pane read ──────────────────
+//
+// The signature is deliberately mirrored from `hasModalOptionList` in
+// @squadrant/workspaces (cmux.ts) rather than imported: the package DAG is
+// one-way (core may not import workspaces), and this is a SCREEN-SHAPE question,
+// not a runtime one. Both sides answer it the same way so a captain the pane
+// layer would refuse to keystroke into is the same captain this calls LOCKED.
+const HR_RE = /^\s*─{10,}\s*$/;
+
+/** True when the HR-bounded region is an open AskUserQuestion/permission
+ *  SELECTION MODAL (each selectable option renders as a `N. Label` line). */
+export function hasModalOptionList(screen: string): boolean {
+  if (!screen) return false;
+  const lines = screen.split(/\r?\n/);
+  let bottomHR = -1;
+  let topHR = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (HR_RE.test(lines[i])) {
+      if (bottomHR === -1) bottomHR = i;
+      else { topHR = i; break; }
+    }
+  }
+  if (topHR === -1) return false;
+  return lines.slice(topHR + 1, bottomHR).some((l) => /^\s*\d+\.\s/.test(l));
+}
+
+/** A live turn shows a spinner/counter. Mirrors the CC working-state heuristic
+ *  in @squadrant/workspaces (cmux.ts CC_WORKING_RE) — same rationale as above. */
+const WORKING_RE = /esc to interrupt|\btokens?\b.*\b(used|left)\b|↓\s*[\d.]+\s*k?\s*tokens?\b|\(\d+m?\s*\d+s\b/i;
+
+/**
+ * Pure: classify a captain's rendered pane for #839.
+ *
+ *   locked      — an open option/permission modal is up; a human must answer.
+ *   mid-turn    — a turn is visibly in flight; slow, not stuck.
+ *   no-session  — the pane rendered but shows no live agent session at all.
+ *   unreadable  — we could not get a screen (null). NEVER reported as dead:
+ *                 a probe we could not complete is the #834 false-negative class.
+ *
+ * `outputAgoMs` (time since the pane last changed) is used only as a tiebreak
+ * for `no-session`, which is the one genuinely-destructive verdict.
+ */
+export function classifyCaptainPane(
+  screen: string | null,
+  opts: { outputAgoMs?: number; idleAfterMs?: number } = {},
+): PaneReadResult {
+  if (screen == null || screen.trim() === "") return { status: "unreadable" };
+  if (hasModalOptionList(screen)) return { status: "locked" };
+  if (WORKING_RE.test(screen)) return { status: "mid-turn" };
+  // No modal and no visible turn. Only call it dead when the pane has also been
+  // stale past the idle threshold — otherwise a captain between turns (or one
+  // mid-render) false-classifies as gone.
+  const idleAfterMs = opts.idleAfterMs ?? 0;
+  const stale = opts.outputAgoMs !== undefined && opts.outputAgoMs >= idleAfterMs;
+  return stale ? { status: "no-session" } : { status: "mid-turn" };
+}
+
+/**
+ * Build the #839 captain-pane classifier for the Telegram watchdog. Reads the
+ * CAPTAIN's own surface (not a crew's) and classifies it.
+ * @param getCaptainTitle  Resolves a project's captain workspace/surface title.
+ * @param cmux  DirectCmuxReader (seam implemented by DaemonCmux in root).
+ */
+export function createCaptainPaneReader(
+  cmux: DirectCmuxReader,
+  getCaptainTitle: (project: string) => string,
+  opts: { log?: (msg: string) => void } = {},
+): (project: string) => Promise<PaneReadResult> {
+  return async (project) => {
+    try {
+      const wsId = await cmux.findWorkspaceId(getCaptainTitle(project));
+      if (!wsId) return { status: "no-session" };
+      const surfaces = await cmux.listSurfaces(wsId);
+      const want = getCaptainTitle(project);
+      const pane: PaneRef | undefined =
+        surfaces.find((s) => s.title === want) ?? surfaces[0];
+      if (!pane) return { status: "no-session" };
+      const screen = await cmux.readPaneScreen(pane);
+      return classifyCaptainPane(screen);
+    } catch (e) {
+      // A cmux outage must never be read as a dead captain (#834).
+      opts.log?.(`captain pane read failed project=${project}: ${(e as Error).message}`);
+      return { status: "unreadable" };
     }
   };
 }

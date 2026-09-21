@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -70,9 +70,28 @@ function buildTelegramBridge(
   const runCommand = createRunCommand(CLI_BIN);
   const sendReply = (threadId: number | undefined, text: string, replyMarkup?: unknown) =>
     client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
+  // #838/#839: typing keep-alive + the shared reply signal + the 15-min watchdog.
+  // Constructed here (host) because it needs the concrete Telegram client and the
+  // cmux pane reader; the DAEMON starts/stops it alongside the bridge so the poll
+  // loop never owns its timers.
+  const lifecycle = createInboundLifecycle({
+    stateRoot,
+    cfg: { supergroupId: cfg.supergroupId },
+    sendChatAction: (chatId, threadId, action) => client.sendChatAction(chatId, threadId, action),
+    sendReply: async (threadId, text) => { await client.sendMessage(cfg.supergroupId, threadId, text); },
+    readPane: createCaptainPaneReader(
+      new DaemonCmux(createCmuxDriver()),
+      (project) => {
+        try { return loadConfig().projects[project]?.captainName ?? `${project}-captain`; }
+        catch { return `${project}-captain`; }
+      },
+      { log },
+    ),
+    log,
+  });
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
-    ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor,
+    ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor, lifecycle,
   });
 }
 
