@@ -111,9 +111,9 @@ access (e.g. `jevapi.org` / `tokenra.io`) are **not** official TypeSafe surfaces
 
 **Standalone-first npm package; squadrant consumes it** (operator decision).
 
-- The gate ships as its own package **`@squadrant/auto-gate`**, in its own repo, publishable
-  and installable by any agent/user: `npm i -g @squadrant/auto-gate` /
-  `npx @squadrant/auto-gate`. It is *named* under the squadrant scope (the eventual home)
+- The gate ships as its own package **`@squadrant-ai/auto-gate`**, in its own repo, publishable
+  and installable by any agent/user: `npm i -g @squadrant-ai/auto-gate` /
+  `npx @squadrant-ai/auto-gate`. It is *named* under the squadrant scope (the eventual home)
   but *homed* in its own repo, so it can be installed and versioned independently of
   squadrant. The existing `squadrant` package will also move into the squadrant org when the
   org exists.
@@ -776,7 +776,7 @@ resolutions are **normative** and supersede any conflicting prose elsewhere in t
    conflict and the foreign entry is **left untouched**.
    **Details (normative):** the installer writes a trailing marker ` # auto-gate-managed` into its
    hook command; detection matches the parsed argv basename `auto-gate` **or** the marker, so it
-   survives `npx @squadrant/auto-gate …` / `node <path> …` forms. Every removal is recorded as
+   survives `npx @squadrant-ai/auto-gate …` / `node <path> …` forms. Every removal is recorded as
    `{ts, action: "removed-foreign-gate", command}` in the daemon log **and** the audit JSONL. If the
    entry is present but not removable (malformed settings, shared matcher, write failure) the
    installer writes **no** squadrant hook (avoiding a double owner), logs an error, and surfaces it as
@@ -839,7 +839,7 @@ resolutions are **normative** and supersede any conflicting prose elsewhere in t
 
 ## 16. Decisions already made — do not re-litigate
 
-1. **Standalone-first** npm package (`@squadrant/auto-gate`); squadrant consumes it. The
+1. **Standalone-first** npm package (`@squadrant-ai/auto-gate`); squadrant consumes it. The
    claude path preserves U7's **hook contract and acceptance tests**, not byte-for-byte
    source: extraction must bridge the config surface, transcript-path derivation, and #560
    event mapping that currently live in `@squadrant/shared`/`@squadrant/agents` (see §3).
