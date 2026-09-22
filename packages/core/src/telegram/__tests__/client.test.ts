@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTelegramClient } from "../client.js";
+import { createTelegramClient, TelegramApiError } from "../client.js";
 
 interface Call {
   url: string;
@@ -52,6 +52,28 @@ describe("createTelegramClient.getUpdates", () => {
     expect(calls[0].url).toBe("https://api.telegram.org/botTKN/getUpdates");
     expect(calls[0].init?.method).toBe("POST");
     expect(bodyOf(calls[0])).toMatchObject({ offset: 5, timeout: 30 });
+  });
+});
+
+describe("createTelegramClient.getUpdates abort (#830)", () => {
+  it("threads an AbortSignal through to fetch", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: [] });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+    const ac = new AbortController();
+
+    await client.getUpdates(0, 5, ac.signal);
+
+    expect(calls[0].init?.signal).toBe(ac.signal);
+  });
+
+  it("throws a TelegramApiError carrying the numeric error_code", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 409, description: "Conflict: terminated by other getUpdates request" });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const err = await client.getUpdates(0).catch((e) => e);
+
+    expect(err).toBeInstanceOf(TelegramApiError);
+    expect((err as TelegramApiError).code).toBe(409);
   });
 });
 
@@ -144,6 +166,54 @@ describe("createTelegramClient.createForumTopic", () => {
   });
 });
 
+describe("createTelegramClient.deleteForumTopic (#321 link race)", () => {
+  it("POSTs chat_id and message_thread_id", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.deleteForumTopic!(-100, 42);
+
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/deleteForumTopic");
+    expect(bodyOf(calls[0])).toEqual({ chat_id: -100, message_thread_id: 42 });
+  });
+});
+
+describe("rate-limit hint (#321)", () => {
+  it("carries the Bot API's retry_after so the poll can honor it", async () => {
+    const { fn } = fakeFetch({
+      ok: false,
+      error_code: 429,
+      description: "Too Many Requests: retry after 7",
+      parameters: { retry_after: 7 },
+    });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const err = await client.getUpdates(0).catch((e) => e);
+
+    expect(err).toBeInstanceOf(TelegramApiError);
+    expect((err as TelegramApiError).code).toBe(429);
+    expect((err as TelegramApiError).retryAfterSec).toBe(7);
+  });
+
+  it("leaves retryAfterSec undefined when the API sent no hint", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 429, description: "Too Many Requests" });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const err = await client.getUpdates(0).catch((e) => e);
+
+    expect((err as TelegramApiError).retryAfterSec).toBeUndefined();
+  });
+
+  it("leaves retryAfterSec undefined on a non-rate-limit error", async () => {
+    const { fn } = fakeFetch({ ok: false, error_code: 409, description: "Conflict", parameters: {} });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    const err = await client.getUpdates(0).catch((e) => e);
+
+    expect((err as TelegramApiError).retryAfterSec).toBeUndefined();
+  });
+});
+
 describe("createTelegramClient.sendChatAction", () => {
   it("POSTs chat_id, message_thread_id, and action when a thread is given", async () => {
     const { fn, calls } = fakeFetch({ ok: true, result: true });
@@ -162,6 +232,22 @@ describe("createTelegramClient.sendChatAction", () => {
     await client.sendChatAction(-100, undefined, "typing");
 
     expect(bodyOf(calls[0])).toEqual({ chat_id: -100, action: "typing" });
+  });
+});
+
+describe("createTelegramClient.setMessageReaction (#838 stage-1 ACK)", () => {
+  it("POSTs chat_id, message_id and a single-emoji reaction", async () => {
+    const { fn, calls } = fakeFetch({ ok: true, result: true });
+    const client = createTelegramClient({ token: "TKN", fetch: fn });
+
+    await client.setMessageReaction!(-100, 42, "👍");
+
+    expect(calls[0].url).toBe("https://api.telegram.org/botTKN/setMessageReaction");
+    expect(bodyOf(calls[0])).toEqual({
+      chat_id: -100,
+      message_id: 42,
+      reaction: [{ type: "emoji", emoji: "👍" }],
+    });
   });
 });
 

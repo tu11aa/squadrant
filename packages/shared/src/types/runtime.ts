@@ -93,7 +93,10 @@ export interface RuntimeDriver {
   // opts.probe=true runs the #302 buffer-liveness probe: deliver only if no real
   // draft is present (protects a real draft, never materializes a ghost). Without
   // it, any draft defers (#258/#268 deliver-when-empty).
-  sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean }): Promise<void>;
+  // opts.agent selects the input-box grammar (#786): "opencode" uses the
+  // opencode gate (deliver only on a positively-confirmed empty box), every
+  // other value — including absent — keeps the claude parser unchanged.
+  sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void>;
 
   // Render a review diff of a branch/worktree in the runtime's native diff
   // surface (#596). cmux: `cmux diff --branch --base <base> --cwd <cwd>

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig, type TelegramConfig } from "@squadrant/shared";
-import { loadState, setLastUserId } from "@squadrant/core";
+import { loadState, setLastUserId, setTopic } from "@squadrant/core";
 import { telegramCommand, runTelegramStatus, runTelegramLink, runTelegramSend, runRegisterCommands, resolveSetupToken, resolveSetupUserId, questionMasked, runTelegramPostSetup } from "../telegram.js";
 
 let root: string;
@@ -127,6 +127,48 @@ describe("runTelegramLink", () => {
     expect(second.topicId).toBe(first.topicId);
     expect(creates).toBe(1);
   });
+
+  it("adopts the winner's topic when another linker wins the race (#321)", async () => {
+    const deleted: number[] = [];
+    const client = {
+      ...fakeClient(),
+      // The competing linker — the bridge's lazy create on first delivery, or a
+      // second `telegram link` — writes the registry while our create is in
+      // flight, so both callers saw "no topic" before either wrote one.
+      createForumTopic: async () => { setTopic(root, "demo", 99); return 70; },
+      deleteForumTopic: async (_chatId: number, threadId: number) => { deleted.push(threadId); },
+    };
+
+    const r = await runTelegramLink({ project: "demo", cfg, client, stateRoot: root });
+
+    expect(r).toEqual({ topicId: 99, created: false });
+    expect(loadState(root).topics["demo::project"]).toBe(99);
+    expect(deleted).toEqual([70]); // our orphaned topic was cleaned up
+  });
+
+  it("still adopts the winner when the orphan topic cannot be deleted (#321)", async () => {
+    const client = {
+      ...fakeClient(),
+      createForumTopic: async () => { setTopic(root, "demo", 99); return 70; },
+      deleteForumTopic: async () => { throw new Error("not enough rights to delete the topic"); },
+    };
+
+    const r = await runTelegramLink({ project: "demo", cfg, client, stateRoot: root });
+
+    expect(r).toEqual({ topicId: 99, created: false });
+    expect(loadState(root).topics["demo::project"]).toBe(99);
+  });
+
+  it("links fine with a client that cannot delete topics (#321)", async () => {
+    const client = {
+      ...fakeClient(),
+      createForumTopic: async () => { setTopic(root, "demo", 99); return 70; },
+    };
+
+    const r = await runTelegramLink({ project: "demo", cfg, client, stateRoot: root });
+
+    expect(r).toEqual({ topicId: 99, created: false });
+  });
 });
 
 describe("runTelegramSend", () => {
@@ -150,10 +192,20 @@ describe("runTelegramSend", () => {
     await expect(runTelegramSend({ project: "nope", message: "hi", cfg, client, stateRoot: root }))
       .rejects.toThrow('project "nope" is not linked — run: squadrant telegram link nope');
   });
+
+  it("clears the pending expectation — the captain replied (#838)", async () => {
+    const client = fakeClient();
+    fs.writeFileSync(
+      path.join(root, "telegram-state.json"),
+      JSON.stringify({ offset: 0, topics: { "demo::project": 42 }, pending: { demo: { threadId: 42, startedAt: 1 } } }),
+    );
+    await runTelegramSend({ project: "demo", message: "on it", cfg, client, stateRoot: root });
+    expect(loadPending(root).demo).toBeUndefined();
+  });
 });
 
 import { runTelegramNotifySet, runTelegramNotifyStatus, runNotifyConfirmation } from "../telegram.js";
-import { isNotifyActive, setTopic as setTopicDirect } from "@squadrant/core";
+import { isNotifyActive, setTopic as setTopicDirect, loadPending } from "@squadrant/core";
 
 describe("telegram notify CLI", () => {
   it("runTelegramNotifySet writes the flag", () => {

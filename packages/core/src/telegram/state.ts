@@ -4,6 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
 
+/** One outstanding "the captain should reply" expectation (#838/#839). Persisted
+ *  so a daemon restart can resume/clear the typing keep-alive and the watchdog. */
+export interface PendingReply {
+  /** Telegram topic the expectation belongs to (typing target + warning route). */
+  threadId: number;
+  /** Epoch ms at which the captain was expected to start working on the message. */
+  startedAt: number;
+  /** Epoch ms the watchdog already warned. Presence = "do not nag again". */
+  warnedAt?: number;
+  /** #839: hash of the captain pane's last-seen screen + when it last CHANGED.
+   *  cmux exposes no activity timestamp, so the watchdog tracks output staleness
+   *  itself across its own polls — this is what makes "rendered but dead"
+   *  distinguishable from "quietly working" (see classifyCaptainPane). */
+  paneHash?: string;
+  paneChangedAt?: number;
+}
+
 export interface TelegramState {
   offset: number;
   /** key = `${project}::${scope}` (see topicKey); value = message_thread_id. */
@@ -12,6 +29,8 @@ export interface TelegramState {
   notify: Record<string, boolean>;
   /** Last seen inbound message sender — populated passively by the bridge poll. */
   lastUserId?: number;
+  /** key = project; outstanding delivery awaiting a captain reply (#838/#839). */
+  pending?: Record<string, PendingReply>;
 }
 
 function statePath(stateRoot: string): string {
@@ -34,6 +53,7 @@ export function loadState(stateRoot: string): TelegramState {
       notify: data.notify ?? {},
     };
     if (typeof data.lastUserId === "number") result.lastUserId = data.lastUserId;
+    if (data.pending && Object.keys(data.pending).length > 0) result.pending = data.pending;
     return result;
   } catch {
     return { offset: 0, topics: {}, notify: {} };
@@ -55,6 +75,25 @@ export function setTopic(
   saveState(stateRoot, s);
 }
 
+/** Drop registry entries whose project is no longer wanted (#321). A link
+ *  outlives the project it points at: unregister a project and its topic id
+ *  stays in the registry forever, so `telegram status` keeps listing a project
+ *  that is gone and outbound delivery keeps sending into a topic nobody owns.
+ *  `keep` decides what survives — the caller must be able to evaluate it, since
+ *  a predicate built from an unreadable config would read as "keep nothing".
+ *  Returns the registry keys removed. */
+export function pruneTopics(stateRoot: string, keep: (project: string) => boolean): string[] {
+  const s = loadState(stateRoot);
+  const removed = Object.keys(s.topics).filter((key) => {
+    const sep = key.indexOf("::");
+    return !keep(sep === -1 ? key : key.slice(0, sep));
+  });
+  if (removed.length === 0) return [];
+  for (const key of removed) delete s.topics[key];
+  saveState(stateRoot, s);
+  return removed;
+}
+
 export function isNotifyActive(stateRoot: string, project: string): boolean {
   return loadState(stateRoot).notify[project] === true;
 }
@@ -69,6 +108,56 @@ export function setNotify(stateRoot: string, project: string, active: boolean): 
   const s = loadState(stateRoot);
   s.notify[project] = active;
   saveState(stateRoot, s);
+}
+
+/** Read the persisted outstanding captain-reply expectations (#838/#839). */
+export function loadPending(stateRoot: string): Record<string, PendingReply> {
+  return loadState(stateRoot).pending ?? {};
+}
+
+/** Record (or replace) a project's outstanding reply expectation. */
+export function setPending(stateRoot: string, project: string, p: PendingReply): void {
+  const s = loadState(stateRoot);
+  s.pending = { ...(s.pending ?? {}), [project]: p };
+  saveState(stateRoot, s);
+}
+
+/** THE single "captain replied" signal (#838/#839). Clearing the pending entry
+ *  is what stops the typing keep-alive (it self-stops on its next tick) and
+ *  disarms the watchdog — both read this one store, so there is no second
+ *  liveness detector to drift out of sync. No-op (no write) when absent. */
+export function clearPending(stateRoot: string, project: string): void {
+  const s = loadState(stateRoot);
+  if (!s.pending || !(project in s.pending)) return;
+  delete s.pending[project];
+  if (Object.keys(s.pending).length === 0) delete s.pending;
+  saveState(stateRoot, s);
+}
+
+/** Stamp that the watchdog warned for this pending delivery (fires once). */
+export function markPendingWarned(stateRoot: string, project: string, at: number): void {
+  const s = loadState(stateRoot);
+  const p = s.pending?.[project];
+  if (!p) return;
+  s.pending![project] = { ...p, warnedAt: at };
+  saveState(stateRoot, s);
+}
+
+/** Record the captain pane's screen hash for this pending delivery, preserving
+ *  the FIRST time that exact screen was seen. Returns how long the pane has been
+ *  on this screen (ms), or undefined on the first observation (nothing to age
+ *  against yet — a single sample must never read as stale).
+ *
+ *  Persisted so a daemon restart does not reset the staleness clock and hand a
+ *  dead captain a fresh 15 minutes of "it's working". */
+export function notePaneScreen(stateRoot: string, project: string, hash: string, at: number): number | undefined {
+  const s = loadState(stateRoot);
+  const p = s.pending?.[project];
+  if (!p) return undefined;
+  if (p.paneHash === hash && p.paneChangedAt !== undefined) return at - p.paneChangedAt;
+  s.pending![project] = { ...p, paneHash: hash, paneChangedAt: at };
+  saveState(stateRoot, s);
+  return undefined;
 }
 
 export function findProjectByThread(

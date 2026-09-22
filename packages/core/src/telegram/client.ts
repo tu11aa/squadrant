@@ -3,8 +3,9 @@
 import type { Update } from "@grammyjs/types";
 
 export interface TelegramClient {
-  /** Long-poll for updates. timeoutSec is the Bot API `timeout` (default 50s). */
-  getUpdates(offset: number, timeoutSec?: number): Promise<Update[]>;
+  /** Long-poll for updates. timeoutSec is the Bot API `timeout` (default 50s).
+   *  A signal cancels an in-flight long-poll cleanly (used by stop(), #830). */
+  getUpdates(offset: number, timeoutSec?: number, signal?: AbortSignal): Promise<Update[]>;
   sendMessage(chatId: number, threadId: number | undefined, text: string, replyMarkup?: unknown): Promise<void>;
   /** Answer a callback_query — REQUIRED on every tap path or the spinner hangs ~15s. */
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
@@ -12,12 +13,20 @@ export interface TelegramClient {
   editMessageReplyMarkup(chatId: number, messageId: number, replyMarkup: unknown): Promise<void>;
   /** Returns the new topic's message_thread_id. */
   createForumTopic(chatId: number, name: string): Promise<number>;
+  /** Remove a forum topic — used to clean up the topic a lost link race created
+   *  (#321). Optional: a client that cannot delete still links correctly, it
+   *  just leaves the orphan topic behind. */
+  deleteForumTopic?(chatId: number, threadId: number): Promise<void>;
   /** Verify the bot token and return the bot identity. */
   getMe(): Promise<{ id: number; username: string }>;
   /** Register the bot's command menu with Telegram. */
   setMyCommands(commands: Array<{ command: string; description: string }>): Promise<void>;
   /** Send a chat action (e.g. "typing") to show activity to the user. */
   sendChatAction(chatId: number, threadId: number | undefined, action: string): Promise<void>;
+  /** Attach an emoji reaction to a message (#838 stage-1 ACK). Optional: it is
+   *  best-effort (setMessageReaction needs Bot API 7.0+), so a client that
+   *  cannot react must not be able to fail delivery. */
+  setMessageReaction?(chatId: number, messageId: number, emoji: string): Promise<void>;
 }
 
 interface TgResponse<T> {
@@ -25,23 +34,42 @@ interface TgResponse<T> {
   result?: T;
   error_code?: number;
   description?: string;
+  /** Structured error metadata. A 429 rate limit carries `retry_after`
+   *  (seconds) — the API's own back-off instruction (#321). */
+  parameters?: { retry_after?: number; migrate_to_chat_id?: number };
+}
+
+/** A Bot API rejection carrying its numeric `error_code`. Lets callers branch on
+ *  a specific code (e.g. 409 single-consumer conflict, #830) without parsing text. */
+export class TelegramApiError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+    /** The API's `parameters.retry_after` in seconds, when it sent one (429
+     *  rate limits do). Undefined ⇒ the API gave no back-off hint. */
+    readonly retryAfterSec?: number,
+  ) {
+    super(message);
+    this.name = "TelegramApiError";
+  }
 }
 
 export function createTelegramClient(opts: { token: string; fetch?: typeof fetch }): TelegramClient {
   const fetchImpl = opts.fetch ?? fetch;
   const base = `https://api.telegram.org/bot${opts.token}`;
 
-  async function call<T>(method: string, body: Record<string, unknown>): Promise<T> {
+  async function call<T>(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const res = await fetchImpl(`${base}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     const json = (await res.json()) as TgResponse<T>;
     if (!res.ok || !json.ok) {
       const code = json.error_code ?? res.status;
       const desc = json.description ?? "unknown error";
-      throw new Error(`telegram ${method} failed (${code}): ${desc}`);
+      throw new TelegramApiError(code, `telegram ${method} failed (${code}): ${desc}`, json.parameters?.retry_after);
     }
     return json.result as T;
   }
@@ -51,8 +79,8 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       const r = await call<{ id: number; username: string }>("getMe", {});
       return { id: r.id, username: r.username };
     },
-    getUpdates(offset, timeoutSec = 50) {
-      return call<Update[]>("getUpdates", { offset, timeout: timeoutSec });
+    getUpdates(offset, timeoutSec = 50, signal) {
+      return call<Update[]>("getUpdates", { offset, timeout: timeoutSec }, signal);
     },
     async sendMessage(chatId, threadId, text, replyMarkup) {
       const body: Record<string, unknown> = { chat_id: chatId, text };
@@ -72,6 +100,9 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       const r = await call<{ message_thread_id: number }>("createForumTopic", { chat_id: chatId, name });
       return r.message_thread_id;
     },
+    async deleteForumTopic(chatId, threadId) {
+      await call<boolean>("deleteForumTopic", { chat_id: chatId, message_thread_id: threadId });
+    },
     async setMyCommands(commands) {
       await call<boolean>("setMyCommands", { commands });
     },
@@ -79,6 +110,13 @@ export function createTelegramClient(opts: { token: string; fetch?: typeof fetch
       const body: Record<string, unknown> = { chat_id: chatId, action };
       if (threadId !== undefined) body.message_thread_id = threadId;
       await call<unknown>("sendChatAction", body);
+    },
+    async setMessageReaction(chatId, messageId, emoji) {
+      await call<boolean>("setMessageReaction", {
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: [{ type: "emoji", emoji }],
+      });
     },
   };
 }

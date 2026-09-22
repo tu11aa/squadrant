@@ -12,7 +12,7 @@ import { buildSpawnPrompt } from "../panels.js";
 const USER = 42;
 const CHAT = -100111;
 const cfg: TelegramConfig = {
-  botToken: "T", supergroupId: -100500, chats: [CHAT], pollMs: 1,
+  botToken: "T-bridge-cb", supergroupId: -100500, chats: [CHAT], pollMs: 1,
   remoteControl: true, users: [USER],
 } as any; // stale dist types lack remoteControl/users
 

@@ -1,15 +1,23 @@
 // Daemon-internal Telegram subsystem (modeled on CmuxEventsBridge). Owns one
 // outbound hook (pushLifecycle) and one inbound getUpdates long-poll. Opt-in and
 // crash-contained: no send/poll error may escape into the daemon.
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import type { ControlEvent, CrewTier, NotifyConfig, TelegramConfig } from "@squadrant/shared";
 import { resolveNotify, loadProjectOverride, saveProjectOverride, loadConfig } from "@squadrant/shared";
-import type { TelegramClient } from "./client.js";
+import { TelegramApiError, type TelegramClient } from "./client.js";
 import { isAuthorized, isControlEnabled } from "./auth.js";
 import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
+import type { InboundLifecycle } from "./inbound-lifecycle.js";
 import type { DeliveryOutcome } from "../control-channel.js";
+
+/** Stage-2 ACK text (#838 Option B). Deliberately ONE short line: stage 1 is the
+ *  attached reaction, so the operator sees both ends of the hop without this
+ *  path becoming the phone flood the original quiet-by-design rule avoided. */
+export const CAPTAIN_RECEIVED_ACK = "✅ captain received";
 
 /**
  * What to tell the phone about an inbound message's fate.
@@ -35,10 +43,11 @@ export function formatInboundReceipt(project: string, outcome?: DeliveryOutcome)
   }
 }
 
-import { formatInbound, formatLifecycle, formatUsageLine, topicName } from "./format.js";
+import { formatInbound, formatLifecycle, formatMediaReceipt, formatUsageLine, inboundBody, mediaKind } from "./format.js";
+import { runTelegramLink } from "./notify.js";
 import type { ProjectUsage } from "../router/usage-ledger.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
-import { findProjectByThread, loadState, saveState, setLastUserId, setNotify, setTopic, topicKey } from "./state.js";
+import { findProjectByThread, loadState, pruneTopics, saveState, setLastUserId, setNotify } from "./state.js";
 import { tierIncludes } from "./tiers.js";
 
 /** A Telegram callback_query (button tap). Narrowed to the fields the bridge uses. */
@@ -98,13 +107,140 @@ export interface TelegramBridgeOptions {
   /** U5: routed usage/cost for a project. Appended to terminal (done/failed)
    *  crew events. Injected by the daemon host; absent ⇒ unchanged output. */
   usageFor?: (project: string) => ProjectUsage | undefined;
+  /** #321: the projects that still exist, for the registry prune on start().
+   *  Injected by the daemon host from the real config file, and REQUIRED to
+   *  answer honestly: `undefined` means "I could not read the project list", and
+   *  the prune is skipped rather than deleting every link on the machine (which
+   *  is what a silent default-to-empty would do). Absent ⇒ never prunes. */
+  registeredProjects?: () => string[] | undefined;
+  /** #838/#839: typing keep-alive + reply signal + watchdog. Injected by the
+   *  daemon host. start()/stop() ride the bridge's own lifecycle so its boot pass
+   *  (resume-or-clear persisted state) still runs while another daemon holds the
+   *  poll lock — a stranded pending entry must never keep a phantom typing alive.
+   *  Absent ⇒ the bridge skips the stage-2 typing handoff (text + reaction still
+   *  fire). */
+  lifecycle?: InboundLifecycle;
+  /** #850: injected scheduler (tests) for the post-stop self-heal backoff.
+   *  Defaults to setTimeout. */
+  schedule?: (fn: () => void, ms: number) => () => void;
 }
 
 // Bot API long-poll window. The loop also sleeps cfg.pollMs between iterations so
 // a fast-returning poll can't busy-loop.
 const LONG_POLL_SEC = 50;
 
+// #830 single-consumer guard: getUpdates is single-consumer per bot token, so a
+// stray second poller makes both sides 409-storm. The lock lives in the OS temp
+// dir keyed by a token hash, so it works across processes (dev harnesses,
+// manually-started daemons) — not just within one daemon.
+const POLL_LOCK_STALE_MS = 2 * 60_000;
+// #830: repeated 409s mean a foreign getUpdates consumer holds this bot token's
+// poll slot. Retrying forever was the ~11.6k-line storm, so a couple of retries
+// absorb a transient race and then the poll stops. The storm protection stays.
+//
+// #850: that stop used to be PERMANENT — inbound stayed dead until the next
+// operator restart even after the competing consumer went away. (The competing
+// consumer is genuine and can be remote — e.g. an older host polling the same
+// token — so the poll cannot assume it is transient.) Keep the terminal stop but
+// make it self-heal: after a terminal stop the loop re-attempts on a long
+// backoff, so one bounded probe per interval recovers inbound by itself once the
+// consumer is gone — without re-creating the #830 storm.
+const CONFLICT_409_TERMINAL_AFTER = 3;
+/** Long backoff before the self-heal re-attempt that follows a terminal 409
+ *  stop. Long on purpose: the competing consumer may be remote/persistent, so
+ *  the poll probes sparsely rather than storming (#830/#850). */
+export const CONFLICT_409_SELF_HEAL_MS = 5 * 60_000;
+
+/** Exclusive lockfile path for a bot token's single getUpdates consumer. */
+export function telegramPollLockPath(token: string): string {
+  const hash = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+  return path.join(os.tmpdir(), `squadrant-telegram-poll-${hash}.lock`);
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM ⇒ the pid exists but belongs to another user (still alive).
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** A lock is held iff its owner pid is alive, or (pid unreadable) it is younger
+ *  than the stale window. Missing/unreadable ⇒ free. */
+function lockIsHeld(file: string): boolean {
+  let pid: number | undefined;
+  let ageMs: number;
+  try {
+    const parsed = Number.parseInt(fs.readFileSync(file, "utf8").trim(), 10);
+    pid = Number.isFinite(parsed) ? parsed : undefined;
+    ageMs = Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return false;
+  }
+  if (pid !== undefined) return pidAlive(pid);
+  return ageMs < POLL_LOCK_STALE_MS;
+}
+
+/** Take the poll lock atomically (O_EXCL). Returns a release fn, or null when a
+ *  live consumer already holds it. A stale lock is reclaimed at most once. */
+function acquirePollLock(token: string): (() => void) | null {
+  const file = telegramPollLockPath(token);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(file, "wx");
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return () => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") return null;
+      if (attempt === 0 && !lockIsHeld(file)) {
+        try { fs.unlinkSync(file); } catch { /* raced with another reclaimer */ }
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function defaultSchedule(fn: () => void, ms: number): () => void {
+  const t = setTimeout(fn, ms);
+  t.unref?.();
+  return () => clearTimeout(t);
+}
+
+/** #850: the recorded pid of a DIFFERENT live process holding the token's poll
+ *  lock, or null when the lock is free, unreadable, or held by this process.
+ *  Logged when the poll refuses to start, so a future diagnosis names the local
+ *  holder in one line. (A REMOTE competing consumer holds no local lock — that
+ *  case surfaces only as 409s.) */
+function foreignPollLockHolder(token: string, selfPid: number = process.pid): number | null {
+  const file = telegramPollLockPath(token);
+  let pid: number;
+  try {
+    const parsed = Number.parseInt(fs.readFileSync(file, "utf8").trim(), 10);
+    if (!Number.isFinite(parsed)) return null;
+    pid = parsed;
+  } catch {
+    return null;
+  }
+  if (pid === selfPid) return null;
+  return pidAlive(pid) ? pid : null;
+}
+
+/** How long to wait before the next poll after a failed one (#321). Telegram
+ *  answers a rate-limited call with 429 + `parameters.retry_after`; retrying on
+ *  our own cadence instead just earns another 429 and lengthens the block, so
+ *  the API's own number wins when it sent one. Every other failure — including
+ *  a 429 with no hint — keeps the configured cadence. */
+export function pollBackoffMs(err: unknown, pollMs: number): number {
+  if (err instanceof TelegramApiError && err.retryAfterSec !== undefined) return err.retryAfterSec * 1000;
+  return pollMs;
+}
 
 const CREW_TIERS = ["all", "alert_only", "done_only", "none"];
 
@@ -143,9 +279,20 @@ export function notifyToggle(text: string): boolean | null {
 
 export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridge {
   const { cfg, stateRoot, client, appendCaptainMessage, log, ensureCaptainAlive, runCommand, sendReply } = opts;
+  const lifecycle = opts.lifecycle;
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
+  const schedule = opts.schedule ?? defaultSchedule;
+  // Same token resolution as the daemon host: a config token, else the env fallback.
+  const lockToken = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
+  let releasePollLock: (() => void) | null = null;
+  let pollAbort: AbortController | null = null;
   let running = false;
+  // #850: set only by stop(), to suppress the self-heal re-attempt that follows a
+  // terminal 409 stop (an operator stop must stay stopped).
+  let pollStopped = false;
+  let selfHealCancel: (() => void) | null = null;
+  let conflictCount = 0;
   let lastSuccessfulPollAt: number | null = null;
   let lastError: string | null = null;
   let lastErrorAt: number | null = null;
@@ -157,13 +304,11 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   }
 
   // Resolve (or lazily create) a project's topic and send raw text into it.
+  // Creation goes through runTelegramLink so a lazy create here and a
+  // `squadrant telegram link` racing it resolve to ONE topic (#321).
   async function sendToTopic(project: string, text: string): Promise<void> {
-    let threadId = loadState(stateRoot).topics[topicKey(project)];
-    if (threadId === undefined) {
-      threadId = await client.createForumTopic(cfg.supergroupId, topicName(project));
-      setTopic(stateRoot, project, threadId);
-    }
-    await client.sendMessage(cfg.supergroupId, threadId, text);
+    const { topicId } = await runTelegramLink({ project, cfg, client, stateRoot });
+    await client.sendMessage(cfg.supergroupId, topicId, text);
   }
 
   // Outbound: resolve active (live state wins over config default) + crew-tier
@@ -389,9 +534,23 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   // (append only). The append throws on delivery-infra failure so the caller can
   // decline to advance the offset (at-least-once); auto-launch failures are
   // contained and never block the append.
-  async function handleProjectTopic(text: string, threadId: number, fromId: number | undefined): Promise<void> {
+  async function handleProjectTopic(
+    text: string,
+    threadId: number,
+    fromId: number | undefined,
+    messageId?: number,
+    media?: { kind: string; hasCaption: boolean },
+  ): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
-    if (!resolved) return; // no project bound to this topic
+    if (!resolved) {
+      // #591: this used to return silently. The operator saw their message
+      // vanish — no reply, no log — while the offset advanced past it, so the
+      // drop was invisible from BOTH ends. An unbound topic is a setup mistake
+      // the operator can fix, so say so.
+      log(`telegram inbound in unbound topic thread=${threadId} — no project linked, message dropped`);
+      await reply(threadId, "⚠️ this topic isn't linked to a project — run: squadrant telegram link <project>");
+      return;
+    }
 
     if (isBareSpawn(text)) {
       // Guided /spawn — picker, never appended. Fail-closed like the toggles.
@@ -458,27 +617,34 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return;
     }
 
-    void client.sendChatAction(cfg.supergroupId, threadId, "typing").catch((e) => {
-      log(`telegram sendChatAction failed: ${(e as Error).message}`);
-    });
-    setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
-    if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
-      try {
-        const r = await ensureCaptainAlive(resolved.project);
-        // The ensure() result IS the delivery signal — "live captain reachable",
-        // not "message read" (no cap-side ack protocol). Surfacing it means a
-        // false-positive isAlive (#517) fails loud in Telegram instead of silently
-        // stranding the message in the mailbox.
-        if (r === "timeout") {
-          await reply(threadId, `❌ couldn't reach ${resolved.project} captain — saved to mailbox, will deliver when you open the workspace.`);
-        } else {
-          await reply(threadId, `📨 delivered to ${resolved.project} captain`);
-        }
-      } catch (e) {
-        log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`);
-      }
+    // #838 stage 1 — daemon received it. A reaction rides ON the operator's own
+    // message (no new message ⇒ zero extra noise), and is best-effort: a client
+    // without setMessageReaction, or a Bot API that rejects it, must never stop
+    // the delivery below.
+    if (messageId !== undefined) {
+      void Promise.resolve(client.setMessageReaction?.(cfg.supergroupId, messageId, "👍")).catch((e) =>
+        log(`telegram stage-1 reaction failed project=${resolved.project}: ${(e as Error).message}`),
+      );
     }
-    
+    setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
+    // #848: the auto-launch/ensure is a best-effort boot of a DOWN captain — it is
+    // NOT a delivery verdict, and it must never gate the delivery below nor the
+    // stage-2 ACK. Awaiting it (warmupTimeoutMs defaults to 120_000) made a live
+    // captain's ACK land two minutes late, and its `timeout` probe produced the
+    // `❌ couldn't reach` line *before* the delivery had even been attempted — the
+    // #834 false-negative family on the ensure path. Kick it off in the background
+    // and let the delivery verdict below decide every receipt. The ensure result is
+    // logged only; it is never rendered to the operator.
+    if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
+      void ensureCaptainAlive(resolved.project)
+        .then((r) => {
+          if (r === "timeout") {
+            log(`telegram auto-launch: warmup timed out project=${resolved.project} — delivery verdict (not this probe) decides the receipt`);
+          }
+        })
+        .catch((e) => log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`));
+    }
+
     let handled = false;
     let outcome: DeliveryOutcome | undefined;
     if (opts.deliverInbound) {
@@ -486,28 +652,71 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       handled = res.handled;
       outcome = res.outcome;
     }
-    
+
+    // #838 stage 2 — "captain received" must mean the message is genuinely with
+    // the captain. A `held` outcome is the one state where it is NOT: the message
+    // is sitting behind an open modal (the #546/#486 case) and no turn was ever
+    // given, so acking it would arm a typing/watchdog for a message nobody read.
+    // Captured HERE, before the fallback block below: #837 sets `outcome =
+    // undefined` when the pane append succeeds, and a guard that read `outcome`
+    // afterwards could not see "held" at all. Read it once, early, and never let
+    // the #837 clearing silently disarm this.
+    const deliveryHeld = outcome?.status === "held";
+
     if (!handled) {
+      // The channel declined (gone / unsupported / off). This append IS the pane
+      // fallback and its success is the FINAL verdict — the #332 delivery loop
+      // drains it into the captain. A pre-fallback `gone` outcome must never be
+      // rendered as terminal "not reachable", or the operator is told a message
+      // that is queued (and will deliver) failed (#834).
       await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
+      outcome = undefined;
     }
-    
+
     const receipt = formatInboundReceipt(resolved.project, outcome);
     if (receipt && sendReply) {
       await sendReply(threadId, receipt).catch((e) =>
         log(`telegram receipt failed project=${resolved.project}: ${(e as Error).message}`)
       );
     }
+
+    // #768: an attachment we cannot forward is NOT a delivery outcome, so this
+    // is additive to the receipts above and fires on every path — including
+    // `held`, where the operator is otherwise told only that the message is
+    // queued. Silence here is what made a dropped photo look sent.
+    if (media) {
+      await reply(threadId, formatMediaReceipt(media.kind, media.hasCaption));
+    }
+
+    // `held` short-circuits both the ACK and the lifecycle handoff. Everything
+    // else (accepted / queued / gone→mailbox / no channel) leaves the message
+    // somewhere the captain will actually pick up.
+    if (deliveryHeld) return;
+
+    // One short text — the failure receipts above are unchanged and additive —
+    // then hand the typing keep-alive + watchdog to the lifecycle. `begin()` IS
+    // the shared signal: typing stops and the watchdog disarms when the captain
+    // replies (clearPending) — there is no second detector.
+    await reply(threadId, CAPTAIN_RECEIVED_ACK);
+    lifecycle?.begin(resolved.project, threadId);
   }
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; text?: string; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; caption?: string; photo?: unknown[]; voice?: unknown; video_note?: unknown; video?: unknown; audio?: unknown; document?: unknown; animation?: unknown; sticker?: unknown; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
     }
     const m = u.message;
-    if (!m || m.text === undefined) return;
+    if (!m) return;
+    // #768: media arrives as photo/document/voice/… with the typed text (if any)
+    // in `caption`. The old `m.text === undefined` early return dropped the
+    // whole message — attachment AND caption — leaving the operator with no
+    // reply, no log, and no way to tell it had vanished.
+    const kind = mediaKind(m);
+    const text = m.text ?? m.caption;
+    if (text === undefined && kind === undefined) return; // nothing to act on
     if (!cfg.chats.includes(m.chat.id)) return; // not an allowlisted chat (coarse filter)
     // Passively capture the sender's user-id for setup auto-population (#user-id).
     if (m.from?.id !== undefined && loadState(stateRoot).lastUserId !== m.from.id) {
@@ -523,7 +732,9 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         await reply(threadId, "⛔ not authorized");
         return;
       }
-      const task = m.text.trim();
+      // `text` (not `m.text`) so a captioned photo can still carry the task;
+      // media with no caption cancels cleanly instead of throwing on undefined.
+      const task = (text ?? "").trim();
       if (!task) {
         await reply(threadId, "spawn cancelled — empty task");
         return;
@@ -533,39 +744,139 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       return; // NOT appended as a captain message
     }
     if (m.message_thread_id === undefined) {
+      // The General topic keeps its v1 shape exactly: a caption is not a command.
+      if (m.text === undefined) return;
       await handleGeneral(m.text, m.from?.id);
       return;
     }
-    await handleProjectTopic(m.text, m.message_thread_id, m.from?.id);
+    // The captain message is the caption (or text) plus the #768 marker; the
+    // marker rides in the body rather than the receipt so the captain — not just
+    // the operator — knows the message was truncated.
+    await handleProjectTopic(
+      inboundBody(text, kind),
+      m.message_thread_id,
+      m.from?.id,
+      m.message_id,
+      kind === undefined ? undefined : { kind, hasCaption: text !== undefined },
+    );
+  }
+
+  /** Take the poll lock when a token is configured, or log why we can't. The log
+   *  names the holder pid so a future diagnosis is one line (#850). */
+  function acquirePollLockOrLog(): boolean {
+    if (!lockToken) return true;
+    releasePollLock = acquirePollLock(lockToken);
+    if (releasePollLock) return true;
+    const holder = foreignPollLockHolder(lockToken);
+    log(`telegram inbound poll disabled: another consumer already polls this bot token (single-consumer guard, #830)${holder !== null ? ` — lock held by pid ${holder}` : ""}`);
+    return false;
+  }
+
+  /** #850 self-heal: a terminal 409 stop is not permanent. After a backoff,
+   *  re-take the poll lock (if free) and restart the loop, so inbound recovers
+   *  without operator action once the competing consumer is gone. */
+  function scheduleSelfHeal(): void {
+    selfHealCancel?.();
+    selfHealCancel = schedule(() => {
+      selfHealCancel = null;
+      if (pollStopped || running) return;
+      if (!acquirePollLockOrLog()) {
+        scheduleSelfHeal(); // still contended — back off and try again
+        return;
+      }
+      running = true;
+      conflictCount = 0; // a fresh attempt gets a fresh burst allowance
+      log("telegram inbound poll re-attempting after a 409 stop (#850)");
+      void pollLoop();
+    }, CONFLICT_409_SELF_HEAL_MS);
   }
 
   async function pollLoop(): Promise<void> {
     while (running) {
+      const ac = new AbortController();
+      pollAbort = ac;
+      let waitMs = pollMs;
       try {
         const offset = loadState(stateRoot).offset;
-        const updates = await client.getUpdates(offset, LONG_POLL_SEC);
+        const updates = await client.getUpdates(offset, LONG_POLL_SEC, ac.signal);
+        conflictCount = 0;
         for (const u of updates) {
           await handleUpdate(u);
           persistOffset(u.update_id + 1);
         }
         lastSuccessfulPollAt = Date.now();
       } catch (e) {
-        lastError = (e as Error).message;
+        if (ac.signal.aborted) break; // stop() cancelled an in-flight long-poll — not an error
+        const msg = (e as Error).message;
+        lastError = msg;
         lastErrorAt = Date.now();
-        log(`telegram inbound poll failed: ${(e as Error).message}`);
+        // #830: repeated 409 means another consumer holds the token's poll slot.
+        // Retrying forever is the 11.6k-line storm; log once and stop. The stop
+        // self-heals on a long backoff (see the CONFLICT_409_* block / #850).
+        if (e instanceof TelegramApiError && e.code === 409) {
+          conflictCount += 1;
+          if (conflictCount >= CONFLICT_409_TERMINAL_AFTER) {
+            log(`telegram inbound poll stopped: repeated 409 conflict (another getUpdates consumer holds this token) — ${msg}`);
+            break;
+          }
+        } else {
+          log(`telegram inbound poll failed: ${msg}`);
+        }
+        // #321: honor the API's own back-off hint on a rate limit instead of
+        // hammering it on our cadence and earning a longer block.
+        waitMs = pollBackoffMs(e, pollMs);
+      } finally {
+        pollAbort = null;
       }
-      if (running) await sleep(pollMs);
+      if (running) await sleep(waitMs);
     }
+    running = false;
+    releasePollLock?.();
+    releasePollLock = null;
+    // #850 self-heal: a terminal stop re-attempts; only stop() is permanent.
+    if (!pollStopped) scheduleSelfHeal();
   }
 
   return {
     start() {
       if (running) return;
+      pollStopped = false;
+      selfHealCancel?.();
+      selfHealCancel = null;
+      if (!acquirePollLockOrLog()) return;
+      // #321 registry prune: a link outlives the project it points at. Runs on
+      // boot, from the instance that actually owns the poll slot. Injected
+      // (below) rather than read here: absent ⇒ no prune, so a bridge that
+      // cannot tell "unregistered" from "unreadable" never deletes a link.
+      const known = opts.registeredProjects?.();
+      if (known !== undefined) {
+        try {
+          const removed = pruneTopics(stateRoot, (p) => known.includes(p));
+          if (removed.length > 0) log(`telegram registry pruned ${removed.length} stale topic link(s): ${removed.join(", ")}`);
+        } catch (e) {
+          log(`telegram registry prune failed: ${(e as Error).message}`);
+        }
+      }
       running = true;
+      conflictCount = 0;
+      // #838 §4 restart safety: the lifecycle's boot pass (resume or clear a
+      // persisted pending entry) is bound to the daemon, not to the poll loop —
+      // it must run even while another daemon holds the poll lock, or a stranded
+      // pending entry could keep a phantom typing alive forever.
+      try { lifecycle?.start(); }
+      catch (e) { log(`telegram lifecycle start failed: ${(e as Error).message}`); }
       void pollLoop();
     },
     stop() {
       running = false;
+      pollStopped = true;
+      selfHealCancel?.();
+      selfHealCancel = null;
+      try { lifecycle?.stop(); }
+      catch (e) { log(`telegram lifecycle stop failed: ${(e as Error).message}`); }
+      pollAbort?.abort();
+      releasePollLock?.();
+      releasePollLock = null;
     },
     pushLifecycle(project, ev) {
       // Fire-and-forget; all errors swallowed so outbound can never throw into

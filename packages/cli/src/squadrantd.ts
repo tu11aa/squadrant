@@ -9,7 +9,7 @@ import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
-import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService } from "@squadrant/core";
+import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
@@ -70,9 +70,47 @@ function buildTelegramBridge(
   const runCommand = createRunCommand(CLI_BIN);
   const sendReply = (threadId: number | undefined, text: string, replyMarkup?: unknown) =>
     client.sendMessage(cfg.supergroupId, threadId, text, replyMarkup);
+  // #838/#839: typing keep-alive + the shared reply signal + the 15-min watchdog.
+  // Constructed here (host) because it needs the concrete Telegram client and the
+  // cmux pane reader; the DAEMON starts/stops it alongside the bridge so the poll
+  // loop never owns its timers.
+  const lifecycle = createInboundLifecycle({
+    stateRoot,
+    cfg: { supergroupId: cfg.supergroupId },
+    sendChatAction: (chatId, threadId, action) => client.sendChatAction(chatId, threadId, action),
+    sendReply: async (threadId, text) => { await client.sendMessage(cfg.supergroupId, threadId, text); },
+    readPane: createCaptainPaneReader(
+      new DaemonCmux(createCmuxDriver()),
+      (project) => {
+        try { return loadConfig().projects[project]?.captainName ?? `${project}-captain`; }
+        catch { return `${project}-captain`; }
+      },
+      {
+        log,
+        // #839 staleness, measured for real: cmux has no pane activity
+        // timestamp, so the reader hashes the screen and asks the persisted
+        // pending store how long that exact screen has been up. Persisted, so a
+        // daemon restart cannot hand a dead captain a fresh 15 minutes.
+        noteScreen: (project, hash) => notePaneScreen(stateRoot, project, hash, Date.now()),
+      },
+    ),
+    log,
+  });
   return createTelegramBridge({
     cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
-    ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor,
+    ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor, lifecycle,
+    // #321 registry prune. Read the file directly rather than via loadConfig():
+    // loadConfig swallows every failure and returns defaults, so an unreadable
+    // config would look like "no projects registered" and the prune would delete
+    // every link on the machine. `undefined` correctly means "don't prune".
+    registeredProjects: () => {
+      try {
+        const parsed = JSON.parse(readFileSync(join(dirname(stateRoot), "config.json"), "utf8")) as { projects?: Record<string, unknown> };
+        return Object.keys(parsed.projects ?? {});
+      } catch {
+        return undefined;
+      }
+    },
   });
 }
 
