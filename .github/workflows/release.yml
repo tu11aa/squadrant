@@ -102,21 +102,25 @@ jobs:
             npm publish --access public
           fi
 
+      # Advisory only. Registry replication can lag well past the publish, and a
+      # timeout here must never skip the tag/GitHub Release below — that is what
+      # stranded the v0.22.0 release. Widen the window for the normal lag, then
+      # warn and continue rather than fail the job.
       - name: Verify npm publish
         if: steps.check.outputs.should_release == 'true'
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          for i in $(seq 1 18); do
+          for i in $(seq 1 36); do
             PUBLISHED=$(curl -fsSL "https://registry.npmjs.org/squadrant/$VERSION" | node -p "JSON.parse(require('fs').readFileSync(0)).version" 2>/dev/null || true)
             if [ "$PUBLISHED" = "$VERSION" ]; then
               echo "✓ squadrant@$VERSION confirmed live on npm"
               exit 0
             fi
-            echo "registry not yet showing $VERSION (attempt $i/18), retrying…"
+            echo "registry not yet showing $VERSION (attempt $i/36), retrying…"
             sleep 10
           done
-          echo "::error::squadrant@$VERSION did NOT appear on the npm registry after publish"
-          exit 1
+          echo "::warning::squadrant@$VERSION did not appear on the npm registry within the verification window; continuing so the tag and GitHub Release are not skipped."
+          exit 0
 
       - name: Create and push tag
         if: steps.check.outputs.should_release == 'true'
