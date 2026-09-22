@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { TelegramConfig } from "@squadrant/shared";
 import type { Update } from "@grammyjs/types";
-import { createTelegramBridge, pollBackoffMs, telegramPollLockPath, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
+import { createTelegramBridge, pollBackoffMs, telegramPollLockPath, CONFLICT_409_SELF_HEAL_MS, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
 import { TelegramApiError, type TelegramClient } from "../client.js";
 
 const CHAT = -100;
@@ -151,25 +151,73 @@ describe("rate-limit back-off (#321)", () => {
   });
 });
 
-describe("repeated 409 is terminal (#830)", () => {
-  it("stops after a bounded number of attempts and logs exactly once", async () => {
+describe("restart-drain 409 tolerance (#850)", () => {
+  it("a burst of 3 consecutive 409s right after start does NOT go terminal", async () => {
     const token = freshToken();
     const getUpdates = vi.fn(async () => {
       throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
     });
-    const client = {
-      ...parkedClient().client,
-      getUpdates,
-    } as TelegramClient;
+    const client = { ...parkedClient().client, getUpdates } as TelegramClient;
     const log = vi.fn();
-    const bridge = createTelegramBridge(opts(token, client, { log }));
+    // Frozen clock: the sustained-409 window can never elapse in this test, so
+    // the ONLY reason to survive here is the removal of the attempt-count guard.
+    const bridge = createTelegramBridge(opts(token, client, { log, now: () => 1_000 }));
+    start(bridge);
+
+    await vi.waitFor(() => expect(getUpdates.mock.calls.length).toBeGreaterThanOrEqual(3));
+    await tick(30);
+
+    expect(bridge.health().polling).toBe(true);
+    const logged = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).not.toMatch(/poll stopped/);
+    expect(bridge.health().lastError).toMatch(/409/);
+  });
+
+  it("yields to a genuinely foreign live lock holder (real protection preserved)", async () => {
+    const token = freshToken();
+    const getUpdates = vi.fn(async () => {
+      throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
+    });
+    const client = { ...parkedClient().client, getUpdates } as TelegramClient;
+    const log = vi.fn();
+    const foreignPid = process.ppid; // a live process that is not this one
+    const bridge = createTelegramBridge(opts(token, client, { log, now: () => 1_000 }));
+    start(bridge);
+    await vi.waitFor(() => expect(getUpdates).toHaveBeenCalled());
+
+    // A different live process takes the poll lock while we are polling.
+    fs.writeFileSync(telegramPollLockPath(token), String(foreignPid));
+
+    await vi.waitFor(() => expect(bridge.health().polling).toBe(false));
+    const logged = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/409/);
+    expect(logged).toContain(String(foreignPid)); // the holder is named
+  });
+
+  it("after a terminal stop, re-attempts the poll with backoff (self-heal)", async () => {
+    const token = freshToken();
+    let clock = 0;
+    const getUpdates = vi.fn(async () => {
+      clock += 60_000; // each attempt pushes past the sustained window
+      throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
+    });
+    const client = { ...parkedClient().client, getUpdates } as TelegramClient;
+    const log = vi.fn();
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const schedule = (fn: () => void, ms: number) => {
+      timers.push({ fn, ms });
+      return () => {};
+    };
+    const bridge = createTelegramBridge(opts(token, client, { log, now: () => clock, schedule }));
     start(bridge);
 
     await vi.waitFor(() => expect(bridge.health().polling).toBe(false));
+    expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/poll stopped/);
+    expect(timers).toHaveLength(1);
+    expect(timers[0].ms).toBe(CONFLICT_409_SELF_HEAL_MS);
 
-    expect(getUpdates).toHaveBeenCalledTimes(3);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0][0])).toMatch(/409/);
-    expect(bridge.health().lastError).toMatch(/409/);
+    const before = getUpdates.mock.calls.length;
+    timers[0].fn(); // the backoff elapses
+    await vi.waitFor(() => expect(getUpdates.mock.calls.length).toBeGreaterThan(before));
   });
 });
