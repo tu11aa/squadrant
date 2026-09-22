@@ -120,9 +120,6 @@ export interface TelegramBridgeOptions {
    *  Absent ⇒ the bridge skips the stage-2 typing handoff (text + reaction still
    *  fire). */
   lifecycle?: InboundLifecycle;
-  /** #850: injected clock (tests). Drives the sustained-409 window. Defaults to
-   *  Date.now. */
-  now?: () => number;
   /** #850: injected scheduler (tests) for the post-stop self-heal backoff.
    *  Defaults to setTimeout. */
   schedule?: (fn: () => void, ms: number) => () => void;
@@ -137,21 +134,22 @@ const LONG_POLL_SEC = 50;
 // dir keyed by a token hash, so it works across processes (dev harnesses,
 // manually-started daemons) — not just within one daemon.
 const POLL_LOCK_STALE_MS = 2 * 60_000;
-// #850: the #830 guard counted *attempts* (3), but what a restart must tolerate —
-// its own predecessor still holding the Bot API getUpdates slot — lasts up to one
-// long-poll window (~50 s). Three 409s land within seconds, so a routine daemon
-// bounce tripped the guard and killed inbound permanently (no recovery). The guard
-// is now two-part, and never permanent:
-//   1. Yield immediately ONLY when a DIFFERENT live process holds the poll lock —
-//      a real second consumer (the #830 protection). A restart's predecessor is
-//      already dead, so it can never trip this.
-//   2. Otherwise tolerate the burst and stop only once 409s are sustained longer
-//      than the long-poll window. A stop then schedules a self-healing re-attempt,
-//      so inbound recovers without operator action once the slot frees.
-/** Sustained 409s (>1.8× the 50 s long-poll) before a terminal stop. */
-export const CONFLICT_409_TERMINAL_MS = 90_000;
-/** Backoff before the self-heal re-attempt that follows a terminal 409 stop. */
-export const CONFLICT_409_SELF_HEAL_MS = 30_000;
+// #830: repeated 409s mean a foreign getUpdates consumer holds this bot token's
+// poll slot. Retrying forever was the ~11.6k-line storm, so a couple of retries
+// absorb a transient race and then the poll stops. The storm protection stays.
+//
+// #850: that stop used to be PERMANENT — inbound stayed dead until the next
+// operator restart even after the competing consumer went away. (The competing
+// consumer is genuine and can be remote — e.g. an older host polling the same
+// token — so the poll cannot assume it is transient.) Keep the terminal stop but
+// make it self-heal: after a terminal stop the loop re-attempts on a long
+// backoff, so one bounded probe per interval recovers inbound by itself once the
+// consumer is gone — without re-creating the #830 storm.
+const CONFLICT_409_TERMINAL_AFTER = 3;
+/** Long backoff before the self-heal re-attempt that follows a terminal 409
+ *  stop. Long on purpose: the competing consumer may be remote/persistent, so
+ *  the poll probes sparsely rather than storming (#830/#850). */
+export const CONFLICT_409_SELF_HEAL_MS = 5 * 60_000;
 
 /** Exclusive lockfile path for a bot token's single getUpdates consumer. */
 export function telegramPollLockPath(token: string): string {
@@ -217,10 +215,10 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
 
 /** #850: the recorded pid of a DIFFERENT live process holding the token's poll
  *  lock, or null when the lock is free, unreadable, or held by this process.
- *  Used to tell a real second consumer (→ yield) apart from a restart's own
- *  predecessor — whose process is already dead, so a restart drain never trips
- *  this and never yields. */
-export function foreignPollLockHolder(token: string, selfPid: number = process.pid): number | null {
+ *  Logged when the poll refuses to start, so a future diagnosis names the local
+ *  holder in one line. (A REMOTE competing consumer holds no local lock — that
+ *  case surfaces only as 409s.) */
+function foreignPollLockHolder(token: string, selfPid: number = process.pid): number | null {
   const file = telegramPollLockPath(token);
   let pid: number;
   try {
@@ -284,7 +282,6 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   const lifecycle = opts.lifecycle;
   const configRoot = opts.configRoot ?? path.join(os.homedir(), ".config", "squadrant");
   const pollMs = cfg.pollMs ?? 1000;
-  const now = opts.now ?? Date.now;
   const schedule = opts.schedule ?? defaultSchedule;
   // Same token resolution as the daemon host: a config token, else the env fallback.
   const lockToken = cfg.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
@@ -295,10 +292,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   // terminal 409 stop (an operator stop must stay stopped).
   let pollStopped = false;
   let selfHealCancel: (() => void) | null = null;
-  // #850: when the current sustained-409 burst began, or null when the last poll
-  // succeeded (the terminal window is time-based, not attempt-based, so a restart
-  // drain can't trip it).
-  let conflictSince: number | null = null;
+  let conflictCount = 0;
   let lastSuccessfulPollAt: number | null = null;
   let lastError: string | null = null;
   let lastErrorAt: number | null = null;
@@ -780,7 +774,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   /** #850 self-heal: a terminal 409 stop is not permanent. After a backoff,
    *  re-take the poll lock (if free) and restart the loop, so inbound recovers
-   *  without operator action once the competing holder/drain is gone. */
+   *  without operator action once the competing consumer is gone. */
   function scheduleSelfHeal(): void {
     selfHealCancel?.();
     selfHealCancel = schedule(() => {
@@ -791,6 +785,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         return;
       }
       running = true;
+      conflictCount = 0; // a fresh attempt gets a fresh burst allowance
       log("telegram inbound poll re-attempting after a 409 stop (#850)");
       void pollLoop();
     }, CONFLICT_409_SELF_HEAL_MS);
@@ -804,37 +799,25 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       try {
         const offset = loadState(stateRoot).offset;
         const updates = await client.getUpdates(offset, LONG_POLL_SEC, ac.signal);
-        conflictSince = null;
+        conflictCount = 0;
         for (const u of updates) {
           await handleUpdate(u);
           persistOffset(u.update_id + 1);
         }
-        lastSuccessfulPollAt = now();
+        lastSuccessfulPollAt = Date.now();
       } catch (e) {
         if (ac.signal.aborted) break; // stop() cancelled an in-flight long-poll — not an error
         const msg = (e as Error).message;
         lastError = msg;
-        lastErrorAt = now();
+        lastErrorAt = Date.now();
+        // #830: repeated 409 means another consumer holds the token's poll slot.
+        // Retrying forever is the 11.6k-line storm; log once and stop. The stop
+        // self-heals on a long backoff (see the CONFLICT_409_* block / #850).
         if (e instanceof TelegramApiError && e.code === 409) {
-          // #850: a restart's own predecessor holds the Bot API getUpdates slot
-          // for up to a long-poll window, so the first 409s after a bounce are
-          // expected. Yield ONLY to a different live lock holder; otherwise
-          // tolerate the burst until it outlasts that window (never an attempt
-          // count, which three quick 409s would trip).
-          const first = conflictSince === null;
-          if (first) conflictSince = now();
-          const holder = lockToken ? foreignPollLockHolder(lockToken) : null;
-          const sustainedMs = now() - (conflictSince ?? now());
-          if (holder !== null) {
-            log(`telegram inbound poll stopped: 409 conflict, a different process (pid ${holder}) holds the poll lock (#850) — ${msg}`);
+          conflictCount += 1;
+          if (conflictCount >= CONFLICT_409_TERMINAL_AFTER) {
+            log(`telegram inbound poll stopped: repeated 409 conflict (another getUpdates consumer holds this token) — ${msg}`);
             break;
-          }
-          if (sustainedMs >= CONFLICT_409_TERMINAL_MS) {
-            log(`telegram inbound poll stopped: 409 conflict sustained ${Math.round(sustainedMs / 1000)}s > ${CONFLICT_409_TERMINAL_MS / 1000}s (another getUpdates consumer holds this token) — ${msg}`);
-            break;
-          }
-          if (first) {
-            log(`telegram inbound poll: tolerating 409 conflict while a predecessor/consumer drains (retrying, self-healing — #850) — ${msg}`);
           }
         } else {
           log(`telegram inbound poll failed: ${msg}`);
@@ -875,6 +858,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
         }
       }
       running = true;
+      conflictCount = 0;
       // #838 §4 restart safety: the lifecycle's boot pass (resume or clear a
       // persisted pending entry) is bound to the daemon, not to the poll loop —
       // it must run even while another daemon holds the poll lock, or a stranded
