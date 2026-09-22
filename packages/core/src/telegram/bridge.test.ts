@@ -133,8 +133,10 @@ describe("handleUpdate routing", () => {
     expect(d.appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({ project: "brove", source: "telegram" }),
     );
-    // #517 follow-up: "launched" is a live-captain-reachable success, same as "alive".
-    expect(d.sendReply).toHaveBeenCalledWith(7, "📨 delivered to brove captain");
+    // #517 follow-up: "launched" is a live-captain-reachable success, same as
+    // "alive". #848: the ensure result is a probe, not a delivery verdict, so it
+    // produces no receipt — the stage-2 ACK is the single success line.
+    expect(d.sendReply).toHaveBeenCalledWith(7, "✅ captain received");
     bridge.stop();
   });
 
@@ -144,7 +146,7 @@ describe("handleUpdate routing", () => {
     const d = deps({ ensureCaptainAlive: vi.fn(async () => "alive" as const) });
     const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
     await drained;
-    expect(d.sendReply).toHaveBeenCalledWith(7, "📨 delivered to brove captain");
+    expect(d.sendReply).toHaveBeenCalledWith(7, "✅ captain received");
     expect(d.appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({ project: "brove", source: "telegram" }),
     );
@@ -163,17 +165,24 @@ describe("handleUpdate routing", () => {
     bridge.stop();
   });
 
-  it("sends an explicit failure into the topic when warmup times out but still queues the message", async () => {
+  it("#848: a warmup timeout no longer fires a failure line — the delivery verdict does", async () => {
+    // The ensure is a probe, not a delivery verdict. It used to gate delivery for
+    // up to 120s and then emit `❌ couldn't reach` *before* delivery was attempted —
+    // even when the message then landed. Worst case: the probe times out, the
+    // channel delivers anyway.
     setTopic(stateRoot, "brove", 7);
     const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
-    const d = deps({ ensureCaptainAlive: vi.fn(async () => "timeout" as const) });
+    const d = deps({
+      ensureCaptainAlive: vi.fn(async () => "timeout" as const),
+      deliverInbound: vi.fn(async () => ({ handled: true, outcome: { status: "accepted" as const, via: "claude-peer" as const, confirmed: true } })),
+    });
     const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
     await drained;
-    expect(d.sendReply).toHaveBeenCalledWith(
-      7,
-      "❌ couldn't reach brove captain — saved to mailbox, will deliver when you open the workspace.",
-    );
-    expect(d.appendCaptainMessage).toHaveBeenCalled();
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies.some((t: string) => t.includes("couldn't reach") || t.includes("❌"))).toBe(false);
+    expect(bodies).toContain("✅ captain received");
+    // The channel delivered, so the mailbox fallback must NOT run a second time.
+    expect(d.appendCaptainMessage).not.toHaveBeenCalled();
     bridge.stop();
   });
 
@@ -438,6 +447,26 @@ describe("two-stage ACK + typing lifecycle (#838)", () => {
     // old per-message flood. Count only the stage-2 body here.
     const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
     expect(bodies.filter((t: string) => t === "✅ captain received")).toHaveLength(1);
+    bridge.stop();
+  });
+
+  it("#848: stage 2 is not blocked by a warmup/ensure that never resolves", async () => {
+    // The ensure can poll for warmupTimeoutMs (120s). Awaiting it before delivery
+    // is exactly what made a live captain's ACK arrive ~2 min late. Since the
+    // bridge no longer awaits it, `drained` resolves on the delivery verdict even
+    // when the probe never settles at all.
+    setTopic(stateRoot, "brove", 7);
+    const begin = vi.fn();
+    const d = deps({
+      lifecycle: { begin },
+      ensureCaptainAlive: vi.fn(() => new Promise<never>(() => {})),
+      deliverInbound: vi.fn(async () => ({ handled: true, outcome: { status: "accepted" as const, via: "claude-peer" as const, confirmed: true } })),
+    } as any);
+    const { bridge, drained } = drive({ cfg: ctrlCfg, ...d }, [topicMsgWithId("ship it", 7, 555)]);
+    await drained;
+    const bodies = (d.sendReply as any).mock.calls.map((c: unknown[]) => c[1] as string);
+    expect(bodies).toContain("✅ captain received");
+    expect(begin).toHaveBeenCalledWith("brove", 7);
     bridge.stop();
   });
 

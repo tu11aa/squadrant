@@ -582,26 +582,24 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       );
     }
     setNotify(stateRoot, resolved.project, true); // engagement → auto-unmute (sticky)
+    // #848: the auto-launch/ensure is a best-effort boot of a DOWN captain — it is
+    // NOT a delivery verdict, and it must never gate the delivery below nor the
+    // stage-2 ACK. Awaiting it (warmupTimeoutMs defaults to 120_000) made a live
+    // captain's ACK land two minutes late, and its `timeout` probe produced the
+    // `❌ couldn't reach` line *before* the delivery had even been attempted — the
+    // #834 false-negative family on the ensure path. Kick it off in the background
+    // and let the delivery verdict below decide every receipt. The ensure result is
+    // logged only; it is never rendered to the operator.
     if (ensureCaptainAlive && isControlEnabled(cfg) && isAuthorized(fromId, cfg)) {
-      try {
-        const r = await ensureCaptainAlive(resolved.project);
-        // The ensure() result IS the delivery signal — "live captain reachable",
-        // not "message read" (no cap-side ack protocol). Surfacing it means a
-        // false-positive isAlive (#517) fails loud in Telegram instead of silently
-        // stranding the message in the mailbox.
-        if (r === "timeout") {
-          await reply(threadId, `❌ couldn't reach ${resolved.project} captain — saved to mailbox, will deliver when you open the workspace.`);
-        } else if (r === "unknown") {
-          // #834: a transient/unobservable health state is NOT evidence the
-          // captain is dead. Stay quiet — the mailbox fallback below delivers.
-        } else {
-          await reply(threadId, `📨 delivered to ${resolved.project} captain`);
-        }
-      } catch (e) {
-        log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`);
-      }
+      void ensureCaptainAlive(resolved.project)
+        .then((r) => {
+          if (r === "timeout") {
+            log(`telegram auto-launch: warmup timed out project=${resolved.project} — delivery verdict (not this probe) decides the receipt`);
+          }
+        })
+        .catch((e) => log(`telegram auto-launch failed project=${resolved.project}: ${(e as Error).message}`));
     }
-    
+
     let handled = false;
     let outcome: DeliveryOutcome | undefined;
     if (opts.deliverInbound) {
