@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { TelegramConfig } from "@squadrant/shared";
 import type { Update } from "@grammyjs/types";
-import { createTelegramBridge, pollBackoffMs, telegramPollLockPath, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
+import { createTelegramBridge, pollBackoffMs, telegramPollLockPath, CONFLICT_409_SELF_HEAL_MS, type TelegramBridge, type TelegramBridgeOptions } from "../bridge.js";
 import { TelegramApiError, type TelegramClient } from "../client.js";
 
 const CHAT = -100;
@@ -151,25 +151,89 @@ describe("rate-limit back-off (#321)", () => {
   });
 });
 
-describe("repeated 409 is terminal (#830)", () => {
-  it("stops after a bounded number of attempts and logs exactly once", async () => {
+describe("terminal 409 stop self-heals (#850)", () => {
+  /** A getUpdates that always 409s — a persistent competing consumer. */
+  const conflictClient = (getUpdates = vi.fn(async () => {
+    throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
+  })) => ({ client: { ...parkedClient().client, getUpdates } as TelegramClient, getUpdates });
+
+  const captureSchedule = () => {
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const schedule = (fn: () => void, ms: number) => {
+      timers.push({ fn, ms });
+      return () => {};
+    };
+    return { timers, schedule };
+  };
+
+  it("after a terminal stop, re-attempts on the long interval (injected, no real wait)", async () => {
     const token = freshToken();
-    const getUpdates = vi.fn(async () => {
-      throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
-    });
-    const client = {
-      ...parkedClient().client,
-      getUpdates,
-    } as TelegramClient;
+    const { client, getUpdates } = conflictClient();
     const log = vi.fn();
-    const bridge = createTelegramBridge(opts(token, client, { log }));
+    const { timers, schedule } = captureSchedule();
+    const bridge = createTelegramBridge(opts(token, client, { log, schedule }));
     start(bridge);
 
     await vi.waitFor(() => expect(bridge.health().polling).toBe(false));
+    expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/poll stopped/);
+    expect(timers).toHaveLength(1);
+    expect(timers[0].ms).toBe(CONFLICT_409_SELF_HEAL_MS);
 
-    expect(getUpdates).toHaveBeenCalledTimes(3);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0][0])).toMatch(/409/);
-    expect(bridge.health().lastError).toMatch(/409/);
+    const before = getUpdates.mock.calls.length;
+    timers[0].fn(); // the long backoff elapses
+    await vi.waitFor(() => expect(getUpdates.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("a persistent 409 does NOT produce a retry storm", async () => {
+    const token = freshToken();
+    const { client, getUpdates } = conflictClient();
+    const { timers, schedule } = captureSchedule();
+    const bridge = createTelegramBridge(opts(token, client, { log: vi.fn(), schedule }));
+    start(bridge);
+
+    await vi.waitFor(() => expect(bridge.health().polling).toBe(false));
+    expect(getUpdates).toHaveBeenCalledTimes(3); // one bounded burst, then stopped
+    await tick(60);
+    expect(getUpdates).toHaveBeenCalledTimes(3); // no rapid retry while the timer is pending
+
+    // A self-heal cycle is also bounded (3 probes), then stops again.
+    const last = () => timers[timers.length - 1];
+    last().fn();
+    await vi.waitFor(() => expect(getUpdates).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() => expect(bridge.health().polling).toBe(false));
+    await tick(60);
+    expect(getUpdates).toHaveBeenCalledTimes(6);
+  });
+
+  it("recovers to a live poll when the competing consumer goes away", async () => {
+    const token = freshToken();
+    let phase: "conflict" | "ok" = "conflict";
+    const getUpdates = vi.fn(async () => {
+      if (phase === "conflict") {
+        throw new TelegramApiError(409, "telegram getUpdates failed (409): Conflict: terminated by other getUpdates request");
+      }
+      return [] as Update[];
+    });
+    const client = { ...parkedClient().client, getUpdates } as TelegramClient;
+    const { timers, schedule } = captureSchedule();
+    const bridge = createTelegramBridge(opts(token, client, { log: vi.fn(), schedule }));
+    start(bridge);
+    await vi.waitFor(() => expect(bridge.health().polling).toBe(false)); // terminal
+
+    phase = "ok"; // the competing consumer is gone
+    timers[timers.length - 1].fn();
+    await vi.waitFor(() => expect(bridge.health().lastSuccessfulPollAt).not.toBeNull());
+    expect(bridge.health().polling).toBe(true);
+  });
+
+  it("names the poll-lock holder pid when refusing at boot", async () => {
+    const token = freshToken();
+    fs.writeFileSync(telegramPollLockPath(token), String(process.ppid)); // a live, foreign holder
+    const c = parkedClient();
+    const log = vi.fn();
+    start(createTelegramBridge(opts(token, c.client, { log })));
+    await tick();
+    expect(c.getUpdates).not.toHaveBeenCalled();
+    expect(String(log.mock.calls[0][0])).toContain(String(process.ppid));
   });
 });
