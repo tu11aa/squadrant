@@ -24,7 +24,7 @@ import {
   type SquadrantGateShape,
 } from "@squadrant-ai/auto-gate";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
-import { readUserIntent } from "./permission-gate.js";
+import { readUserIntent, resolveGateMode } from "./permission-gate.js";
 
 export interface SquadrantAutoGateDeps {
   config: SquadrantConfig;
@@ -72,9 +72,13 @@ export function createSquadrantAutoGate(deps: SquadrantAutoGateDeps): SquadrantA
   const taskId = env.SQUADRANT_CREW_TASK_ID;
   const project = deps.project ?? env.SQUADRANT_CREW_PROJECT;
 
-  const projected = projectGateConfig({ gate: gateForProjection(deps.config) });
-  const enabled = projected.mode === "on";
-
+  // Resolve the mode the U7 way (env SQUADRANT_GATE → config → auto) and feed
+  // the package a projection whose mode reflects it. `projectGateConfig` maps
+  // an absent/auto config mode to "off", so a router session (SQUADRANT_GATE=on
+  // with no config gate block) would otherwise be a silent no-op (P6-C).
+  const mode = resolveGateMode(env, deps.config.defaults.gate);
+  const projected = projectGateConfig({ gate: { ...gateForProjection(deps.config), mode } });
+  const enabled = mode === "on";
   const blockedSignal = async (ctx: BlockedSignalCtx): Promise<void> => {
     // Same event shape the modal/PermissionRequest path emits (#560/#760); a
     // captain/side session has no task record, so it never emits.

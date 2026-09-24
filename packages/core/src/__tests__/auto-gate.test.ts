@@ -151,8 +151,42 @@ describe("createSquadrantAutoGate — B3 blocked-signal → #560 task.blocked", 
   });
 });
 
-// ── B1: U7 transcript reader wired through ────────────────────────────────────
+// ── P6-C: the host's on-check honours the SQUADRANT_GATE env override ─────────
+// Router-backed crews inject SQUADRANT_GATE=on with NO config gate block. The
+// package's own projection maps an absent/auto config mode to "off", so the
+// squadrant host must resolve the mode the U7 way (env → config → auto) and
+// hand the package a projection whose mode is "on".
 
+describe("createSquadrantAutoGate — env SQUADRANT_GATE override (P6-C)", () => {
+  it("env 'on' with no config gate → decides (not a no-op)", async () => {
+    const { gate, decide } = harness({ env: { ...CREW_ENV, SQUADRANT_GATE: "on" } });
+    expect(gate.config.mode).toBe("on");
+    const out = await gate.decideClaudeHookPayload(HOOK_PAYLOAD);
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(out as string).hookSpecificOutput.decision.behavior).toBe("allow");
+  });
+
+  it("env 'off' with config mode 'on' → NO-OP (env wins)", async () => {
+    const { gate, decide } = harness({
+      gate: { mode: "on" },
+      env: { ...CREW_ENV, SQUADRANT_GATE: "off" },
+    });
+    expect(await gate.decideClaudeHookPayload(HOOK_PAYLOAD)).toBeUndefined();
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("an invalid env value falls back to the config mode (never silently off)", async () => {
+    const { gate, decide } = harness({
+      gate: { mode: "on" },
+      env: { ...CREW_ENV, SQUADRANT_GATE: "banana" },
+    });
+    expect(gate.config.mode).toBe("on");
+    await gate.decideClaudeHookPayload(HOOK_PAYLOAD);
+    expect(decide).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── B1: U7 transcript reader wired through ────────────────────────────────────
 describe("createSquadrantAutoGate — transcript reader (U7 extractUserIntentFromTranscript)", () => {
   it("supplies the last human message from the transcript to the classifier", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ag-intent-"));

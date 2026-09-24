@@ -67,7 +67,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:485
   - packages/cli/src/squadrantd.ts:530
   - packages/cli/src/squadrantd.ts:561
-  - packages/core/src/auto-gate.ts:83
+  - packages/core/src/auto-gate.ts:87
   - packages/core/src/daemon/interactive-probe.ts:202
 - `task.review`
   - packages/cli/src/commands/crew-control.ts:217

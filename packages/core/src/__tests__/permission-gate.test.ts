@@ -15,6 +15,7 @@ import {
   isGateSession,
   matchTier1Deny,
   parseClassifierVerdict,
+  resolveGateEngine,
   resolveGateMode,
   resolveGatePolicy,
   resolveGateTools,
@@ -135,6 +136,24 @@ describe("resolveGateMode", () => {
   it("ignores an invalid value (falls back to config/default)", () => {
     expect(resolveGateMode({ SQUADRANT_GATE: "banana" }, { mode: "on" })).toBe("on");
     expect(resolveGateMode({ SQUADRANT_GATE: "banana" }, {})).toBe("auto");
+  });
+});
+
+describe("resolveGateEngine", () => {
+  it("defaults to router when unconfigured", () => {
+    expect(resolveGateEngine({}, undefined)).toBe("router");
+    expect(resolveGateEngine({}, {})).toBe("router");
+  });
+  it("reads config engine", () => {
+    expect(resolveGateEngine({}, { engine: "auto-gate" })).toBe("auto-gate");
+  });
+  it("env SQUADRANT_GATE_ENGINE overrides config", () => {
+    expect(resolveGateEngine({ SQUADRANT_GATE_ENGINE: "auto-gate" }, { engine: "router" })).toBe("auto-gate");
+    expect(resolveGateEngine({ SQUADRANT_GATE_ENGINE: "router" }, { engine: "auto-gate" })).toBe("router");
+  });
+  it("ignores an invalid value (falls back to config/default)", () => {
+    expect(resolveGateEngine({ SQUADRANT_GATE_ENGINE: "banana" }, { engine: "auto-gate" })).toBe("auto-gate");
+    expect(resolveGateEngine({ SQUADRANT_GATE_ENGINE: "banana" }, {})).toBe("router");
   });
 });
 

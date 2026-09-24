@@ -104,6 +104,17 @@ export function isGatePolicy(v: string): v is GatePolicy {
   return (GATE_POLICIES as readonly string[]).includes(v);
 }
 
+/** Which engine owns the `PermissionRequest` decision when mode is `on`.
+ *  `router` (default) = the U7 in-repo router classifier; `auto-gate` = the
+ *  standalone `@squadrant-ai/auto-gate` package (P6 part C, #828). */
+export type GateEngine = "router" | "auto-gate";
+
+export const GATE_ENGINES: readonly GateEngine[] = ["router", "auto-gate"];
+
+export function isGateEngine(v: string): v is GateEngine {
+  return (GATE_ENGINES as readonly string[]).includes(v);
+}
+
 /** U7 hook-based permission gate (#782). Configures the custom `PermissionRequest`
  *  classifier used on router backends where Claude's built-in auto mode fails
  *  closed. Absent block ⇒ the gate is disabled (mode `auto`). Env vars
@@ -111,6 +122,8 @@ export function isGatePolicy(v: string): v is GatePolicy {
 export interface GateConfig {
   /** Unset ⇒ "auto" (no-op). */
   mode?: GateMode;
+  /** Which engine decides when mode is `on`. Unset ⇒ "router" (the U7 path). */
+  engine?: GateEngine;
   /** Router model alias or literal upstream id. Unset ⇒ crew role model. */
   model?: string;
   /** Unset ⇒ "deny-dangerous". */

@@ -19,6 +19,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync, unlinkSync } from "
 import { dirname, join } from "node:path";
 import {
   CONFIG_DIR,
+  isGateEngine,
   isGateMode,
   isGatePolicy,
   resolveRouterModel,
@@ -129,6 +130,14 @@ export function resolveGateMode(env: NodeJS.ProcessEnv, gate: GateConfig | undef
   const fromEnv = env.SQUADRANT_GATE;
   if (fromEnv !== undefined && isGateMode(fromEnv)) return fromEnv;
   return gate?.mode && isGateMode(gate.mode) ? gate.mode : "auto";
+}
+
+/** Env override > config > default `router`. An invalid env value is ignored
+ *  (never silently switches engines) and falls through. Mirrors resolveGateMode. */
+export function resolveGateEngine(env: NodeJS.ProcessEnv, gate: GateConfig | undefined): "router" | "auto-gate" {
+  const fromEnv = env.SQUADRANT_GATE_ENGINE;
+  if (fromEnv !== undefined && isGateEngine(fromEnv)) return fromEnv;
+  return gate?.engine && isGateEngine(gate.engine) ? gate.engine : "router";
 }
 
 export function resolveGatePolicy(

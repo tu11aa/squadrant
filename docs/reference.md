@@ -573,3 +573,28 @@ opencode additionally gets squadrant's skills projected as **loadable skill dirs
 The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `users` is the per-user-id allowlist for **control** actions and `remoteControl` (default `false`) is the master opt-in for auto-launch + the General command channel — both must be set for any remote control to act (fail-closed, [#321](https://github.com/tu11aa/squadrant/issues/321)). `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
 
 The `defaults.router` block is also **optional** — omit it and every role/rule stays on the `native` backend, so behavior is unchanged. When present, roles and routing rules select `backend: "direct"` or `"proxy"` to route the `claude` harness through an Anthropic-Messages upstream. Full schema, the OpenRouter walkthrough, CCR/LiteLLM alternatives, and the backward-compat guarantee are in [Router Backend (Harness/Provider Decoupling)](#router-backend-harnessprovider-decoupling).
+
+The `defaults.gate` block is **optional** too — omit it and the U7 permission gate is off (`mode` defaults to `auto`, a no-op, so the agent's normal permission flow is untouched). With `mode: "on"`, the new `engine` field selects **who** decides a claude `PermissionRequest`:
+
+```jsonc
+{
+  "defaults": {
+    "gate": {
+      "mode": "on",
+      "engine": "router",       // "router" (default) | "auto-gate"
+      "model": "sonnet",        // router engine only
+      "policy": "deny-dangerous",
+      "tools": ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"],
+      "cache": true,
+      "deny": ["^\\s*sudo\\b"]
+    }
+  }
+}
+```
+
+| `engine` | Behaviour |
+|---|---|
+| `router` **(default)** | U7's in-repo classifier: squadrant calls the configured router model directly (no Anthropic credential). Unchanged. |
+| `auto-gate` | The standalone [`@squadrant-ai/auto-gate`](https://www.npmjs.com/package/@squadrant-ai/auto-gate) package decides (Jev-backed by default; its own config/keys, e.g. `TYPESAFE_API_KEY`). `allow`/`deny` print `hookSpecificOutput.decision.behavior`; `ask` prints nothing and emits exactly one `task.blocked`. |
+
+Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GATE_ENGINE` (engine), `SQUADRANT_GATE_POLICY`, `SQUADRANT_GATE_TOOLS`, `SQUADRANT_GATE_MODEL`. Router-backed crews/captains inject `SQUADRANT_GATE=on`; the auto-gate host honours that env override even when no `defaults.gate` block is present. `engine: "auto-gate"` for an **opencode** crew (wiring the launch through the package's `auto-gate opencode run` wrapper) is **not yet implemented** — see [Router Backend](#router-backend-harnessprovider-decoupling).
