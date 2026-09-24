@@ -18,11 +18,25 @@ describe("buildRouterEnv", () => {
       ANTHROPIC_AUTH_TOKEN: "minted-tok",
       ANTHROPIC_API_KEY: "",
       ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      CLAUDE_CODE_SUBAGENT_MODEL: "deepseek-v4.1-flash",
+      ANTHROPIC_SMALL_FAST_MODEL: "deepseek-v4.1-flash",
       [CMUX_PRESERVE_CLAUDE_AUTH_ENV]: "1",
     });
     // Explicitly empty, never unset — an unset key falls back to Anthropic auth.
     expect(env.ANTHROPIC_API_KEY).toBe("");
     expect("ANTHROPIC_API_KEY" in env).toBe(true);
+  });
+
+  // A router upstream serves only the routed model, so the subagent + small/fast
+  // slots must name it too — a leftover Anthropic alias (`sonnet`) 400s every
+  // subagent/small call against a custom upstream.
+  it("mirrors the model into CLAUDE_CODE_SUBAGENT_MODEL + ANTHROPIC_SMALL_FAST_MODEL", () => {
+    const env = buildRouterEnv(
+      { backend: "proxy", baseUrl: "http://127.0.0.1:53421", token: "t" },
+      "deepseek-v4.1-flash",
+    );
+    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("deepseek-v4.1-flash");
+    expect(env.ANTHROPIC_SMALL_FAST_MODEL).toBe("deepseek-v4.1-flash");
   });
 
   it("direct: upstream baseUrl + real credential + custom headers", () => {
@@ -40,6 +54,8 @@ describe("buildRouterEnv", () => {
       ANTHROPIC_API_KEY: "sk-live",
       ANTHROPIC_CUSTOM_HEADERS: "x-opencode-session: squadrant",
       ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      CLAUDE_CODE_SUBAGENT_MODEL: "deepseek-v4.1-flash",
+      ANTHROPIC_SMALL_FAST_MODEL: "deepseek-v4.1-flash",
       [CMUX_PRESERVE_CLAUDE_AUTH_ENV]: "1",
     });
   });
@@ -47,6 +63,9 @@ describe("buildRouterEnv", () => {
   it("omits ANTHROPIC_MODEL when no model resolved", () => {
     const env = buildRouterEnv({ backend: "proxy", baseUrl: "http://x", token: "t" }, undefined);
     expect("ANTHROPIC_MODEL" in env).toBe(false);
+    // No model ⇒ no subagent/small-fast slots to mirror.
+    expect("CLAUDE_CODE_SUBAGENT_MODEL" in env).toBe(false);
+    expect("ANTHROPIC_SMALL_FAST_MODEL" in env).toBe(false);
   });
 
   it("omits ANTHROPIC_CUSTOM_HEADERS when there are no extra headers", () => {
@@ -96,6 +115,23 @@ describe("mergeClaudeEnvRouterSettings (#772 D1)", () => {
     expect(merged).toEqual(routerEnv);
     expect(merged).not.toBe(routerEnv);
     expect(mergeClaudeEnvRouterSettings(routerEnv, {})).not.toBe(routerEnv);
+  });
+
+  // The router's subagent/small-fast keys are router-owned: folding unrelated
+  // non-ANTHROPIC claudeEnv keys must not strip them.
+  it("does not strip the router's subagent/small-fast keys", () => {
+    const merged = mergeClaudeEnvRouterSettings(
+      {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:53421",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        CLAUDE_CODE_SUBAGENT_MODEL: "deepseek-v4.1-flash",
+        ANTHROPIC_SMALL_FAST_MODEL: "deepseek-v4.1-flash",
+      },
+      { CLAUDE_AFK_TIMEOUT_MS: "240000", CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1" },
+    );
+    expect(merged.CLAUDE_CODE_SUBAGENT_MODEL).toBe("deepseek-v4.1-flash");
+    expect(merged.ANTHROPIC_SMALL_FAST_MODEL).toBe("deepseek-v4.1-flash");
+    expect(merged.CLAUDE_AFK_TIMEOUT_MS).toBe("240000");
   });
 });
 
