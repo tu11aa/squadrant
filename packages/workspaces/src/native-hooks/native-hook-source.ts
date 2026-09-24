@@ -293,10 +293,80 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
     }
   }
 
+  // Claude's subagent + small/fast slots must name the custom upstream's model
+  // too (see reconcileSubagentModels). Runs AFTER the claudeEnv overlay so a base
+  // URL/model supplied only by defaults.claudeEnv is honored.
+  if (typeof settings.env === "object" && settings.env !== null && !Array.isArray(settings.env)) {
+    if (reconcileSubagentModels(settings.env as Record<string, unknown>, log)) changed = true;
+  }
+
   if (changed) {
     writeFile(settingsPath, JSON.stringify(settings, null, 2));
   }
   return settingsPath;
+}
+
+// ── Subagent/small-fast model reconcile ────────────────────────────────────────
+
+/** Claude Code's separate model slots for subagent + small/fast requests. */
+const SUBAGENT_MODEL_KEY = "CLAUDE_CODE_SUBAGENT_MODEL";
+const SMALL_FAST_MODEL_KEY = "ANTHROPIC_SMALL_FAST_MODEL";
+
+/** True when `baseUrl` points anywhere other than Anthropic's own API. An absent
+ *  or unparseable URL is treated as non-custom (do nothing). */
+function isCustomUpstream(baseUrl: unknown): boolean {
+  if (typeof baseUrl !== "string" || baseUrl.length === 0) return false;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() !== "api.anthropic.com";
+  } catch {
+    return false;
+  }
+}
+
+/** True when `value` names an Anthropic model — a bare alias or a `claude-…` id. */
+function isAnthropicModelId(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return v === "sonnet" || v === "opus" || v === "haiku" || v.startsWith("claude-");
+}
+
+/**
+ * A custom/router upstream (e.g. opencode-go) only serves the routed model, so
+ * Claude's subagent + small/fast slots must name it too. Left at an Anthropic
+ * alias (`sonnet`) or a `claude-…` id, every subagent/small request 400s with
+ * "Model is unavailable". Align both slots to `ANTHROPIC_MODEL` when the
+ * settings file targets a custom upstream; leave a custom id the operator chose
+ * untouched. Mutates `env` in place, returns true when anything changed.
+ *
+ * No-op when the base URL is absent/official or no `ANTHROPIC_MODEL` is set.
+ * Idempotent — a second run writes nothing.
+ */
+function reconcileSubagentModels(
+  env: Record<string, unknown>,
+  log: (msg: string) => void,
+): boolean {
+  if (!isCustomUpstream(env.ANTHROPIC_BASE_URL)) return false;
+  const model = env.ANTHROPIC_MODEL;
+  if (typeof model !== "string" || model.length === 0) return false;
+
+  let changed = false;
+  for (const key of [SUBAGENT_MODEL_KEY, SMALL_FAST_MODEL_KEY]) {
+    const current = env[key];
+    if (current === undefined) {
+      env[key] = model;
+      changed = true;
+      log(`native-hook: set ${key}='${model}' to match ANTHROPIC_MODEL on a custom upstream`);
+    } else if (isAnthropicModelId(current)) {
+      if (current !== model) {
+        env[key] = model;
+        changed = true;
+        log(`native-hook: aligned ${key} '${String(current)}' → '${model}' for a custom upstream`);
+      }
+    } else {
+      log(`native-hook: ${key} '${String(current)}' is a custom model id — left untouched`);
+    }
+  }
+  return changed;
 }
 
 // ── Sub-event → lifecycle state mapping ──────────────────────────────────────

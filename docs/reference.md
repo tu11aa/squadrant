@@ -282,6 +282,13 @@ A `model` value is looked up in `defaults.router.models`. If it names an alias, 
 >
 > then set `"model": "flash"` on the role/rule. A kind-derived default alias table (auto-normalizing `opencode-go/…` → `…` for the claude harness) was considered and deliberately **not** added: it would be new behavior outside the U2 schema and could silently rewrite an operator's literal id. Follow-up under epic [#772](https://github.com/tu11aa/squadrant/issues/772).
 
+#### Subagent & small/fast model slots
+
+Claude Code sends **subagent** and **small/fast** requests to separate model slots (`CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`). A router upstream usually serves only the routed model, so a slot left at an Anthropic alias (`sonnet`) makes every subagent/small call fail with `400 … Model is unavailable`. Squadrant keeps the slots in sync automatically, in two places:
+
+- **Routed spawns.** `buildRouterEnv` mirrors the resolved model into `ANTHROPIC_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, and `ANTHROPIC_SMALL_FAST_MODEL`, so a routed `claude` crew/captain never asks the upstream for a model it does not have. A `native` spawn injects none of them (byte-for-byte unchanged).
+- **`~/.claude/settings.json` reconcile.** On every daemon boot, `installClaudeHooks` aligns those two keys to `ANTHROPIC_MODEL` **only when** `ANTHROPIC_BASE_URL` points at a custom (non-`api.anthropic.com`) upstream: an absent key is filled, a bare Claude alias (`sonnet`/`opus`/`haiku`) or a `claude-…` id is aligned, and any other (custom) id is left untouched. An official/absent base URL is a no-op, no other `env` key is touched, and the `defaults.claudeEnv` non-clobbering precedence is preserved.
+
 #### Backward compatibility & migration
 
 - **No `config.router` ⇒ zero behavior change.** The shim is never constructed, every backend resolves to `native`, nothing is injected, and `loadConfig` performs no router backfill or migration. Existing `roles.*.model` / `rules[].model` literals pass through the alias resolver unchanged.

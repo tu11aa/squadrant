@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Claude's subagent + small/fast model slots now stay in sync with the routed model, so they no longer 400 on a custom upstream.** A router upstream (e.g. opencode-go) serves only the routed model, so `CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL` left at an Anthropic alias made every subagent/small request fail with `400 … Model is unavailable`. `buildRouterEnv` now mirrors the resolved model into both slots for a routed spawn, and `installClaudeHooks` reconciles them against `ANTHROPIC_MODEL` in `~/.claude/settings.json` on every boot when the base URL is a custom (non-`api.anthropic.com`) upstream — filling absent keys, aligning bare Claude aliases / `claude-…` ids, and leaving custom ids untouched. `native` spawns stay byte-for-byte unchanged and the `defaults.claudeEnv` non-clobbering precedence is preserved.
+
 ## [0.22.0] - 2026-09-22
 
 Telegram reliability hardening, plus a live daemon-log tab in the web dashboard and a provider-preset chooser for `squadrant init`. Excludes the in-progress auto-gate work.
