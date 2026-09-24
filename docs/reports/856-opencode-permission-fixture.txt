@@ -1,0 +1,8 @@
+  ✗ Read file src/index.ts
+  ✓ Read file package.json
+
+┃  △ Permission required
+┃    ← Access external directory ~/.config/auto-gate
+┃  Patterns
+┃  - /Users/q3labsadmin/.config/auto-gate/*
+┃   Allow once   Allow always   Reject        ctrl+f fullscreen  ⇆ select  enter confirm
