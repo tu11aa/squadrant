@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in `@squadrant-ai/auto-gate` engine for the permission gate (#828, P6 part C).** `defaults.gate.engine` now selects who decides a claude `PermissionRequest` when the gate is on: `router` (default — the existing U7 in-repo classifier, byte-for-byte unchanged) or `auto-gate`, which hands the raw hook payload to the standalone `@squadrant-ai/auto-gate` package. Env override `SQUADRANT_GATE_ENGINE` mirrors the other gate resolvers; the auto-gate host now honours the `SQUADRANT_GATE=on` env override router-backed crews already inject, so no `defaults.gate` block is required. `allow`/`deny` print `hookSpecificOutput.decision.behavior`; `ask` prints nothing and emits exactly one `task.blocked`. Out of the box (`defaults.gate` absent) behaviour is unchanged.
+
 ### Fixed
 
 - **Claude's subagent + small/fast model slots now stay in sync with the routed model, so they no longer 400 on a custom upstream.** A router upstream (e.g. opencode-go) serves only the routed model, so `CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL` left at an Anthropic alias made every subagent/small request fail with `400 … Model is unavailable`. `buildRouterEnv` now mirrors the resolved model into both slots for a routed spawn, and `installClaudeHooks` reconciles them against `ANTHROPIC_MODEL` in `~/.claude/settings.json` on every boot when the base URL is a custom (non-`api.anthropic.com`) upstream — filling absent keys, aligning bare Claude aliases / `claude-…` ids, and leaving custom ids untouched. `native` spawns stay byte-for-byte unchanged and the `defaults.claudeEnv` non-clobbering precedence is preserved.

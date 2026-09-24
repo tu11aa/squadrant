@@ -17,12 +17,17 @@ import { Command } from "commander";
 import { sendRequest } from "@squadrant/core";
 import {
   GateDecisionCache,
+  createSquadrantAutoGate,
   isGateSession,
   evaluatePermissionRequest,
   formatPermissionDecision,
   readUserIntent,
+  resolveGateEngine,
+  resolveGateMode,
   type DecisionCacheLike,
   type GateEvaluation,
+  type SquadrantAutoGate,
+  type SquadrantAutoGateDeps,
 } from "@squadrant/core";
 import { DAEMON_SOCK_PATH, loadConfig, type SquadrantConfig } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
@@ -32,6 +37,9 @@ const SOCK = DAEMON_SOCK_PATH;
 
 export interface GateHookDeps {
   payload: unknown;
+  /** The RAW hook JSON string. The auto-gate engine parses it itself; U7 only
+   *  needs the parsed object. Optional so existing callers/tests stay valid. */
+  rawPayload?: string;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
   config?: SquadrantConfig;
@@ -45,6 +53,49 @@ export interface GateHookDeps {
   sendEvent?: (project: string, event: ControlEvent) => Promise<void>;
   loadConfigFn?: () => SquadrantConfig;
   readIntent?: (transcriptPath: string | undefined) => string | null;
+  /** Injectable for tests; defaults to the squadrant auto-gate host (P6-C). */
+  createAutoGate?: (deps: SquadrantAutoGateDeps) => SquadrantAutoGate;
+}
+
+/**
+ * P6-C (#828): dispatch a claude `PermissionRequest` to the standalone
+ * `@squadrant-ai/auto-gate` engine. The package owns the decision; we only
+ * serialize its output and let it map an `ask` to the existing #560
+ * `task.blocked` (via the injected blocked-signal).
+ */
+async function runAutoGateClaudeHook(o: {
+  deps: GateHookDeps;
+  env: NodeJS.ProcessEnv;
+  config: SquadrantConfig;
+  project: string | undefined;
+  stdout: (s: string) => void;
+  log: (m: string) => void;
+}): Promise<GateEvaluation> {
+  const make = o.deps.createAutoGate ?? createSquadrantAutoGate;
+  const autoGate = make({
+    config: o.config,
+    env: o.env,
+    ...(o.project ? { project: o.project } : {}),
+    ...(o.deps.sendEvent ? { sendBlocked: o.deps.sendEvent } : {}),
+    log: o.log,
+  });
+  const out = await autoGate.decideClaudeHookPayload(o.deps.rawPayload ?? "");
+  if (out === undefined) {
+    // ask/yield: emit nothing to Claude so the normal dialog appears; the
+    // package already fired exactly one task.blocked for a crew.
+    o.log("gate auto-gate: ask/yield — normal dialog");
+    return { decision: "ask", tier: 2, reason: "auto-gate: ask/yield" };
+  }
+  o.stdout(out);
+  let decision: "allow" | "deny" = "allow";
+  try {
+    const parsed = JSON.parse(out) as { hookSpecificOutput?: { decision?: { behavior?: unknown } } };
+    if (parsed?.hookSpecificOutput?.decision?.behavior === "deny") decision = "deny";
+  } catch {
+    // Defensive only — formatClaudeHookOutput always emits well-formed JSON.
+  }
+  o.log(`gate auto-gate ${decision}`);
+  return { decision, tier: 2, reason: "auto-gate" };
 }
 
 /**
@@ -76,6 +127,13 @@ export async function runGatePermissionRequest(deps: GateHookDeps): Promise<Gate
   const stdout = deps.stdout ?? (() => {});
   const log = deps.log ?? ((m: string) => process.stderr.write(`[squadrant] ${m}\n`));
   const config = deps.config ?? (deps.loadConfigFn ?? loadConfig)();
+
+  // P6-C (#828): `mode=on + engine=auto-gate` hands the prompt to the standalone
+  // package. The default (`router`) keeps the U7 path below byte-for-byte.
+  const gate = config.defaults.gate;
+  if (resolveGateMode(env, gate) === "on" && resolveGateEngine(env, gate) === "auto-gate") {
+    return runAutoGateClaudeHook({ deps, env, config, project, stdout, log });
+  }
 
   const cwd =
     deps.cwd ??
@@ -165,6 +223,7 @@ export function gateCommand(): Command {
 
       await runGatePermissionRequest({
         payload,
+        rawPayload: stdin,
         env: process.env,
         stdout: (s) => process.stdout.write(s),
         sendEvent: async (project, ev) => {

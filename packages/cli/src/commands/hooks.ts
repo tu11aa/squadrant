@@ -153,6 +153,7 @@ export function hooksCommand(): Command {
       if (sub === "permission-request") {
         await runGatePermissionRequest({
           payload,
+          rawPayload: stdin,
           env: process.env,
           stdout: (s) => process.stdout.write(s),
           sendEvent: async (project, ev) => {
