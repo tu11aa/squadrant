@@ -1864,3 +1864,106 @@ describe("purge (#378)", () => {
   });
 });
 
+// ── Bug #857: a crew stuck in 'blocked' never re-notifies ─────────────────────
+// Two gaps: (1) a SECOND question while already blocked hit the "same state"
+// guard in firePush and was silently dropped; (2) a crew that STAYS blocked
+// had no re-nudge at all. B1 fires a fresh push when the question differs (a
+// literally-identical repeat stays suppressed per #174); B2 emits exactly one
+// reminder per blocked episode once it outlives the threshold.
+describe("daemon – blocked re-notification (#857)", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "cp-d-renotify-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  // B1: a DIFFERENT question on a second approval.requested must notify.
+  it("a DIFFERENT question on a second approval.requested fires a fresh CREW BLOCKED (#857 B1)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-q1", { state: "blocked", question: "first question?" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.approval.requested", id: "t-q1", requestId: 1, question: "second question?", kind: "bash" } });
+    expect(store.get("p", "t-q1")?.state).toBe("blocked");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("CREW BLOCKED");
+    expect(calls[0].message).toContain("second question?");
+  });
+
+  // B1: the SAME question re-emitted is still a no-op (#174 preserved).
+  it("the SAME question re-emitted stays suppressed — no duplicate (#174 preserved)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-q2", { state: "blocked", question: "same?" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.approval.requested", id: "t-q2", requestId: 2, question: "same?", kind: "bash" } });
+    expect(calls).toHaveLength(0);
+  });
+
+  // B1: same guard for the input.requested variant.
+  it("a DIFFERENT question on task.input.requested also fires a fresh CREW BLOCKED (#857 B1)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-q3", { state: "blocked", question: "old?" }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 2000, notify: async (a) => { calls.push(a); } });
+    await d.handle({ kind: "event", project: "p", event: { type: "task.input.requested", id: "t-q3", requestId: 3, question: "new?" } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("new?");
+  });
+
+  // B2: one reminder once the episode outlives the threshold, then silence.
+  it("a crew blocked past the threshold gets exactly one re-nudge reminder (#857 B2)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-nudge", { state: "blocked", question: "which env?", lastHeartbeat: 0, heartbeatBudgetMs: 86_400_000 }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 31 * 60_000, notify: async (a) => { calls.push(a); }, blockedRenudgeMs: 30 * 60_000 });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("CREW BLOCKED REMINDER");
+    expect(calls[0].message).toContain("which env?");
+    expect(calls[0].message).toMatch(/reminder/i);
+    // Second sweep — no spam.
+    calls.length = 0;
+    await d.sweep();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not re-nudge a blocked crew still within the threshold (#857 B2)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-nudge2", { state: "blocked", question: "q?", lastHeartbeat: 0, heartbeatBudgetMs: 86_400_000 }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 5 * 60_000, notify: async (a) => { calls.push(a); }, blockedRenudgeMs: 30 * 60_000 });
+    await d.sweep();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a new blocked episode re-nudges after the previous one is answered (#857 B2 reset)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-ep", { state: "blocked", question: "q1?", lastHeartbeat: 0, heartbeatBudgetMs: 86_400_000 }));
+    const calls: any[] = [];
+    const clock = { t: 31 * 60_000 };
+    const d = createDaemon({ store, now: () => clock.t, notify: async (a) => { calls.push(a); }, blockedRenudgeMs: 30 * 60_000 });
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    // Captain answers → working (leaves the blocked episode).
+    await d.handle({ kind: "event", project: "p", event: { type: "task.started", id: "t-ep" } });
+    // Crew blocks again later.
+    await d.handle({ kind: "event", project: "p", event: { type: "task.approval.requested", id: "t-ep", requestId: 4, question: "q2?", kind: "bash" } });
+    calls.length = 0;
+    clock.t += 31 * 60_000;
+    await d.sweep();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("CREW BLOCKED REMINDER");
+  });
+
+  it("does not re-nudge while the operator holds the crew (#649 stays authoritative)", async () => {
+    const store = createStore(dir);
+    store.put(rec("t-hold", {
+      state: "blocked", question: "q?", lastHeartbeat: 0, heartbeatBudgetMs: 86_400_000,
+      operatorHold: { since: 0, note: "operator" },
+    }));
+    const calls: any[] = [];
+    const d = createDaemon({ store, now: () => 31 * 60_000, notify: async (a) => { calls.push(a); }, blockedRenudgeMs: 30 * 60_000 });
+    await d.sweep();
+    expect(calls.filter((c) => /CREW BLOCKED REMINDER/.test(c.message))).toHaveLength(0);
+  });
+});
+

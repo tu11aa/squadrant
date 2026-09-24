@@ -80,6 +80,13 @@ export interface DaemonDeps {
   firstTurnUndeliveredBudgetMs?: number;
   /** Override for testing; production default is DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS. */
   firstTurnResendCooldownMs?: number;
+  /**
+   * #857: once a crew has been 'blocked' continuously for longer than this, the
+   * sweep emits ONE reminder (CREW BLOCKED REMINDER) — explicitly the same
+   * question, not a new one — then stays quiet for the rest of the episode.
+   * Defaults to DEFAULT_BLOCKED_RENUDGE_MS (30min).
+   */
+  blockedRenudgeMs?: number;
 }
 
 // #466: dedicated, tight budget for detecting an undelivered first turn —
@@ -94,6 +101,11 @@ export const DEFAULT_FIRST_TURN_UNDELIVERED_BUDGET_MS = 120_000;
 // Minimum gap between resend attempts for the same task — avoids hammering a
 // still-not-ready pane with pastes every sweep tick.
 export const DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS = 60_000;
+
+// #857: how long a crew may sit in 'blocked' before the sweep emits a single
+// reminder. Bounded per blocked episode (the episode ends when the crew leaves
+// 'blocked'), so an unanswered crew is nudged once — never spammed.
+export const DEFAULT_BLOCKED_RENUDGE_MS = 30 * 60 * 1000;
 
 // #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
 // heartbeat continuously yet be stuck on one task — the stall watchdog won't
@@ -233,9 +245,18 @@ function firePush(
   next: TaskRecord,
   event: ControlEvent,
   lastCaptainTurnAt?: number,
+  prevRec?: TaskRecord,
 ): void {
   if (!deps.notify) return;
-  if (prev === next.state) return;
+  // #857: a new question arriving while already 'blocked' keeps the state but is
+  // genuinely new information — notify. A literally-identical repeat stays
+  // suppressed (preserves #174's "first question wins, no duplicate" intent).
+  const questionChanged =
+    prev === "blocked" &&
+    next.state === "blocked" &&
+    prevRec != null &&
+    (prevRec.question ?? "").trim() !== (next.question ?? "").trim();
+  if (prev === next.state && !questionChanged) return;
   if (!ATTENTION_STATES.has(next.state)) return;
 
   // #649: the operator is driving this tab. Any attention state now reflects
@@ -317,6 +338,11 @@ export function createDaemon(deps: DaemonDeps) {
   // the quiet episode so exactly one QUIET fires per episode; when the crew shows
   // activity again, liveness advances and a later quiet episode re-notifies.
   const quietNotifiedAt = new Map<string, number>();
+  // #857: per-task marker for the CURRENT blocked episode's one CREW BLOCKED
+  // REMINDER — the stored value is the question the reminder was sent for.
+  // A different question (a new episode) may nudge again; leaving 'blocked'
+  // clears the marker entirely. A long block nudges once, never spams.
+  const blockedRenudgedFor = new Map<string, string>();
   // #466: per-task debounce for first-turn resend attempts — avoids hammering
   // a still-not-ready pane with pastes every sweep tick.
   const resendAttemptedAt = new Map<string, number>();
@@ -340,7 +366,7 @@ export function createDaemon(deps: DaemonDeps) {
     const next = reduce(cur, event, now());
     if (next !== cur) {
       store.put(next); // skip redundant write on terminal no-ops
-      firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id));
+      firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id), cur);
     }
     return next;
   }
@@ -511,6 +537,10 @@ export function createDaemon(deps: DaemonDeps) {
       const recoveryPromises: Promise<void>[] = [];
 
       for (const r of store.listAll()) {
+        // #857: leaving 'blocked' ends the re-nudge episode — a later block
+        // starts a fresh one. Done before any early `continue` below so the
+        // marker never outlives the episode.
+        if (r.state !== "blocked") blockedRenudgedFor.delete(r.id);
         // #378: GC terminal records whose last heartbeat is older than the TTL.
         if (TERMINAL_STATES.has(r.state) && t - r.lastHeartbeat > TERMINAL_RECORD_TTL_MS) {
           store.delete(r.project, r.id);
@@ -603,6 +633,29 @@ export function createDaemon(deps: DaemonDeps) {
           if (liveness === "gone") {
             store.put({ ...r, state: "cancelled", lastEvent: "sweep.surface-gone" });
             continue;
+          }
+        }
+        // #857: a crew that STAYS blocked past the threshold gets ONE reminder —
+        // explicitly the same question (not a new one) — then stays quiet for the
+        // rest of the episode. Placed after the surface-gone reap so a dead
+        // surface is terminalized silently instead of nudged. Skipped while the
+        // operator holds the crew (#649 owns every push for a held crew).
+        if (r.state === "blocked" && !r.operatorHold) {
+          const threshold = deps.blockedRenudgeMs ?? DEFAULT_BLOCKED_RENUDGE_MS;
+          const blockedFor = t - r.lastHeartbeat;
+          const episodeKey = r.question ?? "";
+          if (blockedFor > threshold && blockedRenudgedFor.get(r.id) !== episodeKey) {
+            blockedRenudgedFor.set(r.id, episodeKey);
+            if (deps.notify) {
+              const tag = crewTag(r);
+              const mins = Math.max(1, Math.round(blockedFor / 60000));
+              const message = `CREW BLOCKED REMINDER ${tag}: still blocked ~${mins}min (reminder — same question, not a new one): ${(r.question ?? "(no question)").trim()}`;
+              const synthEvent: ControlEvent = { type: "task.blocked", id: r.id, reason: "renudge", question: r.question ?? "" };
+              try {
+                const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+              } catch { /* swallowed — a flaky notifier must never trip the sweep */ }
+            }
           }
         }
         // #466-single: An interactive crew spawned but never started stays in

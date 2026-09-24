@@ -9,8 +9,11 @@ import type { RuntimeDriver, PaneRef, ModalOption } from "@squadrant/shared";
 import { findCrewPane } from "./crew-spawn.js";
 
 export interface CrewAnswerDeps {
-  /** Read the crew pane's screen and parse its open modal (null = none visible). */
-  readModalOptions(pane: PaneRef): Promise<ModalOption[] | null>;
+  /** Read the crew pane's screen and parse its open modal (null = none visible).
+   *  `axis` is the arrow direction that moves the selection: "vertical" for
+   *  claude's ❯ list (Up/Down), "horizontal" for opencode's ⇆ permission bar
+   *  (Left/Right, #856). */
+  readModalOptions(pane: PaneRef): Promise<{ options: ModalOption[]; axis: "vertical" | "horizontal" } | null>;
   log?(msg: string): void;
 }
 
@@ -68,13 +71,14 @@ export async function runCrewAnswer(
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
 
-  const options = await deps.readModalOptions(crew);
-  if (!options) {
+  const modal = await deps.readModalOptions(crew);
+  if (!modal || modal.options.length === 0) {
     throw new Error(
       `Crew '${name}' has no interactive option prompt visible right now — nothing to answer. ` +
         `Read its screen with 'squadrant crew read ${project} ${name}' to check its state.`,
     );
   }
+  const options = modal.options;
 
   const target = resolveOption(options, option);
   if (opts?.expect && !target.label.toLowerCase().includes(opts.expect.toLowerCase())) {
@@ -90,9 +94,13 @@ export async function runCrewAnswer(
 
   // Drive from wherever ❯ currently sits, not from row 1 — the highlighted
   // default is whatever the model rendered, not necessarily option 1.
+  // #856: the axis comes from the detected dialog shape — claude's ❯ list moves
+  // Up/Down, opencode's ⇆ permission bar moves Left/Right. Both confirm on Enter.
   const current = options.find((o) => o.highlighted) ?? options[0];
   const steps = target.index - current.index;
-  const key = steps >= 0 ? "Down" : "Up";
+  const forwardKey = modal.axis === "horizontal" ? "Right" : "Down";
+  const backwardKey = modal.axis === "horizontal" ? "Left" : "Up";
+  const key = steps >= 0 ? forwardKey : backwardKey;
   for (let i = 0; i < Math.abs(steps); i++) {
     await runtime.sendKeyToPane(crew, key);
   }

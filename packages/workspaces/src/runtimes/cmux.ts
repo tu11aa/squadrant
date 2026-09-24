@@ -318,6 +318,66 @@ export function parseModalOptions(screen: string): ModalOption[] | null {
 }
 
 /**
+ * #856: parse an opencode permission dialog. It is a different shape from
+ * claude's numbered ❯ list — a left-bordered panel headed with
+ * `△ Permission required` and a single footer row of space-separated option
+ * labels followed by a `⇆ select  enter confirm` (and optional `… fullscreen`)
+ * hint bar:
+ *
+ *   ┃  △ Permission required
+ *   ┃    ← Access external directory ~/.config/auto-gate
+ *   ┃  Patterns
+ *   ┃  - /Users/…/.config/auto-gate/*
+ *   ┃   Allow once   Allow always   Reject   ctrl+f fullscreen  ⇆ select  enter confirm
+ *
+ * cmux read-screen captures plain text (no ANSI), so opencode's background-
+ * colour highlight on the selected option is invisible; opencode always starts
+ * on the first option (keys[0]), which is returned as `highlighted`. Returns
+ * null when the shape isn't present (e.g. claude's modal, the "Always allow"
+ * confirm sub-prompt, or a genuine input box), so callers fall through safely.
+ */
+export function parseOpencodePermissionOptions(screen: string): ModalOption[] | null {
+  if (!screen) return null;
+  // Require the permission header: it keeps the "Always allow" confirm
+  // sub-prompt (which shares the ⇆ footer but is headed `△ Always allow`) and
+  // any other ⇆-footer surface from being mistaken for the permission chooser.
+  if (!/△\s*Permission required/.test(screen)) return null;
+  const lines = screen.split(/\r?\n/);
+  // The option row is the one carrying opencode's ⇆ / enter footer.
+  const bar = lines.find((l) => /⇆\s*select/.test(l));
+  if (!bar) return null;
+  // Everything before the footer glyph is the option row (plus a trailing
+  // `… fullscreen` hint). Drop the hint, then the leading box border/padding.
+  let region = bar.split("⇆")[0];
+  const fullscreenIdx = region.toLowerCase().lastIndexOf("fullscreen");
+  if (fullscreenIdx !== -1) {
+    region = region.slice(0, fullscreenIdx).replace(/\s+\S+\s*$/, "");
+  }
+  region = region.replace(/^[\s┃│╭╮╰╯|]+/, "").trim();
+  if (!region) return null;
+  const labels = region.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+  if (labels.length === 0) return null;
+  return labels.map((label, i) => ({ index: i + 1, label, highlighted: i === 0 }));
+}
+
+/**
+ * #856: read a dialog's option list plus the arrow axis that moves its
+ * selection. claude's AskUserQuestion/permission list highlights with ❯ and
+ * navigates vertically (Up/Down); opencode's permission bar navigates
+ * horizontally (Left/Right, per its ⇆ select hint). `crew answer` uses the
+ * axis to pick the right keys. Returns null when no option list is visible.
+ */
+export function parseModal(
+  screen: string,
+): { options: ModalOption[]; axis: "vertical" | "horizontal" } | null {
+  const claude = parseModalOptions(screen);
+  if (claude) return { options: claude, axis: "vertical" };
+  const opencode = parseOpencodePermissionOptions(screen);
+  if (opencode) return { options: opencode, axis: "horizontal" };
+  return null;
+}
+
+/**
  * Extract the RAW input-box content for the #302 buffer-liveness probe — all
  * content lines between the last two HRs, joined, with the prompt glyph and any
  * trailing cursor glyph stripped (but NOT the #294 ghost heuristics: the probe

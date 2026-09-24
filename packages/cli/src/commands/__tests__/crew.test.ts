@@ -1181,10 +1181,13 @@ describe("squadrant crew answer (#592)", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
     readModalOptionsMock
-      .mockResolvedValueOnce([
-        { index: 1, label: "Red", highlighted: true },
-        { index: 2, label: "Blue", highlighted: false },
-      ])
+      .mockResolvedValueOnce({
+        axis: "vertical",
+        options: [
+          { index: 1, label: "Red", highlighted: true },
+          { index: 2, label: "Blue", highlighted: false },
+        ],
+      })
       .mockResolvedValueOnce(null);
 
     const result = await runCrewAnswer("brove", "crew-1", "2");
@@ -1192,6 +1195,30 @@ describe("squadrant crew answer (#592)", () => {
     expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down");
     expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
     expect(result).toEqual({ selected: { index: 2, label: "Blue", highlighted: false }, closed: true });
+  });
+
+  // #856: the CLI wrapper must drive an opencode permission dialog with
+  // Left/Right, proving the axis plumbed through from the parser.
+  it("drives Right/Enter for an opencode permission dialog (horizontal axis)", async () => {
+    listSurfaces.mockResolvedValue([
+      { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
+    ]);
+    readModalOptionsMock
+      .mockResolvedValueOnce({
+        axis: "horizontal",
+        options: [
+          { index: 1, label: "Allow once", highlighted: true },
+          { index: 2, label: "Allow always", highlighted: false },
+          { index: 3, label: "Reject", highlighted: false },
+        ],
+      })
+      .mockResolvedValueOnce(null);
+
+    const result = await runCrewAnswer("brove", "crew-1", "Allow always");
+
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(result).toEqual({ selected: { index: 2, label: "Allow always", highlighted: false }, closed: true });
   });
 
   it("throws when no option list is visible", async () => {

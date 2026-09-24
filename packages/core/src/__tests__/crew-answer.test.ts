@@ -41,6 +41,11 @@ const THREE_OPTIONS: ModalOption[] = [
   { index: 3, label: "Green", highlighted: false },
 ];
 
+// #856: readModalOptions now returns the options plus the arrow axis that moves
+// the selection — claude's ❯ list is vertical (Up/Down), opencode's ⇆ bar is
+// horizontal (Left/Right). The claude mocks keep their option set and add the axis.
+const VERTICAL_MODAL = { options: THREE_OPTIONS, axis: "vertical" as const };
+
 describe("runCrewAnswer", () => {
   it("throws when crew pane not found", async () => {
     const runtime = makeRuntime([]);
@@ -65,7 +70,7 @@ describe("runCrewAnswer", () => {
   it("resolves an option by 1-based index and drives Down/Enter from the highlighted row", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValueOnce(THREE_OPTIONS).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(PROJECT, "crew-1", "3", runtime, "workspace:1", { readModalOptions });
     // highlighted is index 1, target is index 3 → two Down presses, then Enter.
     expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down");
@@ -78,7 +83,7 @@ describe("runCrewAnswer", () => {
   it("resolves an option by exact text match, case-insensitive", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValueOnce(THREE_OPTIONS).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(PROJECT, "crew-1", "blue", runtime, "workspace:1", { readModalOptions });
     expect(result.selected).toEqual({ index: 2, label: "Blue", highlighted: false });
   });
@@ -86,7 +91,7 @@ describe("runCrewAnswer", () => {
   it("resolves an option by unambiguous text prefix", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValueOnce(THREE_OPTIONS).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(PROJECT, "crew-1", "Gr", runtime, "workspace:1", { readModalOptions });
     expect(result.selected).toEqual({ index: 3, label: "Green", highlighted: false });
   });
@@ -94,7 +99,7 @@ describe("runCrewAnswer", () => {
   it("throws when the index has no matching option", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValue(THREE_OPTIONS);
+    const readModalOptions = vi.fn().mockResolvedValue(VERTICAL_MODAL);
     await expect(
       runCrewAnswer(PROJECT, "crew-1", "9", runtime, "workspace:1", { readModalOptions }),
     ).rejects.toThrow(/No option 9/);
@@ -104,7 +109,7 @@ describe("runCrewAnswer", () => {
   it("throws when the text has no matching option", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValue(THREE_OPTIONS);
+    const readModalOptions = vi.fn().mockResolvedValue(VERTICAL_MODAL);
     await expect(
       runCrewAnswer(PROJECT, "crew-1", "Purple", runtime, "workspace:1", { readModalOptions }),
     ).rejects.toThrow(/No option matches "Purple"/);
@@ -115,7 +120,7 @@ describe("runCrewAnswer", () => {
   it("--expect refuses when the resolved option's label doesn't contain the expected text", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValue(THREE_OPTIONS);
+    const readModalOptions = vi.fn().mockResolvedValue(VERTICAL_MODAL);
     await expect(
       runCrewAnswer(PROJECT, "crew-1", "2", runtime, "workspace:1", { readModalOptions }, { expect: "Green" }),
     ).rejects.toThrow(/Refusing.*does not contain expected text "Green"/s);
@@ -125,7 +130,7 @@ describe("runCrewAnswer", () => {
   it("--expect passes when the resolved option's label contains the expected text", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValueOnce(THREE_OPTIONS).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(
       PROJECT, "crew-1", "2", runtime, "workspace:1", { readModalOptions }, { expect: "blue" },
     );
@@ -135,7 +140,7 @@ describe("runCrewAnswer", () => {
   it("reports closed:false when the modal is still visible after driving the selection", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValue(THREE_OPTIONS); // still open on re-read
+    const readModalOptions = vi.fn().mockResolvedValue(VERTICAL_MODAL); // still open on re-read
     const result = await runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", { readModalOptions });
     expect(result.closed).toBe(false);
   });
@@ -147,7 +152,7 @@ describe("runCrewAnswer", () => {
       { index: 1, label: "Red", highlighted: true },
       { index: 2, label: "Type something.", highlighted: false },
     ];
-    const readModalOptions = vi.fn().mockResolvedValueOnce(options).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce({ options, axis: "vertical" }).mockResolvedValueOnce(null);
     await runCrewAnswer(
       PROJECT, "crew-1", "2", runtime, "workspace:1", { readModalOptions }, { text: "Use branch main" },
     );
@@ -160,9 +165,60 @@ describe("runCrewAnswer", () => {
   it("logs which option it is about to select before driving it", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
-    const readModalOptions = vi.fn().mockResolvedValueOnce(THREE_OPTIONS).mockResolvedValueOnce(null);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const log = vi.fn();
     await runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", { readModalOptions, log });
     expect(log).toHaveBeenCalledWith(expect.stringContaining('selecting 1. "Red"'));
+  });
+
+  // #856: an opencode permission dialog lays its options out in a ⇆ bar, so the
+  // selection moves with Left/Right (NOT claude's Up/Down) and confirms with Enter.
+  const OPENCODE_MODAL = {
+    options: [
+      { index: 1, label: "Allow once", highlighted: true },
+      { index: 2, label: "Allow always", highlighted: false },
+      { index: 3, label: "Reject", highlighted: false },
+    ] as ModalOption[],
+    axis: "horizontal" as const,
+  };
+
+  it("drives Right then Enter for an opencode permission dialog (horizontal axis)", async () => {
+    const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime([existing]);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
+    const result = await runCrewAnswer(PROJECT, "crew-1", "Allow always", runtime, "workspace:1", { readModalOptions });
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ selected: { index: 2, label: "Allow always", highlighted: false }, closed: true });
+  });
+
+  it("sends only Enter when the opencode dialog's first option is already selected", async () => {
+    const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime([existing]);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
+    await runCrewAnswer(PROJECT, "crew-1", "Allow once", runtime, "workspace:1", { readModalOptions });
+    expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(1);
+    expect(runtime.sendKeyToPane).toHaveBeenCalledWith(expect.anything(), "Enter");
+  });
+
+  it("drives two Rights to reach the opencode Reject option", async () => {
+    const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime([existing]);
+    const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
+    await runCrewAnswer(PROJECT, "crew-1", "Reject", runtime, "workspace:1", { readModalOptions });
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Right");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(3, expect.anything(), "Enter");
+  });
+
+  it("opencode --expect refuses on mismatch and lists the visible options", async () => {
+    const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime([existing]);
+    const readModalOptions = vi.fn().mockResolvedValue(OPENCODE_MODAL);
+    await expect(
+      runCrewAnswer(PROJECT, "crew-1", "Allow always", runtime, "workspace:1", { readModalOptions }, { expect: "Reject" }),
+    ).rejects.toThrow(/Refusing.*does not contain expected text "Reject"/s);
+    expect(runtime.sendKeyToPane).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
+import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1503,6 +1503,67 @@ describe("parseModalOptions (#592 crew answer option-list parser)", () => {
       { index: 2, label: "Blue", highlighted: true },
       { index: 3, label: "Green", highlighted: false },
     ]);
+  });
+});
+
+// #856: opencode renders its permission prompt as a left-bordered panel with a
+// single footer row of space-separated option labels and a ⇆/enter hint bar,
+// NOT claude's numbered ❯ list. cmux read-screen captures plain text (no ANSI),
+// so the selected option's background-colour highlight is invisible — opencode
+// always starts on the first option (keys[0]), which is the honest default.
+describe("parseModal / parseOpencodePermissionOptions (#856 opencode permission dialog)", () => {
+  const fixture = () =>
+    readFileSync(join(process.cwd(), "docs/reports/856-opencode-permission-fixture.txt"), "utf-8");
+
+  it("parses the captured opencode permission dialog into the three option labels", () => {
+    expect(parseOpencodePermissionOptions(fixture())).toEqual([
+      { index: 1, label: "Allow once", highlighted: true },
+      { index: 2, label: "Allow always", highlighted: false },
+      { index: 3, label: "Reject", highlighted: false },
+    ]);
+  });
+
+  it("returns null without the `Permission required` header (footer shape alone is not enough)", () => {
+    const screen = "┃   Allow once   Allow always   Reject        ctrl+f fullscreen  ⇆ select  enter confirm";
+    expect(parseOpencodePermissionOptions(screen)).toBeNull();
+  });
+
+  it("handles a dialog with no fullscreen hint on the option row", () => {
+    const screen = ["┃ △ Permission required", "┃   Allow once   Allow always   Reject   ⇆ select  enter confirm"].join("\n");
+    expect(parseOpencodePermissionOptions(screen)).toEqual([
+      { index: 1, label: "Allow once", highlighted: true },
+      { index: 2, label: "Allow always", highlighted: false },
+      { index: 3, label: "Reject", highlighted: false },
+    ]);
+  });
+
+  it("parseModal returns axis 'horizontal' for the opencode dialog", () => {
+    expect(parseModal(fixture())).toEqual({
+      axis: "horizontal",
+      options: [
+        { index: 1, label: "Allow once", highlighted: true },
+        { index: 2, label: "Allow always", highlighted: false },
+        { index: 3, label: "Reject", highlighted: false },
+      ],
+    });
+  });
+
+  it("parseModal returns axis 'vertical' for the claude AskUserQuestion modal", () => {
+    const claude = readFileSync(join(process.cwd(), "docs/reports/484-askuserquestion-fixture.txt"), "utf-8");
+    expect(parseModal(claude)).toEqual({
+      axis: "vertical",
+      options: [
+        { index: 1, label: "Red", highlighted: true },
+        { index: 2, label: "Blue", highlighted: false },
+        { index: 3, label: "Green", highlighted: false },
+        { index: 4, label: "Type something.", highlighted: false },
+      ],
+    });
+  });
+
+  it("parseModal returns null when neither shape is present", () => {
+    const idle = readFileSync(join(process.cwd(), "docs/reports/484-idle-fixture.txt"), "utf-8");
+    expect(parseModal(idle)).toBeNull();
   });
 });
 

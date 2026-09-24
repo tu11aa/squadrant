@@ -405,7 +405,7 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 
 `squadrant crew send` correctly **refuses** to touch a pane while a crew has an AskUserQuestion/permission modal open — a bare keystroke would confirm whatever option the model happened to highlight ([#484](https://github.com/tu11aa/squadrant/issues/484)). That used to be a dead end: the refusal's own advice ("wait for the prompt to close") was unactionable, since the prompt only closes when answered.
 
-`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection (`Down`/`Up` from wherever the highlighted row currently sits, then `Enter`):
+`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection, then `Enter`:
 
 ```
 $ squadrant crew read myproj video          # see the options first
@@ -421,6 +421,7 @@ $ squadrant crew answer myproj video 1
 - `--expect "<text>"` refuses if the resolved option's label doesn't contain that text — a guard against the option order shifting between renders (it's model-generated, not fixed).
 - `--text "<answer>"` is for a free-text option (e.g. "Type something."): select it, then type the given answer and submit.
 - If no option list is visible, `crew answer` refuses rather than guessing — read the screen with `crew read` first.
+- **Both agent dialog shapes are recognised.** claude's AskUserQuestion/permission list (`❯ N. Label` between horizontal rules) is driven with `Down`/`Up`; an opencode permission prompt (`△ Permission required` with an `Allow once   Allow always   Reject` bar and a `⇆ select  enter confirm` footer) is driven with `Left`/`Right` — its selection is a `⇆` row, not a vertical list ([#856](https://github.com/tu11aa/squadrant/issues/856)). Because cmux reads the pane as plain text (no ANSI), opencode's background-colour highlight is invisible; its known first-option default is treated as the current selection, and text/`--expect` matching still applies.
 
 `squadrant crew reply <project> <id> [message]` (control-plane path, keyed by task id instead of crew name) now delivers through the same path as `crew send` **before** transitioning task state — never the reverse. If delivery throws (e.g. the prompt is open), the command exits non-zero and no state transition happens; the error points at `crew answer`.
 
@@ -432,6 +433,7 @@ $ squadrant crew answer myproj video 1
 
 - **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/squadrant/issues/332)).
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
+- **Blocked crews re-notify** — a `CREW BLOCKED` push is not one-shot. A *different* question arriving while a crew is already blocked fires a fresh notification (an identical repeat stays suppressed — the first question wins, [#174](https://github.com/tu11aa/squadrant/issues/174)), and a crew that stays blocked past ~30 minutes gets exactly one `CREW BLOCKED REMINDER` (explicitly the same question, never a new one), then stays quiet for the rest of that episode ([#857](https://github.com/tu11aa/squadrant/issues/857)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
 - **Status: superseded for claude by the control channel.** The semantic heartbeat above still runs, but delivery confirmation for claude crews now comes from an agent receipt (`controlChannel=on`), not pane inference — see [Control/Captain Channel (#667)](#controlcaptain-channel-667).
 
