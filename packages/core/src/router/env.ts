@@ -41,7 +41,14 @@ export function buildRouterEnv(
     const headers = formatCustomHeaders(creds.extraHeaders);
     if (headers) env.ANTHROPIC_CUSTOM_HEADERS = headers;
   }
-  if (model) env.ANTHROPIC_MODEL = model;
+  if (model) {
+    env.ANTHROPIC_MODEL = model;
+    // A custom/router upstream only serves the routed model, so Claude's
+    // subagent + small/fast slots must name it too — a leftover Anthropic alias
+    // (e.g. `sonnet`) 400s every subagent/small call against the upstream.
+    env.CLAUDE_CODE_SUBAGENT_MODEL = model;
+    env.ANTHROPIC_SMALL_FAST_MODEL = model;
+  }
   return env;
 }
 

@@ -11,6 +11,9 @@ importers:
       '@inquirer/checkbox':
         specifier: ^4.1.5
         version: 4.3.2(@types/node@22.19.21)
+      '@squadrant-ai/auto-gate':
+        specifier: 0.2.0
+        version: 0.2.0
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -99,6 +102,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@squadrant-ai/auto-gate':
+        specifier: 0.2.0
+        version: 0.2.0
       '@squadrant/shared':
         specifier: workspace:*
         version: link:../shared
@@ -472,6 +478,11 @@ packages:
     resolution: {integrity: sha512-5L+T1fMX4RIEBoZzT0+sQ0PhTS36NULFmMXtl1TZo44TMAROIMHbZufSOjVWt/Y622BtxgxtaNOokbTDvfsrZA==}
     cpu: [x64]
     os: [win32]
+
+  '@squadrant-ai/auto-gate@0.2.0':
+    resolution: {integrity: sha512-tQ8z53cZYPvVKIEGXV8JHaEpMRREzT2d/YeNB8eP6agBVpv0MlqlqE1bOv/M7JACf24gRipvoQZq/limINAJOg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1172,6 +1183,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.62.0':
     optional: true
+
+  '@squadrant-ai/auto-gate@0.2.0': {}
 
   '@types/chai@5.2.3':
     dependencies:

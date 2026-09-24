@@ -75,6 +75,55 @@ function removeCommandHandlers(entries: unknown[], command: string): boolean {
   return removed;
 }
 
+/**
+ * #P6 (§15#5): the standalone `auto-gate` package appends this marker to its
+ * PermissionRequest hook command. Detection matches the marker OR a parsed argv
+ * basename of `auto-gate`, so `auto-gate decide …` and `node …/auto-gate …`
+ * forms are recognized even without the marker (mirrors the package's own
+ * `isOurCommand`).
+ */
+const FOREIGN_AUTO_GATE_MARKER = "auto-gate-managed";
+
+function isForeignAutoGateCommand(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  if (command.includes(FOREIGN_AUTO_GATE_MARKER)) return true;
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  return /(^|[/\\])auto-gate$/.test(first);
+}
+
+/** Commands of any foreign `auto-gate` handlers in a hook event's entry list. */
+function findForeignGateHandlers(entries: unknown[]): string[] {
+  const found: string[] = [];
+  for (const entry of entries) {
+    const hooks = (entry as { hooks?: unknown[] })?.hooks;
+    if (!Array.isArray(hooks)) continue;
+    for (const h of hooks) {
+      const cmd = (h as { command?: unknown })?.command;
+      if (isForeignAutoGateCommand(cmd)) found.push(cmd as string);
+    }
+  }
+  return found;
+}
+
+/** Remove foreign `auto-gate` handlers; returns the removed commands. */
+function removeForeignGateHandlers(entries: unknown[]): string[] {
+  const removed: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as { hooks?: unknown[] };
+    if (!Array.isArray(entry?.hooks)) continue;
+    entry.hooks = entry.hooks.filter((h) => {
+      const cmd = (h as { command?: unknown })?.command;
+      if (isForeignAutoGateCommand(cmd)) {
+        removed.push(cmd as string);
+        return false;
+      }
+      return true;
+    });
+    if (entry.hooks.length === 0) entries.splice(i, 1);
+  }
+  return removed;
+}
+
 // ── Hook installer ────────────────────────────────────────────────────────────
 
 export interface ClaudeHooksInstallOpts {
@@ -97,6 +146,15 @@ export interface ClaudeHooksInstallOpts {
    * squadrant config's defaults.claudeEnv.
    */
   claudeEnv?: Record<string, string>;
+  /**
+   * #P6 (§15#5): squadrant's own gate mode. A foreign `auto-gate`
+   * PermissionRequest handler is removed ONLY when this is "on" — `auto`/absent
+   * is squadrant's documented no-op, so there is no conflict and the foreign
+   * handler is left untouched (warned + recorded either way).
+   */
+  gateMode?: "on" | "off" | "auto";
+  /** #P6: records a gate-ownership action (the daemon log is the warn). */
+  recordGateAction?: (entry: { action: "removed-foreign-gate" | "left-foreign-gate"; command: string }) => void;
 }
 
 /**
@@ -151,6 +209,32 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
       if (legacy !== command && removeCommandHandlers(entries, legacy)) {
         changed = true;
         migrated.push(`${eventName}/${sub}`);
+      }
+
+      // #P6 (§15#5): squadrant wins the PermissionRequest event when its own
+      // gate is ON — remove a foreign standalone `auto-gate` handler so a prompt
+      // is never processed by two owners. When the gate is `auto`/`off` there is
+      // no conflict, so the foreign handler is left untouched. Warn + record
+      // either way.
+      const foreign = findForeignGateHandlers(entries);
+      if (foreign.length > 0) {
+        if (opts.gateMode === "on") {
+          const removed = removeForeignGateHandlers(entries);
+          if (removed.length > 0) changed = true;
+          for (const command of removed) {
+            log(
+              `native-hook: removed foreign auto-gate PermissionRequest handler in ${settingsPath} [#P6 §15#5]: ${command}`,
+            );
+            opts.recordGateAction?.({ action: "removed-foreign-gate", command });
+          }
+        } else {
+          for (const command of foreign) {
+            log(
+              `native-hook: foreign auto-gate PermissionRequest handler present in ${settingsPath} but squadrant's gate is '${opts.gateMode ?? "auto"}' (not 'on') — foreign entry left untouched [#P6 §15#5]: ${command}`,
+            );
+            opts.recordGateAction?.({ action: "left-foreign-gate", command });
+          }
+        }
       }
     }
 
@@ -209,10 +293,80 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
     }
   }
 
+  // Claude's subagent + small/fast slots must name the custom upstream's model
+  // too (see reconcileSubagentModels). Runs AFTER the claudeEnv overlay so a base
+  // URL/model supplied only by defaults.claudeEnv is honored.
+  if (typeof settings.env === "object" && settings.env !== null && !Array.isArray(settings.env)) {
+    if (reconcileSubagentModels(settings.env as Record<string, unknown>, log)) changed = true;
+  }
+
   if (changed) {
     writeFile(settingsPath, JSON.stringify(settings, null, 2));
   }
   return settingsPath;
+}
+
+// ── Subagent/small-fast model reconcile ────────────────────────────────────────
+
+/** Claude Code's separate model slots for subagent + small/fast requests. */
+const SUBAGENT_MODEL_KEY = "CLAUDE_CODE_SUBAGENT_MODEL";
+const SMALL_FAST_MODEL_KEY = "ANTHROPIC_SMALL_FAST_MODEL";
+
+/** True when `baseUrl` points anywhere other than Anthropic's own API. An absent
+ *  or unparseable URL is treated as non-custom (do nothing). */
+function isCustomUpstream(baseUrl: unknown): boolean {
+  if (typeof baseUrl !== "string" || baseUrl.length === 0) return false;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() !== "api.anthropic.com";
+  } catch {
+    return false;
+  }
+}
+
+/** True when `value` names an Anthropic model — a bare alias or a `claude-…` id. */
+function isAnthropicModelId(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return v === "sonnet" || v === "opus" || v === "haiku" || v.startsWith("claude-");
+}
+
+/**
+ * A custom/router upstream (e.g. opencode-go) only serves the routed model, so
+ * Claude's subagent + small/fast slots must name it too. Left at an Anthropic
+ * alias (`sonnet`) or a `claude-…` id, every subagent/small request 400s with
+ * "Model is unavailable". Align both slots to `ANTHROPIC_MODEL` when the
+ * settings file targets a custom upstream; leave a custom id the operator chose
+ * untouched. Mutates `env` in place, returns true when anything changed.
+ *
+ * No-op when the base URL is absent/official or no `ANTHROPIC_MODEL` is set.
+ * Idempotent — a second run writes nothing.
+ */
+function reconcileSubagentModels(
+  env: Record<string, unknown>,
+  log: (msg: string) => void,
+): boolean {
+  if (!isCustomUpstream(env.ANTHROPIC_BASE_URL)) return false;
+  const model = env.ANTHROPIC_MODEL;
+  if (typeof model !== "string" || model.length === 0) return false;
+
+  let changed = false;
+  for (const key of [SUBAGENT_MODEL_KEY, SMALL_FAST_MODEL_KEY]) {
+    const current = env[key];
+    if (current === undefined) {
+      env[key] = model;
+      changed = true;
+      log(`native-hook: set ${key}='${model}' to match ANTHROPIC_MODEL on a custom upstream`);
+    } else if (isAnthropicModelId(current)) {
+      if (current !== model) {
+        env[key] = model;
+        changed = true;
+        log(`native-hook: aligned ${key} '${String(current)}' → '${model}' for a custom upstream`);
+      }
+    } else {
+      log(`native-hook: ${key} '${String(current)}' is a custom model id — left untouched`);
+    }
+  }
+  return changed;
 }
 
 // ── Sub-event → lifecycle state mapping ──────────────────────────────────────

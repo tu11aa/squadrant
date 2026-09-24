@@ -233,6 +233,114 @@ describe("installClaudeHooks — #782 permission-gate migration", () => {
   });
 });
 
+// ── installClaudeHooks — P6 foreign auto-gate handler (spec §15#5) ────────────
+
+describe("installClaudeHooks — P6 foreign auto-gate removal (conditional precedence)", () => {
+  const commandsOf = (entries: unknown[]): string[] =>
+    entries.flatMap((e) =>
+      Array.isArray((e as Record<string, unknown>).hooks)
+        ? ((e as Record<string, unknown>).hooks as Array<Record<string, unknown>>)
+            .map((h) => h.command)
+            .filter((c): c is string => typeof c === "string")
+        : [],
+    );
+  const foreignEntry = (command: string) => ({
+    matcher: "",
+    hooks: [{ type: "command", command }],
+  });
+  const FOREIGN_MARKED = "auto-gate decide --agent claude # auto-gate-managed";
+
+  it("(a) gate ON + foreign auto-gate present → foreign removed, ours installed + recorded", () => {
+    const log = vi.fn();
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    opts.gateMode = "on";
+    opts.log = log;
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    const commands = commandsOf(result.hooks.PermissionRequest);
+    expect(commands).not.toContain(FOREIGN_MARKED);
+    expect(commands).toContain("squadrant gate claude permission-request");
+    expect(recorded).toEqual([{ action: "removed-foreign-gate", command: FOREIGN_MARKED }]);
+    expect(log.mock.calls.some(([m]) => /foreign auto-gate/i.test(m) && /removed/i.test(m))).toBe(true);
+  });
+
+  it("(a2) gate ON detects a foreign handler by argv basename `auto-gate` (no marker)", () => {
+    const foreign = { matcher: "", hooks: [{ type: "command", command: "auto-gate decide --agent claude" }] };
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreign] } },
+    });
+    opts.gateMode = "on";
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).not.toContain("auto-gate decide --agent claude");
+    expect(commands).toContain("squadrant gate claude permission-request");
+  });
+
+  it("(b) gate OFF + foreign present → foreign left untouched (warned + recorded)", () => {
+    const log = vi.fn();
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    opts.gateMode = "off";
+    opts.log = log;
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain(FOREIGN_MARKED);
+    expect(commands).toContain("squadrant gate claude permission-request");
+    expect(recorded).toEqual([{ action: "left-foreign-gate", command: FOREIGN_MARKED }]);
+    expect(log.mock.calls.some(([m]) => /foreign auto-gate/i.test(m) && /left untouched/i.test(m))).toBe(true);
+  });
+
+  it("(b2) gate mode absent + foreign present → foreign left untouched", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry(FOREIGN_MARKED)] } },
+    });
+    installClaudeHooks(opts);
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain(FOREIGN_MARKED);
+  });
+
+  it("(c) gate ON + no foreign handler → untouched (nothing recorded beyond our install)", () => {
+    const recorded: Array<{ action: string; command: string }> = [];
+    const { opts } = makeInstallOpts({
+      existingSettings: { hooks: { PermissionRequest: [foreignEntry("my-tool permission-hook")] } },
+    });
+    opts.gateMode = "on";
+    opts.recordGateAction = (e) => recorded.push(e);
+    installClaudeHooks(opts);
+
+    expect(recorded).toEqual([]);
+  });
+
+  it("(d) never removes a non-auto-gate handler (gate ON)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: {
+        hooks: {
+          PermissionRequest: [
+            foreignEntry("my-tool permission-hook"),
+            foreignEntry("my-auto-gate decide --agent claude"),
+          ],
+        },
+      },
+    });
+    opts.gateMode = "on";
+    installClaudeHooks(opts);
+
+    const commands = commandsOf(JSON.parse(written[0].content).hooks.PermissionRequest);
+    expect(commands).toContain("my-tool permission-hook");
+    expect(commands).toContain("my-auto-gate decide --agent claude");
+  });
+});
+
 describe("installClaudeHooks — non-clobbering (D4: preserves existing hooks)", () => {
   it("preserves existing non-squadrant hooks in the same event array", () => {
     const userHook = { matcher: "*", hooks: [{ type: "command", command: "my-tool hook-stop" }] };
@@ -406,6 +514,213 @@ describe("installClaudeHooks — #615 opt-in claudeEnv overlay", () => {
 
     const result = JSON.parse(written[0].content);
     expect(result.env).toEqual({ SOME_OTHER_VAR: "keep-me", CLAUDE_AFK_TIMEOUT_MS: "240000" });
+  });
+});
+
+// ── installClaudeHooks — subagent/small-fast model reconcile ───────────────────
+//
+// A custom/router upstream (e.g. opencode-go) only serves the routed model, so
+// Claude's subagent + small/fast slots must name it too. A leftover Anthropic
+// alias (`sonnet`) 400s every subagent/small call. On boot, align those two keys
+// to ANTHROPIC_MODEL — but ONLY on a custom upstream, and never clobber a
+// custom id the operator chose.
+
+describe("installClaudeHooks — subagent/small-fast model reconcile", () => {
+  const SUBAGENT = "CLAUDE_CODE_SUBAGENT_MODEL";
+  const SMALL_FAST = "ANTHROPIC_SMALL_FAST_MODEL";
+
+  /** A settings object with every squadrant hook already installed (no drift). */
+  function settled(): Record<string, unknown> {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    return JSON.parse(written[0].content);
+  }
+  const withEnv = (env: Record<string, unknown>): Record<string, unknown> => ({
+    ...settled(),
+    env,
+  });
+
+  it("row 3: custom base URL + model, keys absent → both filled with ANTHROPIC_MODEL", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("row 4: bare Claude alias → aligned to ANTHROPIC_MODEL and logged", () => {
+    for (const alias of ["sonnet", "opus", "haiku", "Sonnet"]) {
+      const log = vi.fn();
+      const { opts, written } = makeInstallOpts({
+        existingSettings: withEnv({
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+          [SUBAGENT]: alias,
+        }),
+      });
+      opts.log = log;
+      installClaudeHooks(opts);
+
+      const result = JSON.parse(written[0].content);
+      expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+      expect(log.mock.calls.some(([m]) => m.includes(SUBAGENT))).toBe(true);
+    }
+  });
+
+  it("row 4b: a claude-* id → aligned", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SMALL_FAST]: "claude-sonnet-4-5",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("row 5: a custom id → left untouched, skip logged", () => {
+    const log = vi.fn();
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SUBAGENT]: "deepseek-v4.1-flash",
+        [SMALL_FAST]: "my-custom-small",
+      }),
+    });
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    // Nothing changed ⇒ nothing written.
+    expect(written).toHaveLength(0);
+    expect(log.mock.calls.some(([m]) => /untouched/i.test(m))).toBe(true);
+  });
+
+  it("row 6: official api.anthropic.com base URL → never touched (byte-for-byte)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 6b: official base URL without a scheme → treated as non-custom (no-op)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "api.anthropic.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 2: no base URL → no env change (byte-for-byte)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({ [SUBAGENT]: "sonnet" }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 2b: custom base URL but no ANTHROPIC_MODEL → no env change", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 8: idempotent — a second run writes nothing", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    const afterFirst = written[0].content;
+
+    const { opts: opts2, written: written2 } = makeInstallOpts({ existingRaw: afterFirst });
+    installClaudeHooks(opts2);
+    expect(written2).toHaveLength(0);
+  });
+
+  it("row 9: does not clobber an unrelated user env key (claudeEnv precedence preserved)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+          CLAUDE_AFK_TIMEOUT_MS: "60000",
+        },
+      },
+    });
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env.CLAUDE_AFK_TIMEOUT_MS).toBe("60000");
+    // …while the reconcile still filled the subagent slot.
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("reconciles a base URL + model supplied only by defaults.claudeEnv", () => {
+    const { opts, written } = makeInstallOpts();
+    opts.claudeEnv = {
+      ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+      ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      [SUBAGENT]: "sonnet",
+    };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("touches no other env key", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        ANTHROPIC_API_KEY: "sk-x",
+        KEEP_ME: "1",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env.ANTHROPIC_API_KEY).toBe("sk-x");
+    expect(result.env.KEEP_ME).toBe("1");
+    expect(Object.keys(result.env).sort()).toEqual(
+      [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        SMALL_FAST,
+        SUBAGENT,
+        "KEEP_ME",
+      ].sort(),
+    );
   });
 });
 

@@ -282,6 +282,13 @@ A `model` value is looked up in `defaults.router.models`. If it names an alias, 
 >
 > then set `"model": "flash"` on the role/rule. A kind-derived default alias table (auto-normalizing `opencode-go/…` → `…` for the claude harness) was considered and deliberately **not** added: it would be new behavior outside the U2 schema and could silently rewrite an operator's literal id. Follow-up under epic [#772](https://github.com/tu11aa/squadrant/issues/772).
 
+#### Subagent & small/fast model slots
+
+Claude Code sends **subagent** and **small/fast** requests to separate model slots (`CLAUDE_CODE_SUBAGENT_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`). A router upstream usually serves only the routed model, so a slot left at an Anthropic alias (`sonnet`) makes every subagent/small call fail with `400 … Model is unavailable`. Squadrant keeps the slots in sync automatically, in two places:
+
+- **Routed spawns.** `buildRouterEnv` mirrors the resolved model into `ANTHROPIC_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, and `ANTHROPIC_SMALL_FAST_MODEL`, so a routed `claude` crew/captain never asks the upstream for a model it does not have. A `native` spawn injects none of them (byte-for-byte unchanged).
+- **`~/.claude/settings.json` reconcile.** On every daemon boot, `installClaudeHooks` aligns those two keys to `ANTHROPIC_MODEL` **only when** `ANTHROPIC_BASE_URL` points at a custom (non-`api.anthropic.com`) upstream: an absent key is filled, a bare Claude alias (`sonnet`/`opus`/`haiku`) or a `claude-…` id is aligned, and any other (custom) id is left untouched. An official/absent base URL is a no-op, no other `env` key is touched, and the `defaults.claudeEnv` non-clobbering precedence is preserved.
+
 #### Backward compatibility & migration
 
 - **No `config.router` ⇒ zero behavior change.** The shim is never constructed, every backend resolves to `native`, nothing is injected, and `loadConfig` performs no router backfill or migration. Existing `roles.*.model` / `rules[].model` literals pass through the alias resolver unchanged.
@@ -398,7 +405,7 @@ Pass `--direction right|left|up|down` to use a split pane instead of a tab. Stat
 
 `squadrant crew send` correctly **refuses** to touch a pane while a crew has an AskUserQuestion/permission modal open — a bare keystroke would confirm whatever option the model happened to highlight ([#484](https://github.com/tu11aa/squadrant/issues/484)). That used to be a dead end: the refusal's own advice ("wait for the prompt to close") was unactionable, since the prompt only closes when answered.
 
-`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection (`Down`/`Up` from wherever the highlighted row currently sits, then `Enter`):
+`squadrant crew answer <project> <name> <option>` is the deliberate escape hatch. It reads the crew's rendered option list back, requires an **explicit** 1-based index or an exact/prefix text match (never an implicit default), and only then drives the selection, then `Enter`:
 
 ```
 $ squadrant crew read myproj video          # see the options first
@@ -414,6 +421,7 @@ $ squadrant crew answer myproj video 1
 - `--expect "<text>"` refuses if the resolved option's label doesn't contain that text — a guard against the option order shifting between renders (it's model-generated, not fixed).
 - `--text "<answer>"` is for a free-text option (e.g. "Type something."): select it, then type the given answer and submit.
 - If no option list is visible, `crew answer` refuses rather than guessing — read the screen with `crew read` first.
+- **Both agent dialog shapes are recognised.** claude's AskUserQuestion/permission list (`❯ N. Label` between horizontal rules) is driven with `Down`/`Up`; an opencode permission prompt (`△ Permission required` with an `Allow once   Allow always   Reject` bar and a `⇆ select  enter confirm` footer) is driven with `Left`/`Right` — its selection is a `⇆` row, not a vertical list ([#856](https://github.com/tu11aa/squadrant/issues/856)). Because cmux reads the pane as plain text (no ANSI), opencode's background-colour highlight is invisible; its known first-option default is treated as the current selection, and text/`--expect` matching still applies.
 
 `squadrant crew reply <project> <id> [message]` (control-plane path, keyed by task id instead of crew name) now delivers through the same path as `crew send` **before** transitioning task state — never the reverse. If delivery throws (e.g. the prompt is open), the command exits non-zero and no state transition happens; the error points at `crew answer`.
 
@@ -425,6 +433,7 @@ $ squadrant crew answer myproj video 1
 
 - **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/squadrant/issues/332)).
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
+- **Blocked crews re-notify** — a `CREW BLOCKED` push is not one-shot. A *different* question arriving while a crew is already blocked fires a fresh notification (an identical repeat stays suppressed — the first question wins, [#174](https://github.com/tu11aa/squadrant/issues/174)), and a crew that stays blocked past ~30 minutes gets exactly one `CREW BLOCKED REMINDER` (explicitly the same question, never a new one), then stays quiet for the rest of that episode ([#857](https://github.com/tu11aa/squadrant/issues/857)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
 - **Status: superseded for claude by the control channel.** The semantic heartbeat above still runs, but delivery confirmation for claude crews now comes from an agent receipt (`controlChannel=on`), not pane inference — see [Control/Captain Channel (#667)](#controlcaptain-channel-667).
 
@@ -566,3 +575,28 @@ opencode additionally gets squadrant's skills projected as **loadable skill dirs
 The `telegram` block is **optional** — omit it and the Telegram bridge is never constructed. `botToken` may be left out of the file and supplied via the `TELEGRAM_BOT_TOKEN` env var instead. `chats` is the inbound `chat_id` allowlist; `users` is the per-user-id allowlist for **control** actions and `remoteControl` (default `false`) is the master opt-in for auto-launch + the General command channel — both must be set for any remote control to act (fail-closed, [#321](https://github.com/tu11aa/squadrant/issues/321)). `pollMs` (default `1000`) is the inbound long-poll cadence. See [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in).
 
 The `defaults.router` block is also **optional** — omit it and every role/rule stays on the `native` backend, so behavior is unchanged. When present, roles and routing rules select `backend: "direct"` or `"proxy"` to route the `claude` harness through an Anthropic-Messages upstream. Full schema, the OpenRouter walkthrough, CCR/LiteLLM alternatives, and the backward-compat guarantee are in [Router Backend (Harness/Provider Decoupling)](#router-backend-harnessprovider-decoupling).
+
+The `defaults.gate` block is **optional** too — omit it and the U7 permission gate is off (`mode` defaults to `auto`, a no-op, so the agent's normal permission flow is untouched). With `mode: "on"`, the new `engine` field selects **who** decides a claude `PermissionRequest`:
+
+```jsonc
+{
+  "defaults": {
+    "gate": {
+      "mode": "on",
+      "engine": "router",       // "router" (default) | "auto-gate"
+      "model": "sonnet",        // router engine only
+      "policy": "deny-dangerous",
+      "tools": ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"],
+      "cache": true,
+      "deny": ["^\\s*sudo\\b"]
+    }
+  }
+}
+```
+
+| `engine` | Behaviour |
+|---|---|
+| `router` **(default)** | U7's in-repo classifier: squadrant calls the configured router model directly (no Anthropic credential). Unchanged. |
+| `auto-gate` | The standalone [`@squadrant-ai/auto-gate`](https://www.npmjs.com/package/@squadrant-ai/auto-gate) package decides (Jev-backed by default; its own config/keys, e.g. `TYPESAFE_API_KEY`). `allow`/`deny` print `hookSpecificOutput.decision.behavior`; `ask` prints nothing and emits exactly one `task.blocked`. |
+
+Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GATE_ENGINE` (engine), `SQUADRANT_GATE_POLICY`, `SQUADRANT_GATE_TOOLS`, `SQUADRANT_GATE_MODEL`. Router-backed crews/captains inject `SQUADRANT_GATE=on`; the auto-gate host honours that env override even when no `defaults.gate` block is present. `engine: "auto-gate"` for an **opencode** crew (wiring the launch through the package's `auto-gate opencode run` wrapper) is **not yet implemented** — see [Router Backend](#router-backend-harnessprovider-decoupling).
