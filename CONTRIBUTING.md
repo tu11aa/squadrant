@@ -27,6 +27,8 @@ the internal packages (`@squadrant/*`) from their build outputs.
 
 Releases follow GitFlow: cut `release/vX.Y.Z` from `develop`, bump `package.json` + `CHANGELOG.md`, then PR into `main`. A push to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which tags `vX.Y.Z` (from `package.json`), creates a GitHub Release from the CHANGELOG, and publishes to npm.
 
+**Config / override changes — run the compatibility matrix.** A change that silently rewrites `~/.claude/settings.json` (or any operator-owned override) can break a real machine before anyone notices. Before releasing such a change, run its documented compatibility matrix end-to-end and confirm every row still holds — the un-opted-in path must stay byte-for-byte unchanged. See the router backend's [release verification checklist](docs/reference.md#release-verification-checklist) for a worked example.
+
 ### npm publishing — use staged publishing
 
 npm is retiring long-lived tokens that bypass 2FA for publishing:
