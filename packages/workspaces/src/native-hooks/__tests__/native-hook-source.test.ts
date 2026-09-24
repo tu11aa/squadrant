@@ -517,6 +517,213 @@ describe("installClaudeHooks — #615 opt-in claudeEnv overlay", () => {
   });
 });
 
+// ── installClaudeHooks — subagent/small-fast model reconcile ───────────────────
+//
+// A custom/router upstream (e.g. opencode-go) only serves the routed model, so
+// Claude's subagent + small/fast slots must name it too. A leftover Anthropic
+// alias (`sonnet`) 400s every subagent/small call. On boot, align those two keys
+// to ANTHROPIC_MODEL — but ONLY on a custom upstream, and never clobber a
+// custom id the operator chose.
+
+describe("installClaudeHooks — subagent/small-fast model reconcile", () => {
+  const SUBAGENT = "CLAUDE_CODE_SUBAGENT_MODEL";
+  const SMALL_FAST = "ANTHROPIC_SMALL_FAST_MODEL";
+
+  /** A settings object with every squadrant hook already installed (no drift). */
+  function settled(): Record<string, unknown> {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    return JSON.parse(written[0].content);
+  }
+  const withEnv = (env: Record<string, unknown>): Record<string, unknown> => ({
+    ...settled(),
+    env,
+  });
+
+  it("row 3: custom base URL + model, keys absent → both filled with ANTHROPIC_MODEL", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("row 4: bare Claude alias → aligned to ANTHROPIC_MODEL and logged", () => {
+    for (const alias of ["sonnet", "opus", "haiku", "Sonnet"]) {
+      const log = vi.fn();
+      const { opts, written } = makeInstallOpts({
+        existingSettings: withEnv({
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+          [SUBAGENT]: alias,
+        }),
+      });
+      opts.log = log;
+      installClaudeHooks(opts);
+
+      const result = JSON.parse(written[0].content);
+      expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+      expect(log.mock.calls.some(([m]) => m.includes(SUBAGENT))).toBe(true);
+    }
+  });
+
+  it("row 4b: a claude-* id → aligned", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SMALL_FAST]: "claude-sonnet-4-5",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("row 5: a custom id → left untouched, skip logged", () => {
+    const log = vi.fn();
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SUBAGENT]: "deepseek-v4.1-flash",
+        [SMALL_FAST]: "my-custom-small",
+      }),
+    });
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    // Nothing changed ⇒ nothing written.
+    expect(written).toHaveLength(0);
+    expect(log.mock.calls.some(([m]) => /untouched/i.test(m))).toBe(true);
+  });
+
+  it("row 6: official api.anthropic.com base URL → never touched (byte-for-byte)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 6b: official base URL without a scheme → treated as non-custom (no-op)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "api.anthropic.com",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 2: no base URL → no env change (byte-for-byte)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({ [SUBAGENT]: "sonnet" }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 2b: custom base URL but no ANTHROPIC_MODEL → no env change", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    expect(written).toHaveLength(0);
+  });
+
+  it("row 8: idempotent — a second run writes nothing", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        [SUBAGENT]: "sonnet",
+      }),
+    });
+    installClaudeHooks(opts);
+    const afterFirst = written[0].content;
+
+    const { opts: opts2, written: written2 } = makeInstallOpts({ existingRaw: afterFirst });
+    installClaudeHooks(opts2);
+    expect(written2).toHaveLength(0);
+  });
+
+  it("row 9: does not clobber an unrelated user env key (claudeEnv precedence preserved)", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+          ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+          CLAUDE_AFK_TIMEOUT_MS: "60000",
+        },
+      },
+    });
+    opts.claudeEnv = { CLAUDE_AFK_TIMEOUT_MS: "240000" };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env.CLAUDE_AFK_TIMEOUT_MS).toBe("60000");
+    // …while the reconcile still filled the subagent slot.
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("reconciles a base URL + model supplied only by defaults.claudeEnv", () => {
+    const { opts, written } = makeInstallOpts();
+    opts.claudeEnv = {
+      ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+      ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+      [SUBAGENT]: "sonnet",
+    };
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env[SUBAGENT]).toBe("deepseek-v4.1-flash");
+    expect(result.env[SMALL_FAST]).toBe("deepseek-v4.1-flash");
+  });
+
+  it("touches no other env key", () => {
+    const { opts, written } = makeInstallOpts({
+      existingSettings: withEnv({
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash",
+        ANTHROPIC_API_KEY: "sk-x",
+        KEEP_ME: "1",
+      }),
+    });
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(result.env.ANTHROPIC_API_KEY).toBe("sk-x");
+    expect(result.env.KEEP_ME).toBe("1");
+    expect(Object.keys(result.env).sort()).toEqual(
+      [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        SMALL_FAST,
+        SUBAGENT,
+        "KEEP_ME",
+      ].sort(),
+    );
+  });
+});
+
 // ── mapSubToLifecycle ─────────────────────────────────────────────────────────
 
 describe("mapSubToLifecycle — pure mapping", () => {
