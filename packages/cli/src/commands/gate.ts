@@ -14,14 +14,17 @@
 // Design: docs/specs/2026-09-20-router-permission-gate-u7-design.md
 
 import { Command } from "commander";
+import chalk from "chalk";
 import { sendRequest } from "@squadrant/core";
 import {
   GateDecisionCache,
   createSquadrantAutoGate,
+  hasAutoGateCredential,
   isGateSession,
   evaluatePermissionRequest,
   formatPermissionDecision,
   readUserIntent,
+  resolveClassifierModel,
   resolveGateEngine,
   resolveGateMode,
   type DecisionCacheLike,
@@ -29,7 +32,16 @@ import {
   type SquadrantAutoGate,
   type SquadrantAutoGateDeps,
 } from "@squadrant/core";
-import { DAEMON_SOCK_PATH, loadConfig, type SquadrantConfig } from "@squadrant/shared";
+import {
+  DAEMON_SOCK_PATH,
+  DEFAULT_CONFIG_PATH,
+  GATE_MODES,
+  isGateMode,
+  loadConfig,
+  saveConfig,
+  type GateMode,
+  type SquadrantConfig,
+} from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
 import { deriveTranscriptPath, mapClaudeHookToEvent } from "@squadrant/agents";
 
@@ -191,10 +203,113 @@ export async function runGatePermissionRequest(deps: GateHookDeps): Promise<Gate
 
 const DEFAULT_EVENT = "permission-request";
 
+// ── `squadrant gate mode [on|off|auto]` (#854) ────────────────────────────────
+// Mirrors the effort-dial pattern (packages/cli/src/commands/effort.ts):
+// get/set on `defaults.gate.mode`, env-override-aware, no daemon bounce (the
+// key is not in DAEMON_CACHED_PREFIXES — resolveGateMode reads it live).
+
+export interface GateModeGetResult {
+  mode: GateMode;
+  source: "env" | "config" | "default";
+}
+
+/** Same precedence as resolveGateMode (env > config > "auto"), plus which tier
+ *  the effective value came from, for the CLI/Telegram-facing display. */
+export function runGateModeGet(
+  configPath = DEFAULT_CONFIG_PATH,
+  env: NodeJS.ProcessEnv = process.env,
+): GateModeGetResult {
+  const config = loadConfig(configPath);
+  const mode = resolveGateMode(env, config.defaults.gate);
+  const source: GateModeGetResult["source"] =
+    env.SQUADRANT_GATE !== undefined && isGateMode(env.SQUADRANT_GATE)
+      ? "env"
+      : config.defaults.gate?.mode && isGateMode(config.defaults.gate.mode)
+        ? "config"
+        : "default";
+  return { mode, source };
+}
+
+export interface GateModeSetResult {
+  old: GateMode;
+  next: GateMode;
+}
+
+/** Writes `defaults.gate.mode`. Rejects an invalid value without touching disk. */
+export function runGateModeSet(value: string, configPath = DEFAULT_CONFIG_PATH): GateModeSetResult {
+  if (!isGateMode(value)) {
+    throw new Error(`Invalid gate mode '${value}'. Valid values: ${GATE_MODES.join(" | ")}`);
+  }
+  const config = loadConfig(configPath);
+  const old: GateMode =
+    config.defaults.gate?.mode && isGateMode(config.defaults.gate.mode) ? config.defaults.gate.mode : "auto";
+  config.defaults.gate = { ...config.defaults.gate, mode: value };
+  saveConfig(config, configPath);
+  return { old, next: value };
+}
+
+export interface GateStatusResult extends GateModeGetResult {
+  engine: "router" | "auto-gate";
+  model: string | undefined;
+  /** Whether the engine's credential resolves — value is NEVER read/printed. */
+  credentialPresent: boolean;
+}
+
+/** Nice-to-have (#854): resolved classifier model + credential presence, never
+ *  the credential value itself. */
+export function runGateStatus(
+  configPath = DEFAULT_CONFIG_PATH,
+  env: NodeJS.ProcessEnv = process.env,
+): GateStatusResult {
+  const config = loadConfig(configPath);
+  const { mode, source } = runGateModeGet(configPath, env);
+  const engine = resolveGateEngine(env, config.defaults.gate);
+  const model = resolveClassifierModel(env, config);
+  const credentialPresent =
+    engine === "auto-gate"
+      ? hasAutoGateCredential(env)
+      : Boolean(config.defaults.router?.apiKey ?? (config.defaults.router?.apiKeyEnv ? env[config.defaults.router.apiKeyEnv] : undefined));
+  return { mode, source, engine, model, credentialPresent };
+}
+
 export function gateCommand(): Command {
   const gate = new Command("gate").description(
-    "(internal) hook-based permission gate for router-backed crew/side sessions (#782)",
+    "Permission gate (#782/#854): get/set defaults.gate.mode; 'claude <event>' is an internal hook handler",
   );
+
+  gate
+    .command("mode [value]")
+    .description("Get or set the permission gate mode (on | off | auto)")
+    .action((value: string | undefined) => {
+      if (value === undefined) {
+        const result = runGateModeGet();
+        console.log(chalk.bold("Gate mode:"), chalk.cyan(result.mode), chalk.dim(`(${result.source})`));
+        return;
+      }
+      let result: GateModeSetResult;
+      try {
+        result = runGateModeSet(value);
+      } catch (e) {
+        console.error(chalk.red((e as Error).message));
+        process.exit(1);
+      }
+      console.log(chalk.green(`✔ gate mode: ${result.old} → ${result.next}`));
+      console.log(chalk.dim("No daemon bounce needed — defaults.gate.mode is read live."));
+      if (isGateMode(process.env.SQUADRANT_GATE ?? "") && process.env.SQUADRANT_GATE !== result.next) {
+        console.log(chalk.yellow(`Note: SQUADRANT_GATE=${process.env.SQUADRANT_GATE} in this session still overrides the config value.`));
+      }
+    });
+
+  gate
+    .command("status")
+    .description("Show the effective gate mode, engine, classifier model, and credential presence")
+    .action(() => {
+      const result = runGateStatus();
+      console.log(chalk.bold("Gate mode:"), chalk.cyan(result.mode), chalk.dim(`(${result.source})`));
+      console.log(chalk.bold("Engine:"), result.engine);
+      console.log(chalk.bold("Classifier model:"), result.model ?? chalk.dim("(unset)"));
+      console.log(chalk.bold("Credential:"), result.credentialPresent ? chalk.green("present") : chalk.yellow("absent"));
+    });
 
   gate
     .command("claude <event>", { hidden: true })
