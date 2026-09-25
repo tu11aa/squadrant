@@ -198,10 +198,19 @@ describe("opencode captain address self-heal (#797)", () => {
   });
 });
 
-// #861: a recurrence of #789/#797 — the heal persisted the discovered PORT but
-// kept the stale recorded sessionId, and only ran when delivery FAILED. A
-// stale-but-still-live session returns "accepted" (delivered into a session
-// the operator isn't watching), so the heal never fired.
+// #861: a recurrence of #789/#797 — root cause traced to `launch.ts`'s
+// fire-and-forget session poll: on timeout it wrote nothing, so a PREVIOUS
+// launch's captain.json (old port, old sessionId) silently survived a
+// relaunch. Two things pinned here on the delivery-loop side:
+//  - defect 1: the heal persisted a newly-DISCOVERED port together with the
+//    OLD recorded sessionId instead of re-resolving the session against that
+//    same live port.
+//  - the heal write must be compare-and-swap: it awaits network I/O, so a
+//    concurrent relaunch's fresh captain.json (new launchedAt) must never be
+//    clobbered by a heal computed from the stale record it started from.
+// (The "heal on every accepted delivery" idea from an earlier pass was
+// rejected by the operator — see the launch.ts synchronous-clear fix instead,
+// covered in launch-opencode-record.test.ts.)
 describe("opencode captain address self-heal (#861)", () => {
   it("defect 1: resolves the session against the DISCOVERED live port, not the stale recorded id", async () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-defect1-"));
@@ -257,31 +266,38 @@ describe("opencode captain address self-heal (#861)", () => {
     expect(readCaptainAddress(stateRoot, project)).toMatchObject({ port: 61099, sessionId: "ses_B" });
   });
 
-  it("defect 2: a stale session that reports 'accepted' still gets corrected for the next delivery", async () => {
-    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-defect2-"));
-    const project = "epsilon";
+  it("CAS: a newer launch record landing mid-heal wins the race — the heal must not clobber it", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-cas-"));
+    const project = "zeta";
     const captainName = `${project}-captain`;
     loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
     const { store, livenessRegistry } = await seed(stateRoot, project);
 
-    const launchedAt = "2026-09-23T06:26:26.600Z";
-    // Session A is stale, but the opencode process holding it is still alive
-    // and answers "accepted" — the false-positive from the #861 report.
+    const oldLaunchedAt = "2026-09-23T06:26:26.600Z";
+    const newLaunchedAt = "2026-09-24T02:33:42.000Z";
     writeCaptainAddress(stateRoot, project, {
-      agent: "opencode", port: 61099, sessionId: "ses_A",
-      directory: "/tmp/epsilon", launchedAt,
+      agent: "opencode", port: 58525, sessionId: "ses_old",
+      directory: "/tmp/zeta", launchedAt: oldLaunchedAt,
     });
-    discoverMock.mockReturnValue({ pid: 999, port: 61099 });
-    vi.mocked(listSessions).mockResolvedValue([
-      { id: "ses_A", directory: "/tmp/epsilon", time: { created: Date.parse(launchedAt) - 1000, updated: Date.parse(launchedAt) } },
-      { id: "ses_B", directory: "/tmp/epsilon", time: { created: Date.parse(launchedAt) + 5000, updated: Date.parse(launchedAt) + 6000 } },
-    ]);
+    discoverMock.mockReturnValue({ pid: 1, port: 61099 });
+    // While the heal is mid-resolution (awaiting listSessions), a fresh
+    // relaunch lands and overwrites captain.json with a NEW launchedAt —
+    // exactly the race #861's compare-and-swap must survive.
+    vi.mocked(listSessions).mockImplementation(async () => {
+      writeCaptainAddress(stateRoot, project, {
+        agent: "opencode", port: 61200, sessionId: "ses_new_launch",
+        directory: "/tmp/zeta", launchedAt: newLaunchedAt,
+      });
+      return [
+        { id: "ses_B", directory: "/tmp/zeta", time: { created: Date.parse(oldLaunchedAt) + 1000, updated: Date.parse(oldLaunchedAt) + 2000 } },
+      ];
+    });
 
-    const channelSend = vi.fn(async () => ({ status: "accepted" as const, via: "opencode-http" as const }));
+    const channelSend = vi.fn(async () => ({ status: "gone" as const }));
     const opencode: ControlChannel = {
       name: "opencode-http", agent: "opencode",
       send: channelSend,
-      probe: vi.fn(async () => ({ status: "reachable" as const, via: "opencode-http" as const })),
+      probe: vi.fn(async () => ({ status: "gone" as const })),
     } as unknown as ControlChannel;
 
     const paneSend = vi.fn(async () => {});
@@ -290,8 +306,9 @@ describe("opencode captain address self-heal (#861)", () => {
       findWorkspaceId: async () => "w1",
       send: paneSend,
     };
+    const logs: string[] = [];
     const deliv = createDelivery({
-      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
       captainChannelMode: () => "on",
       captainChannels: { opencode },
       captainAgentFor: () => "opencode",
@@ -299,10 +316,10 @@ describe("opencode captain address self-heal (#861)", () => {
 
     await deliv.deliveryTick!();
 
-    // The message was accepted by the stale session (nothing to undo there),
-    // but the address is corrected so the NEXT delivery reaches session B.
-    expect(channelSend).toHaveBeenCalledTimes(1);
-    expect(paneSend).not.toHaveBeenCalled();
-    expect(readCaptainAddress(stateRoot, project)).toMatchObject({ port: 61099, sessionId: "ses_B" });
+    // The newer launch's record survives untouched — the heal backed off.
+    expect(readCaptainAddress(stateRoot, project)).toMatchObject({
+      port: 61200, sessionId: "ses_new_launch", launchedAt: newLaunchedAt,
+    });
+    expect(logs.some((l) => l.includes("newer launch record won the race"))).toBe(true);
   });
 });

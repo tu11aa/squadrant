@@ -81,12 +81,18 @@ async function reresolveOpencodeAddress(
 }
 
 /**
- * Verify (cheaply) that a recorded opencode captain address is still fresh,
- * and correct captain.json when it isn't. Called both after a FAILED delivery
- * (#786/#797: heal, then retry against the refreshed address) and after an
- * ACCEPTED one (#861: "accepted" from a stale-but-still-live session is a
- * false positive — the old session still exists and answers, so a heal gated
- * on delivery failure never runs). Returns true when the record was corrected.
+ * Verify that a recorded opencode captain address is still fresh, and correct
+ * captain.json when it isn't. Called from the delivery-FAILURE branch
+ * (#786/#797: heal, then retry against the refreshed address) — a fresh
+ * `squadrant launch` writes its own record synchronously (#861), so a failed
+ * delivery against a stale one is what this heals.
+ *
+ * `reresolveOpencodeAddress` awaits network I/O, so a concurrent relaunch can
+ * land a brand-new captain.json (new `launchedAt`) while this was resolving.
+ * Compare-and-swap on `launchedAt`, re-read right before writing: if it no
+ * longer matches the record this heal started from, a newer launch already
+ * won the race and this write must be dropped, never merged over it (#861).
+ * Returns true when the record was corrected.
  */
 async function healStaleOpencodeAddress(
   stateRoot: string, project: string, log: (m: string) => void, logPrefix: string,
@@ -95,7 +101,12 @@ async function healStaleOpencodeAddress(
   if (!rec) return false;
   const resolved = await reresolveOpencodeAddress(rec);
   if (!resolved) return false;
-  writeCaptainAddress(stateRoot, project, { ...rec, port: resolved.port, sessionId: resolved.sessionId });
+  const current = readCaptainAddress(stateRoot, project);
+  if (!current || current.launchedAt !== rec.launchedAt) {
+    log(`captain-channel ${project}: skipped stale-address heal — a newer launch record won the race`);
+    return false;
+  }
+  writeCaptainAddress(stateRoot, project, { ...current, port: resolved.port, sessionId: resolved.sessionId });
   log(`captain-channel ${project}: ${logPrefix} → port ${resolved.port}`);
   return true;
 }
@@ -468,21 +479,7 @@ export function createDelivery(
               // predates this slice.
               try {
                 const r = await deliverToCaptain(project, text, { channel: picked, mode, log });
-                if (r.handled) {
-                  // #861 defect 2: "accepted" is not proof the session id is
-                  // still the operator's current one — a stale-but-still-live
-                  // session accepts silently, forever, so the address must be
-                  // verified after a SUCCESSFUL delivery too, not only a
-                  // failed one. This can't undo the message just sent to the
-                  // stale session, but it corrects the record for every
-                  // delivery from here on.
-                  if (agent === "opencode") {
-                    await healStaleOpencodeAddress(
-                      stateRoot, project, log, "corrected stale opencode address after accepted delivery",
-                    );
-                  }
-                  return;
-                }
+                if (r.handled) return;
               } catch (e) {
                 log(`captain-channel ${project}: threw, falling back to pane — ${(e as Error).message}`);
               }

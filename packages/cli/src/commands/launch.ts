@@ -385,6 +385,17 @@ export const launchCommand = new Command("launch")
             console.log(chalk.green(`  ✔ Workspace '${name}' created`));
             if (!projectName) return;
             if (isOpencodeCaptain && captainPort) {
+              // #861: clear any PREVIOUS launch's session id SYNCHRONOUSLY,
+              // before the (possibly 60s) resolve below starts. Without this,
+              // a cold-start poll that times out left the prior launch's
+              // captain.json — old port AND old session id — completely
+              // untouched, so deliveries kept silently reaching a session the
+              // operator no longer had open. No session id here reads
+              // downstream as "not deliverable" until it's resolved, which is
+              // the honest outcome — never a silent misroute to the old one.
+              writeCaptainAddress(stateRoot, projectName, {
+                agent: "opencode", port: captainPort, directory: realpathOrSelf(cwd), launchedAt,
+              });
               // #786/#789: the session does not exist until the startup prompt starts
               // a turn (spec §2 test 8), so on a COLD start this waits for it — and
               // only accepts a session CREATED at/after `launchedAt`, so a
@@ -396,6 +407,7 @@ export const launchCommand = new Command("launch")
               void resolveAndPersistOpencodeCaptain({
                 stateRoot, project: projectName, port: captainPort, directory: realpathOrSelf(cwd), launchedAt,
                 sessionId: opencodeResumeSessionId,
+                log: (m) => console.error(chalk.yellow(`  ⚠ ${m}`)),
               }).catch(() => {});
             } else if (role === "captain") {
               // Claude (and any other agent): mark the launch so the daemon knows

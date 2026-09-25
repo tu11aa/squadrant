@@ -154,4 +154,26 @@ describe("opencode captain record refresh on launch (#797)", () => {
       agent: "opencode", port: 61099, sessionId: "ses_old",
     }));
   });
+
+  // #861: root cause — on a COLD start the resolve is a fire-and-forget poll
+  // (up to 60s) that writes NOTHING on timeout, so the PREVIOUS launch's
+  // captain.json (old port, old session id) silently survived every relaunch
+  // that happened to time out. onCreated must clear it synchronously, before
+  // the poll starts, so a stale session id can never outlive its own launch.
+  it("onCreated synchronously clears the prior session id BEFORE the poll starts, on a cold start", async () => {
+    const { opts } = await runLaunch(["--fresh"]);
+    opts.agentCmdFactory(true); // forceFresh=true ⇒ no resume id (cold start)
+    opts.onCreated("demo-captain");
+
+    // The synchronous clear: this project's OWN new port/directory/launchedAt,
+    // but deliberately no sessionId key at all — not even the prior one.
+    expect(writeCaptainAddressMock).toHaveBeenCalledTimes(1);
+    expect(writeCaptainAddressMock).toHaveBeenCalledWith(expect.any(String), "demo", {
+      agent: "opencode", port: 71000, directory: "/tmp/demo", launchedAt: expect.any(String),
+    });
+    // The poll is still started afterward, with no known resume id.
+    expect(resolveAndPersistMock).toHaveBeenCalledWith(expect.objectContaining({
+      project: "demo", port: 71000, sessionId: undefined,
+    }));
+  });
 });
