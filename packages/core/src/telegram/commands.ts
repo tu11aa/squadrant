@@ -17,9 +17,17 @@ export type ParsedCommand =
 
 /** Default-deny allowlist of config keys writable over Telegram (#321). Starts
  *  intentionally tiny; extend deliberately. Secrets are NEVER added here. */
-export const WRITABLE_CONFIG_KEYS: readonly string[] = ["defaults.effort"];
+export const WRITABLE_CONFIG_KEYS: readonly string[] = ["defaults.effort", "defaults.gate.mode"];
 
 const EFFORT_MODES = new Set(["max", "balance", "low"]);
+const GATE_MODES = new Set(["on", "off", "auto"]);
+
+/** Per-key value validators for `/config set` (#854) — an allowlisted key may
+ *  still reject a malformed value before it reaches the CLI. Keys with no
+ *  entry here are unvalidated (accepted as-is). */
+const CONFIG_VALUE_VALIDATORS: Record<string, { valid: Set<string>; usage: string }> = {
+  "defaults.gate.mode": { valid: GATE_MODES, usage: "usage: /config set defaults.gate.mode <on|off|auto>" },
+};
 
 interface Entry {
   /** Build the argv (or a usage/denied result) from the post-name token list. */
@@ -76,6 +84,10 @@ const REGISTRY: Record<string, Entry> = {
             kind: "denied",
             message: `⛔ '${key}' is not writable over Telegram. Allowed: ${WRITABLE_CONFIG_KEYS.join(", ")}`,
           };
+        }
+        const validator = CONFIG_VALUE_VALIDATORS[key];
+        if (validator && !validator.valid.has(value)) {
+          return usage("config", validator.usage);
         }
         return ok("config", ["config", "set", key, value]);
       }

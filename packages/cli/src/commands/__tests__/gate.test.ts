@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import type { SquadrantConfig } from "@squadrant/shared";
-import { getDefaultConfig } from "@squadrant/shared";
+import { getDefaultConfig, saveConfig } from "@squadrant/shared";
 import { createSquadrantAutoGate } from "@squadrant/core";
 import type { GateOutcome } from "@squadrant-ai/auto-gate";
-import { runGatePermissionRequest } from "../gate.js";
+import { runGatePermissionRequest, runGateModeGet, runGateModeSet, runGateStatus } from "../gate.js";
 
 function makeConfig(overrides: Partial<SquadrantConfig["defaults"]> = {}): SquadrantConfig {
   const base = getDefaultConfig();
@@ -302,6 +305,137 @@ describe("runGatePermissionRequest — engine=auto-gate (P6-C)", () => {
     expect(out).toHaveLength(0);
     // Existing #560 signalling for the crew is preserved.
     expect(events).toHaveLength(1);
+  });
+});
+
+describe("gate mode get/set (#854)", () => {
+  let dir: string;
+  let cfgPath: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-gate-"));
+    cfgPath = path.join(dir, "config.json");
+    saveConfig(getDefaultConfig(), cfgPath);
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("defaults to 'auto' with source 'default' when gate is absent", () => {
+    const result = runGateModeGet(cfgPath, {});
+    expect(result).toEqual({ mode: "auto", source: "default" });
+  });
+
+  it("reads the configured mode with source 'config'", () => {
+    const config = makeConfig({ gate: { mode: "on" } });
+    saveConfig(config, cfgPath);
+    const result = runGateModeGet(cfgPath, {});
+    expect(result).toEqual({ mode: "on", source: "config" });
+  });
+
+  it("env SQUADRANT_GATE wins over config, with source 'env'", () => {
+    const config = makeConfig({ gate: { mode: "off" } });
+    saveConfig(config, cfgPath);
+    const result = runGateModeGet(cfgPath, { SQUADRANT_GATE: "on" } as NodeJS.ProcessEnv);
+    expect(result).toEqual({ mode: "on", source: "env" });
+  });
+
+  it("an invalid env value is ignored and falls through to config", () => {
+    const config = makeConfig({ gate: { mode: "off" } });
+    saveConfig(config, cfgPath);
+    const result = runGateModeGet(cfgPath, { SQUADRANT_GATE: "bogus" } as NodeJS.ProcessEnv);
+    expect(result).toEqual({ mode: "off", source: "config" });
+  });
+
+  it("writes 'on' to defaults.gate.mode and reports old → new", () => {
+    const result = runGateModeSet("on", cfgPath);
+    expect(result).toEqual({ old: "auto", next: "on" });
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    expect(onDisk.defaults.gate.mode).toBe("on");
+  });
+
+  it("reports the actual prior config value as 'old', not the env-effective one", () => {
+    const config = makeConfig({ gate: { mode: "off" } });
+    saveConfig(config, cfgPath);
+    const result = runGateModeSet("auto", cfgPath);
+    expect(result).toEqual({ old: "off", next: "auto" });
+  });
+
+  it("round-trips: set 'off' then get returns 'off'", () => {
+    runGateModeSet("off", cfgPath);
+    const result = runGateModeGet(cfgPath, {});
+    expect(result.mode).toBe("off");
+  });
+
+  it("rejects an invalid value without writing config", () => {
+    const before = fs.readFileSync(cfgPath, "utf-8");
+    expect(() => runGateModeSet("turbo", cfgPath)).toThrow(/invalid gate mode/i);
+    const after = fs.readFileSync(cfgPath, "utf-8");
+    expect(after).toBe(before);
+  });
+
+  it("error for an invalid value lists all 3 valid options", () => {
+    let msg = "";
+    try {
+      runGateModeSet("turbo", cfgPath);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain("on");
+    expect(msg).toContain("off");
+    expect(msg).toContain("auto");
+  });
+
+  it("setting mode preserves other defaults.gate fields", () => {
+    const config = makeConfig({ gate: { mode: "off", engine: "auto-gate", policy: "ask-on-doubt" } });
+    saveConfig(config, cfgPath);
+    runGateModeSet("on", cfgPath);
+    const onDisk = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    expect(onDisk.defaults.gate.mode).toBe("on");
+    expect(onDisk.defaults.gate.engine).toBe("auto-gate");
+    expect(onDisk.defaults.gate.policy).toBe("ask-on-doubt");
+  });
+});
+
+describe("gate status (#854)", () => {
+  let dir: string;
+  let cfgPath: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-gate-status-"));
+    cfgPath = path.join(dir, "config.json");
+    saveConfig(getDefaultConfig(), cfgPath);
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("resolves engine 'router' (default) and no credential when router is unconfigured", () => {
+    const result = runGateStatus(cfgPath, {});
+    expect(result.engine).toBe("router");
+    expect(result.credentialPresent).toBe(false);
+  });
+
+  it("reports credentialPresent=true when the router has an inline apiKey, never the value itself", () => {
+    const config = makeConfig({ gate: { mode: "on" }, router: ROUTER });
+    saveConfig(config, cfgPath);
+    const result = runGateStatus(cfgPath, {});
+    expect(result.credentialPresent).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(ROUTER.apiKey);
+  });
+
+  it("resolves the classifier model from config", () => {
+    const config = makeConfig({ gate: { mode: "on", model: "sonnet" }, router: ROUTER });
+    saveConfig(config, cfgPath);
+    const result = runGateStatus(cfgPath, {});
+    expect(result.model).toBe("sonnet");
+  });
+
+  it("engine=auto-gate checks TYPESAFE_API_KEY presence instead of the router credential", () => {
+    const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" }, router: ROUTER });
+    saveConfig(config, cfgPath);
+    const withoutKey = runGateStatus(cfgPath, {});
+    expect(withoutKey.engine).toBe("auto-gate");
+    expect(withoutKey.credentialPresent).toBe(false);
+
+    const withKey = runGateStatus(cfgPath, { TYPESAFE_API_KEY: "sk-typesafe" } as NodeJS.ProcessEnv);
+    expect(withKey.credentialPresent).toBe(true);
   });
 });
 
