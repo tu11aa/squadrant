@@ -372,7 +372,14 @@ export const launchCommand = new Command("launch")
               sessionId: priorRecord?.sessionId,
             });
             if (!live) return;
-            const sessionId = live.sessionId ?? priorRecord?.sessionId;
+            // #861: `live` can be matched by directory cwd alone, with no
+            // sessionId of its own. Falling back to `priorRecord.sessionId`
+            // unconditionally pairs a NEW port with the OLD session id —
+            // exactly the stale-pairing bug. Safe only when the port is
+            // UNCHANGED (nothing suggests the session moved); a changed port
+            // with no live sessionId must write NO sessionId at all, leaving
+            // it to the daemon's failure-branch heal to resolve.
+            const sessionId = live.sessionId ?? (live.port === priorRecord?.port ? priorRecord?.sessionId : undefined);
             // Nothing changed ⇒ leave the record (and its original launchedAt) be.
             if (priorRecord && priorRecord.port === live.port && priorRecord.sessionId === sessionId) return;
             writeCaptainAddress(stateRoot, projectName, {
