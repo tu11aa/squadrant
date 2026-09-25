@@ -15,11 +15,21 @@ vi.mock("@squadrant/shared", async (importOriginal) => {
 });
 
 const discoverMock = vi.hoisted(() => vi.fn());
-vi.mock("../opencode-session.js", () => ({
-  listSessions: vi.fn(async () => []),
-  newestSessionInDirectory: vi.fn(() => null),
-  discoverLiveOpencodeServer: discoverMock,
-}));
+// #861: listSessions is mocked per-port (not a flat queue) so the defect-1/2
+// tests below can prove resolution runs against the DISCOVERED live port, not
+// blindly against the recorded one. newestSessionInDirectory is left REAL
+// (via importOriginal) — with the default empty-rows mock it still returns
+// null for every existing test here, so this is behaviourally identical to
+// the old fully-mocked version for #797, while making #861's session
+// selection decisive rather than another mock return value.
+vi.mock("../opencode-session.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../opencode-session.js")>();
+  return {
+    ...actual,
+    listSessions: vi.fn(async () => []),
+    discoverLiveOpencodeServer: discoverMock,
+  };
+});
 
 import { createDelivery } from "../daemon/delivery-loop.js";
 import { createStore } from "../store.js";
@@ -27,6 +37,7 @@ import { LivenessRegistry } from "../daemon/liveness-registry.js";
 import { appendCaptainMessage, readCursor } from "../mailbox.js";
 import { writeCaptainAddress, readCaptainAddress } from "../captain-record.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
+import { listSessions } from "../opencode-session.js";
 import type { ControlChannel } from "../control-channel.js";
 
 async function seed(stateRoot: string, project: string) {
@@ -184,5 +195,114 @@ describe("opencode captain address self-heal (#797)", () => {
     // Loud, not silent: the server-unreachable fallback is logged.
     expect(logs.some((l) => l.includes("no live opencode server — falling back to pane"))).toBe(true);
     expect(logs.some((l) => l.includes("outcome=deferred"))).toBe(true);
+  });
+});
+
+// #861: a recurrence of #789/#797 — the heal persisted the discovered PORT but
+// kept the stale recorded sessionId, and only ran when delivery FAILED. A
+// stale-but-still-live session returns "accepted" (delivered into a session
+// the operator isn't watching), so the heal never fired.
+describe("opencode captain address self-heal (#861)", () => {
+  it("defect 1: resolves the session against the DISCOVERED live port, not the stale recorded id", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-defect1-"));
+    const project = "delta";
+    const captainName = `${project}-captain`;
+    loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
+    const { store, livenessRegistry } = await seed(stateRoot, project);
+
+    const launchedAt = "2026-09-23T06:26:26.600Z";
+    // Session A recorded against a now-dead port.
+    writeCaptainAddress(stateRoot, project, {
+      agent: "opencode", port: 58525, sessionId: "ses_A",
+      directory: "/tmp/delta", launchedAt,
+    });
+    // Discovery finds the live server by directory cwd, not by session id —
+    // its own reported sessionId is undefined, exactly the #861 field trace.
+    discoverMock.mockReturnValue({ pid: 999, port: 61099 });
+    // The recorded (dead) port answers nothing; the newly-discovered live port
+    // lists session B — created after launchedAt, the operator's real session.
+    vi.mocked(listSessions).mockImplementation(async (port: number) =>
+      port === 61099
+        ? [
+            { id: "ses_A", directory: "/tmp/delta", time: { created: Date.parse(launchedAt) - 1000, updated: Date.parse(launchedAt) } },
+            { id: "ses_B", directory: "/tmp/delta", time: { created: Date.parse(launchedAt) + 5000, updated: Date.parse(launchedAt) + 6000 } },
+          ]
+        : [],
+    );
+
+    const channelSend = vi.fn(async () => ({ status: "gone" as const }));
+    const opencode: ControlChannel = {
+      name: "opencode-http", agent: "opencode",
+      send: channelSend,
+      probe: vi.fn(async () => ({ status: "gone" as const })),
+    } as unknown as ControlChannel;
+
+    const paneSend = vi.fn(async () => {});
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: paneSend,
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+      captainChannelMode: () => "on",
+      captainChannels: { opencode },
+      captainAgentFor: () => "opencode",
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    // Not the stale recorded session id — the newest session on the port that
+    // is actually live.
+    expect(readCaptainAddress(stateRoot, project)).toMatchObject({ port: 61099, sessionId: "ses_B" });
+  });
+
+  it("defect 2: a stale session that reports 'accepted' still gets corrected for the next delivery", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-defect2-"));
+    const project = "epsilon";
+    const captainName = `${project}-captain`;
+    loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
+    const { store, livenessRegistry } = await seed(stateRoot, project);
+
+    const launchedAt = "2026-09-23T06:26:26.600Z";
+    // Session A is stale, but the opencode process holding it is still alive
+    // and answers "accepted" — the false-positive from the #861 report.
+    writeCaptainAddress(stateRoot, project, {
+      agent: "opencode", port: 61099, sessionId: "ses_A",
+      directory: "/tmp/epsilon", launchedAt,
+    });
+    discoverMock.mockReturnValue({ pid: 999, port: 61099 });
+    vi.mocked(listSessions).mockResolvedValue([
+      { id: "ses_A", directory: "/tmp/epsilon", time: { created: Date.parse(launchedAt) - 1000, updated: Date.parse(launchedAt) } },
+      { id: "ses_B", directory: "/tmp/epsilon", time: { created: Date.parse(launchedAt) + 5000, updated: Date.parse(launchedAt) + 6000 } },
+    ]);
+
+    const channelSend = vi.fn(async () => ({ status: "accepted" as const, via: "opencode-http" as const }));
+    const opencode: ControlChannel = {
+      name: "opencode-http", agent: "opencode",
+      send: channelSend,
+      probe: vi.fn(async () => ({ status: "reachable" as const, via: "opencode-http" as const })),
+    } as unknown as ControlChannel;
+
+    const paneSend = vi.fn(async () => {});
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: paneSend,
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+      captainChannelMode: () => "on",
+      captainChannels: { opencode },
+      captainAgentFor: () => "opencode",
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    // The message was accepted by the stale session (nothing to undo there),
+    // but the address is corrected so the NEXT delivery reaches session B.
+    expect(channelSend).toHaveBeenCalledTimes(1);
+    expect(paneSend).not.toHaveBeenCalled();
+    expect(readCaptainAddress(stateRoot, project)).toMatchObject({ port: 61099, sessionId: "ses_B" });
   });
 });
