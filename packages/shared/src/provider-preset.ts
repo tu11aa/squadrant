@@ -2,29 +2,34 @@
 // #826: provider-preset chooser for `squadrant init`. A fresh install used to
 // assume an Anthropic credential (roles = all claude, permissions = auto). For
 // a user without one that fails closed on first run: Claude Code's auto-mode
-// classifier is hardcoded to Claude Sonnet 5, which a router upstream does not
-// serve. A preset writes the roles / permissions / router / gate blocks that
-// match the provider the operator actually has.
+// classifier is hardcoded to Claude Sonnet 5, which not every provider serves.
+// A preset writes the roles / permissions / crewRouting blocks that match the
+// provider the operator actually has.
 //
 // Two rules govern the merge:
 //   - Fresh config (or an explicit `--preset`) => overwrite the preset-owned
 //     blocks.
 //   - Existing config re-run => fill ONLY a wholly-absent block. Never clobber
-//     roles/permissions/router/gate an operator already has, and never touch an
-//     unrelated section (effort, projects, telegram, …).
+//     roles/permissions an operator already has, and never touch an unrelated
+//     section (effort, projects, telegram, …).
+//
+// Preset C used to be "Claude harness + router backend" but was retired: the
+// operator no longer runs claude through a router, and it carried the most
+// complexity (defaults.router, defaults.gate, permissions.default). Codex
+// moved from `d` to `c` to keep the catalog contiguous; `d` is kept as a
+// deprecated alias (see normalizePresetId) so existing scripts/configs don't
+// hard-fail.
 
 import {
   DEFAULT_CREW_ROUTING_RULES,
   type CrewRoutingConfig,
   type CrewRoutingRule,
-  type GateConfig,
   type PermissionConfig,
   type RoleConfig,
-  type RouterConfig,
   type SquadrantConfig,
 } from "./config.js";
 
-export type ProviderPresetId = "a" | "b" | "c" | "d";
+export type ProviderPresetId = "a" | "b" | "c";
 
 export interface ProviderPresetInfo {
   id: ProviderPresetId;
@@ -49,12 +54,6 @@ export const PROVIDER_PRESETS: readonly ProviderPresetInfo[] = [
   },
   {
     id: "c",
-    label: "Claude harness + router backend (advanced)",
-    summary: "Claude harness against a router upstream. The U7 gate replaces auto mode.",
-    requiresAnthropic: false,
-  },
-  {
-    id: "d",
     label: "Codex (ChatGPT Pro)",
     summary: "All roles run on the codex harness.",
     requiresAnthropic: false,
@@ -62,27 +61,25 @@ export const PROVIDER_PRESETS: readonly ProviderPresetInfo[] = [
 ];
 
 export function isProviderPresetId(v: string): v is ProviderPresetId {
-  return v === "a" || v === "b" || v === "c" || v === "d";
+  return v === "a" || v === "b" || v === "c";
 }
 
-/** Literal model the documented opencode-go upstream serves. A routed claude
- *  role uses this until the operator points it at another upstream/model. */
-export const ROUTER_PRESET_MODEL = "deepseek-v4.1-flash";
-
-/** The upstream opencode itself talks to by default (docs/specs/...-router-config-u2). */
-export const DEFAULT_ROUTER_KIND = "opencode-go" as const;
-export const DEFAULT_ROUTER_BASE_URL = "https://opencode.ai/zen/go";
+/** Accepts the current catalog (a|b|c) plus the old codex id `d` as a
+ *  deprecated alias, so a `--preset d` an existing script already passes
+ *  keeps working. Returns undefined for anything else. */
+export function normalizePresetId(v: string): ProviderPresetId | undefined {
+  if (v === "d") return "c";
+  return isProviderPresetId(v) ? v : undefined;
+}
 
 export interface ProviderPresetDefaults {
   roles: RoleConfig;
-  /** Partial — preset D (codex) leaves claude's permission modes alone. */
+  /** Partial — preset C (codex) leaves claude's permission modes alone. */
   permissions: Partial<PermissionConfig>;
   /** Preset-owned routing rules: without these, the shipped defaults would
    *  route the "hard"/"extreme" tiers back to `claude` and silently defeat
-   *  presets B/C/D. */
+   *  presets B/C. */
   crewRouting: CrewRoutingConfig;
-  router?: RouterConfig;
-  gate?: GateConfig;
 }
 
 /** Literal opencode model a preset's routing rules target. */
@@ -113,23 +110,12 @@ function presetCrewRouting(id: ProviderPresetId): CrewRoutingRule[] {
         { ...base("daily"), agent: "opencode", model: OPENCODE_MODEL },
       ];
     case "c":
-      return [
-        { ...base("extreme"), agent: "claude", backend: "proxy", model: ROUTER_PRESET_MODEL },
-        { ...base("hard"), agent: "claude", backend: "proxy", model: ROUTER_PRESET_MODEL },
-        codex("mobile"),
-        { ...base("daily"), agent: "opencode", model: OPENCODE_MODEL },
-      ];
-    case "d":
       return ["extreme", "hard", "mobile", "daily"].map(codex);
   }
 }
 
-/** The exact config blocks a preset wants to write. Pure. Throws for preset C
- *  without a router config (a routed role with no upstream is a hard error). */
-export function providerPresetDefaults(
-  id: ProviderPresetId,
-  router?: RouterConfig,
-): ProviderPresetDefaults {
+/** The exact config blocks a preset wants to write. Pure. */
+export function providerPresetDefaults(id: ProviderPresetId): ProviderPresetDefaults {
   switch (id) {
     case "a":
       return {
@@ -158,30 +144,6 @@ export function providerPresetDefaults(
       };
     }
     case "c": {
-      if (!router) {
-        throw new Error(
-          "preset C (claude harness + router backend) requires a router config — set defaults.router first",
-        );
-      }
-      const routed = { agent: "claude", backend: "proxy" as const, model: ROUTER_PRESET_MODEL };
-      return {
-        roles: {
-          command: { ...routed },
-          captain: { ...routed },
-          crew: { ...routed },
-          exploration: { ...routed },
-          side: { ...routed },
-        },
-        // Auto mode's classifier is hardcoded to Sonnet 5 and fails closed on a
-        // router upstream — every claude session must use a manual mode so the
-        // U7 gate owns the prompt.
-        permissions: { command: "default", captain: "default", crew: "default" },
-        crewRouting: { rules: presetCrewRouting("c") },
-        router,
-        gate: { mode: "on" },
-      };
-    }
-    case "d": {
       const codex = { agent: "codex" };
       return {
         roles: {
@@ -192,24 +154,24 @@ export function providerPresetDefaults(
           side: { ...codex },
         },
         permissions: {},
-        crewRouting: { rules: presetCrewRouting("d") },
+        crewRouting: { rules: presetCrewRouting("c") },
       };
     }
   }
 }
 
 /** Infer which preset a config currently reflects, from its crew role. Lets a
- *  re-run default the provider question to the operator's current setup. */
+ *  re-run default the provider question to the operator's current setup.
+ *  A proxy-backend crew (the retired preset C) has no catalog entry anymore —
+ *  falls through to "a" as the least surprising default. */
 export function detectProviderPresetId(config: SquadrantConfig): ProviderPresetId {
   const crew = config.defaults?.roles?.crew;
   if (crew?.agent === "opencode") return "b";
-  if (crew?.agent === "codex") return "d";
-  if (crew?.backend && crew.backend !== "native") return "c";
+  if (crew?.agent === "codex") return "c";
   return "a";
 }
 
 export interface ApplyProviderPresetOptions {
-  router?: RouterConfig;
   /** true => the preset's roles/permissions replace existing ones (fresh config
    *  or an explicit `--preset`). false => fill only wholly-absent blocks. */
   overwrite: boolean;
@@ -230,7 +192,7 @@ export function applyProviderPreset(
   id: ProviderPresetId,
   opts: ApplyProviderPresetOptions,
 ): ApplyProviderPresetResult {
-  const preset = providerPresetDefaults(id, opts.router);
+  const preset = providerPresetDefaults(id);
   const next = structuredClone(config);
   const changes: string[] = [];
 
@@ -261,22 +223,6 @@ export function applyProviderPreset(
   } else if (next.defaults.permissions === undefined && Object.keys(preset.permissions).length > 0) {
     next.defaults.permissions = { ...preset.permissions } as PermissionConfig;
     changes.push("defaults.permissions");
-  }
-
-  // router — only preset C sets it; never removed for A/B/D.
-  if (preset.router) {
-    if (opts.overwrite || next.defaults.router === undefined) {
-      next.defaults.router = structuredClone(preset.router);
-      changes.push("defaults.router");
-    }
-  }
-
-  // gate — only preset C sets it; never removed for A/B/D.
-  if (preset.gate) {
-    if (opts.overwrite || next.defaults.gate === undefined) {
-      next.defaults.gate = { ...preset.gate };
-      changes.push("defaults.gate");
-    }
   }
 
   return { config: next, changes };

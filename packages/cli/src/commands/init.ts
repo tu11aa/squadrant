@@ -13,14 +13,11 @@ import {
   readUserLevelSource,
   loadConfig,
   isProviderPresetId,
+  normalizePresetId,
   detectProviderPresetId,
   applyProviderPreset,
   PROVIDER_PRESETS,
-  DEFAULT_ROUTER_KIND,
-  DEFAULT_ROUTER_BASE_URL,
-  isRouterKind,
   type ProviderPresetId,
-  type RouterConfig,
   type SquadrantConfig,
 } from "@squadrant/shared";
 import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -74,41 +71,6 @@ function promptLine(question: string): Promise<string> {
 interface InitOptions {
   hub: string;
   preset?: string;
-  routerKind?: string;
-  routerBaseUrl?: string;
-  routerApiKeyEnv?: string;
-}
-
-/** #826: resolve the router block for preset C: reuse an existing block, else
- *  take --router-* flags, else prompt (TTY), else fall back to the documented
- *  opencode-go upstream. Never returns undefined — preset C always writes a router. */
-async function resolveRouter(
-  config: SquadrantConfig,
-  opts: InitOptions,
-  isTTY: boolean,
-): Promise<RouterConfig> {
-  if (config.defaults?.router) return config.defaults.router;
-
-  let kind = opts.routerKind;
-  let baseUrl = opts.routerBaseUrl;
-  let apiKeyEnv = opts.routerApiKeyEnv;
-
-  if (isTTY && (!kind || !baseUrl)) {
-    const k = await promptLine(chalk.cyan(`    Router kind [${DEFAULT_ROUTER_KIND}]: `));
-    kind = kind ?? (k || DEFAULT_ROUTER_KIND);
-    const b = await promptLine(chalk.cyan(`    Router base URL [${DEFAULT_ROUTER_BASE_URL}]: `));
-    baseUrl = baseUrl ?? (b || DEFAULT_ROUTER_BASE_URL);
-    const e = await promptLine(chalk.cyan("    Env var holding the API key (optional): "));
-    apiKeyEnv = apiKeyEnv ?? (e || undefined);
-  }
-
-  const resolvedKind = kind && isRouterKind(kind) ? kind : DEFAULT_ROUTER_KIND;
-  const resolvedBase = baseUrl || DEFAULT_ROUTER_BASE_URL;
-  if (!isTTY && !opts.routerBaseUrl) {
-    console.log(chalk.dim(`    - no router flags given; defaulting to ${resolvedKind} (${resolvedBase})`));
-    console.log(chalk.dim("      set a credential: squadrant config set defaults.router.apiKeyEnv <VAR>"));
-  }
-  return { kind: resolvedKind, baseUrl: resolvedBase, ...(apiKeyEnv ? { apiKeyEnv } : {}) };
 }
 
 /** One provider question (#826). Returns the operator's preset choice. */
@@ -123,9 +85,9 @@ async function askProvider(
     console.log(chalk.dim(`         ${p.summary}`));
   }
   if (!auth.authenticated) {
-    console.log(chalk.yellow("\n    ⚠ No Anthropic credential detected — preset a will not work; consider b or c."));
+    console.log(chalk.yellow("\n    ⚠ No Anthropic credential detected — preset a will not work; consider b."));
   }
-  const answer = (await promptLine(chalk.cyan(`\n    Provider [a/b/c/d] (default ${current}): `))).toLowerCase();
+  const answer = (await promptLine(chalk.cyan(`\n    Provider [a/b/c] (default ${current}): `))).toLowerCase();
   if (!answer) return current;
   if (isProviderPresetId(answer)) return answer;
   console.log(chalk.yellow(`    ⚠ Unknown choice '${answer}' — keeping '${current}'.`));
@@ -136,16 +98,13 @@ async function askProvider(
 function warnIfNoAnthropic(preset: ProviderPresetId, auth: ClaudeAuthStatus): void {
   if (preset !== "a" || auth.authenticated) return;
   console.log(chalk.yellow("    ⚠ No Anthropic credential detected (`claude auth status`)."));
-  console.log(chalk.dim("      Preset A (Claude Pro/Max or an API key) may not work — consider preset b or c."));
+  console.log(chalk.dim("      Preset A (Claude Pro/Max or an API key) may not work — consider preset b."));
 }
 
 export const initCommand = new Command("init")
   .description("Guided first-time setup: provider, hub vault, agents, plugins, projects (re-run-safe)")
   .option("--hub <path>", "Hub vault path", "~/squadrant-hub")
-  .option("--preset <id>", "provider preset: a|b|c|d (non-interactive)")
-  .option("--router-kind <kind>", "router kind for --preset c (opencode-go|openrouter|ccr|litellm|custom)")
-  .option("--router-base-url <url>", "router base URL for --preset c")
-  .option("--router-api-key-env <env>", "env var holding the router credential for --preset c")
+  .option("--preset <id>", "provider preset: a|b|c (non-interactive; d accepted as a deprecated alias for c)")
   .action(async (opts: InitOptions) => {
     const hubPath = resolveHome(opts.hub);
     const pkgRoot = findPackageRoot();
@@ -154,12 +113,14 @@ export const initCommand = new Command("init")
 
     console.log(chalk.bold("\nSquadrant Init\n"));
 
-    // Validate an explicit --preset before doing anything.
+    // Validate an explicit --preset before doing anything. `d` is accepted as
+    // a deprecated alias for codex, now `c` (preset C — claude+router — was
+    // retired and codex moved down to keep the catalog contiguous).
     let explicitPreset: ProviderPresetId | undefined;
     if (opts.preset !== undefined) {
-      const candidate = opts.preset.toLowerCase();
-      if (!isProviderPresetId(candidate)) {
-        console.error(chalk.red(`  ✘ Unknown --preset '${opts.preset}'. Valid values: a, b, c, d`));
+      const candidate = normalizePresetId(opts.preset.toLowerCase());
+      if (!candidate) {
+        console.error(chalk.red(`  ✘ Unknown --preset '${opts.preset}'. Valid values: a, b, c`));
         process.exitCode = 1;
         return;
       }
@@ -171,7 +132,7 @@ export const initCommand = new Command("init")
       console.log("  Run these steps to get started:\n");
       console.log(chalk.bold("  1/5  Hub vault + provider"));
       console.log(chalk.cyan(`       squadrant init --hub ${opts.hub}`));
-      console.log(chalk.dim("       Choose a provider: squadrant init --preset a|b|c|d"));
+      console.log(chalk.dim("       Choose a provider: squadrant init --preset a|b|c"));
       console.log(chalk.bold("\n  2/5  Agent + projection setup"));
       console.log("       (handled automatically by: " + chalk.cyan("squadrant init") + ")");
       console.log(chalk.bold("\n  3/5  Plugins — open Claude Code and run:"));
@@ -225,9 +186,8 @@ export const initCommand = new Command("init")
     let appliedChanges: string[] = [];
     if (chosenPreset) {
       const label = PROVIDER_PRESETS.find((p) => p.id === chosenPreset)?.label ?? chosenPreset;
-      const router = chosenPreset === "c" ? await resolveRouter(config, opts, isTTY) : undefined;
       const overwrite = !configExists || explicitPreset !== undefined;
-      const result = applyProviderPreset(config, chosenPreset, { router, overwrite });
+      const result = applyProviderPreset(config, chosenPreset, { overwrite });
       appliedChanges = result.changes;
       config = result.config;
 

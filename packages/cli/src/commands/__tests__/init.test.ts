@@ -123,9 +123,6 @@ async function runInit(opts: {
   hub?: string;
   isTTY?: boolean;
   preset?: string;
-  routerKind?: string;
-  routerBaseUrl?: string;
-  routerApiKeyEnv?: string;
 } = {}) {
   const { initCommand } = await import("../init.js");
   // Override isTTY on process.stdin for this call
@@ -137,9 +134,6 @@ async function runInit(opts: {
   const args = ["node", "squadrant"];
   if (opts.hub) args.push("--hub", opts.hub);
   if (opts.preset) args.push("--preset", opts.preset);
-  if (opts.routerKind) args.push("--router-kind", opts.routerKind);
-  if (opts.routerBaseUrl) args.push("--router-base-url", opts.routerBaseUrl);
-  if (opts.routerApiKeyEnv) args.push("--router-api-key-env", opts.routerApiKeyEnv);
   await initCommand.parseAsync(args);
 }
 
@@ -402,15 +396,13 @@ describe("init — provider preset (#826)", () => {
     vi.resetModules();
   });
 
-  it("--preset a on a fresh config writes the claude/auto default and no router/gate", async () => {
+  it("--preset a on a fresh config writes the claude/auto default", async () => {
     freshFs();
     await runInit({ isTTY: false, preset: "a", hub: tmpDir });
 
     const cfg = savedConfig();
     expect(cfg.defaults.roles.crew).toEqual({ agent: "claude", model: "sonnet" });
     expect(cfg.defaults.permissions.captain).toBe("auto");
-    expect(cfg.defaults.router).toBeUndefined();
-    expect(cfg.defaults.gate).toBeUndefined();
   });
 
   it("--preset b applies opencode roles non-interactively", async () => {
@@ -422,42 +414,21 @@ describe("init — provider preset (#826)", () => {
       agent: "opencode",
       model: "opencode-go/deepseek-v4.1-flash",
     });
-    expect(cfg.defaults.router).toBeUndefined();
-    expect(cfg.defaults.gate).toBeUndefined();
     // Routing rules must resolve to the same agent family as roles.
     expect(cfg.defaults.crewRouting.rules.some((r: any) => r.agent === "claude")).toBe(false);
     expect(cfg.defaults.crewRouting.rules.find((r: any) => r.tier === "hard").agent).toBe("opencode");
   });
 
-  it("--preset c writes router + gate + manual permission modes", async () => {
+  it("--preset c applies codex roles (codex moved from d to c)", async () => {
     freshFs();
-    await runInit({
-      isTTY: false,
-      preset: "c",
-      hub: tmpDir,
-      routerKind: "openrouter",
-      routerBaseUrl: "https://openrouter.ai/api",
-      routerApiKeyEnv: "OPENROUTER_API_KEY",
-    });
+    await runInit({ isTTY: false, preset: "c", hub: tmpDir });
 
     const cfg = savedConfig();
-    expect(cfg.defaults.router).toEqual({
-      kind: "openrouter",
-      baseUrl: "https://openrouter.ai/api",
-      apiKeyEnv: "OPENROUTER_API_KEY",
-    });
-    expect(cfg.defaults.gate).toEqual({ mode: "on" });
-    expect(cfg.defaults.permissions.captain).toBe("default");
-    expect(cfg.defaults.permissions.crew).toBe("default");
-    expect(cfg.defaults.roles.crew.agent).toBe("claude");
-    expect(cfg.defaults.roles.crew.backend).toBe("proxy");
-    // Every claude routing rule must carry the proxy backend.
-    const claudeRules = cfg.defaults.crewRouting.rules.filter((r: any) => r.agent === "claude");
-    expect(claudeRules.length).toBeGreaterThan(0);
-    expect(claudeRules.every((r: any) => r.backend === "proxy")).toBe(true);
+    expect(cfg.defaults.roles.crew).toEqual({ agent: "codex" });
+    expect(cfg.defaults.crewRouting.rules.every((r: any) => r.agent === "codex")).toBe(true);
   });
 
-  it("--preset d applies codex roles", async () => {
+  it("--preset d is accepted as a deprecated alias for codex's new id c", async () => {
     freshFs();
     await runInit({ isTTY: false, preset: "d", hub: tmpDir });
     const cfg = savedConfig();
@@ -471,15 +442,10 @@ describe("init — provider preset (#826)", () => {
     expect(errorOutput.join("\n")).toMatch(/unknown.*preset/i);
   });
 
-  it("re-running init on an existing config does not clobber roles/router/gate", async () => {
+  it("re-running init on an existing config does not clobber roles/permissions", async () => {
     const existing = mockDefaultConfig();
     existing.defaults.roles = { crew: { agent: "opencode", model: "custom" } } as never;
     existing.defaults.permissions = { command: "auto", captain: "default", crew: "default" } as never;
-    (existing.defaults as Record<string, unknown>).router = {
-      kind: "opencode-go",
-      baseUrl: "https://opencode.ai/zen/go",
-    };
-    (existing.defaults as Record<string, unknown>).gate = { mode: "on" };
     loadConfigMock.mockReturnValue(existing as never);
     existingFs(existing);
 
@@ -517,18 +483,6 @@ describe("init — provider preset (#826)", () => {
     expect(text).toMatch(/no anthropic credential/i);
     // Still applies the chosen default rather than aborting.
     expect(savedConfig().defaults.roles.crew.agent).toBe("claude");
-  });
-
-  it("--preset c without router flags defaults to the documented opencode-go upstream", async () => {
-    freshFs();
-    await runInit({ isTTY: false, preset: "c", hub: tmpDir });
-
-    const cfg = savedConfig();
-    expect(cfg.defaults.router).toEqual({
-      kind: "opencode-go",
-      baseUrl: "https://opencode.ai/zen/go",
-    });
-    expect(cfg.defaults.gate).toEqual({ mode: "on" });
   });
 
   it("prints exactly what will change before writing", async () => {
