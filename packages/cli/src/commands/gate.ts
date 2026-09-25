@@ -19,6 +19,7 @@ import { sendRequest } from "@squadrant/core";
 import {
   GateDecisionCache,
   createSquadrantAutoGate,
+  hasAutoGateCredential,
   isGateSession,
   evaluatePermissionRequest,
   formatPermissionDecision,
@@ -266,7 +267,7 @@ export function runGateStatus(
   const model = resolveClassifierModel(env, config);
   const credentialPresent =
     engine === "auto-gate"
-      ? Boolean(env.TYPESAFE_API_KEY)
+      ? hasAutoGateCredential(env)
       : Boolean(config.defaults.router?.apiKey ?? (config.defaults.router?.apiKeyEnv ? env[config.defaults.router.apiKeyEnv] : undefined));
   return { mode, source, engine, model, credentialPresent };
 }

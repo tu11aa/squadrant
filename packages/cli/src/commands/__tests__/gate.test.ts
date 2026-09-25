@@ -8,6 +8,15 @@ import { createSquadrantAutoGate } from "@squadrant/core";
 import type { GateOutcome } from "@squadrant-ai/auto-gate";
 import { runGatePermissionRequest, runGateModeGet, runGateModeSet, runGateStatus } from "../gate.js";
 
+// hasAutoGateCredential delegates to the package's real ~/.auto-gate-key file
+// fallback (core/src/auto-gate.ts, #854) — stubbed here so this test's outcome
+// never depends on whether the machine running it happens to have that file.
+const hasAutoGateCredential = vi.hoisted(() => vi.fn());
+vi.mock("@squadrant/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@squadrant/core")>();
+  return { ...actual, hasAutoGateCredential };
+});
+
 function makeConfig(overrides: Partial<SquadrantConfig["defaults"]> = {}): SquadrantConfig {
   const base = getDefaultConfig();
   return { ...base, defaults: { ...base.defaults, ...overrides } };
@@ -403,6 +412,7 @@ describe("gate status (#854)", () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-gate-status-"));
     cfgPath = path.join(dir, "config.json");
     saveConfig(getDefaultConfig(), cfgPath);
+    hasAutoGateCredential.mockReset();
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -427,15 +437,26 @@ describe("gate status (#854)", () => {
     expect(result.model).toBe("sonnet");
   });
 
-  it("engine=auto-gate checks TYPESAFE_API_KEY presence instead of the router credential", () => {
+  it("engine=auto-gate delegates credential presence to hasAutoGateCredential, not the router credential", () => {
     const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" }, router: ROUTER });
     saveConfig(config, cfgPath);
+
+    hasAutoGateCredential.mockReturnValue(false);
     const withoutKey = runGateStatus(cfgPath, {});
     expect(withoutKey.engine).toBe("auto-gate");
     expect(withoutKey.credentialPresent).toBe(false);
 
+    hasAutoGateCredential.mockReturnValue(true);
     const withKey = runGateStatus(cfgPath, { TYPESAFE_API_KEY: "sk-typesafe" } as NodeJS.ProcessEnv);
     expect(withKey.credentialPresent).toBe(true);
+  });
+
+  it("engine=router never consults hasAutoGateCredential (the file-fallback is auto-gate-only)", () => {
+    const config = makeConfig({ gate: { mode: "on" }, router: ROUTER });
+    saveConfig(config, cfgPath);
+    hasAutoGateCredential.mockClear();
+    runGateStatus(cfgPath, {});
+    expect(hasAutoGateCredential).not.toHaveBeenCalled();
   });
 });
 
