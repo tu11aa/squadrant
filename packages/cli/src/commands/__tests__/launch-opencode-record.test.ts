@@ -154,4 +154,43 @@ describe("opencode captain record refresh on launch (#797)", () => {
       agent: "opencode", port: 61099, sessionId: "ses_old",
     }));
   });
+
+  // #861 (item 1, same bug class as the delivery-loop heal): `live` here can
+  // be matched by directory cwd ALONE — its own sessionId is absent — so
+  // falling back to the prior record's session id pairs a NEW port with the
+  // OLD, possibly-wrong session. Must write NO session id instead, leaving it
+  // to the daemon's failure-branch heal to resolve against the new port.
+  it("onAlreadyExists: a new port with no live session id writes NO session id (never pairs new port + old session)", async () => {
+    discoverMock.mockReturnValue({ pid: 26805, port: 61200 }); // matched by directory only
+    const { opts } = await runLaunch([]);
+    opts.onAlreadyExists("demo-captain");
+    expect(discoverMock).toHaveBeenCalledWith({ directory: "/tmp/demo", sessionId: "ses_old" });
+    const call = writeCaptainAddressMock.mock.calls.at(-1);
+    expect(call![2]).toEqual({
+      agent: "opencode", port: 61200, directory: "/tmp/demo", launchedAt: expect.any(String),
+    });
+    expect(call![2]).not.toHaveProperty("sessionId");
+  });
+
+  // #861: root cause — on a COLD start the resolve is a fire-and-forget poll
+  // (up to 60s) that writes NOTHING on timeout, so the PREVIOUS launch's
+  // captain.json (old port, old session id) silently survived every relaunch
+  // that happened to time out. onCreated must clear it synchronously, before
+  // the poll starts, so a stale session id can never outlive its own launch.
+  it("onCreated synchronously clears the prior session id BEFORE the poll starts, on a cold start", async () => {
+    const { opts } = await runLaunch(["--fresh"]);
+    opts.agentCmdFactory(true); // forceFresh=true ⇒ no resume id (cold start)
+    opts.onCreated("demo-captain");
+
+    // The synchronous clear: this project's OWN new port/directory/launchedAt,
+    // but deliberately no sessionId key at all — not even the prior one.
+    expect(writeCaptainAddressMock).toHaveBeenCalledTimes(1);
+    expect(writeCaptainAddressMock).toHaveBeenCalledWith(expect.any(String), "demo", {
+      agent: "opencode", port: 71000, directory: "/tmp/demo", launchedAt: expect.any(String),
+    });
+    // The poll is still started afterward, with no known resume id.
+    expect(resolveAndPersistMock).toHaveBeenCalledWith(expect.objectContaining({
+      project: "demo", port: 71000, sessionId: undefined,
+    }));
+  });
 });

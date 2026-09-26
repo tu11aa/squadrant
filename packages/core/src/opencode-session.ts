@@ -197,6 +197,11 @@ export async function resolveAndPersistOpencodeCaptain(opts: {
   timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
   fetchImpl?: typeof fetch;
+  /** #861: the poll runs fire-and-forget from the caller, so a timeout was
+   *  previously silent — logged here so it shows up in the daemon/CLI log
+   *  instead of only being inferrable from a captain that never gets a
+   *  session id. */
+  log?: (m: string) => void;
 }): Promise<string | null> {
   if (opts.sessionId) {
     writeCaptainAddress(opts.stateRoot, opts.project, {
@@ -209,7 +214,13 @@ export async function resolveAndPersistOpencodeCaptain(opts: {
     port: opts.port, directory: opts.directory, createdAfterMs: Date.parse(opts.launchedAt),
     timeoutMs: opts.timeoutMs, sleep: opts.sleep, fetchImpl: opts.fetchImpl,
   });
-  if (!sessionId) return null;
+  if (!sessionId) {
+    opts.log?.(
+      `opencode captain session resolution timed out for ${opts.project} (${opts.directory}) — ` +
+      `captain.json has no session id yet; the daemon's own re-resolve fills it in once a session appears`,
+    );
+    return null;
+  }
   writeCaptainAddress(opts.stateRoot, opts.project, {
     agent: "opencode", port: opts.port, sessionId,
     directory: opts.directory, launchedAt: opts.launchedAt,
