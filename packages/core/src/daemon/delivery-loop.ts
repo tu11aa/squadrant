@@ -8,7 +8,7 @@ import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { stalePrefix } from "./down-alert.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
-import { readCaptainAddress, writeCaptainAddress } from "../captain-record.js";
+import { readCaptainAddress, writeCaptainAddress, type CaptainAddress } from "../captain-record.js";
 import { listSessions, newestSessionInDirectory, discoverLiveOpencodeServer } from "../opencode-session.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
@@ -50,6 +50,65 @@ const STUCK_ALERT_TEXT: Record<DeliverDeferReason, (n: number) => string> = {
 /** Pure: find the captain surface by title in a surface list (#332). */
 export function discoverCaptainSurface(surfaces: PaneRef[], captainTitle: string): PaneRef | null {
   return surfaces.find((s) => s.title === captainTitle) ?? null;
+}
+
+/**
+ * Re-resolve an opencode captain's address (#861). Discovers the live server
+ * for this captain FIRST — by its own recorded session id, else by directory
+ * cwd — then picks the newest session in the directory on THAT port via
+ * `newestSessionInDirectory`. A live server's own reported `sessionId` can be
+ * absent (found only by directory match) or itself stale, so it is never
+ * trusted directly — only `newestSessionInDirectory` against the live port
+ * decides which session is current. Trusting a bare `live.sessionId` (or
+ * silently keeping the old recorded one) is exactly how #861 stayed wrong
+ * forever after a relaunch.
+ *
+ * Returns null when there is nothing to change: no live server was found AND
+ * the recorded port/session already match what re-resolution would pick.
+ */
+async function reresolveOpencodeAddress(
+  rec: CaptainAddress,
+): Promise<{ port: number; sessionId: string } | null> {
+  const live = discoverLiveOpencodeServer({ directory: rec.directory, sessionId: rec.sessionId });
+  const port = live?.port ?? rec.port;
+  if (port === undefined) return null;
+  const newest = newestSessionInDirectory(
+    await listSessions(port), rec.directory, Date.parse(rec.launchedAt),
+  );
+  const sessionId = newest ?? live?.sessionId ?? rec.sessionId;
+  if (!sessionId || (port === rec.port && sessionId === rec.sessionId)) return null;
+  return { port, sessionId };
+}
+
+/**
+ * Verify that a recorded opencode captain address is still fresh, and correct
+ * captain.json when it isn't. Called from the delivery-FAILURE branch
+ * (#786/#797: heal, then retry against the refreshed address) — a fresh
+ * `squadrant launch` writes its own record synchronously (#861), so a failed
+ * delivery against a stale one is what this heals.
+ *
+ * `reresolveOpencodeAddress` awaits network I/O, so a concurrent relaunch can
+ * land a brand-new captain.json (new `launchedAt`) while this was resolving.
+ * Compare-and-swap on `launchedAt`, re-read right before writing: if it no
+ * longer matches the record this heal started from, a newer launch already
+ * won the race and this write must be dropped, never merged over it (#861).
+ * Returns true when the record was corrected.
+ */
+async function healStaleOpencodeAddress(
+  stateRoot: string, project: string, log: (m: string) => void, logPrefix: string,
+): Promise<boolean> {
+  const rec = readCaptainAddress(stateRoot, project);
+  if (!rec) return false;
+  const resolved = await reresolveOpencodeAddress(rec);
+  if (!resolved) return false;
+  const current = readCaptainAddress(stateRoot, project);
+  if (!current || current.launchedAt !== rec.launchedAt) {
+    log(`captain-channel ${project}: skipped stale-address heal — a newer launch record won the race`);
+    return false;
+  }
+  writeCaptainAddress(stateRoot, project, { ...current, port: resolved.port, sessionId: resolved.sessionId });
+  log(`captain-channel ${project}: ${logPrefix} → port ${resolved.port}`);
+  return true;
 }
 
 /**
@@ -426,39 +485,12 @@ export function createDelivery(
               }
               // Addressable but the channel reports gone/unsupported / is off.
               if (agent === "opencode" && mode !== "off") {
-                // #786: the record's session id can go stale (captain relaunched).
-                // Re-resolve the address, then retry ONCE against it. If nothing
-                // can be re-resolved, fall through to the pane rather than a
-                // permanent no-channel defer (#797).
-                const rec = readCaptainAddress(stateRoot, project);
-                let healed = false;
-                if (rec?.port) {
-                  // #789: bound the re-resolve to sessions created at/after the
-                  // captain's launch, same as the initial resolution — otherwise a
-                  // pre-existing session in the repo root can be re-picked.
-                  const fresh = newestSessionInDirectory(
-                    await listSessions(rec.port), rec.directory, Date.parse(rec.launchedAt),
-                  );
-                  if (fresh && fresh !== rec.sessionId) {
-                    writeCaptainAddress(stateRoot, project, { ...rec, sessionId: fresh });
-                    healed = true;
-                  }
-                }
-                // #797: the recorded PORT can be dead too (opencode restarted on
-                // a different port). Re-resolving only the session id dials the
-                // same dead port forever. Discover the live server for this
-                // captain's directory (or its own session id) and rewrite the
-                // address, then retry.
-                if (!healed && rec) {
-                  const live = discoverLiveOpencodeServer({ directory: rec.directory, sessionId: rec.sessionId });
-                  if (live && (live.port !== rec.port || (live.sessionId && live.sessionId !== rec.sessionId))) {
-                    writeCaptainAddress(stateRoot, project, {
-                      ...rec, port: live.port, sessionId: live.sessionId ?? rec.sessionId,
-                    });
-                    log(`captain-channel ${project}: re-resolved opencode address → port ${live.port}`);
-                    healed = true;
-                  }
-                }
+                // #786/#797: the record's port and/or session id can go stale
+                // (captain relaunched, or opencode restarted on a different
+                // port). Re-resolve the address, then retry ONCE against it.
+                // If nothing can be re-resolved, fall through to the pane
+                // rather than a permanent no-channel defer (#797).
+                const healed = await healStaleOpencodeAddress(stateRoot, project, log, "re-resolved opencode address");
                 if (healed) {
                   // Retry with the refreshed address — the channel re-reads the
                   // captain record, so this dials the new port/session.

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
 import type { GateOutcome } from "@squadrant-ai/auto-gate";
-import { createSquadrantAutoGate } from "../auto-gate.js";
+import { createSquadrantAutoGate, hasAutoGateCredential } from "../auto-gate.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -213,6 +213,41 @@ describe("createSquadrantAutoGate — transcript reader (U7 extractUserIntentFro
       );
       expect(seen.toolName).toBe("Bash");
       expect(seen.userIntent).toBe("add a login form");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hasAutoGateCredential (#854)", () => {
+  it("is false when neither TYPESAFE_API_KEY nor a ~/.auto-gate-key file resolves", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ag-cred-none-"));
+    try {
+      expect(hasAutoGateCredential({} as NodeJS.ProcessEnv, dir)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is true from env TYPESAFE_API_KEY alone", () => {
+    expect(hasAutoGateCredential({ TYPESAFE_API_KEY: "sk-typesafe" } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it("is true from the ~/.auto-gate-key file fallback when env is unset (the file-only case)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ag-cred-file-"));
+    try {
+      writeFileSync(join(dir, ".auto-gate-key"), "sk-file-backed\n");
+      expect(hasAutoGateCredential({} as NodeJS.ProcessEnv, dir)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is false when the key file exists but is empty/whitespace-only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ag-cred-empty-"));
+    try {
+      writeFileSync(join(dir, ".auto-gate-key"), "   \n");
+      expect(hasAutoGateCredential({} as NodeJS.ProcessEnv, dir)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

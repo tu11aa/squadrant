@@ -18,6 +18,7 @@
 import {
   createAutoGate,
   projectGateConfig,
+  resolveApiKey,
   type AutoGateConfig,
   type BlockedSignalCtx,
   type GateOutcome,
@@ -60,6 +61,18 @@ function gateForProjection(config: SquadrantConfig): SquadrantGateShape {
   if (gate.tools) out.tools = gate.tools;
   if (gate.deny) out.deny = gate.deny;
   return out;
+}
+
+/**
+ * Whether the auto-gate engine's credential resolves — env `TYPESAFE_API_KEY`
+ * first, then the package's `~/.auto-gate-key` file fallback (§12). Delegates
+ * to the package's own `resolveApiKey` so the two can never disagree about
+ * where the credential comes from; the resolved value itself is discarded
+ * here — only presence is reported (#854). `home` is test-only (defaults to
+ * the real homedir via the package).
+ */
+export function hasAutoGateCredential(env: NodeJS.ProcessEnv = process.env, home?: string): boolean {
+  return Boolean(resolveApiKey({ env, ...(home !== undefined ? { home } : {}) }));
 }
 
 /**

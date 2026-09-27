@@ -15,11 +15,21 @@ vi.mock("@squadrant/shared", async (importOriginal) => {
 });
 
 const discoverMock = vi.hoisted(() => vi.fn());
-vi.mock("../opencode-session.js", () => ({
-  listSessions: vi.fn(async () => []),
-  newestSessionInDirectory: vi.fn(() => null),
-  discoverLiveOpencodeServer: discoverMock,
-}));
+// #861: listSessions is mocked per-port (not a flat queue) so the defect-1/2
+// tests below can prove resolution runs against the DISCOVERED live port, not
+// blindly against the recorded one. newestSessionInDirectory is left REAL
+// (via importOriginal) — with the default empty-rows mock it still returns
+// null for every existing test here, so this is behaviourally identical to
+// the old fully-mocked version for #797, while making #861's session
+// selection decisive rather than another mock return value.
+vi.mock("../opencode-session.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../opencode-session.js")>();
+  return {
+    ...actual,
+    listSessions: vi.fn(async () => []),
+    discoverLiveOpencodeServer: discoverMock,
+  };
+});
 
 import { createDelivery } from "../daemon/delivery-loop.js";
 import { createStore } from "../store.js";
@@ -27,6 +37,7 @@ import { LivenessRegistry } from "../daemon/liveness-registry.js";
 import { appendCaptainMessage, readCursor } from "../mailbox.js";
 import { writeCaptainAddress, readCaptainAddress } from "../captain-record.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
+import { listSessions } from "../opencode-session.js";
 import type { ControlChannel } from "../control-channel.js";
 
 async function seed(stateRoot: string, project: string) {
@@ -184,5 +195,131 @@ describe("opencode captain address self-heal (#797)", () => {
     // Loud, not silent: the server-unreachable fallback is logged.
     expect(logs.some((l) => l.includes("no live opencode server — falling back to pane"))).toBe(true);
     expect(logs.some((l) => l.includes("outcome=deferred"))).toBe(true);
+  });
+});
+
+// #861: a recurrence of #789/#797 — root cause traced to `launch.ts`'s
+// fire-and-forget session poll: on timeout it wrote nothing, so a PREVIOUS
+// launch's captain.json (old port, old sessionId) silently survived a
+// relaunch. Two things pinned here on the delivery-loop side:
+//  - defect 1: the heal persisted a newly-DISCOVERED port together with the
+//    OLD recorded sessionId instead of re-resolving the session against that
+//    same live port.
+//  - the heal write must be compare-and-swap: it awaits network I/O, so a
+//    concurrent relaunch's fresh captain.json (new launchedAt) must never be
+//    clobbered by a heal computed from the stale record it started from.
+// (The "heal on every accepted delivery" idea from an earlier pass was
+// rejected by the operator — see the launch.ts synchronous-clear fix instead,
+// covered in launch-opencode-record.test.ts.)
+describe("opencode captain address self-heal (#861)", () => {
+  it("defect 1: resolves the session against the DISCOVERED live port, not the stale recorded id", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-defect1-"));
+    const project = "delta";
+    const captainName = `${project}-captain`;
+    loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
+    const { store, livenessRegistry } = await seed(stateRoot, project);
+
+    const launchedAt = "2026-09-23T06:26:26.600Z";
+    // Session A recorded against a now-dead port.
+    writeCaptainAddress(stateRoot, project, {
+      agent: "opencode", port: 58525, sessionId: "ses_A",
+      directory: "/tmp/delta", launchedAt,
+    });
+    // Discovery finds the live server by directory cwd, not by session id —
+    // its own reported sessionId is undefined, exactly the #861 field trace.
+    discoverMock.mockReturnValue({ pid: 999, port: 61099 });
+    // The recorded (dead) port answers nothing; the newly-discovered live port
+    // lists session B — created after launchedAt, the operator's real session.
+    vi.mocked(listSessions).mockImplementation(async (port: number) =>
+      port === 61099
+        ? [
+            { id: "ses_A", directory: "/tmp/delta", time: { created: Date.parse(launchedAt) - 1000, updated: Date.parse(launchedAt) } },
+            { id: "ses_B", directory: "/tmp/delta", time: { created: Date.parse(launchedAt) + 5000, updated: Date.parse(launchedAt) + 6000 } },
+          ]
+        : [],
+    );
+
+    const channelSend = vi.fn(async () => ({ status: "gone" as const }));
+    const opencode: ControlChannel = {
+      name: "opencode-http", agent: "opencode",
+      send: channelSend,
+      probe: vi.fn(async () => ({ status: "gone" as const })),
+    } as unknown as ControlChannel;
+
+    const paneSend = vi.fn(async () => {});
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: paneSend,
+    };
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
+      captainChannelMode: () => "on",
+      captainChannels: { opencode },
+      captainAgentFor: () => "opencode",
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    // Not the stale recorded session id — the newest session on the port that
+    // is actually live.
+    expect(readCaptainAddress(stateRoot, project)).toMatchObject({ port: 61099, sessionId: "ses_B" });
+  });
+
+  it("CAS: a newer launch record landing mid-heal wins the race — the heal must not clobber it", async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "deliv-861-cas-"));
+    const project = "zeta";
+    const captainName = `${project}-captain`;
+    loadConfigMock.mockReturnValue({ projects: { [project]: { captainName } }, commandName: "cmd" });
+    const { store, livenessRegistry } = await seed(stateRoot, project);
+
+    const oldLaunchedAt = "2026-09-23T06:26:26.600Z";
+    const newLaunchedAt = "2026-09-24T02:33:42.000Z";
+    writeCaptainAddress(stateRoot, project, {
+      agent: "opencode", port: 58525, sessionId: "ses_old",
+      directory: "/tmp/zeta", launchedAt: oldLaunchedAt,
+    });
+    discoverMock.mockReturnValue({ pid: 1, port: 61099 });
+    // While the heal is mid-resolution (awaiting listSessions), a fresh
+    // relaunch lands and overwrites captain.json with a NEW launchedAt —
+    // exactly the race #861's compare-and-swap must survive.
+    vi.mocked(listSessions).mockImplementation(async () => {
+      writeCaptainAddress(stateRoot, project, {
+        agent: "opencode", port: 61200, sessionId: "ses_new_launch",
+        directory: "/tmp/zeta", launchedAt: newLaunchedAt,
+      });
+      return [
+        { id: "ses_B", directory: "/tmp/zeta", time: { created: Date.parse(oldLaunchedAt) + 1000, updated: Date.parse(oldLaunchedAt) + 2000 } },
+      ];
+    });
+
+    const channelSend = vi.fn(async () => ({ status: "gone" as const }));
+    const opencode: ControlChannel = {
+      name: "opencode-http", agent: "opencode",
+      send: channelSend,
+      probe: vi.fn(async () => ({ status: "gone" as const })),
+    } as unknown as ControlChannel;
+
+    const paneSend = vi.fn(async () => {});
+    const cmux = {
+      listSurfaces: async () => [{ workspaceId: "w1", surfaceId: "surface:1", title: captainName }],
+      findWorkspaceId: async () => "w1",
+      send: paneSend,
+    };
+    const logs: string[] = [];
+    const deliv = createDelivery({
+      stateRoot, store, livenessRegistry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
+      captainChannelMode: () => "on",
+      captainChannels: { opencode },
+      captainAgentFor: () => "opencode",
+    } as any, cmux as any);
+
+    await deliv.deliveryTick!();
+
+    // The newer launch's record survives untouched — the heal backed off.
+    expect(readCaptainAddress(stateRoot, project)).toMatchObject({
+      port: 61200, sessionId: "ses_new_launch", launchedAt: newLaunchedAt,
+    });
+    expect(logs.some((l) => l.includes("newer launch record won the race"))).toBe(true);
   });
 });

@@ -65,6 +65,17 @@ describe("parseCommand", () => {
     expect(parseCommand("/config set defaults.effort").kind).toBe("usage");
   });
 
+  it("allows /config set on the gate mode key with a valid value (#854)", () => {
+    expect(WRITABLE_CONFIG_KEYS).toContain("defaults.gate.mode");
+    const p = parseCommand("/config set defaults.gate.mode on");
+    expect(p).toEqual({ kind: "ok", name: "config", argv: ["config", "set", "defaults.gate.mode", "on"] });
+  });
+
+  it("rejects an invalid gate mode value without denying the key (#854)", () => {
+    const p = parseCommand("/config set defaults.gate.mode bogus");
+    expect(p.kind).toBe("usage");
+  });
+
   it("rejects unknown commands", () => {
     expect(parseCommand("/frobnicate").kind).toBe("unknown");
   });

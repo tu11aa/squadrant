@@ -36,7 +36,7 @@ guided first run — come back here when you need the details.
 
 | Command | Description |
 |---------|-------------|
-| `squadrant init [--preset <a\|b\|c\|d>] [--hub <path>]` | First-time setup — provider preset, config, hub vault, scripts |
+| `squadrant init [--preset <a\|b\|c>] [--hub <path>]` | First-time setup — provider preset, config, hub vault, scripts |
 | `squadrant launch <project>` | Start a specific project captain |
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
@@ -69,6 +69,8 @@ guided first run — come back here when you need the details.
 | `squadrant whoami [--json]` | Show the agent session calling the command (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
 | `squadrant shutdown [project]` | Graceful shutdown |
 | `squadrant effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
+| `squadrant gate mode [on\|off\|auto]` | Get or set the permission gate mode `defaults.gate.mode` (no arg prints current + source: env/config/default); no daemon bounce needed ([#854](https://github.com/tu11aa/squadrant/issues/854)) |
+| `squadrant gate status` | Show the effective gate mode/source, resolved engine, classifier model, and whether the engine's credential is present (never the value) |
 | `squadrant retro` | Generate a retro (weekly/sprint summary) from daily logs and git (zero tokens) |
 | `squadrant config check` | Detect config drift vs the current default schema |
 | `squadrant heal [--dry-run\|daemon]` | Targeted, idempotent remediation for squadrant components (daemon, health) |
@@ -139,7 +141,7 @@ Alongside a per-role **model**, each role can pin a per-role **thinking level** 
 
 ### Provider Presets (`squadrant init`)
 
-A fresh install must not assume the operator has an Anthropic credential. `squadrant init` asks **one** provider question — or takes `--preset <a|b|c|d>` non-interactively — and writes the matching `defaults` blocks ([#826](https://github.com/tu11aa/squadrant/issues/826)). Preset A (all-claude + `auto`) remains the default and preserves back-compat.
+A fresh install must not assume the operator has an Anthropic credential. `squadrant init` asks **one** provider question — or takes `--preset <a|b|c>` non-interactively — and writes the matching `defaults` blocks ([#826](https://github.com/tu11aa/squadrant/issues/826)). Preset A (all-claude + `auto`) remains the default and preserves back-compat.
 
 A preset writes **both** `roles` **and** `defaults.crewRouting.rules` — otherwise the shipped rules (`extreme`/`hard` → `claude`) would silently override a non-claude `roles.crew` for most tasks. Every tier resolves to the same agent family as `roles`.
 
@@ -147,13 +149,13 @@ A preset writes **both** `roles` **and** `defaults.crewRouting.rules` — otherw
 |---|---|---|
 | **A** *(default)* | Claude Code (Pro/Max subscription or API key) | `roles` = all `claude` (command/captain/side = `opus`, crew = `sonnet`, exploration = `haiku`); `permissions` command/captain/crew = `auto`; `crewRouting` = the shipped rules (`extreme`/`hard` → `claude` opus/sonnet, `mobile` → `codex`, `daily` → `opencode`) |
 | **B** | opencode (no Anthropic subscription) | `roles` = all `opencode`, model `opencode-go/deepseek-v4.1-flash`; `permissions` = `auto`; `crewRouting` = `extreme`/`hard`/`daily` → `opencode` (same model), `mobile` → `codex`; router/gate absent |
-| **C** | Claude harness + router backend (advanced) | `roles` = `claude` with `backend: "proxy"`; `crewRouting` = `extreme`/`hard` → `claude` + `backend: "proxy"` + the router model, `daily` → `opencode`, `mobile` → `codex`; `defaults.router`; `defaults.gate.mode = "on"`; `permissions` command/captain/crew = `default` |
-| **D** | Codex (ChatGPT Pro) | `roles` = all `codex`; `crewRouting` = every tier → `codex` |
+| **C** | Codex (ChatGPT Pro) | `roles` = all `codex`; `crewRouting` = every tier → `codex` |
 
-- **Non-interactive:** `squadrant init --preset <a|b|c|d>`. Invalid ids fail fast before any write.
-- **Re-run-safe:** on an existing config, init fills only a wholly-absent `roles`/`permissions`/`crewRouting` block and **never** clobbers `router`/`gate`. Pass `--preset <id>` explicitly to overwrite the preset-owned blocks (`roles`, `permissions`, `crewRouting`, and for C `router` + `gate`). Unrelated sections (`defaults.effort`, `projects`, `telegram`, …) are never touched.
-- **Credential detection:** init probes `claude auth status` (JSON). With no Anthropic credential it **warns** and suggests B or C — it never silently keeps/claims A. A probe that is missing, errors, or returns unreadable output degrades to "not authenticated".
-- **Preset C needs a router:** interactive init prompts for `kind` / `baseUrl` / `apiKeyEnv`; non-interactively supply `--router-kind`, `--router-base-url`, `--router-api-key-env` (defaults to the documented `opencode-go` upstream at `https://opencode.ai/zen/go`). Auto mode is **not available** on a router backend — the [U7 permission gate](#router-backend-harnessprovider-decoupling) replaces it, which is why preset C writes `permission_mode=default`.
+> Preset C used to be "Claude harness + router backend" (advanced) and Codex was `d`. That router preset was retired — the operator no longer runs claude through a router — and Codex moved down to `c` to keep the catalog contiguous. `--preset d` is still accepted as a deprecated alias for `c` so existing scripts/configs don't hard-fail; `squadrant init --help` no longer lists it. The router/gate machinery itself is unchanged and still available via manual config — see [Router Backend](#router-backend-harnessprovider-decoupling).
+
+- **Non-interactive:** `squadrant init --preset <a|b|c>`. Invalid ids fail fast before any write.
+- **Re-run-safe:** on an existing config, init fills only a wholly-absent `roles`/`permissions`/`crewRouting` block. Pass `--preset <id>` explicitly to overwrite the preset-owned blocks (`roles`, `permissions`, `crewRouting`). Unrelated sections (`defaults.router`, `defaults.gate`, `defaults.effort`, `projects`, `telegram`, …) are never touched.
+- **Credential detection:** init probes `claude auth status` (JSON). With no Anthropic credential it **warns** and suggests B — it never silently keeps/claims A. A probe that is missing, errors, or returns unreadable output degrades to "not authenticated".
 
 ### Router Backend (Harness/Provider Decoupling)
 
@@ -463,7 +465,7 @@ The control surfaces (auto-launch + General command channel) are **off by defaul
 1. `remoteControl: true` — an explicit opt-in master switch (default `false`).
 2. `message.from.id ∈ users[]` — the sender's Telegram **user-id** is on the allowlist. An empty/absent `users` list ⇒ control is disabled (fail-closed). Chat membership alone is **never** enough for control.
 
-When remote control is off (the default after upgrade), behavior is **exactly v1**: project-topic messages queue to the captain pane (no auto-launch), and General-topic slash commands are rejected with `⛔ not authorized`. Inbound text is always treated as data; only the curated registry maps to actions, and `/config set` is restricted to a default-deny writable-key allowlist (currently just `defaults.effort`) — **secrets (`botToken`, `users`, `chats`, `supergroupId`) can never be written over Telegram.**
+When remote control is off (the default after upgrade), behavior is **exactly v1**: project-topic messages queue to the captain pane (no auto-launch), and General-topic slash commands are rejected with `⛔ not authorized`. Inbound text is always treated as data; only the curated registry maps to actions, and `/config set` is restricted to a default-deny writable-key allowlist (currently `defaults.effort` and `defaults.gate.mode`, the latter value-validated to `on`/`off`/`auto` — [#854](https://github.com/tu11aa/squadrant/issues/854)) — **secrets (`botToken`, `users`, `chats`, `supergroupId`) can never be written over Telegram.**
 
 #### Notification tuning (per-project)
 
@@ -600,3 +602,5 @@ The `defaults.gate` block is **optional** too — omit it and the U7 permission 
 | `auto-gate` | The standalone [`@squadrant-ai/auto-gate`](https://www.npmjs.com/package/@squadrant-ai/auto-gate) package decides (Jev-backed by default; its own config/keys, e.g. `TYPESAFE_API_KEY`). `allow`/`deny` print `hookSpecificOutput.decision.behavior`; `ask` prints nothing and emits exactly one `task.blocked`. |
 
 Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GATE_ENGINE` (engine), `SQUADRANT_GATE_POLICY`, `SQUADRANT_GATE_TOOLS`, `SQUADRANT_GATE_MODEL`. Router-backed crews/captains inject `SQUADRANT_GATE=on`; the auto-gate host honours that env override even when no `defaults.gate` block is present. `engine: "auto-gate"` for an **opencode** crew (wiring the launch through the package's `auto-gate opencode run` wrapper) is **not yet implemented** — see [Router Backend](#router-backend-harnessprovider-decoupling).
+
+**Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
