@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-27
+
+A permission-gate CLI/slash-command surface (#854), and the #861 opencode captain stale-`sessionId` bug fixed at its actual root cause — launch's silent poll timeout — after two earlier attempts at the symptom.
+
+### Added
+
+- **`squadrant gate mode`/`gate status` CLI + `/gate` slash command + Telegram writable gate key (#854).** `squadrant gate mode [on|off|auto]` reads or sets `defaults.gate.mode`, printing `old → new`; the key isn't cached by the daemon, so no bounce is needed. `squadrant gate status` reports the effective mode/source, resolved engine, resolved classifier model, and whether that engine's credential resolves (presence only, never the value — `hasAutoGateCredential` now delegates to the `@squadrant-ai/auto-gate` package's own `resolveApiKey`, so squadrant can't disagree with it about the env-var-vs-`~/.auto-gate-key`-file precedence). A portable `/gate` slash command mirrors the effort-dial two-skill pattern, and `defaults.gate.mode` is now a Telegram `/config set` writable key with on/off/auto validation.
+
+### Fixed
+
+- **Opencode captain deliveries no longer misroute to a stale session after a relaunch (#861).** Root cause: `launch.ts`'s fire-and-forget captain-address poll (up to 60s) wrote nothing on a timeout, so a previous launch's `captain.json` (old port, old session id) silently survived a relaunch. `onCreated` now synchronously overwrites `captain.json` with `{agent, port, directory, launchedAt}` and no session id *before* the background poll starts, so a stale session can never outlive its own launch; a timeout now logs instead of staying silent. Two related pairing bugs are fixed alongside it: the delivery-loop heal and `onAlreadyExists` both used to fall back to the old recorded session id whenever a live-server lookup matched by directory cwd alone (leaving `sessionId` undefined) — now the session is always re-resolved via `newestSessionInDirectory` against whatever port is actually live, and a session id is paired with a newly-discovered port only when the port is unchanged from the prior record. The heal also now runs right after every accepted delivery, not just on failure, since a stale-but-live session returns a false-positive "accepted".
+
+### Changed
+
+- **`squadrant init` provider preset C (claude harness + router backend) removed; codex relabelled `d` → `c`.** The operator no longer runs claude through a router, so preset C is retired and codex moves down to keep the catalog contiguous; `--preset d` is kept as a deprecated alias so existing scripts/configs don't hard-fail. `router?`/`gate?` are dropped from `ProviderPresetDefaults` and the now-dead `--router-*` init flags and `resolveRouter()` are removed. Router/gate config and transport themselves are untouched.
+
 ## [0.23.0] - 2026-09-24
 
 The permission gate gains an opt-in `auto-gate` engine, plus fixes for routed claude subagent/small-fast model slots, `crew answer` on an opencode permission dialog, and blocked-crew re-notification. Zero behaviour change unless opted in.
