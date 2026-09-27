@@ -34,6 +34,7 @@ import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } fr
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+import { decideOpencodeGateWrap, buildOpencodeGateRunCommand } from "./auto-gate.js";
 
 // Re-exported for test-import stability (crew-spawn.test.ts imports it here).
 export { claudeEnvShadowsRouter };
@@ -231,6 +232,14 @@ export interface CrewSpawnDeps {
    *  by itself proof the turn never landed. Absent ⇒ no such check is possible
    *  (pure unit tests, non-daemon deployments) — behavior is unchanged. */
   getTaskRecord?(project: string, id: string): Promise<TaskRecord | undefined>;
+  /** #828 P6-C: env consulted for the opencode auto-gate wrap decision.
+   *  Absent ⇒ process.env (real deployments); tests inject a fixed object so
+   *  the decision never depends on the daemon's actual environment. */
+  env?: NodeJS.ProcessEnv;
+  /** #828 P6-C: injectable so tests can control auto-gate credential presence
+   *  without touching the real ~/.auto-gate-key file. Absent ⇒ the real
+   *  hasAutoGateCredential (reads TYPESAFE_API_KEY / ~/.auto-gate-key). */
+  hasAutoGateCredential?(env: NodeJS.ProcessEnv): boolean;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -694,22 +703,40 @@ export async function runCrewSpawn(
       budgetMs: 86400000,
       serverPort,
     });
+    // #828 P6-C phase 2: gate on + engine=auto-gate + credential present ⇒
+    // launch through the package's opencode adapter instead of bare `opencode`.
+    // Sole owner of permission-answering in that case — CP3's own --approval
+    // gate must not also race it for the same permission.asked event, so it is
+    // suppressed (with a note) rather than left to answer the same prompt twice.
+    const gateDecision = decideOpencodeGateWrap({
+      config,
+      env: deps.env,
+      hasCredential: deps.hasAutoGateCredential,
+    });
+    if (gateDecision.warn) {
+      process.stderr.write(`⚠️  gate: ${gateDecision.reason} — launching opencode crew '${name}' directly (P6-C safety fallback)\n`);
+    }
+    if (input.approval && gateDecision.wrap) {
+      process.stderr.write(`ℹ️  gate: auto-gate owns permission answering for crew '${name}' — the --approval flag is a no-op while the gate is on\n`);
+    }
     const opencodeConfigPath = deps.writeOpencodeConfig({
       stateRoot: STATE_ROOT,
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.
-      ...(input.approval ? { gateBash: true } : {}),
+      ...(input.approval && !gateDecision.wrap ? { gateBash: true } : {}),
     });
-    const cliCommand = agent.buildCommand({
-      prompt: input.task,
-      workdir: spawnCwd,
-      role: "crew",
-      promptFile,
-      interactive: true,
-      model: crewModel,
-      port: serverPort,
-    });
+    const cliCommand = gateDecision.wrap
+      ? buildOpencodeGateRunCommand({ port: serverPort })
+      : agent.buildCommand({
+          prompt: input.task,
+          workdir: spawnCwd,
+          role: "crew",
+          promptFile,
+          interactive: true,
+          model: crewModel,
+          port: serverPort,
+        });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });

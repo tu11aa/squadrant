@@ -9,7 +9,12 @@ import { join } from "node:path";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
 import type { GateOutcome } from "@squadrant-ai/auto-gate";
-import { createSquadrantAutoGate, hasAutoGateCredential } from "../auto-gate.js";
+import {
+  createSquadrantAutoGate,
+  hasAutoGateCredential,
+  decideOpencodeGateWrap,
+  buildOpencodeGateRunCommand,
+} from "../auto-gate.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -251,5 +256,64 @@ describe("hasAutoGateCredential (#854)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("decideOpencodeGateWrap (#828 P6-C phase 2)", () => {
+  it("does not wrap when the gate is off (default)", () => {
+    const result = decideOpencodeGateWrap({ config: makeConfig(), env: {} as NodeJS.ProcessEnv });
+    expect(result).toEqual({ wrap: false, warn: false, reason: "gate mode='auto' engine='router'" });
+  });
+
+  it("does not wrap when mode=on but engine=router (opencode has no PermissionRequest hook to own)", () => {
+    const result = decideOpencodeGateWrap({
+      config: makeConfig({ gate: { mode: "on", engine: "router" } }),
+      env: {} as NodeJS.ProcessEnv,
+    });
+    expect(result.wrap).toBe(false);
+    expect(result.warn).toBe(false);
+  });
+
+  it("wraps when mode=on, engine=auto-gate, and the credential resolves", () => {
+    const hasCredential = vi.fn(() => true);
+    const result = decideOpencodeGateWrap({
+      config: makeConfig({ gate: { mode: "on", engine: "auto-gate" } }),
+      env: {} as NodeJS.ProcessEnv,
+      hasCredential,
+    });
+    expect(result).toEqual({ wrap: true, warn: false, reason: "gate on, engine=auto-gate, credential present" });
+    expect(hasCredential).toHaveBeenCalledOnce();
+  });
+
+  it("safety fallback: mode=on, engine=auto-gate, credential absent — warn, do not wrap", () => {
+    const result = decideOpencodeGateWrap({
+      config: makeConfig({ gate: { mode: "on", engine: "auto-gate" } }),
+      env: {} as NodeJS.ProcessEnv,
+      hasCredential: () => false,
+    });
+    expect(result.wrap).toBe(false);
+    expect(result.warn).toBe(true);
+    expect(result.reason).toMatch(/credential not present/);
+  });
+
+  it("SQUADRANT_GATE env override wins over an absent config block", () => {
+    const result = decideOpencodeGateWrap({
+      config: makeConfig(),
+      env: { SQUADRANT_GATE: "on", SQUADRANT_GATE_ENGINE: "auto-gate" } as NodeJS.ProcessEnv,
+      hasCredential: () => true,
+    });
+    expect(result.wrap).toBe(true);
+  });
+});
+
+describe("buildOpencodeGateRunCommand (#828 P6-C phase 2)", () => {
+  it("builds a bare --port command with no session id", () => {
+    expect(buildOpencodeGateRunCommand({ port: 4096 })).toBe("squadrant gate opencode-run --port 4096");
+  });
+
+  it("appends --session when a session id is given (captain resume)", () => {
+    expect(buildOpencodeGateRunCommand({ port: 4096, sessionId: "ses_abc" })).toBe(
+      "squadrant gate opencode-run --port 4096 --session ses_abc",
+    );
   });
 });

@@ -23,6 +23,7 @@ import {
   launchOneWorkspace, loadSessions, ensureSocksDir, captainSocketPath,
   readCaptainAddress, writeCaptainAddress, realpathOrSelf, resolveAndPersistOpencodeCaptain,
   discoverLiveOpencodeServer, prepareCaptainRoute, renderEnvAssignments,
+  decideOpencodeGateWrap, buildOpencodeGateRunCommand,
   type CaptainAddress, type CaptainRouteSetup,
 } from "@squadrant/core";
 import { selectCaptainsInteractive } from "./launch-interactive.js";
@@ -337,12 +338,24 @@ export const launchCommand = new Command("launch")
               thinking,
               captainBoot,
               route?.settingsPath);
+            // #828 P6-C phase 2: gate on + engine=auto-gate + credential present
+            // ⇒ launch the opencode captain through the package's opencode
+            // adapter instead of the bare command above. The captain's config
+            // is always allow-all (no CP3 --approval knob exists for captains),
+            // so there is no answerer-ownership conflict to resolve here.
+            const gateDecision = isOpencodeCaptain ? decideOpencodeGateWrap({ config }) : undefined;
+            if (gateDecision?.warn) {
+              console.error(chalk.yellow(`  ⚠ gate: ${gateDecision.reason} — launching opencode captain directly (P6-C safety fallback)`));
+            }
+            const effectiveCmd = gateDecision?.wrap && captainBoot?.port
+              ? buildOpencodeGateRunCommand({ port: captainBoot.port, sessionId: captainBoot.sessionId })
+              : baseCmd;
             // Routed ⇒ prepend the router env + SQUADRANT_GATE=on so the gate owns
             // PermissionRequest. Empty for native ⇒ command byte-for-byte unchanged.
             const gatePrefix = route && Object.keys(route.env).length > 0
               ? `${renderEnvAssignments(route.env)} `
               : "";
-            const cmd = `${gatePrefix}${baseCmd}`;
+            const cmd = `${gatePrefix}${effectiveCmd}`;
             return captainOpencodeConfigPath
               ? `OPENCODE_CONFIG=${captainOpencodeConfigPath} ${cmd}`
               : cmd;

@@ -74,6 +74,8 @@ vi.mock("@squadrant/core", () => ({
     backend: "native" as const, model: o.model, permissionMode: o.configuredPermissionMode, env: {},
   })),
   renderEnvAssignments: vi.fn(() => ""),
+  decideOpencodeGateWrap: vi.fn(() => ({ wrap: false, warn: false, reason: "test-default" })),
+  buildOpencodeGateRunCommand: vi.fn(() => "squadrant gate opencode-run --port 0"),
 }));
 
 vi.mock("@squadrant/shared", async () => {
