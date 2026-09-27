@@ -1,39 +1,40 @@
-// An opencode CAPTAIN (unlike an opencode crew) was launched with a bare
-// `opencode [--session X] [--port N]` command — buildAgentCmd's interactive
-// branch ignores autoApprove — so it inherited only the global
-// ~/.config/opencode/opencode.json (no `permission` block) and blocked on every
-// tool approval. Crews already avoid this: crew-spawn writes a per-task
-// allow-all config (writePerCrewOpencodeConfig) and prefixes the command with
-// `OPENCODE_CONFIG=<path>`. This pins the same CLI-edge behaviour for captains.
+// #828 P6-C phase 2: when the permission gate is ON (mode=on, engine=auto-gate,
+// credential present), an opencode CAPTAIN launches through the auto-gate
+// opencode adapter (`squadrant gate opencode-run --port <n>`) instead of a bare
+// `opencode …` command — reusing the SAME port squadrant already allocated for
+// its own SSE bridge. Gate off/on-but-unusable must leave the command exactly
+// as launch-opencode-captain-perms.test.ts already pins.
 //
 // Exercises the REAL launchCommand action: launchOneWorkspace is mocked only so
 // the test can invoke agentCmdFactory and capture the command string that would
-// reach the workspace runtime.
+// reach the workspace runtime. decideOpencodeGateWrap/buildOpencodeGateRunCommand
+// are mocked at the @squadrant/core boundary — their own logic is unit-tested in
+// packages/core/src/__tests__/auto-gate.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
-const hoisted = vi.hoisted(() => ({ home: "", roleAgent: "opencode" }));
+const hoisted = vi.hoisted(() => ({
+  home: "",
+  wrap: { wrap: false, warn: false, reason: "test-default" } as { wrap: boolean; warn: boolean; reason: string },
+}));
 
-// Redirect the home directory to a throwaway temp dir so the real
-// writePerCrewOpencodeConfig (unchanged, no fs mocking) writes there instead of
-// the developer's ~/.config/squadrant/state.
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
   const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
   const path = await vi.importActual<typeof import("node:path")>("node:path");
-  const home = fs.mkdtempSync(path.join(actual.tmpdir(), "sq-cap-perms-"));
+  const home = fs.mkdtempSync(path.join(actual.tmpdir(), "sq-cap-gate-"));
   hoisted.home = home;
   return { ...actual, default: { ...actual, homedir: () => home }, homedir: () => home };
 });
 
-const buildAgentCmdMock = vi.hoisted(() =>
-  vi.fn((agentName: string) =>
-    agentName === "opencode" ? "opencode --port 61099" : "claude --permission-mode auto",
+const buildAgentCmdMock = vi.hoisted(() => vi.fn(() => "opencode --port 61099"));
+const launchOneWorkspaceMock = vi.hoisted(() => vi.fn());
+const decideOpencodeGateWrapMock = vi.hoisted(() => vi.fn(() => hoisted.wrap));
+const buildOpencodeGateRunCommandMock = vi.hoisted(() =>
+  vi.fn((o: { port: number; sessionId?: string }) =>
+    o.sessionId ? `squadrant gate opencode-run --port ${o.port} --session ${o.sessionId}` : `squadrant gate opencode-run --port ${o.port}`,
   ),
 );
-const launchOneWorkspaceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@squadrant/agents", () => ({
   createClaudeDriver: vi.fn(() => ({})),
@@ -71,13 +72,12 @@ vi.mock("@squadrant/core", () => ({
   realpathOrSelf: (p: string) => p,
   resolveAndPersistOpencodeCaptain: vi.fn(async () => null),
   discoverLiveOpencodeServer: vi.fn(),
-  // #772: native passthrough — these tests exercise opencode captain perms, not router routing.
   prepareCaptainRoute: vi.fn(async (o: { model?: string; configuredPermissionMode: string }) => ({
     backend: "native" as const, model: o.model, permissionMode: o.configuredPermissionMode, env: {},
   })),
   renderEnvAssignments: vi.fn(() => ""),
-  decideOpencodeGateWrap: vi.fn(() => ({ wrap: false, warn: false, reason: "test-default" })),
-  buildOpencodeGateRunCommand: vi.fn(() => "squadrant gate opencode-run --port 0"),
+  decideOpencodeGateWrap: decideOpencodeGateWrapMock,
+  buildOpencodeGateRunCommand: buildOpencodeGateRunCommandMock,
 }));
 
 vi.mock("@squadrant/shared", async () => {
@@ -94,8 +94,9 @@ vi.mock("@squadrant/shared", async () => {
       defaults: {
         captainChannel: "on",
         permissions: {},
-        roles: { captain: { agent: hoisted.roleAgent, model: "gpt-5" } },
+        roles: { captain: { agent: "opencode", model: "gpt-5" } },
         models: {},
+        gate: { mode: "on", engine: "auto-gate" },
       },
     }),
     resolveHome: (p: string) => p,
@@ -119,32 +120,37 @@ async function runLaunchAndGetCmd(): Promise<string> {
   return captured!.agentCmdFactory(false);
 }
 
-describe("opencode captain permission auto-approval (CLI edge)", () => {
+describe("opencode captain gate wiring (#828 P6-C phase 2)", () => {
   beforeEach(() => {
-    hoisted.roleAgent = "opencode";
     buildAgentCmdMock.mockClear();
     launchOneWorkspaceMock.mockClear();
+    decideOpencodeGateWrapMock.mockClear();
+    buildOpencodeGateRunCommandMock.mockClear();
+    hoisted.wrap = { wrap: false, warn: false, reason: "test-default" };
   });
 
-  it("prefixes OPENCODE_CONFIG pointing at an allow-all captain config", async () => {
+  it("routes through the auto-gate opencode adapter on squadrant's own port when the gate wraps", async () => {
+    hoisted.wrap = { wrap: true, warn: false, reason: "gate on, engine=auto-gate, credential present" };
     const cmd = await runLaunchAndGetCmd();
-    const expectedPath = join(
-      hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json",
-    );
-    expect(cmd).toBe(`OPENCODE_CONFIG=${expectedPath} opencode --port 61099`);
-
-    // The file the command points at must auto-approve bash/edit/read — the
-    // exact permission prompt the captain used to block on.
-    const written = JSON.parse(readFileSync(expectedPath, "utf-8"));
-    expect(written.permission.bash).toBe("allow");
-    expect(written.permission.edit).toBe("allow");
-    expect(written.permission.read).toBe("allow");
+    expect(buildOpencodeGateRunCommandMock).toHaveBeenCalledWith({ port: 71000, sessionId: undefined });
+    expect(cmd).toContain("squadrant gate opencode-run --port 71000");
+    expect(cmd).not.toContain("opencode --port 61099");
   });
 
-  it("leaves a non-opencode (claude) captain command unchanged", async () => {
-    hoisted.roleAgent = "claude";
+  it("falls back to the plain command, unchanged, when the gate declines to wrap", async () => {
+    hoisted.wrap = { wrap: false, warn: false, reason: "gate mode='off' engine='auto-gate'" };
     const cmd = await runLaunchAndGetCmd();
-    expect(cmd).not.toContain("OPENCODE_CONFIG");
-    expect(cmd).toBe("claude --permission-mode auto");
+    expect(buildOpencodeGateRunCommandMock).not.toHaveBeenCalled();
+    expect(cmd).toContain("opencode --port 61099");
+    expect(cmd).not.toContain("gate opencode-run");
+  });
+
+  it("safety fallback: gate on but no credential — direct launch, unchanged command", async () => {
+    hoisted.wrap = { wrap: false, warn: true, reason: "auto-gate credential not present (TYPESAFE_API_KEY / ~/.auto-gate-key)" };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cmd = await runLaunchAndGetCmd();
+    expect(cmd).toContain("opencode --port 61099");
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("auto-gate credential not present"));
+    errSpy.mockRestore();
   });
 });

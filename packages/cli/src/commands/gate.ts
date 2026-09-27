@@ -44,6 +44,7 @@ import {
 } from "@squadrant/shared";
 import type { ControlEvent } from "@squadrant/shared";
 import { deriveTranscriptPath, mapClaudeHookToEvent } from "@squadrant/agents";
+import { runGateOpencodeRun } from "./gate-opencode-run.js";
 
 const SOCK = DAEMON_SOCK_PATH;
 
@@ -346,6 +347,19 @@ export function gateCommand(): Command {
         },
       });
       process.exit(0);
+    });
+
+  gate
+    .command("opencode-run", { hidden: true })
+    .description("internal: launch opencode through the auto-gate opencode adapter, falling back to a direct launch on any failure")
+    .requiredOption("--port <n>", "port squadrant allocated for opencode + the auto-gate watcher")
+    .option("--session <id>", "opencode --session id to resume")
+    .action(async (opts: { port: string; session?: string }) => {
+      const code = await runGateOpencodeRun({
+        port: Number(opts.port),
+        args: opts.session ? ["--session", opts.session] : [],
+      });
+      process.exit(code);
     });
 
   return gate;

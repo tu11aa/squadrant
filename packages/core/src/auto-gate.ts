@@ -25,7 +25,7 @@ import {
   type SquadrantGateShape,
 } from "@squadrant-ai/auto-gate";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
-import { readUserIntent, resolveGateMode } from "./permission-gate.js";
+import { readUserIntent, resolveGateEngine, resolveGateMode } from "./permission-gate.js";
 
 export interface SquadrantAutoGateDeps {
   config: SquadrantConfig;
@@ -120,4 +120,68 @@ export function createSquadrantAutoGate(deps: SquadrantAutoGateDeps): SquadrantA
     return { config: host.config, decideClaudeHookPayload: async () => undefined };
   }
   return host;
+}
+
+// ── opencode launch wiring (P6-C phase 2, #828) ────────────────────────────────
+//
+// opencode has no PermissionRequest hook — the package answers its permission
+// prompts by wrapping the whole process (buildRunPlan + supervise from
+// @squadrant-ai/auto-gate, exported from the package root). That pair is async
+// and only runs INSIDE the pane (via the `squadrant gate opencode-run` CLI-edge
+// command — packages/cli/src/commands/gate-opencode-run.ts), so the decision of
+// WHETHER to route through it is made here, synchronously, at command-build
+// time in crew-spawn.ts / launch.ts — before any pane exists.
+
+export interface OpencodeGateDecision {
+  /** True ⇒ launch through the auto-gate opencode adapter. */
+  wrap: boolean;
+  /** True ⇒ the gate was requested (mode=on, engine=auto-gate) but can't be
+   *  honored right now — the caller should log exactly one warning and fall
+   *  back to launching opencode directly (a gate problem must never stop a
+   *  crew from starting). */
+  warn: boolean;
+  reason: string;
+}
+
+/**
+ * Pure/sync: whether an opencode crew/captain launch should route through the
+ * auto-gate opencode adapter instead of a bare `opencode …` command. `hasCredential`
+ * is injectable so callers (and tests) never depend on the real ~/.auto-gate-key
+ * file; defaults to the real `hasAutoGateCredential`.
+ */
+export function decideOpencodeGateWrap(o: {
+  config: SquadrantConfig;
+  env?: NodeJS.ProcessEnv;
+  hasCredential?: (env: NodeJS.ProcessEnv) => boolean;
+}): OpencodeGateDecision {
+  const env = o.env ?? process.env;
+  const gate = o.config.defaults.gate;
+  const mode = resolveGateMode(env, gate);
+  const engine = resolveGateEngine(env, gate);
+  if (mode !== "on" || engine !== "auto-gate") {
+    return { wrap: false, warn: false, reason: `gate mode='${mode}' engine='${engine}'` };
+  }
+  const hasCredential = o.hasCredential ?? hasAutoGateCredential;
+  if (!hasCredential(env)) {
+    return {
+      wrap: false,
+      warn: true,
+      reason: "auto-gate credential not present (TYPESAFE_API_KEY / ~/.auto-gate-key)",
+    };
+  }
+  return { wrap: true, warn: false, reason: "gate on, engine=auto-gate, credential present" };
+}
+
+/**
+ * The command a gate-wrapped opencode crew/captain pane runs instead of a bare
+ * `opencode …`. `port` MUST be the same port squadrant already allocated for
+ * its own SSE bridge (turn-end detection, CREW DONE, approval answering) —
+ * `squadrant gate opencode-run` hands it to `buildRunPlan`'s `allocate`, which
+ * is the package's documented host-injection point (README "opencode"), so
+ * opencode binds the one port everything else already expects.
+ */
+export function buildOpencodeGateRunCommand(o: { port: number; sessionId?: string }): string {
+  let cmd = `squadrant gate opencode-run --port ${o.port}`;
+  if (o.sessionId) cmd += ` --session ${o.sessionId}`;
+  return cmd;
 }
