@@ -87,4 +87,63 @@ describe("runGateOpencodeRun (#828 P6-C phase 2)", () => {
     expect(spawnDirect).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledTimes(1);
   });
+
+  it("falls back to a direct opencode launch when supervise resolves non-zero within the startup window", async () => {
+    const plan: RunPlan = { opencodeArgs: [], env: {}, watcherArgs: [] };
+    const buildRunPlan = vi.fn(async () => plan);
+    const supervise = vi.fn(async () => 7);
+    const child = fakeChild();
+    const spawnDirect = vi.fn((cmd: string, args: string[]) => {
+      expect(cmd).toBe("opencode");
+      expect(args).toEqual(["--session", "ses_abc", "--port", "4096"]);
+      queueMicrotask(() => child.emit("exit", 0));
+      return child;
+    });
+    const log = vi.fn();
+    let calls = 0;
+    const now = vi.fn(() => (calls++ === 0 ? 0 : 3_000)); // 3s elapsed, inside the 10s window
+
+    const code = await runGateOpencodeRun(
+      { port: 4096, args: ["--session", "ses_abc"] },
+      { buildRunPlan, supervise, spawnDirect, log, now },
+    );
+
+    expect(code).toBe(0);
+    expect(spawnDirect).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toContain("code 7");
+  });
+
+  it("propagates the exit code when supervise resolves non-zero after the startup window", async () => {
+    const plan: RunPlan = { opencodeArgs: [], env: {}, watcherArgs: [] };
+    const buildRunPlan = vi.fn(async () => plan);
+    const supervise = vi.fn(async () => 3);
+    const spawnDirect = vi.fn();
+    const log = vi.fn();
+    let calls = 0;
+    const now = vi.fn(() => (calls++ === 0 ? 0 : 15_000)); // 15s elapsed, past the 10s window
+
+    const code = await runGateOpencodeRun(
+      { port: 4096, args: [] },
+      { buildRunPlan, supervise, spawnDirect, log, now },
+    );
+
+    expect(code).toBe(3);
+    expect(spawnDirect).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back when supervise resolves 0", async () => {
+    const plan: RunPlan = { opencodeArgs: [], env: {}, watcherArgs: [] };
+    const buildRunPlan = vi.fn(async () => plan);
+    const supervise = vi.fn(async () => 0);
+    const spawnDirect = vi.fn();
+    const log = vi.fn();
+
+    const code = await runGateOpencodeRun({ port: 4096, args: [] }, { buildRunPlan, supervise, spawnDirect, log });
+
+    expect(code).toBe(0);
+    expect(spawnDirect).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
 });
