@@ -284,6 +284,8 @@ export function writePerCrewOpencodeConfig(o: {
   project: string;
   taskId: string;
   gateBash?: boolean;
+  /** #828: auto-gate wrap — edit flips to "ask" too so the watcher sees it. */
+  gateEdit?: boolean;
 }): string {
   const dir = join(o.stateRoot, o.project, o.taskId);
   mkdirSync(dir, { recursive: true });
@@ -291,7 +293,7 @@ export function writePerCrewOpencodeConfig(o: {
   const config = {
     permission: {
       read: "allow",
-      edit: "allow",
+      edit: o.gateEdit ? "ask" : "allow",
       glob: "allow",
       grep: "allow",
       bash: o.gateBash ? "ask" : "allow",

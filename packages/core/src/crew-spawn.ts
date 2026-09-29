@@ -190,7 +190,7 @@ export interface CrewSpawnDeps {
   /** CLI-edge: write squadrant hooks to <cwd>/.claude/settings.local.json (#134). */
   writeSettingsLocal(projectCwd: string): void;
   /** CLI-edge: write opencode permission config for an interactive crew. */
-  writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean }): string;
+  writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean; gateEdit?: boolean }): string;
   /** #772: CLI-edge — write a per-spawn `--settings` file carrying the router
    *  `env` block. Required for a routed claude spawn: a settings-file `env`
    *  outranks the inherited process env, and command-line `--settings` outranks
@@ -719,12 +719,18 @@ export async function runCrewSpawn(
     if (input.approval && gateDecision.wrap) {
       process.stderr.write(`ℹ️  gate: auto-gate owns permission answering for crew '${name}' — the --approval flag is a no-op while the gate is on\n`);
     }
+    // #828: a wrapped crew must actually ASK for bash/edit, else opencode never
+    // emits permission.asked and the auto-gate watcher has nothing to decide.
+    // An "ask" verdict from auto-gate leaves the prompt open → SSE bridge
+    // surfaces it as task.approval.requested → blocked to the captain.
     const opencodeConfigPath = deps.writeOpencodeConfig({
       stateRoot: STATE_ROOT,
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.
-      ...(input.approval && !gateDecision.wrap ? { gateBash: true } : {}),
+      ...(gateDecision.wrap
+        ? { gateBash: true, gateEdit: true }
+        : input.approval ? { gateBash: true } : {}),
     });
     const cliCommand = gateDecision.wrap
       ? buildOpencodeGateRunCommand({ port: serverPort })

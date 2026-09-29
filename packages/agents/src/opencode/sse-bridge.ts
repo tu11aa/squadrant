@@ -47,6 +47,19 @@ export interface OpencodeSseBridgeDeps {
    * still happens in this class — see spec §5.
    */
   ingest?: (raw: unknown, taskId: string) => void;
+  /**
+   * #828: true when the task is wrapped by auto-gate (its opencode config asks
+   * for bash/edit so the watcher can answer). Every such prompt would otherwise
+   * surface as CREW BLOCKED even though auto-gate answers within ~0.5s, so a
+   * gated task's permission.asked is held for `graceMs`; only a prompt still
+   * unanswered after that surfaces. Absent/false ⇒ surfaced immediately (CP3).
+   */
+  isGateWrapped?: (taskId: string) => boolean;
+  /** Grace window before a gate-wrapped prompt surfaces (default 5000ms). */
+  graceMs?: number;
+  /** Injectable timers for tests. */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (h: unknown) => void;
 }
 
 /**
@@ -64,6 +77,10 @@ export class OpencodeSseBridge {
   /** Synthetic monotonic request id. opencode has no numeric id on the bus, but
    *  task.approval.requested carries one (codex parity) to key gate promotion. */
   private nextRequestId = 1;
+  /** #828: gate-wrapped prompts inside their grace window (key `taskId:permID`). */
+  private held = new Map<string, unknown>();
+  /** #828: permissions already surfaced as blocked (key `taskId:permID`). */
+  private surfaced = new Set<string>();
   private deps: OpencodeSseBridgeDeps;
 
   constructor(deps: OpencodeSseBridgeDeps) {
@@ -85,6 +102,14 @@ export class OpencodeSseBridge {
     if (ac) { ac.abort(); this.controllers.delete(taskId); }
     this.portByTask.delete(taskId);
     this.pendingPermByTask.delete(taskId);
+    for (const k of [...this.held.keys()]) {
+      if (k.startsWith(`${taskId}:`)) { this.clearTimer(this.held.get(k)); this.held.delete(k); }
+    }
+    for (const k of [...this.surfaced]) if (k.startsWith(`${taskId}:`)) this.surfaced.delete(k);
+  }
+
+  private clearTimer(h: unknown): void {
+    (this.deps.clearTimer ?? ((x) => clearTimeout(x as ReturnType<typeof setTimeout>)))(h);
   }
 
   /**
@@ -102,6 +127,9 @@ export class OpencodeSseBridge {
     const port = this.portByTask.get(taskId);
     if (!pend || port == null) return false;
     this.pendingPermByTask.delete(taskId);
+    const heldKey = `${taskId}:${pend.permID}`;
+    if (this.held.has(heldKey)) { this.clearTimer(this.held.get(heldKey)); this.held.delete(heldKey); }
+    this.surfaced.delete(heldKey);
     const fetchImpl = this.deps.fetchImpl ?? fetch;
     const response = decision === "approve" ? "once" : "reject";
     try {
@@ -226,16 +254,31 @@ export class OpencodeSseBridge {
       if (p?.id && p?.sessionID) {
         // Bookkeeping happens on BOTH paths — answer() depends on it.
         this.pendingPermByTask.set(taskId, { permID: p.id, sessionID: p.sessionID });
-        if (this.deps.ingest) { this.deps.ingest(json, taskId); return; }
-        const tool = p.permission ?? "a tool";
-        const cmd = Array.isArray(p.patterns) && p.patterns.length ? `: ${p.patterns.join(" ")}` : "";
-        this.deps.emit({
-          type: "task.approval.requested",
-          id: taskId,
-          requestId: this.nextRequestId++,
-          question: `opencode requests permission to run ${tool}${cmd}`,
-          kind: tool,
-        });
+        const gated = this.deps.isGateWrapped?.(taskId) === true;
+        const surface = (): void => {
+          if (gated) this.surfaced.add(`${taskId}:${p.id}`);
+          if (this.deps.ingest) { this.deps.ingest(json, taskId); return; }
+          const tool = p.permission ?? "a tool";
+          const cmd = Array.isArray(p.patterns) && p.patterns.length ? `: ${p.patterns.join(" ")}` : "";
+          this.deps.emit({
+            type: "task.approval.requested",
+            id: taskId,
+            requestId: this.nextRequestId++,
+            question: `opencode requests permission to run ${tool}${cmd}`,
+            kind: tool,
+          });
+        };
+        if (gated) {
+          // #828: give auto-gate's watcher a grace window to answer first.
+          const key = `${taskId}:${p.id}`;
+          const setT = this.deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+          this.held.set(key, setT(() => {
+            this.held.delete(key);
+            if (this.pendingPermByTask.get(taskId)?.permID === p.id) surface();
+          }, this.deps.graceMs ?? 5000));
+        } else {
+          surface();
+        }
       } else if (this.deps.ingest) {
         this.deps.ingest(json, taskId);
       }
@@ -243,6 +286,17 @@ export class OpencodeSseBridge {
       // The permission was resolved on the bus (by us or another client) — clear
       // pending state so a later captain answer is a no-op rather than a stale POST.
       this.pendingPermByTask.delete(taskId);
+      const rid = json.properties?.requestID ?? json.properties?.id;
+      const key = `${taskId}:${rid}`;
+      if (this.held.has(key)) {
+        // #828: answered inside the grace window — the operator never sees it.
+        this.clearTimer(this.held.get(key));
+        this.held.delete(key);
+      } else if (this.surfaced.delete(key)) {
+        // Already surfaced as blocked, then answered elsewhere (auto-gate/TUI):
+        // return blocked → working; a later session.idle settles it.
+        this.deps.emit({ type: "task.started", id: taskId });
+      }
       this.deps.ingest?.(json, taskId);
     } else if (!IGNORED_FRAME.test(json?.type ?? "")) {
       // Previously fell through silently — now recorded (spec §1, problem 5).

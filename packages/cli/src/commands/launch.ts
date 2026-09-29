@@ -258,10 +258,16 @@ export const launchCommand = new Command("launch")
       // the captain inherited only the global config (no `permission` block)
       // and prompted on every bash/edit. Mirror the crew mechanism at the CLI
       // edge: write an allow-all captain config and prefix the command. No
-      // gateBash — the captain must stay fully autonomous.
+      // gateBash — the captain must stay fully autonomous, EXCEPT (#828) when
+      // wrapped by auto-gate: then bash/edit are "ask" so the watcher decides
+      // (an "ask" verdict stays open and surfaces to the operator).
+      const gateDecision = isOpencodeCaptain ? decideOpencodeGateWrap({ config }) : undefined;
       let captainOpencodeConfigPath: string | undefined;
       if (isOpencodeCaptain && projectName) {
-        captainOpencodeConfigPath = writePerCrewOpencodeConfig({ stateRoot, project: projectName, taskId: "captain" });
+        captainOpencodeConfigPath = writePerCrewOpencodeConfig({
+          stateRoot, project: projectName, taskId: "captain",
+          ...(gateDecision?.wrap ? { gateBash: true, gateEdit: true } : {}),
+        });
       }
 
       // #772 follow-up: a router-backed captain must run the U7 permission gate
@@ -340,10 +346,8 @@ export const launchCommand = new Command("launch")
               route?.settingsPath);
             // #828 P6-C phase 2: gate on + engine=auto-gate + credential present
             // ⇒ launch the opencode captain through the package's opencode
-            // adapter instead of the bare command above. The captain's config
-            // is always allow-all (no CP3 --approval knob exists for captains),
-            // so there is no answerer-ownership conflict to resolve here.
-            const gateDecision = isOpencodeCaptain ? decideOpencodeGateWrap({ config }) : undefined;
+            // adapter instead of the bare command above (decision computed
+            // above, where the captain's opencode config is written).
             if (gateDecision?.warn) {
               console.error(chalk.yellow(`  ⚠ gate: ${gateDecision.reason} — launching opencode captain directly (P6-C safety fallback)`));
             }

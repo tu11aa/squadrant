@@ -257,6 +257,18 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
         ctx.schedulePromotion(ev.id, ev.requestId, "approval", ev.question);
     },
     ingest: (raw, taskId) => eventsSource.ingest("opencode-sse", raw, { taskId }),
+    // #828: a crew wrapped by auto-gate has BOTH bash and edit at "ask" in its
+    // per-task config (CP3 --approval alone only gates bash). Read the config
+    // as ground truth rather than re-deriving the wrap decision in the daemon
+    // (its env may lack the credential the crew's shell had).
+    isGateWrapped: (taskId) => {
+      const rec = store.listAll().find((r) => r.id === taskId);
+      if (!rec) return false;
+      try {
+        const cfg = JSON.parse(readFileSync(join(stateRoot, rec.project, taskId, "opencode.json"), "utf8"));
+        return cfg?.permission?.bash === "ask" && cfg?.permission?.edit === "ask";
+      } catch { return false; }
+    },
     log,
   });
 
