@@ -242,6 +242,63 @@ describe("OpencodeSseBridge", () => {
   });
 });
 
+describe("OpencodeSseBridge — gate-wrapped grace window (#828)", () => {
+  const asked = 'data: {"type":"permission.asked","properties":{"id":"per_9","sessionID":"ses_9","permission":"bash","patterns":["ls"]}}\n';
+  const replied = 'data: {"type":"permission.replied","properties":{"sessionID":"ses_9","requestID":"per_9","reply":"once"}}\n';
+  function mk(sse: string[], wrapped: boolean) {
+    const events: ControlEvent[] = [];
+    const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+    const fetchImpl = vi.fn().mockImplementation((url: unknown) =>
+      String(url).endsWith("/event")
+        ? Promise.resolve(sseResponse(sse))
+        : Promise.resolve({ ok: true, status: 200, body: null } as unknown as Response));
+    const bridge = new OpencodeSseBridge({
+      emit: (e) => events.push(e), fetchImpl, isGateWrapped: () => wrapped, graceMs: 5000,
+      setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
+      clearTimer: (h) => { (h as { cleared: boolean }).cleared = true; },
+    });
+    return { bridge, events, timers };
+  }
+
+  it("holds approval.requested; surfaces only if still open after the grace window", async () => {
+    const { bridge, events, timers } = mk([asked], true);
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush(); await flush();
+    expect(events).toEqual([]);
+    expect(timers[0].ms).toBe(5000);
+    timers[0].fn();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "task.approval.requested", id: "t1", kind: "bash" });
+  });
+
+  it("permission.replied inside the window emits nothing at all", async () => {
+    const { bridge, events, timers } = mk([asked, replied], true);
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush(); await flush();
+    expect(timers[0].cleared).toBe(true);
+    timers[0].fn(); // even a stray fire must not surface
+    expect(events).toEqual([]);
+  });
+
+  it("replied AFTER surfacing returns blocked → working (task.started)", async () => {
+    const { bridge, events, timers } = mk([asked], true);
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush(); await flush();
+    timers[0].fn();
+    expect(events.map((e) => e.type)).toEqual(["task.approval.requested"]);
+    (bridge as unknown as { handleLine(t: string, l: string): void }).handleLine("t1", replied);
+    expect(events.map((e) => e.type)).toEqual(["task.approval.requested", "task.started"]);
+  });
+
+  it("unwrapped task (CP3 --approval) surfaces immediately, no timer, no task.started on reply", async () => {
+    const { bridge, events, timers } = mk([asked, replied], false);
+    bridge.start({ taskId: "t1", port: 7777 });
+    await flush(); await flush();
+    expect(timers).toHaveLength(0);
+    expect(events.map((e) => e.type)).toEqual(["task.approval.requested"]);
+  });
+});
+
 describe("OpencodeSseBridge — fact routing", () => {
   it("routes session.idle through ingest and stops emitting it directly", () => {
     const emitted: unknown[] = [];
