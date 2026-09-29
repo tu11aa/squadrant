@@ -117,6 +117,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...merged, default: merged };
 });
 
+import fsActual from "node:fs";
 import {
   runSideSpawn,
   runSideSend,
@@ -196,6 +197,35 @@ describe("squadrant side spawn", () => {
 
     expect(squadrantdCall).not.toHaveBeenCalled();
     expect(buildDispatchRequest).not.toHaveBeenCalled();
+  });
+
+  // #864: a long multi-paragraph topic pasted inline into the pane was cut to
+  // ~400 chars. Same fix as crew (#730): spill to a temp file, send a pointer.
+  it("spills a long multi-paragraph topic to a temp file so nothing is truncated (#864)", async () => {
+    loadConfig.mockReturnValue(baseConfig);
+    status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+    listSurfaces.mockResolvedValue([]);
+    newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+    buildCommand.mockReturnValue("claude");
+
+    const topic = Array.from({ length: 6 }, (_, p) =>
+      `Paragraph ${p + 1}: ` + "research detail (status.md, TASKS-2026-06-13.md) ".repeat(6),
+    ).join("\n\n") + "\n\nWrite the report to /tmp/OUT-864.md";
+    expect(topic.length).toBeGreaterThan(1500);
+
+    const promise = runSideSpawn({ project: "brove", topic, role: "research", name: "spill864" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+
+    const delivered = sendToPane.mock.calls.map((c) => c[1] as string).find((m) => m.includes("cat it and follow it exactly"));
+    expect(delivered).toBeDefined();
+    expect(delivered!.length).toBeLessThan(200);
+    const spillFile = delivered!.match(/Full task is at (\S+\.md)/)![1];
+    const onDisk = fsActual.readFileSync(spillFile, "utf8");
+    fsActual.rmSync(spillFile, { force: true });
+    expect(onDisk).toContain("Write the report to /tmp/OUT-864.md");
+    expect(onDisk).toContain("Side-session context (for handoff use):");
+    expect(onDisk).toContain(topic);
   });
 
   it("spawns with 🗒 title prefix and side-1 auto-name", async () => {

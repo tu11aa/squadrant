@@ -34,6 +34,7 @@ import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } fr
 import type { RouterCredentials } from "./router/service.js";
 import { randomUUID } from "node:crypto";
 import { resolveCrewRoute, type CrewRouteResult } from "./crew-routing.js";
+import { decideOpencodeGateWrap, buildOpencodeGateRunCommand } from "./auto-gate.js";
 
 // Re-exported for test-import stability (crew-spawn.test.ts imports it here).
 export { claudeEnvShadowsRouter };
@@ -65,20 +66,8 @@ export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
   if ((fs.statSync(dir).mode & 0o777) !== 0o700) fs.chmodSync(dir, 0o700);
 }
 
-/**
- * #730: the first-turn task text for a claude crew is delivered by pasting it
- * into the crew's cmux pane, then confirming submit once the input box stops
- * changing (confirmedSendToPane / sendFirstTurnWhenReady in
- * packages/workspaces/src/crew-pane.ts). That "stops changing" check only
- * samples the screen a couple of times a second — a multi-KB paste that
- * briefly stalls mid-render (observed at ~2.5-3 KB in #730) can look settled
- * before it has fully landed, and Enter then submits a truncated draft. There
- * is no way to positively confirm a large paste arrived intact over that path,
- * so text above this size is spilled to a temp file and a short pointer is
- * sent instead — the same workaround that reliably avoided the corruption in
- * #730's own report.
- */
-export const FIRST_TURN_INLINE_MAX_BYTES = 1200;
+export { FIRST_TURN_INLINE_MAX_BYTES } from "./first-turn-spill.js";
+import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 
 import {
   buildCompletionProtocol,
@@ -189,7 +178,7 @@ export interface CrewSpawnDeps {
   /** CLI-edge: write squadrant hooks to <cwd>/.claude/settings.local.json (#134). */
   writeSettingsLocal(projectCwd: string): void;
   /** CLI-edge: write opencode permission config for an interactive crew. */
-  writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean }): string;
+  writeOpencodeConfig(opts: { stateRoot: string; project: string; taskId: string; gateBash?: boolean; gateEdit?: boolean }): string;
   /** #772: CLI-edge — write a per-spawn `--settings` file carrying the router
    *  `env` block. Required for a routed claude spawn: a settings-file `env`
    *  outranks the inherited process env, and command-line `--settings` outranks
@@ -231,6 +220,14 @@ export interface CrewSpawnDeps {
    *  by itself proof the turn never landed. Absent ⇒ no such check is possible
    *  (pure unit tests, non-daemon deployments) — behavior is unchanged. */
   getTaskRecord?(project: string, id: string): Promise<TaskRecord | undefined>;
+  /** #828 P6-C: env consulted for the opencode auto-gate wrap decision.
+   *  Absent ⇒ process.env (real deployments); tests inject a fixed object so
+   *  the decision never depends on the daemon's actual environment. */
+  env?: NodeJS.ProcessEnv;
+  /** #828 P6-C: injectable so tests can control auto-gate credential presence
+   *  without touching the real ~/.auto-gate-key file. Absent ⇒ the real
+   *  hasAutoGateCredential (reads TYPESAFE_API_KEY / ~/.auto-gate-key). */
+  hasAutoGateCredential?(env: NodeJS.ProcessEnv): boolean;
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -642,12 +639,7 @@ export async function runCrewSpawn(
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     // #730: spill an oversized first-turn to a temp file rather than risking a
     // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
-    let claudeFirstTurn = firstTurnTask;
-    if (Buffer.byteLength(claudeFirstTurn, "utf8") > FIRST_TURN_INLINE_MAX_BYTES) {
-      const spillFile = path.join(os.tmpdir(), `squadrant-task-${rec.id}.md`);
-      fs.writeFileSync(spillFile, claudeFirstTurn, "utf8");
-      claudeFirstTurn = `Full task is at ${spillFile} — cat it and follow it exactly.`;
-    }
+    const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
     const sendPromise = deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
     const scrapeDelivered = sendPromise.then((r) => r.delivered).catch(() => false);
     // #466/#745: surface non-delivery explicitly instead of silently returning
@@ -694,22 +686,46 @@ export async function runCrewSpawn(
       budgetMs: 86400000,
       serverPort,
     });
+    // #828 P6-C phase 2: gate on + engine=auto-gate + credential present ⇒
+    // launch through the package's opencode adapter instead of bare `opencode`.
+    // Sole owner of permission-answering in that case — CP3's own --approval
+    // gate must not also race it for the same permission.asked event, so it is
+    // suppressed (with a note) rather than left to answer the same prompt twice.
+    const gateDecision = decideOpencodeGateWrap({
+      config,
+      env: deps.env,
+      hasCredential: deps.hasAutoGateCredential,
+    });
+    if (gateDecision.warn) {
+      process.stderr.write(`⚠️  gate: ${gateDecision.reason} — launching opencode crew '${name}' directly (P6-C safety fallback)\n`);
+    }
+    if (input.approval && gateDecision.wrap) {
+      process.stderr.write(`ℹ️  gate: auto-gate owns permission answering for crew '${name}' — the --approval flag is a no-op while the gate is on\n`);
+    }
+    // #828: a wrapped crew must actually ASK for bash/edit, else opencode never
+    // emits permission.asked and the auto-gate watcher has nothing to decide.
+    // An "ask" verdict from auto-gate leaves the prompt open → SSE bridge
+    // surfaces it as task.approval.requested → blocked to the captain.
     const opencodeConfigPath = deps.writeOpencodeConfig({
       stateRoot: STATE_ROOT,
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.
-      ...(input.approval ? { gateBash: true } : {}),
+      ...(gateDecision.wrap
+        ? { gateBash: true, gateEdit: true }
+        : input.approval ? { gateBash: true } : {}),
     });
-    const cliCommand = agent.buildCommand({
-      prompt: input.task,
-      workdir: spawnCwd,
-      role: "crew",
-      promptFile,
-      interactive: true,
-      model: crewModel,
-      port: serverPort,
-    });
+    const cliCommand = gateDecision.wrap
+      ? buildOpencodeGateRunCommand({ port: serverPort })
+      : agent.buildCommand({
+          prompt: input.task,
+          workdir: spawnCwd,
+          role: "crew",
+          promptFile,
+          interactive: true,
+          model: crewModel,
+          port: serverPort,
+        });
     const direction: PanePlacement = input.direction ?? "tab";
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });

@@ -798,6 +798,103 @@ describe("runCrewSpawn", () => {
     });
   });
 
+  describe("opencode branch — gate wiring (#828 P6-C phase 2)", () => {
+    function sentCommand(runtime: RuntimeDriver): string {
+      const calls = (runtime.sendToPane as ReturnType<typeof vi.fn>).mock.calls;
+      return calls[calls.length - 1][1] as string;
+    }
+
+    it("gate off (default) — launches opencode exactly as today, byte-identical", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(sentCommand(runtime)).toContain("opencode-cli --interactive");
+      expect(sentCommand(runtime)).not.toContain("gate opencode-run");
+    });
+
+    it("gate on + auto-gate engine + credential present — routes through the adapter on squadrant's own port", async () => {
+      const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.env = { TYPESAFE_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(sentCommand(runtime)).toContain("squadrant gate opencode-run --port 9876");
+      expect(sentCommand(runtime)).not.toContain("opencode-cli --interactive");
+    });
+
+    it("safety fallback: gate on but credential absent — direct launch + one warning, never blocks the crew", async () => {
+      const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.env = {} as NodeJS.ProcessEnv;
+      deps.hasAutoGateCredential = vi.fn().mockReturnValue(false);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(sentCommand(runtime)).toContain("opencode-cli --interactive");
+      expect(sentCommand(runtime)).not.toContain("gate opencode-run");
+      expect(stderrSpy.mock.calls.some(([s]) => String(s).includes("credential not present"))).toBe(true);
+      stderrSpy.mockRestore();
+    });
+
+    it("#828: gate wrap sets bash+edit to ask so auto-gate's watcher sees prompts", async () => {
+      const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.env = { TYPESAFE_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(deps.writeOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({ gateBash: true, gateEdit: true }));
+    });
+
+    it("#828: unwrapped crew config has no gate flags (unchanged)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      const arg = (deps.writeOpencodeConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg.gateBash).toBeUndefined();
+      expect(arg.gateEdit).toBeUndefined();
+    });
+
+    it("gate wrap + --approval: auto-gate owns permission answering (single answerer; no separate CP3-only gate)", async () => {
+      const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.env = { TYPESAFE_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+      await runCrewSpawn(
+        { project: PROJECT, task: "t", agent: "opencode", agentExplicit: true, approval: true },
+        config,
+        deps,
+      );
+
+      // bash is "ask" only because the gate wrap needs it (with gateEdit), not CP3.
+      expect(deps.writeOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({ gateBash: true, gateEdit: true }));
+    });
+  });
+
   // #627 item B: an opencode/codex/gemini crew that resolves to an Anthropic
   // model still depends on the provider a fallback is meant to route around.
   // onModelResolved lets the CLI edge warn (not block — crews are less

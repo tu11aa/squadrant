@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-29
+
+Opencode crews and captains can now run behind `@squadrant-ai/auto-gate` when the permission gate is on (#828 P6-C phase 2), plus two launch/logging fixes.
+
+### Added
+
+- **Opencode crews/captains route through `@squadrant-ai/auto-gate` when the permission gate is on (#828, P6 part C phase 2).** The wrapped opencode config now asks for `bash`/`edit` so auto-gate decides instead of opencode's static allow list, and a gate-wrapped `approval.requested` is held for a 5s grace window so the gate can answer before a human is pinged. If the wrapped `supervise()` exits early with a non-zero code, launch falls back to a direct opencode launch instead of stranding the crew.
+
+### Fixed
+
+- **Long side-session first turns are spilled to a temp file (#864),** as crew spawns already do, so a long topic no longer strands in the pane paste.
+- **Auto-gate watcher/supervise logs no longer garble the opencode permission TUI (#866).** They are written to a log file instead of the pane TTY.
+
+### Changed
+
+- **`@squadrant-ai/auto-gate` bumped to 0.3.2** — the opencode watcher now reconstructs user intent (auto-gate#18), so benign commands are auto-allowed. (0.3.1 was pulled in earlier in this cycle, #828.)
+
 ## [0.24.0] - 2026-09-27
 
 A permission-gate CLI/slash-command surface (#854), and the #861 opencode captain stale-`sessionId` bug fixed at its actual root cause — launch's silent poll timeout — after two earlier attempts at the symptom.

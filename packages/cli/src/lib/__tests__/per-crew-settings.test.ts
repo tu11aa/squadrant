@@ -441,6 +441,14 @@ describe("writePerCrewOpencodeConfig", () => {
     expect(json.permission.bash).toBe("allow");
   });
 
+  it("gateEdit:true sets edit to 'ask' (#828 auto-gate wrap); default stays 'allow'", () => {
+    const on = JSON.parse(fs.readFileSync(writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-e", gateEdit: true }), "utf-8"));
+    expect(on.permission.edit).toBe("ask");
+    expect(on.permission.bash).toBe("allow");
+    const off = JSON.parse(fs.readFileSync(writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-f" }), "utf-8"));
+    expect(off.permission.edit).toBe("allow");
+  });
+
   it("gateBash:true sets bash to 'ask' so the captain approves shell commands", () => {
     const out = writePerCrewOpencodeConfig({ stateRoot: tmp, project: "alpha", taskId: "tid-1", gateBash: true });
     const json = JSON.parse(fs.readFileSync(out, "utf-8"));
