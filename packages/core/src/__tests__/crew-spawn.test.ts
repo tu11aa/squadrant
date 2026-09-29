@@ -849,7 +849,34 @@ describe("runCrewSpawn", () => {
       stderrSpy.mockRestore();
     });
 
-    it("gate wrap + --approval: auto-gate owns permission answering, CP3 gateBash is suppressed", async () => {
+    it("#828: gate wrap sets bash+edit to ask so auto-gate's watcher sees prompts", async () => {
+      const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+      deps.env = { TYPESAFE_API_KEY: "sk-test" } as NodeJS.ProcessEnv;
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      expect(deps.writeOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({ gateBash: true, gateEdit: true }));
+    });
+
+    it("#828: unwrapped crew config has no gate flags (unchanged)", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("opencode");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.resolveAgent = vi.fn().mockReturnValue(agent);
+
+      await runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, config, deps);
+
+      const arg = (deps.writeOpencodeConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg.gateBash).toBeUndefined();
+      expect(arg.gateEdit).toBeUndefined();
+    });
+
+    it("gate wrap + --approval: auto-gate owns permission answering (single answerer; no separate CP3-only gate)", async () => {
       const config = makeConfig({ gate: { mode: "on", engine: "auto-gate" } });
       const runtime = makeRuntime();
       const agent = makeAgent("opencode");
@@ -863,7 +890,8 @@ describe("runCrewSpawn", () => {
         deps,
       );
 
-      expect(deps.writeOpencodeConfig).not.toHaveBeenCalledWith(expect.objectContaining({ gateBash: true }));
+      // bash is "ask" only because the gate wrap needs it (with gateEdit), not CP3.
+      expect(deps.writeOpencodeConfig).toHaveBeenCalledWith(expect.objectContaining({ gateBash: true, gateEdit: true }));
     });
   });
 

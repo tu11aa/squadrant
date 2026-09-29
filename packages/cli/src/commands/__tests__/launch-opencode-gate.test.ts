@@ -12,6 +12,8 @@
 // packages/core/src/__tests__/auto-gate.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const hoisted = vi.hoisted(() => ({
   home: "",
@@ -135,6 +137,22 @@ describe("opencode captain gate wiring (#828 P6-C phase 2)", () => {
     expect(buildOpencodeGateRunCommandMock).toHaveBeenCalledWith({ port: 71000, sessionId: undefined });
     expect(cmd).toContain("squadrant gate opencode-run --port 71000");
     expect(cmd).not.toContain("opencode --port 61099");
+  });
+
+  it("#828: wrapped captain's opencode config asks for bash/edit so the watcher decides", async () => {
+    hoisted.wrap = { wrap: true, warn: false, reason: "gate on, engine=auto-gate, credential present" };
+    await runLaunchAndGetCmd();
+    const cfg = JSON.parse(readFileSync(join(hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json"), "utf-8"));
+    expect(cfg.permission.bash).toBe("ask");
+    expect(cfg.permission.edit).toBe("ask");
+    expect(cfg.permission.read).toBe("allow");
+  });
+
+  it("#828: unwrapped captain's opencode config stays allow-all", async () => {
+    await runLaunchAndGetCmd();
+    const cfg = JSON.parse(readFileSync(join(hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json"), "utf-8"));
+    expect(cfg.permission.bash).toBe("allow");
+    expect(cfg.permission.edit).toBe("allow");
   });
 
   it("falls back to the plain command, unchanged, when the gate declines to wrap", async () => {
