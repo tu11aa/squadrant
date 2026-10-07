@@ -233,6 +233,73 @@ describe("installClaudeHooks — #782 permission-gate migration", () => {
   });
 });
 
+describe("installClaudeHooks — #872 absolute CLI command", () => {
+  const CLI = "'/opt/node/bin/node' '/lib/node_modules/squadrant/dist/index.js'";
+  const commandsOf = (entries: unknown[]): string[] =>
+    entries.flatMap((e) =>
+      Array.isArray((e as Record<string, unknown>).hooks)
+        ? ((e as Record<string, unknown>).hooks as Array<Record<string, unknown>>)
+            .map((h) => h.command)
+            .filter((c): c is string => typeof c === "string")
+        : [],
+    );
+  const absOpts = (existingSettings?: Record<string, unknown>) => {
+    const { opts, written } = makeInstallOpts({ existingSettings });
+    delete opts.hookCmd;
+    opts.cliCmd = CLI;
+    return { opts, written };
+  };
+
+  it("writes hook and gate commands with the cliCmd prefix", () => {
+    const { opts, written } = absOpts();
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(commandsOf(result.hooks.Stop)).toEqual([`${CLI} hooks claude stop`]);
+    expect(commandsOf(result.hooks.PermissionRequest)).toEqual([`${CLI} gate claude permission-request`]);
+  });
+
+  it("repoints bare-name and stale absolute handlers, keeping unrelated ones", () => {
+    const existing = {
+      hooks: {
+        Stop: [
+          { matcher: "", hooks: [{ type: "command", command: "squadrant hooks claude stop", timeout: 10 }] },
+          { matcher: "", hooks: [{ type: "command", command: "my-tool on-stop" }] },
+        ],
+        SessionStart: [
+          { matcher: "", hooks: [{ type: "command", command: "'/old/node' '/old/squadrant/dist/index.js' hooks claude session-start" }] },
+        ],
+        PermissionRequest: [
+          { matcher: "", hooks: [{ type: "command", command: "squadrant gate claude permission-request" }] },
+        ],
+      },
+    };
+    const log = vi.fn();
+    const { opts, written } = absOpts(existing);
+    opts.log = log;
+    installClaudeHooks(opts);
+
+    const result = JSON.parse(written[0].content);
+    expect(commandsOf(result.hooks.Stop)).toEqual(["my-tool on-stop", `${CLI} hooks claude stop`]);
+    expect(commandsOf(result.hooks.SessionStart)).toEqual([`${CLI} hooks claude session-start`]);
+    expect(commandsOf(result.hooks.PermissionRequest)).toEqual([`${CLI} gate claude permission-request`]);
+    expect(log.mock.calls.some(([m]) => /repointed 3 squadrant hook/.test(m))).toBe(true);
+  });
+
+  it("is idempotent once repointed (a second call writes nothing)", () => {
+    const { opts, written } = absOpts({
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "squadrant hooks claude stop" }] }] },
+    });
+    installClaudeHooks(opts);
+
+    const { opts: opts2, written: written2 } = makeInstallOpts({ existingRaw: written[0].content });
+    delete opts2.hookCmd;
+    opts2.cliCmd = CLI;
+    installClaudeHooks(opts2);
+    expect(written2).toHaveLength(0);
+  });
+});
+
 // ── installClaudeHooks — P6 foreign auto-gate handler (spec §15#5) ────────────
 
 describe("installClaudeHooks — P6 foreign auto-gate removal (conditional precedence)", () => {
