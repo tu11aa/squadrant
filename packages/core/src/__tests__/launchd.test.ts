@@ -362,6 +362,15 @@ describe("buildDaemonPath", () => {
     expect(result).toContain("/bin");
   });
 
+  it("drops a cmux per-pane shim dir even when `which` resolves an agent to it", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "claude") return "/Users/me/.cmuxterm/cmux-cli-shims/EB52E049/claude\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/Users/me/.cmuxterm/cmux-cli-shims/EB52E049:/Users/me/.local/bin:/usr/bin");
+    expect(result).toBe("/Users/me/.local/bin:/usr/bin");
+  });
+
   it("returns sanitized path unchanged when no agent binaries found", () => {
     vi.mocked(execFileSync).mockImplementation(() => { throw new Error("not found"); });
     expect(buildDaemonPath("/usr/bin:/bin")).toBe("/usr/bin:/bin");

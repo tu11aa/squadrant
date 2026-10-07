@@ -173,16 +173,9 @@ export function resolveAgentBinDirs(): string[] {
  * deduped against the sanitized entries so the output is deterministic.
  */
 export function buildDaemonPath(shellPath: string): string {
-  const agentDirs = resolveAgentBinDirs();
-  const sanitized = sanitizePathForPlist(shellPath);
-  if (agentDirs.length === 0) return sanitized;
-  const parts = [...agentDirs, ...sanitized.split(":")];
-  const seen = new Set<string>();
-  return parts.filter(p => {
-    if (!p || seen.has(p)) return false;
-    seen.add(p);
-    return true;
-  }).join(":");
+  // Sanitize the agent dirs too: inside cmux, `which claude` resolves to the
+  // pane's shim dir.
+  return sanitizePathForPlist([...resolveAgentBinDirs(), shellPath].join(":"));
 }
 
 /**
