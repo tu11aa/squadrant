@@ -68,6 +68,15 @@ describe("launchd plist", () => {
     expect(sanitizePathForPlist(paneA)).toBe(sanitizePathForPlist(paneB));
   });
 
+  // fnm gives every shell its own ~/.local/state/fnm_multishells/<pid>_<ts>/bin,
+  // deleted when that shell exits — same per-shell drift as the cmux shims.
+  it("sanitizePathForPlist: produces identical output across fnm shells", () => {
+    const shellA = "/Users/me/.local/state/fnm_multishells/8530_1791345090499/bin:/usr/local/bin:/usr/bin";
+    const shellB = "/Users/me/.local/state/fnm_multishells/69286_1791359792501/bin:/usr/local/bin:/usr/bin";
+    expect(sanitizePathForPlist(shellA)).toBe("/usr/local/bin:/usr/bin");
+    expect(sanitizePathForPlist(shellA)).toBe(sanitizePathForPlist(shellB));
+  });
+
   it("sanitizePathForPlist: dedupes while preserving first-occurrence order", () => {
     expect(sanitizePathForPlist("/a:/b:/a:/c::/b")).toBe("/a:/b:/c");
   });
@@ -369,6 +378,15 @@ describe("buildDaemonPath", () => {
     });
     const result = buildDaemonPath("/Users/me/.cmuxterm/cmux-cli-shims/EB52E049:/Users/me/.local/bin:/usr/bin");
     expect(result).toBe("/Users/me/.local/bin:/usr/bin");
+  });
+
+  it("drops an fnm per-shell dir even when `which node` resolves to it", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "node") return "/Users/me/.local/state/fnm_multishells/8530_1/bin/node\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/Users/me/.local/state/fnm_multishells/8530_1/bin:/Users/me/.local/share/fnm/aliases/default/bin:/usr/bin");
+    expect(result).toBe("/Users/me/.local/share/fnm/aliases/default/bin:/usr/bin");
   });
 
   it("returns sanitized path unchanged when no agent binaries found", () => {
