@@ -120,22 +120,22 @@ the reference doc.
 
 ### `doctor` says `Notifier 'cmux' reachable` — FAIL
 
-This usually doesn't mean cmux is broken. The check runs
-`squadrant runtime status --command`, which passes only while the **Command
-workspace** is open in cmux. Command is one-shot (`squadrant command --task …`),
-so the check fails whenever no Command pane is open, which is the normal state.
-
-To confirm cmux itself is fine:
+The check runs `cmux capabilities`, which talks to the running cmux app over
+its socket. A FAIL means cmux isn't running, or its socket refused the call.
+(Before 0.25.1 this check looked for the one-shot Command workspace instead,
+so it failed on a healthy cmux. See #878.)
 
 ```bash
-which cmux        # e.g. /Applications/cmux.app/Contents/Resources/bin/cmux
-cmux --version
-squadrant doctor  # "Runtime 'cmux' installed" and "Notifier 'cmux' installed" should PASS
+which cmux                                   # e.g. /Applications/cmux.app/Contents/Resources/bin/cmux
+cmux capabilities | jq .access_mode          # should print "automation"
 ```
 
-If `which cmux` finds nothing, add cmux's bundled CLI to your PATH
-(`/Applications/cmux.app/Contents/Resources/bin`), then run
-`squadrant heal daemon` so the daemon picks up the new PATH.
+- `which cmux` finds nothing: add cmux's bundled CLI
+  (`/Applications/cmux.app/Contents/Resources/bin`) to your PATH, then run
+  `squadrant heal daemon` so the daemon picks up the new PATH.
+- `access_mode` isn't `"automation"`: squadrant needs
+  `"automation": { "socketControlMode": "automation" }` in
+  `~/.config/cmux/cmux.json` (`squadrant init` writes it).
 
 For everything else — the full command table, monorepo layout, architecture,
 and config schema — see [docs/reference.md](docs/reference.md).
