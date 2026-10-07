@@ -118,5 +118,24 @@ the reference doc.
 - `squadrant heal [--dry-run|daemon]` — targeted, idempotent remediation for
   squadrant components (daemon, health)
 
+### `doctor` says `Notifier 'cmux' reachable` — FAIL
+
+This usually doesn't mean cmux is broken. The check runs
+`squadrant runtime status --command`, which passes only while the **Command
+workspace** is open in cmux. Command is one-shot (`squadrant command --task …`),
+so the check fails whenever no Command pane is open, which is the normal state.
+
+To confirm cmux itself is fine:
+
+```bash
+which cmux        # e.g. /Applications/cmux.app/Contents/Resources/bin/cmux
+cmux --version
+squadrant doctor  # "Runtime 'cmux' installed" and "Notifier 'cmux' installed" should PASS
+```
+
+If `which cmux` finds nothing, add cmux's bundled CLI to your PATH
+(`/Applications/cmux.app/Contents/Resources/bin`), then run
+`squadrant heal daemon` so the daemon picks up the new PATH.
+
 For everything else — the full command table, monorepo layout, architecture,
 and config schema — see [docs/reference.md](docs/reference.md).
