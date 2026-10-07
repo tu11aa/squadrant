@@ -538,3 +538,64 @@ describe("CmuxStoreSource — health() (B4)", () => {
     expect(h.error).toContain("ENOSPC");
   });
 });
+
+describe("CmuxStoreSource — async watcher error", () => {
+  // macOS: libuv reports a failed FSEventStreamStart() as EMFILE via the
+  // watcher's 'error' event, after watch() has returned. Unhandled, it took
+  // down the whole daemon (crash-looped under launchd).
+  it("survives a watcher error and re-arms the watcher after rewatchMs", () => {
+    const { deps, reports } = makeDeps();
+    const onErrors: Array<(err: Error) => void> = [];
+    let stops = 0;
+
+    vi.useFakeTimers();
+    const src = new CmuxStoreSource({
+      stateDir: "/fake/.cmuxterm",
+      rewatchMs: 5000,
+      listFiles: () => [STORE_FILENAME],
+      readFile: () => makeStoreFile({ [CREW_SESSION_ID]: makeSession() }),
+      fileExists: () => false,
+      isPidAlive: () => true,
+      watchDir: (_, _cb, onError) => {
+        onErrors.push(onError);
+        return () => { stops++; };
+      },
+    });
+    src.start(deps);
+    const afterStart = reports.length;
+
+    expect(() => onErrors[0](new Error("EMFILE: too many open files, watch"))).not.toThrow();
+    expect(stops).toBe(1);
+    expect(src.health().error).toContain("EMFILE");
+
+    vi.advanceTimersByTime(5000);
+    vi.useRealTimers();
+
+    // Re-armed, and rescanned to pick up changes missed while unwatched.
+    expect(onErrors.length).toBe(2);
+    expect(reports.length).toBe(afterStart + 1);
+  });
+
+  it("does not re-arm after stop()", () => {
+    const { deps } = makeDeps();
+    const onErrors: Array<(err: Error) => void> = [];
+
+    vi.useFakeTimers();
+    const src = new CmuxStoreSource({
+      stateDir: "/fake/.cmuxterm",
+      rewatchMs: 5000,
+      listFiles: () => [],
+      watchDir: (_, _cb, onError) => {
+        onErrors.push(onError);
+        return () => {};
+      },
+    });
+    src.start(deps);
+    onErrors[0](new Error("EMFILE: too many open files, watch"));
+    src.stop();
+    vi.advanceTimersByTime(10000);
+    vi.useRealTimers();
+
+    expect(onErrors.length).toBe(1);
+  });
+});

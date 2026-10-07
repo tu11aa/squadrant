@@ -43,6 +43,8 @@ export interface CmuxStoreSourceOpts {
   lockRetryMs?: number;
   /** Max re-scan attempts for a locked store file before giving up. Default 3. */
   maxLockRetries?: number;
+  /** Delay before re-arming the watcher after it errors (ms). Default 5000. */
+  rewatchMs?: number;
   /** Returns true if the given pid is alive. Default: process.kill(pid, 0). */
   isPidAlive?: (pid: number) => boolean;
   /**
@@ -61,10 +63,10 @@ export interface CmuxStoreSourceOpts {
    */
   fileExists?: (path: string) => boolean;
   /**
-   * Starts a directory watcher. Calls cb on relevant file changes.
-   * Returns a stop function. Default: fs.watch.
+   * Starts a directory watcher. Calls cb on relevant file changes and onError
+   * if the watcher fails after starting. Returns a stop function. Default: fs.watch.
    */
-  watchDir?: (dir: string, cb: () => void) => () => void;
+  watchDir?: (dir: string, cb: () => void, onError: (err: Error) => void) => () => void;
   /** Injectable setTimeout for debouncing. Default: global setTimeout. */
   scheduleTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   /** Injectable clearTimeout for debouncing. Default: global clearTimeout. */
@@ -92,11 +94,12 @@ export class CmuxStoreSource implements LifecycleSource {
   private readonly debounceMs: number;
   private readonly lockRetryMs: number;
   private readonly maxLockRetries: number;
+  private readonly rewatchMs: number;
   private readonly isPidAlive: (pid: number) => boolean;
   private readonly listFiles: (dir: string) => string[];
   private readonly readFile: (path: string) => string | undefined;
   private readonly fileExists: (path: string) => boolean;
-  private readonly watchDir: (dir: string, cb: () => void) => () => void;
+  private readonly watchDir: (dir: string, cb: () => void, onError: (err: Error) => void) => () => void;
   private readonly scheduleTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   private readonly cancelTimer: (id: ReturnType<typeof setTimeout>) => void;
   private readonly log: (msg: string) => void;
@@ -104,6 +107,7 @@ export class CmuxStoreSource implements LifecycleSource {
   private deps?: LifecycleSourceDeps;
   private stopWatcher?: () => void;
   private debounceTimer?: ReturnType<typeof setTimeout>;
+  private rewatchTimer?: ReturnType<typeof setTimeout>;
   /** filename → pending lock-retry timer (one per locked file). */
   private lockRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** filename → re-scan attempts used in the current lock episode. */
@@ -121,6 +125,7 @@ export class CmuxStoreSource implements LifecycleSource {
     this.debounceMs = opts.debounceMs ?? 50;
     this.lockRetryMs = opts.lockRetryMs ?? 50;
     this.maxLockRetries = opts.maxLockRetries ?? 3;
+    this.rewatchMs = opts.rewatchMs ?? 5000;
     this.isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
     this.listFiles = opts.listFiles ?? defaultListFiles;
     this.readFile = opts.readFile ?? defaultReadFile;
@@ -137,19 +142,17 @@ export class CmuxStoreSource implements LifecycleSource {
     this.lastError = null;
     // Initial scan before any watch events fire.
     this.scan();
-    // Watch for subsequent changes, debounced.
-    try {
-      this.stopWatcher = this.watchDir(this.stateDir, () => this.scheduleDebounced());
-    } catch (e) {
-      this.lastError = (e as Error).message;
-      this.log(`cmux-store: failed to watch ${this.stateDir}: ${(e as Error).message}`);
-    }
+    this.armWatcher();
   }
 
   stop(): void {
     if (this.debounceTimer !== undefined) {
       this.cancelTimer(this.debounceTimer);
       this.debounceTimer = undefined;
+    }
+    if (this.rewatchTimer !== undefined) {
+      this.cancelTimer(this.rewatchTimer);
+      this.rewatchTimer = undefined;
     }
     for (const timer of this.lockRetryTimers.values()) {
       this.cancelTimer(timer);
@@ -174,6 +177,41 @@ export class CmuxStoreSource implements LifecycleSource {
   }
 
   // ── private ─────────────────────────────────────────────────────────────────
+
+  /** Watch for subsequent changes, debounced. */
+  private armWatcher(): void {
+    try {
+      this.stopWatcher = this.watchDir(
+        this.stateDir,
+        () => this.scheduleDebounced(),
+        (err) => this.onWatchError(err),
+      );
+    } catch (e) {
+      this.lastError = (e as Error).message;
+      this.log(`cmux-store: failed to watch ${this.stateDir}: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * The watcher failed after starting (macOS: a refused FSEventStreamStart()
+   * surfaces as EMFILE). Drop it and re-arm later instead of letting the error
+   * escape as an uncaughtException that kills the daemon.
+   */
+  private onWatchError(err: Error): void {
+    this.lastError = err.message;
+    this.log(`cmux-store: watcher error on ${this.stateDir}: ${err.message} — re-arming in ${this.rewatchMs}ms`);
+    this.stopWatcher?.();
+    this.stopWatcher = undefined;
+    if (!this.active || this.rewatchTimer !== undefined) return;
+    this.rewatchTimer = this.scheduleTimer(() => {
+      this.rewatchTimer = undefined;
+      if (!this.active) return;
+      this.lastError = null;
+      // Catch up on changes missed while unwatched.
+      this.scan();
+      this.armWatcher();
+    }, this.rewatchMs);
+  }
 
   private scheduleDebounced(): void {
     if (this.debounceTimer !== undefined) {
@@ -323,11 +361,12 @@ function defaultReadFile(path: string): string | undefined {
   }
 }
 
-function defaultWatchDir(dir: string, cb: () => void): () => void {
+function defaultWatchDir(dir: string, cb: () => void, onError: (err: Error) => void): () => void {
   const w = watch(dir, (_event, filename) => {
     if (typeof filename === "string" && filename.endsWith("-hook-sessions.json")) {
       cb();
     }
   });
+  w.on("error", onError);
   return () => w.close();
 }

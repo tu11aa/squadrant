@@ -58,6 +58,25 @@ describe("launchd plist", () => {
     expect(sanitizePathForPlist(captain)).toBe(sanitizePathForPlist(fresh));
   });
 
+  // cmux injects a per-pane shim dir (~/.cmuxterm/cmux-cli-shims/<panel-uuid>)
+  // into every pane's PATH, so two panes never agreed on the plist and every
+  // command warned that the daemon config was out of date.
+  it("sanitizePathForPlist: produces identical output across cmux panes", () => {
+    const paneA = "/Users/me/.cmuxterm/cmux-cli-shims/A4685B5A-2E48-4801-ACC7-801E09C3F2DE:/usr/local/bin:/usr/bin";
+    const paneB = "/Users/me/.cmuxterm/cmux-cli-shims/EB52E049-2988-4AA1-AEB5-FDE1867F5FEA:/usr/local/bin:/usr/bin";
+    expect(sanitizePathForPlist(paneA)).toBe("/usr/local/bin:/usr/bin");
+    expect(sanitizePathForPlist(paneA)).toBe(sanitizePathForPlist(paneB));
+  });
+
+  // fnm gives every shell its own ~/.local/state/fnm_multishells/<pid>_<ts>/bin,
+  // deleted when that shell exits — same per-shell drift as the cmux shims.
+  it("sanitizePathForPlist: produces identical output across fnm shells", () => {
+    const shellA = "/Users/me/.local/state/fnm_multishells/8530_1791345090499/bin:/usr/local/bin:/usr/bin";
+    const shellB = "/Users/me/.local/state/fnm_multishells/69286_1791359792501/bin:/usr/local/bin:/usr/bin";
+    expect(sanitizePathForPlist(shellA)).toBe("/usr/local/bin:/usr/bin");
+    expect(sanitizePathForPlist(shellA)).toBe(sanitizePathForPlist(shellB));
+  });
+
   it("sanitizePathForPlist: dedupes while preserving first-occurrence order", () => {
     expect(sanitizePathForPlist("/a:/b:/a:/c::/b")).toBe("/a:/b:/c");
   });
@@ -350,6 +369,24 @@ describe("buildDaemonPath", () => {
     expect(result).not.toContain(".claude/plugins");
     expect(result).toContain("/usr/bin");
     expect(result).toContain("/bin");
+  });
+
+  it("drops a cmux per-pane shim dir even when `which` resolves an agent to it", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "claude") return "/Users/me/.cmuxterm/cmux-cli-shims/EB52E049/claude\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/Users/me/.cmuxterm/cmux-cli-shims/EB52E049:/Users/me/.local/bin:/usr/bin");
+    expect(result).toBe("/Users/me/.local/bin:/usr/bin");
+  });
+
+  it("drops an fnm per-shell dir even when `which node` resolves to it", () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string, args: readonly string[] | undefined) => {
+      if (cmd === "which" && args?.[0] === "node") return "/Users/me/.local/state/fnm_multishells/8530_1/bin/node\n";
+      throw new Error("not found");
+    });
+    const result = buildDaemonPath("/Users/me/.local/state/fnm_multishells/8530_1/bin:/Users/me/.local/share/fnm/aliases/default/bin:/usr/bin");
+    expect(result).toBe("/Users/me/.local/share/fnm/aliases/default/bin:/usr/bin");
   });
 
   it("returns sanitized path unchanged when no agent binaries found", () => {
