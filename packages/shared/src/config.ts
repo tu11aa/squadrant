@@ -339,13 +339,8 @@ export function getDefaultConfig(): SquadrantConfig {
         captain: "auto",
         crew: "auto",
       },
-      models: {
-        command: "opus",
-        captain: "opus",
-        crew: "sonnet",
-        exploration: "haiku",
-        review: "opus",
-      },
+      // #874: no `models` here — it's deprecated (superseded by `roles`), so a
+      // fresh init wrote a key the drift check immediately flagged.
       roles: {
         command: { agent: "claude", model: "opus" },
         captain: { agent: "claude", model: "opus" },
