@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-10-07
+
+Hot patch from a fresh-Mac install (production epic #877): the daemon no longer crash-loops on a macOS watcher error, Claude hooks no longer depend on PATH, and `doctor`/drift noise on a healthy install is gone.
+
+### Fixed
+
+- **squadrantd no longer crash-loops when the macOS FSEvents watcher errors (#871).** A refused `FSEventStreamStart()` reaches the `~/.cmuxterm` watcher as an async `EMFILE` error event. It used to be unhandled, so it killed the daemon in a launchd restart loop. The daemon now logs it, drops the watcher and re-arms it after 5s with a catch-up rescan.
+- **Claude hooks use absolute `node` + CLI paths (#872).** Bare `squadrant hooks …` failed with `command not found` on every turn when Claude Code's PATH lacked a version-managed Node's global bin (fnm/nvm). Existing bare-name or stale-path hook entries are repointed on the next daemon start; other hooks are untouched.
+- **The daemon plist no longer pins one cmux pane's shim dir (#879).** `~/.cmuxterm/cmux-cli-shims/<pane>` is stripped from the plist PATH, including when `which claude` resolves to it. Before, every command from another pane warned that the daemon config was out of date.
+- **A fresh `init` no longer writes the deprecated `defaults.models` (#874),** so a new install no longer opens with a config-drift banner.
+- **`doctor`'s `Notifier 'cmux' reachable` checks cmux itself (#878)** via `cmux capabilities`. It used to check whether the one-shot Command workspace was open, so it failed on a healthy cmux.
+
+### Docs
+
+- QUICKSTART troubleshooting entry for the cmux `reachable` check.
+
 ## [0.25.0] - 2026-09-29
 
 Opencode crews and captains can now run behind `@squadrant-ai/auto-gate` when the permission gate is on (#828 P6-C phase 2), plus two launch/logging fixes.

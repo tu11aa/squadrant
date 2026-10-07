@@ -66,7 +66,7 @@ describe("config", () => {
 
   it("defaults crews to sonnet + auto permission mode", () => {
     const config = getDefaultConfig();
-    expect(config.defaults.models!.crew).toBe("sonnet");
+    expect(config.defaults.roles!.crew!.model).toBe("sonnet");
     expect(config.defaults.permissions.crew).toBe("auto");
   });
 

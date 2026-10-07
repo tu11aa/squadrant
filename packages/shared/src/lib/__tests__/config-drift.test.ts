@@ -181,3 +181,11 @@ describe("applySafeFixes", () => {
     expect(u === config).toBe(false);
   });
 });
+
+describe("#874 fresh install", () => {
+  it("the default config reports no deprecated keys against itself", () => {
+    const fresh = getDefaultConfig();
+    const deprecated = detectDrift(fresh, getDefaultConfig()).filter((d) => /deprecated/i.test(JSON.stringify(d)));
+    expect(deprecated).toEqual([]);
+  });
+});

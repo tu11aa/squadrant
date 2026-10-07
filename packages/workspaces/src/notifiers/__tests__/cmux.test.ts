@@ -3,8 +3,14 @@ import { createCmuxNotifier } from "../cmux.js";
 
 const execMock = vi.hoisted(() => vi.fn());
 const execFileMock = vi.hoisted(() => vi.fn());
+const execFileSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("@squadrant/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@squadrant/shared")>()),
+  resolveCmuxBin: () => "/fake/cmux",
+}));
 vi.mock("node:child_process", () => ({
   execSync: execMock,
+  execFileSync: execFileSyncMock,
   // Node-callback shape: util.promisify(execFile) awaits (err, stdout, stderr).
   execFile: execFileMock,
 }));
@@ -13,6 +19,7 @@ describe("CmuxNotifier", () => {
   beforeEach(() => {
     execMock.mockReset();
     execFileMock.mockReset();
+    execFileSyncMock.mockReset();
   });
 
   it("has name 'cmux'", () => {
@@ -67,33 +74,28 @@ describe("CmuxNotifier", () => {
     expect(resolved).toBe(true);
   });
 
-  it("probe returns installed+reachable=true when status succeeds (exit 0)", async () => {
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd.includes("squadrant runtime status --command")) return "running";
-      return "";
-    });
+  it("probe returns installed+reachable=true when cmux capabilities succeeds", async () => {
+    execFileSyncMock.mockImplementation(() => '{"access_mode":"automation"}');
     const probe = await createCmuxNotifier({}).probe();
     expect(probe.installed).toBe(true);
     expect(probe.reachable).toBe(true);
+    expect(execFileSyncMock).toHaveBeenCalledWith("/fake/cmux", ["capabilities"], expect.anything());
   });
 
-  it("probe returns reachable=false when status throws (non-zero exit)", async () => {
-    execMock.mockImplementation((cmd: string) => {
-      if (cmd.includes("squadrant runtime status --command")) {
-        const err: Error & { status?: number } = new Error("stopped");
-        err.status = 1;
-        throw err;
-      }
-      return "";
+  it("probe returns reachable=false when cmux capabilities fails (not running)", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      const err: Error & { status?: number } = new Error("socket not found");
+      err.status = 1;
+      throw err;
     });
     const probe = await createCmuxNotifier({}).probe();
     expect(probe.installed).toBe(true);
     expect(probe.reachable).toBe(false);
   });
 
-  it("probe returns installed=false when squadrant binary is missing", async () => {
-    execMock.mockImplementation(() => {
-      const err: Error & { code?: string } = new Error("squadrant: command not found");
+  it("probe returns installed=false when the cmux binary is missing", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      const err: Error & { code?: string } = new Error("spawn /fake/cmux ENOENT");
       err.code = "ENOENT";
       throw err;
     });
