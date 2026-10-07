@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-10-07
+
+### Fixed
+
+- **The daemon plist no longer pins one shell's fnm dir.** fnm adds a per-shell `~/.local/state/fnm_multishells/<id>/bin` to PATH (and `which node` resolves into it), then deletes it when the shell exits. It's now stripped like the cmux pane shims (#879). Before, every other shell warned that the daemon config was out of date, and the daemon kept a dead PATH entry.
+
 ## [0.25.1] - 2026-10-07
 
 Hot patch from a fresh-Mac install (production epic #877): the daemon no longer crash-loops on a macOS watcher error, Claude hooks no longer depend on PATH, and `doctor`/drift noise on a healthy install is gone.
