@@ -117,7 +117,8 @@ export function detectForeignInstall(
 }
 
 /**
- * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
+ * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs, cmux
+ * per-pane shim dirs) and
  * dedupe so the plist content is stable across squadrant invocations from
  * different shells. Without this, a captain shell (PATH includes
  * ~/.claude/plugins/cache/* bin dirs) vs a fresh login shell would each
@@ -130,6 +131,9 @@ export function sanitizePathForPlist(path: string): string {
   for (const p of path.split(":")) {
     if (!p) continue;
     if (p.includes("/.claude/plugins/")) continue;
+    // cmux's per-pane shim dir (~/.cmuxterm/cmux-cli-shims/<panel-uuid>) differs
+    // in every pane, and pins the daemon to one pane's shims.
+    if (p.includes("/.cmuxterm/cmux-cli-shims/")) continue;
     if (seen.has(p)) continue;
     seen.add(p);
     stable.push(p);

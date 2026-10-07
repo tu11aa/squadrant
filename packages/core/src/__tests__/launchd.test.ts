@@ -58,6 +58,16 @@ describe("launchd plist", () => {
     expect(sanitizePathForPlist(captain)).toBe(sanitizePathForPlist(fresh));
   });
 
+  // cmux injects a per-pane shim dir (~/.cmuxterm/cmux-cli-shims/<panel-uuid>)
+  // into every pane's PATH, so two panes never agreed on the plist and every
+  // command warned that the daemon config was out of date.
+  it("sanitizePathForPlist: produces identical output across cmux panes", () => {
+    const paneA = "/Users/me/.cmuxterm/cmux-cli-shims/A4685B5A-2E48-4801-ACC7-801E09C3F2DE:/usr/local/bin:/usr/bin";
+    const paneB = "/Users/me/.cmuxterm/cmux-cli-shims/EB52E049-2988-4AA1-AEB5-FDE1867F5FEA:/usr/local/bin:/usr/bin";
+    expect(sanitizePathForPlist(paneA)).toBe("/usr/local/bin:/usr/bin");
+    expect(sanitizePathForPlist(paneA)).toBe(sanitizePathForPlist(paneB));
+  });
+
   it("sanitizePathForPlist: dedupes while preserving first-occurrence order", () => {
     expect(sanitizePathForPlist("/a:/b:/a:/c::/b")).toBe("/a:/b:/c");
   });
