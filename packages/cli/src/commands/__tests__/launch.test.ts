@@ -67,9 +67,9 @@ describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
 // claude captain, gated only on agentName==="claude" — not on
 // defaults.captainChannel. An off-by-default feature must not alter the
 // launch command or touch the filesystem (CC_SOCKS_DIR mkdirSync).
-describe("shouldWireCaptainChannel (#697 off-by-default gate)", () => {
-  it("is false when captainChannel is unset (default off)", () => {
-    expect(shouldWireCaptainChannel("claude", { defaults: {} })).toBe(false);
+describe("shouldWireCaptainChannel (#697 gate; default on since #887)", () => {
+  it("is true when captainChannel is unset (default on)", () => {
+    expect(shouldWireCaptainChannel("claude", { defaults: {} })).toBe(true);
   });
 
   it("is false when captainChannel is explicitly 'off'", () => {

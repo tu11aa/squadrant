@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`defaults.captainChannel` now defaults to `"on"` when unset or invalid** (#887). Captain-bound delivery uses the native peer socket by default. Set `"off"` or `"shadow"` explicitly to opt out. Existing captains must be relaunched to get the peer socket.
+
 ## [0.25.2] - 2026-10-07
 
 ### Fixed
