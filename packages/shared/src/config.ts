@@ -211,12 +211,12 @@ export function resolveControlChannelMode(
   return v && CONTROL_CHANNEL_MODES.has(v) ? v : "off";
 }
 
-/** Resolve captain-delivery rollout. Unset or invalid ⇒ "off". */
+/** Resolve captain-delivery rollout. Unset or invalid ⇒ "on" (#887). */
 export function resolveCaptainChannelMode(
   defaults: { captainChannel?: string } | undefined,
 ): ControlChannelMode {
   const v = defaults?.captainChannel;
-  return v && CONTROL_CHANNEL_MODES.has(v) ? (v as ControlChannelMode) : "off";
+  return v && CONTROL_CHANNEL_MODES.has(v) ? (v as ControlChannelMode) : "on";
 }
 
 /** #667 per-agent control-channel rollout position. Unset ⇒ "off". */

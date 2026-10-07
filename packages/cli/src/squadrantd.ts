@@ -26,7 +26,7 @@ import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
          ClaudePeerRegistrySource, createOpencodeFactAdapter, syncShippedOpencodeSkills } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
-import { loadConfig, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
+import { loadConfig, resolveCaptainChannelMode, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
@@ -358,7 +358,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
 
   // ── #667 slice 4: captain channel ─────────────────────────────────────────
   if (!process.env.VITEST) {
-    ctx.captainChannelMode = () => loadConfig().defaults.captainChannel ?? "off";
+    ctx.captainChannelMode = () => resolveCaptainChannelMode(loadConfig().defaults);
     // Build ONLY when the operator has opted in. This used to run unconditionally,
     // so an off-by-default feature bound a socket at every boot — and on 2026-08-19
     // a leftover socket file made that bind throw, killing the daemon and the whole
