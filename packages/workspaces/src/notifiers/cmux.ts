@@ -1,10 +1,11 @@
-import { execFile as execFileCb, execSync } from "node:child_process";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   NotifierDriver,
   NotifierProbeResult,
   NotifierScope,
 } from "./types.js";
+import { resolveCmuxBin } from "@squadrant/shared";
 import { CMUX_TIMEOUT } from "../runtimes/cmux.js";
 
 const execFile = promisify(execFileCb);
@@ -14,16 +15,18 @@ export function createCmuxNotifier(_scope: NotifierScope): NotifierDriver {
     name: "cmux",
 
     async probe(): Promise<NotifierProbeResult> {
+      // #878: ask cmux itself over its socket. This used to run
+      // `squadrant runtime status --command`, which only passes while the
+      // one-shot Command workspace is open — so a healthy cmux reported FAIL.
       try {
-        execSync("squadrant runtime status --command", { encoding: "utf-8", stdio: "pipe" });
+        execFileSync(resolveCmuxBin(), ["capabilities"], { encoding: "utf-8", stdio: "pipe", timeout: CMUX_TIMEOUT });
         return { installed: true, reachable: true };
       } catch (err) {
         const code = (err as { code?: string }).code;
         if (code === "ENOENT") {
           return { installed: false, reachable: false };
         }
-        // Any non-ENOENT error: squadrant shim crashed, workspace down, or
-        // config unreadable all collapse to "installed but not reachable".
+        // Any non-ENOENT error: cmux not running, socket refused, or timed out.
         return { installed: true, reachable: false };
       }
     },
