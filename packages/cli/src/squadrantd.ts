@@ -8,6 +8,7 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { buildContext } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
+import { shellQuote } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
 import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
@@ -294,6 +295,9 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   const nativeHookSource = new NativeHookSource({
     log,
     hookInstall: {
+      // #872: absolute node + CLI paths — Claude runs hooks via /bin/sh with its
+      // own PATH, which often lacks a version-managed Node's global bin.
+      cliCmd: `${shellQuote(process.execPath)} ${shellQuote(CLI_BIN)}`,
       claudeEnv: loadConfig().defaults.claudeEnv,
       // #P6 (§15#5): only an explicit gate mode "on" lets squadrant remove a
       // foreign auto-gate PermissionRequest handler; auto/absent leaves it alone.

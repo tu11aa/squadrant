@@ -36,7 +36,8 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   ["StopFailure", "stop-failure"],
 ];
 
-const DEFAULT_HOOK_CMD = "squadrant hooks";
+/** Bare-name CLI prefix — resolved via PATH by the /bin/sh Claude runs hooks in. */
+const DEFAULT_CLI_CMD = "squadrant";
 
 /**
  * #782: the PermissionRequest event is owned by the U7 permission gate — a
@@ -46,13 +47,42 @@ const DEFAULT_HOOK_CMD = "squadrant hooks";
  * `squadrant hooks claude permission-request` entry is migrated out (see
  * installClaudeHooks) so a prompt is never processed twice.
  */
-const GATE_HOOK_CMD = "squadrant gate";
-
 /** The managed command for one event. PermissionRequest is gate-owned (#782). */
-function hookCommandFor(eventName: string, sub: string, hookCmd: string): string {
+function hookCommandFor(eventName: string, sub: string, hookCmd: string, gateCmd: string): string {
   return eventName === "PermissionRequest"
-    ? `${GATE_HOOK_CMD} claude ${sub}`
+    ? `${gateCmd} claude ${sub}`
     : `${hookCmd} claude ${sub}`;
+}
+
+/**
+ * #872: true for a command squadrant itself installed for `sub` — the bare
+ * `squadrant hooks|gate claude <sub>` form, or an absolute
+ * `<node> …/squadrant/dist/index.js hooks|gate claude <sub>` form from an
+ * earlier install (e.g. a Node version since removed).
+ */
+function isSquadrantOwnedCommand(command: unknown, sub: string): boolean {
+  if (typeof command !== "string") return false;
+  const m = command.match(/^(.*) (?:hooks|gate) claude (\S+)$/);
+  if (!m || m[2] !== sub) return false;
+  const prefix = m[1];
+  return prefix === DEFAULT_CLI_CMD || /squadrant\/dist\/index\.js'?$/.test(prefix);
+}
+
+/** Remove squadrant-owned handlers for `sub` other than `keep`. Returns true if any were removed. */
+function removeStaleOwnedHandlers(entries: unknown[], sub: string, keep: string): boolean {
+  let removed = false;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as { hooks?: unknown[] };
+    if (!Array.isArray(entry?.hooks)) continue;
+    const before = entry.hooks.length;
+    entry.hooks = entry.hooks.filter((h) => {
+      const cmd = (h as { command?: unknown })?.command;
+      return cmd === keep || !isSquadrantOwnedCommand(cmd, sub);
+    });
+    if (entry.hooks.length !== before) removed = true;
+    if (entry.hooks.length === 0) entries.splice(i, 1);
+  }
+  return removed;
 }
 
 /**
@@ -130,8 +160,16 @@ export interface ClaudeHooksInstallOpts {
   /** Path to ~/.claude/settings.json. Injectable for tests. */
   settingsPath?: string;
   /**
+   * #872: shell prefix that invokes the squadrant CLI, e.g.
+   * `'/abs/bin/node' '/abs/squadrant/dist/index.js'`. Claude runs hooks via
+   * /bin/sh with its own PATH, which often lacks a version-managed Node's
+   * global bin (fnm/nvm), so the daemon passes absolute paths. Hook commands
+   * pointing elsewhere are replaced. Default: 'squadrant' (PATH lookup).
+   */
+  cliCmd?: string;
+  /**
    * Base hook command — final command is '<hookCmd> claude <sub>'.
-   * Default: 'squadrant hooks' (the CLI subcommand wired by the daemon crew).
+   * Default: '<cliCmd> hooks' (the CLI subcommand wired by the daemon crew).
    */
   hookCmd?: string;
   /** Injectable: read file content, undefined on any read error. */
@@ -167,7 +205,9 @@ export interface ClaudeHooksInstallOpts {
  */
 export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   const settingsPath = opts.settingsPath ?? join(homedir(), ".claude", "settings.json");
-  const hookCmd = opts.hookCmd ?? DEFAULT_HOOK_CMD;
+  const cliCmd = opts.cliCmd ?? DEFAULT_CLI_CMD;
+  const hookCmd = opts.hookCmd ?? `${cliCmd} hooks`;
+  const gateCmd = `${cliCmd} gate`;
   const readFile = opts.readFile ?? defaultReadFile;
   const writeFile = opts.writeFile ?? defaultWriteFile;
   const log = opts.log ?? (() => {});
@@ -193,12 +233,13 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   let changed = false;
   const repaired: string[] = [];
   const migrated: string[] = [];
+  const repointed: string[] = [];
   for (const [eventName, sub, matcher] of CLAUDE_HOOK_EVENTS) {
     if (!Array.isArray(hooks[eventName])) {
       hooks[eventName] = [];
     }
     const entries = hooks[eventName] as unknown[];
-    const command = hookCommandFor(eventName, sub, hookCmd);
+    const command = hookCommandFor(eventName, sub, hookCmd, gateCmd);
     const hookMatcher = matcher ?? "";
 
     // #782: migrate the legacy PermissionRequest handler (which the gate now
@@ -238,6 +279,11 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
       }
     }
 
+    // #872: drop squadrant's own handlers that invoke the CLI some other way
+    // (bare name, or a stale absolute path) so the event isn't handled twice.
+    const wasRepointed = removeStaleOwnedHandlers(entries, sub, command);
+    if (wasRepointed) changed = true;
+
     // Idempotency check: skip if our exact command is already registered.
     const alreadyPresent = entries.some(
       (m) =>
@@ -251,7 +297,7 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
     if (!alreadyPresent) {
       entries.push({ matcher: hookMatcher, hooks: [{ type: "command", command, timeout: 10 }] });
       changed = true;
-      repaired.push(`${eventName}/${sub}`);
+      (wasRepointed ? repointed : repaired).push(`${eventName}/${sub}`);
     }
   }
 
@@ -270,6 +316,13 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   if (migrated.length > 0) {
     log(
       `native-hook: migrated ${migrated.length} PermissionRequest hook(s) to the U7 permission gate in ${settingsPath} [${migrated.join(", ")}]`,
+    );
+  }
+
+  // #872: hooks that invoked the CLI another way now use cliCmd.
+  if (repointed.length > 0) {
+    log(
+      `native-hook: repointed ${repointed.length} squadrant hook(s) to ${cliCmd} in ${settingsPath} [${repointed.join(", ")}]`,
     );
   }
 
