@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889). Only when that file is untracked is it ignored by the dirty-worktree guard and deleted before `git worktree remove`; a tracked/modified copy or any other uncommitted file still blocks close.
+
 ### Changed
 
 - **`defaults.captainChannel` now defaults to `"on"` when unset or invalid** (#887). Captain-bound delivery uses the native peer socket by default. Set `"off"` or `"shadow"` explicitly to opt out. Existing captains must be relaunched to get the peer socket.
