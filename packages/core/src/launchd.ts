@@ -117,7 +117,8 @@ export function detectForeignInstall(
 }
 
 /**
- * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs) and
+ * Strip per-shell ephemeral PATH entries (Claude Code plugin cache dirs, cmux
+ * per-pane shim dirs) and
  * dedupe so the plist content is stable across squadrant invocations from
  * different shells. Without this, a captain shell (PATH includes
  * ~/.claude/plugins/cache/* bin dirs) vs a fresh login shell would each
@@ -130,6 +131,9 @@ export function sanitizePathForPlist(path: string): string {
   for (const p of path.split(":")) {
     if (!p) continue;
     if (p.includes("/.claude/plugins/")) continue;
+    // cmux's per-pane shim dir (~/.cmuxterm/cmux-cli-shims/<panel-uuid>) differs
+    // in every pane, and pins the daemon to one pane's shims.
+    if (p.includes("/.cmuxterm/cmux-cli-shims/")) continue;
     if (seen.has(p)) continue;
     seen.add(p);
     stable.push(p);
@@ -169,16 +173,9 @@ export function resolveAgentBinDirs(): string[] {
  * deduped against the sanitized entries so the output is deterministic.
  */
 export function buildDaemonPath(shellPath: string): string {
-  const agentDirs = resolveAgentBinDirs();
-  const sanitized = sanitizePathForPlist(shellPath);
-  if (agentDirs.length === 0) return sanitized;
-  const parts = [...agentDirs, ...sanitized.split(":")];
-  const seen = new Set<string>();
-  return parts.filter(p => {
-    if (!p || seen.has(p)) return false;
-    seen.add(p);
-    return true;
-  }).join(":");
+  // Sanitize the agent dirs too: inside cmux, `which claude` resolves to the
+  // pane's shim dir.
+  return sanitizePathForPlist([...resolveAgentBinDirs(), shellPath].join(":"));
 }
 
 /**
