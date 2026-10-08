@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
+import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, PaneInputOptions, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { compatManifest } from "@squadrant/shared";
@@ -779,12 +779,17 @@ export function createCmuxDriver(): RuntimeDriver {
       await this.sendKeyToPane(pane, "Enter");
     },
 
-    async pasteToPane(pane: PaneRef, text: string): Promise<void> {
-      await cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(text)]);
+    // cmux >= 0.65 refuses send/send-key into an open agent dialog or over a
+    // draft unless a leading --force is given (B2). Only `crew answer` forces,
+    // and only where cmux understands the flag (0.64 would type it as text).
+    async pasteToPane(pane: PaneRef, text: string, opts?: PaneInputOptions): Promise<void> {
+      const force = opts?.force && (await cmuxHasInputGuards()) ? ["--force"] : [];
+      await cmux(["send", ...force, "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(text)]);
     },
 
-    async sendKeyToPane(pane: PaneRef, key: string): Promise<void> {
-      await cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, key]);
+    async sendKeyToPane(pane: PaneRef, key: string, opts?: PaneInputOptions): Promise<void> {
+      const force = opts?.force && (await cmuxHasInputGuards()) ? ["--force"] : [];
+      await cmux(["send-key", ...force, "--workspace", pane.workspaceId, "--surface", pane.surfaceId, key]);
     },
 
     async readPaneScreen(pane: PaneRef): Promise<string> {
