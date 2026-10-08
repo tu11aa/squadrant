@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
 import { readConfigFileSync, writeConfigFileSync, migrateConfigPermsSync } from "./lib/config-io.js";
+import type { KnowledgeKbConfig } from "./knowledge.js";
 
 export interface ProjectConfig {
   path: string;
@@ -17,6 +18,10 @@ export interface ProjectConfig {
   /** #246: when false, `squadrant group dispatch` rejects delegations to this
    *  project. Defaults to true when absent. */
   acceptDelegations?: boolean;
+  /** #896 Rules KB: named knowledge bases this project subscribes to (spec D2). */
+  knowledge?: string[];
+  /** #896 Rules KB: KB rule ids switched off for this project. */
+  rulesDisabled?: string[];
 }
 
 export interface PermissionConfig {
@@ -238,6 +243,8 @@ export interface SquadrantConfig {
   projection?: {
     targets?: string[];
   };
+  /** #896 Rules KB: per-KB settings, keyed by KB name. Absent ⇒ no KB configured. */
+  knowledge?: Record<string, KnowledgeKbConfig>;
   delivery?: {
     /** Defer count at which a stuck delivery is flagged on the dashboard (B1). Does NOT
      *  force delivery on its own — probing an actively-changing draft is unsafe (#484); only
