@@ -1,11 +1,11 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
-import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor } from "../mailbox.js";
+import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor, type MailboxEntry } from "../mailbox.js";
 import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
-import { stalePrefix } from "./down-alert.js";
+import { coalesceBacklog } from "./backlog-coalesce.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
 import { readCaptainAddress, writeCaptainAddress, type CaptainAddress } from "../captain-record.js";
@@ -30,7 +30,7 @@ const TERMINAL_KINDS = new Set(["task.done", "task.failed", "task.cancelled", "t
 // the real cause was a destroyed surface). One distinct sentence per reason;
 // "stable"/"unknown" have no operator action of their own, so they keep the
 // generic retry-assurance wording.
-const STUCK_ALERT_TEXT: Record<DeliverDeferReason, (n: number) => string> = {
+export const STUCK_ALERT_TEXT: Record<DeliverDeferReason, (n: number) => string> = {
   "no-box": (n) =>
     `⚠️ DELIVERY STUCK: your captain pane's input box could not be confirmed visible (an overlay, menu, or scrolled view may be covering it) and has blocked pending notification(s) for ${n}+ retries. This keeps retrying safely and will deliver automatically once the input box is visible again.`,
   modal: (n) =>
@@ -363,6 +363,9 @@ export function createDelivery(
   // without delivery. This stops a fresh/empty cursor from re-delivering the
   // entire historical backlog.
   const sessionStartMs = Date.now();
+  // #890: last seq per project whose stale-* outcome was logged — a deferred
+  // stale head used to re-log on every retry (~1/s), flooding the log for hours.
+  const lastStaleLogged = new Map<string, number>();
 
   // Re-entrancy guard: each tick does multiple slow cmux subprocess calls and
   // can exceed the 1s interval.
@@ -434,9 +437,20 @@ export function createDelivery(
           });
           deliveries.set(project, d);
         }
-        for await (const entry of readFromCursor({ stateRoot, project, fromSeq: lastAcked + 1 })) {
+        // #890: read the whole pending backlog first so each entry can be judged
+        // against what is queued behind it and the task's current state —
+        // a recovered captain gets the current truth, not a chronological flood.
+        const pending: MailboxEntry[] = [];
+        for await (const entry of readFromCursor({ stateRoot, project, fromSeq: lastAcked + 1 })) pending.push(entry);
+        const decisions = coalesceBacklog(pending, {
+          now: Date.now(),
+          taskState: (taskId) => store.get(project, taskId)?.state,
+        });
+        for (const [i, entry] of pending.entries()) {
           // #332 storm BUG 3: silently ack entries that pre-date this daemon
           // session by more than STALE_THRESHOLD_MS.
+          // #890: stale-* outcomes are logged once per seq, not on every retry.
+          const logStale = lastStaleLogged.get(project) !== entry.seq;
           if (new Date(entry.ts).getTime() < sessionStartMs - STALE_THRESHOLD_MS) {
             // D1 (#474): terminal events must deliver regardless of age — an
             // undelivered CREW DONE must reach the captain even after a daemon
@@ -449,22 +463,21 @@ export function createDelivery(
                 await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
                 continue;
               }
-              log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-exempt-deliver`);
-            } else {
+              if (logStale) log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-exempt-deliver`);
+            } else if (logStale) {
               log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=stale-terminal-deliver`);
             }
+            lastStaleLogged.set(project, entry.seq);
           }
-          // #744: a daemon-generated captain.message (e.g. the boot-gap "daemon
-          // was down" alert) carries its own generation time in `entry.ts`
-          // already — no new field needed. If it sat in the mailbox long
-          // enough to actually deliver stale, flag that instead of letting it
-          // read as a current event.
-          let deliverEntry = entry;
-          if (entry.kind === "captain.message" && entry.payload?.source === "daemon" && entry.message) {
-            const prefix = stalePrefix(new Date(entry.ts).getTime(), Date.now());
-            if (prefix) deliverEntry = { ...entry, message: `${prefix}${entry.message}` };
+          // #890 (+ #744 stale prefix): only reached once every earlier entry
+          // was acked, so a skip here is safe — must-deliver kinds never skip.
+          const decision = decisions[i];
+          if (decision.action === "skip") {
+            log(`delivery seq=${entry.seq} kind=${entry.kind} outcome=coalesced reason=${decision.reason}`);
+            await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
+            continue;
           }
-          const result = await d.deliver(deliverEntry, async (text, sendOpts) => {
+          const result = await d.deliver(decision.entry, async (text, sendOpts) => {
             const agent = ctx.captainAgentFor?.(project);
             // #786: with no agent resolver, fall back to the legacy single channel —
             // byte-for-byte the pre-#786 behaviour (existing tests rely on it).
