@@ -44,6 +44,7 @@ import { handoffCommand } from "./commands/handoff.js";
 import { sessionsCommand } from "./commands/sessions.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import { knowledgeCommand } from "./commands/knowledge.js";
+import { rulesCommand } from "./commands/rules.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -178,6 +179,7 @@ program.addCommand(workCommand);
 program.addCommand(handoffCommand);
 program.addCommand(sessionsCommand);
 program.addCommand(knowledgeCommand);
+program.addCommand(rulesCommand);
 program.addCommand(whoamiCommand);
 
 program.parseAsync().catch((e) => {
