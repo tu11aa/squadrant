@@ -1121,7 +1121,11 @@ export async function runCrewClose(
   // task) is a typo → surface the not-found error.
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (crew) {
-    await runtime.closePane(crew);
+    try {
+      await runtime.closePane(crew);
+    } catch (e) {
+      process.stderr.write(`(pane close failed: ${(e as Error).message})\n`);
+    }
   } else if (taskId === undefined) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
   }
