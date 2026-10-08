@@ -145,7 +145,11 @@ export async function bootWorkspace(opts: BootWorkspaceOpts): Promise<void> {
   const existing = await runtime.status(workspaceName);
   if (existing && forceFresh) {
     opts.onStoppingStale?.(workspaceName);
-    await runtime.stop(existing.id);
+    try {
+      await runtime.stop(existing.id);
+    } catch (e) {
+      process.stderr.write(`(stale workspace '${workspaceName}' close failed: ${(e as Error).message})\n`);
+    }
   } else if (existing) {
     opts.onAlreadyExists?.(workspaceName);
     opts.selectWorkspace?.(existing.id);

@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, RuntimePaneOptions } from "./types.js";
+import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, PaneInputOptions, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { compatManifest } from "@squadrant/shared";
@@ -88,7 +88,35 @@ function cmuxStdin(args: string[], input: string): Promise<string> {
   });
 }
 
-// Shape of `cmux workspace list --json` (cmux 0.64.16, verified 0.64.22). Only the fields we
+// cmux 0.65.0 added input guards: `send` refuses text into an agent prompt
+// holding a draft or dialog, and `send-key` refuses keys into a dialog, unless
+// a leading `--force` is given. 0.64.x has no guard and types `--force` as
+// literal text, so a caller may only pass it when this returns true. See
+// docs/specs/2026-10-08-cmux-0.65.0-compat-study.md (B1/B2).
+// Only a parsed version is cached; an unreadable one answers false (no
+// --force — never typed into a 0.64 draft) and is retried on the next call.
+let inputGuardsCache: boolean | undefined;
+export async function cmuxHasInputGuards(): Promise<boolean> {
+  if (inputGuardsCache !== undefined) return inputGuardsCache;
+  let version: string;
+  try {
+    version = await cmux(["--version"]);
+  } catch {
+    return false;
+  }
+  const m = version.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return false;
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  inputGuardsCache = major > 0 || minor >= 65;
+  return inputGuardsCache;
+}
+
+/** Test-only: forget the cached cmux version. */
+export function resetCmuxInputGuardsCache(): void {
+  inputGuardsCache = undefined;
+}
+
+// Shape of `cmux workspace list --json` (cmux 0.64.16, verified 0.65.0). Only the fields we
 // consume are typed; everything else in the payload is ignored.
 interface CmuxWorkspaceListJson {
   workspaces?: Array<{
@@ -99,7 +127,7 @@ interface CmuxWorkspaceListJson {
   }>;
 }
 
-// Shape of `cmux tree --json` (cmux 0.64.16, verified 0.64.22). Surfaces nest as
+// Shape of `cmux tree --json` (cmux 0.64.16, verified 0.65.0). Surfaces nest as
 // windows[].workspaces[].panes[].surfaces[]; only consumed fields are typed.
 interface CmuxTreeJson {
   windows?: Array<{
@@ -699,19 +727,25 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async stop(ref: string): Promise<void> {
-      // cmux 0.64.16+ (verified 0.64.22) refuses to close a pinned workspace. Unpin first so that
+      // cmux 0.64.16+ (verified 0.65.0) refuses to close a pinned workspace. Unpin first so that
       // squadrant launch --fresh works even when the captain workspace is pinned.
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
       } catch { /* workspace may not be pinned — proceed to close regardless */ }
+      // cmux 0.65 also refuses to close a workspace with a live process unless --force
+      // (B3, cmux 0.65 compat study). An already-gone workspace is success; any other
+      // error propagates so callers can warn instead of leaving the workspace open silently.
       try {
-        await cmux(["workspace", "close", ref]);
-      } catch { /* may already be closed */ }
+        await cmux(["workspace", "close", ref, "--force"]);
+      } catch (e) {
+        if (/not found|no such|does not exist/i.test((e as Error).message)) return;
+        throw e;
+      }
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {
       // #295 / audit A1+B3: a crew tab must never steal focus from the captain.
-      // cmux 0.64.16+ (verified 0.64.22)'s new-surface and new-pane both DEFAULT to --focus false,
+      // cmux 0.64.16+ (verified 0.65.0)'s new-surface and new-pane both DEFAULT to --focus false,
       // so we pass it explicitly (intent + resilience if the default changes)
       // and create the surface focus-neutrally. This REPLACES the old
       // snapshot-then-move-surface refocus dance, which depended on the fragile
@@ -735,9 +769,15 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async closePane(pane: PaneRef): Promise<void> {
+      // cmux >= 0.65 refuses to close a surface with a live process unless
+      // --force is given (#895). An already-gone surface is success; any other
+      // error propagates so callers can warn instead of leaving a tab open silently.
       try {
-        await cmux(["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
-      } catch { /* may already be closed */ }
+        await cmux(["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, "--force"]);
+      } catch (e) {
+        if (/not found|no such|does not exist/i.test((e as Error).message)) return;
+        throw e;
+      }
     },
 
     async sendToPane(pane: PaneRef, message: string): Promise<void> {
@@ -745,12 +785,17 @@ export function createCmuxDriver(): RuntimeDriver {
       await this.sendKeyToPane(pane, "Enter");
     },
 
-    async pasteToPane(pane: PaneRef, text: string): Promise<void> {
-      await cmux(["send", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(text)]);
+    // cmux >= 0.65 refuses send/send-key into an open agent dialog or over a
+    // draft unless a leading --force is given (B2). Only `crew answer` forces,
+    // and only where cmux understands the flag (0.64 would type it as text).
+    async pasteToPane(pane: PaneRef, text: string, opts?: PaneInputOptions): Promise<void> {
+      const force = opts?.force && (await cmuxHasInputGuards()) ? ["--force"] : [];
+      await cmux(["send", ...force, "--workspace", pane.workspaceId, "--surface", pane.surfaceId, sanitizeForCmuxSend(text)]);
     },
 
-    async sendKeyToPane(pane: PaneRef, key: string): Promise<void> {
-      await cmux(["send-key", "--workspace", pane.workspaceId, "--surface", pane.surfaceId, key]);
+    async sendKeyToPane(pane: PaneRef, key: string, opts?: PaneInputOptions): Promise<void> {
+      const force = opts?.force && (await cmuxHasInputGuards()) ? ["--force"] : [];
+      await cmux(["send-key", ...force, "--workspace", pane.workspaceId, "--surface", pane.surfaceId, key]);
     },
 
     async readPaneScreen(pane: PaneRef): Promise<string> {
@@ -774,7 +819,7 @@ export function createCmuxDriver(): RuntimeDriver {
       // relay still runs as a cmux descendant in the same workspace, preserving
       // the in-cmux delivery requirement (#112).
       //
-      // cmux 0.64.16+ (verified 0.64.22)'s new-surface DEFAULTS to --focus false, so "background"
+      // cmux 0.64.16+ (verified 0.65.0)'s new-surface DEFAULTS to --focus false, so "background"
       // passes --focus false and the relay tab is created without ever stealing
       // focus from the captain — no snapshot-then-move-surface refocus dance
       // (audit A1+B3; the 0.64 freeform canvas broke the old tree-order==index
@@ -887,6 +932,14 @@ export function createCmuxDriver(): RuntimeDriver {
       const after = readInputBoxRaw(afterScreen);
       const rawAfter = readInputBoxRaw(afterScreen, { trim: false });
 
+      // B1 (cmux 0.65.0 compat study): the restore types into a prompt that still
+      // holds the rest of the draft, which cmux >= 0.65.0 refuses unless `--force`
+      // leads the text. 0.64.x would type `--force` literally, hence the gate.
+      const restoreGrapheme = async (grapheme: string) => {
+        const force = (await cmuxHasInputGuards()) ? ["--force"] : [];
+        await cmux(["send", "--workspace", ws, "--surface", sf, ...force, grapheme]);
+      };
+
       const liveness = classifyDraftLiveness(before, after);
       if (liveness === "real-draft") {
         // Confirmed real draft. Restore the last grapheme our probe removed
@@ -894,7 +947,7 @@ export function createCmuxDriver(): RuntimeDriver {
         const segs = before ? [...new Intl.Segmenter().segment(before)] : [];
         const lastGrapheme =
           segs.length > 0 ? segs[segs.length - 1].segment : before!.slice(-1);
-        await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+        await restoreGrapheme(lastGrapheme);
         throw new DeferDelivery(draft);
       }
       if (liveness === "no-draft") {
@@ -911,7 +964,7 @@ export function createCmuxDriver(): RuntimeDriver {
           const segs = [...new Intl.Segmenter().segment(rawBefore)];
           const lastGrapheme =
             segs.length > 0 ? segs[segs.length - 1].segment : rawBefore.slice(-1);
-          await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+          await restoreGrapheme(lastGrapheme);
           throw new DeferDelivery(draft);
         }
         // rawBefore === rawAfter: backspace was a true no-op — the box holds ghost/hint

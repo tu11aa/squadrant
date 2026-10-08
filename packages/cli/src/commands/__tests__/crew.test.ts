@@ -124,6 +124,7 @@ vi.mock("@squadrant/agents", () => ({
 const squadrantdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
 const sendCodexFirstTurn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../doctor.js", () => ({ commandExists: () => true }));
 vi.mock("../crew-control.js", () => ({
   squadrantdCall,
   buildDispatchRequest,
@@ -1192,8 +1193,8 @@ describe("squadrant crew answer (#592)", () => {
 
     const result = await runCrewAnswer("brove", "crew-1", "2");
 
-    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down");
-    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down", { force: true });
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter", { force: true });
     expect(result).toEqual({ selected: { index: 2, label: "Blue", highlighted: false }, closed: true });
   });
 
@@ -1216,8 +1217,8 @@ describe("squadrant crew answer (#592)", () => {
 
     const result = await runCrewAnswer("brove", "crew-1", "Allow always");
 
-    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
-    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right", { force: true });
+    expect(sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter", { force: true });
     expect(result).toEqual({ selected: { index: 2, label: "Allow always", highlighted: false }, closed: true });
   });
 

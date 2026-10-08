@@ -2,7 +2,7 @@ export type ToolEntry = { min?: string; lastVerified?: string };
 
 export const compatManifest = {
   tools: {
-    cmux:     { min: "0.64.0",  lastVerified: "0.64.22" } satisfies ToolEntry,
+    cmux:     { min: "0.64.0",  lastVerified: "0.65.0"  } satisfies ToolEntry,
     claude:   { min: "2.1.32" }                           satisfies ToolEntry,
     node:     { min: "18.0.0",  lastVerified: "24.6.0"  } satisfies ToolEntry,
     // presence-checked; no floor enforced yet

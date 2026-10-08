@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { check, candidateGlobalInstalls, findInstalledSquadrants, formatDuplicateInstallWarning } from "../doctor.js";
+import { check, checkOptional, OPTIONAL_PLUGIN_HINTS, candidateGlobalInstalls, findInstalledSquadrants, formatDuplicateInstallWarning } from "../doctor.js";
 
 describe("doctor check() hint rendering", () => {
   let output: string[];
@@ -47,19 +47,8 @@ describe("doctor check() hint rendering", () => {
   });
 
   it("hint line contains the → indicator", () => {
-    check("Plugin: superpowers", false, "In Claude Code, run: /plugin marketplace add superpowers");
+    check("Squadrant config exists", false, "Run: squadrant init");
     expect(output[1]).toMatch(/→/);
-    expect(output[1]).toMatch(/\/plugin marketplace add superpowers/);
-  });
-
-  it("hint line contains the → indicator for claude-mem", () => {
-    check("Plugin: claude-mem", false, "In Claude Code, run: /plugin marketplace add thedotmack/claude-mem");
-    expect(output[1]).toMatch(/thedotmack\/claude-mem/);
-  });
-
-  it("hint line contains the → indicator for context7", () => {
-    check("Plugin: context7", false, "In Claude Code, run: /plugin marketplace add context7");
-    expect(output[1]).toMatch(/context7/);
   });
 
   it("workspace hint points to squadrant init", () => {
@@ -124,5 +113,44 @@ describe("formatDuplicateInstallWarning", () => {
     expect(msg).toContain("0.18.0");
     expect(msg).toContain("/Users/me/.nvm/versions/node/v24/lib/node_modules/squadrant/package.json");
     expect(msg).toContain("0.16.3");
+  });
+});
+
+describe("doctor checkOptional() — WARN, never FAIL", () => {
+  let output: string[];
+
+  beforeEach(() => {
+    output = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prints PASS and returns true when present", () => {
+    expect(checkOptional("Plugin: context7", true, "what", "hint")).toBe(true);
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatch(/PASS/);
+  });
+
+  it("prints WARN (not FAIL) with enables text and hint, and reports not-present", () => {
+    const ok = checkOptional("Plugin: context7", false, "library docs lookup", "do the thing");
+    // Returns presence, so a WARN is never mistaken for a PASS; callers keep it out of the totals.
+    expect(ok).toBe(false);
+    expect(output[0]).toMatch(/WARN/);
+    expect(output[0]).not.toMatch(/FAIL/);
+    expect(output[0]).toMatch(/optional/);
+    expect(output[0]).toMatch(/library docs lookup/);
+    expect(output[1]).toMatch(/do the thing/);
+  });
+
+  it("optional plugin hints are the exact install commands", () => {
+    expect(OPTIONAL_PLUGIN_HINTS.superpowers).toContain("/plugin install superpowers@claude-plugins-official");
+    expect(OPTIONAL_PLUGIN_HINTS.context7).toContain("/plugin install context7@claude-plugins-official");
+    expect(OPTIONAL_PLUGIN_HINTS.claudeMem).toContain("/plugin marketplace add thedotmack/claude-mem");
+    expect(OPTIONAL_PLUGIN_HINTS.claudeMem).toContain("/plugin install claude-mem@thedotmack");
   });
 });

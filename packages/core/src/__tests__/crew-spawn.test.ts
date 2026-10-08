@@ -1985,6 +1985,23 @@ describe("runCrewClose", () => {
     expect(emitted).not.toEqual([]);
   });
 
+  it("warns but still finishes close when closePane fails (#895)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("ws:1", [existing]);
+    (runtime.closePane as any).mockRejectedValue(new Error("confirmation_required"));
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await runCrewClose(PROJECT, "crew-1", runtime, "ws:1", {
+        listTasks: vi.fn().mockResolvedValue([]),
+        emitEvent: vi.fn(),
+        closeCodexThread: vi.fn(),
+      });
+      expect(stderrSpy.mock.calls.map((c) => c[0]).join("")).toMatch(/pane close failed: confirmation_required/);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
   it("throws when neither pane nor daemon task found", async () => {
     const runtime = makeRuntime("ws:1", []);
     await expect(
@@ -2172,5 +2189,57 @@ describe("runCrewClose", () => {
 
     expect(removeWorktreeMock).toHaveBeenCalledWith(PROJ_PATH, newWorktree, undefined);
     expect(removeWorktreeMock).not.toHaveBeenCalledWith(PROJ_PATH, oldWorktree, undefined);
+  });
+});
+
+// ─── #892: uninstalled agents ────────────────────────────────────────────────
+
+describe("runCrewSpawn — agent not installed (#892)", () => {
+  const routedConfig = () =>
+    makeConfig({
+      crewRouting: {
+        rules: [{ match: "bump", tier: "daily", agent: "opencode", model: "x/y" }],
+      },
+    } as never);
+
+  it("routing to an uninstalled agent falls back to the default agent and prints why", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent());
+    deps.isAgentInstalled = vi.fn((n: string) => n !== "opencode");
+    deps.onRouteSkipped = vi.fn();
+    await runCrewSpawn({ project: PROJECT, task: "bump the version", agent: "claude" }, routedConfig(), deps);
+    expect(deps.onRouteSkipped).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "opencode", tier: "daily" }),
+      "claude",
+    );
+    expect(deps.onRouted).not.toHaveBeenCalled();
+    expect(deps.resolveAgent).toHaveBeenCalledWith("claude");
+    expect(deps.resolveAgent).not.toHaveBeenCalledWith("opencode");
+  });
+
+  it("explicit --agent that is not installed fails before any worktree or pane", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent("opencode"));
+    deps.isAgentInstalled = vi.fn(() => false);
+    await expect(
+      runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, makeConfig(), deps),
+    ).rejects.toThrow(/'opencode' is not installed/);
+    expect(runtime.newPane).not.toHaveBeenCalled();
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+    expect(deps.dispatchCrew).not.toHaveBeenCalled();
+  });
+
+  it("never sends the brief and terminalizes the task when the agent never started", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent());
+    deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false, agentNotStarted: true });
+    deps.emitEvent = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      runCrewSpawn({ project: PROJECT, task: "do work" }, makeConfig(), deps),
+    ).rejects.toThrow(/agent .* did not start/i);
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.failed" }),
+    );
   });
 });

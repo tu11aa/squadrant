@@ -7,6 +7,9 @@ import { runCrewAnswer } from "../crew-answer.js";
 import type { RuntimeDriver, PaneRef, ModalOption } from "@squadrant/shared";
 
 const PROJECT = "myproj";
+// cmux 0.65 (B2): crew answer deliberately types into an open dialog, so every
+// keystroke and paste must bypass cmux's dialog guard.
+const FORCE = { force: true };
 
 function makePaneRef(suffix = "5"): PaneRef {
   return { workspaceId: "workspace:1", surfaceId: `surface:${suffix}` };
@@ -73,9 +76,9 @@ describe("runCrewAnswer", () => {
     const readModalOptions = vi.fn().mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(PROJECT, "crew-1", "3", runtime, "workspace:1", { readModalOptions });
     // highlighted is index 1, target is index 3 → two Down presses, then Enter.
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down");
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Down");
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(3, expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Down", FORCE);
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Down", FORCE);
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(3, expect.anything(), "Enter", FORCE);
     expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(3);
     expect(result).toEqual({ selected: { index: 3, label: "Green", highlighted: false }, closed: true });
   });
@@ -137,6 +140,20 @@ describe("runCrewAnswer", () => {
     expect(result.selected).toEqual({ index: 2, label: "Blue", highlighted: false });
   });
 
+  it("forces every keystroke and paste (cmux 0.65 dialog guard, B2)", async () => {
+    const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime([existing]);
+    const options: ModalOption[] = [
+      { index: 1, label: "Red", highlighted: true },
+      { index: 2, label: "Type something.", highlighted: false },
+    ];
+    const readModalOptions = vi.fn().mockResolvedValueOnce({ options, axis: "vertical" }).mockResolvedValueOnce(null);
+    await runCrewAnswer(PROJECT, "crew-1", "2", runtime, "workspace:1", { readModalOptions }, { text: "x" });
+    const calls = [...vi.mocked(runtime.sendKeyToPane).mock.calls, ...vi.mocked(runtime.pasteToPane).mock.calls];
+    expect(calls.length).toBe(4);
+    for (const c of calls) expect(c[2]).toEqual(FORCE);
+  });
+
   it("reports closed:false when the modal is still visible after driving the selection", async () => {
     const existing = { ...makePaneRef(), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime([existing]);
@@ -156,10 +173,10 @@ describe("runCrewAnswer", () => {
     await runCrewAnswer(
       PROJECT, "crew-1", "2", runtime, "workspace:1", { readModalOptions }, { text: "Use branch main" },
     );
-    expect(runtime.pasteToPane).toHaveBeenCalledWith(expect.anything(), "Use branch main");
+    expect(runtime.pasteToPane).toHaveBeenCalledWith(expect.anything(), "Use branch main", FORCE);
     // Down (to option 2), Enter (select), then a second Enter to submit the typed text.
     expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(3);
-    expect(runtime.sendKeyToPane).toHaveBeenLastCalledWith(expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenLastCalledWith(expect.anything(), "Enter", FORCE);
   });
 
   it("logs which option it is about to select before driving it", async () => {
@@ -187,8 +204,8 @@ describe("runCrewAnswer", () => {
     const runtime = makeRuntime([existing]);
     const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
     const result = await runCrewAnswer(PROJECT, "crew-1", "Allow always", runtime, "workspace:1", { readModalOptions });
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right", FORCE);
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Enter", FORCE);
     expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ selected: { index: 2, label: "Allow always", highlighted: false }, closed: true });
   });
@@ -199,7 +216,7 @@ describe("runCrewAnswer", () => {
     const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
     await runCrewAnswer(PROJECT, "crew-1", "Allow once", runtime, "workspace:1", { readModalOptions });
     expect(runtime.sendKeyToPane).toHaveBeenCalledTimes(1);
-    expect(runtime.sendKeyToPane).toHaveBeenCalledWith(expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenCalledWith(expect.anything(), "Enter", FORCE);
   });
 
   it("drives two Rights to reach the opencode Reject option", async () => {
@@ -207,9 +224,9 @@ describe("runCrewAnswer", () => {
     const runtime = makeRuntime([existing]);
     const readModalOptions = vi.fn().mockResolvedValueOnce(OPENCODE_MODAL).mockResolvedValueOnce(null);
     await runCrewAnswer(PROJECT, "crew-1", "Reject", runtime, "workspace:1", { readModalOptions });
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right");
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Right");
-    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(3, expect.anything(), "Enter");
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(1, expect.anything(), "Right", FORCE);
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(2, expect.anything(), "Right", FORCE);
+    expect(runtime.sendKeyToPane).toHaveBeenNthCalledWith(3, expect.anything(), "Enter", FORCE);
   });
 
   it("opencode --expect refuses on mismatch and lists the visible options", async () => {

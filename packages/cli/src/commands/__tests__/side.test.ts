@@ -10,6 +10,7 @@ const listSurfaces = vi.hoisted(() => vi.fn());
 const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 
+vi.mock("../doctor.js", () => ({ commandExists: () => true }));
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
@@ -530,6 +531,20 @@ describe("runSideList / runSideClose / runSideSend", () => {
     await runSideClose("brove", "side-1");
 
     expect(closePane).toHaveBeenCalledWith(expect.objectContaining({ surfaceId: "s1" }));
+  });
+
+  it("runSideClose warns on closePane failure and still prunes the worktree (#895)", async () => {
+    listSurfaces.mockResolvedValue([{ surfaceId: "s1", title: "🗒 brove:side-1" }]);
+    closePane.mockRejectedValue(new Error("confirmation_required"));
+    existsSyncMock.mockReturnValue(true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await runSideClose("brove", "side-1");
+      expect(stderrSpy.mock.calls.map((c) => c[0]).join("")).toMatch(/pane close failed: confirmation_required/);
+      expect(removeWorktreeMock).toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 
   it("runSideClose throws when session not found", async () => {

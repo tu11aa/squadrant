@@ -250,13 +250,27 @@ export async function resendCrewFirstTurn(
   return confirmedSendToPane(runtime, pane, message);
 }
 
+/**
+ * #892: true when the pane shows a bare shell prompt as its last line (no agent
+ * TUI input box). `requireError` additionally demands a launch-failure message
+ * on screen ("command not found" etc.) — used mid-boot so a slow-starting agent
+ * is never mistaken for a dead one.
+ */
+export function screenLooksLikeBareShell(screen: string, requireError: boolean): boolean {
+  if (hasCCInputBox(screen)) return false;
+  const lines = screen.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim() !== "");
+  const last = lines[lines.length - 1];
+  if (!last || !/[%$#]$/.test(last)) return false;
+  return !requireError || /command not found|no such file or directory|permission denied|unknown command/i.test(screen);
+}
+
 export async function sendFirstTurnWhenReady(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "sendToPane" | "pasteToPane" | "sendKeyToPane">,
   pane: PaneRef,
   task: string,
   preLaunchScreen: string,
   acceptanceConfig?: TurnAcceptanceConfig,
-): Promise<{ delivered: boolean }> {
+): Promise<{ delivered: boolean; agentNotStarted?: boolean }> {
   await new Promise((r) => setTimeout(r, SEND_FIRST_TURN_FLOOR_MS));
 
   const maxPolls = Math.floor(
@@ -292,6 +306,10 @@ export async function sendFirstTurnWhenReady(
     const ready = acceptanceConfig?.splashMarker
       ? screenHasSplashMarker(screen, acceptanceConfig.splashMarker)
       : hasCCInputBox(screen) && classifyStartupSurface(screen) === "idle";
+    // #892: the launch failed and left a bare shell — never paste the brief into it.
+    if (!ready && screen === previousScreen && screen !== preLaunchScreen && screenLooksLikeBareShell(screen, true)) {
+      return { delivered: false, agentNotStarted: true };
+    }
     if (screen.length > 0 && screen === previousScreen && screen !== preLaunchScreen && ready) {
       stable = true;
     } else {
@@ -306,6 +324,12 @@ export async function sendFirstTurnWhenReady(
   // multi-line task never appears verbatim in the single-line pane render and
   // the check would always re-send a duplicate first turn (#168).
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
+
+  // #892: boot window exhausted with no agent UI and a shell prompt showing —
+  // the fallback sends below would paste the brief into the shell.
+  if (!stable && screenLooksLikeBareShell(preSendScreen, false)) {
+    return { delivered: false, agentNotStarted: true };
+  }
 
   // Confirm-on-delivery (#235): poll until the TUI confirms it accepted the turn.
   if (acceptanceConfig?.splashMarker) {

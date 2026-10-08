@@ -205,6 +205,14 @@ When upgrading cmux, verify the runtime integration surfaces (see `docs/specs/20
 - [ ] **Row-5 stale `close-surface` check (#9422):** `cmux close-surface --workspace <ws> --surface surface:99999` fails closed (prints `Surface ref not found: surface:99999`, exits non-zero, closes nothing). `closePane` in squadrant cmux runtime swallows the error gracefully.
 - [ ] **Row-9 socket-policy reload check (#7988):** With daemon running and crew live, confirm `cmux capabilities | jq .access_mode` is `"automation"`; touching `~/.config/cmux/cmux.json` to reload config keeps daemon event stream connected and emitting `task.progress`.
 
+## cmux upgrades (0.65.0+)
+
+cmux 0.65.0 refuses to clobber live input or processes unless `--force` is passed (see `docs/specs/2026-10-08-cmux-0.65.0-compat-study.md`). After an upgrade:
+- [ ] **B1, captain draft survives the backspace probe (#912):** set `captainChannel: off` (pane fallback), type a multi-character draft in the captain's input box and leave it untouched, then trigger a crew notification. Delivery defers, and after several probe cycles the draft is still intact, with no characters lost.
+- [ ] **B2, `crew answer` drives a dialog (#913):** with a crew sitting on an AskUserQuestion, `squadrant crew answer <project> <crew> <n>` selects option `n` and the dialog closes. A free-text answer also lands in the box.
+- [ ] **B3, a live workspace closes (#911):** `squadrant launch <project> --fresh` with the captain running closes the old workspace. `cmux workspace list` no longer shows it, and the command reports any other close failure instead of swallowing it.
+- [ ] **Guard still protects other sends:** `squadrant crew send` to a crew whose input box holds a typed draft must not type into it.
+
 ## Agent upgrades (#667)
 
 Squadrant reads two agent-internal surfaces that are **not** promised-stable public

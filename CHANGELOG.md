@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-08
+
+### Added
+
+- **Rules knowledge base, slice 1: store, schema, layers, index and a read-only CLI** (#896, #909; epic #893). Each knowledge base lives under `<hubVault>/knowledge/<kb>/`. It holds Markdown rule files with front matter, a `sources.yaml`, and a compiled `index.json` that is written atomically. Projects subscribe to KBs in `ProjectConfig.knowledge`. Layering works like this: the first subscribed KB wins, a project rule replaces a KB rule with the same id, and `rulesDisabled` removes a rule. A missing KB or an unknown disabled id produces a warning, not an error.
+  - **`squadrant knowledge init|subscribe|sources|reindex`** sets up a KB, subscribes a project to it, lists its sources and rebuilds its index. The KB name is validated on every subcommand.
+  - **`squadrant rules show|search`** shows and searches the rules in effect for a project. They cover active and stale rules by default, and `--all` adds proposed and retired ones. The project comes from `--project`, then `SQUADRANT_CREW_PROJECT`, then the cwd. A malformed rule file is skipped and reported on stderr. When two files share an id, the lexicographically first path wins and the duplicate is reported.
+  - **`doctor` has a KB section** that appears only when `config.knowledge` defines at least one KB. A missing markitdown is a WARN, not a FAIL.
+  - **Safety:** front matter starting with `---js` or `---javascript` is rejected, so gray-matter's eval engine never runs.
+  - **Privacy:** sources are sent to the extraction crew's model. Mark a source `sensitivity: local-only` to keep it on local models only. `knowledge init` prints this notice.
+  - New dependencies: `gray-matter` and `js-yaml@^4` in core, and `@types/js-yaml` as a root dev dependency.
+
+### Changed
+
+- **`defaults.captainChannel` now defaults to `"on"` when unset or invalid** (#887, #888). Captain-bound delivery uses the native peer socket by default. Set `"off"` or `"shadow"` explicitly to opt out. Existing captains must be relaunched to get the peer socket.
+- **cmux 0.65.0 is now the last-verified cmux version** (#914; compat study #910). `doctor` no longer warns `cmux 0.65.0 > last-verified 0.64.22`. The minimum stays `0.64.0`.
+
+### Fixed
+
+- **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889, #891). That file is ignored by the dirty-worktree guard and deleted before `git worktree remove` only when it is untracked. A tracked or modified copy, or any other uncommitted file, still blocks close.
+- **`crew close` / `side close` now actually close the cmux tab** (#895, #904). cmux 0.65 refuses `close-surface` on a surface with a live process. `closePane` now passes `--force`, treats an already-gone surface as success, and no longer swallows other errors. Close prints a `(pane close failed: …)` warning and still cleans up the worktree.
+- **An uninstalled agent no longer gets a crew brief typed into a bare shell** (#892, #905).
+  - **Routing:** a rule whose agent binary isn't on PATH is skipped and the default agent is used instead, printed like `routed: tier=daily → opencode (not installed) → claude`.
+  - **Explicit `--agent`:** an `--agent X` that isn't installed now fails before any worktree, pane or dispatch is created.
+  - **Bare shell:** if the pane shows a bare shell prompt instead of the agent, the first turn is not sent, the spawn emits `task.failed`, and it reports failure.
+- **A captain whose delivery recovers no longer gets the whole backlog replayed as a flood of stale events** (partial #890, #906). The delivery loop now looks at the pending backlog as a whole.
+  - CREW QUIET/IDLE are dropped when a newer event for the same task is queued behind them. An earlier CREW REVIEW is dropped when a later REVIEW or terminal event for that task follows it.
+  - Events for a task that has since gone terminal get a `[task now <state>]` tag, and its leftover QUIET/IDLE are dropped.
+  - Task events older than an hour get the same `[stale — generated …]` prefix as daemon messages.
+  - DELIVERY STUCK / NOT DELIVERABLE self-alerts are no longer delivered, because the loop only reaches one after its blocker has cleared.
+  - DONE/FAILED/CANCELLED/BLOCKED are never dropped.
+  - The `stale-*` log line now prints once per entry instead of on every retry.
+  - Still open: a digest message, head-of-line blocking, and the retry cadence.
+- **npm package now ships the `obsidian/` hub/spoke templates** (#873, #907). `init` and `projects add` no longer create empty hub/spoke directories ("Hub template not found") on a global install. A packaging test asserts the template paths are in `npm pack`.
+- **`doctor` no longer FAILs on optional dependencies** (#876, #875, #908). The `superpowers`, `claude-mem` and `context7` plugins and the Obsidian app are now WARN, with a note on what each enables, and never block a clean run. "hub reachable" remains the real gate. Install hints are now the exact commands (`/plugin install <name>@claude-plugins-official`; for claude-mem, marketplace add then install). `init` step 3/5 and QUICKSTART mark the plugins optional.
+- **cmux 0.65.0 input guards** (compat study #910). cmux 0.65.0 refuses to type into an agent prompt that holds a draft, or into an open dialog, unless `--force` is given. 0.64.x has no such guard and types a `--force` given to `send`/`send-key` as literal text. So the `send`/`send-key` uses of `--force` are gated by a shared `cmuxHasInputGuards()` check (cmux ≥ 0.65.0, read once and cached).
+  - **B1 — the captain's draft survives the delivery probe** (#912). The backspace probe's grapheme restore passes `--force` on 0.65.0. Before this, on the pane-fallback path, the draft lost a character on every probe cycle.
+  - **B2 — `crew answer` can drive the dialog again** (#913). Its arrow keys, Enter and free-text paste are forced on 0.65.0. Every other send keeps cmux's guard.
+  - **B3 — stopping a live workspace closes it** (#911). `stop()` runs `workspace close <ref> --force`. Only "not found" counts as success, and `launch --fresh` warns if the stale workspace fails to close. 0.64.x ignores this flag, so it isn't gated.
+
+### Docs
+
+- **Rules KB design spec, prior-art research and slice-1 plan** (#893, #903).
+
 ## [0.25.2] - 2026-10-07
 
 ### Fixed

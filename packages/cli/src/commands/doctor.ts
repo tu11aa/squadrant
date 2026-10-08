@@ -4,7 +4,8 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, type SquadrantConfig } from "@squadrant/shared";
+import { readIndex } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -18,7 +19,7 @@ import {
   ProjectionRegistry,
 } from "@squadrant/agents";
 
-function commandExists(cmd: string): boolean {
+export function commandExists(cmd: string): boolean {
   try {
     execSync(`which ${cmd}`, { stdio: "ignore" });
     return true;
@@ -158,6 +159,49 @@ export function check(label: string, pass: boolean, hint?: string): boolean {
   return pass;
 }
 
+/** Exact install hints for the optional Claude Code plugins. Exported for unit testing. */
+export const OPTIONAL_PLUGIN_HINTS = {
+  superpowers: "In Claude Code, run: /plugin install superpowers@claude-plugins-official",
+  context7: "In Claude Code, run: /plugin install context7@claude-plugins-official",
+  claudeMem: "In Claude Code, run: /plugin marketplace add thedotmack/claude-mem  then  /plugin install claude-mem@thedotmack",
+};
+
+/**
+ * Optional dependency: a miss is a WARN (non-blocking), never a FAIL. Returns
+ * whether it is present; callers do NOT add the result to the pass/fail totals,
+ * so a WARN is neutral (neither a PASS nor a FAIL).
+ * Exported for unit testing.
+ */
+export function checkOptional(label: string, present: boolean, enables: string, hint: string): boolean {
+  if (present) {
+    console.log(`  ${chalk.green("✔ PASS")}  ${label}`);
+  } else {
+    console.log(`  ${chalk.yellow("⚠ WARN")}  ${label} ${chalk.dim(`(optional — ${enables})`)}`);
+    console.log(`         ${chalk.cyan("→")} ${chalk.dim(hint)}`);
+  }
+  return present;
+}
+
+/** #896: rules-KB doctor lines. Empty when no KB is configured, so users without a KB see no new FAILs (#876). */
+export function knowledgeDoctorLines(
+  cfg: SquadrantConfig,
+  hasCommand: (cmd: string) => boolean,
+): { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] {
+  const kbs = Object.keys(cfg.knowledge ?? {});
+  if (!kbs.length) return [];
+  const lines: { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] = [{
+    label: "markitdown installed (rules KB conversion)",
+    ok: hasCommand("markitdown"),
+    hint: "pip install 'markitdown[all]'",
+    warnOnly: true,
+  }];
+  for (const kb of kbs) {
+    const { problem } = readIndex(resolveHome(cfg.hubVault), kb);
+    lines.push({ label: `KB '${kb}' index.json valid`, ok: !problem, hint: problem ? `${problem} — run: squadrant knowledge reindex ${kb}` : undefined });
+  }
+  return lines;
+}
+
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
   .action(async () => {
@@ -169,8 +213,8 @@ export const doctorCommand = new Command("doctor")
       "Install from: https://claude.ai/code"));
     results.push(check(`Claude Code version >= ${compatManifest.tools.claude.min}`, claudeVersionOk(),
       `Update Claude Code to >= ${compatManifest.tools.claude.min}`));
-    results.push(check("Obsidian installed", commandExists("obsidian") || fs.existsSync("/Applications/Obsidian.app"),
-      "Install from: https://obsidian.md"));
+    checkOptional("Obsidian installed", commandExists("obsidian") || fs.existsSync("/Applications/Obsidian.app"),
+      "viewer for the hub vault; the vault is plain Markdown", "Install from: https://obsidian.md");
     results.push(check("Node.js >= 18", nodeVersionOk(),
       "Install from: https://nodejs.org"));
     results.push(
@@ -180,14 +224,12 @@ export const doctorCommand = new Command("doctor")
         "Run: squadrant init  (enables automatically), or add to shell profile: export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1",
       ),
     );
-    results.push(check("Plugin: superpowers", pluginInstalled("superpowers@claude-plugins-official"),
-      "In Claude Code, run: /plugin marketplace add superpowers"));
-    results.push(
-      check("Plugin: claude-mem", pluginInstalled("claude-mem@thedotmack"),
-        "In Claude Code, run: /plugin marketplace add thedotmack/claude-mem"),
-    );
-    results.push(check("Plugin: context7", pluginInstalled("context7@claude-plugins-official"),
-      "In Claude Code, run: /plugin marketplace add context7"));
+    checkOptional("Plugin: superpowers", pluginInstalled("superpowers@claude-plugins-official"),
+      "enables the systematic-debugging skill used by side.debug sessions", OPTIONAL_PLUGIN_HINTS.superpowers);
+    checkOptional("Plugin: claude-mem", pluginInstalled("claude-mem@thedotmack"),
+      "adds a claude-mem tier to `squadrant handoff facts`", OPTIONAL_PLUGIN_HINTS.claudeMem);
+    checkOptional("Plugin: context7", pluginInstalled("context7@claude-plugins-official"),
+      "library docs lookup inside Claude Code", OPTIONAL_PLUGIN_HINTS.context7);
 
     const config = loadConfig();
 
@@ -276,6 +318,14 @@ export const doctorCommand = new Command("doctor")
       }
       console.log(`  ${name.padEnd(10)} ${userDest.path} — ${status}`);
     }
+
+    try {
+      const cfgForKb = loadConfig();
+      for (const l of knowledgeDoctorLines(cfgForKb, commandExists)) {
+        if (l.warnOnly && !l.ok) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
+        else results.push(check(l.label, l.ok, l.hint));
+      }
+    } catch { /* no config yet — the config check below reports it */ }
 
     results.push(
       check(
