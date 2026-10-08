@@ -71,3 +71,16 @@ describe("loadRulesDir", () => {
       .toEqual(["coding.live", "coding.pending"]);
   });
 });
+
+describe("front matter safety", () => {
+  it.each(["js", "javascript"])("rejects ---%s front matter without executing it", (tag) => {
+    const g = globalThis as Record<string, unknown>;
+    delete g.PWNED_KB;
+    write("coding/evil.md", `---${tag}\n{ id: (globalThis.PWNED_KB = 1, "coding.evil") }\n---\nbody\n`);
+    write("coding/coding.ok.md", ruleMd("coding.ok"));
+    const r = loadRulesDir(dir, "kb:x");
+    expect(g.PWNED_KB).toBeUndefined();
+    expect(r.rules.map((x) => x.id)).toEqual(["coding.ok"]);
+    expect(r.errors.map((e) => path.basename(e.file))).toEqual(["evil.md"]);
+  });
+});

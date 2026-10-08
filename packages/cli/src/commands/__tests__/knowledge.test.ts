@@ -75,3 +75,29 @@ describe("knowledge reindex", () => {
     expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
   });
 });
+
+describe("kb name validation on every command", () => {
+  it("subscribe/sources/reindex reject traversal names", () => {
+    expect(() => runKnowledgeSubscribe("../x", "flooros", cfgPath)).toThrow(/Invalid knowledge base name/);
+    expect(() => runKnowledgeSources("../x", cfgPath)).toThrow(/Invalid knowledge base name/);
+    expect(() => runKnowledgeReindex("../x", cfgPath)).toThrow(/Invalid knowledge base name/);
+  });
+});
+
+describe("knowledge init index", () => {
+  it("writes an empty index once and never overwrites it", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    const idx = path.join(r.dir, "index.json");
+    expect(fs.existsSync(idx)).toBe(true);
+    fs.writeFileSync(idx, fs.readFileSync(idx, "utf8") + " ");
+    const before = fs.readFileSync(idx, "utf8");
+    expect(runKnowledgeInit("saitex", cfgPath).created).toEqual([]);
+    expect(fs.readFileSync(idx, "utf8")).toBe(before);
+  });
+  it("leaves doctor with no failing index line", async () => {
+    runKnowledgeInit("saitex", cfgPath);
+    const { knowledgeDoctorLines } = await import("../doctor.js");
+    const lines = knowledgeDoctorLines(loadConfig(cfgPath), () => true);
+    expect(lines.filter((l) => !l.ok && !l.warnOnly)).toEqual([]);
+  });
+});

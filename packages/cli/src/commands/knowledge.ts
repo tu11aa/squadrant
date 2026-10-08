@@ -11,8 +11,12 @@ import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbR
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
 
-export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): { dir: string; created: string[] } {
+function assertKbName(kb: string): void {
   if (!KB_NAME_RE.test(kb)) throw new Error(`Invalid knowledge base name '${kb}' (use lowercase letters, digits, '-')`);
+}
+
+export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): { dir: string; created: string[] } {
+  assertKbName(kb);
   const cfg = loadConfig(configPath);
   const hub = resolveHome(cfg.hubVault);
   const dir = kbDir(hub, kb);
@@ -22,6 +26,7 @@ export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): 
   }
   const sourcesFile = path.join(dir, "sources.yaml");
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
+  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(hub, kb, compileIndex(kb, [])); created.push("index.json"); }
   if (!cfg.knowledge?.[kb]) {
     cfg.knowledge = { ...(cfg.knowledge ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
@@ -30,6 +35,7 @@ export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): 
 }
 
 export function runKnowledgeSubscribe(kb: string, project: string, configPath = DEFAULT_CONFIG_PATH): string[] {
+  assertKbName(kb);
   const cfg = loadConfig(configPath);
   const pc = cfg.projects[project];
   if (!pc) throw new Error(`Unknown project '${project}'`);
@@ -45,6 +51,7 @@ export function runKnowledgeSubscribe(kb: string, project: string, configPath = 
 }
 
 export function runKnowledgeSources(kb: string, configPath = DEFAULT_CONFIG_PATH): { sources: KnowledgeSourceEntry[]; errors: string[] } {
+  assertKbName(kb);
   const cfg = loadConfig(configPath);
   return loadSources(resolveHome(cfg.hubVault), kb);
 }
@@ -83,6 +90,7 @@ knowledgeCommand
   });
 
 export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH): { file: string; count: number; errors: number } {
+  assertKbName(kb);
   const cfg = loadConfig(configPath);
   const hub = resolveHome(cfg.hubVault);
   if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);

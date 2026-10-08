@@ -5,6 +5,11 @@ import matter from "gray-matter";
 import { validateRuleFrontmatter, type Rule, type RuleFrontmatter } from "@squadrant/shared";
 import { PROPOSED_DIR } from "./paths.js";
 
+// gray-matter evals `---js` front matter by default; rule files are untrusted, so allow YAML only.
+const NO_JS_FRONTMATTER = {
+  engines: { javascript: { parse: (): never => { throw new Error("only YAML front matter is allowed"); } } },
+};
+
 export interface RuleLoadError { file: string; problems: string[] }
 export interface RuleLoadResult { rules: Rule[]; errors: RuleLoadError[] }
 
@@ -38,7 +43,7 @@ export function loadRulesDir(dir: string, layer: string, opts: { includeProposed
   for (const file of listMarkdown(dir, opts.includeProposed ?? false)) {
     let parsed: matter.GrayMatterFile<string>;
     try {
-      parsed = matter(fs.readFileSync(file, "utf8"));
+      parsed = matter(fs.readFileSync(file, "utf8"), NO_JS_FRONTMATTER);
     } catch (e) {
       errors.push({ file, problems: [`frontmatter parse error: ${(e as Error).message}`] });
       continue;
