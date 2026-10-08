@@ -10,6 +10,7 @@ const listSurfaces = vi.hoisted(() => vi.fn());
 const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 
+vi.mock("../doctor.js", () => ({ commandExists: () => true }));
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",
