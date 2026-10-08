@@ -9,6 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`launch --fresh` / `runtime stop` / `shutdown` now actually close a workspace with a live process** (B3, cmux 0.65 compat study). cmux 0.65 refuses `workspace close` on a running workspace; `stop()` now passes `--force`, treats an already-gone workspace as success, and propagates other errors instead of swallowing them. `launch --fresh` warns (`stale workspace … close failed`) and continues.
+- **`doctor` no longer FAILs on optional dependencies** (#876, #875). The `superpowers`, `claude-mem` and `context7` plugins and the Obsidian app are now WARN (with what each enables) and never block a clean run; "hub reachable" remains the real gate. Install hints are now the exact commands (`/plugin install <name>@claude-plugins-official`; claude-mem marketplace add + install), and `init` step 3/5 and QUICKSTART mark the plugins optional.
 - **npm package now ships the `obsidian/` hub/spoke templates** (#873). `init` and `projects add` no longer create empty hub/spoke directories ("Hub template not found") on a global install. A packaging test asserts the template paths are in `npm pack`.
 - **`crew close` / `side close` now actually close the cmux tab** (#895). cmux 0.65 refuses `close-surface` on a surface with a live process; `closePane` now passes `--force`, treats an already-gone surface as success, and no longer swallows other errors — close prints a `(pane close failed: …)` warning and still cleans up the worktree.

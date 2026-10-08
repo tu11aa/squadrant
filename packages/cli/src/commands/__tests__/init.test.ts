@@ -160,7 +160,8 @@ describe("init — non-TTY path", () => {
     expect(text).toContain("4/5");
     expect(text).toContain("5/5");
     expect(text).toContain("squadrant init");
-    expect(text).toContain("/plugin marketplace add superpowers");
+    expect(text).toContain("/plugin install superpowers@claude-plugins-official");
+    expect(text).toContain("Plugins (optional)");
     expect(text).toContain("squadrant projects add");
     expect(text).toContain("squadrant telegram setup");
     expect(text).toContain("squadrant launch");

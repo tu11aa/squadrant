@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
+import { createCmuxDriver, cmuxHasInputGuards, resetCmuxInputGuardsCache, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
 import { DeferDelivery } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -2165,5 +2165,109 @@ describe("stop (B3)", () => {
   it("propagates any other error instead of swallowing it", async () => {
     failClose("Error: confirmation_required: Workspace has a running process");
     await expect(driver.stop("workspace:3")).rejects.toThrow(/confirmation_required/);
+  });
+});
+
+// Study 2026-10-08 (cmux 0.65.0), B1: 0.65.0 added draft/dialog input guards to
+// `send`/`send-key` that `--force` bypasses. 0.64.x has no guard and types a
+// leading `--force` as literal text, so callers gate the flag on this helper.
+describe("cmuxHasInputGuards (cmux >= 0.65.0)", () => {
+  beforeEach(() => {
+    execFileMock.mockReset();
+    resetCmuxInputGuardsCache();
+  });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  const versionIs = (out: string) =>
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("--version")) return out;
+      return "";
+    });
+  const versionCalls = () => execFileMock.mock.calls.filter((c: unknown[]) => (c[1] as string[]).includes("--version"));
+
+  it.each([
+    ["cmux 0.65.0 (108) [dda24fbd2]", true],
+    ["cmux 0.65.3 (120) [abc]", true],
+    ["cmux 1.0.0 (1) [abc]", true],
+    ["cmux 0.64.25 (99) [abc]", false],
+    ["cmux 0.64.22 (97) [3faf000]", false],
+    ["cmux 0.9.99 (1) [abc]", false],
+  ])("%s → %s", async (out, expected) => {
+    versionIs(out);
+    await expect(cmuxHasInputGuards()).resolves.toBe(expected);
+  });
+
+  it("reads `cmux --version` once and caches the answer", async () => {
+    versionIs("cmux 0.65.0 (108) [dda24fbd2]");
+    await cmuxHasInputGuards();
+    await cmuxHasInputGuards();
+    await cmuxHasInputGuards();
+    expect(versionCalls()).toHaveLength(1);
+  });
+
+  it("fails safe to false when the version is unreadable, and does not cache that", async () => {
+    execFileMock.mockImplementation(() => { throw new Error("cmux: socket unavailable"); });
+    await expect(cmuxHasInputGuards()).resolves.toBe(false);
+    versionIs("cmux 0.65.0 (108) [dda24fbd2]");
+    await expect(cmuxHasInputGuards()).resolves.toBe(true);
+  });
+
+  it("treats unparseable output as false, uncached", async () => {
+    versionIs("cmux dev-build");
+    await expect(cmuxHasInputGuards()).resolves.toBe(false);
+    versionIs("cmux 0.65.0 (108) [dda24fbd2]");
+    await expect(cmuxHasInputGuards()).resolves.toBe(true);
+  });
+});
+
+// Study 2026-10-08 B1: on cmux 0.65.0 the probe's grapheme restore types into a
+// prompt that still holds the rest of the draft, which the new `send` guard
+// refuses — the draft lost a character per probe cycle. The restore passes a
+// leading `--force` (right before the text) only when cmuxHasInputGuards();
+// on 0.64.x the argv is unchanged, since 0.64 would type `--force` as text.
+describe("sendToSurface probe restore --force gate (B1)", () => {
+  const driver = createCmuxDriver();
+  const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    resetCmuxInputGuardsCache();
+  });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  // Stateful box: backspace transforms `raw`; --version answers `version`.
+  function mockBox(version: string, initial: string, onBackspace: (s: string) => string) {
+    let raw = initial;
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("--version")) return version;
+      if (args.includes("read-screen")) return makeTestScreen(`❯ ${raw}`);
+      if (args.includes("send-key") && args.includes("backspace")) { raw = onBackspace(raw); return ""; }
+      return "";
+    });
+  }
+  const restoreSends = () => execFileMock.mock.calls.map(argvOf).filter((a) => a[0] === "send");
+
+  it.each([
+    ["real-draft", "hello world", (s: string) => s.slice(0, -1), "d"],
+    ["trailing-space", "hello ", (s: string) => s.slice(0, -1), " "],
+  ])("%s restore on cmux 0.65.0 passes a leading --force right before the grapheme", async (_branch, draft, bs, grapheme) => {
+    mockBox("cmux 0.65.0 (108) [dda24fbd2]", draft, bs);
+    await expect(driver.sendToSurface(pane, "crew done", { probe: true })).rejects.toBeInstanceOf(DeferDelivery);
+    expect(restoreSends()).toEqual([["send", "--workspace", "workspace:3", "--surface", "surface:8", "--force", grapheme]]);
+  });
+
+  it.each([
+    ["real-draft", "hello world", (s: string) => s.slice(0, -1), "d"],
+    ["trailing-space", "hello ", (s: string) => s.slice(0, -1), " "],
+  ])("%s restore on cmux 0.64.22 keeps the old argv — no --force typed into the draft", async (_branch, draft, bs, grapheme) => {
+    mockBox("cmux 0.64.22 (97) [3faf000]", draft, bs);
+    await expect(driver.sendToSurface(pane, "crew done", { probe: true })).rejects.toBeInstanceOf(DeferDelivery);
+    expect(restoreSends()).toEqual([["send", "--workspace", "workspace:3", "--surface", "surface:8", grapheme]]);
+  });
+
+  it("never adds --force to the delivered message itself (only the restore is forced)", async () => {
+    mockBox("cmux 0.65.0 (108) [dda24fbd2]", "", (s) => s);
+    await driver.sendToSurface(pane, "crew done");
+    expect(restoreSends()).toEqual([["send", "--workspace", "workspace:3", "--surface", "surface:8", "crew done"]]);
   });
 });
