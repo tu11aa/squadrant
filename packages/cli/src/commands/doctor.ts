@@ -19,7 +19,7 @@ import {
   ProjectionRegistry,
 } from "@squadrant/agents";
 
-function commandExists(cmd: string): boolean {
+export function commandExists(cmd: string): boolean {
   try {
     execSync(`which ${cmd}`, { stdio: "ignore" });
     return true;
