@@ -69,6 +69,8 @@ export interface KnowledgeSourceEntry {
 export interface KnowledgeKbConfig {
   homeProject?: string;
   domainCap?: number;
+  /** Optional allowed rule domains; `knowledge validate` warns on rules outside it. */
+  domains?: string[];
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);

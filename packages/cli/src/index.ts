@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import "./lib/suppress-sqlite-warning.js";
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

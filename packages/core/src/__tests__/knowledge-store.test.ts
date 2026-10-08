@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadRulesDir, splitStatement, kbRulesDir, projectRulesDir } from "../knowledge/index.js";
+import { validateKb, loadRulesDir, splitStatement, kbRulesDir, projectRulesDir } from "../knowledge/index.js";
 
 let dir: string;
 function write(rel: string, text: string) {
@@ -63,6 +63,15 @@ describe("loadRulesDir", () => {
     expect(r.errors[0].problems[0]).toContain("duplicate id coding.dup");
   });
 
+  it("duplicate id message names both files, the one used, and the fix", () => {
+    write("a-domain/one.md", ruleMd("coding.dup"));
+    write("b-domain/two.md", ruleMd("coding.dup"));
+    const msg = loadRulesDir(dir, "kb:x").errors[0].problems[0];
+    expect(msg).toContain(path.join("b-domain", "two.md") + " is ignored");
+    expect(msg).toContain(path.join("a-domain", "one.md") + " is used");
+    expect(msg).toMatch(/rename the id.*delete or move/);
+  });
+
   it("excludes _proposed by default (Review Focus 4), includes on request", () => {
     write("coding/coding.live.md", ruleMd("coding.live"));
     write("_proposed/coding.pending@abc.md", ruleMd("coding.pending"));
@@ -93,5 +102,49 @@ describe("front matter safety", () => {
     expect(g.PWNED_KB).toBeUndefined();
     expect(r.rules.map((x) => x.id)).toEqual(["coding.ok"]);
     expect(r.errors.map((e) => path.basename(e.file))).toEqual(["evil.md"]);
+  });
+});
+
+describe("validateKb", () => {
+  const rule = (id: string, quote: string, domain = "coding") =>
+    `---\nid: ${id}\ndomain: ${domain}\nmodality: must\nstatus: active\nsources:\n  - { ref: raw/a.md, sha: abc, quote: "${quote}" }\n---\nS.\n`;
+  const run = (domains?: string[]) => validateKb({ rulesDir: path.join(dir, "rules"), kbRoot: dir, sources: [], domains });
+
+  it("passes when every quote occurs in its source", () => {
+    write("raw/a.md", "alpha beta gamma");
+    write("rules/coding/a.md", rule("coding.a", "beta"));
+    const r = run();
+    expect(r.ok).toBe(true);
+    expect(r.checks.map((c) => c.message)).toContain("1 source quotes found in their source files");
+  });
+  it("fails on a quote missing from the source", () => {
+    write("raw/a.md", "alpha");
+    write("rules/coding/a.md", rule("coding.a", "nope"));
+    const r = run();
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.level === "fail")?.message).toContain("quote not found");
+  });
+  it("skips (not fails) unresolvable source refs", () => {
+    write("rules/coding/a.md", rule("coding.a", "x"));
+    const r = run();
+    expect(r.ok).toBe(true);
+    expect(r.checks.some((c) => c.level === "skip")).toBe(true);
+  });
+  it("fails on invalid files and duplicate ids", () => {
+    write("raw/a.md", "q");
+    write("rules/a/one.md", rule("coding.d", "q"));
+    write("rules/b/two.md", rule("coding.d", "q"));
+    write("rules/c/bad.md", "---\nid: Bad\n---\nx\n");
+    const fails = run().checks.filter((c) => c.level === "fail").map((c) => c.message);
+    expect(fails.some((m) => m.startsWith("invalid") && m.includes("bad.md"))).toBe(true);
+    expect(fails.some((m) => m.startsWith("duplicate id coding.d"))).toBe(true);
+  });
+  it("warns on domains outside the allowed list only when one is given", () => {
+    write("raw/a.md", "q");
+    write("rules/a/one.md", rule("coding.a", "q", "weird"));
+    expect(run().checks.some((c) => c.level === "warn")).toBe(false);
+    const r = run(["coding"]);
+    expect(r.ok).toBe(true);
+    expect(r.checks.find((c) => c.level === "warn")?.message).toContain("'weird'");
   });
 });
