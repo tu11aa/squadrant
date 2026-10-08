@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **npm package now ships the `obsidian/` hub/spoke templates** (#873). `init` and `projects add` no longer create empty hub/spoke directories ("Hub template not found") on a global install. A packaging test asserts the template paths are in `npm pack`.
 - **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889). Only when that file is untracked is it ignored by the dirty-worktree guard and deleted before `git worktree remove`; a tracked/modified copy or any other uncommitted file still blocks close.
 
 ### Changed
