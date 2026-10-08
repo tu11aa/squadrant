@@ -2138,3 +2138,32 @@ describe("closePane (#895)", () => {
     await expect(driver.closePane(pane)).rejects.toThrow(/confirmation_required/);
   });
 });
+
+describe("stop (B3)", () => {
+  const driver = createCmuxDriver();
+  const closeCalls = () => execFileMock.mock.calls.filter((c) => argvOf(c)[0] === "workspace" && argvOf(c)[1] === "close");
+  beforeEach(() => execFileMock.mockReset());
+  const failClose = (msg: string) =>
+    execFileMock.mockImplementation((_b: unknown, args: unknown) => {
+      const a = Array.isArray(args) ? (args as string[]) : [];
+      if (a[0] === "workspace" && a[1] === "close") throw new Error(msg);
+      return "";
+    });
+
+  it("passes --force so a workspace with a live process is closed", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.stop("workspace:3");
+    expect(closeCalls()).toHaveLength(1);
+    expect(argvOf(closeCalls()[0])).toEqual(["workspace", "close", "workspace:3", "--force"]);
+  });
+
+  it("treats an already-gone workspace as success", async () => {
+    failClose("Error: Workspace ref not found: workspace:3");
+    await expect(driver.stop("workspace:3")).resolves.toBeUndefined();
+  });
+
+  it("propagates any other error instead of swallowing it", async () => {
+    failClose("Error: confirmation_required: Workspace has a running process");
+    await expect(driver.stop("workspace:3")).rejects.toThrow(/confirmation_required/);
+  });
+});

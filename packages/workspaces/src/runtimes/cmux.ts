@@ -704,9 +704,15 @@ export function createCmuxDriver(): RuntimeDriver {
       try {
         await cmux(["workspace-action", "--workspace", ref, "--action", "unpin"]);
       } catch { /* workspace may not be pinned — proceed to close regardless */ }
+      // cmux 0.65 also refuses to close a workspace with a live process unless --force
+      // (B3, cmux 0.65 compat study). An already-gone workspace is success; any other
+      // error propagates so callers can warn instead of leaving the workspace open silently.
       try {
-        await cmux(["workspace", "close", ref]);
-      } catch { /* may already be closed */ }
+        await cmux(["workspace", "close", ref, "--force"]);
+      } catch (e) {
+        if (/not found|no such|does not exist/i.test((e as Error).message)) return;
+        throw e;
+      }
     },
 
     async newPane(opts: RuntimePaneOptions): Promise<PaneRef> {

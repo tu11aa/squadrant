@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { RuntimeDriver } from "@squadrant/shared";
-import { launchOneWorkspace } from "../launch-workspace.js";
+import { bootWorkspace, launchOneWorkspace } from "../launch-workspace.js";
 import { saveSessions, computeTemplateHash } from "../session-freshness.js";
 
 let tmpDir: string;
@@ -131,5 +131,24 @@ describe("launchOneWorkspace — captain marker (#636)", () => {
     expect(runtime.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ command: "claude --permission-mode auto" }),
     );
+  });
+});
+
+describe("bootWorkspace stale-workspace stop (B3)", () => {
+  it("warns when stopping the stale workspace fails, and still spawns", async () => {
+    const runtime = {
+      ...makeRuntime(),
+      status: vi.fn().mockResolvedValue({ id: "workspace:9", name: "cap", status: "running" }),
+      stop: vi.fn().mockRejectedValue(new Error("confirmation_required")),
+      spawn: vi.fn().mockResolvedValue({ id: "workspace:10", name: "cap", status: "running" }),
+    } as unknown as RuntimeDriver;
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await bootWorkspace({ runtime, workspaceName: "cap", agentCmd: "claude", forceFresh: true });
+      expect(stderrSpy.mock.calls.map((c) => c[0]).join("")).toMatch(/close failed: confirmation_required/);
+      expect(runtime.spawn).toHaveBeenCalled();
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });
