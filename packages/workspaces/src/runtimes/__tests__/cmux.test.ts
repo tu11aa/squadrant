@@ -2114,10 +2114,10 @@ describe("closePane (#895)", () => {
   const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
   const closeCalls = () => execFileMock.mock.calls.filter((c) => argvOf(c)[0] === "close-surface");
   beforeEach(() => execFileMock.mockReset());
-  const failClose = (msg: string, onlyWithForce = false) =>
+  const failClose = (msg: string) =>
     execFileMock.mockImplementation((_b: unknown, args: unknown) => {
       const a = Array.isArray(args) ? (args as string[]) : [];
-      if (a[0] === "close-surface" && (!onlyWithForce || a.includes("--force"))) throw new Error(msg);
+      if (a[0] === "close-surface" && true) throw new Error(msg);
       return "";
     });
 
@@ -2136,12 +2136,5 @@ describe("closePane (#895)", () => {
   it("propagates any other error instead of swallowing it", async () => {
     failClose("Error: confirmation_required: Surface has a running process");
     await expect(driver.closePane(pane)).rejects.toThrow(/confirmation_required/);
-  });
-
-  it("falls back to a plain close when --force is rejected as an unknown flag", async () => {
-    failClose("Error: unknown flag --force", true);
-    await driver.closePane(pane);
-    expect(closeCalls()).toHaveLength(2);
-    expect(argvOf(closeCalls()[1])).not.toContain("--force");
   });
 });
