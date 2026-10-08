@@ -8,14 +8,18 @@ import { resolveProjectRules } from "./layers.js";
 
 export const SESSION_RULE_CAP = 20;
 export const PROMPT_RULE_CAP = 3;
-/** Minimum search score for a prompt match; validated on the saitex KB (chit-chat stays silent). */
+/** Minimum search score for a prompt match with 2+ whole-word terms; validated on the saitex KB (chit-chat stays silent). */
 export const PROMPT_MIN_SCORE = 8;
+/** A single whole-word term must hit nearly every field (a lone curated keyword is ~6-10). */
+export const PROMPT_SINGLE_TERM_MIN_SCORE = 13;
 export const INJECT_BUDGET_MS = 1500;
 const MAX_PROMPT_CHARS = 3000;
 const MAX_LINE_CHARS = 400;
 const MAX_TERMS = 40;
 /** Short tokens worth keeping despite the 3-char floor. */
 const SHORT_TERMS = new Set(["pr", "db", "ci", "ui"]);
+/** "pre-commit", "non-blocking": the part after a prefix is not a topic of its own. */
+const PREFIXES = new Set(["pre", "non", "sub", "anti", "multi", "semi", "post", "mid"]);
 const SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOPWORDS = new Set((
@@ -74,21 +78,62 @@ export function cleanPromptQuery(prompt: string): string {
     const t = raw.replace(/^[._-]+|[._-]+$/g, "");
     if (STOPWORDS.has(t)) continue;
     add(t);
-    // "branch-naming" also searches "branch" and "naming", so it can meet the 2-term bar.
-    if (/[._-]/.test(t)) t.split(/[._-]+/).forEach(add);
+    // "branch-naming" also searches "branch" and "naming", so it can meet the 2-term bar. Prefixed words
+    // ("re-verify", "in-flight", "pre-commit") stay whole so they never hit "verify"/"flight"/"commit".
+    const parts = t.split(/[._-]+/);
+    if (parts.length > 1 && parts.every((x) => x.length >= 3 && !PREFIXES.has(x))) parts.forEach(add);
     if (terms.length >= MAX_TERMS) break;
   }
   return terms.slice(0, MAX_TERMS).join(" ");
 }
 
-/** Strength bar on the search's own signal: enough score, and 2+ terms or a curated keyword hit. */
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Query terms that hit the rule as whole words (plural-tolerant) in id / triggers / statement. */
+export function wholeWordTerms(rule: Rule, terms: string[]): string[] {
+  const text = [rule.id, ...(rule.triggers?.keywords ?? []), ...(rule.triggers?.expanded ?? []),
+    rule.triggers?.when ?? "", rule.statement].join("\n").toLowerCase();
+  return terms.filter((t) => {
+    const base = t.length > 4 ? t.replace(/(es|s)$/, "") : t;
+    return new RegExp(`(^|[^a-z0-9])(?:${escapeRe(t)}|${escapeRe(base)}(?:s|es)?)($|[^a-z0-9])`).test(text);
+  });
+}
+
+/**
+ * Strength bar for auto-injection, stricter than manual `rules search`: 2+ whole-word query terms with
+ * enough score, or one whole-word term that scores on nearly every field. A lone curated keyword is not enough.
+ */
 export function selectPromptHits(
-  hits: SearchHit[], seen: ReadonlySet<string>, opts: { cap?: number; minScore?: number } = {},
+  hits: SearchHit[], query: string, seen: ReadonlySet<string>, opts: { cap?: number; minScore?: number } = {},
 ): SearchHit[] {
   const minScore = opts.minScore ?? PROMPT_MIN_SCORE;
+  const terms = query.split(" ").filter(Boolean);
   return hits
-    .filter((h) => h.score >= minScore && (h.matched >= 2 || h.curated) && !seen.has(h.rule.id))
+    .filter((h) => {
+      if (seen.has(h.rule.id)) return false;
+      const n = wholeWordTerms(h.rule, terms).length;
+      return (n >= 2 && h.score >= minScore) || (n === 1 && h.score >= PROMPT_SINGLE_TERM_MIN_SCORE);
+    })
     .slice(0, opts.cap ?? PROMPT_RULE_CAP);
+}
+
+/**
+ * squadrant's own notices (daemon, crew lifecycle, side handoffs, stale replays) and anything delivered
+ * over the claude peer channel are not human prompts; never inject rules for them.
+ */
+export function isSystemPrompt(prompt: string): boolean {
+  const t = prompt.trimStart();
+  return /^(⚠|🗒|\[stale\b|CREW [A-Z]|Another Claude session sent a message)/u.test(t)
+    || t.includes("<cross-session-message");
+}
+
+const BRIEF_POINTER_RE = /^Full task is at (\S+\.md) — cat it/;
+
+/** A crew first-turn brief spilled to a file (first-turn-spill.ts) is searched through the file's text. */
+function promptText(prompt: string): string {
+  const m = BRIEF_POINTER_RE.exec(prompt.trimStart());
+  if (!m) return prompt;
+  try { return fs.readFileSync(m[1], "utf8").slice(0, MAX_PROMPT_CHARS * 2); } catch { return prompt; }
 }
 
 export function formatPromptContext(hits: SearchHit[]): string {
@@ -199,10 +244,11 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
     return text;
   }
 
-  const query = typeof p.prompt === "string" ? cleanPromptQuery(p.prompt) : "";
+  if (typeof p.prompt !== "string" || isSystemPrompt(p.prompt)) return null;
+  const query = cleanPromptQuery(promptText(p.prompt));
   if (!query) return null;
   const seen = sessionId ? readSeenRules(i.stateRoot, sessionId) : new Set<string>();
-  const picked = selectPromptHits(searchRules(resolveProjectRules(i.cfg, project).rules, query), seen);
+  const picked = selectPromptHits(searchRules(resolveProjectRules(i.cfg, project).rules, query), query, seen);
   if (!picked.length) return null;
   if (sessionId) recordSeenRules(i.stateRoot, sessionId, picked.map((h) => h.rule.id));
   return formatPromptContext(picked);

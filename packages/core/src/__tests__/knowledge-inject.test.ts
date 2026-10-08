@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
-  computeRulesInjection, cleanPromptQuery, formatSessionContext, injectStateDir, kbRulesDir,
+  computeRulesInjection, cleanPromptQuery, isSystemPrompt, formatSessionContext, injectStateDir, kbRulesDir,
   pruneSeenRules, recordSeenRules, readSeenRules, resolveInjectProject, withBudget, type RulesInjectInput,
 } from "../knowledge/index.js";
 
@@ -33,10 +33,11 @@ const input = (over: Partial<RulesInjectInput>): RulesInjectInput => ({
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "kb-inject-"));
-  put("git.branch-naming", "must", "Name branches feat/<ticket>-<slug>.", ["branch", "branches"]);
+  put("git.branch-naming", "must", "Create every new branch as feat/<ticket>-<slug> or fix/<ticket>-<slug>.", ["branch", "branches"]);
   put("git.no-force-push", "must-not", "Force-push to main or develop.", ["push", "force"]);
   put("git.commit-format", "must", "Use conventional commit messages.", ["commit"]);
   put("style.prefer-short", "should", "Prefer short functions.", ["function"]);
+  put("frontend.verify-live-dom", "must", "Verify UI changes in the live DOM in light and dark mode.", ["ui", "dom", "dark", "light", "verify", "css"]);
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -62,7 +63,8 @@ describe("computeRulesInjection — SessionStart", () => {
     const ruleLines = lines.filter((l) => /^MUST/.test(l));
     expect(ruleLines).toEqual([
       "MUST-NOT git.no-force-push: Force-push to main or develop.",
-      "MUST git.branch-naming: Name branches feat/<ticket>-<slug>.",
+      "MUST frontend.verify-live-dom: Verify UI changes in the live DOM in light and dark mode.",
+      "MUST git.branch-naming: Create every new branch as feat/<ticket>-<slug> or fix/<ticket>-<slug>.",
       "MUST git.commit-format: Use conventional commit messages.",
     ]);
     expect(text).not.toContain("style.prefer-short");
@@ -108,12 +110,51 @@ describe("computeRulesInjection — UserPromptSubmit", () => {
   });
   it("dedups across two prompts in the same session, not across sessions", () => {
     expect(prompt("create a branch", "d1")).toContain("git.branch-naming");
-    expect(prompt("rename the branch please", "d1")).toBeNull();
-    expect(prompt("rename the branch please", "d2")).toContain("git.branch-naming");
+    expect(prompt("create a fix branch please", "d1")).toBeNull();
+    expect(prompt("create a fix branch please", "d2")).toContain("git.branch-naming");
   });
   it("rules shown at SessionStart are not re-injected on a prompt", () => {
     computeRulesInjection(input({ payload: { session_id: "ss" } }));
     expect(prompt("create a branch", "ss")).toBeNull();
+  });
+});
+
+describe("computeRulesInjection — false positives (flooros captain feedback)", () => {
+  const prompt = (text: string, session = "fp") =>
+    computeRulesInjection(input({ event: "prompt-submit", payload: { session_id: session, prompt: text } }));
+  const NOTICE = "⚠️ Daemon restarted → v0.26.1 (control-plane bounced). Re-verify in-flight crews — a crew mid-first-turn may need a crew send.";
+
+  it("the daemon-restart notice injects nothing", () => {
+    expect(prompt(NOTICE)).toBeNull();
+  });
+  it("squadrant notices and peer messages are not human prompts", () => {
+    for (const t of [
+      NOTICE,
+      "CREW DONE [kb-hook]: create a branch and commit",
+      "[stale — generated 5m ago] CREW BLOCKED [x]: which branch?",
+      "🗒 Side handoff from cmux065: branch naming notes",
+      "Another Claude session sent a message:\n<cross-session-message from=\"uds:/x\">create a branch</cross-session-message>",
+      "<cross-session-message from=\"uds:/x\">create a branch</cross-session-message>",
+    ]) expect(isSystemPrompt(t), t).toBe(true);
+    expect(isSystemPrompt("create a branch for the CREW feature")).toBe(false);
+    expect(isSystemPrompt("Full task is at /tmp/t.md — cat it and follow it exactly.")).toBe(false);
+  });
+  it("re-verify / reverify do not hit the verify keyword", () => {
+    expect(prompt("please re-verify the light theme", "fp1")).toBeNull();
+  });
+  it("matches whole words only: 'reverify' and 'ui' inside other words never count", () => {
+    expect(prompt("reverify everything", "fp3")).toBeNull();
+    expect(prompt("build the guide and the quiz", "fp4")).toBeNull();
+  });
+  it("a single curated-keyword hit alone is not enough to inject", () => {
+    expect(prompt("verify", "fp5")).toBeNull();
+    expect(prompt("verify the ui in dark mode", "fp6")).toContain("frontend.verify-live-dom");
+  });
+  it("a crew first-turn brief pointer is searched through its task file", () => {
+    const brief = path.join(root, "task.md");
+    fs.writeFileSync(brief, "## Objective\nCreate a new branch and commit the fix.\n");
+    const text = prompt(`Full task is at ${brief} — cat it and follow it exactly. --- COMPLETION PROTOCOL (required): run squadrant crew signal done`, "fp7");
+    expect(text).toContain("git.branch-naming");
   });
 });
 
@@ -124,6 +165,9 @@ describe("cleanPromptQuery", () => {
   });
   it("adds the parts of hyphen/dot tokens and drops rule-meta words", () => {
     expect(cleanPromptQuery("list the branch-naming rule and any must-not rules")).toBe("list branch-naming branch naming");
+  });
+  it("does not split prefixed words (re-verify, in-flight, pre-commit)", () => {
+    expect(cleanPromptQuery("re-verify in-flight pre-commit")).toBe("re-verify in-flight pre-commit");
   });
 });
 

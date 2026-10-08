@@ -124,7 +124,7 @@ describe("rulesHookOutput (#899)", () => {
   fs.mkdirSync(ruleDir, { recursive: true });
   fs.writeFileSync(path.join(ruleDir, "git.branch-naming.md"),
     "---\nid: git.branch-naming\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
-    + "triggers:\n  keywords: [branch]\n---\nName branches feat/<ticket>-<slug>.\n");
+    + "triggers:\n  keywords: [branch]\n---\nCreate every new branch as feat/<ticket>-<slug>.\n");
   const cfg = (knowledge?: string[]): SquadrantConfig => {
     const c = getDefaultConfig();
     c.hubVault = path.join(root, "hub");
@@ -144,6 +144,8 @@ describe("rulesHookOutput (#899)", () => {
     expect(out.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
     expect(out.hookSpecificOutput.additionalContext).toContain("git.branch-naming");
     expect(await rulesHookOutput("prompt-submit", { session_id: "h3", prompt: "thanks!" }, opts())).toBe("");
+    const notice = "⚠️ Daemon restarted → v0.26.1 (control-plane bounced). Re-verify in-flight crews — a crew mid-first-turn may need a crew send.";
+    expect(await rulesHookOutput("prompt-submit", { session_id: "h4", prompt: notice }, opts())).toBe("");
   });
   it("no subscription, env off, other subs → empty", async () => {
     expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: () => cfg() }))).toBe("");
