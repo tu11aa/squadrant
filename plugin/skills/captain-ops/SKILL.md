@@ -410,6 +410,11 @@ If everything is shipped and there is no in-flight work, you do not need to writ
 
 **The handoff is your gift to tomorrow's session.** Be specific. "Working on the API" is useless. "Backend routes for /providers and /providers/:id are done, /timeseries endpoint is next, PR #12 is open for review" is useful.
 
+## Project Rules (Knowledge Base)
+
+If the project subscribes to a knowledge base, consult `squadrant rules search <terms>` before decomposing or reviewing work, and tell crews to do the same (see the `squadrant:rules-ops` skill).
+
+
 ## Group Awareness
 
 If your config has `group` / `groupRole`:
