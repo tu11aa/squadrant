@@ -88,6 +88,34 @@ function cmuxStdin(args: string[], input: string): Promise<string> {
   });
 }
 
+// cmux 0.65.0 added input guards: `send` refuses text into an agent prompt
+// holding a draft or dialog, and `send-key` refuses keys into a dialog, unless
+// a leading `--force` is given. 0.64.x has no guard and types `--force` as
+// literal text, so a caller may only pass it when this returns true. See
+// docs/specs/2026-10-08-cmux-0.65.0-compat-study.md (B1/B2).
+// Only a parsed version is cached; an unreadable one answers false (no
+// --force — never typed into a 0.64 draft) and is retried on the next call.
+let inputGuardsCache: boolean | undefined;
+export async function cmuxHasInputGuards(): Promise<boolean> {
+  if (inputGuardsCache !== undefined) return inputGuardsCache;
+  let version: string;
+  try {
+    version = await cmux(["--version"]);
+  } catch {
+    return false;
+  }
+  const m = version.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return false;
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  inputGuardsCache = major > 0 || minor >= 65;
+  return inputGuardsCache;
+}
+
+/** Test-only: forget the cached cmux version. */
+export function resetCmuxInputGuardsCache(): void {
+  inputGuardsCache = undefined;
+}
+
 // Shape of `cmux workspace list --json` (cmux 0.64.16, verified 0.64.22). Only the fields we
 // consume are typed; everything else in the payload is ignored.
 interface CmuxWorkspaceListJson {
