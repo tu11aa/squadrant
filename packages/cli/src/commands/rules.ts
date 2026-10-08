@@ -25,20 +25,22 @@ export function formatRule(rule: Rule): string {
   ].join("\n");
 }
 
-function loadFor(opts: RulesOpts, configPath: string): { rules: Rule[]; warnings: string[] } {
+function loadFor(opts: RulesOpts, configPath: string): Rule[] {
   const cfg = loadConfig(configPath);
   const project = resolveRulesProject(cfg, opts);
   const res = resolveProjectRules(cfg, project, { includeProposed: opts.all });
-  return { rules: res.rules, warnings: [...res.warnings, ...res.errors.map((e) => `${e.file}: ${e.problems.join("; ")}`)] };
+  for (const w of res.warnings) console.error(chalk.yellow(`warning: ${w}`));
+  for (const e of res.errors) console.error(chalk.yellow(`skipped ${e.file}: ${e.problems.join("; ")}`));
+  return res.rules;
 }
 
 export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit[] {
-  const { rules } = loadFor(opts, configPath);
+  const rules = loadFor(opts, configPath);
   return searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
 }
 
 export function runRulesShow(id: string, opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): Rule {
-  const { rules } = loadFor(opts, configPath);
+  const rules = loadFor(opts, configPath);
   const statuses: readonly RuleStatus[] = opts.all ? RULE_STATUSES : DEFAULT_SEARCH_STATUSES;
   const rule = rules.find((r) => r.id === id && statuses.includes(r.status));
   if (!rule) throw new Error(`No rule '${id}' for this project`);

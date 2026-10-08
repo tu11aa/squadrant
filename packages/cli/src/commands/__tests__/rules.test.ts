@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -55,5 +55,16 @@ describe("rules search/show", () => {
   it("show hides retired rules unless --all (default statuses are active+stale)", () => {
     expect(() => runRulesShow("biz.old", { project: "flooros" }, cfgPath)).toThrow(/No rule 'biz.old'/);
     expect(runRulesShow("biz.old", { project: "flooros", all: true }, cfgPath).status).toBe("retired");
+  });
+  it("skips a malformed rule file and reports it on stderr without failing search (Review Focus 1)", () => {
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath).hubVault, "saitex"), "business");
+    fs.writeFileSync(path.join(rd, "biz.broken.md"), "---\nid: [unclosed\n---\nbody\n");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(runRulesSearch("invoice", { project: "flooros" }, cfgPath).map((h) => h.rule.id)).toEqual(["biz.invoice.vnd-rounding"]);
+      expect(err.mock.calls.map((c) => String(c[0])).join("\n")).toContain("biz.broken.md");
+    } finally {
+      err.mockRestore();
+    }
   });
 });
