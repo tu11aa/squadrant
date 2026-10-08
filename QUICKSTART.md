@@ -22,7 +22,7 @@ crew, and (optionally) wire up your phone. For the pitch, see the
 
 # Claude Memory — optional tier in `squadrant handoff facts`
 /plugin marketplace add thedotmack/claude-mem
-/plugin install claude-mem
+/plugin install claude-mem@thedotmack
 
 # context7 — library docs lookup
 /plugin install context7@claude-plugins-official

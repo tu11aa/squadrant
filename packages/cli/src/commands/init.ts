@@ -138,7 +138,7 @@ export const initCommand = new Command("init")
       console.log(chalk.bold("\n  3/5  Plugins (optional) — open Claude Code and run:"));
       console.log(chalk.cyan("       /plugin install superpowers@claude-plugins-official"));
       console.log(chalk.cyan("       /plugin marketplace add thedotmack/claude-mem"));
-      console.log(chalk.cyan("       /plugin install claude-mem"));
+      console.log(chalk.cyan("       /plugin install claude-mem@thedotmack"));
       console.log(chalk.cyan("       /plugin install context7@claude-plugins-official"));
       console.log(chalk.dim("\n       Using opencode crews? Install the CLI:"));
       console.log(chalk.cyan("       npm install -g opencode-ai"));
@@ -289,7 +289,7 @@ export const initCommand = new Command("init")
     console.log("    Optional — squadrant works without them. Install inside Claude Code if you want them:\n");
     console.log(chalk.cyan("      /plugin install superpowers@claude-plugins-official"));
     console.log(chalk.cyan("      /plugin marketplace add thedotmack/claude-mem"));
-    console.log(chalk.cyan("      /plugin install claude-mem"));
+    console.log(chalk.cyan("      /plugin install claude-mem@thedotmack"));
     console.log(chalk.cyan("      /plugin install context7@claude-plugins-official\n"));
     console.log(chalk.dim("    Squadrant never auto-installs plugins — open Claude Code and run the commands above."));
 

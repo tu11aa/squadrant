@@ -136,9 +136,10 @@ describe("doctor checkOptional() — WARN, never FAIL", () => {
     expect(output[0]).toMatch(/PASS/);
   });
 
-  it("prints WARN (not FAIL) with enables text and hint, and does not count as a failure", () => {
+  it("prints WARN (not FAIL) with enables text and hint, and reports not-present", () => {
     const ok = checkOptional("Plugin: context7", false, "library docs lookup", "do the thing");
-    expect(ok).toBe(true);
+    // Returns presence, so a WARN is never mistaken for a PASS; callers keep it out of the totals.
+    expect(ok).toBe(false);
     expect(output[0]).toMatch(/WARN/);
     expect(output[0]).not.toMatch(/FAIL/);
     expect(output[0]).toMatch(/optional/);
@@ -150,6 +151,6 @@ describe("doctor checkOptional() — WARN, never FAIL", () => {
     expect(OPTIONAL_PLUGIN_HINTS.superpowers).toContain("/plugin install superpowers@claude-plugins-official");
     expect(OPTIONAL_PLUGIN_HINTS.context7).toContain("/plugin install context7@claude-plugins-official");
     expect(OPTIONAL_PLUGIN_HINTS.claudeMem).toContain("/plugin marketplace add thedotmack/claude-mem");
-    expect(OPTIONAL_PLUGIN_HINTS.claudeMem).toContain("/plugin install claude-mem");
+    expect(OPTIONAL_PLUGIN_HINTS.claudeMem).toContain("/plugin install claude-mem@thedotmack");
   });
 });
