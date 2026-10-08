@@ -49,3 +49,4 @@ export type { ControlChannel, ControlChannelMode, DeliveryOutcome, ProbeResult, 
 export * from "./captain-channel.js";
 export * from "./captain-record.js";
 export * from "./opencode-session.js";
+export * from "./knowledge/index.js";
