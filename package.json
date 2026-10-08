@@ -51,6 +51,7 @@
     "@squadrant/shared": "workspace:*",
     "@squadrant/web": "workspace:*",
     "@squadrant/workspaces": "workspace:*",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",

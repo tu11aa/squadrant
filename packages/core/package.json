@@ -10,6 +10,7 @@
   "dependencies": {
     "@squadrant-ai/auto-gate": "0.3.2",
     "@squadrant/shared": "workspace:*",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0"
   }
 }
