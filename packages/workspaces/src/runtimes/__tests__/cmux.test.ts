@@ -2117,7 +2117,7 @@ describe("closePane (#895)", () => {
   const failClose = (msg: string) =>
     execFileMock.mockImplementation((_b: unknown, args: unknown) => {
       const a = Array.isArray(args) ? (args as string[]) : [];
-      if (a[0] === "close-surface" && true) throw new Error(msg);
+      if (a[0] === "close-surface") throw new Error(msg);
       return "";
     });
 
