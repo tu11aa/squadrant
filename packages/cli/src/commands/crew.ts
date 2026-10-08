@@ -24,6 +24,7 @@ import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirs
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
+import { commandExists } from "./doctor.js";
 
 export type { CrewSpawnInput };
 
@@ -96,6 +97,11 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     // so this optional check never itself breaks the spawn.
     getTaskRecord: async (p, id) =>
       (await squadrantdCall(buildStatusRequest(p, id)).catch(() => undefined)) as TaskRecord | undefined,
+    isAgentInstalled: (name) => commandExists(name),
+    onRouteSkipped: (route, fallback) =>
+      console.log(
+        chalk.dim(`routed: tier=${route.tier} → ${route.agent} (not installed) → ${fallback}`),
+      ),
     onRouted: (route) =>
       console.log(
         chalk.dim(

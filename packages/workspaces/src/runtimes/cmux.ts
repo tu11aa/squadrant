@@ -926,6 +926,14 @@ export function createCmuxDriver(): RuntimeDriver {
       const after = readInputBoxRaw(afterScreen);
       const rawAfter = readInputBoxRaw(afterScreen, { trim: false });
 
+      // B1 (cmux 0.65.0 compat study): the restore types into a prompt that still
+      // holds the rest of the draft, which cmux >= 0.65.0 refuses unless `--force`
+      // leads the text. 0.64.x would type `--force` literally, hence the gate.
+      const restoreGrapheme = async (grapheme: string) => {
+        const force = (await cmuxHasInputGuards()) ? ["--force"] : [];
+        await cmux(["send", "--workspace", ws, "--surface", sf, ...force, grapheme]);
+      };
+
       const liveness = classifyDraftLiveness(before, after);
       if (liveness === "real-draft") {
         // Confirmed real draft. Restore the last grapheme our probe removed
@@ -933,7 +941,7 @@ export function createCmuxDriver(): RuntimeDriver {
         const segs = before ? [...new Intl.Segmenter().segment(before)] : [];
         const lastGrapheme =
           segs.length > 0 ? segs[segs.length - 1].segment : before!.slice(-1);
-        await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+        await restoreGrapheme(lastGrapheme);
         throw new DeferDelivery(draft);
       }
       if (liveness === "no-draft") {
@@ -950,7 +958,7 @@ export function createCmuxDriver(): RuntimeDriver {
           const segs = [...new Intl.Segmenter().segment(rawBefore)];
           const lastGrapheme =
             segs.length > 0 ? segs[segs.length - 1].segment : rawBefore.slice(-1);
-          await cmux(["send", "--workspace", ws, "--surface", sf, lastGrapheme]);
+          await restoreGrapheme(lastGrapheme);
           throw new DeferDelivery(draft);
         }
         // rawBefore === rawAfter: backspace was a true no-op — the box holds ghost/hint
