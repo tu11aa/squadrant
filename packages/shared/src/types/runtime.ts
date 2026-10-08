@@ -10,6 +10,10 @@ export interface PaneRef {
   title?: string;      // tab title — populated by listSurfaces, optional on spawn
 }
 
+export interface PaneInputOptions {
+  force?: boolean; // bypass the runtime's open-dialog/draft input guard
+}
+
 export interface RuntimeSpawnOptions {
   name: string;
   workdir: string;
@@ -64,9 +68,12 @@ export interface RuntimeDriver {
   // sendKeyToPane to submit as a separate, settled keystroke — required for the
   // #339 first-turn fix, where bundling the CR with a large paste lets Claude
   // Code absorb it as a newline inside the [Pasted text] placeholder.
-  pasteToPane(pane: PaneRef, text: string): Promise<void>;
+  // `force` bypasses the runtime's open-dialog/draft guard (cmux >= 0.65). Only
+  // `crew answer` may set it — it types into a dialog on purpose; every other
+  // caller must keep the guard.
+  pasteToPane(pane: PaneRef, text: string, opts?: PaneInputOptions): Promise<void>;
   // Send a single literal key press to a pane (e.g. "Enter").
-  sendKeyToPane(pane: PaneRef, key: string): Promise<void>;
+  sendKeyToPane(pane: PaneRef, key: string, opts?: PaneInputOptions): Promise<void>;
   readPaneScreen(pane: PaneRef): Promise<string>;
   // List all surfaces (tabs/panes) inside a workspace, with their titles.
   // Used to find named crews by tab title (#56).

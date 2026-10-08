@@ -2220,6 +2220,47 @@ describe("cmuxHasInputGuards (cmux >= 0.65.0)", () => {
   });
 });
 
+describe("sendKeyToPane / pasteToPane force (cmux 0.65 B2)", () => {
+  const driver = createCmuxDriver();
+  const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+  const onVersion = (out: string) =>
+    execFileMock.mockImplementation((_bin: string, args: string[]) => (args.includes("--version") ? out : ""));
+  const inputArgv = () =>
+    execFileMock.mock.calls.map(argvOf).filter((a) => a[0] === "send" || a[0] === "send-key");
+  beforeEach(() => { execFileMock.mockReset(); resetCmuxInputGuardsCache(); onVersion("cmux 0.65.0 (108) [dda24fbd2]"); });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  it("keeps cmux's dialog/draft guard by default (no --force)", async () => {
+    await driver.sendKeyToPane(pane, "Enter");
+    await driver.pasteToPane(pane, "hi");
+    expect(inputArgv()).toEqual([
+      ["send-key", "--workspace", "workspace:3", "--surface", "surface:8", "Enter"],
+      ["send", "--workspace", "workspace:3", "--surface", "surface:8", "hi"],
+    ]);
+  });
+
+  it("passes a leading --force when asked on cmux >= 0.65", async () => {
+    await driver.sendKeyToPane(pane, "Down", { force: true });
+    await driver.pasteToPane(pane, "hi", { force: true });
+    expect(inputArgv()).toEqual([
+      ["send-key", "--force", "--workspace", "workspace:3", "--surface", "surface:8", "Down"],
+      ["send", "--force", "--workspace", "workspace:3", "--surface", "surface:8", "hi"],
+    ]);
+  });
+
+  it("never passes --force on cmux 0.64 (it would be typed as text)", async () => {
+    onVersion("cmux 0.64.22 (97) [3faf000]");
+    await driver.sendKeyToPane(pane, "Down", { force: true });
+    await driver.pasteToPane(pane, "hi", { force: true });
+    expect(inputArgv().some((a) => a.includes("--force"))).toBe(false);
+  });
+
+  it("sendToPane never forces", async () => {
+    await driver.sendToPane(pane, "msg");
+    expect(inputArgv().some((a) => a.includes("--force"))).toBe(false);
+  });
+});
+
 // Study 2026-10-08 B1: on cmux 0.65.0 the probe's grapheme restore types into a
 // prompt that still holds the rest of the draft, which the new `send` guard
 // refuses — the draft lost a character per probe cycle. The restore passes a

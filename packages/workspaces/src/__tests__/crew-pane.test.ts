@@ -52,6 +52,8 @@ describe("sendFirstTurnWhenReady — claude/codex first-turn (#339)", () => {
     expect(pasteToPane).toHaveBeenCalledWith(pane, "do the big thing");
     expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
     expect(sendToPane).not.toHaveBeenCalled();
+    // cmux 0.65 (B2): only crew answer may bypass the dialog guard.
+    for (const c of [...pasteToPane.mock.calls, ...sendKeyToPane.mock.calls]) expect(c[2]?.force).toBeFalsy();
   });
 
   // #339 core regression: when the first Enter is absorbed as a newline (box still
@@ -335,6 +337,8 @@ describe("confirmedSendToPane — follow-up crew send (#448)", () => {
     expect(pasteToPane).toHaveBeenCalledTimes(1);
     expect(pasteToPane).toHaveBeenCalledWith(pane, "follow-up message");
     expect(sendKeyToPane).toHaveBeenCalledWith(pane, "Enter");
+    // cmux 0.65 (B2): only crew answer may bypass the dialog guard.
+    for (const c of [...pasteToPane.mock.calls, ...sendKeyToPane.mock.calls]) expect(c[2]?.force).toBeFalsy();
   });
 
   // #448 regression: when the first Enter is absorbed (box still holds draft),

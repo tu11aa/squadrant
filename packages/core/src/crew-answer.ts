@@ -8,6 +8,10 @@
 import type { RuntimeDriver, PaneRef, ModalOption } from "@squadrant/shared";
 import { findCrewPane } from "./crew-spawn.js";
 
+// cmux >= 0.65 refuses keys/text into an open agent dialog unless forced (B2).
+// crew answer is the one caller that types into a dialog on purpose.
+const FORCE = { force: true } as const;
+
 export interface CrewAnswerDeps {
   /** Read the crew pane's screen and parse its open modal (null = none visible).
    *  `axis` is the arrow direction that moves the selection: "vertical" for
@@ -102,13 +106,13 @@ export async function runCrewAnswer(
   const backwardKey = modal.axis === "horizontal" ? "Left" : "Up";
   const key = steps >= 0 ? forwardKey : backwardKey;
   for (let i = 0; i < Math.abs(steps); i++) {
-    await runtime.sendKeyToPane(crew, key);
+    await runtime.sendKeyToPane(crew, key, FORCE);
   }
-  await runtime.sendKeyToPane(crew, "Enter");
+  await runtime.sendKeyToPane(crew, "Enter", FORCE);
 
   if (opts?.text) {
-    await runtime.pasteToPane(crew, opts.text);
-    await runtime.sendKeyToPane(crew, "Enter");
+    await runtime.pasteToPane(crew, opts.text, FORCE);
+    await runtime.sendKeyToPane(crew, "Enter", FORCE);
   }
 
   const after = await deps.readModalOptions(crew);
