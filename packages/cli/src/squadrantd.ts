@@ -1,6 +1,7 @@
 // src/squadrantd.ts — host: constructs concrete drivers + thin shim.
 // All daemon logic lives in daemon/start.ts; this file owns only the
 // concrete class instantiation and the launchd entry guard.
+import "./lib/suppress-sqlite-warning.js";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";

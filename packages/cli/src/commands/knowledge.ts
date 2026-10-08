@@ -6,7 +6,7 @@ import {
   loadConfig, saveConfig, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
-import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex } from "@squadrant/core";
+import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb } from "@squadrant/core";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -89,14 +89,29 @@ knowledgeCommand
     if (errors.length) process.exitCode = 1;
   });
 
-export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH): { file: string; count: number; errors: number } {
+export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH): {
+  file: string; count: number; proposed: number; errors: number; invalid: { file: string; problems: string[] }[];
+} {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
   const hub = resolveHome(cfg.hubVault);
   if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  const { rules, errors } = loadKbRules(cfg, kb);
-  const file = writeIndex(hub, kb, compileIndex(kb, rules));
-  return { file, count: rules.length, errors: errors.length };
+  const { rules: all, errors } = loadKbRules(cfg, kb, { includeProposed: true });
+  const proposedRoot = path.join(kbRulesDir(hub, kb), PROPOSED_DIR) + path.sep;
+  const live = all.filter((r) => !r.file.startsWith(proposedRoot));
+  const file = writeIndex(hub, kb, compileIndex(kb, live));
+  return { file, count: live.length, proposed: all.length - live.length, errors: errors.length, invalid: errors };
+}
+
+export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PATH): ReturnType<typeof validateKb> {
+  assertKbName(kb);
+  const cfg = loadConfig(configPath);
+  const hub = resolveHome(cfg.hubVault);
+  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  const { sources, errors } = loadSources(hub, kb);
+  const res = validateKb({ rulesDir: kbRulesDir(hub, kb), kbRoot: kbDir(hub, kb), sources, domains: cfg.knowledge?.[kb]?.domains });
+  const srcChecks = errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` }));
+  return { checks: [...srcChecks, ...res.checks], ok: res.ok && !errors.length };
 }
 
 knowledgeCommand
@@ -104,5 +119,17 @@ knowledgeCommand
   .description("Recompile index.json from the KB's rule files")
   .action((kb: string) => {
     const r = runKnowledgeReindex(kb);
-    console.log(`${r.file}: ${r.count} rules${r.errors ? chalk.red(`, ${r.errors} invalid files skipped`) : ""}`);
+    console.log(`${r.file}: ${r.count} active${r.proposed ? ` (+${r.proposed} proposed)` : ""}${r.errors ? chalk.red(`, ${r.errors} invalid files skipped`) : ""}`);
+    for (const e of r.invalid) console.log(chalk.red(`  ✘ ${e.file}: ${e.problems.join("; ")}`));
+  });
+
+knowledgeCommand
+  .command("validate <kb>")
+  .description("CI-style check: invalid files, duplicate ids, quotes present in sources; exits non-zero on failure")
+  .action((kb: string) => {
+    const { checks, ok } = runKnowledgeValidate(kb);
+    const mark = { ok: chalk.green("✔"), fail: chalk.red("✘"), warn: chalk.yellow("!"), skip: chalk.dim("-") };
+    for (const c of checks) console.log(`${mark[c.level]} ${c.message}`);
+    console.log(ok ? chalk.green("valid") : chalk.red("invalid"));
+    if (!ok) process.exitCode = 1;
   });

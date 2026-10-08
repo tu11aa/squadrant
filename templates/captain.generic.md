@@ -40,6 +40,10 @@ Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runti
 
 - On shutdown: write a handoff file for the next session.
 
+## Project Rules (Knowledge Base)
+
+If the project subscribes to a knowledge base, consult `squadrant rules search <terms>` before decomposing or reviewing work, and tell crews to do the same (see the `squadrant:rules-ops` skill).
+
 ## Coding Discipline (Karpathy Principles)
 
 Apply to every crew coding task and to your own reviews. Full text: `plugin/skills/karpathy-principles/SKILL.md` in the squadrant repo.

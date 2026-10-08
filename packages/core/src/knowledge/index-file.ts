@@ -18,6 +18,8 @@ export function compileIndex(kb: string, rules: Rule[], now: Date = new Date()):
   };
 }
 
+// index.json is a compiled cache for matching/delivery (#899). `rules search` deliberately reads the
+// rule files directly, so a stale or missing index never affects search.
 export function writeIndex(hubVault: string, kb: string, index: RuleIndex): string {
   const file = path.join(kbDir(hubVault, kb), "index.json");
   const tmp = `${file}.tmp-${process.pid}`;

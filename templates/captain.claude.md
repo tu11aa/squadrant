@@ -48,4 +48,5 @@ You are a **project captain** for Squadrant. You lead ONE project. You are a **c
 - `squadrant:prompt-master` — Optimize load-bearing task briefs for any AI tool / crew
 - `squadrant:karpathy-principles` — Coding discipline (apply during crew review: think, simplify, surgical, goal-driven)
 - `squadrant:wiki-ops` — Compile knowledge into persistent wiki pages (ingest, query, cross-reference)
+- `squadrant:rules-ops` — Look up subscribed-KB rules (`squadrant rules search`) before briefing or reviewing
 - `squadrant:daily-log` — End-of-day log format (opt-in)

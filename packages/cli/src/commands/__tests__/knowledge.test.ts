@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
-import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex } from "../knowledge.js";
+import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate } from "../knowledge.js";
 import { kbRulesDir, readIndex } from "@squadrant/core";
 
 let dir: string;
@@ -71,6 +71,20 @@ describe("knowledge reindex", () => {
     expect(r).toMatchObject({ count: 1, errors: 0 });
     expect(readIndex(hub, "saitex").index?.rules[0].id).toBe("coding.a");
   });
+  it("counts proposed separately and names each invalid file", () => {
+    runKnowledgeInit("saitex", cfgPath);
+    const hub = loadConfig(cfgPath).hubVault;
+    const rules = kbRulesDir(hub, "saitex");
+    const md = (id: string) => `---\nid: ${id}\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n---\nX.\n`;
+    fs.mkdirSync(path.join(rules, "_proposed"), { recursive: true });
+    fs.writeFileSync(path.join(rules, "coding.a.md"), md("coding.a"));
+    fs.writeFileSync(path.join(rules, "_proposed", "coding.b.md"), md("coding.b"));
+    fs.writeFileSync(path.join(rules, "bad.md"), "---\nid: Bad\n---\nx\n");
+    const r = runKnowledgeReindex("saitex", cfgPath);
+    expect(r).toMatchObject({ count: 1, proposed: 1, errors: 1 });
+    expect(r.invalid[0].file).toContain("bad.md");
+    expect(readIndex(hub, "saitex").index?.rules.map((x) => x.id)).toEqual(["coding.a"]);
+  });
   it("fails clearly on an uninitialised KB", () => {
     expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
   });
@@ -99,5 +113,26 @@ describe("knowledge init index", () => {
     const { knowledgeDoctorLines } = await import("../doctor.js");
     const lines = knowledgeDoctorLines(loadConfig(cfgPath), () => true);
     expect(lines.filter((l) => !l.ok && !l.warnOnly)).toEqual([]);
+  });
+});
+
+describe("knowledge validate", () => {
+  it("fails on a quote not in the source, passes once fixed, and reads domains from KB config", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    const hub = loadConfig(cfgPath).hubVault;
+    fs.mkdirSync(path.join(r.dir, "raw"), { recursive: true });
+    fs.writeFileSync(path.join(r.dir, "raw", "a.md"), "use Result everywhere");
+    const file = path.join(kbRulesDir(hub, "saitex"), "coding.a.md");
+    const md = (q: string) => `---\nid: coding.a\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: raw/a.md, sha: s, quote: "${q}" }\n---\nX.\n`;
+    fs.writeFileSync(file, md("use Option"));
+    expect(runKnowledgeValidate("saitex", cfgPath).ok).toBe(false);
+    fs.writeFileSync(file, md("use Result"));
+    expect(runKnowledgeValidate("saitex", cfgPath).ok).toBe(true);
+    const cfg = loadConfig(cfgPath);
+    cfg.knowledge = { saitex: { domains: ["git"] } };
+    saveConfig(cfg, cfgPath);
+    const v = runKnowledgeValidate("saitex", cfgPath);
+    expect(v.ok).toBe(true);
+    expect(v.checks.some((c) => c.level === "warn")).toBe(true);
   });
 });
