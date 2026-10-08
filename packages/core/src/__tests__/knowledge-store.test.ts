@@ -70,6 +70,17 @@ describe("loadRulesDir", () => {
     expect(loadRulesDir(dir, "kb:x", { includeProposed: true }).rules.map((r) => r.id).sort())
       .toEqual(["coding.live", "coding.pending"]);
   });
+
+  it("with includeProposed, a live rule beats a _proposed rule with the same id", () => {
+    write("coding/coding.same.md", ruleMd("coding.same"));
+    write("_proposed/coding.same@abc.md", ruleMd("coding.same"));
+    const r = loadRulesDir(dir, "kb:x", { includeProposed: true });
+    expect(r.rules).toHaveLength(1);
+    expect(r.rules[0].file).toContain(path.join("coding", "coding.same.md"));
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0].file).toContain("_proposed");
+    expect(r.errors[0].problems[0]).toContain("duplicate id coding.same");
+  });
 });
 
 describe("front matter safety", () => {

@@ -32,7 +32,9 @@ function listMarkdown(dir: string, includeProposed: boolean): string[] {
     }
   };
   walk(dir);
-  return out.sort();
+  // Live rules first so a live id always beats a _proposed duplicate; path order within each group.
+  const isProposed = (f: string) => path.relative(dir, f).split(path.sep).includes(PROPOSED_DIR);
+  return out.sort((a, b) => Number(isProposed(a)) - Number(isProposed(b)) || (a < b ? -1 : a > b ? 1 : 0));
 }
 
 export function loadRulesDir(dir: string, layer: string, opts: { includeProposed?: boolean } = {}): RuleLoadResult {
