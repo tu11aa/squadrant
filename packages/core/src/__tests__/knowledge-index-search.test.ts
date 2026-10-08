@@ -51,6 +51,33 @@ describe("searchRules", () => {
     const ids = searchRules(rules, "invoice", { statuses: ["active", "stale", "proposed", "retired"] }).map((h) => h.rule.id);
     expect(ids).toContain("biz.old");
   });
+  it("requires 2 matched terms for multi-term queries, falls back to single-term hits", () => {
+    const rs = [
+      mk("a.both", { statement: "alpha beta together." }),
+      mk("a.one", { statement: "alpha only." }),
+    ];
+    expect(searchRules(rs, "alpha beta").map((h) => h.rule.id)).toEqual(["a.both"]);
+    expect(searchRules(rs, "alpha zeta").map((h) => h.rule.id)).toEqual(["a.both", "a.one"]);
+  });
+  it("keeps a single-term hit on a curated keyword alongside multi-term hits", () => {
+    const rs = [
+      mk("w.det", { statement: "No clocks.", triggers: { keywords: ["workflow"] } }),
+      mk("w.http", { statement: "No http in tx." }),
+      mk("w.noise", { statement: "workflow stuff mentioned once." }),
+    ];
+    const ids = searchRules(rs, "workflow http").map((h) => h.rule.id);
+    expect(ids).toContain("w.det");
+    expect(ids).not.toContain("w.noise");
+  });
+  it("weights id/keywords above rationale and sorts by score", () => {
+    const rs = [
+      mk("x.rationale", { statement: "Unrelated.", body: "Unrelated.\n\nWhy: cache the token.", }),
+      mk("x.cache-token", { statement: "Unrelated." }),
+    ];
+    const hits = searchRules(rs, "cache token");
+    expect(hits.map((h) => h.rule.id)).toEqual(["x.cache-token", "x.rationale"]);
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+  });
   it("empty query returns nothing", () => {
     expect(searchRules(rules, "   ")).toEqual([]);
   });

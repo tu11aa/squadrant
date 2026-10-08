@@ -4,7 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { kbRulesDir } from "@squadrant/core";
-import { runRulesSearch, runRulesShow, resolveRulesProject, formatRule } from "../rules.js";
+import { runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
+import type { SearchHit } from "@squadrant/core";
 
 let dir: string;
 let cfgPath: string;
@@ -66,5 +67,42 @@ describe("rules search/show", () => {
     } finally {
       err.mockRestore();
     }
+  });
+});
+
+describe("rules output rendering", () => {
+  const hit = (id: string, score: number): SearchHit => ({
+    rule: { id, domain: "d", modality: "must", status: "active", sources: [], statement: `S-${id}`, body: "", file: "", layer: "kb:x" },
+    score, matched: 1, curated: false,
+  });
+  const hits = ["a", "b", "c", "d", "e", "f", "g"].map((id, i) => hit(id, 20 - i));
+
+  it("limits to 5 by default and says how many were cut", () => {
+    const out = renderSearch(hits, {});
+    expect(out).toHaveLength(6);
+    expect(out[5]).toBe("(+2 more; use --limit)");
+    expect(out[0]).toContain("score: 20");
+  });
+  it("--limit overrides; no truncation note when everything fits", () => {
+    expect(renderSearch(hits, { limit: "7" })).toHaveLength(7);
+    expect(renderSearch(hits, { limit: 2 }).at(-1)).toBe("(+5 more; use --limit)");
+  });
+  it("rejects a bad --limit", () => {
+    expect(() => parseLimit("0")).toThrow(/--limit/);
+    expect(() => parseLimit("abc")).toThrow(/--limit/);
+  });
+  it("--brief is one line per rule; --ids-only is bare ids", () => {
+    expect(renderSearch(hits.slice(0, 1), { brief: true })).toEqual(["[20] MUST a: S-a"]);
+    expect(renderSearch(hits.slice(0, 2), { idsOnly: true })).toEqual(["a", "b"]);
+  });
+  it("always prints (no matching rules) for zero hits, in every mode", () => {
+    for (const o of [{}, { brief: true }, { idsOnly: true }]) expect(renderSearch([], o)).toEqual(["(no matching rules)"]);
+    expect(runRulesSearch("approver role keycloak", { project: "flooros" }, cfgPath)).toEqual([]);
+  });
+  it("list returns resolved rules sorted, hides retired unless --all", () => {
+    expect(renderList(runRulesList({ project: "flooros" }, cfgPath), { brief: true }))
+      .toEqual(["MUST biz.invoice.vnd-rounding: VND amounts are rounded half-up."]);
+    expect(runRulesList({ project: "flooros", all: true }, cfgPath).map((r) => r.id)).toEqual(["biz.invoice.vnd-rounding", "biz.old"]);
+    expect(renderList([], {})).toEqual(["(no rules)"]);
   });
 });
