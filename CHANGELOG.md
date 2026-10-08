@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-10-08
+
+Refs #899, #893.
+
+### Added
+
+- **Rules KB auto-injection for Claude** (#927). Claude sessions in a project that subscribes to a KB now see its rules with no agent action, through the existing `squadrant hooks claude session-start|prompt-submit` entries (no new hook entries).
+  - **SessionStart** injects a labelled `<squadrant-project-rules>` data block with every active `must`/`must-not` rule as one line, capped at 20, then a `+N more: squadrant rules list --brief` line and a pointer to `rules search`/`show` and the rules-ops skill.
+  - **UserPromptSubmit** injects up to 3 strongly matching rules from the ranked search: 2+ whole-word query terms with score ≥8, or one term scoring ≥13. A lone curated-keyword hit is not enough. Each rule is shown once per session. Manual `rules search` is unchanged.
+  - squadrant's own notices (`⚠️…`, `CREW …`, `🗒 Side handoff`, `[stale …`) and `<cross-session-message>` peer input are skipped. A spilled crew first-turn brief is searched through its task file.
+  - `SQUADRANT_RULES_INJECT=0` turns it off. A 1.5s fail-open budget means a throw, timeout or overrun injects nothing and never blocks the session.
+  - Codex, gemini and opencode are not covered yet (#900).
+
 ## [0.26.1] - 2026-10-08
 
 Refs #893.
