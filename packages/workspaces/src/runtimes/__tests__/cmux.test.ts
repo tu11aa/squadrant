@@ -2108,3 +2108,33 @@ describe("sendToSurface agent-aware opencode gate (#786)", () => {
     expect(argvOf(sendCall)).toContain("crew done");
   });
 });
+
+describe("closePane (#895)", () => {
+  const driver = createCmuxDriver();
+  const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+  const closeCalls = () => execFileMock.mock.calls.filter((c) => argvOf(c)[0] === "close-surface");
+  beforeEach(() => execFileMock.mockReset());
+  const failClose = (msg: string) =>
+    execFileMock.mockImplementation((_b: unknown, args: unknown) => {
+      const a = Array.isArray(args) ? (args as string[]) : [];
+      if (a[0] === "close-surface") throw new Error(msg);
+      return "";
+    });
+
+  it("passes --force so a surface with a live process is closed", async () => {
+    execFileMock.mockReturnValue("");
+    await driver.closePane(pane);
+    expect(closeCalls()).toHaveLength(1);
+    expect(argvOf(closeCalls()[0])).toEqual(["close-surface", "--workspace", "workspace:3", "--surface", "surface:8", "--force"]);
+  });
+
+  it("treats an already-gone surface as success", async () => {
+    failClose("Error: Surface ref not found: surface:8");
+    await expect(driver.closePane(pane)).resolves.toBeUndefined();
+  });
+
+  it("propagates any other error instead of swallowing it", async () => {
+    failClose("Error: confirmation_required: Surface has a running process");
+    await expect(driver.closePane(pane)).rejects.toThrow(/confirmation_required/);
+  });
+});

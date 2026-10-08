@@ -1985,6 +1985,23 @@ describe("runCrewClose", () => {
     expect(emitted).not.toEqual([]);
   });
 
+  it("warns but still finishes close when closePane fails (#895)", async () => {
+    const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+    const runtime = makeRuntime("ws:1", [existing]);
+    (runtime.closePane as any).mockRejectedValue(new Error("confirmation_required"));
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await runCrewClose(PROJECT, "crew-1", runtime, "ws:1", {
+        listTasks: vi.fn().mockResolvedValue([]),
+        emitEvent: vi.fn(),
+        closeCodexThread: vi.fn(),
+      });
+      expect(stderrSpy.mock.calls.map((c) => c[0]).join("")).toMatch(/pane close failed: confirmation_required/);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
   it("throws when neither pane nor daemon task found", async () => {
     const runtime = makeRuntime("ws:1", []);
     await expect(
