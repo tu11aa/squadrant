@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { mapHookSub, buildCaptainSessionRecord } from "../hooks.js";
+import { describe, it, expect, afterAll } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
+import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput } from "../hooks.js";
 
 // #560: the "ask-question" sub fires from NativeHookSource's global
 // PreToolUse+AskUserQuestion matcher install (see native-hook-source.ts). It
@@ -107,5 +111,54 @@ describe("buildCaptainSessionRecord (#651)", () => {
   it("returns null for a malformed/non-object payload", () => {
     expect(buildCaptainSessionRecord(undefined, "squadrant", "/fallback", NOW)).toBeNull();
     expect(buildCaptainSessionRecord("not an object", "squadrant", "/fallback", NOW)).toBeNull();
+  });
+});
+
+// #899 v0: Rules KB injection rides on the existing session-start /
+// prompt-submit subs. It must be purely additive: the lifecycle mapping is
+// unchanged and every failure path yields no output.
+describe("rulesHookOutput (#899)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-rules-"));
+  const projDir = path.join(root, "flooros");
+  const ruleDir = path.join(root, "hub", "knowledge", "saitex", "rules", "git");
+  fs.mkdirSync(ruleDir, { recursive: true });
+  fs.writeFileSync(path.join(ruleDir, "git.branch-naming.md"),
+    "---\nid: git.branch-naming\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
+    + "triggers:\n  keywords: [branch]\n---\nCreate every new branch as feat/<ticket>-<slug>.\n");
+  const cfg = (knowledge?: string[]): SquadrantConfig => {
+    const c = getDefaultConfig();
+    c.hubVault = path.join(root, "hub");
+    c.projects = { flooros: { path: projDir, captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge } };
+    return c;
+  };
+  const opts = (over = {}) => ({ env: {}, cwd: projDir, loadCfg: () => cfg(["saitex"]), stateRoot: path.join(root, "state"), ...over });
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("SessionStart → hookSpecificOutput with the must/must-not block", async () => {
+    const out = JSON.parse(await rulesHookOutput("session-start", { session_id: "h1" }, opts()));
+    expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
+    expect(out.hookSpecificOutput.additionalContext).toContain("MUST git.branch-naming:");
+  });
+  it("UserPromptSubmit → matching rule for a strong prompt, nothing for chit-chat", async () => {
+    const out = JSON.parse(await rulesHookOutput("prompt-submit", { session_id: "h2", prompt: "create a new branch" }, opts()));
+    expect(out.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
+    expect(out.hookSpecificOutput.additionalContext).toContain("git.branch-naming");
+    expect(await rulesHookOutput("prompt-submit", { session_id: "h3", prompt: "thanks!" }, opts())).toBe("");
+    const notice = "⚠️ Daemon restarted → v0.26.1 (control-plane bounced). Re-verify in-flight crews — a crew mid-first-turn may need a crew send.";
+    expect(await rulesHookOutput("prompt-submit", { session_id: "h4", prompt: notice }, opts())).toBe("");
+  });
+  it("no subscription, env off, other subs → empty", async () => {
+    expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: () => cfg() }))).toBe("");
+    expect(await rulesHookOutput("session-start", {}, opts({ env: { SQUADRANT_RULES_INJECT: "0" } }))).toBe("");
+    expect(await rulesHookOutput("stop", {}, opts())).toBe("");
+  });
+  it("a throwing config load or a slow lookup → empty, never throws", async () => {
+    expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: () => { throw new Error("bad config"); } }))).toBe("");
+    const slow = () => { const end = Date.now() + 30; while (Date.now() < end) { /* spin */ } return cfg(["saitex"]); };
+    expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: slow, budgetMs: 10 }))).toBe("");
+  });
+  it("existing lifecycle mapping for the same subs is unchanged", () => {
+    expect(mapHookSub("session-start", {}, "t")).toEqual({ type: "task.progress", id: "t", note: "session-start" });
+    expect(mapHookSub("prompt-submit", {}, "t")).toEqual({ type: "task.first-turn.confirmed", id: "t" });
   });
 });

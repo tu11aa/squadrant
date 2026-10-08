@@ -15,6 +15,8 @@ A project can subscribe to a knowledge base (KB) of rules: short statements with
 
 If the project has no KB, the commands say so (or return nothing). Move on; do not invent rules.
 
+**Claude sessions get rules auto-injected** (`<squadrant-project-rules>` blocks): every `must`/`must-not` rule at session start, and up to 3 strongly matching rules per prompt. That covers the hard rules, not every rule; still search for the task at hand. Disable with `SQUADRANT_RULES_INJECT=0`.
+
 ## How
 
 ```bash
