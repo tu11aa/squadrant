@@ -11,10 +11,10 @@
 import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { sendRequest, resolveCurrentProject } from "@squadrant/core";
+import { sendRequest, resolveCurrentProject, computeRulesInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
 import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite } from "@squadrant/agents";
-import { loadConfig, DAEMON_SOCK_PATH } from "@squadrant/shared";
-import type { ControlEvent } from "@squadrant/shared";
+import { loadConfig, DAEMON_SOCK_PATH, CONFIG_DIR } from "@squadrant/shared";
+import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
 import { runGatePermissionRequest } from "./gate.js";
@@ -117,6 +117,34 @@ function recordCaptainSessionStart(payload: unknown): void {
   }
 }
 
+const RULES_HOOK_EVENTS = { "session-start": "SessionStart", "prompt-submit": "UserPromptSubmit" } as const;
+
+/**
+ * #899 v0: Rules KB injection for SessionStart / UserPromptSubmit. Returns the
+ * hook's stdout JSON (`hookSpecificOutput.additionalContext`), or "" when there
+ * is nothing to inject. Never throws: a slow or failing lookup yields "" so a
+ * rules problem can never block a session or prompt. Purely additive — the
+ * lifecycle event for the same sub is still sent by the caller.
+ */
+export async function rulesHookOutput(
+  sub: string,
+  payload: unknown,
+  opts: {
+    env: NodeJS.ProcessEnv; cwd: string; project?: string;
+    loadCfg?: () => SquadrantConfig; stateRoot?: string; budgetMs?: number;
+  },
+): Promise<string> {
+  if (sub !== "session-start" && sub !== "prompt-submit") return "";
+  if (opts.env.SQUADRANT_RULES_INJECT === "0") return "";
+  const ctx = await withBudget(() => computeRulesInjection({
+    event: sub, payload, env: opts.env, cwd: opts.cwd, project: opts.project,
+    cfg: (opts.loadCfg ?? loadConfig)(),
+    stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+  }), opts.budgetMs ?? INJECT_BUDGET_MS);
+  if (!ctx) return "";
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: RULES_HOOK_EVENTS[sub], additionalContext: ctx } });
+}
+
 export function hooksCommand(): Command {
   const hooks = new Command("hooks")
     .description("(internal) receive lifecycle hook events from agent processes");
@@ -124,7 +152,8 @@ export function hooksCommand(): Command {
   hooks
     .command("claude <sub>", { hidden: true })
     .description("internal: bridge a NativeHookSource claude hook to squadrantd")
-    .action(async (sub: string) => {
+    .option("--project <name>", "project for rules injection (default: SQUADRANT_CREW_PROJECT, then cwd)")
+    .action(async (sub: string, opts: { project?: string }) => {
       // Read stdin FIRST — it's needed by both the captain path below and
       // the crew path further down, and a stream can only be drained once.
       let stdin = "";
@@ -135,6 +164,11 @@ export function hooksCommand(): Command {
       if (stdin.trim()) {
         try { payload = JSON.parse(stdin); } catch { /* ignore malformed */ }
       }
+
+      // #899: inject Rules KB context first, for every claude session (captain,
+      // crew, plain). Await the write so a later process.exit can't truncate it.
+      const rulesOut = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project });
+      if (rulesOut) await new Promise<void>((resolve) => process.stdout.write(rulesOut, () => resolve()));
 
       // #651: captain sessions have SQUADRANT_ROLE=captain but no crew env
       // vars, so they'd otherwise no-op below without this. Best-effort,
