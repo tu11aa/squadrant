@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-10-08
+
+Refs #893.
+
+### Added
+
+- **`rules-ops` skill** (#921, #924). A portable `plugin/skills/rules-ops/SKILL.md` tells agents when to look up rules and how to use `squadrant rules search|show|list`, including `--project`/`SQUADRANT_CREW_PROJECT`, modality/status/priority, and conflict handling (must-not wins, ask the captain). One line in the crew and captain templates (claude, generic, opencode) and a section in captain-ops point at it.
+- **`squadrant rules search` options and `rules list`** (#922). `--limit <n>` (default 5) prints `(+N more; use --limit)` when truncated, search output shows the score, `--brief` prints one line per rule and `--ids-only` prints bare ids. `squadrant rules list [--all] [--brief]` lists every resolved rule for the project. A search with no matches always prints `(no matching rules)`.
+- **`squadrant knowledge validate <kb>`** (#923). Exits non-zero on invalid files, duplicate ids, or a `sources[].quote` not found in its source file. Unresolvable source refs are reported as skipped, not failed.
+- **Optional `knowledge.<kb>.domains` list** (#923). `validate` warns on rules outside the list; absent means no check.
+
+### Changed
+
+- **`rules search` is now ranked** (#922). Hits in id, keywords and expanded triggers weigh most, then `when` and statement, then the rationale body. A query with 2+ terms requires at least 2 matched terms (or a hit on a curated keyword/expanded trigger), falling back to single-term hits only if nothing passes. Results are sorted by score.
+
+### Fixed
+
+- **`knowledge reindex` names each invalid file and its problems**, and counts print as `65 active (+5 proposed)` (#923).
+- **Duplicate-id errors name both files**, which one is used, and the fix (#923). Resolution order is unchanged.
+- **The Node SQLite ExperimentalWarning is no longer printed** by the CLI or daemon (#923). Other warnings pass through.
+
 ## [0.26.0] - 2026-10-08
 
 ### Added
