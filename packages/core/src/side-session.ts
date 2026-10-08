@@ -226,7 +226,12 @@ export async function runSideClose(
       `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
-  await runtime.closePane(pane);
+  // closePane force-closes the surface, which tears down the agent's pty (#895).
+  try {
+    await runtime.closePane(pane);
+  } catch (e) {
+    process.stderr.write(`(pane close failed: ${(e as Error).message})\n`);
+  }
   // Prune the scratch worktree if this was a debug session. Detection is
   // filesystem-based: debug spawns create a worktree at the deterministic path;
   // research spawns do not. If the path exists, remove it (best-effort).

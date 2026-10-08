@@ -735,9 +735,22 @@ export function createCmuxDriver(): RuntimeDriver {
     },
 
     async closePane(pane: PaneRef): Promise<void> {
+      // cmux >= 0.65 refuses to close a surface with a live process unless
+      // --force is given (#895). An already-gone surface is success; any other
+      // error propagates so callers can warn instead of leaving a tab open silently.
+      const base = ["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId];
       try {
-        await cmux(["close-surface", "--workspace", pane.workspaceId, "--surface", pane.surfaceId]);
-      } catch { /* may already be closed */ }
+        try {
+          await cmux([...base, "--force"]);
+        } catch (e) {
+          // Older cmux that rejects --force as an unknown flag: previous behaviour.
+          if (!/unknown (flag|option)|unrecognized (flag|option)/i.test((e as Error).message)) throw e;
+          await cmux(base);
+        }
+      } catch (e) {
+        if (/not found|no such|does not exist/i.test((e as Error).message)) return;
+        throw e;
+      }
     },
 
     async sendToPane(pane: PaneRef, message: string): Promise<void> {

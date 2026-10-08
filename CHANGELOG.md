@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`crew close` / `side close` now actually close the cmux tab** (#895). cmux 0.65 refuses `close-surface` on a surface with a live process; `closePane` now passes `--force` (falling back to the plain call on cmux versions that reject the flag), treats an already-gone surface as success, and no longer swallows other errors — close prints a `(pane close failed: …)` warning and still cleans up the worktree.
 - **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889). Only when that file is untracked is it ignored by the dirty-worktree guard and deleted before `git worktree remove`; a tracked/modified copy or any other uncommitted file still blocks close.
 
 ### Changed
