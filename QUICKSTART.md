@@ -9,16 +9,28 @@ crew, and (optionally) wire up your phone. For the pitch, see the
 
 - [Claude Code](https://claude.ai/code) >= 2.1.32
 - [cmux](https://cmux.dev) (macOS terminal for coding agents)
-- [Obsidian](https://obsidian.md) (status tracking)
+- [Obsidian](https://obsidian.md) (optional — viewer for the hub vault, which is plain Markdown)
 - Node.js >= 18
+
+### Optional Claude Code plugins
+
+`squadrant doctor` reports these as WARN when missing; a clean install does not need them.
+
+```bash
+# superpowers — systematic-debugging skill for side.debug sessions
+/plugin install superpowers@claude-plugins-official
+
+# Claude Memory — optional tier in `squadrant handoff facts`
+/plugin marketplace add thedotmack/claude-mem
+/plugin install claude-mem@thedotmack
+
+# context7 — library docs lookup
+/plugin install context7@claude-plugins-official
+```
 
 ### Required Integrations
 
 ```bash
-# Claude Memory — cross-session continuity
-/plugin marketplace add thedotmack/claude-mem
-/plugin install claude-mem
-
 # Task Master — PRD decomposition (works via Max subscription)
 npm install -g task-master-ai
 
