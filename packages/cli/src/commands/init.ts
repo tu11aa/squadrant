@@ -135,10 +135,11 @@ export const initCommand = new Command("init")
       console.log(chalk.dim("       Choose a provider: squadrant init --preset a|b|c"));
       console.log(chalk.bold("\n  2/5  Agent + projection setup"));
       console.log("       (handled automatically by: " + chalk.cyan("squadrant init") + ")");
-      console.log(chalk.bold("\n  3/5  Plugins — open Claude Code and run:"));
-      console.log(chalk.cyan("       /plugin marketplace add superpowers"));
+      console.log(chalk.bold("\n  3/5  Plugins (optional) — open Claude Code and run:"));
+      console.log(chalk.cyan("       /plugin install superpowers@claude-plugins-official"));
       console.log(chalk.cyan("       /plugin marketplace add thedotmack/claude-mem"));
-      console.log(chalk.cyan("       /plugin marketplace add context7"));
+      console.log(chalk.cyan("       /plugin install claude-mem"));
+      console.log(chalk.cyan("       /plugin install context7@claude-plugins-official"));
       console.log(chalk.dim("\n       Using opencode crews? Install the CLI:"));
       console.log(chalk.cyan("       npm install -g opencode-ai"));
       console.log(chalk.dim(`       (squadrant provisions a default model in ${DEFAULT_GLOBAL_OPENCODE_CONFIG_PATH} if it's missing)`));
@@ -284,11 +285,12 @@ export const initCommand = new Command("init")
     }
 
     // ── 3/5  Plugins ────────────────────────────────────────────────────────
-    stepHeader(3, 5, "Plugins");
-    console.log("    Install these plugins inside Claude Code:\n");
-    console.log(chalk.cyan("      /plugin marketplace add superpowers"));
+    stepHeader(3, 5, "Plugins (optional)");
+    console.log("    Optional — squadrant works without them. Install inside Claude Code if you want them:\n");
+    console.log(chalk.cyan("      /plugin install superpowers@claude-plugins-official"));
     console.log(chalk.cyan("      /plugin marketplace add thedotmack/claude-mem"));
-    console.log(chalk.cyan("      /plugin marketplace add context7\n"));
+    console.log(chalk.cyan("      /plugin install claude-mem"));
+    console.log(chalk.cyan("      /plugin install context7@claude-plugins-official\n"));
     console.log(chalk.dim("    Squadrant never auto-installs plugins — open Claude Code and run the commands above."));
 
     console.log(chalk.bold("\n    Using opencode crews?"));

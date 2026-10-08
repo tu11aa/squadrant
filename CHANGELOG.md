@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`doctor` no longer FAILs on optional dependencies** (#876, #875). The `superpowers`, `claude-mem` and `context7` plugins and the Obsidian app are now WARN (with what each enables) and never block a clean run; "hub reachable" remains the real gate. Install hints are now the exact commands (`/plugin install <name>@claude-plugins-official`; claude-mem marketplace add + install), and `init` step 3/5 and QUICKSTART mark the plugins optional.
 - **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889). Only when that file is untracked is it ignored by the dirty-worktree guard and deleted before `git worktree remove`; a tracked/modified copy or any other uncommitted file still blocks close.
 
 ### Changed
