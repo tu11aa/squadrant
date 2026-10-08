@@ -23,6 +23,7 @@ import {
   resolveWorktreeBase,
   removeWorktree,
   worktreeDirtyFiles,
+  removeGeneratedWorktreeFiles,
   TERMINAL_STATES,
   crewSessionName,
   resolveRouterModel,
@@ -1136,6 +1137,7 @@ export async function runCrewClose(
   // not break close (the branch is preserved regardless).
   if (worktreeCwd && projRoot) {
     try {
+      removeGeneratedWorktreeFiles(worktreeCwd);
       removeWorktree(projRoot, worktreeCwd, opts);
     } catch (e) {
       process.stderr.write(`(worktree remove failed: ${(e as Error).message})\n`);

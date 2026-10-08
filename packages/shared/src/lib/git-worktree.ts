@@ -207,14 +207,33 @@ function installWorktreeDependencies(wt: string): void {
   }
 }
 
-/** #649: files that would be destroyed by removing this worktree. */
-export function worktreeDirtyFiles(wtPath: string): string[] {
+/** #889: files squadrant itself writes into a crew worktree; never the user's work when untracked. */
+export const SQUADRANT_GENERATED_PATHS: readonly string[] = [".claude/settings.local.json"];
+
+/** `git status --porcelain` entries as [XY, path]; empty on git failure. */
+function worktreeStatus(wtPath: string): Array<[string, string]> {
   try {
     return execFileSync("git", ["-C", wtPath, "status", "--porcelain", "--untracked-files=all"],
       { stdio: ["ignore", "pipe", "ignore"] })
-      .toString().split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+      .toString().split("\n").filter(Boolean)
+      .map((l): [string, string] => [l.slice(0, 2), l.slice(3).trim()]);
   } catch {
     return [];
+  }
+}
+
+const isGeneratedUntracked = ([xy, file]: [string, string]) =>
+  xy === "??" && SQUADRANT_GENERATED_PATHS.includes(file);
+
+/** #649: files that would be destroyed by removing this worktree (minus untracked squadrant-generated ones, #889). */
+export function worktreeDirtyFiles(wtPath: string): string[] {
+  return worktreeStatus(wtPath).filter((e) => !isGeneratedUntracked(e)).map(([, file]) => file);
+}
+
+/** #889: delete untracked squadrant-generated files so `git worktree remove` (no --force) can proceed. */
+export function removeGeneratedWorktreeFiles(wtPath: string): void {
+  for (const [, file] of worktreeStatus(wtPath).filter(isGeneratedUntracked)) {
+    fs.rmSync(path.join(wtPath, file), { force: true });
   }
 }
 
