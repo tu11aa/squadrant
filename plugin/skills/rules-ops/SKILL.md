@@ -18,19 +18,22 @@ If the project has no KB, the commands say so (or return nothing). Move on; do n
 ## How
 
 ```bash
-squadrant rules search <terms...>   # keyword search, e.g. squadrant rules search invoice approval
+squadrant rules search <terms...>   # ranked keyword search, e.g. squadrant rules search invoice approval
 squadrant rules show <id>           # full rule by id
-squadrant rules list                # browse rules (may not exist on older squadrant versions)
+squadrant rules list                # browse every rule in scope
 ```
 
 - The project comes from your working directory or `SQUADRANT_CREW_PROJECT` (set automatically for crews). Pass `--project <name>` to override.
-- By default only `active` and `stale` rules are returned. `--all` adds `proposed` and `retired`.
-- Search is a loose keyword match and can return many hits. The best match is usually in the top 3. Search the distinctive noun first, then narrow with a second query rather than reading everything.
+- By default only `active` and `stale` rules are returned. `--all` adds `proposed` and `retired` (works on `search` and `list`).
+- **Prefer `--brief` to save context.** It prints one line per rule: `[score] MODALITY id: statement` (`list --brief` omits the score). Scan those, then `squadrant rules show <id>` only for the rules that matter.
+- `--ids-only` prints just the matching rule ids.
+- `search` shows the top 5 by default. When more matched it ends with `(+N more; use --limit)`; raise it with `--limit <n>`.
+- Ranking weighs the id and keywords above the statement, and the statement above the rationale. A query of 2+ terms needs at least 2 matched terms (or a hit on a curated keyword), so add a second distinctive term to narrow rather than reading everything. The best match is usually in the top 3.
 - `(no matching rules)` means none matched. Try a synonym before concluding there is no rule.
 
 ## Reading a Result
 
-Each hit prints `MODALITY statement`, then `id · domain · status · layer`, then `source:`.
+Each hit prints `MODALITY statement`, then `id · domain · status · layer`, then `source:`, then `score:` (higher is a better match; `search` only). With `--brief` it is the single line `[score] MODALITY id: statement`.
 
 | Modality | Meaning |
 |---|---|
