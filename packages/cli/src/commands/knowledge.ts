@@ -6,7 +6,7 @@ import {
   loadConfig, saveConfig, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
-import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources } from "@squadrant/core";
+import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex } from "@squadrant/core";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -80,4 +80,21 @@ knowledgeCommand
     }
     for (const e of errors) console.log(chalk.red(`  ✘ ${e}`));
     if (errors.length) process.exitCode = 1;
+  });
+
+export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH): { file: string; count: number; errors: number } {
+  const cfg = loadConfig(configPath);
+  const hub = resolveHome(cfg.hubVault);
+  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  const { rules, errors } = loadKbRules(cfg, kb);
+  const file = writeIndex(hub, kb, compileIndex(kb, rules));
+  return { file, count: rules.length, errors: errors.length };
+}
+
+knowledgeCommand
+  .command("reindex <kb>")
+  .description("Recompile index.json from the KB's rule files")
+  .action((kb: string) => {
+    const r = runKnowledgeReindex(kb);
+    console.log(`${r.file}: ${r.count} rules${r.errors ? chalk.red(`, ${r.errors} invalid files skipped`) : ""}`);
   });

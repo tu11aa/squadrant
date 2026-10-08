@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
-import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources } from "../knowledge.js";
+import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex } from "../knowledge.js";
+import { kbRulesDir, readIndex } from "@squadrant/core";
 
 let dir: string;
 let cfgPath: string;
@@ -56,5 +57,21 @@ describe("knowledge sources", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
     fs.writeFileSync(path.join(r.dir, "sources.yaml"), "- { path: raw/a.md, priority: company }\n");
     expect(runKnowledgeSources("saitex", cfgPath).sources).toEqual([{ path: "raw/a.md", priority: "company" }]);
+  });
+});
+
+describe("knowledge reindex", () => {
+  it("compiles index.json from the KB's rules", () => {
+    runKnowledgeInit("saitex", cfgPath);
+    const hub = loadConfig(cfgPath).hubVault;
+    fs.mkdirSync(path.join(kbRulesDir(hub, "saitex"), "coding"), { recursive: true });
+    fs.writeFileSync(path.join(kbRulesDir(hub, "saitex"), "coding", "coding.a.md"),
+      "---\nid: coding.a\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n---\nUse Result.\n");
+    const r = runKnowledgeReindex("saitex", cfgPath);
+    expect(r).toMatchObject({ count: 1, errors: 0 });
+    expect(readIndex(hub, "saitex").index?.rules[0].id).toBe("coding.a");
+  });
+  it("fails clearly on an uninitialised KB", () => {
+    expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
   });
 });

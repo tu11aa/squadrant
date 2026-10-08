@@ -4,7 +4,8 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, type SquadrantConfig } from "@squadrant/shared";
+import { readIndex } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -158,6 +159,26 @@ export function check(label: string, pass: boolean, hint?: string): boolean {
   return pass;
 }
 
+/** #896: rules-KB doctor lines. Empty when no KB is configured, so users without a KB see no new FAILs (#876). */
+export function knowledgeDoctorLines(
+  cfg: SquadrantConfig,
+  hasCommand: (cmd: string) => boolean,
+): { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] {
+  const kbs = Object.keys(cfg.knowledge ?? {});
+  if (!kbs.length) return [];
+  const lines: { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] = [{
+    label: "markitdown installed (rules KB conversion)",
+    ok: hasCommand("markitdown"),
+    hint: "pip install 'markitdown[all]'",
+    warnOnly: true,
+  }];
+  for (const kb of kbs) {
+    const { problem } = readIndex(resolveHome(cfg.hubVault), kb);
+    lines.push({ label: `KB '${kb}' index.json valid`, ok: !problem, hint: problem ? `${problem} — run: squadrant knowledge reindex ${kb}` : undefined });
+  }
+  return lines;
+}
+
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
   .action(async () => {
@@ -276,6 +297,14 @@ export const doctorCommand = new Command("doctor")
       }
       console.log(`  ${name.padEnd(10)} ${userDest.path} — ${status}`);
     }
+
+    try {
+      const cfgForKb = loadConfig();
+      for (const l of knowledgeDoctorLines(cfgForKb, commandExists)) {
+        if (l.warnOnly && !l.ok) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
+        else results.push(check(l.label, l.ok, l.hint));
+      }
+    } catch { /* no config yet — the config check below reports it */ }
 
     results.push(
       check(
