@@ -124,6 +124,7 @@ vi.mock("@squadrant/agents", () => ({
 const squadrantdCall = vi.hoisted(() => vi.fn());
 const buildDispatchRequest = vi.hoisted(() => vi.fn());
 const sendCodexFirstTurn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../doctor.js", () => ({ commandExists: () => true }));
 vi.mock("../crew-control.js", () => ({
   squadrantdCall,
   buildDispatchRequest,

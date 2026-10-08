@@ -2174,3 +2174,55 @@ describe("runCrewClose", () => {
     expect(removeWorktreeMock).not.toHaveBeenCalledWith(PROJ_PATH, oldWorktree, undefined);
   });
 });
+
+// ─── #892: uninstalled agents ────────────────────────────────────────────────
+
+describe("runCrewSpawn — agent not installed (#892)", () => {
+  const routedConfig = () =>
+    makeConfig({
+      crewRouting: {
+        rules: [{ match: "bump", tier: "daily", agent: "opencode", model: "x/y" }],
+      },
+    } as never);
+
+  it("routing to an uninstalled agent falls back to the default agent and prints why", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent());
+    deps.isAgentInstalled = vi.fn((n: string) => n !== "opencode");
+    deps.onRouteSkipped = vi.fn();
+    await runCrewSpawn({ project: PROJECT, task: "bump the version", agent: "claude" }, routedConfig(), deps);
+    expect(deps.onRouteSkipped).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "opencode", tier: "daily" }),
+      "claude",
+    );
+    expect(deps.onRouted).not.toHaveBeenCalled();
+    expect(deps.resolveAgent).toHaveBeenCalledWith("claude");
+    expect(deps.resolveAgent).not.toHaveBeenCalledWith("opencode");
+  });
+
+  it("explicit --agent that is not installed fails before any worktree or pane", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent("opencode"));
+    deps.isAgentInstalled = vi.fn(() => false);
+    await expect(
+      runCrewSpawn({ project: PROJECT, task: "t", agent: "opencode", agentExplicit: true }, makeConfig(), deps),
+    ).rejects.toThrow(/'opencode' is not installed/);
+    expect(runtime.newPane).not.toHaveBeenCalled();
+    expect(addWorktreeMock).not.toHaveBeenCalled();
+    expect(deps.dispatchCrew).not.toHaveBeenCalled();
+  });
+
+  it("never sends the brief and terminalizes the task when the agent never started", async () => {
+    const runtime = makeRuntime();
+    const deps = makeSpawnDeps(runtime, makeAgent());
+    deps.sendFirstTurn = vi.fn().mockResolvedValue({ delivered: false, agentNotStarted: true });
+    deps.emitEvent = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      runCrewSpawn({ project: PROJECT, task: "do work" }, makeConfig(), deps),
+    ).rejects.toThrow(/agent .* did not start/i);
+    expect(deps.emitEvent).toHaveBeenCalledWith(
+      PROJECT,
+      expect.objectContaining({ type: "task.failed" }),
+    );
+  });
+});

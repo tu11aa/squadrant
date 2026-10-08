@@ -190,7 +190,13 @@ export interface CrewSpawnDeps {
   /** CLI-edge: deliver the first turn once the agent pane is ready. Returns
    *  { delivered: true } when positively confirmed, { delivered: false } when
    *  all retry paths exhausted without confirmation (#466). */
-  sendFirstTurn(pane: PaneRef, firstTurn: string, preLaunchScreen: string, opts?: TurnAcceptanceConfig): Promise<{ delivered: boolean }>;
+  sendFirstTurn(pane: PaneRef, firstTurn: string, preLaunchScreen: string, opts?: TurnAcceptanceConfig): Promise<{ delivered: boolean; agentNotStarted?: boolean }>;
+  /** #892: CLI-edge — is this agent's binary on PATH (same resolution as `doctor`)?
+   *  Absent ⇒ assume installed (no preflight). */
+  isAgentInstalled?(name: string): boolean;
+  /** #892: called when a routing rule picked an uninstalled agent and the spawn
+   *  falls back to `fallbackAgent`. */
+  onRouteSkipped?(route: CrewRouteResult, fallbackAgent: string): void;
   /** CLI-edge: reserve an ephemeral TCP port for opencode's embedded HTTP server. */
   getFreePort(): Promise<number>;
   /** CLI-edge: deliver the task to a freshly-dispatched codex thread. */
@@ -379,6 +385,15 @@ async function runCodexInteractiveSpawn(o: {
   return { ...pane, title };
 }
 
+/** #892: the agent pane never reached a TUI (e.g. the launch command failed and
+ *  left a bare shell) — terminalize the task and fail the spawn rather than
+ *  report ✔. The brief was never sent (sendFirstTurn refused). */
+async function failAgentNotStarted(deps: CrewSpawnDeps, project: string, id: string, name: string, agent: string): Promise<never> {
+  const error = `agent '${agent}' did not start in the crew pane; first turn was not sent`;
+  await deps.emitEvent?.(project, { type: "task.failed", id, error }).catch(() => {});
+  throw new Error(`Crew '${name}': ${error}. Check that '${agent}' launches, then re-spawn.`);
+}
+
 // ─── runCrewSpawn ─────────────────────────────────────────────────────────────
 
 export async function runCrewSpawn(
@@ -409,6 +424,26 @@ export async function runCrewSpawn(
     }
   }
   const name = input.name ?? nextAutoName(existingTitles, input.project);
+
+  // #275 leveled crew routing: consult routing rules when agent/model were not
+  // explicitly provided by the caller. Explicit --agent or --model always win.
+  // #892: resolved before the worktree/pane exist so an uninstalled agent fails
+  // (explicit) or is skipped (routed) without leaving any side effects behind.
+  let route = !input.agentExplicit && !input.model
+    ? resolveCrewRoute(input.task, config)
+    : null;
+  if (route && deps.isAgentInstalled && !deps.isAgentInstalled(route.agent)) {
+    deps.onRouteSkipped?.(route, input.agent ?? "claude");
+    route = null;
+  } else if (route) {
+    deps.onRouted?.(route);
+  }
+  const requestedAgent = route?.agent ?? input.agent ?? "claude";
+  if (deps.isAgentInstalled && !deps.isAgentInstalled(requestedAgent)) {
+    throw new Error(
+      `Agent '${requestedAgent}' is not installed (binary not found on PATH). Install it or pick another with --agent.`,
+    );
+  }
 
   // Crews run in an isolated worktree+branch by default so multiple parallel
   // crews never collide on a shared HEAD (#296). Pass shared:true (CLI: --shared)
@@ -443,16 +478,7 @@ export async function runCrewSpawn(
     firstTurnTask = `Read ./${basename} to get your task brief, then execute it.`;
   }
 
-  // #275 leveled crew routing: consult routing rules when agent/model were not
-  // explicitly provided by the caller. Explicit --agent or --model always win.
-  const route = !input.agentExplicit && !input.model
-    ? resolveCrewRoute(input.task, config)
-    : null;
-  if (route) {
-    deps.onRouted?.(route);
-  }
-
-  const agentName = route?.agent ?? input.agent ?? "claude";
+  const agentName = requestedAgent;
   const agent = deps.resolveAgent(agentName);
   if (!agent) {
     throw new Error(`Unknown agent '${agentName}'. Known: claude, codex, gemini, opencode.`);
@@ -642,7 +668,8 @@ export async function runCrewSpawn(
     // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
     const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
     const sendPromise = deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
-    const scrapeDelivered = sendPromise.then((r) => r.delivered).catch(() => false);
+    let agentNotStarted = false;
+    const scrapeDelivered = sendPromise.then((r) => { agentNotStarted = !!r.agentNotStarted; return r.delivered; }).catch(() => false);
     // #466/#745: surface non-delivery explicitly instead of silently returning
     // success — but when hooks are installed, the hook's daemon-side
     // confirmation is PRIMARY (see pollFirstTurnConfirmedAt above): the scrape
@@ -657,6 +684,7 @@ export async function runCrewSpawn(
         )
       : await scrapeDelivered;
     cancelHookPoll.stopped = true;
+    if (agentNotStarted) await failAgentNotStarted(deps, input.project, rec.id, name, agent.name);
     if (!delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
     } else if (!hooksInstalled) {
@@ -745,6 +773,7 @@ export async function runCrewSpawn(
       // "Ask anything…" (U+2026) this used to hardcode, which never matched.
       splashMarker: "Ask anything",
     } satisfies TurnAcceptanceConfig);
+    if (opencodeResult.agentNotStarted) await failAgentNotStarted(deps, input.project, rec.id, name, agent.name);
     // #466: surface non-delivery; emit confirmed event on success.
     if (!opencodeResult.delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);

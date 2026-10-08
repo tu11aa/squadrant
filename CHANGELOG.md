@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Crew spawn no longer launches an agent that isn't installed, or pastes the brief into a bare shell** (#892). Routing skips a rule whose agent binary isn't on PATH (reusing `doctor`'s `commandExists`) and falls back to the default agent, printing `routed: tier=… → opencode (not installed) → claude`. An explicit `--agent X` that isn't installed fails before any worktree or tab is created. If the pane shows a shell prompt instead of the agent TUI, first-turn delivery sends nothing, the task is marked `task.failed`, and the spawn errors instead of printing ✔ (claude and opencode branches).
 - **`crew close` no longer needs `--force` for the `.claude/settings.local.json` squadrant writes into every claude crew worktree** (#889). Only when that file is untracked is it ignored by the dirty-worktree guard and deleted before `git worktree remove`; a tracked/modified copy or any other uncommitted file still blocks close.
 
 ### Changed
