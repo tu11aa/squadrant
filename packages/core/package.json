@@ -9,6 +9,7 @@
   "scripts": { "build": "tsc -b" },
   "dependencies": {
     "@squadrant-ai/auto-gate": "0.3.2",
-    "@squadrant/shared": "workspace:*"
+    "@squadrant/shared": "workspace:*",
+    "gray-matter": "^4.0.3"
   }
 }
