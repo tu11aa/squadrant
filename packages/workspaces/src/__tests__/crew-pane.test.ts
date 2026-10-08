@@ -1218,3 +1218,28 @@ describe("resendCrewFirstTurn — #466 daemon self-heal", () => {
     expect(sendKeyToPane).not.toHaveBeenCalled();
   });
 });
+
+describe("sendFirstTurnWhenReady — agent never started (#892)", () => {
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const SHELL = "$ opencode\nzsh: command not found: opencode\nuser@host repo %";
+
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  for (const [label, cfg] of [["claude path", undefined], ["opencode splash path", { splashMarker: "Ask anything" }]] as const) {
+    it(`${label}: a bare shell is never sent the brief`, async () => {
+      const readPaneScreen = vi.fn().mockResolvedValue(SHELL);
+      const sendToPane = vi.fn();
+      const pasteToPane = vi.fn();
+      const sendKeyToPane = vi.fn();
+      const p = sendFirstTurnWhenReady(
+        { readPaneScreen, sendToPane, pasteToPane, sendKeyToPane }, pane, "the brief", "$ launch", cfg,
+      );
+      await vi.advanceTimersByTimeAsync(100000);
+      await expect(p).resolves.toEqual({ delivered: false, agentNotStarted: true });
+      expect(sendToPane).not.toHaveBeenCalled();
+      expect(pasteToPane).not.toHaveBeenCalled();
+      expect(sendKeyToPane).not.toHaveBeenCalled();
+    });
+  }
+});
