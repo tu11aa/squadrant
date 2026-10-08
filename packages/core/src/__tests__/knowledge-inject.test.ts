@@ -122,6 +122,9 @@ describe("cleanPromptQuery", () => {
     const q = cleanPromptQuery("Please fix the branch!\n```\nconst secretThing = 1\n```\n" + "x".repeat(500) + "\nsee https://example.com/foo and open a PR");
     expect(q).toBe("fix branch open pr");
   });
+  it("adds the parts of hyphen/dot tokens and drops rule-meta words", () => {
+    expect(cleanPromptQuery("list the branch-naming rule and any must-not rules")).toBe("list branch-naming branch naming");
+  });
 });
 
 describe("dedup store", () => {
