@@ -85,19 +85,23 @@ export async function runCrewAnswer(
   if (match) {
     const dialog = await runtime.findDialog!(match).catch(() => undefined);
     if (dialog) {
-      const options: ModalOption[] = dialog.options.map((o) => ({ ...o, highlighted: false }));
-      const target = resolveOption(options, option);
-      if (opts?.expect && !target.label.toLowerCase().includes(opts.expect.toLowerCase())) {
-        throw new Error(
-          `Refusing: option ${target.index} is "${target.label}", which does not contain expected text "${opts.expect}". ` +
-            `Visible options:\n${describeOptions(options)}`,
-        );
-      }
       const log = deps.log ?? (() => {});
-      log(`→ answering ${target.index}. "${target.label}" via the runtime (no keystrokes)`);
-      const ok = await runtime.answerDialog!(dialog, opts?.text ? { text: opts.text } : { label: target.label }).catch(() => false);
-      if (ok) return { selected: target, closed: true };
-      log("runtime answer was not accepted — falling back to keystrokes");
+      const options: ModalOption[] = dialog.options.map((o) => ({ ...o, highlighted: false }));
+      // A selector/--expect miss here falls through: the keystroke path re-checks
+      // against what the screen actually shows.
+      let target: ModalOption | undefined;
+      try {
+        target = resolveOption(options, option);
+        if (opts?.expect && !target.label.toLowerCase().includes(opts.expect.toLowerCase())) target = undefined;
+      } catch {
+        target = undefined;
+      }
+      if (target) {
+        log(`→ answering ${target.index}. "${target.label}" via the runtime (no keystrokes)`);
+        const ok = await runtime.answerDialog!(dialog, opts?.text ? { text: opts.text } : { label: target.label }).catch(() => false);
+        if (ok) return { selected: target, closed: true };
+      }
+      log("runtime answer not applied — falling back to keystrokes");
     }
   }
 

@@ -2332,7 +2332,7 @@ describe("findDialog / answerDialog (Feed, #918)", () => {
   it("finds a question by claude session id and lists option labels", async () => {
     feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2", workstream_id: ws("other") }]);
     await expect(driver.findDialog!({ agentSessionId: "s1" })).resolves.toEqual({
-      id: "question:r1",
+      id: "r1",
       options: [{ index: 1, label: "Red" }, { index: 2, label: "Green" }],
     });
     expect(rpcs()[0]).toEqual(["rpc", "feed.list", '{"pending_only":true}']);
@@ -2340,7 +2340,7 @@ describe("findDialog / answerDialog (Feed, #918)", () => {
 
   it("falls back to cwd, and refuses to guess among several items", async () => {
     feed("cmux 0.65.0 (108)", [question]);
-    expect((await driver.findDialog!({ cwd: "/wt" }))?.id).toBe("question:r1");
+    expect((await driver.findDialog!({ cwd: "/wt" }))?.id).toBe("r1");
     feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2" }]);
     await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
   });
@@ -2359,16 +2359,11 @@ describe("findDialog / answerDialog (Feed, #918)", () => {
     await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
   });
 
-  it("exposes permission and plan dialogs with fixed reply modes", async () => {
+  it("leaves permission and plan dialogs to the keystroke path", async () => {
     feed("cmux 0.65.0", [{ request_id: "p1", kind: "permissionRequest", cwd: "/wt" }]);
-    const d = (await driver.findDialog!({ cwd: "/wt" }))!;
-    expect(d.options.map((o) => o.label)).toEqual(["Allow once", "Always allow", "Deny"]);
-    await expect(driver.answerDialog!(d, { label: "Deny" })).resolves.toBe(true);
-    expect(rpcs().at(-1)).toEqual(["rpc", "feed.permission.reply", '{"request_id":"p1","mode":"deny"}']);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
     feed("cmux 0.65.0", [{ request_id: "e1", kind: "exitPlan", cwd: "/wt" }]);
-    const p = (await driver.findDialog!({ cwd: "/wt" }))!;
-    await driver.answerDialog!(p, { label: "Auto-accept edits" });
-    expect(rpcs().at(-1)).toEqual(["rpc", "feed.exit_plan.reply", '{"request_id":"e1","mode":"autoAccept"}']);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
   });
 
   it("answers a question with the option label, or free text, as selections", async () => {

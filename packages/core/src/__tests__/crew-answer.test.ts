@@ -266,8 +266,13 @@ describe("runCrewAnswer — runtime structured answer (#918)", () => {
     expect(runtime.answerDialog).toHaveBeenCalledWith(dialog, { text: "teal" });
   });
 
-  it("honours --expect before answering", async () => {
+  it("falls back to keystrokes (screen re-check) on an --expect mismatch", async () => {
     const { runtime, deps } = setup();
+    deps.readModalOptions.mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValue(null);
+    await runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", deps, { expect: "red" });
+    expect(runtime.answerDialog).toHaveBeenCalledTimes(1);
+    deps.readModalOptions.mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValue(null);
+    (runtime.answerDialog as ReturnType<typeof vi.fn>).mockClear();
     await expect(
       runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", deps, { expect: "green" }),
     ).rejects.toThrow("Refusing");

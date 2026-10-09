@@ -123,11 +123,6 @@ interface FeedItem {
   questions?: Array<{ options?: Array<{ label?: string }> }>;
 }
 
-// Permission/plan items carry no option list; these are the cmux reply modes
-// we expose, in the order shown to the operator.
-const FEED_PERMISSION_MODES: Record<string, string> = { "Allow once": "once", "Always allow": "always", Deny: "deny" };
-const FEED_PLAN_MODES: Record<string, string> = { "Approve manually": "manual", "Auto-accept edits": "autoAccept", Deny: "deny" };
-
 function feedSessionOf(item: FeedItem): string | undefined {
   const parts = item.workstream_id?.split(":");
   if (parts?.[0] !== "cmux-feed-v1" || !parts[2]) return undefined;
@@ -1050,42 +1045,22 @@ export function createCmuxDriver(): RuntimeDriver {
       // Ambiguous (several open dialogs for one crew) is not safe to guess at.
       if (mine.length !== 1 || !mine[0].request_id) return undefined;
       const item = mine[0];
-      let labels: string[];
-      if (item.kind === "question") {
-        if (item.questions?.length !== 1) return undefined;
-        labels = (item.questions[0].options ?? []).map((o) => o.label ?? "");
-      } else if (item.kind === "permissionRequest") {
-        labels = Object.keys(FEED_PERMISSION_MODES);
-      } else if (item.kind === "exitPlan") {
-        labels = Object.keys(FEED_PLAN_MODES);
-      } else {
-        return undefined;
-      }
+      // Only questions: Feed carries their real option list, matching the screen.
+      // Permission/plan prompts have no option list in Feed (the screen's varies),
+      // so they keep the keystroke path.
+      if (item.kind !== "question" || item.questions?.length !== 1) return undefined;
+      const labels = (item.questions[0].options ?? []).map((o) => o.label ?? "");
       if (labels.length === 0) return undefined;
       return {
-        id: `${item.kind}:${item.request_id}`,
+        id: item.request_id!,
         options: labels.map((label, i) => ({ index: i + 1, label })),
       };
     },
 
     async answerDialog(dialog: PendingDialog, answer: { label?: string; text?: string }): Promise<boolean> {
-      const sep = dialog.id.indexOf(":");
-      const kind = dialog.id.slice(0, sep);
-      const request_id = dialog.id.slice(sep + 1);
       const reply = answer.text ?? answer.label;
       if (!reply) return false;
-      let method: string;
-      let params: object;
-      if (kind === "question") {
-        method = "feed.question.reply";
-        params = { request_id, selections: [reply] };
-      } else {
-        const mode = (kind === "exitPlan" ? FEED_PLAN_MODES : FEED_PERMISSION_MODES)[reply];
-        if (!mode || answer.text !== undefined) return false;
-        method = kind === "exitPlan" ? "feed.exit_plan.reply" : "feed.permission.reply";
-        params = { request_id, mode };
-      }
-      const res = (await feedRpc(method, params)) as { delivered?: boolean };
+      const res = (await feedRpc("feed.question.reply", { request_id: dialog.id, selections: [reply] })) as { delivered?: boolean };
       return res.delivered === true;
     },
 
