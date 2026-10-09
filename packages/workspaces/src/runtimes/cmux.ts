@@ -1,9 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
-import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, PaneInputOptions, RuntimePaneOptions } from "./types.js";
+import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceRef, PaneRef, PaneInputOptions, PaneInputState, RuntimePaneOptions } from "./types.js";
 import { resolveCmuxBin } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { compatManifest } from "@squadrant/shared";
-import type { ModalOption } from "@squadrant/shared";
+import type { ModalOption, DialogMatch, PendingDialog } from "@squadrant/shared";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -109,6 +109,28 @@ export async function cmuxHasInputGuards(): Promise<boolean> {
   const [major, minor] = [Number(m[1]), Number(m[2])];
   inputGuardsCache = major > 0 || minor >= 65;
   return inputGuardsCache;
+}
+
+// cmux Feed (0.65+): every claude AskUserQuestion / permission / plan prompt is
+// a pending Feed item answerable over the control socket by request_id. Items
+// carry no surface id, so a crew is matched by the claude session id embedded
+// in workstream_id ("cmux-feed-v1:<b64 agent>:<b64 session id>") or by cwd.
+interface FeedItem {
+  request_id?: string;
+  kind?: string;
+  cwd?: string;
+  workstream_id?: string;
+  questions?: Array<{ options?: Array<{ label?: string }> }>;
+}
+
+function feedSessionOf(item: FeedItem): string | undefined {
+  const parts = item.workstream_id?.split(":");
+  if (parts?.[0] !== "cmux-feed-v1" || !parts[2]) return undefined;
+  return Buffer.from(parts[2], "base64").toString("utf-8");
+}
+
+async function feedRpc(method: string, params: object): Promise<unknown> {
+  return JSON.parse(await cmux(["rpc", method, JSON.stringify(params)]));
 }
 
 /** Test-only: forget the cached cmux version. */
@@ -842,6 +864,33 @@ export function createCmuxDriver(): RuntimeDriver {
       return { workspaceId: wsId, surfaceId, title: opts.title };
     },
 
+    // #916: cmux >= 0.65 `surface.input_state` reads the render grid (incl. faint
+    // spans) without touching the pane. The RPC needs a surface UUID, and an
+    // unknown ref would silently fall back to the focused surface, so resolve the
+    // ref through the tree first. Anything unexpected → undefined (old path).
+    async inputState(pane: PaneRef): Promise<PaneInputState | undefined> {
+      try {
+        if (!(await cmuxHasInputGuards())) return undefined;
+        const tree = JSON.parse(await cmux(["tree", "--workspace", pane.workspaceId, "--json", "--id-format", "both"])) as {
+          windows?: Array<{ workspaces?: Array<{ panes?: Array<{ surfaces?: Array<{ ref?: string; id?: string }> }> }> }>;
+        };
+        const id = tree.windows
+          ?.flatMap((w) => w.workspaces ?? [])
+          .flatMap((w) => w.panes ?? [])
+          .flatMap((p) => p.surfaces ?? [])
+          .find((s) => s.ref === pane.surfaceId)?.id;
+        if (!id) return undefined;
+        const r = JSON.parse(await cmux(["rpc", "surface.input_state", JSON.stringify({ surface_id: id })])) as {
+          state?: string; agent?: boolean;
+        };
+        // agent:false = the session's hooks haven't reported in (e.g. trust panel up).
+        if (r.agent !== true) return "unknown";
+        return r.state === "empty" || r.state === "draft" || r.state === "dialog" ? r.state : "unknown";
+      } catch {
+        return undefined;
+      }
+    },
+
     async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void> {
       const ws = surface.workspaceId;
       const sf = surface.surfaceId;
@@ -872,6 +921,18 @@ export function createCmuxDriver(): RuntimeDriver {
           process.stderr.write(`[squadrant] send-debug ${JSON.stringify({ surface: sf, verdict, payload, preBox, postBox })}\n`);
         }
       };
+
+      // #916: prefer the runtime's own input state over screen-scraping. Only a
+      // definite verdict short-circuits; unknown/undefined/opencode (#786 gate) fall
+      // through to the unchanged path below, so the #302 probe survives only as that
+      // fallback. Draft content is unknown here, so DeferDelivery carries null and
+      // the relay's stability-based probe escalation never triggers.
+      if (opts?.agent !== "opencode") {
+        const state = await this.inputState?.(surface);
+        if (state === "draft") throw new DeferDelivery(null, "draft");
+        if (state === "dialog") throw new DeferDelivery(null, "modal");
+        if (state === "empty") { await deliver(); return; }
+      }
 
       // #258/#268 Approach B: deliver only when the captain's input is positively
       // confirmed empty. null = box not visible (overlay/menu/scroll) → always defer.
@@ -1004,6 +1065,42 @@ export function createCmuxDriver(): RuntimeDriver {
       if (opts.focus === false) args.push("--no-focus");
       else args.push("--focus", "true");
       await cmux(args);
+    },
+
+    // Feed-backed structured answer (#918). cmux >= 0.65 only; any miss
+    // (old cmux, no matching item, unsupported shape) is undefined so the
+    // caller keeps the keystroke path.
+    async findDialog(match: DialogMatch): Promise<PendingDialog | undefined> {
+      if (!(await cmuxHasInputGuards())) return undefined;
+      let items: FeedItem[];
+      try {
+        items = ((await feedRpc("feed.list", { pending_only: true })) as { items?: FeedItem[] }).items ?? [];
+      } catch {
+        return undefined;
+      }
+      const mine = items.filter((i) =>
+        match.agentSessionId ? feedSessionOf(i) === match.agentSessionId : !!match.cwd && i.cwd === match.cwd,
+      );
+      // Ambiguous (several open dialogs for one crew) is not safe to guess at.
+      if (mine.length !== 1 || !mine[0].request_id) return undefined;
+      const item = mine[0];
+      // Only questions: Feed carries their real option list, matching the screen.
+      // Permission/plan prompts have no option list in Feed (the screen's varies),
+      // so they keep the keystroke path.
+      if (item.kind !== "question" || item.questions?.length !== 1) return undefined;
+      const labels = (item.questions[0].options ?? []).map((o) => o.label ?? "");
+      if (labels.length === 0) return undefined;
+      return {
+        id: item.request_id!,
+        options: labels.map((label, i) => ({ index: i + 1, label })),
+      };
+    },
+
+    async answerDialog(dialog: PendingDialog, answer: { label?: string; text?: string }): Promise<boolean> {
+      const reply = answer.text ?? answer.label;
+      if (!reply) return false;
+      const res = (await feedRpc("feed.question.reply", { request_id: dialog.id, selections: [reply] })) as { delivered?: boolean };
+      return res.delivered === true;
     },
 
     async showPatch(opts: {

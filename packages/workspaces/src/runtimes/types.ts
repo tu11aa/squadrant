@@ -3,9 +3,12 @@ export type {
   WorkspaceRef,
   PaneRef,
   PaneInputOptions,
+  PaneInputState,
   RuntimeSpawnOptions,
   PanePlacement,
   RuntimePaneOptions,
   RuntimeProbeResult,
   RuntimeDriver,
+  PendingDialog,
+  DialogMatch,
 } from "@squadrant/shared";

@@ -2312,3 +2312,183 @@ describe("sendToSurface probe restore --force gate (B1)", () => {
     expect(restoreSends()).toEqual([["send", "--workspace", "workspace:3", "--surface", "surface:8", "crew done"]]);
   });
 });
+
+// #918: findDialog/answerDialog over cmux Feed (0.65+). Items carry no surface
+// id, so a crew is matched by the claude session id in workstream_id, or cwd.
+describe("findDialog / answerDialog (Feed, #918)", () => {
+  const driver = createCmuxDriver();
+  const ws = (sid: string) => `cmux-feed-v1:${Buffer.from("claude").toString("base64")}:${Buffer.from(sid).toString("base64")}`;
+  const question = { request_id: "r1", kind: "question", cwd: "/wt", workstream_id: ws("s1"), questions: [{ prompt: "Pick", options: [{ label: "Red" }, { label: "Green" }] }] };
+  const feed = (version: string, items: unknown[], reply: unknown = { delivered: true }) =>
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("--version")) return version;
+      if (args[1] === "feed.list") return JSON.stringify({ items });
+      return JSON.stringify(reply);
+    });
+  const rpcs = () => execFileMock.mock.calls.map(argvOf).filter((a) => a[0] === "rpc");
+  beforeEach(() => { execFileMock.mockReset(); resetCmuxInputGuardsCache(); });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  it("finds a question by claude session id and lists option labels", async () => {
+    feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2", workstream_id: ws("other") }]);
+    await expect(driver.findDialog!({ agentSessionId: "s1" })).resolves.toEqual({
+      id: "r1",
+      options: [{ index: 1, label: "Red" }, { index: 2, label: "Green" }],
+    });
+    expect(rpcs()[0]).toEqual(["rpc", "feed.list", '{"pending_only":true}']);
+  });
+
+  it("falls back to cwd, and refuses to guess among several items", async () => {
+    feed("cmux 0.65.0 (108)", [question]);
+    expect((await driver.findDialog!({ cwd: "/wt" }))?.id).toBe("r1");
+    feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("is undefined below cmux 0.65 without touching Feed", async () => {
+    feed("cmux 0.64.22 (99)", [question]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+    expect(rpcs()).toEqual([]);
+  });
+
+  it("is undefined when feed.list fails", async () => {
+    execFileMock.mockImplementation((_b: string, args: string[]) => {
+      if (args.includes("--version")) return "cmux 0.65.0";
+      throw new Error("boom");
+    });
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("leaves permission and plan dialogs to the keystroke path", async () => {
+    feed("cmux 0.65.0", [{ request_id: "p1", kind: "permissionRequest", cwd: "/wt" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+    feed("cmux 0.65.0", [{ request_id: "e1", kind: "exitPlan", cwd: "/wt" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("answers a question with the option label, or free text, as selections", async () => {
+    feed("cmux 0.65.0", [question]);
+    const d = (await driver.findDialog!({ cwd: "/wt" }))!;
+    await expect(driver.answerDialog!(d, { label: "Green" })).resolves.toBe(true);
+    expect(rpcs().at(-1)).toEqual(["rpc", "feed.question.reply", '{"request_id":"r1","selections":["Green"]}']);
+    await driver.answerDialog!(d, { text: "teal" });
+    expect(rpcs().at(-1)).toEqual(["rpc", "feed.question.reply", '{"request_id":"r1","selections":["teal"]}']);
+  });
+
+  it("reports false when cmux did not deliver", async () => {
+    feed("cmux 0.65.0", [question], { delivered: false });
+    const d = (await driver.findDialog!({ cwd: "/wt" }))!;
+    await expect(driver.answerDialog!(d, { label: "Red" })).resolves.toBe(false);
+  });
+});
+
+// #916: RuntimeDriver.inputState via cmux `surface.input_state` (cmux >= 0.65).
+describe("inputState / sendToSurface native input state (#916)", () => {
+  const driver = createCmuxDriver();
+  const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+  const UUID = "8FD987D1-5F4C-4D15-BD04-E99A240B8FF5";
+
+  beforeEach(() => {
+    execFileMock.mockReset();
+    resetCmuxInputGuardsCache();
+  });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  const tree = JSON.stringify({
+    windows: [{ workspaces: [{ ref: "workspace:3", panes: [{ surfaces: [
+      { ref: "surface:7", id: "OTHER" },
+      { ref: "surface:8", id: UUID },
+    ] }] }] }],
+  });
+  const rpcOut = (o: object) => JSON.stringify({ agent: true, terminal: true, blocks_typing: false, ...o });
+
+  // version = cmux --version output; rpc = what surface.input_state returns (or throws)
+  function mockCmux(version: string, rpc: () => string, screen = makeTestScreen("❯ ▌")) {
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args[0] === "--version") return version;
+      if (args[0] === "tree") return tree;
+      if (args[0] === "rpc") return rpc();
+      if (args.includes("read-screen")) return screen;
+      return "";
+    });
+  }
+  const V65 = "cmux 0.65.0 (108) [dda24fbd2]";
+  const V64 = "cmux 0.64.22 (97) [3faf000]";
+  const argvs = () => execFileMock.mock.calls.map(argvOf);
+
+  it.each([
+    ["empty", { state: "empty" }, "empty"],
+    ["draft", { state: "draft", blocks_typing: true }, "draft"],
+    ["dialog", { state: "dialog", waiting_on_human: true }, "dialog"],
+    ["unknown", { state: "unknown" }, "unknown"],
+    ["empty but agent not yet reporting", { state: "empty", agent: false }, "unknown"],
+  ])("maps %s", async (_n, payload, expected) => {
+    mockCmux(V65, () => rpcOut(payload));
+    expect(await driver.inputState!(pane)).toBe(expected);
+    const rpc = argvs().find((a) => a[0] === "rpc")!;
+    expect(rpc).toEqual(["rpc", "surface.input_state", JSON.stringify({ surface_id: UUID })]);
+  });
+
+  it("is undefined on cmux < 0.65 and never calls the rpc", async () => {
+    mockCmux(V64, () => rpcOut({ state: "empty" }));
+    expect(await driver.inputState!(pane)).toBeUndefined();
+    expect(argvs().some((a) => a[0] === "rpc")).toBe(false);
+  });
+
+  it("is undefined when the surface cannot be resolved to a UUID", async () => {
+    mockCmux(V65, () => rpcOut({ state: "empty" }));
+    expect(await driver.inputState!({ workspaceId: "workspace:3", surfaceId: "surface:99" })).toBeUndefined();
+    expect(argvs().some((a) => a[0] === "rpc")).toBe(false);
+  });
+
+  it("is undefined on rpc error or unparseable output", async () => {
+    mockCmux(V65, () => { throw new Error("not_found"); });
+    expect(await driver.inputState!(pane)).toBeUndefined();
+    mockCmux(V65, () => "garbage");
+    expect(await driver.inputState!(pane)).toBeUndefined();
+  });
+
+  it("empty → delivers with no backspace probe and no read-screen parse", async () => {
+    mockCmux(V65, () => rpcOut({ state: "empty" }));
+    await driver.sendToSurface(pane, "crew done", { probe: true });
+    const calls = argvs();
+    expect(calls.some((a) => a.includes("backspace"))).toBe(false);
+    expect(calls.filter((a) => a[0] === "send")).toEqual([["send", "--workspace", "workspace:3", "--surface", "surface:8", "crew done"]]);
+    expect(calls.some((a) => a[0] === "send-key" && a.includes("Enter"))).toBe(true);
+  });
+
+  it("draft → defers (reason draft) with zero mutation, even when probe-escalated", async () => {
+    mockCmux(V65, () => rpcOut({ state: "draft", blocks_typing: true }));
+    const err = await driver.sendToSurface(pane, "crew done", { probe: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(DeferDelivery);
+    expect(err.reason).toBe("draft");
+    expect(argvs().some((a) => a[0] === "send" || a[0] === "send-key")).toBe(false);
+  });
+
+  it("dialog → defers (reason modal) with zero mutation", async () => {
+    mockCmux(V65, () => rpcOut({ state: "dialog" }));
+    const err = await driver.sendToSurface(pane, "crew done").catch((e) => e);
+    expect(err).toBeInstanceOf(DeferDelivery);
+    expect(err.reason).toBe("modal");
+    expect(argvs().some((a) => a[0] === "send" || a[0] === "send-key")).toBe(false);
+  });
+
+  it("unknown → falls back to the screen-scrape path unchanged", async () => {
+    mockCmux(V65, () => rpcOut({ state: "unknown" }), makeTestScreen("❯ half-typed"));
+    const err = await driver.sendToSurface(pane, "crew done").catch((e) => e);
+    expect(err).toBeInstanceOf(DeferDelivery);
+    expect(err.draft).toBe("half-typed");
+  });
+
+  it("rpc error → falls back to the screen-scrape path unchanged", async () => {
+    mockCmux(V65, () => { throw new Error("boom"); });
+    await driver.sendToSurface(pane, "crew done");
+    expect(argvs().filter((a) => a[0] === "send")).toHaveLength(1);
+  });
+
+  it("opencode target skips the native state and keeps the #786 gate", async () => {
+    mockCmux(V65, () => rpcOut({ state: "empty" }));
+    await driver.sendToSurface(pane, "crew done", { agent: "opencode" }).catch(() => {});
+    expect(argvs().some((a) => a[0] === "rpc")).toBe(false);
+  });
+});

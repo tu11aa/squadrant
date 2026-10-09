@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.3] - 2026-10-09
+
+Refs #326. Closes #916, #917, #918.
+
+### Added
+
+- **`RuntimeDriver.inputState` via cmux `surface.input_state`** (#930, closes #916). New optional runtime capability returning `empty` / `draft` / `dialog` / `unknown`, implemented by the cmux driver on cmux >= 0.65. When the state is known, delivery no longer uses the #302 backspace probe: `empty` delivers with no screen parse, `draft` defers, `dialog` defers as a modal. `unknown`, errors, older cmux and opencode keep the previous path. Other runtimes can skip the method.
+- **`crew answer` through an optional dialog capability** (#932, closes #918). `RuntimeDriver.findDialog` / `answerDialog`, implemented by cmux over Feed on cmux >= 0.65, answer a claude crew's AskUserQuestion dialog with a structured reply instead of keystrokes. This avoids the cmux 0.65 `send-key` refusal into dialogs (B2). Free-text answers work. Permission and plan-approval prompts, multi-question prompts, other agents, and any miss or `--expect` mismatch stay on the keystroke path.
+- **cmux 0.65 adoption research** (#919). `docs/specs/2026-10-08-cmux-0.65-adoption-research.md`.
+
+### Changed
+
+- **Claude crew first turn goes over the peer channel** (#931, closes #917). When claude's `controlChannel` is `on`, the full brief is sent as a peer message once the session registry reports `idle`, instead of the pane paste loop. Spawn to first turn measured 94.7s → 1.6s on the same machine. The brief keeps its line breaks and is not spilled to a file. Failure falls back to the existing pane path, and an accepted-but-unconfirmed send never pastes a duplicate. Other agents are unchanged.
+- A pre-existing draft in a pane now defers delivery instead of being pasted over on cmux >= 0.65 (#930). A stuck first-turn draft keeps deferring until cleared.
+
+### Fixed
+
+- **Folder-trust panel during claude spawn** (#931). The panel is detected by its real wording and answered. The cursor starts on "No, exit", so it steps to "Yes" before Enter instead of quitting claude.
+
 ## [0.26.2] - 2026-10-08
 
 Refs #899, #893.

@@ -239,3 +239,59 @@ describe("runCrewAnswer", () => {
     expect(runtime.sendKeyToPane).not.toHaveBeenCalled();
   });
 });
+
+// #918: structured answer through the runtime's optional findDialog/answerDialog.
+describe("runCrewAnswer — runtime structured answer (#918)", () => {
+  const dialog = { id: "question:r1", options: [{ index: 1, label: "Red" }, { index: 2, label: "Green" }] };
+  const crew = () => makePaneRef("5");
+  const setup = (over: Partial<RuntimeDriver> = {}) => {
+    const runtime = makeRuntime([{ ...crew(), title: "🔧 myproj:crew-1" }]);
+    Object.assign(runtime, { findDialog: vi.fn().mockResolvedValue(dialog), answerDialog: vi.fn().mockResolvedValue(true) }, over);
+    const deps = { readModalOptions: vi.fn().mockResolvedValue(null), dialogMatch: vi.fn().mockResolvedValue({ agentSessionId: "s1" }) };
+    return { runtime, deps };
+  };
+
+  it("answers by label with no keystrokes and never reads the screen", async () => {
+    const { runtime, deps } = setup();
+    const r = await runCrewAnswer(PROJECT, "crew-1", "2", runtime, "workspace:1", deps);
+    expect(runtime.answerDialog).toHaveBeenCalledWith(dialog, { label: "Green" });
+    expect(runtime.sendKeyToPane).not.toHaveBeenCalled();
+    expect(deps.readModalOptions).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ selected: { index: 2, label: "Green" }, closed: true });
+  });
+
+  it("passes --text through as free text", async () => {
+    const { runtime, deps } = setup();
+    await runCrewAnswer(PROJECT, "crew-1", "2", runtime, "workspace:1", deps, { text: "teal" });
+    expect(runtime.answerDialog).toHaveBeenCalledWith(dialog, { text: "teal" });
+  });
+
+  it("falls back to keystrokes (screen re-check) on an --expect mismatch", async () => {
+    const { runtime, deps } = setup();
+    deps.readModalOptions.mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValue(null);
+    await runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", deps, { expect: "red" });
+    expect(runtime.answerDialog).toHaveBeenCalledTimes(1);
+    deps.readModalOptions.mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValue(null);
+    (runtime.answerDialog as ReturnType<typeof vi.fn>).mockClear();
+    await expect(
+      runCrewAnswer(PROJECT, "crew-1", "1", runtime, "workspace:1", deps, { expect: "green" }),
+    ).rejects.toThrow("Refusing");
+    expect(runtime.answerDialog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no capability", { findDialog: undefined, answerDialog: undefined }, true],
+    ["no match (non-claude agent)", {}, false],
+    ["no pending dialog", { findDialog: vi.fn().mockResolvedValue(undefined) }, true],
+    ["reply refused", { answerDialog: vi.fn().mockResolvedValue(false) }, true],
+    ["reply throws", { answerDialog: vi.fn().mockRejectedValue(new Error("x")) }, true],
+  ])("falls back to keystrokes: %s", async (_n, over, withMatch) => {
+    const { runtime, deps } = setup(over as Partial<RuntimeDriver>);
+    if (!withMatch) deps.dialogMatch.mockResolvedValue(undefined);
+    deps.readModalOptions.mockResolvedValueOnce(VERTICAL_MODAL).mockResolvedValue(null);
+    const r = await runCrewAnswer(PROJECT, "crew-1", "2", runtime, "workspace:1", deps);
+    expect(runtime.sendKeyToPane).toHaveBeenCalledWith(expect.anything(), "Enter", FORCE);
+    expect(r.closed).toBe(true);
+  });
+});
+
