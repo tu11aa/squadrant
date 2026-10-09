@@ -69,6 +69,7 @@ export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
 
 export { FIRST_TURN_INLINE_MAX_BYTES } from "./first-turn-spill.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
+import type { PeerFirstTurnResult } from "./peer-first-turn.js";
 
 import {
   buildCompletionProtocol,
@@ -191,6 +192,11 @@ export interface CrewSpawnDeps {
    *  { delivered: true } when positively confirmed, { delivered: false } when
    *  all retry paths exhausted without confirmation (#466). */
   sendFirstTurn(pane: PaneRef, firstTurn: string, preLaunchScreen: string, opts?: TurnAcceptanceConfig): Promise<{ delivered: boolean; agentNotStarted?: boolean }>;
+  /** #917: CLI-edge — deliver a claude crew's first turn over the peer channel,
+   *  gated on registry idle. Absent (or controlChannel not `on`) ⇒ the pane path
+   *  below is used unchanged. `fallback` ⇒ nothing was sent, use the pane path;
+   *  `unconfirmed` ⇒ bytes were accepted, never paste a duplicate. */
+  sendFirstTurnPeer?(o: { pane: PaneRef; taskId: string; project: string; messagingSocketPath: string; message: string }): Promise<PeerFirstTurnResult>;
   /** #892: CLI-edge — is this agent's binary on PATH (same resolution as `doctor`)?
    *  Absent ⇒ assume installed (no preflight). */
   isAgentInstalled?(name: string): boolean;
@@ -667,7 +673,15 @@ export async function runCrewSpawn(
     // #730: spill an oversized first-turn to a temp file rather than risking a
     // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
     const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
-    const sendPromise = deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen);
+    // #917: peer channel first — the brief goes in whole (no spill, no
+    // single-line flattening). Only a `fallback` result reaches the pane path.
+    const peerBrief = `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`;
+    const peerResult = deps.sendFirstTurnPeer
+      ? await deps.sendFirstTurnPeer({ pane, taskId: rec.id, project: input.project, messagingSocketPath, message: peerBrief }).catch((): PeerFirstTurnResult => ({ kind: "fallback" }))
+      : ({ kind: "fallback" } as PeerFirstTurnResult);
+    const sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }> = peerResult.kind === "fallback"
+      ? deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen)
+      : Promise.resolve({ delivered: peerResult.kind === "delivered" });
     let agentNotStarted = false;
     const scrapeDelivered = sendPromise.then((r) => { agentNotStarted = !!r.agentNotStarted; return r.delivered; }).catch(() => false);
     // #466/#745: surface non-delivery explicitly instead of silently returning
