@@ -48,6 +48,11 @@ export interface ModalOption {
   highlighted: boolean;
 }
 
+// Runtime-reported state of an agent's prompt (#916). "unknown" = the runtime
+// can't tell (unrecognised agent, session not yet reporting, ...) — callers must
+// treat it exactly like a missing capability and fall back to screen inspection.
+export type PaneInputState = "empty" | "draft" | "dialog" | "unknown";
+
 export interface RuntimeDriver {
   name: string;                                        // "cmux", "tmux", ...
 
@@ -104,6 +109,13 @@ export interface RuntimeDriver {
   // opencode gate (deliver only on a positively-confirmed empty box), every
   // other value — including absent — keeps the claude parser unchanged.
   sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void>;
+
+  // Ask the runtime — without mutating the pane — what state the agent's prompt
+  // is in (#916). Optional: runtimes that can't tell simply omit it, and callers
+  // MUST treat `undefined`, "unknown", a throw, or a missing method identically:
+  // fall back to the screen-scrape path (parse + #302 probe) unchanged. "empty"
+  // means safe to deliver with no probe; "draft"/"dialog" mean defer.
+  inputState?(pane: PaneRef): Promise<PaneInputState | undefined>;
 
   // Render a review diff of a branch/worktree in the runtime's native diff
   // surface (#596). cmux: `cmux diff --branch --base <base> --cwd <cwd>
