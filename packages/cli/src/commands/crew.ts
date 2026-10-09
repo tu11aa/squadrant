@@ -220,6 +220,13 @@ export async function runCrewAnswer(
     workspaceId,
     {
       readModalOptions: (pane) => readModalOptions(runtime, pane),
+      // #918: only claude has a structured answer path; others keep keystrokes.
+      dialogMatch: async () => {
+        const tasks = (await squadrantdCall({ kind: "list", project }).catch(() => [])) as TaskRecord[];
+        const t = resolveApproveTarget(tasks, name);
+        if (!t || t.provider !== "claude" || !(t.sessionId || t.cwd)) return undefined;
+        return { agentSessionId: t.sessionId, cwd: t.cwd };
+      },
       log: (m) => console.log(chalk.dim(m)),
     },
     opts,
