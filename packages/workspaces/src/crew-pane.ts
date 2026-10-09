@@ -168,10 +168,16 @@ export async function readModalOptions(
  * pane at all when an AskUserQuestion/permission SELECTION MODAL is open (#516).
  */
 export async function confirmedSendToPane(
-  runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane">,
+  runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane" | "inputState">,
   pane: PaneRef,
   message: string,
 ): Promise<{ delivered: boolean; blockedByModal?: boolean }> {
+  // #916: the runtime's native input state, when it has one, is authoritative
+  // for dialog/draft — decided before any pane mutation. empty/unknown/undefined/
+  // a throw all fall through to the screen-scrape path below, unchanged.
+  const native = await runtime.inputState?.(pane).catch(() => undefined);
+  if (native === "dialog") return { delivered: false, blockedByModal: true };
+  if (native === "draft") return { delivered: false };
   const preSendScreen = (await runtime.readPaneScreen(pane)) ?? "";
   // #516: a selection modal renders its highlighted default option ("❯ 1. Red")
   // in the same HR-bounded region a real draft would occupy, so the settle

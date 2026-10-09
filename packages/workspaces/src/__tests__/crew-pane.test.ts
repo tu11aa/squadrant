@@ -341,6 +341,47 @@ describe("confirmedSendToPane — follow-up crew send (#448)", () => {
     for (const c of [...pasteToPane.mock.calls, ...sendKeyToPane.mock.calls]) expect(c[2]?.force).toBeFalsy();
   });
 
+  // #916: the runtime's native input state short-circuits the screen-scrape
+  // pre-check. dialog/draft → no pane mutation; anything else → today's path.
+  describe("native inputState (#916)", () => {
+    const withState = (inputState: () => Promise<unknown>) => ({ ...rt(), inputState } as unknown as Parameters<typeof confirmedSendToPane>[0]);
+
+    it("dialog → blockedByModal without touching the pane", async () => {
+      readPaneScreen.mockResolvedValue(EMPTY_BOX); // screen alone would NOT flag a modal
+      const r = await confirmedSendToPane(withState(async () => "dialog"), pane, "hi");
+      expect(r).toEqual({ delivered: false, blockedByModal: true });
+      expect(pasteToPane).not.toHaveBeenCalled();
+      expect(sendKeyToPane).not.toHaveBeenCalled();
+    });
+
+    it("draft → not delivered, pane untouched", async () => {
+      readPaneScreen.mockResolvedValue(EMPTY_BOX);
+      const r = await confirmedSendToPane(withState(async () => "draft"), pane, "hi");
+      expect(r).toEqual({ delivered: false });
+      expect(pasteToPane).not.toHaveBeenCalled();
+      expect(sendKeyToPane).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["empty", async () => "empty"],
+      ["unknown", async () => "unknown"],
+      ["undefined", async () => undefined],
+      ["throw", async () => { throw new Error("rpc"); }],
+    ])("%s → today's path (paste + Enter)", async (_n, inputState) => {
+      let n = 0;
+      readPaneScreen.mockImplementation(async () => {
+        n++;
+        if (n === 1) return box("");
+        if (n <= 3) return DRAFT_BOX;
+        return EMPTY_BOX;
+      });
+      const promise = confirmedSendToPane(withState(inputState), pane, "hi");
+      await vi.advanceTimersByTimeAsync(3000);
+      expect((await promise).delivered).toBe(true);
+      expect(pasteToPane).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // #448 regression: when the first Enter is absorbed (box still holds draft),
   // re-issue ONLY Enter — never re-paste the message.
   it("re-issues ONLY Enter when the first submit is stranded — never re-pastes", async () => {
