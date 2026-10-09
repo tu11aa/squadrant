@@ -2313,6 +2313,75 @@ describe("sendToSurface probe restore --force gate (B1)", () => {
   });
 });
 
+// #918: findDialog/answerDialog over cmux Feed (0.65+). Items carry no surface
+// id, so a crew is matched by the claude session id in workstream_id, or cwd.
+describe("findDialog / answerDialog (Feed, #918)", () => {
+  const driver = createCmuxDriver();
+  const ws = (sid: string) => `cmux-feed-v1:${Buffer.from("claude").toString("base64")}:${Buffer.from(sid).toString("base64")}`;
+  const question = { request_id: "r1", kind: "question", cwd: "/wt", workstream_id: ws("s1"), questions: [{ prompt: "Pick", options: [{ label: "Red" }, { label: "Green" }] }] };
+  const feed = (version: string, items: unknown[], reply: unknown = { delivered: true }) =>
+    execFileMock.mockImplementation((_bin: string, args: string[]) => {
+      if (args.includes("--version")) return version;
+      if (args[1] === "feed.list") return JSON.stringify({ items });
+      return JSON.stringify(reply);
+    });
+  const rpcs = () => execFileMock.mock.calls.map(argvOf).filter((a) => a[0] === "rpc");
+  beforeEach(() => { execFileMock.mockReset(); resetCmuxInputGuardsCache(); });
+  afterEach(() => resetCmuxInputGuardsCache());
+
+  it("finds a question by claude session id and lists option labels", async () => {
+    feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2", workstream_id: ws("other") }]);
+    await expect(driver.findDialog!({ agentSessionId: "s1" })).resolves.toEqual({
+      id: "r1",
+      options: [{ index: 1, label: "Red" }, { index: 2, label: "Green" }],
+    });
+    expect(rpcs()[0]).toEqual(["rpc", "feed.list", '{"pending_only":true}']);
+  });
+
+  it("falls back to cwd, and refuses to guess among several items", async () => {
+    feed("cmux 0.65.0 (108)", [question]);
+    expect((await driver.findDialog!({ cwd: "/wt" }))?.id).toBe("r1");
+    feed("cmux 0.65.0 (108)", [question, { ...question, request_id: "r2" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("is undefined below cmux 0.65 without touching Feed", async () => {
+    feed("cmux 0.64.22 (99)", [question]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+    expect(rpcs()).toEqual([]);
+  });
+
+  it("is undefined when feed.list fails", async () => {
+    execFileMock.mockImplementation((_b: string, args: string[]) => {
+      if (args.includes("--version")) return "cmux 0.65.0";
+      throw new Error("boom");
+    });
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("leaves permission and plan dialogs to the keystroke path", async () => {
+    feed("cmux 0.65.0", [{ request_id: "p1", kind: "permissionRequest", cwd: "/wt" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+    feed("cmux 0.65.0", [{ request_id: "e1", kind: "exitPlan", cwd: "/wt" }]);
+    await expect(driver.findDialog!({ cwd: "/wt" })).resolves.toBeUndefined();
+  });
+
+  it("answers a question with the option label, or free text, as selections", async () => {
+    feed("cmux 0.65.0", [question]);
+    const d = (await driver.findDialog!({ cwd: "/wt" }))!;
+    await expect(driver.answerDialog!(d, { label: "Green" })).resolves.toBe(true);
+    expect(rpcs().at(-1)).toEqual(["rpc", "feed.question.reply", '{"request_id":"r1","selections":["Green"]}']);
+    await driver.answerDialog!(d, { text: "teal" });
+    expect(rpcs().at(-1)).toEqual(["rpc", "feed.question.reply", '{"request_id":"r1","selections":["teal"]}']);
+  });
+
+  it("reports false when cmux did not deliver", async () => {
+    feed("cmux 0.65.0", [question], { delivered: false });
+    const d = (await driver.findDialog!({ cwd: "/wt" }))!;
+    await expect(driver.answerDialog!(d, { label: "Red" })).resolves.toBe(false);
+  });
+});
+
 // #916: RuntimeDriver.inputState via cmux `surface.input_state` (cmux >= 0.65).
 describe("inputState / sendToSurface native input state (#916)", () => {
   const driver = createCmuxDriver();

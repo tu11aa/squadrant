@@ -9,4 +9,6 @@ export type {
   RuntimePaneOptions,
   RuntimeProbeResult,
   RuntimeDriver,
+  PendingDialog,
+  DialogMatch,
 } from "@squadrant/shared";

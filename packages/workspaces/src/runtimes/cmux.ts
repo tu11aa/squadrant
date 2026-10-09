@@ -3,7 +3,7 @@ import type { RuntimeDriver, RuntimeProbeResult, RuntimeSpawnOptions, WorkspaceR
 import { resolveCmuxBin } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { compatManifest } from "@squadrant/shared";
-import type { ModalOption } from "@squadrant/shared";
+import type { ModalOption, DialogMatch, PendingDialog } from "@squadrant/shared";
 
 // 15s — cmux operations are local IPC (sub-50ms normally). 15s covers unusual
 // system load or a momentarily stuck cmux server without causing the captain
@@ -109,6 +109,28 @@ export async function cmuxHasInputGuards(): Promise<boolean> {
   const [major, minor] = [Number(m[1]), Number(m[2])];
   inputGuardsCache = major > 0 || minor >= 65;
   return inputGuardsCache;
+}
+
+// cmux Feed (0.65+): every claude AskUserQuestion / permission / plan prompt is
+// a pending Feed item answerable over the control socket by request_id. Items
+// carry no surface id, so a crew is matched by the claude session id embedded
+// in workstream_id ("cmux-feed-v1:<b64 agent>:<b64 session id>") or by cwd.
+interface FeedItem {
+  request_id?: string;
+  kind?: string;
+  cwd?: string;
+  workstream_id?: string;
+  questions?: Array<{ options?: Array<{ label?: string }> }>;
+}
+
+function feedSessionOf(item: FeedItem): string | undefined {
+  const parts = item.workstream_id?.split(":");
+  if (parts?.[0] !== "cmux-feed-v1" || !parts[2]) return undefined;
+  return Buffer.from(parts[2], "base64").toString("utf-8");
+}
+
+async function feedRpc(method: string, params: object): Promise<unknown> {
+  return JSON.parse(await cmux(["rpc", method, JSON.stringify(params)]));
 }
 
 /** Test-only: forget the cached cmux version. */
@@ -1043,6 +1065,42 @@ export function createCmuxDriver(): RuntimeDriver {
       if (opts.focus === false) args.push("--no-focus");
       else args.push("--focus", "true");
       await cmux(args);
+    },
+
+    // Feed-backed structured answer (#918). cmux >= 0.65 only; any miss
+    // (old cmux, no matching item, unsupported shape) is undefined so the
+    // caller keeps the keystroke path.
+    async findDialog(match: DialogMatch): Promise<PendingDialog | undefined> {
+      if (!(await cmuxHasInputGuards())) return undefined;
+      let items: FeedItem[];
+      try {
+        items = ((await feedRpc("feed.list", { pending_only: true })) as { items?: FeedItem[] }).items ?? [];
+      } catch {
+        return undefined;
+      }
+      const mine = items.filter((i) =>
+        match.agentSessionId ? feedSessionOf(i) === match.agentSessionId : !!match.cwd && i.cwd === match.cwd,
+      );
+      // Ambiguous (several open dialogs for one crew) is not safe to guess at.
+      if (mine.length !== 1 || !mine[0].request_id) return undefined;
+      const item = mine[0];
+      // Only questions: Feed carries their real option list, matching the screen.
+      // Permission/plan prompts have no option list in Feed (the screen's varies),
+      // so they keep the keystroke path.
+      if (item.kind !== "question" || item.questions?.length !== 1) return undefined;
+      const labels = (item.questions[0].options ?? []).map((o) => o.label ?? "");
+      if (labels.length === 0) return undefined;
+      return {
+        id: item.request_id!,
+        options: labels.map((label, i) => ({ index: i + 1, label })),
+      };
+    },
+
+    async answerDialog(dialog: PendingDialog, answer: { label?: string; text?: string }): Promise<boolean> {
+      const reply = answer.text ?? answer.label;
+      if (!reply) return false;
+      const res = (await feedRpc("feed.question.reply", { request_id: dialog.id, selections: [reply] })) as { delivered?: boolean };
+      return res.delivered === true;
     },
 
     async showPatch(opts: {

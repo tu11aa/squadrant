@@ -5,7 +5,7 @@
 // option list back, requires an EXPLICIT index or text match (never an
 // implicit default), and only then drives the selection.
 
-import type { RuntimeDriver, PaneRef, ModalOption } from "@squadrant/shared";
+import type { RuntimeDriver, PaneRef, ModalOption, DialogMatch } from "@squadrant/shared";
 import { findCrewPane } from "./crew-spawn.js";
 
 // cmux >= 0.65 refuses keys/text into an open agent dialog unless forced (B2).
@@ -18,6 +18,10 @@ export interface CrewAnswerDeps {
    *  claude's ❯ list (Up/Down), "horizontal" for opencode's ⇆ permission bar
    *  (Left/Right, #856). */
   readModalOptions(pane: PaneRef): Promise<{ options: ModalOption[]; axis: "vertical" | "horizontal" } | null>;
+  /** How to find this crew's dialog in a runtime's structured answer path (#918).
+   *  Return undefined for agents without one (only claude has it today) — the
+   *  keystroke path below is then used unchanged. */
+  dialogMatch?(): Promise<DialogMatch | undefined>;
   log?(msg: string): void;
 }
 
@@ -73,6 +77,32 @@ export async function runCrewAnswer(
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
+  }
+
+  // #918: prefer the runtime's structured answer (no keystrokes); any miss —
+  // no capability, no match, no pending dialog, a refused reply — falls through.
+  const match = runtime.findDialog && runtime.answerDialog ? await deps.dialogMatch?.() : undefined;
+  if (match) {
+    const dialog = await runtime.findDialog!(match).catch(() => undefined);
+    if (dialog) {
+      const log = deps.log ?? (() => {});
+      const options: ModalOption[] = dialog.options.map((o) => ({ ...o, highlighted: false }));
+      // A selector/--expect miss here falls through: the keystroke path re-checks
+      // against what the screen actually shows.
+      let target: ModalOption | undefined;
+      try {
+        target = resolveOption(options, option);
+        if (opts?.expect && !target.label.toLowerCase().includes(opts.expect.toLowerCase())) target = undefined;
+      } catch {
+        target = undefined;
+      }
+      if (target) {
+        log(`→ answering ${target.index}. "${target.label}" via the runtime (no keystrokes)`);
+        const ok = await runtime.answerDialog!(dialog, opts?.text ? { text: opts.text } : { label: target.label }).catch(() => false);
+        if (ok) return { selected: target, closed: true };
+      }
+      log("runtime answer not applied — falling back to keystrokes");
+    }
   }
 
   const modal = await deps.readModalOptions(crew);

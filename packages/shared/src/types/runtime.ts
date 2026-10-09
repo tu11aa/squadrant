@@ -48,6 +48,20 @@ export interface ModalOption {
   highlighted: boolean;
 }
 
+// A pending agent dialog (question / permission / plan-approval) the runtime
+// can answer structurally, without driving the TUI by keystrokes. `id` is
+// opaque to callers — only the runtime that produced it can resolve it.
+export interface PendingDialog {
+  id: string;
+  options: { index: number; label: string }[];
+}
+
+// How to find a crew's pending dialog. Runtimes match on whichever they can.
+export interface DialogMatch {
+  agentSessionId?: string; // the agent's own session id (claude)
+  cwd?: string;            // the crew's working directory / worktree
+}
+
 // Runtime-reported state of an agent's prompt (#916). "unknown" = the runtime
 // can't tell (unrecognised agent, session not yet reporting, ...) — callers must
 // treat it exactly like a missing capability and fall back to screen inspection.
@@ -150,4 +164,13 @@ export interface RuntimeDriver {
     layout?: "split" | "unified";
     focus?: boolean;
   }): Promise<void>;
+
+  // Structured answer path for an open agent dialog (#918). Optional: a runtime
+  // without one (or one that cannot see the dialog) omits it / returns
+  // undefined, and callers fall back to the keystroke path unchanged.
+  // findDialog resolves to undefined when no dialog is pending for the match.
+  findDialog?(match: DialogMatch): Promise<PendingDialog | undefined>;
+  // Answers `dialog` by option `label` (one of dialog.options), or free `text`.
+  // Resolves true when the runtime accepted the answer.
+  answerDialog?(dialog: PendingDialog, answer: { label?: string; text?: string }): Promise<boolean>;
 }
