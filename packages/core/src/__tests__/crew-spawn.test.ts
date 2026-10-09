@@ -314,6 +314,51 @@ describe("runCrewSpawn", () => {
       );
     });
 
+    // #917: peer delivery replaces the pane paste for claude when the socket is up.
+    describe("peer first turn (#917)", () => {
+      it("delivered ⇒ whole multi-line brief goes over the peer channel, no pane paste", async () => {
+        const runtime = makeRuntime();
+        const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+        deps.sendFirstTurnPeer = vi.fn().mockResolvedValue({ kind: "delivered" });
+        await runCrewSpawn({ project: PROJECT, task: "line one\nline two" }, makeConfig(), deps);
+        expect(deps.sendFirstTurnPeer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            taskId: "task-001",
+            message: expect.stringContaining("line one\nline two"),
+            messagingSocketPath: expect.stringMatching(/\.sock$/),
+          }),
+        );
+        expect(deps.sendFirstTurn).not.toHaveBeenCalled();
+      });
+
+      it("fallback ⇒ existing pane path runs unchanged", async () => {
+        const runtime = makeRuntime();
+        const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+        deps.sendFirstTurnPeer = vi.fn().mockResolvedValue({ kind: "fallback" });
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+        expect(deps.sendFirstTurn).toHaveBeenCalledOnce();
+      });
+
+      it("peer dep throwing ⇒ falls back to the pane path", async () => {
+        const runtime = makeRuntime();
+        const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+        deps.sendFirstTurnPeer = vi.fn().mockRejectedValue(new Error("boom"));
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+        expect(deps.sendFirstTurn).toHaveBeenCalledOnce();
+      });
+
+      it("unconfirmed ⇒ never pastes a duplicate", async () => {
+        const runtime = makeRuntime();
+        const deps = makeSpawnDeps(runtime, makeAgent("claude"));
+        deps.sendFirstTurnPeer = vi.fn().mockResolvedValue({ kind: "unconfirmed" });
+        const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        try {
+          await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+        } finally { spy.mockRestore(); }
+        expect(deps.sendFirstTurn).not.toHaveBeenCalled();
+      });
+    });
+
     // #466: when sendFirstTurn resolves { delivered: false }, runCrewSpawn must NOT
     // report clean success — the caller gets the pane ref (crew is usable via send)
     // but the warning is surfaced via stderr so the captain knows to re-send.

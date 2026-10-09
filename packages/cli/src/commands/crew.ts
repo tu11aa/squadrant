@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
-import type { PanePlacement, BackendMode } from "@squadrant/shared";
+import type { PanePlacement, BackendMode, PaneRef } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
 import { createServer, connect as netConnect } from "node:net";
@@ -21,6 +21,7 @@ import {
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
+import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
 import { tailLines } from "./crew-output.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
@@ -88,6 +89,15 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
     writeRouterSettings,
     sendFirstTurn: (pane, firstTurn, preLaunchScreen, opts) =>
       sendFirstTurnWhenReady(runtime, pane, firstTurn, preLaunchScreen, opts),
+    // #917: claude crews get their first turn over the peer socket when the
+    // claude control channel is `on`; anything else keeps the pane path.
+    ...(resolveControlChannelMode(config.defaults.controlChannel, "claude") === "on"
+      ? {
+          sendFirstTurnPeer: (o: { pane: PaneRef; taskId: string; project: string; messagingSocketPath: string; message: string }) =>
+            sendClaudeFirstTurnViaPeer(runtime, o, async () =>
+              (await squadrantdCall(buildStatusRequest(o.project, o.taskId)).catch(() => undefined)) as TaskRecord | undefined),
+        }
+      : {}),
     getFreePort,
     sendCodexFirstTurn,
     // #466: wire delivery confirmation so the daemon stamps firstTurnConfirmedAt.
