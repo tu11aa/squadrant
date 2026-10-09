@@ -3,6 +3,7 @@ export type {
   WorkspaceRef,
   PaneRef,
   PaneInputOptions,
+  PaneInputState,
   RuntimeSpawnOptions,
   PanePlacement,
   RuntimePaneOptions,
