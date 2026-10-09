@@ -29,7 +29,7 @@ export async function sendClaudeFirstTurnViaPeer(
   return deliverFirstTurnViaPeer(o.message, {
     statusOf: () => readClaudeStatusBySocketPath(o.messagingSocketPath),
     readScreen: async () => (await runtime.readPaneScreen(o.pane)) ?? "",
-    answerTrust: () => runtime.sendKeyToPane(o.pane, "Enter"),
+    pressKey: (key) => runtime.sendKeyToPane(o.pane, key),
     send: (m) => channel.send(o.taskId, m),
     isConfirmed: async () => !!(await getTaskRecord())?.firstTurnConfirmedAt,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

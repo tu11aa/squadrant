@@ -16,8 +16,8 @@ export interface PeerFirstTurnDeps {
    *  (booting, or the folder-trust panel is open). */
   statusOf(): { status?: string } | undefined;
   readScreen(): Promise<string>;
-  /** Accept the folder-trust panel (default option is "Yes, proceed"). */
-  answerTrust(): Promise<void>;
+  /** Press one key in the crew pane (used only to accept the folder-trust panel). */
+  pressKey(key: string): Promise<void>;
   send(message: string): Promise<DeliveryOutcome>;
   /** Has the daemon stamped firstTurnConfirmedAt (UserPromptSubmit receipt)? */
   isConfirmed(): Promise<boolean>;
@@ -34,11 +34,17 @@ const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const DEFAULT_POLL_MS = 250;
 const DEFAULT_CONFIRM_GRACE_MS = 10_000;
 /** Don't re-press Enter on a trust panel that is still repainting. */
-const TRUST_ANSWER_COOLDOWN_MS = 2_000;
+const TRUST_ANSWER_COOLDOWN_MS = 5_000;
 
 /** The folder-trust panel: no registry entry exists while it is open. */
 export function screenShowsTrustPanel(screen: string): boolean {
-  return /do you trust the files in this folder|is this a project you (created or )?trust/i.test(screen);
+  return /do you trust the files in this folder|is this a project you created or one you trust|is this a project you trust/i.test(screen);
+}
+
+/** Keys that accept the panel. Newer panels default the cursor to "No, exit" —
+ *  a bare Enter would quit claude — so step to "Yes" first when ❯ is on "No". */
+export function trustPanelAcceptKeys(screen: string): string[] {
+  return /❯\s*(\d\.\s*)?No\b/.test(screen) ? ["Down", "Enter"] : ["Enter"];
 }
 
 export async function deliverFirstTurnViaPeer(message: string, deps: PeerFirstTurnDeps): Promise<PeerFirstTurnResult> {
@@ -53,7 +59,7 @@ export async function deliverFirstTurnViaPeer(message: string, deps: PeerFirstTu
       const screen = await deps.readScreen().catch(() => "");
       if (screenShowsTrustPanel(screen)) {
         lastTrustAnswer = deps.now();
-        await deps.answerTrust().catch(() => {});
+        for (const key of trustPanelAcceptKeys(screen)) await deps.pressKey(key).catch(() => {});
       }
     }
     await deps.sleep(pollMs);

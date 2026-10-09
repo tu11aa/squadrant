@@ -46,7 +46,7 @@ export * from "./events/conformance.js";
 export * from "./events/source.js";
 export { fallsBackToPane, describeOutcome } from "./control-channel.js";
 export type { ControlChannel, ControlChannelMode, DeliveryOutcome, ProbeResult, ChannelName } from "./control-channel.js";
-export { deliverFirstTurnViaPeer, screenShowsTrustPanel } from "./peer-first-turn.js";
+export { deliverFirstTurnViaPeer, screenShowsTrustPanel, trustPanelAcceptKeys } from "./peer-first-turn.js";
 export type { PeerFirstTurnDeps, PeerFirstTurnResult } from "./peer-first-turn.js";
 export * from "./captain-channel.js";
 export * from "./captain-record.js";

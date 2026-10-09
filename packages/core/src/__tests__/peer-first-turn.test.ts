@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { deliverFirstTurnViaPeer, screenShowsTrustPanel, type PeerFirstTurnDeps } from "../peer-first-turn.js";
+import { deliverFirstTurnViaPeer, screenShowsTrustPanel, trustPanelAcceptKeys, type PeerFirstTurnDeps } from "../peer-first-turn.js";
 import type { DeliveryOutcome } from "../control-channel.js";
 
 function mk(over: Partial<PeerFirstTurnDeps> = {}) {
@@ -7,7 +7,7 @@ function mk(over: Partial<PeerFirstTurnDeps> = {}) {
   const deps: PeerFirstTurnDeps = {
     statusOf: () => ({ status: "idle" }),
     readScreen: async () => "",
-    answerTrust: vi.fn(async () => {}),
+    pressKey: vi.fn(async () => {}),
     send: vi.fn(async (): Promise<DeliveryOutcome> => ({ status: "accepted", via: "claude-peer", confirmed: true })),
     isConfirmed: async () => false,
     sleep: async (ms) => { t += ms; },
@@ -24,7 +24,13 @@ describe("screenShowsTrustPanel", () => {
   it("matches the folder-trust panel", () => {
     expect(screenShowsTrustPanel("Do you trust the files in this folder?\n❯ 1. Yes, proceed")).toBe(true);
     expect(screenShowsTrustPanel("Accessing workspace:\n /x\nQuick safety check: Is this a project you trust?")).toBe(true);
+    expect(screenShowsTrustPanel("Quick safety check: Is this a project you created or one you trust? (Like your own code")).toBe(true);
     expect(screenShowsTrustPanel("❯ \n? for shortcuts")).toBe(false);
+  });
+
+  it("steps to Yes when the cursor defaults to 'No, exit' (bare Enter would quit claude)", () => {
+    expect(trustPanelAcceptKeys(" ❯ No, exit\n   Yes, I trust this folder")).toEqual(["Down", "Enter"]);
+    expect(trustPanelAcceptKeys("❯ 1. Yes, proceed\n  2. No, exit")).toEqual(["Enter"]);
   });
 });
 
@@ -33,27 +39,27 @@ describe("deliverFirstTurnViaPeer", () => {
     const d = mk();
     expect(await deliverFirstTurnViaPeer("brief\nline2", d)).toEqual({ kind: "delivered" });
     expect(d.send).toHaveBeenCalledWith("brief\nline2");
-    expect(d.answerTrust).not.toHaveBeenCalled();
+    expect(d.pressKey).not.toHaveBeenCalled();
   });
 
   it("answers the trust panel while no registry entry exists, then sends once idle", async () => {
     let polls = 0;
     const d = mk({
       statusOf: () => (++polls > 3 ? { status: "idle" } : undefined),
-      readScreen: async () => (polls <= 3 ? "Do you trust the files in this folder?" : ""),
+      readScreen: async () => (polls <= 3 ? "Do you trust the files in this folder?\n❯ 1. Yes, proceed" : ""),
     });
     expect((await deliverFirstTurnViaPeer("b", d)).kind).toBe("delivered");
-    expect(d.answerTrust).toHaveBeenCalled();
+    expect(d.pressKey).toHaveBeenCalled();
   });
 
   it("does not hammer the trust panel every poll", async () => {
     let polls = 0;
     const d = mk({
       statusOf: () => (++polls > 6 ? { status: "idle" } : undefined),
-      readScreen: async () => "Do you trust the files in this folder?",
+      readScreen: async () => "Do you trust the files in this folder?\n❯ 1. Yes, proceed",
     });
     await deliverFirstTurnViaPeer("b", d);
-    expect((d.answerTrust as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(3);
+    expect((d.pressKey as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(3);
   });
 
   it("falls back (no send) when the registry never reports idle", async () => {
