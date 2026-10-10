@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import type { Rule } from "@squadrant/shared";
 
-export type AuditEventName = "item.surfaced" | "item.suppressed" | "item.searched" | "item.shown";
+export type AuditEventName =
+  | "item.surfaced" | "item.suppressed" | "item.searched" | "item.shown"
+  | "item.proposed" | "item.superseded" | "item.applied" | "item.rejected";
 
 export interface AuditEvent {
   kb: string;
@@ -21,6 +23,8 @@ export interface AuditEvent {
   session?: string;
   /** item.searched: the query, truncated to AUDIT_QUERY_CHARS. */
   query?: string;
+  /** item.rejected: why (e.g. "ungrounded"). */
+  reason?: string;
 }
 
 /** Test seam: where and when to write. */

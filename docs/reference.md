@@ -536,6 +536,22 @@ Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squa
 - `knowledge.<kb>` (the pre-#936 key) is still read as a deprecated alias; `squadrant doctor` reports it as config drift and the drift fix moves it to `knowledgeBases`.
 - Old spoke overlays (`<spokeVault>/knowledge/rules/`) move to the project's overlay home too; a project with no group KB or `knowledgeHome` is skipped and reported. A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
 
+#### Ingest and extraction (#897)
+
+`squadrant knowledge ingest <kb> [--dry-run] [--json] [--local-model] [--max-sections n]` checks every `sources.yaml` entry (mtime + size first, sha only on a difference), converts changed files with `markitdown` into `<kb>/.converted/` (md/txt pass through; a failed conversion is reported and skipped), and prints the section plan for the [`knowledge-extract`](../plugin/skills/knowledge-extract/SKILL.md) skill. `--dry-run` prints the token estimate and writes nothing. `knowledgeBases.<kb>.maxSectionsPerPass` (default 40) caps one pass; the remainder carries to the next. A `sensitivity: local-only` source is skipped unless `--local-model` is passed.
+
+The skill's output is a candidates JSON file. `squadrant knowledge apply <kb> candidates.json` does the mechanical rest:
+
+| Step | Behaviour |
+|---|---|
+| Quote check | Normalised (whitespace, line-break hyphenation, smart quotes/dashes, ligatures); not found ⇒ rejected as `ungrounded` (audit `item.rejected`). The char `offset` in `.converted/` is recorded. >20% of a source dropped ⇒ "try docling". |
+| Id matching | A quote overlapping an existing rule's `offset` in the same source takes that rule's id, whatever the model chose. |
+| Classify | new ⇒ `active`; same id + same meaning ⇒ source added, `offset` updated; meaning changed or contradiction ⇒ `shared/rules/_proposed/<id>@<sha>.md` (old stays active); source rule missing from a fully swept source ⇒ `stale`. A second change while a proposal is pending renames the older one to `.superseded` (audit `item.superseded`). |
+| Anchors | For each project subscribed to the KB, the repo is searched for `keywords + expanded`; matching `paths`/`symbols` go in `anchors.<project>`. |
+| Index | `index.json` is recompiled. |
+
+`item.proposed`, `item.superseded`, `item.applied` and `item.rejected` go to the audit log. Re-running on unchanged sources changes no ids and no files. A pending proposal shares its id with the live rule by design; `validate` and `reindex` do not count that as a duplicate.
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup

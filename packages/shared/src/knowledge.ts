@@ -72,6 +72,8 @@ export interface KnowledgeKbConfig {
   path?: string;
   homeProject?: string;
   domainCap?: number;
+  /** Max sections handed to the extractor in one pass; the rest carries over (first-ingest guard, #897). Default 40. */
+  maxSectionsPerPass?: number;
   /** Optional allowed rule domains; `knowledge validate` warns on rules outside it. */
   domains?: string[];
 }
