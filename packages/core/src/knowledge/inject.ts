@@ -149,6 +149,44 @@ export function formatPromptContext(hits: SearchHit[], match: "prompt" | "read" 
   ].join("\n");
 }
 
+const READ_TOOLS = new Set(["read", "read_file", "readfile", "view"]);
+const SHELL_TOOLS = new Set(["bash", "shell", "run_shell_command", "local_shell", "exec_command"]);
+const SHELL_META = /[|;&<>$`()]/;
+
+/**
+ * The file a post-tool payload read: a read tool's path argument (claude Read, gemini read_file,
+ * opencode read), or for shell-only agents (codex) the trailing file argument of a plain
+ * `cat|head|tail|nl|bat|sed` command. Null for anything else.
+ */
+export function readTargetPath(payload: unknown): string | null {
+  const q = (typeof payload === "object" && payload !== null ? payload : {}) as { tool_name?: unknown; tool_input?: unknown };
+  const tool = typeof q.tool_name === "string" ? q.tool_name.toLowerCase() : "";
+  const input = (typeof q.tool_input === "object" && q.tool_input !== null ? q.tool_input : {}) as Record<string, unknown>;
+  if (READ_TOOLS.has(tool)) {
+    for (const k of ["file_path", "absolute_path", "filePath", "path"]) {
+      if (typeof input[k] === "string" && input[k]) return input[k] as string;
+    }
+    return null;
+  }
+  const cmd = SHELL_TOOLS.has(tool) ? (input.command ?? input.cmd) : undefined;
+  const text = Array.isArray(cmd) ? cmd.filter((x): x is string => typeof x === "string").join(" ") : cmd;
+  if (typeof text !== "string" || SHELL_META.test(text)) return null;
+  const words = text.trim().split(/\s+/);
+  if (words.length < 2 || !/^(cat|head|tail|nl|bat|sed)$/.test(words[0])) return null;
+  const last = words[words.length - 1].replace(/^["']|["']$/g, "");
+  return last && !last.startsWith("-") ? last : null;
+}
+
+/** Marker-block pointer for agents whose hooks are unverified or absent (spec §6 fallback). */
+export function rulesFallbackPointer(kbs: string[]): string {
+  return [
+    "## Project rules (squadrant)",
+    "",
+    `This project subscribes to the rules KB: ${kbs.join(", ")}. ${DATA_NOTE}`,
+    "Before changing code, look up the rules that apply with `squadrant rules search <terms>`, then `squadrant rules show <id>`.",
+  ].join("\n");
+}
+
 // ── per-session dedup ────────────────────────────────────────────────
 
 export function injectStateDir(stateRoot: string): string {
@@ -217,6 +255,8 @@ export interface RulesInjectInput {
   project?: string;
   /** Audit-log destination/clock override (tests). */
   audit?: AuditSink;
+  /** Agent this injection is for (audit `agent` field). Default "claude". */
+  agent?: string;
 }
 
 const MAX_SUPPRESSED_LOGGED = 10;
@@ -240,7 +280,7 @@ function audit(
 ): void {
   appendAudit(items.map(({ rule, event, score }): AuditEvent => ({
     ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event, trigger,
-    ...(score === undefined ? {} : { score }), chars: line(rule).length, agent: "claude", ...(session ? { session } : {}),
+    ...(score === undefined ? {} : { score }), chars: line(rule).length, agent: i.agent ?? "claude", ...(session ? { session } : {}),
   })), i.audit);
 }
 
@@ -272,9 +312,8 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
   const seen = sessionId ? readSeenRules(i.stateRoot, sessionId) : new Set<string>();
 
   if (i.event === "post-read") {
-    const q = p as { tool_name?: unknown; tool_input?: unknown };
-    const file = (q.tool_input as { file_path?: unknown } | undefined)?.file_path;
-    if (q.tool_name !== "Read" || typeof file !== "string" || !file) return null;
+    const file = readTargetPath(p);
+    if (!file) return null;
     const rels = repoRelativePaths(file, cwd, resolveHome(i.cfg.projects[project].path));
     const hits = matchPaths(rules, project, rels).map((h) => ({ rule: h.rule, score: h.via === "glob" ? 100 : 90, matched: 1, curated: true }));
     return deliver(i, project, sessionId, "tool", "read", hits, seen, []);
