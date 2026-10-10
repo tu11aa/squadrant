@@ -14,13 +14,14 @@ const rule = (id: string, modality: string, body: string, keywords: string[] = [
   + (keywords.length ? `triggers:\n  keywords: [${keywords.join(", ")}]\n` : "")
   + `---\n${body}\n`;
 function put(id: string, modality: string, body: string, keywords?: string[]) {
-  const dir = path.join(kbRulesDir(path.join(root, "hub"), "saitex"), "coding");
+  const dir = path.join(kbRulesDir(cfg(), "saitex"), "coding");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${id}.md`), rule(id, modality, body, keywords));
 }
 function cfg(knowledge: string[] | null = ["saitex"]): SquadrantConfig {
   const c = getDefaultConfig();
   c.hubVault = path.join(root, "hub");
+  c.knowledgeBases = { saitex: { path: path.join(root, "kb", "saitex") } };
   c.projects = {
     flooros: { path: path.join(root, "flooros"), captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge: knowledge ?? undefined },
   };

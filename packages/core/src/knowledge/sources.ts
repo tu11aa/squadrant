@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import { validateSourceEntry, type KnowledgeSourceEntry } from "@squadrant/shared";
-import { kbDir } from "./paths.js";
 
 export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec §3). Only these can produce rules.
 # priority: company > project > agent (decides conflicts).
@@ -16,8 +15,8 @@ export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec
 []
 `;
 
-export function loadSources(hubVault: string, kb: string): { sources: KnowledgeSourceEntry[]; errors: string[] } {
-  const file = path.join(kbDir(hubVault, kb), "sources.yaml");
+export function loadSources(kbRoot: string): { sources: KnowledgeSourceEntry[]; errors: string[] } {
+  const file = path.join(kbRoot, "sources.yaml");
   if (!fs.existsSync(file)) return { sources: [], errors: [] };
   let data: unknown;
   try {

@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Rule, RuleAnchors, RuleModality, RuleStatus, RuleTriggers } from "@squadrant/shared";
-import { kbDir } from "./paths.js";
 
 export interface RuleIndexEntry {
   id: string; domain: string; modality: RuleModality; status: RuleStatus;
@@ -20,16 +19,16 @@ export function compileIndex(kb: string, rules: Rule[], now: Date = new Date()):
 
 // index.json is a compiled cache for matching/delivery (#899). `rules search` deliberately reads the
 // rule files directly, so a stale or missing index never affects search.
-export function writeIndex(hubVault: string, kb: string, index: RuleIndex): string {
-  const file = path.join(kbDir(hubVault, kb), "index.json");
+export function writeIndex(kbRoot: string, index: RuleIndex): string {
+  const file = path.join(kbRoot, "index.json");
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(index, null, 2) + "\n");
   fs.renameSync(tmp, file);
   return file;
 }
 
-export function readIndex(hubVault: string, kb: string): { index: RuleIndex | null; problem?: string } {
-  const file = path.join(kbDir(hubVault, kb), "index.json");
+export function readIndex(kbRoot: string, kb: string): { index: RuleIndex | null; problem?: string } {
+  const file = path.join(kbRoot, "index.json");
   if (!fs.existsSync(file)) return { index: null, problem: `index.json missing for kb '${kb}'` };
   try {
     const index = JSON.parse(fs.readFileSync(file, "utf8")) as RuleIndex;

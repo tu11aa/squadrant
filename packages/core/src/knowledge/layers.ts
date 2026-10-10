@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import { resolveHome, subscribedKbs, type Rule, type SquadrantConfig } from "@squadrant/shared";
-import { kbDir, kbRulesDir, projectRulesDir } from "./paths.js";
+import { projectRulesHome, subscribedKbs, type Rule, type SquadrantConfig } from "@squadrant/shared";
+import { kbDir, kbRulesDir } from "./paths.js";
 import { loadRulesDir, type RuleLoadError, type RuleLoadResult } from "./store.js";
 
 export interface ResolvedRules { rules: Rule[]; errors: RuleLoadError[]; warnings: string[] }
 
 export function loadKbRules(cfg: SquadrantConfig, kb: string, opts: { includeProposed?: boolean } = {}): RuleLoadResult {
-  return loadRulesDir(kbRulesDir(resolveHome(cfg.hubVault), kb), `kb:${kb}`, opts);
+  return loadRulesDir(kbRulesDir(cfg, kb), `kb:${kb}`, opts);
 }
 
 export function resolveProjectRules(
@@ -21,7 +21,7 @@ export function resolveProjectRules(
   const warnings: string[] = [];
 
   for (const kb of subscribedKbs(cfg, project)) {
-    if (!fs.existsSync(kbDir(resolveHome(cfg.hubVault), kb))) {
+    if (!fs.existsSync(kbDir(cfg, kb))) {
       warnings.push(`knowledge base '${kb}' not found (run: squadrant knowledge init ${kb})`);
       continue;
     }
@@ -34,9 +34,12 @@ export function resolveProjectRules(
     }
   }
 
-  const proj = loadRulesDir(projectRulesDir(resolveHome(pc.spokeVault)), `project:${project}`, opts);
-  errors.push(...proj.errors);
-  for (const r of proj.rules) byId.set(r.id, r);
+  const projDir = projectRulesHome(cfg, project);
+  if (projDir) {
+    const proj = loadRulesDir(projDir, `project:${project}`, opts);
+    errors.push(...proj.errors);
+    for (const r of proj.rules) byId.set(r.id, r);
+  }
 
   for (const id of pc.rulesDisabled ?? []) {
     if (!byId.delete(id)) warnings.push(`rulesDisabled: unknown rule id '${id}'`);

@@ -6,3 +6,4 @@ export * from "./search.js";
 export * from "./sources.js";
 export * from "./inject.js";
 export * from "./audit.js";
+export * from "./migrate.js";
