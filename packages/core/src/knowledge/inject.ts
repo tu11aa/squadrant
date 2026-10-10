@@ -5,6 +5,7 @@ import path from "node:path";
 import { resolveHome, subscribedKbs, type Rule, type SquadrantConfig } from "@squadrant/shared";
 import { searchRules, type SearchHit } from "./search.js";
 import { resolveProjectRules } from "./layers.js";
+import { appendAudit, ruleAuditScope, type AuditEvent, type AuditSink } from "./audit.js";
 
 export const SESSION_RULE_CAP = 20;
 export const PROMPT_RULE_CAP = 3;
@@ -46,7 +47,7 @@ function sessionOrder(a: Rule, b: Rule): number {
 /** SessionStart block: every active must/must-not rule (capped) plus how to look up the rest. */
 export function formatSessionContext(
   kbs: string[], rules: Rule[], cap = SESSION_RULE_CAP,
-): { text: string; ids: string[] } {
+): { text: string; ids: string[]; hiddenIds: string[] } {
   const hard = rules.filter((r) => r.status === "active" && (r.modality === "must" || r.modality === "must-not"))
     .sort(sessionOrder);
   const shown = hard.slice(0, cap);
@@ -58,7 +59,7 @@ export function formatSessionContext(
   if (hard.length > shown.length) lines.push(`+${hard.length - shown.length} more: squadrant rules list --brief`);
   lines.push("Look up rules for a task with `squadrant rules search <terms>` / `squadrant rules show <id>` (rules-ops skill).");
   lines.push("</squadrant-project-rules>");
-  return { text: lines.join("\n"), ids: shown.map((r) => r.id) };
+  return { text: lines.join("\n"), ids: shown.map((r) => r.id), hiddenIds: hard.slice(cap).map((r) => r.id) };
 }
 
 /** Prompt text → search query: drop code fences and long pasted lines, stopwords and short tokens. */
@@ -211,7 +212,11 @@ export interface RulesInjectInput {
   stateRoot: string;
   /** Explicit `--project`; beats SQUADRANT_CREW_PROJECT and cwd. */
   project?: string;
+  /** Audit-log destination/clock override (tests). */
+  audit?: AuditSink;
 }
+
+const MAX_SUPPRESSED_LOGGED = 10;
 
 /** --project, then SQUADRANT_CREW_PROJECT, then the deepest project path containing cwd (crew worktrees included). */
 export function resolveInjectProject(cfg: SquadrantConfig, cwd: string, env: NodeJS.ProcessEnv, project?: string): string | null {
@@ -224,6 +229,16 @@ export function resolveInjectProject(cfg: SquadrantConfig, cwd: string, env: Nod
     if ((cwd === root || cwd.startsWith(root + path.sep)) && root.length > bestLen) { best = name; bestLen = root.length; }
   }
   return best;
+}
+
+function audit(
+  i: RulesInjectInput, project: string, session: string | null, trigger: "session" | "prompt",
+  items: { rule: Rule; event: "item.surfaced" | "item.suppressed"; score: number | undefined }[],
+): void {
+  appendAudit(items.map(({ rule, event, score }): AuditEvent => ({
+    ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event, trigger,
+    ...(score === undefined ? {} : { score }), chars: line(rule).length, agent: "claude", ...(session ? { session } : {}),
+  })), i.audit);
 }
 
 /** The additionalContext to inject for this hook, or null. Sync; callers wrap it in withBudget. */
@@ -239,7 +254,13 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
   const sessionId = typeof p.session_id === "string" && p.session_id ? p.session_id : null;
 
   if (i.event === "session-start") {
-    const { text, ids } = formatSessionContext(kbs, resolveProjectRules(i.cfg, project).rules);
+    const rules = resolveProjectRules(i.cfg, project).rules;
+    const { text, ids, hiddenIds } = formatSessionContext(kbs, rules);
+    const byId = new Map(rules.map((r) => [r.id, r]));
+    audit(i, project, sessionId, "session", [
+      ...ids.map((id) => ({ id, event: "item.surfaced" as const })),
+      ...hiddenIds.map((id) => ({ id, event: "item.suppressed" as const })),
+    ].map((e) => ({ rule: byId.get(e.id)!, event: e.event, score: undefined })));
     if (sessionId) { pruneSeenRules(i.stateRoot); recordSeenRules(i.stateRoot, sessionId, ids); }
     return text;
   }
@@ -248,7 +269,13 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
   const query = cleanPromptQuery(promptText(p.prompt));
   if (!query) return null;
   const seen = sessionId ? readSeenRules(i.stateRoot, sessionId) : new Set<string>();
-  const picked = selectPromptHits(searchRules(resolveProjectRules(i.cfg, project).rules, query), query, seen);
+  const hits = searchRules(resolveProjectRules(i.cfg, project).rules, query);
+  const picked = selectPromptHits(hits, query, seen);
+  audit(i, project, sessionId, "prompt", [
+    ...picked.map((h) => ({ rule: h.rule, event: "item.surfaced" as const, score: h.score })),
+    ...hits.filter((h) => !picked.includes(h)).slice(0, MAX_SUPPRESSED_LOGGED)
+      .map((h) => ({ rule: h.rule, event: "item.suppressed" as const, score: h.score })),
+  ]);
   if (!picked.length) return null;
   if (sessionId) recordSeenRules(i.stateRoot, sessionId, picked.map((h) => h.rule.id));
   return formatPromptContext(picked);

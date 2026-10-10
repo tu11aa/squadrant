@@ -13,6 +13,7 @@ const rule = (id: string, status = "active", extra = "") =>
   `---\nid: ${id}\ndomain: business\nmodality: must\nstatus: ${status}\n${extra}sources:\n  - { ref: raw/Policy-v3.pdf, sha: s, loc: "p.12", quote: q }\n---\nVND amounts are rounded half-up.\n`;
 
 beforeEach(() => {
+  process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-rules-"));
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-rules-"));
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
@@ -24,7 +25,11 @@ beforeEach(() => {
   fs.writeFileSync(path.join(rd, "biz.invoice.vnd-rounding.md"), rule("biz.invoice.vnd-rounding", "active", "triggers:\n  keywords: [invoice]\n"));
   fs.writeFileSync(path.join(rd, "biz.old.md"), rule("biz.old", "retired", "triggers:\n  keywords: [invoice]\n"));
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  fs.rmSync(process.env.SQUADRANT_AUDIT_DIR!, { recursive: true, force: true });
+  delete process.env.SQUADRANT_AUDIT_DIR;
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe("resolveRulesProject", () => {
   it("prefers --project, then SQUADRANT_CREW_PROJECT, then cwd", () => {
@@ -104,5 +109,20 @@ describe("rules output rendering", () => {
       .toEqual(["MUST biz.invoice.vnd-rounding: VND amounts are rounded half-up."]);
     expect(runRulesList({ project: "flooros", all: true }, cfgPath).map((r) => r.id)).toEqual(["biz.invoice.vnd-rounding", "biz.old"]);
     expect(renderList([], {})).toEqual(["(no rules)"]);
+  });
+});
+
+describe("rules audit log (#935)", () => {
+  const read = () => fs.readdirSync(process.env.SQUADRANT_AUDIT_DIR!).flatMap((f) =>
+    fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, f), "utf8").trim().split("\n").map((l) => JSON.parse(l)));
+  it("search logs item.searched with the query truncated to 200 chars", () => {
+    runRulesSearch("invoice " + "x".repeat(300), { project: "flooros" }, cfgPath);
+    const [e] = read();
+    expect(e).toMatchObject({ event: "item.searched", domain: "rules", project: "flooros" });
+    expect(e.query).toHaveLength(200);
+  });
+  it("show logs item.shown", () => {
+    runRulesShow("biz.invoice.vnd-rounding", { project: "flooros" }, cfgPath);
+    expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group" });
   });
 });

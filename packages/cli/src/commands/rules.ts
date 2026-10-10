@@ -3,12 +3,16 @@ import chalk from "chalk";
 import {
   loadConfig, DEFAULT_CONFIG_PATH, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
-import { resolveProjectRules, searchRules, DEFAULT_SEARCH_STATUSES, type SearchHit } from "@squadrant/core";
+import {
+  resolveProjectRules, searchRules, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
+} from "@squadrant/core";
 import { detectCurrentProject } from "./work.js";
 
 interface RulesOpts {
   project?: string; all?: boolean; cwd?: string; env?: NodeJS.ProcessEnv;
   limit?: string | number; brief?: boolean; idsOnly?: boolean;
+  /** Audit-log destination/clock override (tests). */
+  audit?: AuditSink;
 }
 
 export const DEFAULT_SEARCH_LIMIT = 5;
@@ -72,7 +76,10 @@ function loadFor(opts: RulesOpts, configPath: string): Rule[] {
 
 export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit[] {
   const rules = loadFor(opts, configPath);
-  return searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
+  const hits = searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
+  const project = resolveRulesProject(loadConfig(configPath), opts);
+  appendAudit([{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query, score: hits[0]?.score }], opts.audit);
+  return hits;
 }
 
 export function runRulesList(opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): Rule[] {
@@ -85,6 +92,8 @@ export function runRulesShow(id: string, opts: RulesOpts, configPath = DEFAULT_C
   const statuses: readonly RuleStatus[] = opts.all ? RULE_STATUSES : DEFAULT_SEARCH_STATUSES;
   const rule = rules.find((r) => r.id === id && statuses.includes(r.status));
   if (!rule) throw new Error(`No rule '${id}' for this project`);
+  const project = resolveRulesProject(loadConfig(configPath), opts);
+  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], opts.audit);
   return rule;
 }
 

@@ -5,3 +5,4 @@ export * from "./index-file.js";
 export * from "./search.js";
 export * from "./sources.js";
 export * from "./inject.js";
+export * from "./audit.js";
