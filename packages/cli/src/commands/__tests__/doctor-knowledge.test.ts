@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig } from "@squadrant/shared";
-import { kbDir } from "@squadrant/core";
 import { knowledgeDoctorLines } from "../doctor.js";
 
 let hub: string;
@@ -17,12 +16,19 @@ describe("knowledgeDoctorLines", () => {
   it("flags a missing index and a missing markitdown (warn only)", () => {
     const c = getDefaultConfig();
     c.hubVault = hub;
-    c.knowledge = { saitex: {} };
-    fs.mkdirSync(kbDir(hub, "saitex"), { recursive: true });
+    c.knowledgeBases = { saitex: { path: path.join(hub, "kb", "saitex") } };
+    fs.mkdirSync(path.join(hub, "kb", "saitex"), { recursive: true });
     const lines = knowledgeDoctorLines(c, () => false);
     expect(lines).toEqual([
       expect.objectContaining({ label: "markitdown installed (rules KB conversion)", ok: false, warnOnly: true }),
       expect.objectContaining({ label: "KB 'saitex' index.json valid", ok: false }),
     ]);
+  });
+  it("warns about a KB still under <hubVault>/knowledge/", () => {
+    const c = getDefaultConfig();
+    c.hubVault = hub;
+    fs.mkdirSync(path.join(hub, "knowledge", "saitex"), { recursive: true });
+    expect(knowledgeDoctorLines(c, () => true)).toContainEqual(
+      expect.objectContaining({ label: expect.stringContaining("saitex"), ok: false, warnOnly: true }));
   });
 });

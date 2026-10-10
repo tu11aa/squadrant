@@ -3,10 +3,13 @@ import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
-import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb } from "@squadrant/core";
+import {
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb,
+  ensureGitRepo, moveLegacyKbs, type KbMoveEntry,
+} from "@squadrant/core";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -18,17 +21,17 @@ function assertKbName(kb: string): void {
 export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): { dir: string; created: string[] } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  const dir = kbDir(hub, kb);
+  const dir = kbDir(cfg, kb);
   const created: string[] = [];
-  for (const d of [path.join(dir, "raw"), kbRulesDir(hub, kb), path.join(kbRulesDir(hub, kb), PROPOSED_DIR)]) {
+  for (const d of [path.join(dir, "raw"), kbRulesDir(cfg, kb), path.join(kbRulesDir(cfg, kb), PROPOSED_DIR)]) {
     if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); created.push(path.relative(dir, d)); }
   }
   const sourcesFile = path.join(dir, "sources.yaml");
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
-  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(hub, kb, compileIndex(kb, [])); created.push("index.json"); }
-  if (!cfg.knowledge?.[kb]) {
-    cfg.knowledge = { ...(cfg.knowledge ?? {}), [kb]: {} };
+  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(dir, compileIndex(kb, [])); created.push("index.json"); }
+  if (ensureGitRepo(dir)) created.push(".git");
+  if (!kbConfigs(cfg)[kb]) {
+    cfg.knowledgeBases = { ...(cfg.knowledgeBases ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
   }
   return { dir, created };
@@ -39,7 +42,7 @@ export function runKnowledgeSubscribe(kb: string, project: string, configPath = 
   const cfg = loadConfig(configPath);
   const pc = cfg.projects[project];
   if (!pc) throw new Error(`Unknown project '${project}'`);
-  if (!fs.existsSync(kbDir(resolveHome(cfg.hubVault), kb))) {
+  if (!fs.existsSync(kbDir(cfg, kb))) {
     throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
   }
   const list = pc.knowledge ?? [];
@@ -53,14 +56,14 @@ export function runKnowledgeSubscribe(kb: string, project: string, configPath = 
 export function runKnowledgeSources(kb: string, configPath = DEFAULT_CONFIG_PATH): { sources: KnowledgeSourceEntry[]; errors: string[] } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  return loadSources(resolveHome(cfg.hubVault), kb);
+  return loadSources(kbDir(cfg, kb));
 }
 
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
 
 knowledgeCommand
   .command("init <kb>")
-  .description("Create a knowledge base under <hubVault>/knowledge/<kb>/")
+  .description("Create a knowledge base (its own git repo) under ~/squadrant/kb/<kb>/")
   .action((kb: string) => {
     const { dir, created } = runKnowledgeInit(kb);
     console.log(created.length ? chalk.green(`Initialised ${dir} (${created.join(", ")})`) : `Already initialised: ${dir}`);
@@ -94,22 +97,20 @@ export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH
 } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
   const { rules: all, errors } = loadKbRules(cfg, kb, { includeProposed: true });
-  const proposedRoot = path.join(kbRulesDir(hub, kb), PROPOSED_DIR) + path.sep;
+  const proposedRoot = path.join(kbRulesDir(cfg, kb), PROPOSED_DIR) + path.sep;
   const live = all.filter((r) => !r.file.startsWith(proposedRoot));
-  const file = writeIndex(hub, kb, compileIndex(kb, live));
+  const file = writeIndex(kbDir(cfg, kb), compileIndex(kb, live));
   return { file, count: live.length, proposed: all.length - live.length, errors: errors.length, invalid: errors };
 }
 
 export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PATH): ReturnType<typeof validateKb> {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  const { sources, errors } = loadSources(hub, kb);
-  const res = validateKb({ rulesDir: kbRulesDir(hub, kb), kbRoot: kbDir(hub, kb), sources, domains: cfg.knowledge?.[kb]?.domains });
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, domains: kbConfigs(cfg)[kb]?.domains });
   const srcChecks = errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` }));
   return { checks: [...srcChecks, ...res.checks], ok: res.ok && !errors.length };
 }
@@ -132,4 +133,18 @@ knowledgeCommand
     for (const c of checks) console.log(`${mark[c.level]} ${c.message}`);
     console.log(ok ? chalk.green("valid") : chalk.red("invalid"));
     if (!ok) process.exitCode = 1;
+  });
+
+export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): KbMoveEntry[] {
+  return moveLegacyKbs(loadConfig(configPath), opts);
+}
+
+knowledgeCommand
+  .command("migrate")
+  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ (never deletes; prints a report)")
+  .option("--dry-run", "show what would move")
+  .action((opts: { dryRun?: boolean }) => {
+    const report = runKnowledgeMigrate(opts);
+    if (!report.length) console.log("Nothing to migrate: no knowledge bases under <hubVault>/knowledge/.");
+    for (const e of report) console.log(`${e.action.padEnd(10)} ${e.kb}: ${e.from} -> ${e.to}${e.note ? chalk.dim(` (${e.note})`) : ""}`);
   });

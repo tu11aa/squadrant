@@ -4,8 +4,8 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig, resolveHome, type SquadrantConfig } from "@squadrant/shared";
-import { readIndex } from "@squadrant/core";
+import { loadConfig, kbConfigs, type SquadrantConfig } from "@squadrant/shared";
+import { readIndex, kbDir, findLegacyKbs } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -187,16 +187,23 @@ export function knowledgeDoctorLines(
   cfg: SquadrantConfig,
   hasCommand: (cmd: string) => boolean,
 ): { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] {
-  const kbs = Object.keys(cfg.knowledge ?? {});
-  if (!kbs.length) return [];
+  const kbs = Object.keys(kbConfigs(cfg));
+  const legacy = findLegacyKbs(cfg);
+  if (!kbs.length && !legacy.length) return [];
   const lines: { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] = [{
     label: "markitdown installed (rules KB conversion)",
     ok: hasCommand("markitdown"),
     hint: "pip install 'markitdown[all]'",
     warnOnly: true,
   }];
+  if (legacy.length) {
+    lines.push({
+      label: `knowledge bases still under <hubVault>/knowledge/: ${legacy.join(", ")}`,
+      ok: false, warnOnly: true, hint: "run: squadrant knowledge migrate (moves to ~/squadrant/kb, deletes nothing)",
+    });
+  }
   for (const kb of kbs) {
-    const { problem } = readIndex(resolveHome(cfg.hubVault), kb);
+    const { problem } = readIndex(kbDir(cfg, kb), kb);
     lines.push({ label: `KB '${kb}' index.json valid`, ok: !problem, hint: problem ? `${problem} — run: squadrant knowledge reindex ${kb}` : undefined });
   }
   return lines;
