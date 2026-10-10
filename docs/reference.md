@@ -552,6 +552,18 @@ The skill's output is a candidates JSON file. `squadrant knowledge apply <kb> ca
 
 `item.proposed`, `item.superseded`, `item.applied` and `item.rejected` go to the audit log. Re-running on unchanged sources changes no ids and no files. A pending proposal shares its id with the live rule by design; `validate` and `reindex` do not count that as a duplicate.
 
+#### Rule delivery to Claude (#899)
+
+Rules reach a Claude session through the managed hooks, in-process and under a 1.5s budget (a failure or timeout injects nothing; `SQUADRANT_RULES_INJECT=0` turns it off):
+
+| Hook | Injects |
+|---|---|
+| `SessionStart` | every active `must`/`must-not` rule, within the ≈800-token budget (`+N more` line past it) |
+| `UserPromptSubmit` | rules matching the prompt: a named file (glob/anchor path), an anchored symbol (`computeTotal`), or enough keyword/`when` terms |
+| `PostToolUse` (matcher `Read`) | rules whose `globs` match the file just read, or whose anchor for the current project lists it |
+
+At most 5 rules and ≈800 tokens per injection; each rule is shown once per session; overflow collapses to `+N more: squadrant rules show <ids>`. `PostToolUse` is in the managed hook set, so it lands in `~/.claude/settings.json` on the next daemon boot. `squadrant rules match [--project p] [--event session|prompt|read] [--path f] [--text t] [--session id]` prints what the hooks would inject (without `--session` nothing is recorded as seen). Matching is T0 only (glob, anchor, lexical); embeddings (T1) and a daemon-warm matcher are deferred (#902).
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup

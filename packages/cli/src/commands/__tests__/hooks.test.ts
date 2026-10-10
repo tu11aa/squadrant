@@ -149,6 +149,22 @@ describe("rulesHookOutput (#899)", () => {
     const notice = "⚠️ Daemon restarted → v0.26.1 (control-plane bounced). Re-verify in-flight crews — a crew mid-first-turn may need a crew send.";
     expect(await rulesHookOutput("prompt-submit", { session_id: "h4", prompt: notice }, opts())).toBe("");
   });
+  it("PostToolUse(Read) → rules whose glob matches the file; other tools and files → nothing (#899)", async () => {
+    const d = path.join(root, "kb", "saitex", "shared", "rules", "sol");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "sol.no-unchecked.md"),
+      "---\nid: sol.no-unchecked\ndomain: coding\nmodality: must-not\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
+      + "triggers:\n  globs: ['contracts/**/*.sol']\n---\nUse unchecked arithmetic.\n");
+    const read = (file: string, tool = "Read", session = "r1") =>
+      rulesHookOutput("post-tool-use", { session_id: session, tool_name: tool, tool_input: { file_path: file } }, opts());
+    const out = JSON.parse(await read(path.join(projDir, "contracts", "vault", "Vault.sol")));
+    expect(out.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    expect(out.hookSpecificOutput.additionalContext).toContain("MUST-NOT sol.no-unchecked:");
+    expect(await read(path.join(projDir, "contracts", "vault", "Vault.sol"))).toBe("");
+    expect(await read(path.join(projDir, "src", "a.ts"), "Read", "r2")).toBe("");
+    expect(await read(path.join(projDir, "contracts", "A.sol"), "Edit", "r3")).toBe("");
+    expect(mapHookSub("post-tool-use", {}, "t")).toBeNull();
+  });
   it("no subscription, env off, other subs → empty", async () => {
     expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: () => cfg() }))).toBe("");
     expect(await rulesHookOutput("session-start", {}, opts({ env: { SQUADRANT_RULES_INJECT: "0" } }))).toBe("");

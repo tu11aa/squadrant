@@ -5,6 +5,7 @@ import path from "node:path";
 import { resolveHome, subscribedKbs, type Rule, type SquadrantConfig } from "@squadrant/shared";
 import { searchRules, type SearchHit } from "./search.js";
 import { resolveProjectRules } from "./layers.js";
+import { applyBudget, matchPaths, matchSymbols, mentionedPaths, repoRelativePaths, INJECT_MAX_CHARS } from "./match.js";
 import { appendAudit, ruleAuditScope, type AuditEvent, type AuditSink } from "./audit.js";
 
 export const SESSION_RULE_CAP = 20;
@@ -50,7 +51,8 @@ export function formatSessionContext(
 ): { text: string; ids: string[]; hiddenIds: string[] } {
   const hard = rules.filter((r) => r.status === "active" && (r.modality === "must" || r.modality === "must-not"))
     .sort(sessionOrder);
-  const shown = hard.slice(0, cap);
+  // Rule lines also obey the ≈800-token budget (spec §6), not just the count cap.
+  const shown = applyBudget(hard.map((rule) => ({ rule })), (r) => line(r).length, cap, INJECT_MAX_CHARS).shown.map((x) => x.rule);
   const lines = [
     `<squadrant-project-rules kb="${kbs.join(",")}">`,
     `Rules KB: ${kbs.join(", ")}. ${DATA_NOTE}`,
@@ -59,7 +61,7 @@ export function formatSessionContext(
   if (hard.length > shown.length) lines.push(`+${hard.length - shown.length} more: squadrant rules list --brief`);
   lines.push("Look up rules for a task with `squadrant rules search <terms>` / `squadrant rules show <id>` (rules-ops skill).");
   lines.push("</squadrant-project-rules>");
-  return { text: lines.join("\n"), ids: shown.map((r) => r.id), hiddenIds: hard.slice(cap).map((r) => r.id) };
+  return { text: lines.join("\n"), ids: shown.map((r) => r.id), hiddenIds: hard.slice(shown.length).map((r) => r.id) };
 }
 
 /** Prompt text → search query: drop code fences and long pasted lines, stopwords and short tokens. */
@@ -137,11 +139,12 @@ function promptText(prompt: string): string {
   try { return fs.readFileSync(m[1], "utf8").slice(0, MAX_PROMPT_CHARS * 2); } catch { return prompt; }
 }
 
-export function formatPromptContext(hits: SearchHit[]): string {
+export function formatPromptContext(hits: SearchHit[], match: "prompt" | "read" = "prompt", overflowIds: string[] = []): string {
   return [
-    "<squadrant-project-rules match=\"prompt\">",
-    `Rules that may apply to this prompt. ${DATA_NOTE}`,
+    `<squadrant-project-rules match="${match}">`,
+    `Rules that may apply to this ${match === "read" ? "file" : "prompt"}. ${DATA_NOTE}`,
     ...hits.map((h) => line(h.rule)),
+    ...(overflowIds.length ? [`+${overflowIds.length} more: squadrant rules show ${overflowIds.join(" ")}`] : []),
     "</squadrant-project-rules>",
   ].join("\n");
 }
@@ -200,7 +203,7 @@ export async function withBudget<T>(fn: () => T | Promise<T>, budgetMs = INJECT_
 
 // ── hook entry point ────────────────────────────────────────────────
 
-export type RulesInjectEvent = "session-start" | "prompt-submit";
+export type RulesInjectEvent = "session-start" | "prompt-submit" | "post-read";
 
 export interface RulesInjectInput {
   event: RulesInjectEvent;
@@ -232,7 +235,7 @@ export function resolveInjectProject(cfg: SquadrantConfig, cwd: string, env: Nod
 }
 
 function audit(
-  i: RulesInjectInput, project: string, session: string | null, trigger: "session" | "prompt",
+  i: RulesInjectInput, project: string, session: string | null, trigger: "session" | "prompt" | "tool",
   items: { rule: Rule; event: "item.surfaced" | "item.suppressed"; score: number | undefined }[],
 ): void {
   appendAudit(items.map(({ rule, event, score }): AuditEvent => ({
@@ -265,18 +268,43 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
     return text;
   }
 
-  if (typeof p.prompt !== "string" || isSystemPrompt(p.prompt)) return null;
-  const query = cleanPromptQuery(promptText(p.prompt));
-  if (!query) return null;
+  const rules = resolveProjectRules(i.cfg, project).rules;
   const seen = sessionId ? readSeenRules(i.stateRoot, sessionId) : new Set<string>();
-  const hits = searchRules(resolveProjectRules(i.cfg, project).rules, query);
-  const picked = selectPromptHits(hits, query, seen);
-  audit(i, project, sessionId, "prompt", [
-    ...picked.map((h) => ({ rule: h.rule, event: "item.surfaced" as const, score: h.score })),
-    ...hits.filter((h) => !picked.includes(h)).slice(0, MAX_SUPPRESSED_LOGGED)
+
+  if (i.event === "post-read") {
+    const q = p as { tool_name?: unknown; tool_input?: unknown };
+    const file = (q.tool_input as { file_path?: unknown } | undefined)?.file_path;
+    if (q.tool_name !== "Read" || typeof file !== "string" || !file) return null;
+    const rels = repoRelativePaths(file, cwd, resolveHome(i.cfg.projects[project].path));
+    const hits = matchPaths(rules, project, rels).map((h) => ({ rule: h.rule, score: h.via === "glob" ? 100 : 90, matched: 1, curated: true }));
+    return deliver(i, project, sessionId, "tool", "read", hits, seen, []);
+  }
+
+  if (typeof p.prompt !== "string" || isSystemPrompt(p.prompt)) return null;
+  const text = promptText(p.prompt);
+  const query = cleanPromptQuery(text);
+  // Exact structural hits (a file named, an anchored symbol mentioned) rank before lexical ones.
+  const structural = [...matchPaths(rules, project, mentionedPaths(text)), ...matchSymbols(rules, project, text)]
+    .map((h) => ({ rule: h.rule, score: 100, matched: 1, curated: true }));
+  const lexical = query ? searchRules(rules, query) : [];
+  const picked = selectPromptHits(lexical, query, seen);
+  const all = [...new Map([...structural, ...picked].map((h) => [h.rule.id, h])).values()];
+  return deliver(i, project, sessionId, "prompt", "prompt", all, seen, lexical.filter((h) => !picked.includes(h)));
+}
+
+/** Drop seen rules, apply the injection budget, audit, record, format. Null when nothing is left to show. */
+function deliver(
+  i: RulesInjectInput, project: string, sessionId: string | null, trigger: "prompt" | "tool", match: "prompt" | "read",
+  candidates: SearchHit[], seen: ReadonlySet<string>, belowBar: SearchHit[],
+): string | null {
+  const fresh = candidates.filter((h) => !seen.has(h.rule.id));
+  const { shown, overflow } = applyBudget(fresh, (r) => line(r).length);
+  audit(i, project, sessionId, trigger, [
+    ...shown.map((h) => ({ rule: h.rule, event: "item.surfaced" as const, score: h.score })),
+    ...[...overflow, ...belowBar].slice(0, MAX_SUPPRESSED_LOGGED)
       .map((h) => ({ rule: h.rule, event: "item.suppressed" as const, score: h.score })),
   ]);
-  if (!picked.length) return null;
-  if (sessionId) recordSeenRules(i.stateRoot, sessionId, picked.map((h) => h.rule.id));
-  return formatPromptContext(picked);
+  if (!shown.length) return null;
+  if (sessionId) recordSeenRules(i.stateRoot, sessionId, shown.map((h) => h.rule.id));
+  return formatPromptContext(shown, match, overflow.map((h) => h.rule.id));
 }

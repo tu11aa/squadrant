@@ -1,10 +1,11 @@
+import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, DEFAULT_CONFIG_PATH, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
+  loadConfig, DEFAULT_CONFIG_PATH, CONFIG_DIR, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
 import {
-  resolveProjectRules, searchRules, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
+  resolveProjectRules, searchRules, computeRulesInjection, withBudget, INJECT_BUDGET_MS, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
 } from "@squadrant/core";
 import { detectCurrentProject } from "./work.js";
 
@@ -133,4 +134,37 @@ rulesCommand
       console.log(formatRule(r));
       console.log(chalk.dim(r.body) + "\n");
     }
+  });
+
+/** Run the same in-process matcher the hooks use. Never throws or blocks past the budget: failure prints nothing. */
+export async function runRulesMatch(
+  opts: RulesOpts & { event?: string; path?: string; text?: string; session?: string; stateRoot?: string }, configPath = DEFAULT_CONFIG_PATH,
+): Promise<string> {
+  const event = opts.event ?? (opts.path ? "read" : opts.text ? "prompt" : "session");
+  const mapped = ({ session: "session-start", prompt: "prompt-submit", read: "post-read" } as Record<string, string | undefined>)[event];
+  if (!mapped) throw new Error(`--event must be session, prompt or read, got '${event}'`);
+  const env = opts.env ?? process.env;
+  const cwd = opts.cwd ?? process.cwd();
+  const out = await withBudget(() => {
+    const cfg = loadConfig(configPath);
+    return computeRulesInjection({
+      event: mapped as "session-start", cfg, env, cwd, project: opts.project, audit: opts.audit,
+      stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+      payload: { session_id: opts.session, cwd, prompt: opts.text, tool_name: "Read", tool_input: { file_path: opts.path } },
+    });
+  }, INJECT_BUDGET_MS);
+  return out ?? "";
+}
+
+rulesCommand
+  .command("match")
+  .description("Print the rules the hooks would inject for an event (in-process; never blocks)")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .option("--event <e>", "session | prompt | read (default: read if --path, prompt if --text, else session)")
+  .option("--path <file>", "file read (event read)")
+  .option("--text <t>", "prompt text (event prompt)")
+  .option("--session <id>", "session id: rules already shown to it are skipped, and shown ones are recorded")
+  .action(async (opts: RulesOpts & { event?: string; path?: string; text?: string; session?: string }) => {
+    const out = await runRulesMatch(opts);
+    if (out) console.log(out);
   });
