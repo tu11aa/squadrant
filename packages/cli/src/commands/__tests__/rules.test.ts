@@ -5,6 +5,7 @@ import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { kbRulesDir } from "@squadrant/core";
 import { runRulesMatch, runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
+import { runKnowledgeFeedback, runKnowledgeStats, runKnowledgeCiteScan, renderStats } from "../knowledge.js";
 import type { SearchHit } from "@squadrant/core";
 
 let dir: string;
@@ -143,5 +144,33 @@ describe("rules match", () => {
     expect(await runRulesMatch({ ...o, path: path.join(dir, "flooros", "c", "A.sol") }, cfgPath)).toContain("biz.sol");
     await expect(runRulesMatch({ ...o, event: "edit" }, cfgPath)).rejects.toThrow(/--event/);
     expect(await runRulesMatch({ ...o, project: "nope", text: "invoice vnd" }, cfgPath)).toBe("");
+  });
+});
+
+describe("knowledge feedback / stats / cite-scan (#901)", () => {
+  const audit = (at = "2026-10-10T00:00:00Z") => ({ dir: process.env.SQUADRANT_AUDIT_DIR!, now: () => new Date(at), machineId: "m1" });
+  const events = () => fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+  it("feedback logs one item.outcome with kb/domain; unknown ids and projects fail", () => {
+    runKnowledgeFeedback("biz.invoice.vnd-rounding", "violated", { project: "flooros", audit: audit(), env: {} }, cfgPath);
+    expect(events()).toMatchObject([{ event: "item.outcome", outcome: "violated", itemId: "biz.invoice.vnd-rounding", domain: "rules", project: "flooros" }]);
+    expect(() => runKnowledgeFeedback("nope", "noise", { project: "flooros", audit: audit(), env: {} }, cfgPath)).toThrow(/No rule 'nope'/);
+  });
+  it("cite-scan --text cites a surfaced id once; stats reflect surfaced, cited and feedback", async () => {
+    await runRulesMatch({ project: "flooros", text: "round the invoice amount in vnd", session: "s1", env: {}, audit: audit(), stateRoot: path.join(dir, "state") }, cfgPath);
+      const first = runKnowledgeCiteScan({ project: "flooros", text: "done: biz.invoice.vnd-rounding applied", audit: audit() });
+      expect(first).toEqual(["biz.invoice.vnd-rounding"]);
+      expect(runKnowledgeCiteScan({ project: "flooros", text: "done: biz.invoice.vnd-rounding applied", audit: audit() })).toEqual([]);
+      runKnowledgeFeedback("biz.invoice.vnd-rounding", "noise", { project: "flooros", audit: audit(), env: {} }, cfgPath);
+      const [s] = runKnowledgeStats({ project: "flooros", auditDir: process.env.SQUADRANT_AUDIT_DIR, now: new Date("2026-10-10T00:00:00Z") }, cfgPath);
+      expect(s.items.map((x) => [x.itemId, x.surfaced, x.cited, x.noise, x.useRate])).toEqual([["biz.invoice.vnd-rounding", 1, 1, 1, 1]]);
+      expect(renderStats([s]).join("\n")).toContain("use 100%");
+      expect(runKnowledgeStats({ kb: "saitex", item: "nope", auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath)[0].items).toEqual([]);
+  });
+  it("cite-scan --git scans commit messages with their own timestamp and dedups by sha", async () => {
+    await runRulesMatch({ project: "flooros", text: "round the invoice amount in vnd", session: "s1", env: {}, audit: audit("2026-10-08T00:00:00Z"), stateRoot: path.join(dir, "state") }, cfgPath);
+    const git_run = () => "\x1eabc123\x1f2026-10-09T12:00:00Z\x1ffix: biz.invoice.vnd-rounding\n";
+      expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual(["biz.invoice.vnd-rounding"]);
+      expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual([]);
   });
 });

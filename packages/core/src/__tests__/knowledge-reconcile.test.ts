@@ -25,7 +25,7 @@ let clock: Date;
 
 const kbRoot = () => kbDir(cfg, "t");
 const enqueue = async (project: string, text: string) => { mailbox.push({ project, text }); };
-const deps = () => ({ cfg, stateRoot, enqueue, now: () => clock });
+const deps = () => ({ cfg, stateRoot, enqueue, now: () => clock, auditDir: path.join(root, "audit") });
 const ctx = (extra: Partial<ReviewContext> = {}): ReviewContext => ({ cfg, kb: "t", sources: SOURCES, audit: { dir: path.join(root, "audit"), machineId: "m" }, now: () => clock, ...extra });
 const preConverted = (dir: string): Converter => async (file) => fs.readFileSync(path.join(dir, `${path.basename(file)}.md`), "utf8");
 const cands = (name: string) => JSON.parse(fs.readFileSync(path.join(FIX, name), "utf8")) as CandidateFile;
@@ -255,7 +255,10 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     // 4. the pass closes: REPORT.md, schedule advanced, one captain line with the count
     const fin = await finishReconcile("t", deps());
     expect(fin.needsYou).toBe(1);
-    expect(fs.readFileSync(path.join(kbRoot(), "REPORT.md"), "utf8")).toContain("Needs you (1)");
+    const report = fs.readFileSync(path.join(kbRoot(), "REPORT.md"), "utf8");
+    expect(report).toContain("Needs you (1)");
+    expect(report).toContain("## Scores (30 days)");
+    expect(JSON.parse(fs.readFileSync(path.join(kbRoot(), "scores.json"), "utf8")).kb).toBe("t");
     expect(mailbox[mailbox.length - 1]).toEqual({ project: "flooros", text: "t KB: 1 item need you (squadrant knowledge review t)" });
     expect(readSchedule(stateRoot).t.running).toBeUndefined();
 
@@ -330,6 +333,23 @@ describe("full-pass checks", () => {
     await finishReconcile("t", { ...deps(), pass: "full", auditDir: path.join(root, "noaudit") });
     expect(readEscalations(kbRoot()).map((e) => e.kind)).toContain("override-base-changed");
     expect(mailbox.at(-1)!.text).toContain("need you");
+  });
+});
+
+describe("audit compaction on the full pass (#901)", () => {
+  it("compacts old months into stats and leaves verdicts.jsonl and the current month alone", async () => {
+    liveRule("coding.a");
+    const dir = path.join(root, "audit");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "2026-05.m.jsonl"), JSON.stringify({ ts: "2026-05-01T00:00:00Z", kb: "t", domain: "rules", itemId: "coding.a", event: "item.surfaced" }) + "\n");
+    fs.writeFileSync(path.join(dir, "2026-10.m.jsonl"), JSON.stringify({ ts: "2026-10-09T00:00:00Z", kb: "t", domain: "rules", itemId: "coding.a", event: "item.surfaced" }) + "\n");
+    fs.writeFileSync(path.join(kbRoot(), "verdicts.jsonl"), '{"kind":"review"}\n');
+    schedSeed({});
+    await finishReconcile("t", { ...deps(), pass: "full" });
+    expect(fs.readdirSync(dir).filter((f) => f.startsWith("2026-05"))).toEqual(["2026-05.m.stats.json"]);
+    expect(fs.existsSync(path.join(dir, "2026-10.m.jsonl"))).toBe(true);
+    expect(fs.readFileSync(path.join(kbRoot(), "verdicts.jsonl"), "utf8")).toBe('{"kind":"review"}\n');
+    expect(JSON.parse(fs.readFileSync(path.join(kbRoot(), "scores.json"), "utf8")).items[0]).toMatchObject({ itemId: "coding.a", surfaced: 1, lifetimeSurfaced: 2 });
   });
 });
 

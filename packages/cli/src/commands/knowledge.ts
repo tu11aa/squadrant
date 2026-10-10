@@ -14,9 +14,11 @@ import {
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
-  resolveEscalation, duePass, reconcileConfig, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
+  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, readGitMessages,
+  type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
 import type { RuleModality } from "@squadrant/shared";
+import { resolveRulesProject } from "./rules.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -336,3 +338,89 @@ knowledgeCommand
 function kbConfigsHome(kb: string): string {
   return resolveKbConfig(loadConfig(), kb).homeProject ?? "(no homeProject)";
 }
+
+// ── feedback / stats / cite-scan (#901) ──────────────────────────────
+
+export const FEEDBACK_OUTCOMES = ["followed", "violated", "noise", "wrong"] as const;
+type FeedbackOutcome = (typeof FEEDBACK_OUTCOMES)[number];
+
+/** Log an item.outcome for a rule the project resolves. Operator or agent may call it. */
+export function runKnowledgeFeedback(id: string, outcome: FeedbackOutcome, o: { project?: string; audit?: AuditSink; env?: NodeJS.ProcessEnv; cwd?: string }, configPath = DEFAULT_CONFIG_PATH): void {
+  const cfg = loadConfig(configPath);
+  const project = resolveRulesProject(cfg, o);
+  const rule = resolveProjectRules(cfg, project).rules.find((r) => r.id === id);
+  if (!rule) throw new Error(`No rule '${id}' for project '${project}'`);
+  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, agent: (o.env ?? process.env).SQUADRANT_AGENT }], o.audit);
+}
+
+knowledgeCommand
+  .command("feedback <id>")
+  .description("Report how a rule fared: --followed | --violated | --noise | --wrong (feeds scores and the next reconcile)")
+  .option("--followed").option("--violated").option("--noise").option("--wrong")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .action((id: string, o: Record<string, unknown> & { project?: string }) => {
+    const picked = FEEDBACK_OUTCOMES.filter((k) => o[k]);
+    if (picked.length !== 1) throw new Error("Pass exactly one of --followed, --violated, --noise, --wrong");
+    runKnowledgeFeedback(id, picked[0], o);
+    console.log(`recorded: ${id} ${picked[0]}`);
+  });
+
+export interface StatsOpts { kb?: string; project?: string; domain?: string; item?: string; json?: boolean; auditDir?: string; now?: Date }
+
+/** Scores per KB (all KBs, or the project's subscriptions, or one --kb), filtered by domain/item. */
+export function runKnowledgeStats(o: StatsOpts, configPath = DEFAULT_CONFIG_PATH): Scores[] {
+  const cfg = loadConfig(configPath);
+  let kbs = Object.keys(kbConfigs(cfg));
+  if (o.kb) kbs = [o.kb];
+  else if (o.project) {
+    if (!cfg.projects[o.project]) throw new Error(`Unknown project '${o.project}'`);
+    kbs = subscribedKbs(cfg, o.project);
+  }
+  return kbs.map((kb) => {
+    assertKbName(kb);
+    const s = scoreKb({ kb, now: o.now ?? new Date(), auditDir: o.auditDir, kbRoot: kbDir(cfg, kb), known: loadRules(cfg, kb).rules.map((r) => ({ id: r.id, domain: "rules", status: r.status })) });
+    return { ...s, items: s.items.filter((x) => (!o.domain || x.domain === o.domain) && (!o.item || x.itemId === o.item)), domains: s.domains.filter((d) => !o.domain || d.domain === o.domain) };
+  });
+}
+
+export function renderStats(all: Scores[]): string[] {
+  const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
+  return all.flatMap((s) => [
+    `${s.kb} (last ${s.windowDays} days)`,
+    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.shown}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
+    ...s.domains.map((d) => `  domain ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`),
+    `  agents: ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
+  ]);
+}
+
+knowledgeCommand
+  .command("stats")
+  .description("Scores computed from the audit log: fire/pull/use/noise/violation rates, never-fired, per-domain activity")
+  .option("--kb <kb>").option("--project <name>").option("--domain <slug>").option("--item <id>")
+  .option("--json", "print scores.json-shaped output")
+  .action((o: StatsOpts) => {
+    const all = runKnowledgeStats(o);
+    if (o.json) console.log(JSON.stringify(all, null, 2));
+    else for (const l of renderStats(all)) console.log(l);
+  });
+
+export function runKnowledgeCiteScan(o: { project: string; text?: string; git?: string; sinceDays?: number; ref?: string; audit?: AuditSink; git_run?: (args: string[]) => string }): string[] {
+  const run = o.git_run ?? ((args: string[]) => spawnSync("git", args, { encoding: "utf8" }).stdout ?? "");
+  if (o.git) {
+    const since = new Date((o.audit?.now?.() ?? new Date()).getTime() - (o.sinceDays ?? 30) * 86400000);
+    return readGitMessages(o.git, since, run).flatMap((c) => scanAndLogCitations({ text: c.text, ref: `git:${c.sha}`, project: o.project, at: c.at, sink: o.audit }));
+  }
+  if (!o.text) throw new Error("Pass --text <message> or --git <repo>");
+  return scanAndLogCitations({ text: o.text, ref: o.ref ?? "manual", project: o.project, sink: o.audit });
+}
+
+knowledgeCommand
+  .command("cite-scan")
+  .description("Log item.cited for rule ids named in a message (--text) or in recent commit messages (--git <repo>)")
+  .requiredOption("--project <name>")
+  .option("--text <message>").option("--git <repo>", "scan commit messages of this repo").option("--since-days <n>", "git lookback (default 30)", (v) => Number(v))
+  .option("--ref <ref>", "dedup key for --text (default: manual)")
+  .action((o: { project: string; text?: string; git?: string; sinceDays?: number; ref?: string }) => {
+    const ids = runKnowledgeCiteScan(o);
+    console.log(ids.length ? `cited: ${ids.join(", ")}` : "no new citations");
+  });
