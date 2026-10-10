@@ -16,7 +16,7 @@ export interface AuditEvent {
   domain: string;
   itemId: string;
   event: AuditEventName;
-  trigger?: "session" | "prompt";
+  trigger?: "session" | "prompt" | "tool";
   score?: number;
   chars?: number;
   agent?: string;

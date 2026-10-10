@@ -117,10 +117,12 @@ function recordCaptainSessionStart(payload: unknown): void {
   }
 }
 
-const RULES_HOOK_EVENTS = { "session-start": "SessionStart", "prompt-submit": "UserPromptSubmit" } as const;
+const RULES_HOOK_EVENTS = {
+  "session-start": "SessionStart", "prompt-submit": "UserPromptSubmit", "post-tool-use": "PostToolUse",
+} as const;
 
 /**
- * #899 v0: Rules KB injection for SessionStart / UserPromptSubmit. Returns the
+ * #899: Rules KB injection for SessionStart / UserPromptSubmit / PostToolUse(Read). Returns the
  * hook's stdout JSON (`hookSpecificOutput.additionalContext`), or "" when there
  * is nothing to inject. Never throws: a slow or failing lookup yields "" so a
  * rules problem can never block a session or prompt. Purely additive — the
@@ -134,10 +136,10 @@ export async function rulesHookOutput(
     loadCfg?: () => SquadrantConfig; stateRoot?: string; budgetMs?: number;
   },
 ): Promise<string> {
-  if (sub !== "session-start" && sub !== "prompt-submit") return "";
+  if (sub !== "session-start" && sub !== "prompt-submit" && sub !== "post-tool-use") return "";
   if (opts.env.SQUADRANT_RULES_INJECT === "0") return "";
   const ctx = await withBudget(() => computeRulesInjection({
-    event: sub, payload, env: opts.env, cwd: opts.cwd, project: opts.project,
+    event: sub === "post-tool-use" ? "post-read" : sub, payload, env: opts.env, cwd: opts.cwd, project: opts.project,
     cfg: (opts.loadCfg ?? loadConfig)(),
     stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
   }), opts.budgetMs ?? INJECT_BUDGET_MS);

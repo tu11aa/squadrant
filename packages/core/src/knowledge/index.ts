@@ -11,3 +11,4 @@ export * from "./verify.js";
 export * from "./ingest.js";
 export * from "./anchor.js";
 export * from "./extract.js";
+export * from "./match.js";

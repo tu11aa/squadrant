@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { kbRulesDir } from "@squadrant/core";
-import { runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
+import { runRulesMatch, runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
 import type { SearchHit } from "@squadrant/core";
 
 let dir: string;
@@ -125,5 +125,23 @@ describe("rules audit log (#935)", () => {
   it("show logs item.shown", () => {
     runRulesShow("biz.invoice.vnd-rounding", { project: "flooros" }, cfgPath);
     expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group" });
+  });
+});
+
+describe("rules match", () => {
+  const o = { project: "flooros", env: {}, stateRoot: "" };
+  it("prompt event prints the injection block; no match prints nothing", async () => {
+    o.stateRoot = path.join(dir, "state");
+    const out = await runRulesMatch({ ...o, text: "round the invoice amount in vnd" }, cfgPath);
+    expect(out).toContain("biz.invoice.vnd-rounding");
+    expect(await runRulesMatch({ ...o, text: "thanks" }, cfgPath)).toBe("");
+  });
+  it("read event matches a rule glob; bad event errors; unknown project prints nothing", async () => {
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "business");
+    fs.writeFileSync(path.join(rd, "biz.sol.md"), rule("biz.sol", "active", "triggers:\n  globs: ['**/*.sol']\n"));
+    o.stateRoot = path.join(dir, "state");
+    expect(await runRulesMatch({ ...o, path: path.join(dir, "flooros", "c", "A.sol") }, cfgPath)).toContain("biz.sol");
+    await expect(runRulesMatch({ ...o, event: "edit" }, cfgPath)).rejects.toThrow(/--event/);
+    expect(await runRulesMatch({ ...o, project: "nope", text: "invoice vnd" }, cfgPath)).toBe("");
   });
 });
