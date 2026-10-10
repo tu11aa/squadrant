@@ -1,5 +1,8 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import readline from "node:readline/promises";
+import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
@@ -10,7 +13,10 @@ import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
+  resolveEscalation, duePass, reconcileConfig, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
+import type { RuleModality } from "@squadrant/shared";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -214,3 +220,119 @@ knowledgeCommand
     for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
+
+const defaultStateRoot = () => path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+
+function reviewContext(kb: string, configPath: string): ReviewContext {
+  const cfg = requireKb(kb, configPath);
+  const projects = Object.entries(cfg.projects)
+    .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
+    .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
+  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+}
+
+export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {
+  return applyDecisions(JSON.parse(fs.readFileSync(file, "utf8")) as DecisionFile, reviewContext(kb, configPath));
+}
+export function runKnowledgeResolve(kb: string, key: string, r: Resolution, by: string, reason: string, configPath = DEFAULT_CONFIG_PATH): string {
+  return resolveEscalation(reviewContext(kb, configPath), key, r, by, reason);
+}
+export function runKnowledgePropose(kb: string, o: { statement: string; evidence: string; id?: string; domain?: string; modality?: RuleModality }, configPath = DEFAULT_CONFIG_PATH): string {
+  return proposeAgentRule(reviewContext(kb, configPath), { ...o, agent: process.env.SQUADRANT_AGENT ?? "agent" });
+}
+
+knowledgeCommand
+  .command("review <kb>")
+  .description("Escalations for the operator (interactive walk-through); --json prints the reviewer packet; --apply applies reviewer decisions")
+  .option("--json", "print the reviewer packet (proposals, stale rules, decided conflicts, open escalations)")
+  .option("--apply <file>", "apply a reviewer decisions file (typed decisions + confidence); escalations are queued")
+  .option("--resolve <key>", "answer one escalation non-interactively")
+  .option("--approve", "with --resolve: approve / keep").option("--reject", "with --resolve: reject / drop")
+  .option("--keep-doc", "with --resolve (code-vs-doc): keep the doc's rule").option("--supersede-with-code", "with --resolve (code-vs-doc): retire the rule in favour of the code")
+  .option("--reason <text>", "reason recorded with the answer", "")
+  .action(async (kb: string, o: { json?: boolean; apply?: string; resolve?: string; approve?: boolean; reject?: boolean; keepDoc?: boolean; supersedeWithCode?: boolean; reason: string }) => {
+    if (o.json) { console.log(JSON.stringify(buildReviewPacket(reviewContext(kb, DEFAULT_CONFIG_PATH)), null, 2)); return; }
+    if (o.apply) {
+      const r = runKnowledgeReviewApply(kb, o.apply);
+      console.log(`applied ${r.applied.length}, escalated ${r.escalated.length}, code violations ${r.violations.length}, skipped ${r.skipped.length}`);
+      for (const e of r.escalated) console.log(chalk.yellow(`  ! ${e.key}: ${e.reasons.join(", ")}`));
+      for (const x of r.skipped) console.log(chalk.red(`  ✘ ${x.item}: ${x.reason}`));
+      return;
+    }
+    const by = os.userInfo().username;
+    const resolution = (): Resolution | null =>
+      o.keepDoc ? { kind: "verdict", verdict: "keep-doc" } : o.supersedeWithCode ? { kind: "verdict", verdict: "supersede-with-code" }
+        : o.approve ? { kind: "approve" } : o.reject ? { kind: "reject" } : null;
+    if (o.resolve) {
+      const r = resolution();
+      if (!r) throw new Error("--resolve needs --approve, --reject, --keep-doc or --supersede-with-code");
+      console.log(runKnowledgeResolve(kb, o.resolve, r, by, o.reason));
+      return;
+    }
+    const open = readEscalations(kbDir(requireKb(kb, DEFAULT_CONFIG_PATH), kb)).filter((e) => e.needsYou);
+    if (!open.length) { console.log("Nothing needs you."); return; }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      for (const e of open) {
+        console.log(`\n${chalk.bold(e.key)} [${e.kind}] ${e.reasons.join(", ")}\n${e.explanation}`);
+        const codeVsDoc = e.kind === "code-vs-doc";
+        const ans = (await rl.question(codeVsDoc ? "(k)eep doc / (s)upersede with code / (n)ext: " : "(a)pprove / (r)eject / (e)dit / (n)ext: ")).trim().toLowerCase();
+        const reason = ans === "n" || !ans ? "" : await rl.question("reason: ");
+        let r: Resolution | null = null;
+        if (codeVsDoc) r = ans === "k" ? { kind: "verdict", verdict: "keep-doc" } : ans === "s" ? { kind: "verdict", verdict: "supersede-with-code" } : null;
+        else if (ans === "a") r = { kind: "approve" };
+        else if (ans === "r") r = { kind: "reject" };
+        else if (ans === "e" && e.kind === "proposal") {
+          const ctx = reviewContext(kb, DEFAULT_CONFIG_PATH);
+          const file = path.join(kbRulesDir(ctx.cfg, kb), PROPOSED_DIR, `${e.item}.md`);
+          spawnSync(process.env.EDITOR ?? "vi", [file], { stdio: "inherit" });
+          r = { kind: "approve" };
+        }
+        if (r) console.log(chalk.green(runKnowledgeResolve(kb, e.key, r, by, reason)));
+      }
+    } finally { rl.close(); }
+  });
+
+knowledgeCommand
+  .command("propose")
+  .description("Propose a rule from what you learned (lands in _proposed/ with agent priority; never goes live unreviewed)")
+  .requiredOption("--kb <kb>", "knowledge base")
+  .requiredOption("--evidence <where>", "where you saw this (quote or pointer)")
+  .option("--id <id>").option("--domain <slug>").option("--modality <m>", "must|must-not|should|may")
+  .argument("<statement>", "the rule, one imperative sentence")
+  .action((statement: string, o: { kb: string; evidence: string; id?: string; domain?: string; modality?: RuleModality }) => {
+    console.log(`proposed: ${runKnowledgePropose(o.kb, { statement, ...o })}`);
+  });
+
+knowledgeCommand
+  .command("reconcile <kb>")
+  .description("Reconcile status; --now requests a pass from the home captain; --finish closes a pass (REPORT.md, schedule, captain message)")
+  .option("--full", "full pass instead of incremental")
+  .option("--now", "request the pass now instead of waiting for the schedule")
+  .option("--dry-run", "show what would happen; write nothing")
+  .option("--finish", "close the running pass (run by the reviewer crew when done)")
+  .action(async (kb: string, o: { full?: boolean; now?: boolean; dryRun?: boolean; finish?: boolean }) => {
+    const cfg = requireKb(kb, DEFAULT_CONFIG_PATH);
+    const stateRoot = defaultStateRoot();
+    const enqueue = (project: string, text: string) => appendCaptainMessage({ stateRoot, project, text, source: "cli" });
+    const deps = { cfg, stateRoot, enqueue };
+    if (o.finish) {
+      if (o.dryRun) { console.log("dry run: would write REPORT.md, advance the schedule and message the captain"); return; }
+      const r = await finishReconcile(kb, { ...deps, pass: o.full ? "full" : undefined });
+      console.log(`${r.pass} pass closed; ${r.needsYou} need you; ${r.report}`);
+      return;
+    }
+    if (o.now || o.dryRun) {
+      const r = await requestPass(kb, o.full ? "full" : "incremental", deps, { dryRun: o.dryRun });
+      console.log(r.requested ? `requested ${r.pass} pass from ${kbConfigsHome(kb)}` : `not requested: ${r.reason}`);
+      if (!r.requested && !o.dryRun) process.exitCode = 1;
+      return;
+    }
+    const e = readSchedule(stateRoot)[kb] ?? {};
+    const due = duePass(e, { now: new Date(), rc: reconcileConfig(cfg, kb), empty: loadRules(cfg, kb, { includeProposed: true }).rules.length === 0 });
+    console.log(JSON.stringify({ ...e, due }, null, 2));
+  });
+
+function kbConfigsHome(kb: string): string {
+  return kbConfigs(loadConfig())[kb]?.homeProject ?? "(no homeProject)";
+}

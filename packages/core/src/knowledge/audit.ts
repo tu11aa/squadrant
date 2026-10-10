@@ -7,7 +7,7 @@ import type { Rule } from "@squadrant/shared";
 
 export type AuditEventName =
   | "item.surfaced" | "item.suppressed" | "item.searched" | "item.shown"
-  | "item.proposed" | "item.superseded" | "item.applied" | "item.rejected";
+  | "item.proposed" | "item.approved" | "item.rejected" | "item.applied" | "item.promoted" | "item.superseded" | "item.archived";
 
 export interface AuditEvent {
   kb: string;

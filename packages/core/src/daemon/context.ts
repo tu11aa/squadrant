@@ -43,6 +43,8 @@ export interface SquadrantdOpts {
   }) => Promise<void> | void;
   /** Background rotation timer interval (ms). 0 disables. Default 60_000. */
   rotationIntervalMs?: number;
+  /** Extra work for the 60s rotation tick (#898 KB reconcile scheduler); supplied by the host, never reads config here. */
+  knowledgeTick?: () => Promise<void>;
   /** Mailbox rotation thresholds (size/age/retention). */
   mailboxConfig?: {
     maxBytes?: number;
