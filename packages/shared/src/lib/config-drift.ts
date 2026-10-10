@@ -27,7 +27,12 @@ const MANAGED_PATHS: string[] = [
   "runtime",
 ];
 
-const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: SquadrantConfig) => boolean; note: string }> = [
+const KNOWN_DEPRECATED: Array<{ path: string; when?: (u: SquadrantConfig) => boolean; note: string; moveTo?: string }> = [
+  {
+    path: "knowledge",
+    note: "renamed to knowledgeBases (still read as an alias); --fix moves the entries across",
+    moveTo: "knowledgeBases",
+  },
   {
     path: "defaults.models",
     when: (u) => u.defaults?.roles !== undefined,
@@ -206,7 +211,11 @@ export function applySafeFixes(
   for (const item of items) {
     if (!SAFE_KINDS.includes(item.kind)) continue;
     if (item.kind === "missing") setPath(root, item.path, item.suggested);
-    else if (item.kind === "deprecated") deletePath(root, item.path);
+    else if (item.kind === "deprecated") {
+      const moveTo = KNOWN_DEPRECATED.find((d) => d.path === item.path)?.moveTo;
+      if (moveTo) setPath(root, moveTo, { ...(item.current as object), ...(getPath(root, moveTo) as object | undefined) });
+      deletePath(root, item.path);
+    }
     applied.push(item.path);
   }
   return { config, applied };

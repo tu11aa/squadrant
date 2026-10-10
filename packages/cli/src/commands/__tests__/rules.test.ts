@@ -18,9 +18,10 @@ beforeEach(() => {
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
   c.hubVault = path.join(dir, "hub");
+  c.knowledgeBases = { saitex: { path: path.join(dir, "kb", "saitex") } };
   c.projects = { flooros: { path: path.join(dir, "flooros"), captainName: "f", spokeVault: path.join(dir, "spoke"), host: "local", knowledge: ["saitex"] } };
   saveConfig(c, cfgPath);
-  const rd = path.join(kbRulesDir(c.hubVault, "saitex"), "business");
+  const rd = path.join(kbRulesDir(c, "saitex"), "business");
   fs.mkdirSync(rd, { recursive: true });
   fs.writeFileSync(path.join(rd, "biz.invoice.vnd-rounding.md"), rule("biz.invoice.vnd-rounding", "active", "triggers:\n  keywords: [invoice]\n"));
   fs.writeFileSync(path.join(rd, "biz.old.md"), rule("biz.old", "retired", "triggers:\n  keywords: [invoice]\n"));
@@ -63,7 +64,7 @@ describe("rules search/show", () => {
     expect(runRulesShow("biz.old", { project: "flooros", all: true }, cfgPath).status).toBe("retired");
   });
   it("skips a malformed rule file and reports it on stderr without failing search (Review Focus 1)", () => {
-    const rd = path.join(kbRulesDir(loadConfig(cfgPath).hubVault, "saitex"), "business");
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "business");
     fs.writeFileSync(path.join(rd, "biz.broken.md"), "---\nid: [unclosed\n---\nbody\n");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

@@ -1,6 +1,7 @@
 // packages/shared/src/knowledge.ts
 // #896 Rules KB — pure schema types + validators. Spec: docs/specs/2026-10-07-rules-kb-design.md §3.
-import type { SquadrantConfig } from "./config.js";
+import path from "node:path";
+import { resolveHome, type SquadrantConfig } from "./config.js";
 
 export type RuleModality = "must" | "must-not" | "should" | "may";
 export type RuleStatus = "proposed" | "active" | "stale" | "retired";
@@ -67,6 +68,8 @@ export interface KnowledgeSourceEntry {
 }
 
 export interface KnowledgeKbConfig {
+  /** KB repo root. Default: ~/squadrant/kb/<kb>. */
+  path?: string;
   homeProject?: string;
   domainCap?: number;
   /** Optional allowed rule domains; `knowledge validate` warns on rules outside it. */
@@ -127,13 +130,46 @@ export function validateSourceEntry(e: unknown): string[] {
   return p;
 }
 
+export const DEFAULT_KB_ROOT = "~/squadrant/kb";
+
+/** Per-KB settings. `knowledge.<kb>` is the deprecated alias of `knowledgeBases.<kb>`; the new key wins. */
+export function kbConfigs(cfg: SquadrantConfig): Record<string, KnowledgeKbConfig> {
+  const out: Record<string, KnowledgeKbConfig> = { ...cfg.knowledge };
+  for (const [kb, c] of Object.entries(cfg.knowledgeBases ?? {})) out[kb] = { ...out[kb], ...c };
+  return out;
+}
+
+/** Absolute root of a KB repo. */
+export function kbPath(cfg: SquadrantConfig, kb: string): string {
+  return resolveHome(kbConfigs(cfg)[kb]?.path ?? `${DEFAULT_KB_ROOT}/${kb}`);
+}
+
+/** The KB that holds the project's own items (KB spec §3 home resolution; auto-create is a later phase). */
+export function homeKb(cfg: SquadrantConfig, project: string): string | undefined {
+  const pc = cfg.projects[project];
+  if (pc?.knowledgeHome?.startsWith("kb:")) return pc.knowledgeHome.slice(3);
+  if (pc?.knowledgeHome) return undefined;
+  return pc?.group ? cfg.groups?.[pc.group]?.kb : undefined;
+}
+
+/** KBs read for a project: its group's/home KB first, then `projects.<p>.knowledge[]`. A group KB is inherited. */
 export function subscribedKbs(cfg: SquadrantConfig, project: string): string[] {
-  return cfg.projects[project]?.knowledge ?? [];
+  const pc = cfg.projects[project];
+  const group = pc?.group ? cfg.groups?.[pc.group]?.kb : undefined;
+  return [...new Set([group, homeKb(cfg, project), ...(pc?.knowledge ?? [])].filter((k): k is string => !!k))];
+}
+
+/** Where the project's rule overlay lives: `<kb>/projects/<p>/rules`, or `<repo>/docs/rules` for `repo:docs`. */
+export function projectRulesHome(cfg: SquadrantConfig, project: string): string | undefined {
+  const pc = cfg.projects[project];
+  if (pc?.knowledgeHome === "repo:docs") return path.join(resolveHome(pc.path), "docs", "rules");
+  const kb = homeKb(cfg, project);
+  return kb ? path.join(kbPath(cfg, kb), "projects", project, "rules") : undefined;
 }
 
 export function resolveKbConfig(cfg: SquadrantConfig, kb: string): { homeProject?: string; domainCap: number } {
-  const explicit = cfg.knowledge?.[kb] ?? {};
-  const firstSubscriber = Object.entries(cfg.projects).find(([, p]) => p.knowledge?.includes(kb))?.[0];
+  const explicit = kbConfigs(cfg)[kb] ?? {};
+  const firstSubscriber = Object.keys(cfg.projects).find((p) => subscribedKbs(cfg, p).includes(kb));
   return {
     homeProject: explicit.homeProject ?? firstSubscriber,
     domainCap: explicit.domainCap ?? DEFAULT_DOMAIN_CAP,

@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import os from "node:os";
+import path from "node:path";
 import {
   validateRuleFrontmatter, validateSourceEntry, subscribedKbs, resolveKbConfig,
-  DEFAULT_DOMAIN_CAP, getDefaultConfig,
+  DEFAULT_DOMAIN_CAP, getDefaultConfig, kbPath, kbConfigs, projectRulesHome,
 } from "../index.js";
 import type { SquadrantConfig } from "../index.js";
 
@@ -69,5 +71,37 @@ describe("subscription + kb config", () => {
   });
   it("homeProject is undefined when nobody subscribes", () => {
     expect(resolveKbConfig(cfg(), "nobody").homeProject).toBeUndefined();
+  });
+});
+
+describe("group inheritance + KB config (#936)", () => {
+  function cfg(): SquadrantConfig {
+    const c = getDefaultConfig();
+    c.groups = { saitex: { kb: "saitex" }, loose: {} };
+    c.projects = {
+      flooros: { path: "/f", captainName: "f", spokeVault: "/v/f", host: "local", group: "saitex", knowledge: ["conv"] },
+      lone: { path: "/l", captainName: "l", spokeVault: "/v/l", host: "local", group: "loose" },
+      docs: { path: "/d", captainName: "d", spokeVault: "/v/d", host: "local", group: "saitex", knowledgeHome: "repo:docs" },
+    };
+    return c;
+  }
+  it("subscribedKbs: group KB first, then knowledge[]", () => {
+    expect(subscribedKbs(cfg(), "flooros")).toEqual(["saitex", "conv"]);
+    expect(subscribedKbs(cfg(), "lone")).toEqual([]);
+  });
+  it("kbPath defaults to ~/squadrant/kb/<kb>; path overrides; deprecated knowledge alias is read", () => {
+    const c = cfg();
+    expect(kbPath(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex"));
+    c.knowledge = { a: { path: "/old/a", domainCap: 5 } };
+    c.knowledgeBases = { a: { domainCap: 9 }, b: { path: "/new/b" } };
+    expect(kbPath(c, "a")).toBe("/old/a");
+    expect(kbConfigs(c).a).toEqual({ path: "/old/a", domainCap: 9 });
+    expect(kbPath(c, "b")).toBe("/new/b");
+  });
+  it("projectRulesHome: <kb>/projects/<p>/rules, docs/rules for repo:docs, none without a home", () => {
+    const c = cfg();
+    expect(projectRulesHome(c, "flooros")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex", "projects", "flooros", "rules"));
+    expect(projectRulesHome(c, "docs")).toBe(path.join("/d", "docs", "rules"));
+    expect(projectRulesHome(c, "lone")).toBeUndefined();
   });
 });

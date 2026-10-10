@@ -39,6 +39,17 @@ describe("detectDrift \u2014 deprecated", () => {
     expect(dep).toBeDefined();
   });
 
+  it("flags deprecated knowledge.<kb>; --fix moves it to knowledgeBases without losing or overriding entries", () => {
+    const u = userConfig();
+    (u as any).knowledge = { saitex: { domainCap: 7 }, old: { path: "/o" } };
+    (u as any).knowledgeBases = { saitex: { domainCap: 9 } };
+    const items = detectDrift(u, getDefaultConfig());
+    expect(items.find((i) => i.kind === "deprecated" && i.path === "knowledge")?.note).toContain("knowledgeBases");
+    const { config } = applySafeFixes(u, items, getDefaultConfig());
+    expect((config as any).knowledge).toBeUndefined();
+    expect((config as any).knowledgeBases).toEqual({ saitex: { domainCap: 9 }, old: { path: "/o" } });
+  });
+
   it("does NOT flag an unknown key it has no opinion about", () => {
     const u = userConfig();
     (u as any).someFutureKey = { a: 1 };

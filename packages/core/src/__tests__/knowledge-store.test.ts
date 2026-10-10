@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { validateKb, loadRulesDir, splitStatement, kbRulesDir, projectRulesDir } from "../knowledge/index.js";
+import { getDefaultConfig } from "@squadrant/shared";
+import { validateKb, loadRulesDir, splitStatement, kbRulesDir, kbDir } from "../knowledge/index.js";
 
 let dir: string;
 function write(rel: string, text: string) {
@@ -19,9 +20,17 @@ beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "kb-store-")); })
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe("paths", () => {
-  it("builds kb and project layer dirs", () => {
-    expect(kbRulesDir("/hub", "saitex")).toBe(path.join("/hub", "knowledge", "saitex", "rules"));
-    expect(projectRulesDir("/spoke")).toBe(path.join("/spoke", "knowledge", "rules"));
+  it("defaults the KB root to ~/squadrant/kb/<kb>; rules live in shared/rules", () => {
+    const c = getDefaultConfig();
+    expect(kbDir(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex"));
+    expect(kbRulesDir(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex", "shared", "rules"));
+  });
+  it("honours knowledgeBases.<kb>.path and the deprecated knowledge.<kb>.path alias", () => {
+    const c = getDefaultConfig();
+    c.knowledgeBases = { a: { path: "/x/a" } };
+    c.knowledge = { b: { path: "/x/b" } };
+    expect(kbDir(c, "a")).toBe("/x/a");
+    expect(kbDir(c, "b")).toBe("/x/b");
   });
 });
 

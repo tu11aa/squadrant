@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate } from "../knowledge.js";
-import { kbRulesDir, readIndex } from "@squadrant/core";
+import { kbRulesDir, kbDir, readIndex } from "@squadrant/core";
 
 let dir: string;
 let cfgPath: string;
@@ -14,6 +14,7 @@ beforeEach(() => {
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
   c.hubVault = path.join(dir, "hub");
+  c.knowledgeBases = { saitex: { path: path.join(dir, "kb", "saitex") } };
   c.projects = { flooros: { path: "/f", captainName: "f", spokeVault: "/v", host: "local" } };
   saveConfig(c, cfgPath);
 });
@@ -22,10 +23,11 @@ afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 describe("knowledge init", () => {
   it("creates the layout, sources.yaml template, and a config entry", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
-    for (const rel of ["raw", "rules", "rules/_proposed", "sources.yaml"]) {
+    for (const rel of ["raw", "shared/rules", "shared/rules/_proposed", "sources.yaml", ".git"]) {
       expect(fs.existsSync(path.join(r.dir, rel))).toBe(true);
     }
-    expect(loadConfig(cfgPath).knowledge).toEqual({ saitex: {} });
+    expect(loadConfig(cfgPath).knowledgeBases?.saitex).toBeDefined();
+    expect(loadConfig(cfgPath).knowledge).toBeUndefined();
   });
   it("is idempotent and never overwrites sources.yaml", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
@@ -63,17 +65,17 @@ describe("knowledge sources", () => {
 describe("knowledge reindex", () => {
   it("compiles index.json from the KB's rules", () => {
     runKnowledgeInit("saitex", cfgPath);
-    const hub = loadConfig(cfgPath).hubVault;
+    const hub = loadConfig(cfgPath);
     fs.mkdirSync(path.join(kbRulesDir(hub, "saitex"), "coding"), { recursive: true });
     fs.writeFileSync(path.join(kbRulesDir(hub, "saitex"), "coding", "coding.a.md"),
       "---\nid: coding.a\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n---\nUse Result.\n");
     const r = runKnowledgeReindex("saitex", cfgPath);
     expect(r).toMatchObject({ count: 1, errors: 0 });
-    expect(readIndex(hub, "saitex").index?.rules[0].id).toBe("coding.a");
+    expect(readIndex(kbDir(hub, "saitex"), "saitex").index?.rules[0].id).toBe("coding.a");
   });
   it("counts proposed separately and names each invalid file", () => {
     runKnowledgeInit("saitex", cfgPath);
-    const hub = loadConfig(cfgPath).hubVault;
+    const hub = loadConfig(cfgPath);
     const rules = kbRulesDir(hub, "saitex");
     const md = (id: string) => `---\nid: ${id}\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n---\nX.\n`;
     fs.mkdirSync(path.join(rules, "_proposed"), { recursive: true });
@@ -83,7 +85,7 @@ describe("knowledge reindex", () => {
     const r = runKnowledgeReindex("saitex", cfgPath);
     expect(r).toMatchObject({ count: 1, proposed: 1, errors: 1 });
     expect(r.invalid[0].file).toContain("bad.md");
-    expect(readIndex(hub, "saitex").index?.rules.map((x) => x.id)).toEqual(["coding.a"]);
+    expect(readIndex(kbDir(hub, "saitex"), "saitex").index?.rules.map((x) => x.id)).toEqual(["coding.a"]);
   });
   it("fails clearly on an uninitialised KB", () => {
     expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
@@ -119,7 +121,7 @@ describe("knowledge init index", () => {
 describe("knowledge validate", () => {
   it("fails on a quote not in the source, passes once fixed, and reads domains from KB config", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
-    const hub = loadConfig(cfgPath).hubVault;
+    const hub = loadConfig(cfgPath);
     fs.mkdirSync(path.join(r.dir, "raw"), { recursive: true });
     fs.writeFileSync(path.join(r.dir, "raw", "a.md"), "use Result everywhere");
     const file = path.join(kbRulesDir(hub, "saitex"), "coding.a.md");
@@ -129,7 +131,7 @@ describe("knowledge validate", () => {
     fs.writeFileSync(file, md("use Result"));
     expect(runKnowledgeValidate("saitex", cfgPath).ok).toBe(true);
     const cfg = loadConfig(cfgPath);
-    cfg.knowledge = { saitex: { domains: ["git"] } };
+    cfg.knowledgeBases = { saitex: { ...cfg.knowledgeBases!.saitex, domains: ["git"] } };
     saveConfig(cfg, cfgPath);
     const v = runKnowledgeValidate("saitex", cfgPath);
     expect(v.ok).toBe(true);

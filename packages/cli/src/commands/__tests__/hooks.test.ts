@@ -121,7 +121,7 @@ describe("buildCaptainSessionRecord (#651)", () => {
 describe("rulesHookOutput (#899)", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-rules-"));
   const projDir = path.join(root, "flooros");
-  const ruleDir = path.join(root, "hub", "knowledge", "saitex", "rules", "git");
+  const ruleDir = path.join(root, "kb", "saitex", "shared", "rules", "git");
   fs.mkdirSync(ruleDir, { recursive: true });
   fs.writeFileSync(path.join(ruleDir, "git.branch-naming.md"),
     "---\nid: git.branch-naming\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
@@ -129,6 +129,7 @@ describe("rulesHookOutput (#899)", () => {
   const cfg = (knowledge?: string[]): SquadrantConfig => {
     const c = getDefaultConfig();
     c.hubVault = path.join(root, "hub");
+    c.knowledgeBases = { saitex: { path: path.join(root, "kb", "saitex") } };
     c.projects = { flooros: { path: projDir, captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge } };
     return c;
   };
