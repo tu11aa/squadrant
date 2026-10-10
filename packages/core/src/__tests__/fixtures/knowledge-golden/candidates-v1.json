@@ -1,0 +1,41 @@
+{
+  "complete": ["raw/billing-policy.md", "raw/handbook.docx", "raw/security.pdf"],
+  "candidates": [
+    {
+      "source": "raw/billing-policy.md", "id": "biz.rounding.vnd-half-up", "domain": "business", "modality": "must",
+      "statement": "Round VND amounts half-up to the unit.",
+      "rationale": "Policy rounding rule for monetary totals.",
+      "quote": "All VND amounts shall be rounded half-up to the unit.", "loc": "§Rounding",
+      "triggers": { "keywords": ["vnd", "rounding"], "expanded": ["total", "amount"], "when": "Computing or displaying VND amounts" }
+    },
+    {
+      "source": "raw/billing-policy.md", "id": "biz.invoice.issue-window", "domain": "business", "modality": "must",
+      "statement": "Issue invoices within 5 days of delivery.",
+      "quote": "Invoices must be issued within 5 days of delivery.", "loc": "§Invoicing",
+      "triggers": { "keywords": ["invoice"], "expanded": ["delivery"], "when": "Issuing an invoice" }
+    },
+    {
+      "source": "raw/handbook.docx", "id": "coding.api.validate-input", "domain": "coding", "modality": "must",
+      "statement": "Validate input on every public API endpoint.",
+      "quote": "All public API endpoints must validate their input.", "loc": "§API",
+      "triggers": { "keywords": ["endpoint", "validate"], "when": "Adding or changing a public API endpoint" }
+    },
+    {
+      "source": "raw/handbook.docx", "id": "biz.invoice.issue-window", "domain": "business", "modality": "must",
+      "statement": "Issue invoices within 5 days of delivery.", "meaning": "same",
+      "quote": "Invoices must be issued within 5 days of delivery.", "loc": "§Billing"
+    },
+    {
+      "source": "raw/security.pdf", "id": "sec.logging.no-passwords", "domain": "security", "modality": "must-not",
+      "statement": "Never write passwords to logs.",
+      "quote": "Passwords must never be written to logs.", "loc": "p.1",
+      "triggers": { "keywords": ["password", "log"], "when": "Adding logging near credentials" }
+    },
+    {
+      "source": "raw/security.pdf", "id": "biz.invoice.issue-window-30d", "domain": "business", "modality": "may",
+      "statement": "Invoices may be issued up to 30 days after delivery.",
+      "quote": "Invoices may be issued up to 30 days after delivery.", "loc": "p.1",
+      "contradicts": ["biz.invoice.issue-window"]
+    }
+  ]
+}

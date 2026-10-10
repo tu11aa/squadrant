@@ -7,3 +7,7 @@ export * from "./sources.js";
 export * from "./inject.js";
 export * from "./audit.js";
 export * from "./migrate.js";
+export * from "./verify.js";
+export * from "./ingest.js";
+export * from "./anchor.js";
+export * from "./extract.js";

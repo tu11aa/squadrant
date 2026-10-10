@@ -1,0 +1,16 @@
+{
+  "complete": ["raw/billing-policy.md"],
+  "candidates": [
+    {
+      "source": "raw/billing-policy.md", "id": "biz.rounding.half-even", "domain": "business", "modality": "must",
+      "statement": "Round VND amounts half-even to the unit.",
+      "quote": "All VND amounts shall be rounded half-even to the unit.", "loc": "§Rounding", "meaning": "changed",
+      "triggers": { "keywords": ["vnd", "rounding"], "expanded": ["total", "amount"], "when": "Computing or displaying VND amounts" }
+    },
+    {
+      "source": "raw/billing-policy.md", "id": "biz.invoice.issue-window", "domain": "business", "modality": "must",
+      "statement": "Issue invoices within 5 days of delivery.", "meaning": "same",
+      "quote": "Invoices must be issued within 5 days of delivery.", "loc": "§Invoicing"
+    }
+  ]
+}

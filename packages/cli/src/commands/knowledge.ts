@@ -7,7 +7,7 @@ import {
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
-  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb,
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
   ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
 } from "@squadrant/core";
 
@@ -98,11 +98,13 @@ export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH
   assertKbName(kb);
   const cfg = loadConfig(configPath);
   if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  const { rules: all, errors } = loadKbRules(cfg, kb, { includeProposed: true });
+  const { rules: all, errors: allErrors } = loadKbRules(cfg, kb, { includeProposed: true });
   const proposedRoot = path.join(kbRulesDir(cfg, kb), PROPOSED_DIR) + path.sep;
   const live = all.filter((r) => !r.file.startsWith(proposedRoot));
+  const pendingDups = allErrors.filter((e) => isPendingProposalDup(e, kbRulesDir(cfg, kb)));
+  const errors = allErrors.filter((e) => !pendingDups.includes(e));
   const file = writeIndex(kbDir(cfg, kb), compileIndex(kb, live));
-  return { file, count: live.length, proposed: all.length - live.length, errors: errors.length, invalid: errors };
+  return { file, count: live.length, proposed: all.length - live.length + pendingDups.length, errors: errors.length, invalid: errors };
 }
 
 export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PATH): ReturnType<typeof validateKb> {

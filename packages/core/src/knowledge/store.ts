@@ -20,6 +20,12 @@ export function duplicateIdProblem(id: string, ignored: string, used: string): s
     + "Fix: rename the id in one file, or delete or move one of them.";
 }
 
+/** A `_proposed/<id>@<sha>.md` sharing its id with a live rule is a pending meaning change (D5), not a defect. */
+export function isPendingProposalDup(e: RuleLoadError, rulesDir: string): boolean {
+  return e.problems.every((p) => p.startsWith("duplicate id"))
+    && path.relative(rulesDir, e.file).split(path.sep).includes(PROPOSED_DIR);
+}
+
 export function splitStatement(body: string): string {
   const first = body.trim().split(/\n\s*\n/)[0] ?? "";
   return first.replace(/\s+/g, " ").trim();
@@ -89,10 +95,11 @@ export function validateKb(opts: {
 }): { checks: KbCheck[]; ok: boolean } {
   const { rules, errors } = loadRulesDir(opts.rulesDir, "kb", { includeProposed: true });
   const checks: KbCheck[] = [];
-  const dups = errors.filter((e) => e.problems.some((p) => p.startsWith("duplicate id")));
-  const invalid = errors.filter((e) => !dups.includes(e));
+  const dups = errors.filter((e) => e.problems.some((p) => p.startsWith("duplicate id")) && !isPendingProposalDup(e, opts.rulesDir));
+  const pendingDups = errors.filter((e) => isPendingProposalDup(e, opts.rulesDir)).length;
+  const invalid = errors.filter((e) => !dups.includes(e) && !isPendingProposalDup(e, opts.rulesDir));
   const proposed = rules.filter((r) => path.relative(opts.rulesDir, r.file).split(path.sep).includes(PROPOSED_DIR)).length;
-  checks.push({ level: "ok", message: `${rules.length + errors.length} rule files read (${rules.length - proposed} live, ${proposed} proposed parsed OK)` });
+  checks.push({ level: "ok", message: `${rules.length + errors.length} rule files read (${rules.length - proposed} live, ${proposed + pendingDups} proposed parsed OK)` });
   if (invalid.length) for (const e of invalid) checks.push({ level: "fail", message: `invalid ${e.file}: ${e.problems.join("; ")}` });
   else checks.push({ level: "ok", message: "no invalid rule files" });
   if (dups.length) for (const e of dups) checks.push({ level: "fail", message: e.problems.join("; ") });
