@@ -3,6 +3,7 @@
 - **Status:** brainstormed with the operator 2026-10-07 → 08; Fable review applied (ready-with-fixes → fixed); awaiting operator spec review
 - **Epic:** #893 (knowledge architecture)
 - **Related:** #555, #885, #886, #894, #662, #615, #31
+- **Amended 2026-10-10 (#936):** storage, config, project overlay, audit location and `verdicts.jsonl` follow [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) §3, §4, §9, §10. Those sections win where they differ from the original text below.
 - **Prior art:** [`docs/research/2026-10-07-rules-kb-prior-art.md`](../research/2026-10-07-rules-kb-prior-art.md)
 
 ## 1. Goal
@@ -32,14 +33,14 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 | # | Decision |
 |---|---|
 | D1 | **Approach: push via hooks + pull via squadrant tool, stored in the vault.** Rejected: compiling into native rule files (Claude `paths:` is buggy, it pollutes repos (#662), and gives no audit); pull-only (relies on the agent remembering to look). |
-| D2 | **Storage:** a named KB at `<hubVault>/knowledge/<kb>/`. A project subscribes with `"knowledge": ["saitex"]`; a project KB overrides by `id` or disables via `rulesDisabled`. KBs are **not** tied to `group`. |
+| D2 | **Storage:** a named KB at `~/squadrant/kb/<kb>/`, its own git repo (`git init` on create; a remote is optional). A project inherits the KB mapped to its `group` (`groups.<g>.kb`) and adds more with `"knowledge": ["conventions"]`; its own overlay overrides by `id` or disables via `rulesDisabled`. *(Amended #936: was `<hubVault>/knowledge/<kb>/`, not tied to `group`.)* |
 | D3 | **Trust:** only sources listed in `sources.yaml` can produce rules. An agent proposal stays `proposed` until it is reviewed. |
 | D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically. Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
 | D5 | **A meaning change goes to the reviewer first.** The old version stays active while the change is pending. |
 | D6 | **v1 is LLM-driven.** Every decision is phrased as a typed question behind a `decider` seam, so Jev (cloud) or Quyet-Large (local) can replace individual questions later, evaluated against the audit log. |
 | D7 | **Two-tier reconcile:** an incremental pass at a fixed 7 days after the first change, plus a full pass every 30 days, plus manual. **Exception:** a KB with zero active rules extracts immediately (first ingest). |
 | D8 | **Delivery points shared by all four agents:** turn/prompt start and after a tool runs. Delivery never blocks. Pre-tool injection (Claude PreToolUse on Edit) is **cut from v1**: its context arrives after the edit is already chosen, and rules already arrive on Read. |
-| D9 | **Matching v1:** T0 glob/anchor/keyword plus an optional T1 static embedding (model2vec, warm in the daemon). Anchors are computed at extraction time, per project. **T2 (an async LLM/Jev rerank) is deferred** until the tier-contribution score shows a need. |
+| D9 | **Matching v1:** T0 glob/anchor/keyword computed in-process (T1 static embeddings are deferred to #902). Anchors are computed at extraction time, per project. **T2 (an async LLM/Jev rerank) is deferred** until the tier-contribution score shows a need. |
 | D10 | **An agent never reads files outside its cwd** to obtain a rule, because that triggers a permission prompt. Rule text is injected, and pull goes through the allowlisted `squadrant rules` CLI. An MCP tool is deferred. |
 | D11 | **Execution:** the daemon never spawns crews. A due pass enqueues a mailbox request to the KB's `homeProject` captain, who spawns the extraction or review crew. |
 | D12 | **Source privacy:** client documents are sent to the extraction model. A source marked `sensitivity: local-only` is extracted only by a local model (router backend); if none is available it is skipped and reported. |
@@ -47,14 +48,14 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 ## 3. Store and rule format
 
 ```
-<hubVault>/knowledge/<kb>/
+~/squadrant/kb/<kb>/               # its own git repo
   sources.yaml            # trusted sources: the only way in
   raw/                    # operator drops files here; free-form subfolders
   .converted/<src>.md     # markitdown output + .sha (regenerable cache)
-  rules/<domain>/<id>.md  # coding | system | business | security | …
-  rules/_proposed/        # awaiting reviewer / operator
+  shared/rules/<domain>/<id>.md   # coding | system | business | security | … (applies to every project in the KB)
+  shared/rules/_proposed/         # awaiting reviewer / operator
+  projects/<p>/rules/             # project overlay (§3 Project layer)
   index.json              # compiled: triggers, anchors, embeddings ref
-  audit.jsonl             # append-only (§7)
   REPORT.md               # latest reconcile report + pending escalations
 ```
 
@@ -71,16 +72,20 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
   sensitivity: local-only                    # D12: never sent to a hosted model
 ```
 
-**KB config** goes in `config.json` under `knowledge.<kb>`:
+**KB config** goes in `config.json` under `knowledgeBases.<kb>` (`path` defaults to `~/squadrant/kb/<kb>`). The old `knowledge.<kb>` key is still read as a deprecated alias; `squadrant doctor` reports it as config drift.
 
 ```json
-{ "homeProject": "flooros", "domainCap": 150 }
+{
+  "knowledgeBases": { "saitex": { "path": "~/squadrant/kb/saitex", "homeProject": "flooros", "domainCap": 150 } },
+  "groups": { "saitex": { "kb": "saitex" } },
+  "projects": { "flooros": { "group": "saitex", "knowledge": ["conventions"] } }
+}
 ```
 
 `homeProject` defaults to the first subscribing project and is required when no project subscribes. If no project subscribes, extraction still runs but anchors are skipped.
 
 **Project layer:**
-- It lives at `<spokeVault>/knowledge/rules/`, uses the same file format, and follows the same trust rules (D3).
+- It lives at the project home `<kb>/projects/<p>/rules/`, or `<repo>/docs/rules/` when `projects.<p>.knowledgeHome` is `"repo:docs"`, uses the same file format, and follows the same trust rules (D3).
 - An override **replaces the whole rule** with the same `id`. `rulesDisabled: [id]` in the project config turns a KB rule off.
 - When the base rule of an override changes, the full pass escalates `override.base-changed`.
 
@@ -218,18 +223,18 @@ Unanswered items stay `proposed` and never go live by default.
 
 ## 6. Delivery
 
-**Core command:** `squadrant rules match --project <p> --event prompt|read|edit|session --path <f> --text <t> --session <id>`
+**Core command:** `squadrant rules match --project <p> --event prompt|read|session --path <f> --text <t> --session <id>`
 
-- It is a thin client: it makes a socket round-trip to `squadrantd`, which keeps `index.json` and the embedding model warm.
+- **In-process-first (captain decision, #899):** matching runs inside the hook / CLI process, under a 1.5s budget (`INJECT_BUDGET_MS`); a throw, timeout or overrun injects nothing and never blocks. Rules are read from the KB files on every call (no warm daemon state), which is fast enough for T0. A daemon-warm matcher (socket round-trip, `index.json` held in memory) is a **deferred option**, to be revisited only if T1 or a large KB makes in-process too slow.
 - KBs are resolved from the project config, using cwd or `SQUADRANT_CREW_PROJECT`.
-- It covers crews, captains and plain sessions.
+- It covers crews, captains and plain sessions. `rules match` runs the same code the hooks run, for testing and for agents without hooks.
 
 **Matching (v1):**
 
 | Tier | Budget | What | When |
 |---|---|---|---|
-| T0 | <5ms | glob + anchor path/symbol (current project's anchors only) + BM25 over `keywords + expanded + when` | every event |
-| T1 (optional) | <5ms | static model2vec embedding cosine, fused with T0 via RRF. Config: `knowledge.matcher.t1: off \| model2vec`; when `off`, matching uses T0 only | every event |
+| T0 | in-process, within the 1.5s hook budget | glob + anchor path/symbol (current project's anchors only) + a field-weighted lexical score over `keywords + expanded + when` (the `searchRules` scorer) | every event |
+| T1 (deferred, #902) | <5ms | static model2vec embedding cosine, fused with T0 via RRF. Not built: no new dependency in v1, and no `knowledge.matcher.t1` config key yet | every event |
 | T2 (deferred) | 0.2–2.5s | async rerank of the shortlist by an LLM or a Jev/Quyet decision model | added only if tier-contribution and recall data show a need |
 
 **Injection rules:**
@@ -255,18 +260,17 @@ Unanswered items stay `proposed` and never go live by default.
 **Pull:** `squadrant rules search|show` as an allowlisted CLI. It does not read paths outside cwd (D10). An MCP tool is deferred.
 
 **Failure behavior:**
-- The hook never blocks. It calls the daemon socket with an explicit 2s timeout (the default is 5s). On an error or timeout it injects nothing and logs `match.error`.
+- The hook never blocks. On an error or timeout of the in-process matcher (1.5s) it injects nothing.
 - If the index is missing or corrupt, nothing is injected and `doctor` flags it.
-- If the daemon is down, the hook falls back to an in-process T0 only.
 
 ## 7. Audit and scoring
 
-`knowledge/<kb>/audit.jsonl` is append-only. Each entry has `{ts, kb, ruleId?, project, agent, session, event, …}`.
+The audit log is append-only, one JSON line per event, at `~/.local/state/squadrant/audit/YYYY-MM.<machine-id>.jsonl` (one file per machine, shared by all KBs and domains). Each entry has `{ts, kb, level, project, domain, itemId, event, …}` (events are named `item.*`; see `packages/core/src/knowledge/audit.ts`).
 
 | Group | Events |
 |---|---|
 | Lifecycle | `rule.extracted`, `rule.updated`, `rule.status`, `rule.rejected.ungrounded` |
-| Decisions | `decision`: question type, input, answer, confidence, justification, applied or escalated, operator override. Stored in a separate `decisions.jsonl` that is **never compacted**. This is the future eval set for Jev/Quyet. |
+| Decisions | `decision`: question type, input, answer, confidence, justification, applied or escalated, operator override. Stored in a separate `verdicts.jsonl` (renamed from `decisions.jsonl`; "decisions" is reserved for the Decisions domain) that is **never compacted**. This is the future eval set for Jev/Quyet. |
 | Delivery | `rule.surfaced`, `rule.suppressed` (budget / dedup / threshold), `match.error`, each with tier, score and tokens |
 | Pull | `rule.searched`, `rule.shown` |
 | Outcome | `rule.outcome` (followed / violated / n-a). In v1 its only source is `squadrant knowledge feedback <id> --violated\|--noise\|--wrong`, used by the operator or by agents. Sampled diffs and mechanical checks are deferred. |
@@ -295,7 +299,7 @@ Unanswered items stay `proposed` and never go live by default.
 | `knowledge/store` | core | Read/write KB dirs, index compile, layer resolution (KB + project overrides) |
 | `knowledge/ingest` | core | Source hashing, markitdown conversion, quote verification, change classification |
 | `knowledge/scheduler` | core | Incremental/full due-time state, lock, and snapshot on the rotation tick; enqueues a mailbox request to the homeProject captain (D11) |
-| `knowledge/matcher` | core | T0 + optional T1 (model2vec) in the daemon, budget/dedup/format |
+| `knowledge/matcher` | core | T0 in-process (T1 deferred, #902), budget/dedup/format |
 | `knowledge/decider` | core | Typed-question seam; v1 = LLM implementation |
 | `knowledge/audit` | core | Append, rotate, score, REPORT.md |
 | adapters | agents/workspaces | claude hooks (extend `hooks.ts` before the crew-only early exit), codex/gemini hooks, opencode plugin |
@@ -322,12 +326,13 @@ Unanswered items stay `proposed` and never go live by default.
 1. **Store + schema + CLI basics:** `knowledge init/sources`, `rules show/search`, layer resolution, `doctor` checks.
 2. **Ingest + extract + verify:** markitdown, the `knowledge-extract` skill, quote verification, change classification, per-project anchors, `sensitivity: local-only`, first-ingest guard (`--dry-run`, `maxSectionsPerPass`), optional T1 embeddings.
 3. **Reconcile + reviewer + scheduler:** incremental/full passes, mailbox-to-captain execution, lock/snapshot, `knowledge-review` skill, escalations, `review/propose`.
-4. **Delivery (Claude first):** daemon matcher T0 + optional T1, `rules match`, Claude `UserPromptSubmit`/`PostToolUse(Read)`/`SessionStart` adapters (adds PostToolUse to the managed hook set).
+4. **Delivery (Claude first):** in-process T0 matcher (daemon matcher and T1 deferred), `rules match`, Claude `UserPromptSubmit`/`PostToolUse(Read)`/`SessionStart` adapters (adds PostToolUse to the managed hook set).
 5. **Delivery for codex/gemini/opencode:** live-verify the injection points, then add the adapters and the AGENTS.md fallback pointer.
 6. **Audit + scoring + REPORT.md + feedback CLI.**
 7. **Follow-ups (deferred, data-gated):**
-   - decider backends, Jev cloud and Quyet-Large local, chosen by replaying `decisions.jsonl` as an eval set
+   - decider backends, Jev cloud and Quyet-Large local, chosen by replaying `verdicts.jsonl` as an eval set
    - T2 rerank
+   - T1 static embeddings (model2vec) and the `knowledge.matcher.t1` config key (#902 scope), plus the daemon-warm matcher they would need
    - MCP pull tool
    - automated outcome detection
 

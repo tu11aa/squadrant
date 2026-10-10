@@ -4,7 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { kbRulesDir } from "@squadrant/core";
-import { runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
+import { runRulesMatch, runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
+import { runKnowledgeFeedback, runKnowledgeStats, runKnowledgeCiteScan, renderStats } from "../knowledge.js";
 import type { SearchHit } from "@squadrant/core";
 
 let dir: string;
@@ -13,18 +14,24 @@ const rule = (id: string, status = "active", extra = "") =>
   `---\nid: ${id}\ndomain: business\nmodality: must\nstatus: ${status}\n${extra}sources:\n  - { ref: raw/Policy-v3.pdf, sha: s, loc: "p.12", quote: q }\n---\nVND amounts are rounded half-up.\n`;
 
 beforeEach(() => {
+  process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-rules-"));
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-rules-"));
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
   c.hubVault = path.join(dir, "hub");
+  c.knowledgeBases = { saitex: { path: path.join(dir, "kb", "saitex") } };
   c.projects = { flooros: { path: path.join(dir, "flooros"), captainName: "f", spokeVault: path.join(dir, "spoke"), host: "local", knowledge: ["saitex"] } };
   saveConfig(c, cfgPath);
-  const rd = path.join(kbRulesDir(c.hubVault, "saitex"), "business");
+  const rd = path.join(kbRulesDir(c, "saitex"), "business");
   fs.mkdirSync(rd, { recursive: true });
   fs.writeFileSync(path.join(rd, "biz.invoice.vnd-rounding.md"), rule("biz.invoice.vnd-rounding", "active", "triggers:\n  keywords: [invoice]\n"));
   fs.writeFileSync(path.join(rd, "biz.old.md"), rule("biz.old", "retired", "triggers:\n  keywords: [invoice]\n"));
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  fs.rmSync(process.env.SQUADRANT_AUDIT_DIR!, { recursive: true, force: true });
+  delete process.env.SQUADRANT_AUDIT_DIR;
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe("resolveRulesProject", () => {
   it("prefers --project, then SQUADRANT_CREW_PROJECT, then cwd", () => {
@@ -58,7 +65,7 @@ describe("rules search/show", () => {
     expect(runRulesShow("biz.old", { project: "flooros", all: true }, cfgPath).status).toBe("retired");
   });
   it("skips a malformed rule file and reports it on stderr without failing search (Review Focus 1)", () => {
-    const rd = path.join(kbRulesDir(loadConfig(cfgPath).hubVault, "saitex"), "business");
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "business");
     fs.writeFileSync(path.join(rd, "biz.broken.md"), "---\nid: [unclosed\n---\nbody\n");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -104,5 +111,66 @@ describe("rules output rendering", () => {
       .toEqual(["MUST biz.invoice.vnd-rounding: VND amounts are rounded half-up."]);
     expect(runRulesList({ project: "flooros", all: true }, cfgPath).map((r) => r.id)).toEqual(["biz.invoice.vnd-rounding", "biz.old"]);
     expect(renderList([], {})).toEqual(["(no rules)"]);
+  });
+});
+
+describe("rules audit log (#935)", () => {
+  const read = () => fs.readdirSync(process.env.SQUADRANT_AUDIT_DIR!).flatMap((f) =>
+    fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, f), "utf8").trim().split("\n").map((l) => JSON.parse(l)));
+  it("search logs item.searched with the query truncated to 200 chars", () => {
+    runRulesSearch("invoice " + "x".repeat(300), { project: "flooros" }, cfgPath);
+    const [e] = read();
+    expect(e).toMatchObject({ event: "item.searched", domain: "rules", project: "flooros" });
+    expect(e.query).toHaveLength(200);
+  });
+  it("show logs item.shown", () => {
+    runRulesShow("biz.invoice.vnd-rounding", { project: "flooros" }, cfgPath);
+    expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group" });
+  });
+});
+
+describe("rules match", () => {
+  const o = { project: "flooros", env: {}, stateRoot: "" };
+  it("prompt event prints the injection block; no match prints nothing", async () => {
+    o.stateRoot = path.join(dir, "state");
+    const out = await runRulesMatch({ ...o, text: "round the invoice amount in vnd" }, cfgPath);
+    expect(out).toContain("biz.invoice.vnd-rounding");
+    expect(await runRulesMatch({ ...o, text: "thanks" }, cfgPath)).toBe("");
+  });
+  it("read event matches a rule glob; bad event errors; unknown project prints nothing", async () => {
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "business");
+    fs.writeFileSync(path.join(rd, "biz.sol.md"), rule("biz.sol", "active", "triggers:\n  globs: ['**/*.sol']\n"));
+    o.stateRoot = path.join(dir, "state");
+    expect(await runRulesMatch({ ...o, path: path.join(dir, "flooros", "c", "A.sol") }, cfgPath)).toContain("biz.sol");
+    await expect(runRulesMatch({ ...o, event: "edit" }, cfgPath)).rejects.toThrow(/--event/);
+    expect(await runRulesMatch({ ...o, project: "nope", text: "invoice vnd" }, cfgPath)).toBe("");
+  });
+});
+
+describe("knowledge feedback / stats / cite-scan (#901)", () => {
+  const audit = (at = "2026-10-10T00:00:00Z") => ({ dir: process.env.SQUADRANT_AUDIT_DIR!, now: () => new Date(at), machineId: "m1" });
+  const events = () => fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+  it("feedback logs one item.outcome with kb/domain; unknown ids and projects fail", () => {
+    runKnowledgeFeedback("biz.invoice.vnd-rounding", "violated", { project: "flooros", audit: audit(), env: {} }, cfgPath);
+    expect(events()).toMatchObject([{ event: "item.outcome", outcome: "violated", itemId: "biz.invoice.vnd-rounding", domain: "rules", project: "flooros" }]);
+    expect(() => runKnowledgeFeedback("nope", "noise", { project: "flooros", audit: audit(), env: {} }, cfgPath)).toThrow(/No rule 'nope'/);
+  });
+  it("cite-scan --text cites a surfaced id once; stats reflect surfaced, cited and feedback", async () => {
+    await runRulesMatch({ project: "flooros", text: "round the invoice amount in vnd", session: "s1", env: {}, audit: audit(), stateRoot: path.join(dir, "state") }, cfgPath);
+      const first = runKnowledgeCiteScan({ project: "flooros", text: "done: biz.invoice.vnd-rounding applied", audit: audit() });
+      expect(first).toEqual(["biz.invoice.vnd-rounding"]);
+      expect(runKnowledgeCiteScan({ project: "flooros", text: "done: biz.invoice.vnd-rounding applied", audit: audit() })).toEqual([]);
+      runKnowledgeFeedback("biz.invoice.vnd-rounding", "noise", { project: "flooros", audit: audit(), env: {} }, cfgPath);
+      const [s] = runKnowledgeStats({ project: "flooros", auditDir: process.env.SQUADRANT_AUDIT_DIR, now: new Date("2026-10-10T00:00:00Z") }, cfgPath);
+      expect(s.items.map((x) => [x.itemId, x.surfaced, x.cited, x.noise, x.useRate])).toEqual([["biz.invoice.vnd-rounding", 1, 1, 1, 1]]);
+      expect(renderStats([s]).join("\n")).toContain("use 100%");
+      expect(runKnowledgeStats({ kb: "saitex", item: "nope", auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath)[0].items).toEqual([]);
+  });
+  it("cite-scan --git scans commit messages with their own timestamp and dedups by sha", async () => {
+    await runRulesMatch({ project: "flooros", text: "round the invoice amount in vnd", session: "s1", env: {}, audit: audit("2026-10-08T00:00:00Z"), stateRoot: path.join(dir, "state") }, cfgPath);
+    const git_run = () => "\x1eabc123\x1f2026-10-09T12:00:00Z\x1ffix: biz.invoice.vnd-rounding\n";
+      expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual(["biz.invoice.vnd-rounding"]);
+      expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual([]);
   });
 });

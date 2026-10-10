@@ -15,8 +15,9 @@ import type { LifecycleSource, LifecycleSourceDeps, LifecycleSnapshot, Lifecycle
 // ── Hook event matrix ─────────────────────────────────────────────────────────
 
 // Claude hook event name → sub-command alias → optional tool matcher (blueprint §9).
-// Non-lifecycle hooks (PostToolUse, SubagentStop) are intentionally excluded;
-// they feed the existing crew._hook bridge and are not part of the 4-state model.
+// Other non-lifecycle hooks (SubagentStop) are intentionally excluded; they feed the existing
+// crew._hook bridge and are not part of the 4-state model. PostToolUse(Read) is installed only
+// for rules injection (#899) and never maps to a lifecycle event.
 //
 // Third element (matcher) is passed as the hook entry's "matcher" field.
 // AskUserQuestion is a TOOL, not an event — hook it via PreToolUse with a tool matcher.
@@ -34,6 +35,8 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   // #763: the turn died on an API error — today squadrant has no source for
   // this at all; without it the watchdog reports a plain stall (wrong story).
   ["StopFailure", "stop-failure"],
+  // #899: rules whose globs/anchors match the file just read are injected as context.
+  ["PostToolUse", "post-tool-use", "Read"],
 ];
 
 /** Bare-name CLI prefix — resolved via PATH by the /bin/sh Claude runs hooks in. */

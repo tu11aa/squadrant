@@ -117,10 +117,35 @@ function recordCaptainSessionStart(payload: unknown): void {
   }
 }
 
-const RULES_HOOK_EVENTS = { "session-start": "SessionStart", "prompt-submit": "UserPromptSubmit" } as const;
+type RulesSub = { event: "session-start" | "prompt-submit" | "post-read"; hookEventName: string };
+
+/** Per agent: hook sub-command → rules event and the hookEventName the agent expects back. */
+const RULES_HOOK_SUBS: Record<string, Record<string, RulesSub>> = {
+  claude: {
+    "session-start": { event: "session-start", hookEventName: "SessionStart" },
+    "prompt-submit": { event: "prompt-submit", hookEventName: "UserPromptSubmit" },
+    "post-tool-use": { event: "post-read", hookEventName: "PostToolUse" },
+  },
+  codex: {
+    "session-start": { event: "session-start", hookEventName: "SessionStart" },
+    "prompt-submit": { event: "prompt-submit", hookEventName: "UserPromptSubmit" },
+    "post-tool-use": { event: "post-read", hookEventName: "PostToolUse" },
+  },
+  gemini: {
+    "session-start": { event: "session-start", hookEventName: "SessionStart" },
+    "before-agent": { event: "prompt-submit", hookEventName: "BeforeAgent" },
+    "after-tool": { event: "post-read", hookEventName: "AfterTool" },
+  },
+  // opencode has no hook protocol: the squadrant plugin pipes a synthesized payload and reads additionalContext.
+  opencode: {
+    "session-start": { event: "session-start", hookEventName: "session" },
+    "chat-message": { event: "prompt-submit", hookEventName: "chat.message" },
+    "tool-after": { event: "post-read", hookEventName: "tool.execute.after" },
+  },
+};
 
 /**
- * #899 v0: Rules KB injection for SessionStart / UserPromptSubmit. Returns the
+ * #899/#900: Rules KB injection for an agent's session / prompt / after-read hooks. Returns the
  * hook's stdout JSON (`hookSpecificOutput.additionalContext`), or "" when there
  * is nothing to inject. Never throws: a slow or failing lookup yields "" so a
  * rules problem can never block a session or prompt. Purely additive — the
@@ -130,19 +155,28 @@ export async function rulesHookOutput(
   sub: string,
   payload: unknown,
   opts: {
-    env: NodeJS.ProcessEnv; cwd: string; project?: string;
+    env: NodeJS.ProcessEnv; cwd: string; project?: string; agent?: string;
     loadCfg?: () => SquadrantConfig; stateRoot?: string; budgetMs?: number;
   },
 ): Promise<string> {
-  if (sub !== "session-start" && sub !== "prompt-submit") return "";
+  const agent = opts.agent ?? "claude";
+  const map = RULES_HOOK_SUBS[agent]?.[sub];
+  if (!map) return "";
   if (opts.env.SQUADRANT_RULES_INJECT === "0") return "";
   const ctx = await withBudget(() => computeRulesInjection({
-    event: sub, payload, env: opts.env, cwd: opts.cwd, project: opts.project,
+    event: map.event, payload, env: opts.env, cwd: opts.cwd, project: opts.project, agent,
     cfg: (opts.loadCfg ?? loadConfig)(),
     stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
   }), opts.budgetMs ?? INJECT_BUDGET_MS);
   if (!ctx) return "";
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: RULES_HOOK_EVENTS[sub], additionalContext: ctx } });
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: map.hookEventName, additionalContext: ctx } });
+}
+
+async function readStdinJson(): Promise<unknown> {
+  let stdin = "";
+  try { for await (const chunk of process.stdin) stdin += chunk as string; } catch { /* ignore */ }
+  if (!stdin.trim()) return undefined;
+  try { return JSON.parse(stdin); } catch { return undefined; }
 }
 
 export function hooksCommand(): Command {
@@ -238,6 +272,20 @@ export function hooksCommand(): Command {
       }
       process.exit(0);
     });
+
+  // #900: rules-only receivers for agents with no lifecycle bridge. Always exit 0.
+  for (const agent of ["codex", "gemini", "opencode"]) {
+    hooks
+      .command(`${agent} <sub>`, { hidden: true })
+      .description(`internal: Rules KB injection for ${agent}`)
+      .option("--project <name>", "project for rules injection (default: SQUADRANT_CREW_PROJECT, then cwd)")
+      .action(async (sub: string, opts: { project?: string }) => {
+        const payload = await readStdinJson();
+        const out = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project, agent });
+        if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
+        process.exit(0);
+      });
+  }
 
   return hooks;
 }

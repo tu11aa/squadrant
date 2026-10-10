@@ -517,6 +517,67 @@ opencode additionally gets squadrant's skills projected as **loadable skill dirs
 - **Hub Wiki** — cross-project knowledge aggregated by an on-demand `squadrant command --task wiki-aggregate` run.
 - Scripts: `wiki-ingest.sh`, `wiki-query.sh`, `wiki-log.sh`.
 
+### Knowledge bases (rules, #893 / #936)
+
+Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squadrant knowledge init <kb>` runs `git init`; a remote is optional). Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
+
+```json
+{
+  "knowledgeBases": { "saitex": { "path": "~/squadrant/kb/saitex", "homeProject": "flooros", "domainCap": 150 } },
+  "groups": { "saitex": { "kb": "saitex" } },
+  "projects": {
+    "flooros":   { "group": "saitex", "knowledge": ["conventions"] },
+    "squadrant": { "knowledgeHome": "repo:docs" }
+  }
+}
+```
+
+- A project in a group inherits that group's KB; `projects.<p>.knowledge[]` adds extra KBs. `path` defaults to `~/squadrant/kb/<kb>`.
+- `knowledge.<kb>` (the pre-#936 key) is still read as a deprecated alias; `squadrant doctor` reports it as config drift and the drift fix moves it to `knowledgeBases`.
+- Old spoke overlays (`<spokeVault>/knowledge/rules/`) move to the project's overlay home too; a project with no group KB or `knowledgeHome` is skipped and reported. A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
+
+#### Ingest and extraction (#897)
+
+`squadrant knowledge ingest <kb> [--dry-run] [--json] [--local-model] [--max-sections n]` checks every `sources.yaml` entry (mtime + size first, sha only on a difference), converts changed files with `markitdown` into `<kb>/.converted/` (md/txt pass through; a failed conversion is reported and skipped), and prints the section plan for the [`knowledge-extract`](../plugin/skills/knowledge-extract/SKILL.md) skill. `--dry-run` prints the token estimate and writes nothing. `knowledgeBases.<kb>.maxSectionsPerPass` (default 40) caps one pass; the remainder carries to the next. A `sensitivity: local-only` source is skipped unless `--local-model` is passed.
+
+The skill's output is a candidates JSON file. `squadrant knowledge apply <kb> candidates.json` does the mechanical rest:
+
+| Step | Behaviour |
+|---|---|
+| Quote check | Normalised (whitespace, line-break hyphenation, smart quotes/dashes, ligatures); not found ⇒ rejected as `ungrounded` (audit `item.rejected`). The char `offset` in `.converted/` is recorded. >20% of a source dropped ⇒ "try docling". |
+| Id matching | A quote overlapping an existing rule's `offset` in the same source takes that rule's id, whatever the model chose. |
+| Classify | new ⇒ `active`; same id + same meaning ⇒ source added, `offset` updated; meaning changed or contradiction ⇒ `shared/rules/_proposed/<id>@<sha>.md` (old stays active); source rule missing from a fully swept source ⇒ `stale`. A second change while a proposal is pending renames the older one to `.superseded` (audit `item.superseded`). |
+| Anchors | For each project subscribed to the KB, the repo is searched for `keywords + expanded`; matching `paths`/`symbols` go in `anchors.<project>`. |
+| Index | `index.json` is recompiled. |
+
+`item.proposed`, `item.superseded`, `item.applied` and `item.rejected` go to the audit log. Re-running on unchanged sources changes no ids and no files. A pending proposal shares its id with the live rule by design; `validate` and `reindex` do not count that as a duplicate.
+
+#### Rule delivery to Claude (#899)
+
+Rules reach a Claude session through the managed hooks, in-process and under a 1.5s budget (a failure or timeout injects nothing; `SQUADRANT_RULES_INJECT=0` turns it off):
+
+| Hook | Injects |
+|---|---|
+| `SessionStart` | every active `must`/`must-not` rule, within the ≈800-token budget (`+N more` line past it) |
+| `UserPromptSubmit` | rules matching the prompt: a named file (glob/anchor path), an anchored symbol (`computeTotal`), or enough keyword/`when` terms |
+| `PostToolUse` (matcher `Read`) | rules whose `globs` match the file just read, or whose anchor for the current project lists it |
+
+At most 5 rules and ≈800 tokens per injection; each rule is shown once per session; overflow collapses to `+N more: squadrant rules show <ids>`. `PostToolUse` is in the managed hook set, so it lands in `~/.claude/settings.json` on the next daemon boot. `squadrant rules match [--project p] [--event session|prompt|read] [--path f] [--text t] [--session id]` prints what the hooks would inject (without `--session` nothing is recorded as seen). Matching is T0 only (glob, anchor, lexical); embeddings (T1) and a daemon-warm matcher are deferred (#902).
+
+#### Rule delivery to codex, gemini, opencode (#900)
+
+Same core as Claude (`squadrant hooks <agent> <sub>` → `computeRulesInjection`), so budget, once-per-session dedup and the `SQUADRANT_RULES_INJECT=0` switch behave identically; the audit `agent` field is the real agent. Nothing is installed automatically: run `squadrant rules install-hooks --agent codex|gemini|opencode [--dry-run]`. It merges into the agent's own config without touching other entries.
+
+| Agent | Config written | Prompt | After a read | Session |
+|---|---|---|---|---|
+| codex | `$CODEX_HOME/hooks.json` | `UserPromptSubmit` | `PostToolUse` (matcher `Bash`; a plain `cat`/`head`/`tail`/`nl`/`bat`/`sed <file>`) | `SessionStart` |
+| gemini | `~/.gemini/settings.json` `hooks` | `BeforeAgent` | `AfterTool` (matcher `read_file`) | `SessionStart` |
+| opencode | `~/.config/opencode/plugin/squadrant-rules.js` | `chat.message` | `tool.execute.after` (`read`) | none (no injection point) |
+
+These formats follow each agent's documentation and have **not been live-verified** (#900 stays open until each agent's smoke test shows a rule reached the model).
+
+**Fallback pointer.** `squadrant projection emit` adds a short "look rules up with `squadrant rules search`" section to the codex/gemini/opencode projection of a project that subscribes to a KB. It is part of the marker body, so it is written only inside `<!-- squadrant:start/end -->` and disappears on the next emit after the project unsubscribes. Each emit logs one `item.fallback` audit entry (`trigger: "fallback"`, `agent`) per KB.
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup
@@ -606,3 +667,40 @@ Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GA
 **opencode ([#828](https://github.com/tu11aa/squadrant/issues/828) P6-C phase 2).** opencode has no `PermissionRequest` hook, so `engine: "auto-gate"` works differently there: instead of a per-prompt hook call, an opencode crew/captain launch is wrapped end-to-end. With `mode: "on"` + `engine: "auto-gate"` + the engine credential present (`hasAutoGateCredential` — env `TYPESAFE_API_KEY` or `~/.auto-gate-key`), squadrant launches the pane with `squadrant gate opencode-run --port <n> [--session <id>]` instead of a bare `opencode …`. That hidden command calls the package's `buildRunPlan({ args, allocate })` with `allocate` resolving to the **same port** squadrant already allocated for its own SSE bridge (turn-end detection, CREW DONE, approval answering) — never a second port — then runs opencode and the package's `opencode watch` watcher as one supervised unit (`supervise`). **Ownership:** once a crew is gate-wrapped, the auto-gate watcher is the sole answerer of opencode `permission.asked` events; squadrant's own CP3 `--approval`/`gateBash` crew-approval flag (which also answers permission prompts, via the SSE bridge) is suppressed for that crew to avoid two answerers racing the same prompt. **The wrapped crew/captain's per-task `opencode.json` sets `bash` and `edit` to `"ask"`** (everything else, incl. `external_directory`, unchanged; unwrapped configs are byte-identical to before) — opencode only emits `permission.asked` for `ask` rules, so an allow-all config would leave the watcher nothing to decide. squadrant's SSE bridge only records/surfaces the prompt (`task.approval.requested` → blocked → captain/Telegram) and never answers on its own, so if auto-gate answers `ask` (uncertain) the prompt stays open and reaches the operator. For a gate-wrapped crew (detected from its per-task config having both `bash` and `edit` at `ask`) the bridge holds each `permission.asked` for a ~5s grace window and drops it if `permission.replied` arrives first — so prompts auto-gate answers never ping the captain/Telegram; only still-open ones surface (and a later reply returns the task blocked → working). CP3 `--approval` crews surface immediately, unchanged; auto-gate is the only automatic answerer. **Gate log ([#866](https://github.com/tu11aa/squadrant/issues/866)):** the watcher's output and squadrant's own supervise log never touch the pane TTY (they garbled the TUI and broke `squadrant crew answer`); both append to `~/.config/squadrant/state/<project>/auto-gate-opencode.log` (`_shared` when no project env is set), or are discarded if that file can't be opened. **Safety fallback:** if the credential is absent, or building/running the plan throws for any other reason, squadrant logs one warning and launches opencode directly, byte-identical to the gate-off command — a gate defect must never stop a crew from starting. `mode: "on"` + `engine: "router"` is a no-op for opencode (that engine only owns Claude's `PermissionRequest` hook); opencode is unaffected either way. See [Router Backend](#router-backend-harnessprovider-decoupling).
 
 **Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
+
+## Rules audit log (#935)
+
+Every rules push and pull is logged, so you can tell whether a rule is ever surfaced and used. One JSON line per event is appended to `~/.local/state/squadrant/audit/YYYY-MM.<hostname>.jsonl` (override the directory with `SQUADRANT_AUDIT_DIR`). Fields: `ts, kb, level, project, domain:"rules", itemId, event, trigger, score, chars, agent, session`.
+
+- `item.surfaced` / `item.suppressed` come from the SessionStart and UserPromptSubmit injection (`trigger: "session"|"prompt"`). Suppressed = past the session cap, or a prompt hit that was already shown, under the strength bar, or over the 3-rule cap (the top 10 are logged).
+- `item.searched` (`rules search`, query truncated to 200 chars) and `item.shown` (`rules show`).
+- Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command. A daemon single-writer is phase 2.
+
+### Citations, feedback and scores (#901)
+
+Injected blocks end with one line asking the agent to name the rule ids it applied in its DONE/commit message. That is what makes "used" measurable.
+
+- **`item.cited`** is logged when a delivered (surfaced/shown) rule id appears as a whole token in a message. Hook points: `squadrant crew signal done|review --message` (automatic, best effort, never affects the signal), `squadrant knowledge cite-scan --project p --text "<message>"` (handoff text or anything else), and `squadrant knowledge cite-scan --project p --git <repo> [--since-days 30]` (commit messages; each commit is scanned once, deduped by sha, and only deliveries made before the commit count). Only ids the audit log shows were delivered to that project in the last 7 days can be cited.
+- **`squadrant knowledge feedback <id> --followed|--violated|--noise|--wrong [--project p]`** logs an `item.outcome`.
+- **Scores** are computed by code, never by a model, over the last 30 days: fire rate (surfaced), pull rate (shown), use rate (cited ÷ surfaced), noise rate, violation rate, `last_surfaced`/`last_used`, never-fired-30d; per domain writes/month, reads/month, chars injected per citation and a **dead-domain alarm** (no writes and no reads for 30 days); tier contribution; per-agent coverage; reviewer agreement (operator `approve` resolutions ÷ all operator resolutions in `verdicts.jsonl`). Every reconcile pass writes `<kb>/scores.json` and a `## Scores` section in `REPORT.md`. `squadrant knowledge stats [--kb k] [--project p] [--domain d] [--item id] [--json]` prints them on demand.
+- **Rotation**: logs are monthly files. A full pass folds every month that ends before the 30-day scoring window into `YYYY-MM.<machine>.stats.json` (per-item counts, so lifetime totals and `last_used` survive) and removes the raw file. `verdicts.jsonl` is never compacted.
+- **Privacy**: query text is truncated to 200 characters, REPORT.md and notifications carry ids and counts only.
+
+## Rules KB reconcile (#898)
+
+A KB with `homeProject` and `sources.yaml` is reconciled on a schedule kept in `stateRoot/knowledge-schedule.json` and driven by the daemon's 60s tick: an incremental pass 7 days after the first source change (the window is fixed; later edits do not push it back), a full pass every 30 days, and a full pass right away for an empty KB. One pass runs per KB at a time (a `running` entry older than 6h is taken over); a full pass absorbs a due incremental one; sources are snapshotted when the pass starts, so edits made during the pass open the next window. The daemon only appends a `captain.message` to the `homeProject` captain's mailbox; the captain spawns a crew with the `knowledge-review` skill. The daemon never spawns.
+
+Per-KB settings (`knowledgeBases.<kb>.reconcile`, all optional): `incrementalAfterDays` (7), `fullEveryDays` (30), `autoApproveConfidence` (0.8).
+
+| Command | Purpose |
+|---|---|
+| `knowledge reconcile <kb> [--full] [--now] [--dry-run]` | no flags: show schedule state. `--now`: request a pass from the home captain. `--dry-run`: show what would be requested |
+| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count |
+| `knowledge review <kb> --json` | reviewer packet |
+| `knowledge review <kb> --apply decisions.json` | apply typed reviewer decisions; at or above `autoApproveConfidence` they apply, otherwise they escalate |
+| `knowledge review <kb>` | interactive walk-through of open escalations (approve / reject / edit; keep-doc / supersede-with-code); `--resolve <key> --approve\|--reject\|--keep-doc\|--supersede-with-code --reason …` is the scripted form |
+| `knowledge propose --kb <kb> "<statement>" --evidence "<where>"` | agent learning: writes to `_proposed/` with `agent` priority |
+
+Always escalated, regardless of confidence: a conflict between two `company` sources, retiring a `must`/`must-not` rule, anything the reviewer flags, and **code-vs-doc** conflicts where the code is newer than the doc (by git dates). Those are never auto-superseded; the operator's answer is stored as a `decision` block on the rule (who, when, `keep-doc | supersede-with-code`, doc and code revisions, reason) and is not asked again unless the doc gets a new revision or the anchored code changes after the decision date. When the doc is newer, the code is flagged as a violation in `REPORT.md`.
+
+The full pass also reports duplicate candidates, usage findings from the audit log (never surfaced, noisy, violated), domains over the cap, and `override.base-changed` for project overrides whose KB rule changed. Open escalations live in `<kb>/escalations.json`, reviewer and operator verdicts in `<kb>/verdicts.jsonl` (append-only). Write-stage events (`item.proposed|approved|rejected|applied|superseded|archived`) go to the audit log.

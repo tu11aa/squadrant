@@ -1,14 +1,20 @@
+import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, DEFAULT_CONFIG_PATH, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
+  loadConfig, DEFAULT_CONFIG_PATH, CONFIG_DIR, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
-import { resolveProjectRules, searchRules, DEFAULT_SEARCH_STATUSES, type SearchHit } from "@squadrant/core";
+import {
+  resolveProjectRules, searchRules, computeRulesInjection, withBudget, INJECT_BUDGET_MS, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
+} from "@squadrant/core";
+import { installRulesHooks, type RulesHookAgent } from "@squadrant/agents";
 import { detectCurrentProject } from "./work.js";
 
 interface RulesOpts {
   project?: string; all?: boolean; cwd?: string; env?: NodeJS.ProcessEnv;
   limit?: string | number; brief?: boolean; idsOnly?: boolean;
+  /** Audit-log destination/clock override (tests). */
+  audit?: AuditSink;
 }
 
 export const DEFAULT_SEARCH_LIMIT = 5;
@@ -72,7 +78,10 @@ function loadFor(opts: RulesOpts, configPath: string): Rule[] {
 
 export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit[] {
   const rules = loadFor(opts, configPath);
-  return searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
+  const hits = searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
+  const project = resolveRulesProject(loadConfig(configPath), opts);
+  appendAudit([{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query, score: hits[0]?.score }], opts.audit);
+  return hits;
 }
 
 export function runRulesList(opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): Rule[] {
@@ -85,6 +94,8 @@ export function runRulesShow(id: string, opts: RulesOpts, configPath = DEFAULT_C
   const statuses: readonly RuleStatus[] = opts.all ? RULE_STATUSES : DEFAULT_SEARCH_STATUSES;
   const rule = rules.find((r) => r.id === id && statuses.includes(r.status));
   if (!rule) throw new Error(`No rule '${id}' for this project`);
+  const project = resolveRulesProject(loadConfig(configPath), opts);
+  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], opts.audit);
   return rule;
 }
 
@@ -124,4 +135,57 @@ rulesCommand
       console.log(formatRule(r));
       console.log(chalk.dim(r.body) + "\n");
     }
+  });
+
+/** Run the same in-process matcher the hooks use. Never throws or blocks past the budget: failure prints nothing. */
+export async function runRulesMatch(
+  opts: RulesOpts & { event?: string; path?: string; text?: string; session?: string; stateRoot?: string; agent?: string }, configPath = DEFAULT_CONFIG_PATH,
+): Promise<string> {
+  const event = opts.event ?? (opts.path ? "read" : opts.text ? "prompt" : "session");
+  const mapped = ({ session: "session-start", prompt: "prompt-submit", read: "post-read" } as Record<string, string | undefined>)[event];
+  if (!mapped) throw new Error(`--event must be session, prompt or read, got '${event}'`);
+  const env = opts.env ?? process.env;
+  const cwd = opts.cwd ?? process.cwd();
+  const out = await withBudget(() => {
+    const cfg = loadConfig(configPath);
+    return computeRulesInjection({
+      event: mapped as "session-start", cfg, env, cwd, project: opts.project, audit: opts.audit, agent: opts.agent,
+      stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+      payload: { session_id: opts.session, cwd, prompt: opts.text, tool_name: "Read", tool_input: { file_path: opts.path } },
+    });
+  }, INJECT_BUDGET_MS);
+  return out ?? "";
+}
+
+rulesCommand
+  .command("match")
+  .description("Print the rules the hooks would inject for an event (in-process; never blocks)")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .option("--event <e>", "session | prompt | read (default: read if --path, prompt if --text, else session)")
+  .option("--path <file>", "file read (event read)")
+  .option("--text <t>", "prompt text (event prompt)")
+  .option("--session <id>", "session id: rules already shown to it are skipped, and shown ones are recorded")
+  .option("--agent <name>", "agent recorded in the audit log (default: claude)")
+  .action(async (opts: RulesOpts & { event?: string; path?: string; text?: string; session?: string; agent?: string }) => {
+    const out = await runRulesMatch(opts);
+    if (out) console.log(out);
+  });
+
+const HOOK_AGENTS: RulesHookAgent[] = ["codex", "gemini", "opencode"];
+
+/** #900: write the rules hook/plugin entry for one agent into that agent's own config. */
+export function runRulesInstallHooks(opts: { agent: string; dryRun?: boolean; target?: string }): string {
+  if (!HOOK_AGENTS.includes(opts.agent as RulesHookAgent)) throw new Error(`--agent must be one of ${HOOK_AGENTS.join(", ")}`);
+  const r = installRulesHooks(opts.agent as RulesHookAgent, { dryRun: opts.dryRun, target: opts.target });
+  if (r.skipped) return `${r.path}: not a squadrant-managed file, left untouched`;
+  return `${r.path}: ${r.changed ? (opts.dryRun ? "would update" : "updated") : "already up to date"}`;
+}
+
+rulesCommand
+  .command("install-hooks")
+  .description("Install the rules injection hook/plugin for codex, gemini or opencode (needs a live check per agent)")
+  .requiredOption("--agent <name>", HOOK_AGENTS.join(" | "))
+  .option("--dry-run", "report what would change without writing")
+  .action((opts: { agent: string; dryRun?: boolean }) => {
+    try { console.log(runRulesInstallHooks(opts)); } catch (err) { console.error(chalk.red((err as Error).message)); process.exit(1); }
   });

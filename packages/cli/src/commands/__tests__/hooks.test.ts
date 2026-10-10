@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-hooks-")); // never write the real audit log
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput } from "../hooks.js";
 
@@ -120,7 +121,7 @@ describe("buildCaptainSessionRecord (#651)", () => {
 describe("rulesHookOutput (#899)", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-rules-"));
   const projDir = path.join(root, "flooros");
-  const ruleDir = path.join(root, "hub", "knowledge", "saitex", "rules", "git");
+  const ruleDir = path.join(root, "kb", "saitex", "shared", "rules", "git");
   fs.mkdirSync(ruleDir, { recursive: true });
   fs.writeFileSync(path.join(ruleDir, "git.branch-naming.md"),
     "---\nid: git.branch-naming\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
@@ -128,6 +129,7 @@ describe("rulesHookOutput (#899)", () => {
   const cfg = (knowledge?: string[]): SquadrantConfig => {
     const c = getDefaultConfig();
     c.hubVault = path.join(root, "hub");
+    c.knowledgeBases = { saitex: { path: path.join(root, "kb", "saitex") } };
     c.projects = { flooros: { path: projDir, captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge } };
     return c;
   };
@@ -147,6 +149,22 @@ describe("rulesHookOutput (#899)", () => {
     const notice = "⚠️ Daemon restarted → v0.26.1 (control-plane bounced). Re-verify in-flight crews — a crew mid-first-turn may need a crew send.";
     expect(await rulesHookOutput("prompt-submit", { session_id: "h4", prompt: notice }, opts())).toBe("");
   });
+  it("PostToolUse(Read) → rules whose glob matches the file; other tools and files → nothing (#899)", async () => {
+    const d = path.join(root, "kb", "saitex", "shared", "rules", "sol");
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "sol.no-unchecked.md"),
+      "---\nid: sol.no-unchecked\ndomain: coding\nmodality: must-not\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
+      + "triggers:\n  globs: ['contracts/**/*.sol']\n---\nUse unchecked arithmetic.\n");
+    const read = (file: string, tool = "Read", session = "r1") =>
+      rulesHookOutput("post-tool-use", { session_id: session, tool_name: tool, tool_input: { file_path: file } }, opts());
+    const out = JSON.parse(await read(path.join(projDir, "contracts", "vault", "Vault.sol")));
+    expect(out.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    expect(out.hookSpecificOutput.additionalContext).toContain("MUST-NOT sol.no-unchecked:");
+    expect(await read(path.join(projDir, "contracts", "vault", "Vault.sol"))).toBe("");
+    expect(await read(path.join(projDir, "src", "a.ts"), "Read", "r2")).toBe("");
+    expect(await read(path.join(projDir, "contracts", "A.sol"), "Edit", "r3")).toBe("");
+    expect(mapHookSub("post-tool-use", {}, "t")).toBeNull();
+  });
   it("no subscription, env off, other subs → empty", async () => {
     expect(await rulesHookOutput("session-start", {}, opts({ loadCfg: () => cfg() }))).toBe("");
     expect(await rulesHookOutput("session-start", {}, opts({ env: { SQUADRANT_RULES_INJECT: "0" } }))).toBe("");
@@ -160,5 +178,60 @@ describe("rulesHookOutput (#899)", () => {
   it("existing lifecycle mapping for the same subs is unchanged", () => {
     expect(mapHookSub("session-start", {}, "t")).toEqual({ type: "task.progress", id: "t", note: "session-start" });
     expect(mapHookSub("prompt-submit", {}, "t")).toEqual({ type: "task.first-turn.confirmed", id: "t" });
+  });
+});
+
+// #900: codex / gemini / opencode adapters call the same core; only the sub names, the hookEventName
+// echoed back, the read-tool shape and the audit `agent` differ.
+describe("rulesHookOutput — codex / gemini / opencode adapters (#900)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-rules-agents-"));
+  const projDir = path.join(root, "flooros");
+  const ruleDir = path.join(root, "kb", "saitex", "shared", "rules", "sol");
+  fs.mkdirSync(ruleDir, { recursive: true });
+  fs.writeFileSync(path.join(ruleDir, "sol.no-unchecked.md"),
+    "---\nid: sol.no-unchecked\ndomain: coding\nmodality: must-not\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n"
+    + "triggers:\n  globs: ['contracts/**/*.sol']\n  keywords: [vault]\n---\nUse unchecked arithmetic in vault code.\n");
+  const cfg = (): SquadrantConfig => {
+    const c = getDefaultConfig();
+    c.hubVault = path.join(root, "hub");
+    c.knowledgeBases = { saitex: { path: path.join(root, "kb", "saitex") } };
+    c.projects = { flooros: { path: projDir, captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge: ["saitex"] } };
+    return c;
+  };
+  const run = (agent: string, sub: string, payload: unknown) =>
+    rulesHookOutput(sub, payload, { env: {}, cwd: projDir, loadCfg: cfg, stateRoot: path.join(root, "state"), agent });
+  const audited = () => fs.readdirSync(process.env.SQUADRANT_AUDIT_DIR!)
+    .flatMap((f) => fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, f), "utf8").split("\n").filter(Boolean))
+    .map((l) => JSON.parse(l) as { agent?: string; itemId: string; event: string });
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("codex: UserPromptSubmit + PostToolUse(shell cat) inject; audit agent=codex", async () => {
+    const p = JSON.parse(await run("codex", "prompt-submit", { session_id: "cx1", prompt: "edit contracts/vault/Vault.sol" }));
+    expect(p.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
+    expect(p.hookSpecificOutput.additionalContext).toContain("sol.no-unchecked");
+    const r = JSON.parse(await run("codex", "post-tool-use", { session_id: "cx2", tool_name: "Bash", tool_input: { command: "cat contracts/vault/Vault.sol" } }));
+    expect(r.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    expect(r.hookSpecificOutput.additionalContext).toContain("MUST-NOT sol.no-unchecked");
+    expect(await run("codex", "post-tool-use", { session_id: "cx3", tool_name: "Bash", tool_input: { command: "cat a.sol | grep x" } })).toBe("");
+    expect(audited().some((e) => e.agent === "codex" && e.itemId === "sol.no-unchecked" && e.event === "item.surfaced")).toBe(true);
+  });
+  it("gemini: BeforeAgent + AfterTool(read_file); audit agent=gemini", async () => {
+    const b = JSON.parse(await run("gemini", "before-agent", { session_id: "g1", prompt: "edit contracts/vault/Vault.sol" }));
+    expect(b.hookSpecificOutput.hookEventName).toBe("BeforeAgent");
+    expect(b.hookSpecificOutput.additionalContext).toContain("sol.no-unchecked");
+    const a = JSON.parse(await run("gemini", "after-tool", { session_id: "g2", tool_name: "read_file", tool_input: { file_path: path.join(projDir, "contracts/A.sol") } }));
+    expect(a.hookSpecificOutput.hookEventName).toBe("AfterTool");
+    expect(audited().some((e) => e.agent === "gemini" && e.event === "item.surfaced")).toBe(true);
+  });
+  it("opencode: chat-message + tool-after; audit agent=opencode", async () => {
+    const c = JSON.parse(await run("opencode", "chat-message", { session_id: "o1", prompt: "edit contracts/vault/Vault.sol" }));
+    expect(c.hookSpecificOutput.additionalContext).toContain("sol.no-unchecked");
+    const t = JSON.parse(await run("opencode", "tool-after", { session_id: "o2", tool_name: "read", tool_input: { filePath: path.join(projDir, "contracts/B.sol") } }));
+    expect(t.hookSpecificOutput.additionalContext).toContain("sol.no-unchecked");
+    expect(audited().some((e) => e.agent === "opencode" && e.event === "item.surfaced")).toBe(true);
+  });
+  it("a sub that belongs to another agent injects nothing", async () => {
+    expect(await run("gemini", "prompt-submit", { session_id: "x", prompt: "edit contracts/vault/Vault.sol" })).toBe("");
+    expect(await run("codex", "chat-message", { session_id: "x", prompt: "edit contracts/vault/Vault.sol" })).toBe("");
   });
 });

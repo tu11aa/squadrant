@@ -68,7 +68,7 @@ describe("installClaudeHooks — basic installation", () => {
     expect(written).toHaveLength(1);
     const result = JSON.parse(written[0].content);
     // 8 unique event keys (PreToolUse appears twice: catch-all + AskUserQuestion matcher)
-    for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd", "PermissionRequest", "StopFailure"]) {
+    for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd", "PermissionRequest", "StopFailure", "PostToolUse"]) {
       expect(result.hooks[ev]).toBeDefined();
       expect(Array.isArray(result.hooks[ev])).toBe(true);
       expect(result.hooks[ev].length).toBeGreaterThan(0);
@@ -93,6 +93,7 @@ describe("installClaudeHooks — basic installation", () => {
       ["SessionEnd", "session-end"],
       ["PermissionRequest", "permission-request"],
       ["StopFailure", "stop-failure"],
+      ["PostToolUse", "post-tool-use"],
     ];
     for (const [ev, sub] of singleEntryExpectations) {
       const entry = result.hooks[ev][0];
@@ -104,6 +105,8 @@ describe("installClaudeHooks — basic installation", () => {
           : `${HOOK_CMD} claude ${sub}`;
       expect(entry.hooks[0].command).toBe(expected);
     }
+    // #899: PostToolUse is scoped to the Read tool
+    expect(result.hooks.PostToolUse[0].matcher).toBe("Read");
     // PreToolUse: catch-all (matcher "") and AskUserQuestion-specific (matcher "AskUserQuestion")
     const hasCmd = (entries: unknown[], cmd: string): boolean =>
       entries.some(

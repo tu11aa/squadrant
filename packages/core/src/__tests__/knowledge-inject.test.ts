@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
-  computeRulesInjection, cleanPromptQuery, isSystemPrompt, formatSessionContext, injectStateDir, kbRulesDir,
+  appendAudit, computeRulesInjection, cleanPromptQuery, isSystemPrompt, formatSessionContext, injectStateDir, kbRulesDir,
   pruneSeenRules, recordSeenRules, readSeenRules, resolveInjectProject, withBudget, type RulesInjectInput,
 } from "../knowledge/index.js";
 
@@ -14,13 +14,14 @@ const rule = (id: string, modality: string, body: string, keywords: string[] = [
   + (keywords.length ? `triggers:\n  keywords: [${keywords.join(", ")}]\n` : "")
   + `---\n${body}\n`;
 function put(id: string, modality: string, body: string, keywords?: string[]) {
-  const dir = path.join(kbRulesDir(path.join(root, "hub"), "saitex"), "coding");
+  const dir = path.join(kbRulesDir(cfg(), "saitex"), "coding");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${id}.md`), rule(id, modality, body, keywords));
 }
 function cfg(knowledge: string[] | null = ["saitex"]): SquadrantConfig {
   const c = getDefaultConfig();
   c.hubVault = path.join(root, "hub");
+  c.knowledgeBases = { saitex: { path: path.join(root, "kb", "saitex") } };
   c.projects = {
     flooros: { path: path.join(root, "flooros"), captainName: "f", spokeVault: path.join(root, "spoke"), host: "local", knowledge: knowledge ?? undefined },
   };
@@ -28,7 +29,8 @@ function cfg(knowledge: string[] | null = ["saitex"]): SquadrantConfig {
 }
 const input = (over: Partial<RulesInjectInput>): RulesInjectInput => ({
   event: "session-start", payload: { session_id: "s1" }, cfg: cfg(), env: {},
-  cwd: path.join(root, "flooros"), stateRoot: path.join(root, "state"), ...over,
+  cwd: path.join(root, "flooros"), stateRoot: path.join(root, "state"),
+  audit: { dir: path.join(root, "audit"), now: () => new Date("2026-10-10T01:02:03Z"), machineId: "m1" }, ...over,
 });
 
 beforeEach(() => {
@@ -194,5 +196,50 @@ describe("withBudget", () => {
   });
   it("a sync overrun → null", async () => {
     expect(await withBudget(() => { const end = Date.now() + 40; while (Date.now() < end) { /* spin */ } return "late"; }, 20)).toBeNull();
+  });
+});
+
+describe("computeRulesInjection — audit log (#935)", () => {
+  const lines = () => {
+    const f = path.join(root, "audit", "2026-10.m1.jsonl");
+    return fs.existsSync(f) ? fs.readFileSync(f, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
+  };
+  it("session start logs one surfaced line per rule; output unchanged", () => {
+    const text = computeRulesInjection(input({}))!;
+    const ev = lines();
+    expect(ev).toHaveLength(4);
+    expect(ev[0]).toEqual({
+      ts: "2026-10-10T01:02:03.000Z", kb: "saitex", level: "group", project: "flooros", domain: "rules",
+      itemId: "git.no-force-push", event: "item.surfaced", trigger: "session", chars: "MUST-NOT git.no-force-push: Force-push to main or develop.".length,
+      agent: "claude", session: "s1",
+    });
+    expect(text).toContain("git.no-force-push");
+  });
+  it("prompt logs surfaced hits with score and suppressed already-seen hits", () => {
+    const p = (session: string) => computeRulesInjection(input({ event: "prompt-submit", payload: { session_id: session, prompt: "create a new branch and force push to main" } }));
+    p("p1");
+    const first = lines().filter((e) => e.trigger === "prompt");
+    expect(first.some((e) => e.event === "item.surfaced" && typeof e.score === "number")).toBe(true);
+    fs.rmSync(path.join(root, "audit"), { recursive: true });
+    p("p1");
+    expect(lines().every((e) => e.event === "item.suppressed")).toBe(true);
+    expect(lines().length).toBeGreaterThan(0);
+  });
+  it("never throws on an unwritable path and output is unaffected", () => {
+    fs.writeFileSync(path.join(root, "blocker"), "x");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const text = computeRulesInjection(input({ audit: { dir: path.join(root, "blocker", "sub") } }));
+    expect(text).toContain("git.branch-naming");
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("squadrant audit"));
+    err.mockRestore();
+  });
+});
+
+describe("appendAudit", () => {
+  it("truncates query to 200 chars", () => {
+    appendAudit([{ kb: "", level: "project", project: "p", domain: "rules", itemId: "", event: "item.searched", query: "q".repeat(500) }],
+      { dir: path.join(root, "a2"), now: () => new Date("2026-10-10T00:00:00Z"), machineId: "m" });
+    const e = JSON.parse(fs.readFileSync(path.join(root, "a2", "2026-10.m.jsonl"), "utf8"));
+    expect(e.query).toHaveLength(200);
   });
 });

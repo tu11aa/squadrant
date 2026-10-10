@@ -6,7 +6,7 @@ import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync, statSync, existsSync } from "node:fs";
-import { buildContext } from "@squadrant/core";
+import { buildContext, tickKnowledgeSchedule } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { shellQuote } from "@squadrant/core";
@@ -734,7 +734,17 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${DAEMON_SOCK_PATH}\n`);
       process.exit(0);
     }
-    const h = startSquadrantd({ sweepMs: 30000 });
+    const h = startSquadrantd({
+      sweepMs: 30000,
+      // #898: KB reconcile scheduler on the 60s tick. Enqueues to the home captain's mailbox; never spawns.
+      knowledgeTick: async () => {
+        const stateRoot = join(homedir(), ".config", "squadrant", "state"); // same default as buildContext
+        await tickKnowledgeSchedule({
+          cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`),
+          enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+        });
+      },
+    });
     // #535: await stop() before exiting — it writes the exit marker and runs
     // teardown (bridges, in-flight headless kills) synchronously-then-async;
     // exiting immediately after firing it (not awaiting) raced process.exit()

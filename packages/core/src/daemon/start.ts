@@ -352,6 +352,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
           entries.filter((e) => e.endsWith(".log")).map((e) => e.slice(0, -".log".length)),
         );
         for (const project of projects) await rotateIfNeeded({ stateRoot, project, ...mboxCfg });
+        await opts.knowledgeTick?.();
       } catch (e) {
         log(`rotation timer error: ${(e as Error).message}`);
       } finally {

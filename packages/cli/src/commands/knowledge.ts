@@ -1,12 +1,24 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import readline from "node:readline/promises";
+import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
-import { kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb } from "@squadrant/core";
+import {
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
+  planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
+  ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
+  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, readGitMessages,
+  type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
+} from "@squadrant/core";
+import type { RuleModality } from "@squadrant/shared";
+import { resolveRulesProject } from "./rules.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
@@ -18,17 +30,17 @@ function assertKbName(kb: string): void {
 export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): { dir: string; created: string[] } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  const dir = kbDir(hub, kb);
+  const dir = kbDir(cfg, kb);
   const created: string[] = [];
-  for (const d of [path.join(dir, "raw"), kbRulesDir(hub, kb), path.join(kbRulesDir(hub, kb), PROPOSED_DIR)]) {
+  for (const d of [path.join(dir, "raw"), kbRulesDir(cfg, kb), path.join(kbRulesDir(cfg, kb), PROPOSED_DIR)]) {
     if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); created.push(path.relative(dir, d)); }
   }
   const sourcesFile = path.join(dir, "sources.yaml");
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
-  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(hub, kb, compileIndex(kb, [])); created.push("index.json"); }
-  if (!cfg.knowledge?.[kb]) {
-    cfg.knowledge = { ...(cfg.knowledge ?? {}), [kb]: {} };
+  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(dir, compileIndex(kb, [])); created.push("index.json"); }
+  if (ensureGitRepo(dir)) created.push(".git");
+  if (!kbConfigs(cfg)[kb]) {
+    cfg.knowledgeBases = { ...(cfg.knowledgeBases ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
   }
   return { dir, created };
@@ -39,7 +51,7 @@ export function runKnowledgeSubscribe(kb: string, project: string, configPath = 
   const cfg = loadConfig(configPath);
   const pc = cfg.projects[project];
   if (!pc) throw new Error(`Unknown project '${project}'`);
-  if (!fs.existsSync(kbDir(resolveHome(cfg.hubVault), kb))) {
+  if (!fs.existsSync(kbDir(cfg, kb))) {
     throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
   }
   const list = pc.knowledge ?? [];
@@ -53,14 +65,14 @@ export function runKnowledgeSubscribe(kb: string, project: string, configPath = 
 export function runKnowledgeSources(kb: string, configPath = DEFAULT_CONFIG_PATH): { sources: KnowledgeSourceEntry[]; errors: string[] } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  return loadSources(resolveHome(cfg.hubVault), kb);
+  return loadSources(kbDir(cfg, kb));
 }
 
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
 
 knowledgeCommand
   .command("init <kb>")
-  .description("Create a knowledge base under <hubVault>/knowledge/<kb>/")
+  .description("Create a knowledge base (its own git repo) under ~/squadrant/kb/<kb>/")
   .action((kb: string) => {
     const { dir, created } = runKnowledgeInit(kb);
     console.log(created.length ? chalk.green(`Initialised ${dir} (${created.join(", ")})`) : `Already initialised: ${dir}`);
@@ -94,22 +106,22 @@ export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH
 } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  const { rules: all, errors } = loadKbRules(cfg, kb, { includeProposed: true });
-  const proposedRoot = path.join(kbRulesDir(hub, kb), PROPOSED_DIR) + path.sep;
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  const { rules: all, errors: allErrors } = loadKbRules(cfg, kb, { includeProposed: true });
+  const proposedRoot = path.join(kbRulesDir(cfg, kb), PROPOSED_DIR) + path.sep;
   const live = all.filter((r) => !r.file.startsWith(proposedRoot));
-  const file = writeIndex(hub, kb, compileIndex(kb, live));
-  return { file, count: live.length, proposed: all.length - live.length, errors: errors.length, invalid: errors };
+  const pendingDups = allErrors.filter((e) => isPendingProposalDup(e, kbRulesDir(cfg, kb)));
+  const errors = allErrors.filter((e) => !pendingDups.includes(e));
+  const file = writeIndex(kbDir(cfg, kb), compileIndex(kb, live));
+  return { file, count: live.length, proposed: all.length - live.length + pendingDups.length, errors: errors.length, invalid: errors };
 }
 
 export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PATH): ReturnType<typeof validateKb> {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
-  const hub = resolveHome(cfg.hubVault);
-  if (!fs.existsSync(kbDir(hub, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  const { sources, errors } = loadSources(hub, kb);
-  const res = validateKb({ rulesDir: kbRulesDir(hub, kb), kbRoot: kbDir(hub, kb), sources, domains: cfg.knowledge?.[kb]?.domains });
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, domains: kbConfigs(cfg)[kb]?.domains });
   const srcChecks = errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` }));
   return { checks: [...srcChecks, ...res.checks], ok: res.ok && !errors.length };
 }
@@ -132,4 +144,283 @@ knowledgeCommand
     for (const c of checks) console.log(`${mark[c.level]} ${c.message}`);
     console.log(ok ? chalk.green("valid") : chalk.red("invalid"));
     if (!ok) process.exitCode = 1;
+  });
+
+export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): KbMoveEntry[] {
+  const cfg = loadConfig(configPath);
+  // KBs first: an overlay target may live inside a KB that was just moved.
+  return [...moveLegacyKbs(cfg, opts), ...moveLegacyOverlays(cfg, opts)];
+}
+
+knowledgeCommand
+  .command("migrate")
+  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report)")
+  .option("--dry-run", "show what would move")
+  .action((opts: { dryRun?: boolean }) => {
+    const report = runKnowledgeMigrate(opts);
+    if (!report.length) console.log("Nothing to migrate: no knowledge bases under <hubVault>/knowledge/ and no spoke overlays.");
+    for (const e of report) console.log(`${e.action.padEnd(10)} ${e.kb}: ${e.from} -> ${e.to}${e.note ? chalk.dim(` (${e.note})`) : ""}`);
+  });
+
+function requireKb(kb: string, configPath: string) {
+  assertKbName(kb);
+  const cfg = loadConfig(configPath);
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  return cfg;
+}
+
+export async function runKnowledgeIngest(
+  kb: string,
+  opts: { dryRun?: boolean; localModel?: boolean; maxSections?: number } = {},
+  configPath = DEFAULT_CONFIG_PATH,
+): Promise<IngestPlan> {
+  const cfg = requireKb(kb, configPath);
+  const root = kbDir(cfg, kb);
+  const { sources, errors } = loadSources(root);
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  const existing = loadKbRules(cfg, kb).rules.map((r) => ({ id: r.id, domain: r.domain, statement: r.statement }));
+  return planIngest(root, {
+    sources, existing, dryRun: opts.dryRun, localModel: opts.localModel,
+    maxSectionsPerPass: opts.maxSections ?? kbConfigs(cfg)[kb]?.maxSectionsPerPass ?? DEFAULT_MAX_SECTIONS_PER_PASS,
+  });
+}
+
+export function runKnowledgeApply(kb: string, candidatesFile: string, configPath = DEFAULT_CONFIG_PATH): ApplyResult {
+  const cfg = requireKb(kb, configPath);
+  const input = JSON.parse(fs.readFileSync(candidatesFile, "utf8")) as CandidateFile;
+  if (!input || !Array.isArray(input.candidates)) throw new Error("candidates file must be { complete?: string[], candidates: [...] }");
+  const projects = Object.entries(cfg.projects)
+    .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
+    .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects });
+}
+
+knowledgeCommand
+  .command("ingest <kb>")
+  .description("Detect changed sources, convert them (markitdown) into .converted/, and print the section plan for the knowledge-extract skill")
+  .option("--dry-run", "estimate tokens only; write nothing")
+  .option("--json", "print the full plan as JSON")
+  .option("--local-model", "a local model is available, so sensitivity: local-only sources are planned instead of skipped")
+  .option("--max-sections <n>", "override maxSectionsPerPass", (v) => parseInt(v, 10))
+  .action(async (kb: string, opts: { dryRun?: boolean; json?: boolean; localModel?: boolean; maxSections?: number }) => {
+    const plan = await runKnowledgeIngest(kb, opts);
+    if (opts.json) { console.log(JSON.stringify(plan, null, 2)); return; }
+    for (const s of plan.sources) console.log(`  ${s.ref}  ${s.sections.length}/${s.totalSections} sections${s.sensitivity ? chalk.yellow("  local-only") : ""}`);
+    for (const s of plan.skipped) console.log(chalk.yellow(`  skipped ${s.ref}: ${s.reason}`));
+    for (const f of plan.failed) console.log(chalk.red(`  ✘ ${f.ref}: conversion failed: ${f.error}`));
+    console.log(`${plan.sectionCount} sections, ~${plan.estimatedTokens} input tokens${plan.carriedSections ? `, ${plan.carriedSections} carried to the next pass` : ""}${opts.dryRun ? " (dry run)" : ""}`);
+    if (plan.failed.length) process.exitCode = 1;
+  });
+
+knowledgeCommand
+  .command("apply <kb> <candidates>")
+  .description("Verify extracted candidates (quote grounding, offset id-matching), classify changes, write rules/_proposed, anchor, reindex")
+  .action((kb: string, file: string) => {
+    const r = runKnowledgeApply(kb, file);
+    console.log(`created ${r.created.length}, merged ${r.merged.length}, proposed ${r.proposed.length}, superseded ${r.superseded.length}, stale ${r.stale.length}, rejected ${r.rejected.length}`);
+    for (const x of r.rejected) console.log(chalk.red(`  ✘ ${x.id} (${x.source}): ${x.reason}`));
+    for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
+    for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
+  });
+
+const defaultStateRoot = () => path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+
+function reviewContext(kb: string, configPath: string): ReviewContext {
+  const cfg = requireKb(kb, configPath);
+  const projects = Object.entries(cfg.projects)
+    .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
+    .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
+  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+}
+
+export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {
+  return applyDecisions(JSON.parse(fs.readFileSync(file, "utf8")) as DecisionFile, reviewContext(kb, configPath));
+}
+export function runKnowledgeResolve(kb: string, key: string, r: Resolution, by: string, reason: string, configPath = DEFAULT_CONFIG_PATH): string {
+  return resolveEscalation(reviewContext(kb, configPath), key, r, by, reason);
+}
+export function runKnowledgePropose(kb: string, o: { statement: string; evidence: string; id?: string; domain?: string; modality?: RuleModality }, configPath = DEFAULT_CONFIG_PATH): string {
+  return proposeAgentRule(reviewContext(kb, configPath), { ...o, agent: process.env.SQUADRANT_AGENT ?? "agent" });
+}
+
+knowledgeCommand
+  .command("review <kb>")
+  .description("Escalations for the operator (interactive walk-through); --json prints the reviewer packet; --apply applies reviewer decisions")
+  .option("--json", "print the reviewer packet (proposals, stale rules, decided conflicts, open escalations)")
+  .option("--apply <file>", "apply a reviewer decisions file (typed decisions + confidence); escalations are queued")
+  .option("--resolve <key>", "answer one escalation non-interactively")
+  .option("--approve", "with --resolve: approve / keep").option("--reject", "with --resolve: reject / drop")
+  .option("--keep-doc", "with --resolve (code-vs-doc): keep the doc's rule").option("--supersede-with-code", "with --resolve (code-vs-doc): retire the rule in favour of the code")
+  .option("--reason <text>", "reason recorded with the answer", "")
+  .action(async (kb: string, o: { json?: boolean; apply?: string; resolve?: string; approve?: boolean; reject?: boolean; keepDoc?: boolean; supersedeWithCode?: boolean; reason: string }) => {
+    if (o.json) { console.log(JSON.stringify(buildReviewPacket(reviewContext(kb, DEFAULT_CONFIG_PATH)), null, 2)); return; }
+    if (o.apply) {
+      const r = runKnowledgeReviewApply(kb, o.apply);
+      console.log(`applied ${r.applied.length}, escalated ${r.escalated.length}, code violations ${r.violations.length}, skipped ${r.skipped.length}`);
+      for (const e of r.escalated) console.log(chalk.yellow(`  ! ${e.key}: ${e.reasons.join(", ")}`));
+      for (const x of r.skipped) console.log(chalk.red(`  ✘ ${x.item}: ${x.reason}`));
+      return;
+    }
+    const by = os.userInfo().username;
+    const resolution = (): Resolution | null =>
+      o.keepDoc ? { kind: "verdict", verdict: "keep-doc" } : o.supersedeWithCode ? { kind: "verdict", verdict: "supersede-with-code" }
+        : o.approve ? { kind: "approve" } : o.reject ? { kind: "reject" } : null;
+    if (o.resolve) {
+      const r = resolution();
+      if (!r) throw new Error("--resolve needs --approve, --reject, --keep-doc or --supersede-with-code");
+      console.log(runKnowledgeResolve(kb, o.resolve, r, by, o.reason));
+      return;
+    }
+    const open = readEscalations(kbDir(requireKb(kb, DEFAULT_CONFIG_PATH), kb)).filter((e) => e.needsYou);
+    if (!open.length) { console.log("Nothing needs you."); return; }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      for (const e of open) {
+        console.log(`\n${chalk.bold(e.key)} [${e.kind}] ${e.reasons.join(", ")}\n${e.explanation}`);
+        const codeVsDoc = e.kind === "code-vs-doc";
+        const ans = (await rl.question(codeVsDoc ? "(k)eep doc / (s)upersede with code / (n)ext: " : "(a)pprove / (r)eject / (e)dit / (n)ext: ")).trim().toLowerCase();
+        const reason = ans === "n" || !ans ? "" : await rl.question("reason: ");
+        let r: Resolution | null = null;
+        if (codeVsDoc) r = ans === "k" ? { kind: "verdict", verdict: "keep-doc" } : ans === "s" ? { kind: "verdict", verdict: "supersede-with-code" } : null;
+        else if (ans === "a") r = { kind: "approve" };
+        else if (ans === "r") r = { kind: "reject" };
+        else if (ans === "e" && e.kind === "proposal") {
+          const ctx = reviewContext(kb, DEFAULT_CONFIG_PATH);
+          const file = path.join(kbRulesDir(ctx.cfg, kb), PROPOSED_DIR, `${e.item}.md`);
+          spawnSync(process.env.EDITOR ?? "vi", [file], { stdio: "inherit" });
+          r = { kind: "approve" };
+        }
+        if (r) console.log(chalk.green(runKnowledgeResolve(kb, e.key, r, by, reason)));
+      }
+    } finally { rl.close(); }
+  });
+
+knowledgeCommand
+  .command("propose")
+  .description("Propose a rule from what you learned (lands in _proposed/ with agent priority; never goes live unreviewed)")
+  .requiredOption("--kb <kb>", "knowledge base")
+  .requiredOption("--evidence <where>", "where you saw this (quote or pointer)")
+  .option("--id <id>").option("--domain <slug>").option("--modality <m>", "must|must-not|should|may")
+  .argument("<statement>", "the rule, one imperative sentence")
+  .action((statement: string, o: { kb: string; evidence: string; id?: string; domain?: string; modality?: RuleModality }) => {
+    console.log(`proposed: ${runKnowledgePropose(o.kb, { statement, ...o })}`);
+  });
+
+knowledgeCommand
+  .command("reconcile <kb>")
+  .description("Reconcile status; --now requests a pass from the home captain; --finish closes a pass (REPORT.md, schedule, captain message)")
+  .option("--full", "full pass instead of incremental")
+  .option("--now", "request the pass now instead of waiting for the schedule")
+  .option("--dry-run", "show what would happen; write nothing")
+  .option("--finish", "close the running pass (run by the reviewer crew when done)")
+  .action(async (kb: string, o: { full?: boolean; now?: boolean; dryRun?: boolean; finish?: boolean }) => {
+    const cfg = requireKb(kb, DEFAULT_CONFIG_PATH);
+    const stateRoot = defaultStateRoot();
+    const enqueue = (project: string, text: string) => appendCaptainMessage({ stateRoot, project, text, source: "cli" });
+    const deps = { cfg, stateRoot, enqueue };
+    if (o.finish) {
+      if (o.dryRun) { console.log("dry run: would write REPORT.md, advance the schedule and message the captain"); return; }
+      const r = await finishReconcile(kb, { ...deps, pass: o.full ? "full" : undefined });
+      console.log(`${r.pass} pass closed; ${r.needsYou} need you; ${r.report}`);
+      return;
+    }
+    if (o.now || o.dryRun) {
+      const r = await requestPass(kb, o.full ? "full" : "incremental", deps, { dryRun: o.dryRun });
+      console.log(r.requested ? `requested ${r.pass} pass from ${kbConfigsHome(kb)}` : `not requested: ${r.reason}`);
+      if (!r.requested && !o.dryRun) process.exitCode = 1;
+      return;
+    }
+    const e = readSchedule(stateRoot)[kb] ?? {};
+    const due = duePass(e, { now: new Date(), rc: reconcileConfig(cfg, kb), empty: loadRules(cfg, kb, { includeProposed: true }).rules.length === 0 });
+    console.log(JSON.stringify({ ...e, due }, null, 2));
+  });
+
+function kbConfigsHome(kb: string): string {
+  return resolveKbConfig(loadConfig(), kb).homeProject ?? "(no homeProject)";
+}
+
+// ── feedback / stats / cite-scan (#901) ──────────────────────────────
+
+export const FEEDBACK_OUTCOMES = ["followed", "violated", "noise", "wrong"] as const;
+type FeedbackOutcome = (typeof FEEDBACK_OUTCOMES)[number];
+
+/** Log an item.outcome for a rule the project resolves. Operator or agent may call it. */
+export function runKnowledgeFeedback(id: string, outcome: FeedbackOutcome, o: { project?: string; audit?: AuditSink; env?: NodeJS.ProcessEnv; cwd?: string }, configPath = DEFAULT_CONFIG_PATH): void {
+  const cfg = loadConfig(configPath);
+  const project = resolveRulesProject(cfg, o);
+  const rule = resolveProjectRules(cfg, project).rules.find((r) => r.id === id);
+  if (!rule) throw new Error(`No rule '${id}' for project '${project}'`);
+  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, agent: (o.env ?? process.env).SQUADRANT_AGENT }], o.audit);
+}
+
+knowledgeCommand
+  .command("feedback <id>")
+  .description("Report how a rule fared: --followed | --violated | --noise | --wrong (feeds scores and the next reconcile)")
+  .option("--followed").option("--violated").option("--noise").option("--wrong")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .action((id: string, o: Record<string, unknown> & { project?: string }) => {
+    const picked = FEEDBACK_OUTCOMES.filter((k) => o[k]);
+    if (picked.length !== 1) throw new Error("Pass exactly one of --followed, --violated, --noise, --wrong");
+    runKnowledgeFeedback(id, picked[0], o);
+    console.log(`recorded: ${id} ${picked[0]}`);
+  });
+
+export interface StatsOpts { kb?: string; project?: string; domain?: string; item?: string; json?: boolean; auditDir?: string; now?: Date }
+
+/** Scores per KB (all KBs, or the project's subscriptions, or one --kb), filtered by domain/item. */
+export function runKnowledgeStats(o: StatsOpts, configPath = DEFAULT_CONFIG_PATH): Scores[] {
+  const cfg = loadConfig(configPath);
+  let kbs = Object.keys(kbConfigs(cfg));
+  if (o.kb) kbs = [o.kb];
+  else if (o.project) {
+    if (!cfg.projects[o.project]) throw new Error(`Unknown project '${o.project}'`);
+    kbs = subscribedKbs(cfg, o.project);
+  }
+  return kbs.map((kb) => {
+    assertKbName(kb);
+    const s = scoreKb({ kb, now: o.now ?? new Date(), auditDir: o.auditDir, kbRoot: kbDir(cfg, kb), known: loadRules(cfg, kb).rules.map((r) => ({ id: r.id, domain: "rules", status: r.status })) });
+    return { ...s, items: s.items.filter((x) => (!o.domain || x.domain === o.domain) && (!o.item || x.itemId === o.item)), domains: s.domains.filter((d) => !o.domain || d.domain === o.domain) };
+  });
+}
+
+export function renderStats(all: Scores[]): string[] {
+  const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
+  return all.flatMap((s) => [
+    `${s.kb} (last ${s.windowDays} days)`,
+    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.shown}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
+    ...s.domains.map((d) => `  domain ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`),
+    `  agents: ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
+  ]);
+}
+
+knowledgeCommand
+  .command("stats")
+  .description("Scores computed from the audit log: fire/pull/use/noise/violation rates, never-fired, per-domain activity")
+  .option("--kb <kb>").option("--project <name>").option("--domain <slug>").option("--item <id>")
+  .option("--json", "print scores.json-shaped output")
+  .action((o: StatsOpts) => {
+    const all = runKnowledgeStats(o);
+    if (o.json) console.log(JSON.stringify(all, null, 2));
+    else for (const l of renderStats(all)) console.log(l);
+  });
+
+export function runKnowledgeCiteScan(o: { project: string; text?: string; git?: string; sinceDays?: number; ref?: string; audit?: AuditSink; git_run?: (args: string[]) => string }): string[] {
+  const run = o.git_run ?? ((args: string[]) => spawnSync("git", args, { encoding: "utf8" }).stdout ?? "");
+  if (o.git) {
+    const since = new Date((o.audit?.now?.() ?? new Date()).getTime() - (o.sinceDays ?? 30) * 86400000);
+    return readGitMessages(o.git, since, run).flatMap((c) => scanAndLogCitations({ text: c.text, ref: `git:${c.sha}`, project: o.project, at: c.at, sink: o.audit }));
+  }
+  if (!o.text) throw new Error("Pass --text <message> or --git <repo>");
+  return scanAndLogCitations({ text: o.text, ref: o.ref ?? "manual", project: o.project, sink: o.audit });
+}
+
+knowledgeCommand
+  .command("cite-scan")
+  .description("Log item.cited for rule ids named in a message (--text) or in recent commit messages (--git <repo>)")
+  .requiredOption("--project <name>")
+  .option("--text <message>").option("--git <repo>", "scan commit messages of this repo").option("--since-days <n>", "git lookback (default 30)", (v) => Number(v))
+  .option("--ref <ref>", "dedup key for --text (default: manual)")
+  .action((o: { project: string; text?: string; git?: string; sinceDays?: number; ref?: string }) => {
+    const ids = runKnowledgeCiteScan(o);
+    console.log(ids.length ? `cited: ${ids.join(", ")}` : "no new citations");
   });
