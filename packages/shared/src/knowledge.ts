@@ -35,6 +35,19 @@ export interface RuleTriggers {
 /** Per-project anchors, keyed by project name. */
 export type RuleAnchors = Record<string, { paths?: string[]; symbols?: string[] }>;
 
+export type RuleDecisionVerdict = "keep-doc" | "supersede-with-code";
+/** The operator's recorded answer to a code-vs-doc conflict (#898 decision 2026-10-09). Evidence, not a status. */
+export interface RuleDecision {
+  by: string;
+  at: string;
+  verdict: RuleDecisionVerdict;
+  /** What the doc / code looked like when judged; a change in either re-opens the question. */
+  docRev: string;
+  codeRev: string;
+  files?: string[];
+  reason: string;
+}
+
 export interface RuleFrontmatter {
   id: string;
   domain: string;
@@ -47,6 +60,9 @@ export interface RuleFrontmatter {
   justification?: string;
   supersedes?: string[];
   conflictsWith?: string[];
+  decision?: RuleDecision;
+  /** Project overlay rules only: hash of the KB rule this one overrides, taken when the override was last confirmed. */
+  overridesBase?: string;
 }
 
 export interface Rule extends RuleFrontmatter {
@@ -67,7 +83,16 @@ export interface KnowledgeSourceEntry {
   sensitivity?: "local-only";
 }
 
+export interface ReconcileConfig {
+  incrementalAfterDays: number;
+  fullEveryDays: number;
+  autoApproveConfidence: number;
+}
+export const DEFAULT_RECONCILE: ReconcileConfig = { incrementalAfterDays: 7, fullEveryDays: 30, autoApproveConfidence: 0.8 };
+
 export interface KnowledgeKbConfig {
+  /** Reconcile schedule + auto-approve threshold (#898); unset fields use DEFAULT_RECONCILE. */
+  reconcile?: Partial<ReconcileConfig>;
   /** KB repo root. Default: ~/squadrant/kb/<kb>. */
   path?: string;
   homeProject?: string;

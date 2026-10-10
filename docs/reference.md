@@ -661,3 +661,22 @@ Every rules push and pull is logged, so you can tell whether a rule is ever surf
 - `item.surfaced` / `item.suppressed` come from the SessionStart and UserPromptSubmit injection (`trigger: "session"|"prompt"`). Suppressed = past the session cap, or a prompt hit that was already shown, under the strength bar, or over the 3-rule cap (the top 10 are logged).
 - `item.searched` (`rules search`, query truncated to 200 chars) and `item.shown` (`rules show`).
 - Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command. A daemon single-writer is phase 2.
+
+## Rules KB reconcile (#898)
+
+A KB with `homeProject` and `sources.yaml` is reconciled on a schedule kept in `stateRoot/knowledge-schedule.json` and driven by the daemon's 60s tick: an incremental pass 7 days after the first source change (the window is fixed; later edits do not push it back), a full pass every 30 days, and a full pass right away for an empty KB. One pass runs per KB at a time (a `running` entry older than 6h is taken over); a full pass absorbs a due incremental one; sources are snapshotted when the pass starts, so edits made during the pass open the next window. The daemon only appends a `captain.message` to the `homeProject` captain's mailbox; the captain spawns a crew with the `knowledge-review` skill. The daemon never spawns.
+
+Per-KB settings (`knowledgeBases.<kb>.reconcile`, all optional): `incrementalAfterDays` (7), `fullEveryDays` (30), `autoApproveConfidence` (0.8).
+
+| Command | Purpose |
+|---|---|
+| `knowledge reconcile <kb> [--full] [--now] [--dry-run]` | no flags: show schedule state. `--now`: request a pass from the home captain. `--dry-run`: show what would be requested |
+| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count |
+| `knowledge review <kb> --json` | reviewer packet |
+| `knowledge review <kb> --apply decisions.json` | apply typed reviewer decisions; at or above `autoApproveConfidence` they apply, otherwise they escalate |
+| `knowledge review <kb>` | interactive walk-through of open escalations (approve / reject / edit; keep-doc / supersede-with-code); `--resolve <key> --approve\|--reject\|--keep-doc\|--supersede-with-code --reason …` is the scripted form |
+| `knowledge propose --kb <kb> "<statement>" --evidence "<where>"` | agent learning: writes to `_proposed/` with `agent` priority |
+
+Always escalated, regardless of confidence: a conflict between two `company` sources, retiring a `must`/`must-not` rule, anything the reviewer flags, and **code-vs-doc** conflicts where the code is newer than the doc (by git dates). Those are never auto-superseded; the operator's answer is stored as a `decision` block on the rule (who, when, `keep-doc | supersede-with-code`, doc and code revisions, reason) and is not asked again unless the doc gets a new revision or the anchored code changes after the decision date. When the doc is newer, the code is flagged as a violation in `REPORT.md`.
+
+The full pass also reports duplicate candidates, usage findings from the audit log (never surfaced, noisy, violated), domains over the cap, and `override.base-changed` for project overrides whose KB rule changed. Open escalations live in `<kb>/escalations.json`, reviewer and operator verdicts in `<kb>/verdicts.jsonl` (append-only). Write-stage events (`item.proposed|approved|rejected|applied|superseded|archived`) go to the audit log.

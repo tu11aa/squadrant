@@ -149,7 +149,9 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     // Mechanical id matching: offset overlap in the same source beats the model's id.
     let id = cand.id;
     for (const [wid, w] of work) {
-      if (w.fm.sources.some((s) => s.ref === cand.source && s.offset && spansOverlap(s.offset, offset))) { id = wid; break; }
+      // Offsets were taken against the sha at extraction time; once the source changed, re-find the stored quote in the new text (an edited quote is gone, so keep its old span).
+      const span = (s: RuleSourceRef) => (s.sha === st.sha ? s.offset : findQuote(hay!, s.quote) ?? s.offset);
+      if (w.fm.sources.some((s) => s.ref === cand.source && s.offset && ((o) => !!o && spansOverlap(o, offset))(span(s)))) { id = wid; break; }
     }
     if (id !== cand.id) res.idOverrides.push({ from: cand.id, to: id });
     touched.add(id);
