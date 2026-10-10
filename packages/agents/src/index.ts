@@ -31,3 +31,4 @@ export { OpencodeHttpChannel } from "./opencode/http-channel.js";
 export type { OpencodeHttpChannelDeps } from "./opencode/http-channel.js";
 export { createOpencodeFactAdapter } from "./opencode/fact-adapter.js";
 export type { OpencodeFactAdapterDeps } from "./opencode/fact-adapter.js";
+export * from "./rules-hooks/install.js";

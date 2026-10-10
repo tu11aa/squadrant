@@ -564,6 +564,20 @@ Rules reach a Claude session through the managed hooks, in-process and under a 1
 
 At most 5 rules and ≈800 tokens per injection; each rule is shown once per session; overflow collapses to `+N more: squadrant rules show <ids>`. `PostToolUse` is in the managed hook set, so it lands in `~/.claude/settings.json` on the next daemon boot. `squadrant rules match [--project p] [--event session|prompt|read] [--path f] [--text t] [--session id]` prints what the hooks would inject (without `--session` nothing is recorded as seen). Matching is T0 only (glob, anchor, lexical); embeddings (T1) and a daemon-warm matcher are deferred (#902).
 
+#### Rule delivery to codex, gemini, opencode (#900)
+
+Same core as Claude (`squadrant hooks <agent> <sub>` → `computeRulesInjection`), so budget, once-per-session dedup and the `SQUADRANT_RULES_INJECT=0` switch behave identically; the audit `agent` field is the real agent. Nothing is installed automatically: run `squadrant rules install-hooks --agent codex|gemini|opencode [--dry-run]`. It merges into the agent's own config without touching other entries.
+
+| Agent | Config written | Prompt | After a read | Session |
+|---|---|---|---|---|
+| codex | `$CODEX_HOME/hooks.json` | `UserPromptSubmit` | `PostToolUse` (matcher `Bash`; a plain `cat`/`head`/`tail`/`nl`/`bat`/`sed <file>`) | `SessionStart` |
+| gemini | `~/.gemini/settings.json` `hooks` | `BeforeAgent` | `AfterTool` (matcher `read_file`) | `SessionStart` |
+| opencode | `~/.config/opencode/plugin/squadrant-rules.js` | `chat.message` | `tool.execute.after` (`read`) | none (no injection point) |
+
+These formats follow each agent's documentation and have **not been live-verified** (#900 stays open until each agent's smoke test shows a rule reached the model).
+
+**Fallback pointer.** `squadrant projection emit` adds a short "look rules up with `squadrant rules search`" section to the codex/gemini/opencode projection of a project that subscribes to a KB. It is part of the marker body, so it is written only inside `<!-- squadrant:start/end -->` and disappears on the next emit after the project unsubscribes. Each emit logs one `item.fallback` audit entry (`trigger: "fallback"`, `agent`) per KB.
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup

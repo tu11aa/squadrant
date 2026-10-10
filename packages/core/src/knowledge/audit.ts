@@ -6,7 +6,7 @@ import path from "node:path";
 import type { Rule } from "@squadrant/shared";
 
 export type AuditEventName =
-  | "item.surfaced" | "item.suppressed" | "item.searched" | "item.shown"
+  | "item.surfaced" | "item.suppressed" | "item.fallback" | "item.searched" | "item.shown"
   | "item.proposed" | "item.approved" | "item.rejected" | "item.applied" | "item.promoted" | "item.superseded" | "item.archived";
 
 export interface AuditEvent {
@@ -16,7 +16,7 @@ export interface AuditEvent {
   domain: string;
   itemId: string;
   event: AuditEventName;
-  trigger?: "session" | "prompt" | "tool";
+  trigger?: "session" | "prompt" | "tool" | "fallback";
   score?: number;
   chars?: number;
   agent?: string;

@@ -3,7 +3,8 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, subscribedKbs } from "@squadrant/shared";
+import { rulesFallbackPointer, appendAudit } from "@squadrant/core";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -52,6 +53,21 @@ function buildRegistry(): ProjectionRegistry {
     opencode: createOpencodeEmitter,
     claude: createClaudeEmitter,
   });
+}
+
+/** Agents that get the rules pointer (#900): hooks unverified or absent, so AGENTS.md/GEMINI.md carries it. */
+const RULES_POINTER_TARGETS = new Set(["codex", "gemini", "opencode"]);
+
+/** The pointer rides inside the projection markers (instructions are the marker body), only for subscribing projects. */
+export function withRulesPointer(source: ProjectionSource, target: string, kbs: string[]): ProjectionSource {
+  if (!kbs.length || !RULES_POINTER_TARGETS.has(target)) return source;
+  return { ...source, instructions: [source.instructions.trim(), rulesFallbackPointer(kbs)].filter(Boolean).join("\n\n") };
+}
+
+export function auditFallback(project: string, kbs: string[], agent: string): void {
+  appendAudit(kbs.map((kb) => ({
+    kb, level: "project", project, domain: "rules", itemId: "*", event: "item.fallback" as const, trigger: "fallback" as const, agent,
+  })));
 }
 
 function resolveTargets(cfg: ReturnType<typeof loadConfig>, opts: Opts): string[] {
@@ -131,8 +147,10 @@ async function runEmit(opts: Opts & { dryRun?: boolean }) {
         console.log(chalk.gray(`- ${projectName}: no AGENTS.md, skipping`));
         continue;
       }
+      const kbs = subscribedKbs(cfg, projectName);
       for (const name of targets) {
-        await emitForTarget(registry.get(name), "project", source, proj.path);
+        await emitForTarget(registry.get(name), "project", withRulesPointer(source, name, kbs), proj.path);
+        if (kbs.length && !opts.dryRun && RULES_POINTER_TARGETS.has(name)) auditFallback(projectName, kbs, name);
       }
     }
   }
