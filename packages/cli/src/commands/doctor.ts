@@ -5,7 +5,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
 import { loadConfig, kbConfigs, type SquadrantConfig } from "@squadrant/shared";
-import { readIndex, kbDir, findLegacyKbs } from "@squadrant/core";
+import { readIndex, kbDir, findLegacyKbs, findLegacyOverlays } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -189,7 +189,8 @@ export function knowledgeDoctorLines(
 ): { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] {
   const kbs = Object.keys(kbConfigs(cfg));
   const legacy = findLegacyKbs(cfg);
-  if (!kbs.length && !legacy.length) return [];
+  const overlays = findLegacyOverlays(cfg);
+  if (!kbs.length && !legacy.length && !overlays.length) return [];
   const lines: { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] = [{
     label: "markitdown installed (rules KB conversion)",
     ok: hasCommand("markitdown"),
@@ -200,6 +201,12 @@ export function knowledgeDoctorLines(
     lines.push({
       label: `knowledge bases still under <hubVault>/knowledge/: ${legacy.join(", ")}`,
       ok: false, warnOnly: true, hint: "run: squadrant knowledge migrate (moves to ~/squadrant/kb, deletes nothing)",
+    });
+  }
+  if (overlays.length) {
+    lines.push({
+      label: `project rule overlays still under <spokeVault>/knowledge/rules/: ${overlays.join(", ")}`,
+      ok: false, warnOnly: true, hint: "run: squadrant knowledge migrate (moves to <kb>/projects/<p>/rules, deletes nothing)",
     });
   }
   for (const kb of kbs) {

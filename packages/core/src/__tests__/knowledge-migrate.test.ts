@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig } from "@squadrant/shared";
-import { findLegacyKbs, moveLegacyKbs } from "../knowledge/index.js";
+import { findLegacyKbs, moveLegacyKbs, findLegacyOverlays, moveLegacyOverlays } from "../knowledge/index.js";
 
 let root: string;
 function cfg() {
@@ -59,5 +59,48 @@ describe("moveLegacyKbs", () => {
   it("reports nothing when there is no legacy dir", () => {
     fs.rmSync(path.join(root, "hub"), { recursive: true });
     expect(moveLegacyKbs(cfg())).toEqual([]);
+  });
+});
+
+describe("moveLegacyOverlays", () => {
+  const spoke = (p: string) => path.join(root, "spoke", p, "knowledge", "rules");
+  function ocfg() {
+    const c = cfg();
+    c.groups = { saitex: { kb: "saitex" } };
+    c.projects = {
+      flooros: { path: path.join(root, "f"), captainName: "f", spokeVault: path.join(root, "spoke", "flooros"), host: "local", group: "saitex" },
+      lone: { path: path.join(root, "l"), captainName: "l", spokeVault: path.join(root, "spoke", "lone"), host: "local" },
+      docs: { path: path.join(root, "d"), captainName: "d", spokeVault: path.join(root, "spoke", "docs"), host: "local", knowledgeHome: "repo:docs" },
+    };
+    for (const p of ["flooros", "lone", "docs"]) {
+      fs.mkdirSync(path.join(spoke(p), "coding"), { recursive: true });
+      fs.writeFileSync(path.join(spoke(p), "coding", "coding.a.md"), p);
+    }
+    return c;
+  }
+
+  it("finds spoke overlays", () => {
+    expect(findLegacyOverlays(ocfg())).toEqual(["docs", "flooros", "lone"]);
+  });
+
+  it("moves to the project home (kb or repo docs); skips a project with no home; deletes nothing", () => {
+    const rep = Object.fromEntries(moveLegacyOverlays(ocfg()).map((e) => [e.kb, e]));
+    expect(rep["overlay:flooros"].action).toBe("moved");
+    expect(fs.readFileSync(path.join(root, "kb", "saitex", "projects", "flooros", "rules", "coding", "coding.a.md"), "utf8")).toBe("flooros");
+    expect(rep["overlay:docs"].action).toBe("moved");
+    expect(fs.readFileSync(path.join(root, "d", "docs", "rules", "coding", "coding.a.md"), "utf8")).toBe("docs");
+    expect(rep["overlay:lone"]).toMatchObject({ action: "skipped" });
+    expect(rep["overlay:lone"].note).toContain("no group KB");
+    expect(fs.existsSync(path.join(spoke("lone"), "coding", "coding.a.md"))).toBe(true);
+  });
+
+  it("skips when the target exists and on --dry-run moves nothing", () => {
+    const c = ocfg();
+    expect(moveLegacyOverlays(c, { dryRun: true }).filter((e) => e.action === "would-move")).toHaveLength(2);
+    expect(fs.existsSync(spoke("flooros"))).toBe(true);
+    fs.mkdirSync(path.join(root, "kb", "saitex", "projects", "flooros", "rules"), { recursive: true });
+    const e = moveLegacyOverlays(c).find((x) => x.kb === "overlay:flooros")!;
+    expect(e.action).toBe("skipped");
+    expect(fs.existsSync(spoke("flooros"))).toBe(true);
   });
 });

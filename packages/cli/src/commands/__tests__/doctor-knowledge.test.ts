@@ -31,4 +31,12 @@ describe("knowledgeDoctorLines", () => {
     expect(knowledgeDoctorLines(c, () => true)).toContainEqual(
       expect.objectContaining({ label: expect.stringContaining("saitex"), ok: false, warnOnly: true }));
   });
+  it("warns about a leftover <spokeVault>/knowledge/rules overlay", () => {
+    const c = getDefaultConfig();
+    const spoke = path.join(hub, "spoke");
+    fs.mkdirSync(path.join(spoke, "knowledge", "rules"), { recursive: true });
+    c.projects = { flooros: { path: "/f", captainName: "f", spokeVault: spoke, host: "local" } };
+    expect(knowledgeDoctorLines(c, () => true)).toContainEqual(
+      expect.objectContaining({ label: expect.stringContaining("flooros"), ok: false, warnOnly: true }));
+  });
 });

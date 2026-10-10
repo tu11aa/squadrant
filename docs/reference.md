@@ -534,7 +534,7 @@ Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squa
 
 - A project in a group inherits that group's KB; `projects.<p>.knowledge[]` adds extra KBs. `path` defaults to `~/squadrant/kb/<kb>`.
 - `knowledge.<kb>` (the pre-#936 key) is still read as a deprecated alias; `squadrant doctor` reports it as config drift and the drift fix moves it to `knowledgeBases`.
-- A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
+- Old spoke overlays (`<spokeVault>/knowledge/rules/`) move to the project's overlay home too; a project with no group KB or `knowledgeHome` is skipped and reported. A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
 
 ### Session Continuity
 

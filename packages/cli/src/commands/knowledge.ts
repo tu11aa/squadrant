@@ -8,7 +8,7 @@ import {
 } from "@squadrant/shared";
 import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb,
-  ensureGitRepo, moveLegacyKbs, type KbMoveEntry,
+  ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
 } from "@squadrant/core";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
@@ -136,15 +136,17 @@ knowledgeCommand
   });
 
 export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): KbMoveEntry[] {
-  return moveLegacyKbs(loadConfig(configPath), opts);
+  const cfg = loadConfig(configPath);
+  // KBs first: an overlay target may live inside a KB that was just moved.
+  return [...moveLegacyKbs(cfg, opts), ...moveLegacyOverlays(cfg, opts)];
 }
 
 knowledgeCommand
   .command("migrate")
-  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ (never deletes; prints a report)")
+  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report)")
   .option("--dry-run", "show what would move")
   .action((opts: { dryRun?: boolean }) => {
     const report = runKnowledgeMigrate(opts);
-    if (!report.length) console.log("Nothing to migrate: no knowledge bases under <hubVault>/knowledge/.");
+    if (!report.length) console.log("Nothing to migrate: no knowledge bases under <hubVault>/knowledge/ and no spoke overlays.");
     for (const e of report) console.log(`${e.action.padEnd(10)} ${e.kb}: ${e.from} -> ${e.to}${e.note ? chalk.dim(` (${e.note})`) : ""}`);
   });

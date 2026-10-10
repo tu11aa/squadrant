@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { KB_NAME_RE, resolveHome, type SquadrantConfig } from "@squadrant/shared";
+import { KB_NAME_RE, projectRulesHome, resolveHome, type SquadrantConfig } from "@squadrant/shared";
 import { kbDir, legacyKbDir } from "./paths.js";
 
 export interface KbMoveEntry {
@@ -27,6 +27,35 @@ export function findLegacyKbs(cfg: SquadrantConfig): string[] {
 export function ensureGitRepo(dir: string): boolean {
   if (fs.existsSync(path.join(dir, ".git"))) return false;
   try { execFileSync("git", ["init", "-q", dir], { stdio: "ignore" }); return true; } catch { return false; }
+}
+
+const legacyOverlay = (cfg: SquadrantConfig, project: string) =>
+  path.join(resolveHome(cfg.projects[project].spokeVault), "knowledge", "rules");
+
+/** Projects with a pre-#936 overlay at <spokeVault>/knowledge/rules/. */
+export function findLegacyOverlays(cfg: SquadrantConfig): string[] {
+  return Object.keys(cfg.projects).filter((p) => fs.existsSync(legacyOverlay(cfg, p))).sort();
+}
+
+/** Move each project's old overlay to projectRulesHome(). Skips (and reports) when there is no home or the target exists. */
+export function moveLegacyOverlays(cfg: SquadrantConfig, opts: { dryRun?: boolean } = {}): KbMoveEntry[] {
+  return findLegacyOverlays(cfg).map((project): KbMoveEntry => {
+    const from = legacyOverlay(cfg, project);
+    const to = projectRulesHome(cfg, project);
+    const kb = `overlay:${project}`;
+    if (!to) return { kb, from, to: "", action: "skipped", note: "no group KB or knowledgeHome for this project; set one, then re-run" };
+    if (fs.existsSync(to)) return { kb, from, to, action: "skipped", note: "target already exists; nothing moved" };
+    if (opts.dryRun) return { kb, from, to, action: "would-move" };
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    try {
+      fs.renameSync(from, to);
+      return { kb, from, to, action: "moved" };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+      fs.cpSync(from, to, { recursive: true });
+      return { kb, from, to, action: "copied", note: "cross-device: original left in place, delete it yourself once verified" };
+    }
+  });
 }
 
 export function moveLegacyKbs(cfg: SquadrantConfig, opts: { dryRun?: boolean } = {}): KbMoveEntry[] {
