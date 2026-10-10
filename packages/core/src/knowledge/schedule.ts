@@ -3,7 +3,7 @@
 // KB's homeProject captain); it never spawns a crew. Everything here is deterministic and clock-injected.
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_RECONCILE, kbConfigs, type KnowledgeSourceEntry, type ReconcileConfig, type SquadrantConfig } from "@squadrant/shared";
+import { DEFAULT_RECONCILE, kbConfigs, resolveKbConfig, type KnowledgeSourceEntry, type ReconcileConfig, type SquadrantConfig } from "@squadrant/shared";
 import { detectChange, expandSource, readState } from "./ingest.js";
 import { loadKbRules } from "./layers.js";
 import { kbDir } from "./paths.js";
@@ -99,7 +99,7 @@ export interface RequestResult { kb: string; pass: PassKind; requested: boolean;
 /** Take the lock, snapshot sources, and enqueue the request. Used by the tick and by `reconcile --now`. */
 export async function requestPass(kb: string, pass: PassKind, d: RequestDeps, opts: { dryRun?: boolean } = {}): Promise<RequestResult> {
   const now = d.now?.() ?? new Date();
-  const home = kbConfigs(d.cfg)[kb]?.homeProject;
+  const home = resolveKbConfig(d.cfg, kb).homeProject;
   if (!home) return { kb, pass, requested: false, reason: "no homeProject configured" };
   const schedule = readSchedule(d.stateRoot);
   const entry = (schedule[kb] ??= { createdAt: now.toISOString() });
@@ -124,8 +124,8 @@ export async function requestPass(kb: string, pass: PassKind, d: RequestDeps, op
 export async function tickKnowledgeSchedule(d: RequestDeps): Promise<RequestResult[]> {
   const out: RequestResult[] = [];
   const now = d.now?.() ?? new Date();
-  for (const [kb, kc] of Object.entries(kbConfigs(d.cfg))) {
-    if (!kc.homeProject) continue;
+  for (const kb of Object.keys(kbConfigs(d.cfg))) {
+    if (!resolveKbConfig(d.cfg, kb).homeProject) continue;
     try {
       const root = kbDir(d.cfg, kb);
       if (!fs.existsSync(root)) continue;

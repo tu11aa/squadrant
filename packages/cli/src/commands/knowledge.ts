@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, kbConfigs, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
@@ -334,5 +334,5 @@ knowledgeCommand
   });
 
 function kbConfigsHome(kb: string): string {
-  return kbConfigs(loadConfig())[kb]?.homeProject ?? "(no homeProject)";
+  return resolveKbConfig(loadConfig(), kb).homeProject ?? "(no homeProject)";
 }

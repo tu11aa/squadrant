@@ -1,5 +1,5 @@
 // packages/core/src/knowledge/reconcile.ts — close a reconcile pass: checks, REPORT.md, schedule, one-line captain message (#898).
-import { kbConfigs } from "@squadrant/shared";
+import { resolveKbConfig } from "@squadrant/shared";
 import { runFullChecks, type FullPassFindings } from "./fullpass.js";
 import { kbDir } from "./paths.js";
 import { writeReport } from "./report.js";
@@ -17,7 +17,7 @@ export async function finishReconcile(kb: string, d: RequestDeps & { pass?: Pass
   if (pass === "full") full = runFullChecks(d.cfg, kb, { now, auditDir: d.auditDir });
   const report = writeReport(d.cfg, kb, { pass, now, full });
   const needsYou = needsYouCount(kbDir(d.cfg, kb));
-  const home = kbConfigs(d.cfg)[kb]?.homeProject;
+  const home = resolveKbConfig(d.cfg, kb).homeProject;
   if (home) await d.enqueue(home, finishMessage(kb, needsYou));
   return { pass, report, needsYou };
 }

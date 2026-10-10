@@ -112,6 +112,17 @@ describe("tickKnowledgeSchedule", () => {
     expect(acquirePass(e, "incremental", new Date(T0.getTime() + RUNNING_STALE_MS + 1), {})).toBe(true);
   });
 
+  it("a KB with no explicit homeProject is scheduled and notified via its first subscriber", async () => {
+    cfg.knowledgeBases = { t: { path: path.join(root, "kb", "t") } };
+    liveRule("coding.a");
+    schedSeed({ lastFullAt: T0.toISOString(), firstChangeAt: T0.toISOString(), incrementalDueAt: T0.toISOString() });
+    clock = at(1);
+    expect((await tickKnowledgeSchedule(deps())).map((x) => x.requested)).toEqual([true]);
+    expect(mailbox[0].project).toBe("flooros");
+    await finishReconcile("t", deps());
+    expect(mailbox.at(-1)!.project).toBe("flooros");
+  });
+
   it("a failed enqueue releases the lock", async () => {
     liveRule("coding.a");
     schedSeed({ lastFullAt: T0.toISOString() });
