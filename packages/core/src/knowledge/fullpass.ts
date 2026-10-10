@@ -35,17 +35,17 @@ export function dedupPairs(rules: Rule[]): { a: string; b: string; shared: strin
   return out.slice(0, MAX_DEDUP_PAIRS);
 }
 
-export interface AuditRecord { ts: string; kb?: string; itemId?: string; event?: string; outcome?: string; [k: string]: unknown }
+export interface AuditRecord { ts: string; kb?: string; itemId?: string; event?: string; outcome?: string; project?: string; session?: string; ref?: string; [k: string]: unknown }
 
 /** Read audit lines for one KB at or after `since`; unreadable lines are skipped. */
-export function readAuditRecords(kb: string, since: Date, dir = defaultAuditDir()): AuditRecord[] {
+export function readAuditRecords(kb: string | undefined, since: Date, dir = defaultAuditDir()): AuditRecord[] {
   if (!fs.existsSync(dir)) return [];
   const sinceMonth = since.toISOString().slice(0, 7);
   const out: AuditRecord[] = [];
   for (const f of fs.readdirSync(dir).filter((n) => n.endsWith(".jsonl") && n.slice(0, 7) >= sinceMonth).sort()) {
     for (const line of fs.readFileSync(path.join(dir, f), "utf8").split("\n")) {
       if (!line.trim()) continue;
-      try { const e = JSON.parse(line) as AuditRecord; if (e.kb === kb && Date.parse(e.ts) >= since.getTime()) out.push(e); } catch { /* skip */ }
+      try { const e = JSON.parse(line) as AuditRecord; if ((kb === undefined || e.kb === kb) && Date.parse(e.ts) >= since.getTime()) out.push(e); } catch { /* skip */ }
     }
   }
   return out;

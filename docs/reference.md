@@ -676,6 +676,16 @@ Every rules push and pull is logged, so you can tell whether a rule is ever surf
 - `item.searched` (`rules search`, query truncated to 200 chars) and `item.shown` (`rules show`).
 - Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command. A daemon single-writer is phase 2.
 
+### Citations, feedback and scores (#901)
+
+Injected blocks end with one line asking the agent to name the rule ids it applied in its DONE/commit message. That is what makes "used" measurable.
+
+- **`item.cited`** is logged when a delivered (surfaced/shown) rule id appears as a whole token in a message. Hook points: `squadrant crew signal done|review --message` (automatic, best effort, never affects the signal), `squadrant knowledge cite-scan --project p --text "<message>"` (handoff text or anything else), and `squadrant knowledge cite-scan --project p --git <repo> [--since-days 30]` (commit messages; each commit is scanned once, deduped by sha, and only deliveries made before the commit count). Only ids the audit log shows were delivered to that project in the last 7 days can be cited.
+- **`squadrant knowledge feedback <id> --followed|--violated|--noise|--wrong [--project p]`** logs an `item.outcome`.
+- **Scores** are computed by code, never by a model, over the last 30 days: fire rate (surfaced), pull rate (shown), use rate (cited ÷ surfaced), noise rate, violation rate, `last_surfaced`/`last_used`, never-fired-30d; per domain writes/month, reads/month, chars injected per citation and a **dead-domain alarm** (no writes and no reads for 30 days); tier contribution; per-agent coverage; reviewer agreement (operator `approve` resolutions ÷ all operator resolutions in `verdicts.jsonl`). Every reconcile pass writes `<kb>/scores.json` and a `## Scores` section in `REPORT.md`. `squadrant knowledge stats [--kb k] [--project p] [--domain d] [--item id] [--json]` prints them on demand.
+- **Rotation**: logs are monthly files. A full pass folds every month that ends before the 30-day scoring window into `YYYY-MM.<machine>.stats.json` (per-item counts, so lifetime totals and `last_used` survive) and removes the raw file. `verdicts.jsonl` is never compacted.
+- **Privacy**: query text is truncated to 200 characters, REPORT.md and notifications carry ids and counts only.
+
 ## Rules KB reconcile (#898)
 
 A KB with `homeProject` and `sources.yaml` is reconciled on a schedule kept in `stateRoot/knowledge-schedule.json` and driven by the daemon's 60s tick: an incremental pass 7 days after the first source change (the window is fixed; later edits do not push it back), a full pass every 30 days, and a full pass right away for an empty KB. One pass runs per KB at a time (a `running` entry older than 6h is taken over); a full pass absorbs a due incremental one; sources are snapshotted when the pass starts, so edits made during the pass open the next window. The daemon only appends a `captain.message` to the `homeProject` captain's mailbox; the captain spawns a crew with the `knowledge-review` skill. The daemon never spawns.

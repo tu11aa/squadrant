@@ -17,3 +17,5 @@ export * from "./review.js";
 export * from "./fullpass.js";
 export * from "./report.js";
 export * from "./reconcile.js";
+export * from "./scores.js";
+export * from "./cite.js";

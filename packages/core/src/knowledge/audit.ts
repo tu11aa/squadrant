@@ -7,6 +7,7 @@ import type { Rule } from "@squadrant/shared";
 
 export type AuditEventName =
   | "item.surfaced" | "item.suppressed" | "item.fallback" | "item.searched" | "item.shown"
+  | "item.cited" | "item.outcome"
   | "item.proposed" | "item.approved" | "item.rejected" | "item.applied" | "item.promoted" | "item.superseded" | "item.archived";
 
 export interface AuditEvent {
@@ -23,6 +24,10 @@ export interface AuditEvent {
   session?: string;
   /** item.searched: the query, truncated to AUDIT_QUERY_CHARS. */
   query?: string;
+  /** item.outcome: what the operator or agent reported. */
+  outcome?: "followed" | "violated" | "noise" | "wrong";
+  /** item.cited: where the id was seen (e.g. "crew-done", "git:<sha>"); with itemId it dedups re-scans. */
+  ref?: string;
   /** item.rejected: why (e.g. "ungrounded"). */
   reason?: string;
 }

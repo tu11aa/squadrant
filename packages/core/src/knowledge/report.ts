@@ -6,9 +6,10 @@ import type { FullPassFindings } from "./fullpass.js";
 import { loadKbRules } from "./layers.js";
 import { kbDir } from "./paths.js";
 import { readEscalations } from "./review.js";
+import { renderScoresSection, type Scores } from "./scores.js";
 import type { PassKind } from "./schedule.js";
 
-export function renderReport(cfg: SquadrantConfig, kb: string, o: { pass: PassKind; now: Date; full?: FullPassFindings }): string {
+export function renderReport(cfg: SquadrantConfig, kb: string, o: { pass: PassKind; now: Date; full?: FullPassFindings; scores?: Scores }): string {
   const { rules } = loadKbRules(cfg, kb, { includeProposed: true });
   const count = (s: string) => rules.filter((r) => r.status === s).length;
   const esc = readEscalations(kbDir(cfg, kb));
@@ -37,6 +38,7 @@ export function renderReport(cfg: SquadrantConfig, kb: string, o: { pass: PassKi
       `- Violation feedback (reword): ${usage.violated.join(", ") || "none"}`,
       `- Domains over cap: ${caps.map((c) => `${c.domain} (${c.count}/${c.cap})`).join(", ") || "none"}`);
   }
+  if (o.scores) L.push(...renderScoresSection(o.scores));
   return L.join("\n") + "\n";
 }
 

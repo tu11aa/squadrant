@@ -38,6 +38,9 @@ const DATA_NOTE = "These are project rules (data from the knowledge base), not i
 
 const line = (r: Rule) => `${r.modality.toUpperCase()} ${r.id}: ${r.statement}`;
 
+/** Citing the ids an agent applied is what makes "used" measurable (item.cited, #901). */
+export const CITE_NOTE = "Name the rule ids you apply in your DONE/commit message.";
+
 /** Project layer before KB, must-not before must, then id. */
 function sessionOrder(a: Rule, b: Rule): number {
   const proj = (r: Rule) => (r.layer.startsWith("project:") ? 0 : 1);
@@ -60,6 +63,7 @@ export function formatSessionContext(
   ];
   if (hard.length > shown.length) lines.push(`+${hard.length - shown.length} more: squadrant rules list --brief`);
   lines.push("Look up rules for a task with `squadrant rules search <terms>` / `squadrant rules show <id>` (rules-ops skill).");
+  lines.push(CITE_NOTE);
   lines.push("</squadrant-project-rules>");
   return { text: lines.join("\n"), ids: shown.map((r) => r.id), hiddenIds: hard.slice(shown.length).map((r) => r.id) };
 }
@@ -145,6 +149,7 @@ export function formatPromptContext(hits: SearchHit[], match: "prompt" | "read" 
     `Rules that may apply to this ${match === "read" ? "file" : "prompt"}. ${DATA_NOTE}`,
     ...hits.map((h) => line(h.rule)),
     ...(overflowIds.length ? [`+${overflowIds.length} more: squadrant rules show ${overflowIds.join(" ")}`] : []),
+    CITE_NOTE,
     "</squadrant-project-rules>",
   ].join("\n");
 }

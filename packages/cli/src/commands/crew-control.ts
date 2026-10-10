@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { sendRequest } from "@squadrant/core";
+import { sendRequest, scanAndLogCitations } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ProjectUsage } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
@@ -578,6 +578,11 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           ...(opts.project !== undefined ? { project: opts.project } : {}),
           writeResult: defaultWriteResult,
         }, { call: squadrantdCall });
+        // item.cited (#901): a rule id named in the DONE/review summary. Best effort; never affects the signal.
+        const citeProject = opts.project ?? process.env.SQUADRANT_CREW_PROJECT;
+        if ((state === "done" || state === "review") && opts.message && citeProject) {
+          try { scanAndLogCitations({ text: opts.message, ref: `crew-${state}:${opts.taskId ?? process.env.SQUADRANT_CREW_TASK_ID}`, project: citeProject }); } catch { /* audit must not block a signal */ }
+        }
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
