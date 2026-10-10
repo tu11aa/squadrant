@@ -517,6 +517,25 @@ opencode additionally gets squadrant's skills projected as **loadable skill dirs
 - **Hub Wiki** — cross-project knowledge aggregated by an on-demand `squadrant command --task wiki-aggregate` run.
 - Scripts: `wiki-ingest.sh`, `wiki-query.sh`, `wiki-log.sh`.
 
+### Knowledge bases (rules, #893 / #936)
+
+Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squadrant knowledge init <kb>` runs `git init`; a remote is optional). Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
+
+```json
+{
+  "knowledgeBases": { "saitex": { "path": "~/squadrant/kb/saitex", "homeProject": "flooros", "domainCap": 150 } },
+  "groups": { "saitex": { "kb": "saitex" } },
+  "projects": {
+    "flooros":   { "group": "saitex", "knowledge": ["conventions"] },
+    "squadrant": { "knowledgeHome": "repo:docs" }
+  }
+}
+```
+
+- A project in a group inherits that group's KB; `projects.<p>.knowledge[]` adds extra KBs. `path` defaults to `~/squadrant/kb/<kb>`.
+- `knowledge.<kb>` (the pre-#936 key) is still read as a deprecated alias; `squadrant doctor` reports it as config drift and the drift fix moves it to `knowledgeBases`.
+- A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup

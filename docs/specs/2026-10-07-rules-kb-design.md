@@ -3,6 +3,7 @@
 - **Status:** brainstormed with the operator 2026-10-07 → 08; Fable review applied (ready-with-fixes → fixed); awaiting operator spec review
 - **Epic:** #893 (knowledge architecture)
 - **Related:** #555, #885, #886, #894, #662, #615, #31
+- **Amended 2026-10-10 (#936):** storage, config, project overlay, audit location and `verdicts.jsonl` follow [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) §3, §4, §9, §10. Those sections win where they differ from the original text below.
 - **Prior art:** [`docs/research/2026-10-07-rules-kb-prior-art.md`](../research/2026-10-07-rules-kb-prior-art.md)
 
 ## 1. Goal
@@ -32,7 +33,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 | # | Decision |
 |---|---|
 | D1 | **Approach: push via hooks + pull via squadrant tool, stored in the vault.** Rejected: compiling into native rule files (Claude `paths:` is buggy, it pollutes repos (#662), and gives no audit); pull-only (relies on the agent remembering to look). |
-| D2 | **Storage:** a named KB at `<hubVault>/knowledge/<kb>/`. A project subscribes with `"knowledge": ["saitex"]`; a project KB overrides by `id` or disables via `rulesDisabled`. KBs are **not** tied to `group`. |
+| D2 | **Storage:** a named KB at `~/squadrant/kb/<kb>/`, its own git repo (`git init` on create; a remote is optional). A project inherits the KB mapped to its `group` (`groups.<g>.kb`) and adds more with `"knowledge": ["conventions"]`; its own overlay overrides by `id` or disables via `rulesDisabled`. *(Amended #936: was `<hubVault>/knowledge/<kb>/`, not tied to `group`.)* |
 | D3 | **Trust:** only sources listed in `sources.yaml` can produce rules. An agent proposal stays `proposed` until it is reviewed. |
 | D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically. Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
 | D5 | **A meaning change goes to the reviewer first.** The old version stays active while the change is pending. |
@@ -47,14 +48,14 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 ## 3. Store and rule format
 
 ```
-<hubVault>/knowledge/<kb>/
+~/squadrant/kb/<kb>/               # its own git repo
   sources.yaml            # trusted sources: the only way in
   raw/                    # operator drops files here; free-form subfolders
   .converted/<src>.md     # markitdown output + .sha (regenerable cache)
-  rules/<domain>/<id>.md  # coding | system | business | security | …
-  rules/_proposed/        # awaiting reviewer / operator
+  shared/rules/<domain>/<id>.md   # coding | system | business | security | … (applies to every project in the KB)
+  shared/rules/_proposed/         # awaiting reviewer / operator
+  projects/<p>/rules/             # project overlay (§3 Project layer)
   index.json              # compiled: triggers, anchors, embeddings ref
-  audit.jsonl             # append-only (§7)
   REPORT.md               # latest reconcile report + pending escalations
 ```
 
@@ -71,16 +72,20 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
   sensitivity: local-only                    # D12: never sent to a hosted model
 ```
 
-**KB config** goes in `config.json` under `knowledge.<kb>`:
+**KB config** goes in `config.json` under `knowledgeBases.<kb>` (`path` defaults to `~/squadrant/kb/<kb>`). The old `knowledge.<kb>` key is still read as a deprecated alias; `squadrant doctor` reports it as config drift.
 
 ```json
-{ "homeProject": "flooros", "domainCap": 150 }
+{
+  "knowledgeBases": { "saitex": { "path": "~/squadrant/kb/saitex", "homeProject": "flooros", "domainCap": 150 } },
+  "groups": { "saitex": { "kb": "saitex" } },
+  "projects": { "flooros": { "group": "saitex", "knowledge": ["conventions"] } }
+}
 ```
 
 `homeProject` defaults to the first subscribing project and is required when no project subscribes. If no project subscribes, extraction still runs but anchors are skipped.
 
 **Project layer:**
-- It lives at `<spokeVault>/knowledge/rules/`, uses the same file format, and follows the same trust rules (D3).
+- It lives at the project home `<kb>/projects/<p>/rules/`, or `<repo>/docs/rules/` when `projects.<p>.knowledgeHome` is `"repo:docs"`, uses the same file format, and follows the same trust rules (D3).
 - An override **replaces the whole rule** with the same `id`. `rulesDisabled: [id]` in the project config turns a KB rule off.
 - When the base rule of an override changes, the full pass escalates `override.base-changed`.
 
@@ -261,12 +266,12 @@ Unanswered items stay `proposed` and never go live by default.
 
 ## 7. Audit and scoring
 
-`knowledge/<kb>/audit.jsonl` is append-only. Each entry has `{ts, kb, ruleId?, project, agent, session, event, …}`.
+The audit log is append-only, one JSON line per event, at `~/.local/state/squadrant/audit/YYYY-MM.<machine-id>.jsonl` (one file per machine, shared by all KBs and domains). Each entry has `{ts, kb, level, project, domain, itemId, event, …}` (events are named `item.*`; see `packages/core/src/knowledge/audit.ts`).
 
 | Group | Events |
 |---|---|
 | Lifecycle | `rule.extracted`, `rule.updated`, `rule.status`, `rule.rejected.ungrounded` |
-| Decisions | `decision`: question type, input, answer, confidence, justification, applied or escalated, operator override. Stored in a separate `decisions.jsonl` that is **never compacted**. This is the future eval set for Jev/Quyet. |
+| Decisions | `decision`: question type, input, answer, confidence, justification, applied or escalated, operator override. Stored in a separate `verdicts.jsonl` (renamed from `decisions.jsonl`; "decisions" is reserved for the Decisions domain) that is **never compacted**. This is the future eval set for Jev/Quyet. |
 | Delivery | `rule.surfaced`, `rule.suppressed` (budget / dedup / threshold), `match.error`, each with tier, score and tokens |
 | Pull | `rule.searched`, `rule.shown` |
 | Outcome | `rule.outcome` (followed / violated / n-a). In v1 its only source is `squadrant knowledge feedback <id> --violated\|--noise\|--wrong`, used by the operator or by agents. Sampled diffs and mechanical checks are deferred. |
@@ -326,7 +331,7 @@ Unanswered items stay `proposed` and never go live by default.
 5. **Delivery for codex/gemini/opencode:** live-verify the injection points, then add the adapters and the AGENTS.md fallback pointer.
 6. **Audit + scoring + REPORT.md + feedback CLI.**
 7. **Follow-ups (deferred, data-gated):**
-   - decider backends, Jev cloud and Quyet-Large local, chosen by replaying `decisions.jsonl` as an eval set
+   - decider backends, Jev cloud and Quyet-Large local, chosen by replaying `verdicts.jsonl` as an eval set
    - T2 rerank
    - MCP pull tool
    - automated outcome detection
