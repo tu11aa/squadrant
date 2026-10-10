@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-10
+
+Rules KB Phase 1 (epic #893). PRs #937-#944.
+
+### Added
+
+- **Rules KB at `~/squadrant/kb/<kb>/`** (shared + `projects/<p>/rules`). New `knowledgeBases` / `groups` config; the old `knowledge` key is a deprecated alias. `knowledge migrate` moves existing data and never deletes. `doctor` reports legacy layouts (#936).
+- **Audit log** of rule injection, search and show (#935).
+- **Ingest and extract with quote verification and anchors** (#897).
+- **In-process T0 matcher and rule delivery** (#899): PostToolUse(Read) injection, a 5-rule / ~800-token budget, and `rules match`.
+- **Opt-in hooks for codex, gemini and opencode** via `rules install-hooks`, plus an AGENTS.md / GEMINI.md fallback pointer (#900).
+- **Reconcile passes, daemon scheduler, reviewer skill and escalations** (#898). Code-vs-doc conflicts are escalated, never auto-superseded.
+- **Code-computed scores** and `knowledge feedback|stats|cite-scan`, the `item.cited` event, and audit log compaction (#901).
+- **KB architecture spec** (#893).
+
 ## [0.26.3] - 2026-10-09
 
 Refs #326. Closes #916, #917, #918.
