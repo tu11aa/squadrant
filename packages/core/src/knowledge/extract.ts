@@ -13,7 +13,7 @@ import { compileIndex, writeIndex } from "./index-file.js";
 import { convertedFile, readState } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
-import { findQuote, needsDocling, normalizeText, normalizedViews, spansOverlap } from "./verify.js";
+import { findQuote, needsDocling, normalizeText, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
 
 export interface Candidate {
   /** Source ref exactly as listed in the ingest plan. */

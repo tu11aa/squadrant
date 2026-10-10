@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import matter from "gray-matter";
 import {
-  applyCandidates, planIngest, loadRulesDir, findQuote, normalizeText, needsDocling, splitSections, computeAnchor,
+  applyCandidates, planIngest, isPendingProposalDup, loadRulesDir, findQuote, normalizeText, needsDocling, splitSections, computeAnchor,
   PROPOSED_DIR, type Candidate, type CandidateFile, type Converter,
 } from "../knowledge/index.js";
 
@@ -139,6 +139,8 @@ describe("golden fixture", () => {
     const active = rules().find((x) => x.id === "biz.rounding.vnd-half-up")!;
     expect(active.status).toBe("active");
     expect(active.statement).toContain("half-up");
+    const withProposed = loadRulesDir(rulesDir, "kb:t", { includeProposed: true });
+    expect(withProposed.errors.every((e) => isPendingProposalDup(e, rulesDir))).toBe(true);
     expect(audit().filter((e) => e.event === "item.proposed").map((e) => e.itemId)).toContain("biz.rounding.vnd-half-up");
   });
 

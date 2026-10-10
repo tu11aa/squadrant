@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
-import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate } from "../knowledge.js";
+import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply } from "../knowledge.js";
 import { kbRulesDir, kbDir, readIndex } from "@squadrant/core";
 
 let dir: string;
@@ -136,5 +136,27 @@ describe("knowledge validate", () => {
     const v = runKnowledgeValidate("saitex", cfgPath);
     expect(v.ok).toBe(true);
     expect(v.checks.some((c) => c.level === "warn")).toBe(true);
+  });
+});
+
+describe("knowledge ingest / apply", () => {
+  it("ingest plans a changed md source; apply writes the rule and is idempotent", async () => {
+    const { dir: kbRoot } = runKnowledgeInit("saitex", cfgPath);
+    fs.writeFileSync(path.join(kbRoot, "sources.yaml"), "- { path: raw/**, priority: company }\n");
+    fs.writeFileSync(path.join(kbRoot, "raw", "p.md"), "# P\n\nInvoices must be issued within 5 days.\n");
+    const plan = await runKnowledgeIngest("saitex", {}, cfgPath);
+    expect(plan.sources.map((s) => s.ref)).toEqual(["raw/p.md"]);
+    const cand = path.join(dir, "cand.json");
+    fs.writeFileSync(cand, JSON.stringify({ complete: ["raw/p.md"], candidates: [{
+      source: "raw/p.md", id: "biz.invoice.window", domain: "business", modality: "must",
+      statement: "Issue invoices within 5 days.", quote: "Invoices must be issued within 5 days.",
+    }] }));
+    process.env.SQUADRANT_AUDIT_DIR = path.join(dir, "audit");
+    try {
+      expect(runKnowledgeApply("saitex", cand, cfgPath).created).toEqual(["biz.invoice.window"]);
+      expect(runKnowledgeApply("saitex", cand, cfgPath)).toMatchObject({ created: [], merged: [] });
+    } finally { delete process.env.SQUADRANT_AUDIT_DIR; }
+    expect(readIndex(kbRoot, "saitex").index?.rules.map((r) => r.id)).toEqual(["biz.invoice.window"]);
+    expect((await runKnowledgeIngest("saitex", {}, cfgPath)).sources).toEqual([]);
   });
 });

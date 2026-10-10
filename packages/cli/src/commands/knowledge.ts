@@ -3,11 +3,12 @@ import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, kbConfigs, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
+  planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
 } from "@squadrant/core";
 
@@ -151,4 +152,65 @@ knowledgeCommand
     const report = runKnowledgeMigrate(opts);
     if (!report.length) console.log("Nothing to migrate: no knowledge bases under <hubVault>/knowledge/ and no spoke overlays.");
     for (const e of report) console.log(`${e.action.padEnd(10)} ${e.kb}: ${e.from} -> ${e.to}${e.note ? chalk.dim(` (${e.note})`) : ""}`);
+  });
+
+function requireKb(kb: string, configPath: string) {
+  assertKbName(kb);
+  const cfg = loadConfig(configPath);
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  return cfg;
+}
+
+export async function runKnowledgeIngest(
+  kb: string,
+  opts: { dryRun?: boolean; localModel?: boolean; maxSections?: number } = {},
+  configPath = DEFAULT_CONFIG_PATH,
+): Promise<IngestPlan> {
+  const cfg = requireKb(kb, configPath);
+  const root = kbDir(cfg, kb);
+  const { sources, errors } = loadSources(root);
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  const existing = loadKbRules(cfg, kb).rules.map((r) => ({ id: r.id, domain: r.domain, statement: r.statement }));
+  return planIngest(root, {
+    sources, existing, dryRun: opts.dryRun, localModel: opts.localModel,
+    maxSectionsPerPass: opts.maxSections ?? kbConfigs(cfg)[kb]?.maxSectionsPerPass ?? DEFAULT_MAX_SECTIONS_PER_PASS,
+  });
+}
+
+export function runKnowledgeApply(kb: string, candidatesFile: string, configPath = DEFAULT_CONFIG_PATH): ApplyResult {
+  const cfg = requireKb(kb, configPath);
+  const input = JSON.parse(fs.readFileSync(candidatesFile, "utf8")) as CandidateFile;
+  if (!input || !Array.isArray(input.candidates)) throw new Error("candidates file must be { complete?: string[], candidates: [...] }");
+  const projects = Object.entries(cfg.projects)
+    .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
+    .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects });
+}
+
+knowledgeCommand
+  .command("ingest <kb>")
+  .description("Detect changed sources, convert them (markitdown) into .converted/, and print the section plan for the knowledge-extract skill")
+  .option("--dry-run", "estimate tokens only; write nothing")
+  .option("--json", "print the full plan as JSON")
+  .option("--local-model", "a local model is available, so sensitivity: local-only sources are planned instead of skipped")
+  .option("--max-sections <n>", "override maxSectionsPerPass", (v) => parseInt(v, 10))
+  .action(async (kb: string, opts: { dryRun?: boolean; json?: boolean; localModel?: boolean; maxSections?: number }) => {
+    const plan = await runKnowledgeIngest(kb, opts);
+    if (opts.json) { console.log(JSON.stringify(plan, null, 2)); return; }
+    for (const s of plan.sources) console.log(`  ${s.ref}  ${s.sections.length}/${s.totalSections} sections${s.sensitivity ? chalk.yellow("  local-only") : ""}`);
+    for (const s of plan.skipped) console.log(chalk.yellow(`  skipped ${s.ref}: ${s.reason}`));
+    for (const f of plan.failed) console.log(chalk.red(`  ✘ ${f.ref}: conversion failed: ${f.error}`));
+    console.log(`${plan.sectionCount} sections, ~${plan.estimatedTokens} input tokens${plan.carriedSections ? `, ${plan.carriedSections} carried to the next pass` : ""}${opts.dryRun ? " (dry run)" : ""}`);
+    if (plan.failed.length) process.exitCode = 1;
+  });
+
+knowledgeCommand
+  .command("apply <kb> <candidates>")
+  .description("Verify extracted candidates (quote grounding, offset id-matching), classify changes, write rules/_proposed, anchor, reindex")
+  .action((kb: string, file: string) => {
+    const r = runKnowledgeApply(kb, file);
+    console.log(`created ${r.created.length}, merged ${r.merged.length}, proposed ${r.proposed.length}, superseded ${r.superseded.length}, stale ${r.stale.length}, rejected ${r.rejected.length}`);
+    for (const x of r.rejected) console.log(chalk.red(`  ✘ ${x.id} (${x.source}): ${x.reason}`));
+    for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
+    for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
