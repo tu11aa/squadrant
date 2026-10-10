@@ -18,8 +18,10 @@ export interface ProjectConfig {
   /** #246: when false, `squadrant group dispatch` rejects delegations to this
    *  project. Defaults to true when absent. */
   acceptDelegations?: boolean;
-  /** #896 Rules KB: named knowledge bases this project subscribes to (spec D2). */
+  /** #936: extra knowledge bases this project subscribes to, on top of its group's KB (KB spec §3). */
   knowledge?: string[];
+  /** #936: where this project's own KB items live: `kb:<name>` or `repo:docs` (KB spec §3). Default: the group's KB. */
+  knowledgeHome?: string;
   /** #896 Rules KB: KB rule ids switched off for this project. */
   rulesDisabled?: string[];
 }
@@ -243,8 +245,12 @@ export interface SquadrantConfig {
   projection?: {
     targets?: string[];
   };
-  /** #896 Rules KB: per-KB settings, keyed by KB name. Absent ⇒ no KB configured. */
+  /** #936: per-KB settings, keyed by KB name. Absent ⇒ no KB configured. */
+  knowledgeBases?: Record<string, KnowledgeKbConfig>;
+  /** @deprecated #936: renamed to `knowledgeBases`; still read as an alias (see kbConfigs). */
   knowledge?: Record<string, KnowledgeKbConfig>;
+  /** #936: group → KB mapping; projects in a group inherit the group's KB. */
+  groups?: Record<string, { kb?: string }>;
   delivery?: {
     /** Defer count at which a stuck delivery is flagged on the dashboard (B1). Does NOT
      *  force delivery on its own — probing an actively-changing draft is unsafe (#484); only
