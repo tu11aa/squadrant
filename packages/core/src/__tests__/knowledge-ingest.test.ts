@@ -47,7 +47,7 @@ describe("verify", () => {
   ])("grounds a quote with or without inline markup, span slices the original: %s", (plain, src, sliced) => {
     const span = findQuote(src, plain)!;
     expect(span).not.toBeNull();
-    expect(src.slice(span[0], span[1]).replace(/^`/, "")).toBe(sliced.replace(/^`/, ""));
+    expect(src.slice(span[0], span[1])).toBe(sliced);
     expect(findQuote(src, src)).not.toBeNull();
   });
   it("ignores markup but still fails on a changed or missing word", () => {
