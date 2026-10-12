@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig } from "@squadrant/shared";
-import { validateKb, loadRulesDir, splitStatement, kbRulesDir, kbDir } from "../knowledge/index.js";
+import { planIngest, validateKb, loadRulesDir, splitStatement, kbRulesDir, kbDir } from "../knowledge/index.js";
 
 let dir: string;
 function write(rel: string, text: string) {
@@ -138,6 +138,36 @@ describe("validateKb", () => {
     const r = run();
     expect(r.ok).toBe(true);
     expect(r.checks.some((c) => c.level === "skip")).toBe(true);
+  });
+  const ruleFor = (ref: string, quote: string) =>
+    `---\nid: coding.c\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: ${ref}, sha: abc, quote: "${quote}" }\n---\nS.\n`;
+  const ingestRaw = () => planIngest(dir, { sources: [{ path: "raw/**", priority: "company" as const }], converter: async () => "# Title\n\nThe deploy step  runs\nafter “review”.\n" });
+
+  it("grounds quotes against the converted text of an ingested PDF/HTML source", async () => {
+    write("raw/doc.pdf", "%PDF-binary");
+    await ingestRaw();
+    write("rules/coding/c.md", ruleFor("raw/doc.pdf", "deploy step runs after \\\"review\\\""));
+    const r = run();
+    expect(r.ok).toBe(true);
+    expect(r.checks.map((c) => c.message)).toContain("1 source quotes found in their source files");
+  });
+  it("matches whitespace and smart-quote differences in a markdown source", () => {
+    write("raw/a.md", "alpha   beta\n“gamma”\n");
+    write("rules/coding/a.md", rule("coding.a", "alpha beta \\\"gamma\\\""));
+    expect(run().ok).toBe(true);
+  });
+  it("still fails an absent quote from a converted source", async () => {
+    write("raw/doc.pdf", "%PDF-binary");
+    await ingestRaw();
+    write("rules/coding/c.md", ruleFor("raw/doc.pdf", "never said this"));
+    expect(run().ok).toBe(false);
+  });
+  it("skips (not fails) a convertible source with no .converted cache", () => {
+    write("raw/doc.pdf", "%PDF-binary");
+    write("rules/coding/c.md", ruleFor("raw/doc.pdf", "anything"));
+    const r = run();
+    expect(r.ok).toBe(true);
+    expect(r.checks.find((c) => c.level === "skip")?.message).toContain("knowledge ingest");
   });
   it("fails on invalid files and duplicate ids", () => {
     write("raw/a.md", "q");

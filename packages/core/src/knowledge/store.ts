@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import matter from "gray-matter";
 import { validateRuleFrontmatter, type KnowledgeSourceEntry, type Rule, type RuleFrontmatter } from "@squadrant/shared";
+import { convertedFile, PASS_THROUGH, readState } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
+import { findQuote, normalizedViews, type Normalized } from "./verify.js";
 
 // gray-matter evals `---js` front matter by default; rule files are untrusted, so allow YAML only.
 const NO_JS_FRONTMATTER = {
@@ -105,18 +107,28 @@ export function validateKb(opts: {
   if (dups.length) for (const e of dups) checks.push({ level: "fail", message: e.problems.join("; ") });
   else checks.push({ level: "ok", message: "no duplicate ids" });
 
-  const cache = new Map<string, string | null>();
-  let verified = 0, unresolved = 0;
+  // Ground against the same text `knowledge apply` used: the converted cache when ingested, else the original.
+  const cache = new Map<string, Normalized[] | null>();
+  let verified = 0, unresolved = 0, notIngested = 0;
   for (const r of rules) {
     r.sources.forEach((src, i) => {
       const file = resolveSourceRef(src.ref, opts.kbRoot, opts.sources);
       if (!file) { unresolved++; return; }
-      if (!cache.has(file)) cache.set(file, fs.readFileSync(file, "utf8"));
-      if (cache.get(file)!.includes(src.quote)) verified++;
+      const key = `${src.ref}\0${file}`;
+      if (!cache.has(key)) {
+        const conv = readState(opts.kbRoot, src.ref) ? convertedFile(opts.kbRoot, src.ref) : null;
+        if (conv && fs.existsSync(conv)) cache.set(key, normalizedViews(fs.readFileSync(conv, "utf8")));
+        else if (PASS_THROUGH.has(path.extname(file).toLowerCase())) cache.set(key, normalizedViews(fs.readFileSync(file, "utf8")));
+        else cache.set(key, null);
+      }
+      const hay = cache.get(key);
+      if (!hay) { notIngested++; return; }
+      if (findQuote(hay, src.quote)) verified++;
       else checks.push({ level: "fail", message: `quote not found in ${file}: ${r.id} sources[${i}] (${r.file})` });
     });
   }
   if (!checks.some((c) => c.message.startsWith("quote not found"))) checks.push({ level: "ok", message: `${verified} source quotes found in their source files` });
+  if (notIngested) checks.push({ level: "skip", message: `${notIngested} source refs need conversion but have no .converted cache, quote not checked (run \`squadrant knowledge ingest <kb>\`)` });
   if (unresolved) checks.push({ level: "skip", message: `${unresolved} source refs not resolvable on this machine, quote not checked` });
 
   if (opts.domains) {
