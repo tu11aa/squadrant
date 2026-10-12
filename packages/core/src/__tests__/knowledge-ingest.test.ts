@@ -40,6 +40,21 @@ describe("verify", () => {
     expect(normalizeText("ﬁnal ofﬁce")).toBe("final office");
     expect(findQuote("not here", "absent quote")).toBeNull();
   });
+  it.each([
+    ["requireRole reads roles only from the validated JWT", "`requireRole` reads roles **only** from the validated JWT", "requireRole` reads roles **only** from the validated JWT"],
+    ["A test proves denied -> 403 / masked and allowed -> passes.", "A test proves *denied -> 403 / masked* and *allowed -> passes*.", "A test proves *denied -> 403 / masked* and *allowed -> passes*."],
+    ["Sharing happens only through packages/*.", "Sharing happens only through `packages/*`.", "Sharing happens only through `packages/*`."],
+  ])("grounds a quote with or without inline markup, span slices the original: %s", (plain, src, sliced) => {
+    const span = findQuote(src, plain)!;
+    expect(span).not.toBeNull();
+    expect(src.slice(span[0], span[1]).replace(/^`/, "")).toBe(sliced.replace(/^`/, ""));
+    expect(findQuote(src, src)).not.toBeNull();
+  });
+  it("ignores markup but still fails on a changed or missing word", () => {
+    const src = "`requireRole` reads roles **only** from the validated JWT";
+    expect(findQuote(src, "requireRole reads roles only from the validated token")).toBeNull();
+    expect(findQuote(src, "requireRole reads roles from the validated JWT")).toBeNull();
+  });
   it("flags docling only above 20% dropped", () => {
     expect(needsDocling(1, 5)).toBe(false);
     expect(needsDocling(2, 5)).toBe(true);
