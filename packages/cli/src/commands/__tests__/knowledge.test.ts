@@ -36,6 +36,24 @@ describe("knowledge init", () => {
     expect(again.created).toEqual([]);
     expect(fs.readFileSync(path.join(r.dir, "sources.yaml"), "utf8")).toContain("raw/a.md");
   });
+  it("writes a default .gitignore (raw/, .converted/) for a fresh KB", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    const gi = fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8");
+    expect(gi).toContain("\nraw/\n");
+    expect(gi).toContain("\n.converted/\n");
+  });
+  it("writes .gitignore into an already-initialised repo that lacks one", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    fs.rmSync(path.join(r.dir, ".gitignore"));
+    expect(runKnowledgeInit("saitex", cfgPath).created).toEqual([".gitignore"]);
+    expect(fs.existsSync(path.join(r.dir, ".gitignore"))).toBe(true);
+  });
+  it("never modifies an existing .gitignore", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    fs.writeFileSync(path.join(r.dir, ".gitignore"), "custom\n");
+    runKnowledgeInit("saitex", cfgPath);
+    expect(fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8")).toBe("custom\n");
+  });
   it("rejects an invalid kb name", () => {
     expect(() => runKnowledgeInit("Bad Name", cfgPath)).toThrow(/Invalid knowledge base name/);
   });

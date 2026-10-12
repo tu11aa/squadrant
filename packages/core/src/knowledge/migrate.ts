@@ -29,6 +29,16 @@ export function ensureGitRepo(dir: string): boolean {
   try { execFileSync("git", ["init", "-q", dir], { stdio: "ignore" }); return true; } catch { return false; }
 }
 
+const KB_GITIGNORE = "# squadrant KB defaults: source documents stay local\nraw/\n.converted/\n";
+
+/** Write the default .gitignore if the KB has none (#951). Never touches an existing one. Returns whether it wrote. */
+export function ensureKbGitignore(dir: string): boolean {
+  const file = path.join(dir, ".gitignore");
+  if (fs.existsSync(file)) return false;
+  fs.writeFileSync(file, KB_GITIGNORE);
+  return true;
+}
+
 const legacyOverlay = (cfg: SquadrantConfig, project: string) =>
   path.join(resolveHome(cfg.projects[project].spokeVault), "knowledge", "rules");
 
@@ -83,6 +93,7 @@ export function moveLegacyKbs(cfg: SquadrantConfig, opts: { dryRun?: boolean } =
       notes.push("rules/ -> shared/rules/");
     }
     if (ensureGitRepo(to)) notes.push("git init");
+    if (ensureKbGitignore(to)) notes.push("wrote .gitignore (raw/, .converted/)");
     if (fs.existsSync(path.join(to, "index.json"))) notes.push(`index.json holds old paths: run squadrant knowledge reindex ${kb}`);
     if (action === "copied") notes.push("cross-device: original left in place, delete it yourself once verified");
     return { kb, from, to, action, ...(notes.length ? { note: notes.join("; ") } : {}) };
