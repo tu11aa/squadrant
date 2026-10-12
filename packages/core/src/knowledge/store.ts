@@ -108,7 +108,7 @@ export function validateKb(opts: {
   else checks.push({ level: "ok", message: "no duplicate ids" });
 
   // Ground against the same text `knowledge apply` used: the converted cache when ingested, else the original.
-  const cache = new Map<string, Normalized[] | null>();
+  const cache = new Map<string, { hay: Normalized[]; convertible: boolean }>();
   let verified = 0, unresolved = 0, notIngested = 0;
   for (const r of rules) {
     r.sources.forEach((src, i) => {
@@ -117,13 +117,15 @@ export function validateKb(opts: {
       const key = `${src.ref}\0${file}`;
       if (!cache.has(key)) {
         const conv = readState(opts.kbRoot, src.ref) ? convertedFile(opts.kbRoot, src.ref) : null;
-        if (conv && fs.existsSync(conv)) cache.set(key, normalizedViews(fs.readFileSync(conv, "utf8")));
-        else if (PASS_THROUGH.has(path.extname(file).toLowerCase())) cache.set(key, normalizedViews(fs.readFileSync(file, "utf8")));
-        else cache.set(key, null);
+        const cached = !!conv && fs.existsSync(conv);
+        cache.set(key, {
+          hay: normalizedViews(fs.readFileSync(cached ? conv! : file, "utf8")),
+          convertible: !cached && !PASS_THROUGH.has(path.extname(file).toLowerCase()),
+        });
       }
-      const hay = cache.get(key);
-      if (!hay) { notIngested++; return; }
+      const { hay, convertible } = cache.get(key)!;
       if (findQuote(hay, src.quote)) verified++;
+      else if (convertible) notIngested++;
       else checks.push({ level: "fail", message: `quote not found in ${file}: ${r.id} sources[${i}] (${r.file})` });
     });
   }

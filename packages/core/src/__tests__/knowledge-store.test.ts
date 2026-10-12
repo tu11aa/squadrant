@@ -169,6 +169,13 @@ describe("validateKb", () => {
     expect(r.ok).toBe(true);
     expect(r.checks.find((c) => c.level === "skip")?.message).toContain("knowledge ingest");
   });
+  it("still verifies a quote in an un-ingested plain source such as .ts", () => {
+    write("raw/x.ts", "export const deploy = 1;\n");
+    write("rules/coding/c.md", ruleFor("raw/x.ts", "export const deploy = 1;"));
+    const r = run();
+    expect(r.ok).toBe(true);
+    expect(r.checks.map((c) => c.message)).toContain("1 source quotes found in their source files");
+  });
   it("fails on invalid files and duplicate ids", () => {
     write("raw/a.md", "q");
     write("rules/a/one.md", rule("coding.d", "q"));
