@@ -199,6 +199,8 @@ The replay is a short script a crew writes and runs once. It is not a new CLI co
 | 4 | saitex migration: write `errata.yaml` (from 26 errata + 26 corrected rows) and about 10–15 decision records; edit `sources.yaml`; replay the branch; extract decisions; operator review | saitex KB | crew ~1 day + operator ~1–2 h for ~70 escalations |
 | 5 | `--remove` extracted, archive the folder, delete the branch, `validate` green | saitex KB | ~0.5 h |
 
+**Ops hazard (Phase 4):** never check out a review branch in the live KB checkout. Inject serves whatever is checked out (10-12 incident, ~10 min). Use a separate worktree or clone.
+
 Phases 1–3 are independent (one crew each, or one crew in sequence). Phase 4 needs 1–3 released. Not in scope: the anchor walk skipping `.venv/` and gitignored dirs (found in §7, a separate small fix).
 
 ## 9. Multi-agent
@@ -234,11 +236,15 @@ Each phase updates its docs in the same PR. Docs and diagrams never trail the co
 | 3 | `docs/reference.md` command table; rules spec §5 manual commands; `knowledge-review` skill if stale-from-removal needs a note; diagram |
 | 4–5 | saitex KB only (no squadrant docs); this spec's status line → "migrated" with final counts |
 
-## 12. Open questions for the operator
+## 12. Decided 2026-10-13
 
-- **Q1.** An errata hit: reject outright (recommended), or send it to `_proposed/` so you see it again?
-- **Q2.** Gated proposals: always you (recommended for raw), or let the reviewer agent approve at high confidence? A second value (`review: agent`) can be added later if you want it.
-- **Q3.** Branch `extract/raw-2026-10-12`: replay on `main` (recommended), or re-extract fresh?
-- **Q4.** The 7 ClickUp-survey rules: record them as your decisions now, or wait for Hau on the OPEN items first?
-- **Q5.** The 17 "repo docs that are stale" rows: file them as flooros tickets, add errata for the handbook lines, or leave them in the archive?
-- **Q6.** Who may edit `errata.yaml` and `shared/decisions/`: only you, or a crew on your instruction (recommended, same as the 13 Oct approvals)?
+The operator answered the open questions on PR #963.
+
+| # | Question | Decision |
+|---|---|---|
+| Q1 | A candidate that hits an erratum | **Rejected** as `errata:<id>`. It is not sent to `_proposed/`. |
+| Q2 | Who approves gated proposals | **Always the operator.** The reviewer agent may not approve them. |
+| Q3 | Branch `extract/raw-2026-10-12` | **Replay it on `main`** as a candidates file. Do not merge the branch. |
+| Q4 | The 7 ClickUp-survey rules | OBSERVED practice becomes decision records now ("we follow observed practice X"). OPEN items (awaiting Hau) stay out of the KB until answered. |
+| Q5 | The 17 "repo docs that are stale" rows | They become `errata.yaml` entries. No flooros tickets. |
+| Q6 | Who edits `errata.yaml` and `shared/decisions/` | A crew, on the operator's instruction. The operator approves the diff. |
