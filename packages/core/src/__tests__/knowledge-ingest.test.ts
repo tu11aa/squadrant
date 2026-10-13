@@ -249,6 +249,14 @@ describe("review: required sources (spec 2026-10-13 §5)", () => {
     expect(rules().find((x) => x.id === "biz.invoice.issue-window")!.sources.map((s) => s.ref).sort()).toEqual(["raw/billing-policy.md", "raw/handbook.docx"]);
   });
 
+  it("stays gated when the raw file was deleted after ingest (gate is the glob, not files on disk)", async () => {
+    await ingest();
+    fs.rmSync(path.join(kb, "raw", "handbook.docx"));
+    const r = apply(cands("candidates-v1.json"), { sources: GATED });
+    expect(r.created).toEqual([]);
+    expect(r.proposed.some((p) => p.startsWith("coding.api.validate-input@"))).toBe(true);
+  });
+
   it("an ungated source behaves as today", async () => {
     await ingest();
     const r = apply(cands("candidates-v1.json"), { sources: [{ path: "raw/**", priority: "agent" }] });

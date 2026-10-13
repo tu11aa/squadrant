@@ -13,7 +13,7 @@ import {
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
 import { computeAnchor } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { expandSource, fileForRef, gatedRefs, refFor } from "./ingest.js";
+import { expandSource, fileForRef, isGatedRef, refFor } from "./ingest.js";
 import { kbDir, kbRulesDir, PROPOSED_DIR } from "./paths.js";
 import { reconcileConfig } from "./schedule.js";
 import { loadRulesDir } from "./store.js";
@@ -284,7 +284,6 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
   const res: ReviewResult = { applied: [], escalated: [], violations: [], skipped: [] };
   const events: AuditEvent[] = [];
   let { proposals, live } = loadProposals(c);
-  const gated = gatedRefs(kbRoot, c.sources);
 
   const escalate = (e: Omit<Escalation, "createdAt" | "needsYou"> & { needsYou?: boolean }) => {
     addEscalation(kbRoot, { createdAt: now.toISOString(), needsYou: true, ...e });
@@ -343,7 +342,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
     if (d.decision === "escalate" || d.flag) reasons.push("reviewer-flagged");
     if (conf < threshold) reasons.push("low-confidence");
     // Q2 (2026-10-13): proposals from a `review: required` source always go to the operator, at any confidence.
-    if (p.rule.sources.some((s) => gated.has(s.ref))) reasons.push("review-required");
+    if (p.rule.sources.some((s) => isGatedRef(kbRoot, c.sources, s.ref))) reasons.push("review-required");
     if (d.decision === "approve") {
       const myPri = priorityOfRule(c, p.rule);
       const conflicted = (p.rule.conflictsWith ?? []).map((id) => live.find((r) => r.id === id)).filter((r): r is Rule => !!r);

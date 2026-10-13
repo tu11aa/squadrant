@@ -194,7 +194,10 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources: loadSources(kbDir(cfg, kb)).sources });
+  // Same reason as errata.yaml: a dropped entry would silently disable a review: required gate.
+  const { sources, errors: sourceErrors } = loadSources(kbDir(cfg, kb));
+  if (sourceErrors.length) throw new Error(`sources.yaml: ${sourceErrors.join("; ")}`);
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources });
 }
 
 knowledgeCommand
@@ -232,7 +235,9 @@ function reviewContext(kb: string, configPath: string): ReviewContext {
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  return { cfg, kb, sources, projects };
 }
 
 export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {
