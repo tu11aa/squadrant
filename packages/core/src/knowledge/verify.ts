@@ -4,11 +4,12 @@
 const LIGATURES: Record<string, string> = { "ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st" };
 const QUOTES: Record<string, string> = { "‘": "'", "’": "'", "‚": "'", "‛": "'", "“": '"', "”": '"', "„": '"', "‟": '"' };
 const DASHES = new Set(["‐", "‑", "‒", "–", "—", "―", "−"]);
+const MARKUP = new Set(["*", "_", "`", "\\"]);
 
 export interface Normalized { text: string; /** map[i] = index in the original string of normalized char i. */ map: number[] }
 
 /**
- * Collapse whitespace, rejoin line-break hyphenation, fold smart quotes and dashes, expand ligatures.
+ * Collapse whitespace, rejoin line-break hyphenation, fold smart quotes and dashes, expand ligatures, drop inline-markdown markers (applied to haystack and needle alike).
  * Keeps an index map so a match can be reported as a span of the *original* converted text.
  */
 export function normalizeWithMap(src: string, keepBreakHyphen = false): Normalized {
@@ -31,6 +32,7 @@ export function normalizeWithMap(src: string, keepBreakHyphen = false): Normaliz
       if (out.length && out[out.length - 1] !== " ") push(" ", start);
       continue;
     }
+    if (MARKUP.has(ch)) { i++; continue; }
     if (LIGATURES[ch]) push(LIGATURES[ch], i);
     else if (QUOTES[ch]) push(QUOTES[ch], i);
     else if (DASHES.has(ch)) push("-", i);

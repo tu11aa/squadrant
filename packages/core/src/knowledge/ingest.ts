@@ -14,7 +14,7 @@ export const CONVERTED_DIR = ".converted";
 export const DEFAULT_MAX_SECTIONS_PER_PASS = 40;
 /** Rough chars-per-token for the first-ingest estimate. */
 export const CHARS_PER_TOKEN = 4;
-const PASS_THROUGH = new Set([".md", ".markdown", ".txt"]);
+export const PASS_THROUGH = new Set([".md", ".markdown", ".txt"]);
 const SECTION_TARGET_CHARS = 4000;
 
 /** Converter seam: source file → markdown text. Default shells out to markitdown. */

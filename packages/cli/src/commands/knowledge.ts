@@ -12,7 +12,7 @@ import {
 import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
-  ensureGitRepo, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
   resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, readGitMessages,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
@@ -39,6 +39,7 @@ export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): 
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
   if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(dir, compileIndex(kb, [])); created.push("index.json"); }
   if (ensureGitRepo(dir)) created.push(".git");
+  if (ensureKbGitignore(dir)) created.push(".gitignore");
   if (!kbConfigs(cfg)[kb]) {
     cfg.knowledgeBases = { ...(cfg.knowledgeBases ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
@@ -76,6 +77,7 @@ knowledgeCommand
   .action((kb: string) => {
     const { dir, created } = runKnowledgeInit(kb);
     console.log(created.length ? chalk.green(`Initialised ${dir} (${created.join(", ")})`) : `Already initialised: ${dir}`);
+    console.log(chalk.dim("raw/ and .converted/ are git-ignored by default (edit .gitignore to opt in)."));
     console.log(chalk.dim(KNOWLEDGE_PRIVACY_NOTICE));
   });
 
