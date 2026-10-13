@@ -113,6 +113,15 @@ describe("group inheritance + KB config (#936)", () => {
   });
 });
 
+describe("validateRuleFrontmatter sources", () => {
+  it("requires a source, except for a stale or retired rule whose last source was removed", () => {
+    expect(validateRuleFrontmatter({ ...good, sources: [] })).toEqual([expect.stringContaining("sources")]);
+    expect(validateRuleFrontmatter({ ...good, status: "stale", sources: [] })).toEqual([]);
+    expect(validateRuleFrontmatter({ ...good, status: "retired", sources: [] })).toEqual([]);
+    expect(validateRuleFrontmatter({ ...good, status: "stale", sources: "x" })).toEqual([expect.stringContaining("sources")]);
+  });
+});
+
 describe("validateErratum", () => {
   const ok = { id: "onb.pre-commit-tools", ref: "raw/a.html", quote: "Runs ESLint.", reason: "The hook runs lint-staged only." };
   it("accepts the required fields and the optional ones", () => {

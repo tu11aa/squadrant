@@ -121,6 +121,13 @@ export function expandSource(kbRoot: string, entry: KnowledgeSourceEntry): strin
   return walkFiles(root).filter((f) => re.test(f.split(path.sep).join("/"))).sort();
 }
 
+/** Does a sources.yaml entry cover this rule source ref? Works after the files are gone (the glob is matched, not expanded). */
+export function sourceCovers(kbRoot: string, entry: KnowledgeSourceEntry, ref: string): boolean {
+  const abs = path.resolve(kbRoot, expandHome(entry.path));
+  const file = fileForRef(kbRoot, ref);
+  return /[*?]/.test(entry.path) ? globToRegExp(abs.split(path.sep).join("/")).test(file.split(path.sep).join("/")) : abs === file;
+}
+
 /** Refs of every file listed by a `review: required` source entry. */
 export function gatedRefs(kbRoot: string, sources: KnowledgeSourceEntry[]): Set<string> {
   const out = new Set<string>();

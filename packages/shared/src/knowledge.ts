@@ -146,7 +146,9 @@ export function validateRuleFrontmatter(fm: unknown): string[] {
   for (const k of ["supersedes", "conflictsWith"] as const) {
     if (fm[k] !== undefined && !isStrArr(fm[k])) p.push(`${k} must be a string array`);
   }
-  if (!Array.isArray(fm.sources) || fm.sources.length === 0) {
+  // `knowledge sources --remove` leaves a stale/retired rule with no source; any other status needs one.
+  const mayBeSourceless = fm.status === "stale" || fm.status === "retired";
+  if (!Array.isArray(fm.sources) || (fm.sources.length === 0 && !mayBeSourceless)) {
     p.push("sources must be a non-empty array");
   } else {
     fm.sources.forEach((s, i) => {
