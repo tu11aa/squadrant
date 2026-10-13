@@ -325,6 +325,33 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     }
   });
 
+  describe("a stale rule with no source (after knowledge sources --remove)", () => {
+    const sourceless = () => {
+      const dir = path.join(kbRulesDir(cfg, "t"), "coding");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "coding.orphan.md"), "---\nid: coding.orphan\ndomain: coding\nmodality: should\nstatus: stale\nsources: []\n---\nOrphan statement.\n");
+    };
+    const status = () => loadKbRules(cfg, "t").rules.find((x) => x.id === "coding.orphan")?.status;
+
+    it("the reviewer cannot keep it active, even at high confidence: it escalates", () => {
+      sourceless();
+      const res = applyDecisions({ decisions: [{ item: "stale:coding.orphan", decision: "reject", confidence: 0.99, justification: "still true" }] }, ctx());
+      expect(res.applied).toEqual([]);
+      expect(res.escalated[0].reasons).toEqual(["no-source"]);
+      expect(status()).toBe("stale");
+    });
+
+    it("the operator cannot keep it active; retiring works", () => {
+      sourceless();
+      applyDecisions({ decisions: [{ item: "stale:coding.orphan", decision: "reject", confidence: 0.99, justification: "x" }] }, ctx());
+      expect(() => resolveEscalation(ctx(), "stale:coding.orphan", { kind: "reject" }, "op", "keep")).toThrow(/no source.*add a source.*retire/i);
+      expect(status()).toBe("stale");
+      expect(readEscalations(kbRoot()).map((e) => e.key)).toEqual(["stale:coding.orphan"]);
+      resolveEscalation(ctx(), "stale:coding.orphan", { kind: "approve" }, "op", "gone");
+      expect(status()).toBe("retired");
+    });
+  });
+
   it("low confidence and reviewer flags escalate", async () => {
     await ingest();
     applyV1();

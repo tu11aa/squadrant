@@ -319,8 +319,9 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
         const f = readFm(rule.file);
         f.fm.status = "active";
         if (d.loc && f.fm.sources[0]) f.fm.sources[0].loc = d.loc;
-        if (conf >= threshold && !d.flag && !reasons.length) { fs.writeFileSync(rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id)); verdict(d, "applied", { confidence: conf }); continue; }
-        reasons.push(conf < threshold ? "low-confidence" : "reviewer-flagged");
+        const noSource = !rule.sources.length; // keeping it active would leave an invalid, silently dropped rule
+        if (conf >= threshold && !d.flag && !reasons.length && !noSource) { fs.writeFileSync(rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id)); verdict(d, "applied", { confidence: conf }); continue; }
+        reasons.push(noSource ? "no-source" : conf < threshold ? "low-confidence" : "reviewer-flagged");
       } else if (d.decision === "approve") {
         if (strong(rule.modality)) reasons.push("retiring must/must-not");
         if (conf < threshold) reasons.push("low-confidence");
@@ -448,6 +449,9 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
   }
   if (esc.kind === "stale-retire") {
     const rule = live.find((x) => x.id === esc.ruleId);
+    if (rule && r.kind !== "approve" && !rule.sources.length) {
+      throw new Error(`Rule ${rule.id} has no source, so it cannot be kept active. Add a source to the rule (or re-extract it), or retire it with --approve.`);
+    }
     if (rule) { const f = readFm(rule.file); f.fm.status = r.kind === "approve" ? "retired" : "active"; fs.writeFileSync(rule.file, fileText(f.fm, f.body)); events.push(ev(c, r.kind === "approve" ? "item.archived" : "item.applied", rule.id)); }
     return done(`${esc.ruleId}: ${r.kind === "approve" ? "retired" : "kept"}`);
   }

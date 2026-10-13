@@ -86,6 +86,12 @@ describe("removeSource (lifecycle spec §6.2 step 3)", () => {
     expect(removeSource(kb(), rulesDir(), "~/saitex-x/extracted/**", { dryRun: true }).stripped).toEqual(["coding.abs", "coding.tilde"]);
   });
 
+  it("names the index after the KB, not the directory", () => {
+    write("- path: extracted/**\n  priority: project\n");
+    removeSource(kb(), rulesDir(), "extracted/**", { kbName: "saitex-kb" });
+    expect(JSON.parse(fs.readFileSync(path.join(kb(), "index.json"), "utf8")).kb).toBe("saitex-kb");
+  });
+
   it("an unknown entry is an error and changes nothing", () => {
     seed();
     const before = snapshot();

@@ -73,7 +73,7 @@ export function runKnowledgeSourcesRemove(kb: string, entryPath: string, opts: {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
   if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
-  return removeSource(kbDir(cfg, kb), kbRulesDir(cfg, kb), entryPath, opts);
+  return removeSource(kbDir(cfg, kb), kbRulesDir(cfg, kb), entryPath, { ...opts, kbName: kb });
 }
 
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");

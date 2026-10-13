@@ -70,7 +70,7 @@ function dropEntryBlock(text: string, entryPath: string): string | null {
  * (still delivered until the reviewer retires them), drop the entry from sources.yaml, recompile the index.
  * Rules with another source stay as they are. Proposals in `_proposed/` are not touched.
  */
-export function removeSource(kbRoot: string, rulesDir: string, entryPath: string, opts: { dryRun?: boolean } = {}): RemoveSourceResult {
+export function removeSource(kbRoot: string, rulesDir: string, entryPath: string, opts: { dryRun?: boolean; kbName?: string } = {}): RemoveSourceResult {
   const file = path.join(kbRoot, "sources.yaml");
   const { sources } = loadSources(kbRoot);
   const entry = sources.find((s) => s.path === entryPath);
@@ -98,7 +98,7 @@ export function removeSource(kbRoot: string, rulesDir: string, entryPath: string
 
   for (const w of writes) fs.writeFileSync(w.file, w.text);
   fs.writeFileSync(file, edited);
-  const name = path.basename(kbRoot);
+  const name = opts.kbName ?? path.basename(kbRoot);
   writeIndex(kbRoot, compileIndex(name, loadRulesDir(rulesDir, `kb:${name}`).rules));
   return res;
 }

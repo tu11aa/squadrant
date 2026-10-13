@@ -31,7 +31,7 @@ You are the **reviewer** for one knowledge base pass. Code enforces every hard r
 
 ## Stale rules from a removed source
 
-`squadrant knowledge sources <kb> --remove <path>` can leave rules with no source (status `stale`, empty `sources`). They appear in the packet's `stale` list like any other. Retire (`approve`) one only if its statement is still unsupported; a `reject` (keep) on a source-less rule leaves an `active` rule with no source, which `validate` fails, so flag it for the operator instead.
+`squadrant knowledge sources <kb> --remove <path>` can leave rules with no source (status `stale`, empty `sources`). They appear in the packet's `stale` list like any other. Retire (`approve`) one only if its statement is still unsupported; a `reject` (keep) on a source-less rule always escalates (`no-source`), and the operator cannot keep it either: they must add a source to the rule or retire it.
 
 ## Always escalated (code enforces this, whatever your confidence)
 
