@@ -76,7 +76,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
   - packages/cli/src/commands/crew-control.ts:207
-  - packages/cli/src/commands/crew-control.ts:367
+  - packages/cli/src/commands/crew-control.ts:399
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78

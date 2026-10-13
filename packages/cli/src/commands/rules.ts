@@ -80,7 +80,11 @@ export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFA
   const rules = loadFor(opts, configPath);
   const hits = searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
   const project = resolveRulesProject(loadConfig(configPath), opts);
-  appendAudit([{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query, score: hits[0]?.score }], opts.audit);
+  // One event per displayed hit, attributed to its KB, so a search counts as a pull of each rule it printed.
+  const shown = hits.slice(0, parseLimit(opts.limit));
+  appendAudit(shown.length
+    ? shown.map((h) => ({ ...ruleAuditScope(h.rule), project, domain: "rules", itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
+    : [{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query }], opts.audit);
   return hits;
 }
 

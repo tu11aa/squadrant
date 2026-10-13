@@ -5,6 +5,7 @@
 - **Related:** #555, #885, #886, #894, #662, #615, #31
 - **Amended 2026-10-10 (#936):** storage, config, project overlay, audit location and `verdicts.jsonl` follow [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) §3, §4, §9, §10. Those sections win where they differ from the original text below.
 - **Prior art:** [`docs/research/2026-10-07-rules-kb-prior-art.md`](../research/2026-10-07-rules-kb-prior-art.md)
+- **Extended 2026-10-13:** raw → rules lifecycle (errata, per-source review gating) in [`2026-10-13-kb-raw-lifecycle-design.md`](2026-10-13-kb-raw-lifecycle-design.md).
 
 ## 1. Goal
 
@@ -35,7 +36,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 | D1 | **Approach: push via hooks + pull via squadrant tool, stored in the vault.** Rejected: compiling into native rule files (Claude `paths:` is buggy, it pollutes repos (#662), and gives no audit); pull-only (relies on the agent remembering to look). |
 | D2 | **Storage:** a named KB at `~/squadrant/kb/<kb>/`, its own git repo (`git init` on create; a remote is optional). A project inherits the KB mapped to its `group` (`groups.<g>.kb`) and adds more with `"knowledge": ["conventions"]`; its own overlay overrides by `id` or disables via `rulesDisabled`. *(Amended #936: was `<hubVault>/knowledge/<kb>/`, not tied to `group`.)* |
 | D3 | **Trust:** only sources listed in `sources.yaml` can produce rules. An agent proposal stays `proposed` until it is reviewed. |
-| D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically. Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
+| D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically (unless the source entry sets `review: required`, below). Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
 | D5 | **A meaning change goes to the reviewer first.** The old version stays active while the change is pending. |
 | D6 | **v1 is LLM-driven.** Every decision is phrased as a typed question behind a `decider` seam, so Jev (cloud) or Quyet-Large (local) can replace individual questions later, evaluated against the audit log. |
 | D7 | **Two-tier reconcile:** an incremental pass at a fixed 7 days after the first change, plus a full pass every 30 days, plus manual. **Exception:** a KB with zero active rules extracts immediately (first ingest). |
@@ -50,6 +51,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 ```
 ~/squadrant/kb/<kb>/               # its own git repo
   sources.yaml            # trusted sources: the only way in
+  errata.yaml             # optional: stale source passages `apply` rejects (2026-10-13 lifecycle spec §4); never produces rules
   raw/                    # operator drops files here; free-form subfolders
   .converted/<src>.md     # markitdown output + .sha (regenerable cache)
   shared/rules/<domain>/<id>.md   # coding | system | business | security | … (applies to every project in the KB)
@@ -70,6 +72,9 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 - path: raw/contracts/**
   priority: company
   sensitivity: local-only                    # D12: never sent to a hosted model
+- path: raw/**
+  priority: agent
+  review: required                           # new rules wait in _proposed/ for the operator (2026-10-13 lifecycle spec §5)
 ```
 
 **KB config** goes in `config.json` under `knowledgeBases.<kb>` (`path` defaults to `~/squadrant/kb/<kb>`). The old `knowledge.<kb>` key is still read as a deprecated alias; `squadrant doctor` reports it as config drift.
@@ -129,13 +134,15 @@ conflictsWith: []
    - **First-ingest cost guard:** `knowledge reconcile --dry-run` prints a token estimate, and `maxSectionsPerPass` bounds a single pass. Any remainder carries over to the next pass.
 4. **Verify mechanically** (code, no LLM):
    - **Quote verification.** Normalize both sides: collapse whitespace, rejoin line-break hyphenation, fold smart quotes and dashes, expand ligatures, then search. If the quote is not found, the candidate is dropped and `rule.rejected.ungrounded` is logged. If the quote is found, its `offset` is recorded. When more than 20% of a source's candidates are dropped, `REPORT.md` flags the source as "conversion likely poor, try docling".
+   - **Errata.** A grounded candidate whose span overlaps an `errata.yaml` entry for the same source is rejected as `errata:<id>` (logged `item.rejected`). It is not sent to `_proposed/`. An erratum whose quote is no longer found is reported as orphaned. `knowledge validate` warns on a live rule grounded in an erratum passage.
    - The schema is valid, the modality is in the allowed set, and the globs parse.
    - **Mechanical id matching overrides the LLM.** A candidate whose quote span overlaps an existing rule's `offset` in the same source takes that rule's id. This prevents id churn from LLM non-determinism.
 5. **Classify the change:**
 
    | Candidate | Result |
    |---|---|
-   | New rule | `active` |
+   | Overlaps an `errata.yaml` passage | rejected, `errata:<id>` (no rule, no proposal) |
+   | New rule | `active` (from a `review: required` source: `_proposed/`) |
    | Same id, same meaning | add the source to `sources[]` and update `offset` |
    | Same id, **meaning changed** | written to `_proposed/<id>@<sha>.md`; the old version stays active (D5) |
    | A previous rule from this source is missing | `stale`, still delivered until retired |
@@ -208,6 +215,7 @@ Deferred until there is usage data: automated diff sampling for outcomes, and sp
   - a conflict between two `company`-priority sources
   - retiring a `must` or `must-not` rule
   - any item the reviewer flags itself
+  - any proposal from a `review: required` source, at any confidence; the reviewer agent can never approve it (the reviewer still writes its suggestion)
 
 **Escalations reach the operator through:**
 - `REPORT.md`
@@ -220,6 +228,8 @@ Unanswered items stay `proposed` and never go live by default.
 **Agent learning.** Any captain or crew can run `squadrant knowledge propose --kb <kb> "<statement>" --evidence "<where seen>"`. This writes to `_proposed/` with `priority: agent`.
 
 **Manual run:** `squadrant knowledge reconcile <kb> [--full] [--now]`.
+
+**Retiring a source:** `squadrant knowledge sources <kb> --remove <path> [--dry-run]` strips that entry's refs from every rule, marks rules left with no source `stale` (still delivered until the reviewer retires them; a `must`/`must-not` retire escalates), and drops the entry from `sources.yaml`. Only `stale`/`retired` rules may have an empty `sources` list.
 
 ## 6. Delivery
 

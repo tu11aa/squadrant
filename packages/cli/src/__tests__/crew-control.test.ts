@@ -1,6 +1,10 @@
 // src/control/__tests__/crew-control.test.ts
 import { describe, it, expect, vi } from "vitest";
-import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest, runCrewSignal, runCrewReply } from "../commands/crew-control.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { buildDispatchRequest, buildStatusRequest, buildGateResolveRequest, runCrewSignal, runCrewReply, logSignalCitations } from "../commands/crew-control.js";
 import type { TaskRecord } from "@squadrant/shared";
 
 describe("crew-control request builders", () => {
@@ -165,5 +169,43 @@ describe("runCrewReply (#592)", () => {
       runCrewReply("p", "task-abc123", "msg", { listTasks, sendCrew, getStatus }),
     ).rejects.toThrow(/no crew name on record/);
     expect(sendCrew).not.toHaveBeenCalled();
+  });
+});
+
+describe("logSignalCitations (signal done|review → item.cited, any agent)", () => {
+  const setup = () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "sig-cite-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sig-audit-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+    const commit = (msg: string) => { fs.writeFileSync(path.join(repo, "f"), msg); git("add", "f"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg); };
+    git("init", "-q", "-b", "develop");
+    commit("base: git.on-base");
+    git("checkout", "-qb", "crew/x");
+    commit("feat: x\n\nRules: git.in-commit");
+    const at = new Date(Date.now() - 60_000).toISOString();
+    fs.writeFileSync(path.join(dir, `${at.slice(0, 7)}.m.jsonl`), ["git.on-base", "git.in-commit", "git.in-message"].map((itemId) =>
+      JSON.stringify({ ts: at, kb: "k", level: "group", project: "p", domain: "rules", itemId, event: "item.surfaced" })).join("\n") + "\n");
+    return { repo, dir };
+  };
+
+  it("cites ids from the message and from the crew branch's own commits, once", () => {
+    const { repo, dir } = setup();
+    const o = { message: "done. Rules: git.in-message", taskId: "t1", project: "p", cwd: repo, audit: { dir } };
+    expect(logSignalCitations("done", o).sort()).toEqual(["git.in-commit", "git.in-message"]);
+    expect(logSignalCitations("review", o)).toEqual(["git.in-message"]);  // new ref for the review message; commit already cited by sha
+    expect(logSignalCitations("done", o)).toEqual([]);
+  });
+  it("never throws: a git failure writes one stderr note and still scans the message", () => {
+    const { repo, dir } = setup();
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const got = logSignalCitations("done", { message: "Rules: git.in-message", taskId: "t2", project: "p", cwd: repo, audit: { dir }, git: () => { throw new Error("timed out"); } });
+    expect(got).toEqual(["git.in-message"]);
+    expect(String(err.mock.calls[0]?.[0])).toContain("timed out");
+    err.mockRestore();
+  });
+  it("does nothing for blocked/failed or without a project", () => {
+    const { repo, dir } = setup();
+    expect(logSignalCitations("blocked", { message: "Rules: git.in-message", project: "p", cwd: repo, audit: { dir } })).toEqual([]);
+    expect(logSignalCitations("done", { message: "Rules: git.in-message", cwd: repo, audit: { dir }, env: {} })).toEqual([]);
   });
 });

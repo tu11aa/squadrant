@@ -3,10 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import matter from "gray-matter";
-import { validateRuleFrontmatter, type KnowledgeSourceEntry, type Rule, type RuleFrontmatter } from "@squadrant/shared";
+import { validateRuleFrontmatter, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleFrontmatter } from "@squadrant/shared";
 import { convertedFile, PASS_THROUGH, readState } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
-import { findQuote, normalizedViews, type Normalized } from "./verify.js";
+import { findQuote, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
 
 // gray-matter evals `---js` front matter by default; rule files are untrusted, so allow YAML only.
 const NO_JS_FRONTMATTER = {
@@ -93,7 +93,7 @@ function resolveSourceRef(ref: string, kbRoot: string, sources: KnowledgeSourceE
 
 /** CI-style KB check: invalid files, duplicate ids, quote-in-source, optional allowed domains. */
 export function validateKb(opts: {
-  rulesDir: string; kbRoot: string; sources: KnowledgeSourceEntry[]; domains?: string[];
+  rulesDir: string; kbRoot: string; sources: KnowledgeSourceEntry[]; domains?: string[]; errata?: KnowledgeErratum[];
 }): { checks: KbCheck[]; ok: boolean } {
   const { rules, errors } = loadRulesDir(opts.rulesDir, "kb", { includeProposed: true });
   const checks: KbCheck[] = [];
@@ -124,7 +124,13 @@ export function validateKb(opts: {
         });
       }
       const { hay, convertible } = cache.get(key)!;
-      if (findQuote(hay, src.quote)) verified++;
+      const span = findQuote(hay, src.quote);
+      if (span) {
+        verified++;
+        const active = r.status === "active" && !path.relative(opts.rulesDir, r.file).split(path.sep).includes(PROPOSED_DIR);
+        const err = active ? (opts.errata ?? []).find((e) => e.ref === src.ref && ((o) => !!o && spansOverlap(o, span))(findQuote(hay, e.quote))) : undefined;
+        if (err) checks.push({ level: "warn", message: `${r.id}: grounded in erratum ${err.id} (${err.reason}); re-check or retire it (${r.file})` });
+      }
       else if (convertible) notIngested++;
       else checks.push({ level: "fail", message: `quote not found in ${file}: ${r.id} sources[${i}] (${r.file})` });
     });

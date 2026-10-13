@@ -10,11 +10,11 @@ import {
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
-  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
-  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, readGitMessages,
+  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
 import type { RuleModality } from "@squadrant/shared";
@@ -69,6 +69,13 @@ export function runKnowledgeSources(kb: string, configPath = DEFAULT_CONFIG_PATH
   return loadSources(kbDir(cfg, kb));
 }
 
+export function runKnowledgeSourcesRemove(kb: string, entryPath: string, opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): RemoveSourceResult {
+  assertKbName(kb);
+  const cfg = loadConfig(configPath);
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  return removeSource(kbDir(cfg, kb), kbRulesDir(cfg, kb), entryPath, { ...opts, kbName: kb });
+}
+
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
 
 knowledgeCommand
@@ -92,12 +99,23 @@ knowledgeCommand
 
 knowledgeCommand
   .command("sources <kb>")
-  .description("List the trusted sources of a knowledge base")
-  .action((kb: string) => {
+  .description("List the trusted sources of a knowledge base; --remove drops one and strips its refs from rules")
+  .option("--remove <path>", "remove the sources.yaml entry with this exact path; rules left with no source become stale")
+  .option("--dry-run", "with --remove: print what would change, write nothing")
+  .action((kb: string, o: { remove?: string; dryRun?: boolean }) => {
+    if (o.dryRun && !o.remove) throw new Error("--dry-run only applies to --remove");
+    if (o.remove) {
+      const r = runKnowledgeSourcesRemove(kb, o.remove, { dryRun: o.dryRun });
+      const stripped = r.stripped.length - r.stale.length;
+      console.log(`${r.dryRun ? "would remove" : "removed"} ${o.remove}: ${r.stripped.length} rules lose a ref, ${r.stale.length} left with no source (stale), ${stripped} keep another source`);
+      for (const id of r.stale) console.log(chalk.yellow(`  stale: ${id}`));
+      if (r.dryRun) console.log(chalk.dim("dry run: nothing written"));
+      return;
+    }
     const { sources, errors } = runKnowledgeSources(kb);
     if (!sources.length && !errors.length) console.log("(no sources — edit sources.yaml)");
     for (const s of sources) {
-      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}`);
+      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}${s.review ? chalk.cyan("  review: required") : ""}`);
     }
     for (const e of errors) console.log(chalk.red(`  ✘ ${e}`));
     if (errors.length) process.exitCode = 1;
@@ -123,9 +141,13 @@ export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PAT
   const cfg = loadConfig(configPath);
   if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
   const { sources, errors } = loadSources(kbDir(cfg, kb));
-  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, domains: kbConfigs(cfg)[kb]?.domains });
-  const srcChecks = errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` }));
-  return { checks: [...srcChecks, ...res.checks], ok: res.ok && !errors.length };
+  const { errata, errors: errataErrors } = loadErrata(kbDir(cfg, kb));
+  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, errata, domains: kbConfigs(cfg)[kb]?.domains });
+  const srcChecks = [
+    ...errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` })),
+    ...errataErrors.map((e) => ({ level: "fail" as const, message: `errata.yaml: ${e}` })),
+  ];
+  return { checks: [...srcChecks, ...res.checks], ok: res.ok && !srcChecks.length };
 }
 
 knowledgeCommand
@@ -194,7 +216,12 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects });
+  // A broken errata.yaml or sources.yaml must stop apply: ignoring it would let stale passages go live, or drop a review: required gate.
+  const { errata, errors } = loadErrata(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`errata.yaml: ${errors.join("; ")}`);
+  const { sources, errors: sourceErrors } = loadSources(kbDir(cfg, kb));
+  if (sourceErrors.length) throw new Error(`sources.yaml: ${sourceErrors.join("; ")}`);
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources, errata });
 }
 
 knowledgeCommand
@@ -222,6 +249,7 @@ knowledgeCommand
     console.log(`created ${r.created.length}, merged ${r.merged.length}, proposed ${r.proposed.length}, superseded ${r.superseded.length}, stale ${r.stale.length}, rejected ${r.rejected.length}`);
     for (const x of r.rejected) console.log(chalk.red(`  ✘ ${x.id} (${x.source}): ${x.reason}`));
     for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
+    for (const e of r.orphanedErrata) console.log(chalk.yellow(`  errata ${e.id} (${e.ref}): quote no longer found; the raw file changed, re-check it`));
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
 
@@ -232,7 +260,9 @@ function reviewContext(kb: string, configPath: string): ReviewContext {
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  return { cfg, kb, sources, projects };
 }
 
 export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {
@@ -389,7 +419,7 @@ export function renderStats(all: Scores[]): string[] {
   const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
   return all.flatMap((s) => [
     `${s.kb} (last ${s.windowDays} days)`,
-    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.shown}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
+    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.pullRate}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
     ...s.domains.map((d) => `  domain ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`),
     `  agents: ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ]);
@@ -410,7 +440,7 @@ export function runKnowledgeCiteScan(o: { project: string; text?: string; git?: 
   const run = o.git_run ?? ((args: string[]) => spawnSync("git", args, { encoding: "utf8" }).stdout ?? "");
   if (o.git) {
     const since = new Date((o.audit?.now?.() ?? new Date()).getTime() - (o.sinceDays ?? 30) * 86400000);
-    return readGitMessages(o.git, since, run).flatMap((c) => scanAndLogCitations({ text: c.text, ref: `git:${c.sha}`, project: o.project, at: c.at, sink: o.audit }));
+    return scanCitations(readGitMessages(o.git, since, run).map((c) => ({ text: c.text, ref: `git:${c.sha}`, at: c.at })), { project: o.project, sink: o.audit });
   }
   if (!o.text) throw new Error("Pass --text <message> or --git <repo>");
   return scanAndLogCitations({ text: o.text, ref: o.ref ?? "manual", project: o.project, sink: o.audit });

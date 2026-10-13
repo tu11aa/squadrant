@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
-import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply } from "../knowledge.js";
+import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply, runKnowledgeSourcesRemove, runKnowledgeReviewApply } from "../knowledge.js";
 import { kbRulesDir, kbDir, readIndex } from "@squadrant/core";
 
 let dir: string;
@@ -176,5 +176,33 @@ describe("knowledge ingest / apply", () => {
     } finally { delete process.env.SQUADRANT_AUDIT_DIR; }
     expect(readIndex(kbRoot, "saitex").index?.rules.map((r) => r.id)).toEqual(["biz.invoice.window"]);
     expect((await runKnowledgeIngest("saitex", {}, cfgPath)).sources).toEqual([]);
+  });
+});
+
+describe("knowledge sources --remove", () => {
+  it("dry run changes nothing; the real run drops the entry and marks the source-less rule stale", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    fs.writeFileSync(path.join(r.dir, "sources.yaml"), "- path: extracted/**\n  priority: project\n- path: raw/**\n  priority: agent\n");
+    fs.mkdirSync(path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "coding"), { recursive: true });
+    const file = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "coding", "coding.a.md");
+    fs.writeFileSync(file, "---\nid: coding.a\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: extracted/a.md, sha: abc, quote: q }\n---\nS.\n");
+    expect(runKnowledgeSourcesRemove("saitex", "extracted/**", { dryRun: true }, cfgPath)).toMatchObject({ dryRun: true, stale: ["coding.a"] });
+    expect(runKnowledgeSources("saitex", cfgPath).sources).toHaveLength(2);
+    expect(runKnowledgeSourcesRemove("saitex", "extracted/**", {}, cfgPath).stale).toEqual(["coding.a"]);
+    expect(runKnowledgeSources("saitex", cfgPath).sources.map((s) => s.path)).toEqual(["raw/**"]);
+    expect(fs.readFileSync(file, "utf8")).toContain("status: stale");
+    expect(runKnowledgeValidate("saitex", cfgPath).ok).toBe(true);
+  });
+});
+
+describe("sources.yaml errors stop apply and review", () => {
+  it("a bad review value does not silently drop the gate", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    fs.writeFileSync(path.join(r.dir, "sources.yaml"), "- path: raw/**\n  priority: agent\n  review: yes\n");
+    const cand = path.join(dir, "c.json");
+    fs.writeFileSync(cand, JSON.stringify({ candidates: [] }));
+    expect(() => runKnowledgeApply("saitex", cand, cfgPath)).toThrow(/sources\.yaml.*review/);
+    fs.writeFileSync(cand, JSON.stringify({ decisions: [] }));
+    expect(() => runKnowledgeReviewApply("saitex", cand, cfgPath)).toThrow(/sources\.yaml.*review/);
   });
 });

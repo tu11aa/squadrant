@@ -81,6 +81,24 @@ export interface KnowledgeSourceEntry {
   priority: SourcePriority;
   domain?: string;
   sensitivity?: "local-only";
+  /** `required`: new rules from this source wait in `_proposed/` for the operator (spec 2026-10-13 §5). Absent = auto-live (D4). */
+  review?: "required";
+}
+
+/** One stale passage of a source, recorded in `<kb>/errata.yaml`. `apply` rejects candidates that overlap it (spec 2026-10-13 §4). */
+export interface KnowledgeErratum {
+  id: string;
+  /** Source ref exactly as in rule `sources[].ref`. */
+  ref: string;
+  /** Verbatim passage that is out of date; located with the same grounding as rule quotes. */
+  quote: string;
+  reason: string;
+  evidence?: string[];
+  checked?: string;
+  by?: string;
+  at?: string;
+  /** Optional decision record behind it. */
+  decision?: string;
 }
 
 export interface ReconcileConfig {
@@ -128,7 +146,9 @@ export function validateRuleFrontmatter(fm: unknown): string[] {
   for (const k of ["supersedes", "conflictsWith"] as const) {
     if (fm[k] !== undefined && !isStrArr(fm[k])) p.push(`${k} must be a string array`);
   }
-  if (!Array.isArray(fm.sources) || fm.sources.length === 0) {
+  // `knowledge sources --remove` leaves a stale/retired rule with no source; any other status needs one.
+  const mayBeSourceless = fm.status === "stale" || fm.status === "retired";
+  if (!Array.isArray(fm.sources) || (fm.sources.length === 0 && !mayBeSourceless)) {
     p.push("sources must be a non-empty array");
   } else {
     fm.sources.forEach((s, i) => {
@@ -154,6 +174,21 @@ export function validateSourceEntry(e: unknown): string[] {
   if (!SOURCE_PRIORITIES.includes(e.priority as SourcePriority)) p.push(`priority must be one of ${SOURCE_PRIORITIES.join("|")}`);
   if (e.domain !== undefined && typeof e.domain !== "string") p.push("domain must be a string");
   if (e.sensitivity !== undefined && e.sensitivity !== "local-only") p.push("sensitivity must be 'local-only' when set");
+  if (e.review !== undefined && e.review !== "required") p.push("review must be 'required' when set");
+  return p;
+}
+
+export function validateErratum(e: unknown): string[] {
+  if (!isObj(e)) return ["erratum must be an object"];
+  const p: string[] = [];
+  if (typeof e.id !== "string" || !RULE_ID_RE.test(e.id)) p.push(`id must match ${RULE_ID_RE}`);
+  for (const k of ["ref", "quote", "reason"] as const) {
+    if (typeof e[k] !== "string" || e[k] === "") p.push(`${k} must be a non-empty string`);
+  }
+  if (e.evidence !== undefined && !isStrArr(e.evidence)) p.push("evidence must be a string array");
+  for (const k of ["checked", "by", "at", "decision"] as const) {
+    if (e[k] !== undefined && typeof e[k] !== "string") p.push(`${k} must be a string`);
+  }
   return p;
 }
 

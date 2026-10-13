@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-13
+
+The rules KB now owns the whole path from raw documents to rules (spec `docs/specs/2026-10-13-kb-raw-lifecycle-design.md`, diagram `docs/diagrams/2026-10-13-kb-raw-lifecycle.html`), and `knowledge stats` can finally tell whether rules are used. PRs #963-#967.
+
+### Added
+
+- **`review: required` on a `sources.yaml` entry.** A new rule extracted from that source goes to `_proposed/` and always escalates to the operator, whatever the reviewer's confidence. A same-meaning candidate still merges into the live rule. Gating is decided by the entry's path pattern, so a renamed or deleted raw file stays gated (#965).
+- **`<kb>/errata.yaml`.** Quote-anchored entries for raw passages that are known to be outdated. `knowledge apply` rejects any candidate that overlaps an erratum (`errata:<id>`). Errata whose quote is no longer found are reported as orphaned in the apply output and in `REPORT.md`. `knowledge validate` warns when an active rule is grounded in an erratum passage. Without the file, nothing changes (#966).
+- **`knowledge sources <kb> --remove <path> [--dry-run]`.** Removes a source from `sources.yaml` and strips its refs from rules. Rules left with no source become `stale`, and rules with another source stay active. A source-less rule cannot be kept active: the reviewer escalates it, and the operator gets a clear error (#967).
+- **Automatic rule citations.** `crew signal done|review` records `item.cited` for rule ids named in the message and in the crew branch's own commits. Crew templates ask crews to end the message with `Rules: <ids>`. This works for every agent (#964).
+
+### Fixed
+
+- **`knowledge stats` measures usage.** `rules search` hits now count as pulls. `cite-scan --git` reads all branches, not just HEAD. Write-only events (for example from an unmerged extraction branch) no longer create item rows (#964).
+- **`knowledge apply` and `knowledge review` refuse to run when `sources.yaml` has errors**, so a typo can no longer silently turn off a review gate (#965).
+
 ## [0.27.1] - 2026-10-13
 
 Closes #951, #952, #953, #957.

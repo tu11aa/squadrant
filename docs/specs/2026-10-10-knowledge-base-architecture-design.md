@@ -3,6 +3,7 @@
 - **Status:** brainstormed with the operator 2026-10-10 (research side-session); sections 1–4 approved in chat; **awaiting operator spec review**
 - **Epic:** #893 · **Supersedes parts of:** `docs/specs/2026-10-07-rules-kb-design.md` (D2 storage, §7 file naming; see §10)
 - **Related:** #894 (profile), #885 (learnings), #886 (wiki), #865 (learnings reconcile), #555 (group knowledge), #896–#902 (rules KB), #662 / #717 (projection), #641 / #627 (boot brief), #556 (crew memory guard)
+- **See also:** [`2026-10-13-kb-raw-lifecycle-design.md`](2026-10-13-kb-raw-lifecycle-design.md): rules raw lifecycle (errata, per-source review), uses `shared/decisions/` as a rule source.
 - **Research:**
   - spoke `reports/2026-10-10-knowledge-base-taxonomy-research.md` (≈25 systems surveyed)
   - `reports/2026-10-10-kb-gap-analysis.md`
@@ -74,7 +75,7 @@ _user  (profile)                    ← every session, every project
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
   <company>/        (git)               # e.g. saitex, lumilabs
-    sources.yaml  raw/  .converted/     # rules spec §3, now under the KB root
+    sources.yaml  errata.yaml  raw/  .converted/   # rules spec §3, now under the KB root; errata.yaml: lifecycle spec §4
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
     REPORT.md                           # latest reconcile + scores, per KB
@@ -182,7 +183,7 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 |---|---|
 | Write | `item.proposed` `item.approved` `item.rejected` `item.applied` `item.promoted` `item.superseded` `item.archived` `kb.created` `write.daemon-bypass` |
 | Called | `item.surfaced` (push) · `item.suppressed` (budget/dedup/threshold) · `item.searched` / `item.shown` (pull) |
-| Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced or shown in that session |
+| Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced, shown or returned by a search for that project. Captured automatically at `crew signal done\|review` (the message plus the crew branch's own commits, any agent); `knowledge cite-scan` covers the rest |
 | Outcome | `item.outcome` = followed / violated / noise / wrong, via `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong` (operator or agent), plus the domain signals below |
 
 **Domain outcome signals:**

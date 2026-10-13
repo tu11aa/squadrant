@@ -128,6 +128,12 @@ describe("golden fixture", () => {
     expect(fs.existsSync(path.join(kb, "index.json"))).toBe(true);
   });
 
+  it("write events carry the KB domain 'rules', not the rule's subject domain", async () => {
+    await ingest();
+    apply(cands("candidates-v1.json"));
+    expect(new Set(audit().map((e) => e.domain))).toEqual(new Set(["rules"]));
+  });
+
   it("re-running extraction on unchanged sources changes no ids and no files", async () => {
     await ingest();
     apply(cands("candidates-v1.json"));
@@ -216,6 +222,45 @@ describe("golden fixture", () => {
   it("an unknown source is rejected without throwing", () => {
     const r = apply({ candidates: [{ source: "raw/nope.md", id: "a.b", domain: "coding", modality: "must", statement: "s", quote: "q" }] });
     expect(r.rejected[0].reason).toContain("unknown source");
+  });
+});
+
+describe("review: required sources (spec 2026-10-13 §5)", () => {
+  const GATED = [{ path: "raw/**", priority: "agent" as const, review: "required" as const }];
+
+  it("a new candidate from a gated source lands in _proposed/ instead of going live", async () => {
+    await ingest();
+    const r = apply(cands("candidates-v1.json"), { sources: GATED });
+    expect(r.created).toEqual([]);
+    expect(r.proposed).toHaveLength(cands("candidates-v1.json").candidates.length);
+    expect(rules()).toEqual([]);
+    const names = fs.readdirSync(path.join(rulesDir, PROPOSED_DIR));
+    expect(names.some((n) => n.startsWith("coding.api.validate-input@"))).toBe(true);
+    expect(matter(fs.readFileSync(path.join(rulesDir, PROPOSED_DIR, names.find((n) => n.startsWith("coding.api.validate-input@"))!), "utf8")).data).toMatchObject({ status: "proposed", conflictsWith: [] });
+  });
+
+  it("a same-meaning candidate still merges into a live rule", async () => {
+    await ingest();
+    const v1 = cands("candidates-v1.json");
+    apply({ candidates: v1.candidates.filter((c) => c.source === "raw/billing-policy.md") });
+    const r = apply(v1, { sources: GATED });
+    expect(r.created).toEqual([]);
+    expect(r.merged).toEqual(["biz.invoice.issue-window"]);
+    expect(rules().find((x) => x.id === "biz.invoice.issue-window")!.sources.map((s) => s.ref).sort()).toEqual(["raw/billing-policy.md", "raw/handbook.docx"]);
+  });
+
+  it("stays gated when the raw file was deleted after ingest (gate is the glob, not files on disk)", async () => {
+    await ingest();
+    fs.rmSync(path.join(kb, "raw", "handbook.docx"));
+    const r = apply(cands("candidates-v1.json"), { sources: GATED });
+    expect(r.created).toEqual([]);
+    expect(r.proposed.some((p) => p.startsWith("coding.api.validate-input@"))).toBe(true);
+  });
+
+  it("an ungated source behaves as today", async () => {
+    await ingest();
+    const r = apply(cands("candidates-v1.json"), { sources: [{ path: "raw/**", priority: "agent" }] });
+    expect(r.created).toHaveLength(4);
   });
 });
 

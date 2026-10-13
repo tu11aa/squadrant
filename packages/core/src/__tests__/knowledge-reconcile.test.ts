@@ -272,6 +272,7 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     // 6. write-stage audit events and the never-compacted verdicts log
     const names = auditEvents().map((e) => e.event);
     expect(names).toEqual(expect.arrayContaining(["item.approved", "item.applied", "item.superseded"]));
+    expect(new Set(auditEvents().map((e) => e.domain))).toEqual(new Set(["rules"]));
     const verdicts = fs.readFileSync(path.join(kbRoot(), "verdicts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(verdicts.map((v) => v.outcome ?? v.resolution?.kind)).toEqual(["escalated", "approve"]);
   });
@@ -289,6 +290,66 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     expect(hi.applied).toEqual([key]);
     expect(fs.existsSync(f)).toBe(false);
     expect(loadKbRules(cfg, "t").rules.find((r) => r.id === "biz.invoice.issue-window-30d")!.status).toBe("active");
+  });
+
+  it("a gated proposal at confidence 0.95 still escalates and is never approved by the reviewer", async () => {
+    await ingest();
+    applyV1();
+    const pdir = path.join(kbRulesDir(cfg, "t"), "_proposed");
+    const f = path.join(pdir, fs.readdirSync(pdir).find((n) => n.endsWith(".md"))!);
+    const m = matter(fs.readFileSync(f, "utf8"));
+    fs.writeFileSync(f, matter.stringify(m.content, { ...m.data, conflictsWith: [] }));
+    const key = path.basename(f, ".md");
+    const gated = ctx({ sources: [{ path: "raw/**", priority: "company", review: "required" }] });
+    const r = applyDecisions({ decisions: [{ item: key, decision: "approve", confidence: 0.95, justification: "ok" }] }, gated);
+    expect(r.applied).toEqual([]);
+    expect(r.escalated[0].reasons).toEqual(["review-required"]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
+  it("a gated proposal stays gated after its raw file is gone, for approve, reject and merge-into", async () => {
+    await ingest();
+    applyV1();
+    const pdir = path.join(kbRulesDir(cfg, "t"), "_proposed");
+    const f = path.join(pdir, fs.readdirSync(pdir).find((n) => n.endsWith(".md"))!);
+    const m = matter(fs.readFileSync(f, "utf8"));
+    fs.writeFileSync(f, matter.stringify(m.content, { ...m.data, conflictsWith: [] }));
+    const key = path.basename(f, ".md");
+    fs.rmSync(path.join(kbRoot(), "raw"), { recursive: true });
+    const gated = ctx({ sources: [{ path: "raw/**", priority: "company", review: "required" }] });
+    for (const decision of ["approve", "reject", "merge-into:biz.rounding.vnd-half-up"] as const) {
+      const r = applyDecisions({ decisions: [{ item: key, decision, confidence: 0.95, justification: "ok" }] }, gated);
+      expect(r.applied).toEqual([]);
+      expect(r.escalated[0].reasons).toContain("review-required");
+      expect(fs.existsSync(f)).toBe(true);
+    }
+  });
+
+  describe("a stale rule with no source (after knowledge sources --remove)", () => {
+    const sourceless = () => {
+      const dir = path.join(kbRulesDir(cfg, "t"), "coding");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "coding.orphan.md"), "---\nid: coding.orphan\ndomain: coding\nmodality: should\nstatus: stale\nsources: []\n---\nOrphan statement.\n");
+    };
+    const status = () => loadKbRules(cfg, "t").rules.find((x) => x.id === "coding.orphan")?.status;
+
+    it("the reviewer cannot keep it active, even at high confidence: it escalates", () => {
+      sourceless();
+      const res = applyDecisions({ decisions: [{ item: "stale:coding.orphan", decision: "reject", confidence: 0.99, justification: "still true" }] }, ctx());
+      expect(res.applied).toEqual([]);
+      expect(res.escalated[0].reasons).toEqual(["no-source"]);
+      expect(status()).toBe("stale");
+    });
+
+    it("the operator cannot keep it active; retiring works", () => {
+      sourceless();
+      applyDecisions({ decisions: [{ item: "stale:coding.orphan", decision: "reject", confidence: 0.99, justification: "x" }] }, ctx());
+      expect(() => resolveEscalation(ctx(), "stale:coding.orphan", { kind: "reject" }, "op", "keep")).toThrow(/no source.*add a source.*retire/i);
+      expect(status()).toBe("stale");
+      expect(readEscalations(kbRoot()).map((e) => e.key)).toEqual(["stale:coding.orphan"]);
+      resolveEscalation(ctx(), "stale:coding.orphan", { kind: "approve" }, "op", "gone");
+      expect(status()).toBe("retired");
+    });
   });
 
   it("low confidence and reviewer flags escalate", async () => {

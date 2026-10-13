@@ -2,11 +2,11 @@
 import { Command } from "commander";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { sendRequest, scanAndLogCitations } from "@squadrant/core";
+import { sendRequest, scanCitations, readBranchOnlyMessages, type AuditSink, type CiteText } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ProjectUsage } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
@@ -241,6 +241,38 @@ function defaultWriteResult(id: string, payload: string): string {
  * silent-succeed. This wraps buildSignalRequest with an upfront status check
  * so the CLI throws instead of emitting an event doomed to be ignored.
  */
+/** Bound on the git read at signal time, so a slow or huge repo can never hold up a signal. */
+const CITE_GIT_TIMEOUT_MS = 2000;
+const citeGit = (args: string[]): string => {
+  const r = spawnSync("git", args, { encoding: "utf8", timeout: CITE_GIT_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] });
+  if (r.error) throw r.error;
+  return r.status === 0 ? r.stdout : "";
+};
+
+/** item.cited (#901) at `signal done|review`: rule ids named in the message or in the crew branch's own commits
+ *  (deduped by sha). Lives in the CLI signal path, so it works for every agent. Never throws: a failure is one
+ *  stderr note, and the signal itself has already been sent. */
+export function logSignalCitations(
+  state: string,
+  o: { message?: string; taskId?: string; project?: string; cwd?: string; env?: NodeJS.ProcessEnv; git?: (args: string[]) => string; audit?: AuditSink },
+): string[] {
+  const env = o.env ?? process.env;
+  const project = o.project ?? env.SQUADRANT_CREW_PROJECT;
+  if ((state !== "done" && state !== "review") || !project) return [];
+  const texts: CiteText[] = o.message ? [{ text: o.message, ref: `crew-${state}:${o.taskId ?? env.SQUADRANT_CREW_TASK_ID}` }] : [];
+  try {
+    texts.push(...readBranchOnlyMessages(o.cwd ?? process.cwd(), o.git ?? citeGit).map((c) => ({ text: c.text, ref: `git:${c.sha}`, at: c.at })));
+  } catch (e) {
+    process.stderr.write(`squadrant: rule citation scan of commits skipped: ${(e as Error).message}\n`);
+  }
+  try {
+    return scanCitations(texts, { project, sink: o.audit });
+  } catch (e) {
+    process.stderr.write(`squadrant: rule citation scan skipped: ${(e as Error).message}\n`);
+    return [];
+  }
+}
+
 export async function runCrewSignal(
   signal: "done" | "blocked" | "failed" | "review",
   o: {
@@ -578,11 +610,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           ...(opts.project !== undefined ? { project: opts.project } : {}),
           writeResult: defaultWriteResult,
         }, { call: squadrantdCall });
-        // item.cited (#901): a rule id named in the DONE/review summary. Best effort; never affects the signal.
-        const citeProject = opts.project ?? process.env.SQUADRANT_CREW_PROJECT;
-        if ((state === "done" || state === "review") && opts.message && citeProject) {
-          try { scanAndLogCitations({ text: opts.message, ref: `crew-${state}:${opts.taskId ?? process.env.SQUADRANT_CREW_TASK_ID}`, project: citeProject }); } catch { /* audit must not block a signal */ }
-        }
+        logSignalCitations(state, opts);
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);
