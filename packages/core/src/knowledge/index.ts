@@ -9,6 +9,7 @@ export * from "./audit.js";
 export * from "./migrate.js";
 export * from "./verify.js";
 export * from "./ingest.js";
+export * from "./errata.js";
 export * from "./anchor.js";
 export * from "./extract.js";
 export * from "./match.js";

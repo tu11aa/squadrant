@@ -35,6 +35,7 @@ Works from any agent: it is plain CLI plus a JSON file.
 
    List a ref in `complete` **only** when this file covers every section of that source (no carried sections). Rules from a `complete` source that no candidate matches are marked `stale`; listing a partially-covered source would wrongly stale its rules.
    A source marked `review: required` in `sources.yaml` never produces live rules: its new rules land in `_proposed/` and wait for the operator (a same-meaning candidate for an existing rule still merges). Extract it exactly the same way.
+   If the KB has an `errata.yaml`, candidates that hit a stale passage come back as rejected with reason `errata:<id>`. That is expected, not a failure: do not re-emit or rephrase them. An "errata <id> … quote no longer found" line means the raw file changed; tell the captain, do not edit `errata.yaml` yourself.
 5. **Report** the apply output: created / merged / proposed / rejected counts. If it says a source is flagged "conversion likely poor, try docling", tell the captain; do not retry the same conversion.
 
 ## Rules
