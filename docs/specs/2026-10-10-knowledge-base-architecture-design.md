@@ -182,7 +182,7 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 |---|---|
 | Write | `item.proposed` `item.approved` `item.rejected` `item.applied` `item.promoted` `item.superseded` `item.archived` `kb.created` `write.daemon-bypass` |
 | Called | `item.surfaced` (push) · `item.suppressed` (budget/dedup/threshold) · `item.searched` / `item.shown` (pull) |
-| Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced or shown in that session |
+| Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced, shown or returned by a search for that project |
 | Outcome | `item.outcome` = followed / violated / noise / wrong, via `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong` (operator or agent), plus the domain signals below |
 
 **Domain outcome signals:**

@@ -53,6 +53,18 @@ describe("computeScores (table-driven)", () => {
     ["active domain is not dead", () => s.domains.find((d) => d.domain === "decisions")!.deadDomain, false],
   ])("%s", (_n, got, want) => expect(got()).toEqual(want));
 
+  it("an id with only write events (applied/rejected on another branch) is not a stats row", () => {
+    const w = computeScores({ kb: "saitex", now: NOW, known: [], records: [
+      rec("2026-10-02", { event: "item.applied", itemId: "authz.branch-only" }),
+      rec("2026-10-02", { event: "item.rejected", itemId: "authz.ungrounded" }),
+    ] });
+    expect(w.items).toEqual([]);
+    expect(w.domains.find((d) => d.domain === "rules")!.writesPerMonth).toBe(2);
+  });
+  it("pull = shown + searched (rules search hits count as pulls)", () => {
+    const p = computeScores({ kb: "saitex", now: NOW, records: [rec("2026-10-02", { event: "item.searched" }), rec("2026-10-03", { event: "item.shown" })] });
+    expect(p.items[0]).toMatchObject({ searched: 1, shown: 1, pullRate: 2 });
+  });
   it("a domain with no activity in 30 days raises the dead-domain alarm", () => {
     const dead = computeScores({ kb: "saitex", records: [rec("2026-08-01", { event: "item.surfaced", domain: "wiki", itemId: "w" })], now: NOW, known: [{ id: "w", domain: "wiki", status: "active" }] });
     expect(dead.domains.find((d) => d.domain === "wiki")!.deadDomain).toBe(true);
@@ -116,6 +128,10 @@ describe("compaction and citations", () => {
     expect(scanAndLogCitations({ text, ref: "crew-done:1", project: "elsewhere", sink: sink() })).toEqual([]);
     const lines = fs.readFileSync(path.join(dir, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(lines.filter((l) => l.event === "item.cited").map((l) => [l.itemId, l.ref])).toEqual([["git.no-force-push", "crew-done:1"], ["git.other", "crew-done:1"]]);
+  });
+  it("a rules search hit counts as a delivery", () => {
+    appendAudit([ev({ event: "item.searched", query: "force push" })], sink(new Date("2026-10-09T00:00:00Z")));
+    expect(scanAndLogCitations({ text: "Rules: git.no-force-push.", ref: "git:1", project: "flooros", sink: sink() })).toEqual(["git.no-force-push"]);
   });
   it("ignores deliveries after the text was written", () => {
     appendAudit([ev()], sink(new Date("2026-10-09T00:00:00Z")));

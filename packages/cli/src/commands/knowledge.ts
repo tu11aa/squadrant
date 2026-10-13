@@ -389,7 +389,7 @@ export function renderStats(all: Scores[]): string[] {
   const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
   return all.flatMap((s) => [
     `${s.kb} (last ${s.windowDays} days)`,
-    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.shown}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
+    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.pullRate}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
     ...s.domains.map((d) => `  domain ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`),
     `  agents: ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ]);
