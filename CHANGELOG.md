@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-10-13
+
+Closes #951, #952, #953, #957.
+
+### Fixed
+
+- **`knowledge validate` checks quotes against the converted text** (`.converted/`) using the same matcher as `knowledge apply`. Quotes from PDF, HTML and PPTX sources no longer all fail. A source that hasn't been converted is reported as skipped with an ingest hint (#952).
+- **Quote matching ignores inline markdown markup** (`*`, `_`, backticks, `\`), so plain-text quotes ground against HTML-converted sources (#953).
+- **KB repos get a default `.gitignore`** (`raw/`, `.converted/`) on `knowledge init` and `knowledge migrate`. An existing `.gitignore` is never touched (#951).
+- **Flaky daemon-direct re-entrancy test** now waits on a signal instead of a fixed 10ms sleep (#957).
+
 ## [0.27.0] - 2026-10-10
 
 Rules KB Phase 1 (epic #893). PRs #937-#944.
