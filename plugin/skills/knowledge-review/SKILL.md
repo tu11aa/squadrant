@@ -34,6 +34,7 @@ You are the **reviewer** for one knowledge base pass. Code enforces every hard r
 - two `company`-priority sources in conflict
 - retiring a `must` or `must-not` rule
 - anything you flag, and any code-vs-doc conflict where the code is newer
+- any proposal from a source marked `review: required` in `sources.yaml` (escalated as `review-required`, at any confidence). You may still decide and justify it; the operator makes the call.
 
 ## Rules
 

@@ -47,6 +47,13 @@ describe("validateSourceEntry", () => {
   });
 });
 
+describe("validateSourceEntry review gate", () => {
+  it("accepts review: required and rejects other values", () => {
+    expect(validateSourceEntry({ path: "raw/**", priority: "agent", review: "required" })).toEqual([]);
+    expect(validateSourceEntry({ path: "raw/**", priority: "agent", review: "optional" })).toEqual([expect.stringContaining("review")]);
+  });
+});
+
 describe("subscription + kb config", () => {
   function cfg(): SquadrantConfig {
     const c = getDefaultConfig();

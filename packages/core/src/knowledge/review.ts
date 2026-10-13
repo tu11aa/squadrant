@@ -13,7 +13,7 @@ import {
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
 import { computeAnchor } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { expandSource, fileForRef, refFor } from "./ingest.js";
+import { expandSource, fileForRef, isGatedRef, refFor } from "./ingest.js";
 import { kbDir, kbRulesDir, PROPOSED_DIR } from "./paths.js";
 import { reconcileConfig } from "./schedule.js";
 import { loadRulesDir } from "./store.js";
@@ -341,6 +341,8 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
     const p = prop!;
     if (d.decision === "escalate" || d.flag) reasons.push("reviewer-flagged");
     if (conf < threshold) reasons.push("low-confidence");
+    // Q2 (2026-10-13): proposals from a `review: required` source always go to the operator, at any confidence.
+    if (p.rule.sources.some((s) => isGatedRef(kbRoot, c.sources, s.ref))) reasons.push("review-required");
     if (d.decision === "approve") {
       const myPri = priorityOfRule(c, p.rule);
       const conflicted = (p.rule.conflictsWith ?? []).map((id) => live.find((r) => r.id === id)).filter((r): r is Rule => !!r);

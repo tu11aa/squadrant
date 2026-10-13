@@ -81,6 +81,8 @@ export interface KnowledgeSourceEntry {
   priority: SourcePriority;
   domain?: string;
   sensitivity?: "local-only";
+  /** `required`: new rules from this source wait in `_proposed/` for the operator (spec 2026-10-13 §5). Absent = auto-live (D4). */
+  review?: "required";
 }
 
 export interface ReconcileConfig {
@@ -154,6 +156,7 @@ export function validateSourceEntry(e: unknown): string[] {
   if (!SOURCE_PRIORITIES.includes(e.priority as SourcePriority)) p.push(`priority must be one of ${SOURCE_PRIORITIES.join("|")}`);
   if (e.domain !== undefined && typeof e.domain !== "string") p.push("domain must be a string");
   if (e.sensitivity !== undefined && e.sensitivity !== "local-only") p.push("sensitivity must be 'local-only' when set");
+  if (e.review !== undefined && e.review !== "required") p.push("review must be 'required' when set");
   return p;
 }
 

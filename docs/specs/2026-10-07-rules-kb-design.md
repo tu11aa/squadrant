@@ -36,7 +36,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 | D1 | **Approach: push via hooks + pull via squadrant tool, stored in the vault.** Rejected: compiling into native rule files (Claude `paths:` is buggy, it pollutes repos (#662), and gives no audit); pull-only (relies on the agent remembering to look). |
 | D2 | **Storage:** a named KB at `~/squadrant/kb/<kb>/`, its own git repo (`git init` on create; a remote is optional). A project inherits the KB mapped to its `group` (`groups.<g>.kb`) and adds more with `"knowledge": ["conventions"]`; its own overlay overrides by `id` or disables via `rulesDisabled`. *(Amended #936: was `<hubVault>/knowledge/<kb>/`, not tied to `group`.)* |
 | D3 | **Trust:** only sources listed in `sources.yaml` can produce rules. An agent proposal stays `proposed` until it is reviewed. |
-| D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically. Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
+| D4 | **Review = option B.** A grounded rule from a trusted source goes live automatically (unless the source entry sets `review: required`, below). Exceptions go to a **reviewer agent**, which decides with a justification; the operator is reached only on escalation. |
 | D5 | **A meaning change goes to the reviewer first.** The old version stays active while the change is pending. |
 | D6 | **v1 is LLM-driven.** Every decision is phrased as a typed question behind a `decider` seam, so Jev (cloud) or Quyet-Large (local) can replace individual questions later, evaluated against the audit log. |
 | D7 | **Two-tier reconcile:** an incremental pass at a fixed 7 days after the first change, plus a full pass every 30 days, plus manual. **Exception:** a KB with zero active rules extracts immediately (first ingest). |
@@ -71,6 +71,9 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 - path: raw/contracts/**
   priority: company
   sensitivity: local-only                    # D12: never sent to a hosted model
+- path: raw/**
+  priority: agent
+  review: required                           # new rules wait in _proposed/ for the operator (2026-10-13 lifecycle spec §5)
 ```
 
 **KB config** goes in `config.json` under `knowledgeBases.<kb>` (`path` defaults to `~/squadrant/kb/<kb>`). The old `knowledge.<kb>` key is still read as a deprecated alias; `squadrant doctor` reports it as config drift.
@@ -209,6 +212,7 @@ Deferred until there is usage data: automated diff sampling for outcomes, and sp
   - a conflict between two `company`-priority sources
   - retiring a `must` or `must-not` rule
   - any item the reviewer flags itself
+  - any proposal from a `review: required` source, at any confidence; the reviewer agent can never approve it (the reviewer still writes its suggestion)
 
 **Escalations reach the operator through:**
 - `REPORT.md`

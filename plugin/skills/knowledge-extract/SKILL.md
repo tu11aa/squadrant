@@ -34,6 +34,7 @@ Works from any agent: it is plain CLI plus a JSON file.
    `squadrant knowledge apply <kb> candidates.json`
 
    List a ref in `complete` **only** when this file covers every section of that source (no carried sections). Rules from a `complete` source that no candidate matches are marked `stale`; listing a partially-covered source would wrongly stale its rules.
+   A source marked `review: required` in `sources.yaml` never produces live rules: its new rules land in `_proposed/` and wait for the operator (a same-meaning candidate for an existing rule still merges). Extract it exactly the same way.
 5. **Report** the apply output: created / merged / proposed / rejected counts. If it says a source is flagged "conversion likely poor, try docling", tell the captain; do not retry the same conversion.
 
 ## Rules

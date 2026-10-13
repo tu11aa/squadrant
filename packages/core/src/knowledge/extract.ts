@@ -5,12 +5,12 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import {
-  RULE_ID_RE, RULE_MODALITIES, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
+  RULE_ID_RE, RULE_MODALITIES, type KnowledgeSourceEntry, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
 import { computeAnchor } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { convertedFile, readState } from "./ingest.js";
+import { convertedFile, isGatedRef, readState } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
 import { findQuote, needsDocling, normalizeText, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
@@ -44,6 +44,8 @@ export interface ApplyOptions {
   rulesDir: string;
   /** Subscribed projects to anchor against (name → repo root). Empty ⇒ anchors skipped. */
   projects?: { name: string; root: string }[];
+  /** sources.yaml entries; a candidate from a `review: required` source never goes live on its own. */
+  sources?: KnowledgeSourceEntry[];
   audit?: AuditSink;
   now?: () => Date;
 }
@@ -169,7 +171,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       continue;
     }
 
-    if (!target && contradicted.length === 0) {
+    if (!target && contradicted.length === 0 && !isGatedRef(kbRoot, opts.sources ?? [], cand.source)) {
       const fm: Fm = {
         id, domain: cand.domain, modality: cand.modality, status: "active",
         ...(cand.triggers ? { triggers: cand.triggers } : {}),
@@ -181,7 +183,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       continue;
     }
 
-    // Meaning change (D5) or contradiction: old version stays active, the new one waits in _proposed/.
+    // Meaning change (D5), contradiction, or a new rule from a gated source: old version stays active, the new one waits in _proposed/.
     const fm: Fm = {
       id, domain: target?.fm.domain ?? cand.domain, modality: cand.modality, status: "proposed",
       ...(cand.triggers ?? target?.fm.triggers ? { triggers: cand.triggers ?? target?.fm.triggers } : {}),

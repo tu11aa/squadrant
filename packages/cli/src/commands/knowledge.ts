@@ -97,7 +97,7 @@ knowledgeCommand
     const { sources, errors } = runKnowledgeSources(kb);
     if (!sources.length && !errors.length) console.log("(no sources — edit sources.yaml)");
     for (const s of sources) {
-      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}`);
+      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}${s.review ? chalk.cyan("  review: required") : ""}`);
     }
     for (const e of errors) console.log(chalk.red(`  ✘ ${e}`));
     if (errors.length) process.exitCode = 1;
@@ -194,7 +194,10 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects });
+  // Same reason as errata.yaml: a dropped entry would silently disable a review: required gate.
+  const { sources, errors: sourceErrors } = loadSources(kbDir(cfg, kb));
+  if (sourceErrors.length) throw new Error(`sources.yaml: ${sourceErrors.join("; ")}`);
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources });
 }
 
 knowledgeCommand
@@ -232,7 +235,9 @@ function reviewContext(kb: string, configPath: string): ReviewContext {
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  return { cfg, kb, sources, projects };
 }
 
 export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {

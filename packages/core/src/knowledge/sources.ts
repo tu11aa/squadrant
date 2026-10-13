@@ -6,12 +6,16 @@ import { validateSourceEntry, type KnowledgeSourceEntry } from "@squadrant/share
 export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec §3). Only these can produce rules.
 # priority: company > project > agent (decides conflicts).
 # sensitivity: local-only  → never sent to a hosted model (D12).
+# review: required         → new rules from this source wait in rules/_proposed/ for the operator; they never go live on their own.
 #
 # - path: raw/finance/**
 #   priority: company
 # - path: ~/work/flooros/docs/handbook/**
 #   priority: project
 #   domain: coding
+# - path: raw/**
+#   priority: agent
+#   review: required
 []
 `;
 
