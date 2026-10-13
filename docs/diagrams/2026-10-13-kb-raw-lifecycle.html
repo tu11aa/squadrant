@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KB Raw Lifecycle · squadrant</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#161d2b; --line:#222c3d;
+    --fg:#e6edf7; --dim:#8b9bb4; --dimmer:#5d6b83;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --acc2:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:48px 16px 96px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:20px;margin:52px 0 6px;letter-spacing:-.01em;
+     padding-left:12px;border-left:3px solid var(--acc)}
+  h3{font-size:15px;margin:26px 0 10px;color:var(--dim);
+     text-transform:uppercase;letter-spacing:.09em}
+  .meta{color:var(--dimmer);font-size:13px;font-family:var(--mono);margin-bottom:36px}
+  p{margin:12px 0}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);
+    padding:2px 6px;border-radius:4px;color:var(--acc2)}
+  .card{background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:860px){.g2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.07em}
+  tr:last-child td{border-bottom:none}
+  .tablewrap{overflow-x:auto}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .acc{color:var(--acc)}
+  .lead{font-size:16px;color:var(--dim);margin:8px 0 0}
+  .note{border-left:3px solid var(--warn);background:#1a1608;
+    padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0}
+  .note.b{border-color:var(--bad);background:#1c0f0e}
+  .note.g{border-color:var(--ok);background:#0c1a10}
+  .note strong{color:var(--fg)}
+  .flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;margin:18px 0}
+  .node{flex:1;min-width:140px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;padding:14px}
+  .node.hand{border-style:dashed;border-color:var(--warn)}
+  .node.new{border-color:#1c4a2a;box-shadow:inset 0 0 0 1px #1c4a2a}
+  .node.op{border-color:#4a3a7a}
+  .node .t{font-family:var(--mono);font-size:12px;color:var(--acc);margin-bottom:6px}
+  .node.hand .t{color:var(--warn)} .node.new .t{color:var(--ok)} .node.op .t{color:var(--acc2)}
+  .node .d{font-size:13px;color:var(--dim);line-height:1.45}
+  .arrow{display:flex;align-items:center;color:var(--dimmer);font-size:20px}
+  @media(max-width:860px){.flow{flex-direction:column}.arrow{justify-content:center;transform:rotate(90deg)}}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;
+    padding:3px 10px;border-radius:6px;margin:3px 4px 3px 0}
+  .p-ok{background:#0f2417;color:var(--ok);border:1px solid #1c4a2a}
+  .p-warn{background:#241d0f;color:var(--warn);border:1px solid #4a3a12}
+  .p-bad{background:#1c0f0e;color:var(--bad);border:1px solid #4a1c1a}
+  .p-op{background:#1a1430;color:var(--acc2);border:1px solid #4a3a7a}
+  .p-dim{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+  .route{display:grid;grid-template-columns:minmax(150px,1fr) 28px minmax(170px,1.3fr);gap:8px 10px;align-items:center;margin:10px 0}
+  .route .q{font-family:var(--mono);font-size:13px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .route .a{color:var(--dimmer);text-align:center}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat .n{font-size:26px;font-family:var(--mono);font-weight:600}
+  .stat .l{font-size:13px;color:var(--dim)}
+  .legend span{margin-right:14px;font-size:13px;color:var(--dim)}
+  .foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);color:var(--dimmer);font-size:13px}
+  .foot a{color:var(--acc);text-decoration:none}
+  @media(max-width:640px){
+    .route{grid-template-columns:1fr}.route .a{display:none}
+    .card{padding:16px 14px}.node{min-width:0}
+    h1{font-size:24px}.meta{word-break:break-word}
+    code{word-break:break-word}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>KB raw → rules lifecycle</h1>
+<p class="lead">How a company document becomes a live rule today, how it will after this design, and where your decisions live in each.</p>
+<div class="meta">2026-10-13 · epic #893 · spec docs/specs/2026-10-13-kb-raw-lifecycle-design.md · numbers from saitex KB main@dd29c45</div>
+
+<div class="legend">
+  <span><span class="pill p-dim">box</span>KB code (exists)</span>
+  <span><span class="pill p-warn">dashed</span>made by hand, outside the KB</span>
+  <span><span class="pill p-ok">green</span>new in this design</span>
+  <span><span class="pill p-op">violet</span>operator decides</span>
+</div>
+
+<h2>1. Today</h2>
+<p>The KB has no idea a raw passage is stale, and any grounded candidate goes live. So you built a middle layer by hand.</p>
+
+<div class="card">
+  <h3>The hand-made layer (7–8 Oct)</h3>
+  <div class="flow">
+    <div class="node"><div class="t">raw/</div><div class="d">7 company docs (pdf, html, pptx). Never edited.</div></div>
+    <div class="arrow">→</div>
+    <div class="node hand"><div class="t">extracted/*.md</div><div class="d">coding, pr, clickup rules restated and corrected against flooros code.</div></div>
+    <div class="arrow">+</div>
+    <div class="node hand"><div class="t">raw-errata.md</div><div class="d">37 notes on what raw got wrong.</div></div>
+    <div class="arrow">+</div>
+    <div class="node hand op"><div class="t">RECONCILE-LOG.md</div><div class="d">68 rows: corrections, errata, and your <code>[USER]</code> rulings.</div></div>
+  </div>
+  <h3>The KB pipeline on top of it</h3>
+  <div class="flow">
+    <div class="node"><div class="t">sources.yaml</div><div class="d">lists <code>extracted/**</code> (project) and <code>raw/**</code> (agent).</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">ingest + extract</div><div class="d">convert, then the knowledge-extract skill writes candidates.</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">apply</div><div class="d">quote found? new id → <b class="warn">live at once</b> (D4). Priority is never read here.</div></div>
+    <div class="arrow">→</div>
+    <div class="node op"><div class="t">review</div><div class="d">reviewer agent; you only on escalation. <code>verdicts.jsonl</code>.</div></div>
+  </div>
+  <div class="note b"><strong>What went wrong on 12 Oct.</strong> Raw extraction made 131 candidates. 11 contradicted raw-errata.md and you dropped them by hand. The other results could not land on main unreviewed, so they sit on branch <code>extract/raw-2026-10-12</code> (69 new, 2 proposed, 44 changed), still unmerged.</div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="n">81</div><div class="l">live rules on main</div></div>
+  <div class="stat"><div class="n warn">65</div><div class="l">cite extracted/ (58 only extracted/)</div></div>
+  <div class="stat"><div class="n">0</div><div class="l">decision blocks</div></div>
+  <div class="stat"><div class="n">15</div><div class="l">operator rulings found only in extracted/</div></div>
+</div>
+
+<h2>2. Target</h2>
+<p>The KB owns the whole path. Your rulings and the errata move into the KB repo, and <code>apply</code> reads them.</p>
+
+<div class="card">
+  <h3>Sources</h3>
+  <div class="flow">
+    <div class="node new"><div class="t">raw/**</div><div class="d">priority agent · <b>review: required</b></div></div>
+    <div class="node"><div class="t">CLAUDE.md, handbook</div><div class="d">priority project · auto-live as today</div></div>
+    <div class="node new op"><div class="t">shared/decisions/**</div><div class="d">your rulings as decision records · priority company</div></div>
+  </div>
+  <div class="flow">
+    <div class="node"><div class="t">ingest + extract</div><div class="d">unchanged. Any agent, plain CLI + JSON.</div></div>
+    <div class="arrow">→</div>
+    <div class="node new"><div class="t">apply</div><div class="d">quote grounding, id matching, then the two new checks below.</div></div>
+    <div class="arrow">↔</div>
+    <div class="node new op"><div class="t">errata.yaml</div><div class="d">one entry per stale passage: ref + verbatim quote + reason + evidence. Not a source.</div></div>
+  </div>
+
+  <h3>How apply routes one grounded candidate</h3>
+  <div class="route">
+    <div class="q">overlaps an erratum quote?</div><div class="a">→</div>
+    <div><span class="pill p-bad">rejected · errata:&lt;id&gt;</span> logged, never live, never re-asked</div>
+    <div class="q">from a review: required source and new?</div><div class="a">→</div>
+    <div><span class="pill p-warn">_proposed/</span> then <span class="pill p-op">always escalates to you</span></div>
+    <div class="q">same id, new meaning, or contradicts?</div><div class="a">→</div>
+    <div><span class="pill p-warn">_proposed/</span> as today (D5)</div>
+    <div class="q">same id, same meaning</div><div class="a">→</div>
+    <div><span class="pill p-ok">merge</span> source ref added, rule stays live</div>
+    <div class="q">anything else</div><div class="a">→</div>
+    <div><span class="pill p-ok">active</span> as today (D4)</div>
+  </div>
+
+  <div class="flow">
+    <div class="node op"><div class="t">knowledge review</div><div class="d">you walk the gated items; every answer lands in <code>verdicts.jsonl</code>.</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">rules/</div><div class="d">live rules, every one grounded in a listed source.</div></div>
+  </div>
+</div>
+
+<h2>3. Where your decisions live</h2>
+<div class="card tablewrap">
+<table>
+  <tr><th>What you decided</th><th>Today</th><th>Target</th></tr>
+  <tr><td>"this raw passage is out of date"</td><td>raw-errata.md, RECONCILE-LOG <code>errata</code> rows (26)</td><td><code>errata.yaml</code> entry, checked by <code>apply</code></td></tr>
+  <tr><td>"the code is right, raw is wrong"</td><td>RECONCILE-LOG <code>corrected</code> rows (26)</td><td><code>errata.yaml</code> entry on the wrong quote; the rule comes from CLAUDE.md or a decision record</td></tr>
+  <tr><td>"we do it this way" (<code>[USER]</code>, developer decision)</td><td>tags in pr-rules.md, log rows (15 mentions)</td><td><code>shared/decisions/&lt;id&gt;.md</code>, accepted, extracted like any source</td></tr>
+  <tr><td>"keep the doc even though code differs"</td><td>log text ("kept as team rule")</td><td><code>decision</code> block on the rule (exists, #898), asked once when it comes up</td></tr>
+  <tr><td>approve / reject a proposal</td><td><code>verdicts.jsonl</code></td><td><code>verdicts.jsonl</code>, now including raw extraction</td></tr>
+</table>
+</div>
+
+<h2>4. Migration of the 65 rules</h2>
+<div class="card tablewrap">
+<table>
+  <tr><th>Rules</th><th>Rest on</th><th>New source</th></tr>
+  <tr><td>26</td><td>a raw passage</td><td>same raw file (merge)</td></tr>
+  <tr><td>22</td><td>raw, corrected by code</td><td>CLAUDE.md / handbook, or a decision record</td></tr>
+  <tr><td>7</td><td>ClickUp survey practice</td><td>a decision record</td></tr>
+  <tr><td>9</td><td>your word only (<code>[USER]</code>)</td><td>a decision record</td></tr>
+  <tr><td>2</td><td>unmatched</td><td>checked by hand</td></tr>
+</table>
+<p>Then <code>knowledge sources saitex --remove '~/saitex/kb/extracted/**'</code> strips the old refs. Any rule left with no source turns <code>stale</code> and goes to the reviewer. <code>extracted/</code> moves to <code>~/saitex/kb/archive/</code>.</p>
+<div class="note g"><strong>The 12 Oct branch.</strong> Not merged. Its 71 added files are replayed on main as a candidates file (no model call). Errata and gating apply, and you review them through <code>knowledge review</code>. Delete the branch afterwards.</div>
+</div>
+
+<h2>5. Phases</h2>
+<div class="card tablewrap">
+<table>
+  <tr><th>#</th><th>Phase</th><th>Effort</th></tr>
+  <tr><td>1</td><td><code>review: required</code> in sources.yaml, apply routing, always-escalate</td><td>~0.5 day</td></tr>
+  <tr><td>2</td><td><code>errata.yaml</code>: apply filter, orphan report, validate check</td><td>~1 day</td></tr>
+  <tr><td>3</td><td><code>knowledge sources --remove</code></td><td>~0.5 day</td></tr>
+  <tr><td>4</td><td>saitex: errata + decision records, replay branch, your review</td><td>crew ~1 day + you ~1–2 h</td></tr>
+  <tr><td>5</td><td>remove extracted/, archive, delete branch</td><td>~0.5 h</td></tr>
+</table>
+</div>
+
+<div class="foot">squadrant · rules KB · <a href="../specs/2026-10-13-kb-raw-lifecycle-design.md">design spec</a> · <a href="../specs/2026-10-07-rules-kb-design.md">rules KB spec</a> · <a href="../specs/2026-10-10-knowledge-base-architecture-design.md">KB architecture spec</a></div>
+</div>
+</body>
+</html>

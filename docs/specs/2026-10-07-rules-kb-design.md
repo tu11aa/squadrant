@@ -5,6 +5,7 @@
 - **Related:** #555, #885, #886, #894, #662, #615, #31
 - **Amended 2026-10-10 (#936):** storage, config, project overlay, audit location and `verdicts.jsonl` follow [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) §3, §4, §9, §10. Those sections win where they differ from the original text below.
 - **Prior art:** [`docs/research/2026-10-07-rules-kb-prior-art.md`](../research/2026-10-07-rules-kb-prior-art.md)
+- **Extended 2026-10-13:** raw → rules lifecycle (errata, per-source review gating) in [`2026-10-13-kb-raw-lifecycle-design.md`](2026-10-13-kb-raw-lifecycle-design.md).
 
 ## 1. Goal
 
