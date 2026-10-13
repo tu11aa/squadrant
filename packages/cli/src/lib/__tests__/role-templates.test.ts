@@ -61,6 +61,10 @@ describe("generic role templates — audit", () => {
     expect(findForbidden(fake)).toContain("TaskCreate");
   });
 
+  it.each(["crew.claude.md", "crew.generic.md", "crew.opencode.md"])("%s asks crews to cite applied rule ids as 'Rules: <ids>' in the done message", (f) => {
+    expect(readTemplate(f)).toContain("end the message with `Rules: <id>, <id>`");
+  });
+
   it("captain.generic.md uses the squadrant crew spawn primitive", () => {
     const body = readTemplate("captain.generic.md");
     expect(body).toMatch(/squadrant crew spawn/);

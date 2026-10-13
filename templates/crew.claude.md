@@ -43,6 +43,7 @@ Your captain learns you are done from an **explicit signal**, not from your CLI 
 1. Commit your work.
 2. Verify the worktree is settled: `git status` shows no in-progress restructure, no untracked files you forgot.
 3. Run **`squadrant crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the squadrant daemon so the captain sees terminal state without scraping your pane.
+   If you applied any knowledge-base rules, end the message with `Rules: <id>, <id>` (leave it out when none applied). The signal records those ids as citations, and it also picks up rule ids named in your branch's commit messages.
 4. Then (and only then) exit your CLI.
 
 If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — run this BEFORE ending your turn, then wait:

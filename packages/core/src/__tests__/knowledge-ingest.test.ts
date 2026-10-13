@@ -128,6 +128,12 @@ describe("golden fixture", () => {
     expect(fs.existsSync(path.join(kb, "index.json"))).toBe(true);
   });
 
+  it("write events carry the KB domain 'rules', not the rule's subject domain", async () => {
+    await ingest();
+    apply(cands("candidates-v1.json"));
+    expect(new Set(audit().map((e) => e.domain))).toEqual(new Set(["rules"]));
+  });
+
   it("re-running extraction on unchanged sources changes no ids and no files", async () => {
     await ingest();
     apply(cands("candidates-v1.json"));

@@ -29,14 +29,16 @@ export interface Tally {
 }
 const emptyTally = (): Tally => ({ items: {}, domains: {}, agents: {}, tiers: {} });
 
-/** Fold audit records into counts. Events without an itemId (searches) still count toward domain reads. */
+/** Fold audit records into counts. Events without an itemId (searches) still count toward domain reads; write
+ *  events only count toward domain writes, so an id that was merely applied/rejected (e.g. on an unmerged
+ *  extraction branch) never becomes a stats row. */
 export function tally(records: AuditRecord[], into: Tally = emptyTally()): Tally {
   for (const e of records) {
     const domain = typeof e.domain === "string" && e.domain ? e.domain : "rules";
     const d = (into.domains[domain] ??= { writes: 0, reads: 0 });
     if (WRITE_EVENTS.has(e.event ?? "")) d.writes++;
     if (READ_EVENTS.has(e.event ?? "")) d.reads++;
-    if (!e.itemId) continue;
+    if (!e.itemId || WRITE_EVENTS.has(e.event ?? "")) continue;
     const c = (into.items[`${domain}|${e.itemId}`] ??= { ...zero(), domain, itemId: e.itemId });
     switch (e.event) {
       case "item.surfaced": {
@@ -169,7 +171,7 @@ export function computeScores(i: ScoreInput): Scores {
     return {
       domain, itemId, surfaced: w.surfaced, suppressed: w.suppressed, searched: w.searched, shown: w.shown, cited: w.cited,
       followed: w.followed, violated: w.violated, noise: w.noise, wrong: w.wrong,
-      fireRate: w.surfaced, pullRate: w.shown,
+      fireRate: w.surfaced, pullRate: w.shown + w.searched,
       useRate: ratio(w.cited, w.surfaced), noiseRate: ratio(w.noise, w.surfaced), violationRate: ratio(w.violated, w.surfaced),
       lastSurfaced: l?.lastSurfaced, lastUsed: l?.lastUsed,
       neverFired30d: w.surfaced === 0 && (knownActive.has(key) || (l?.surfaced ?? 0) > 0), lifetimeSurfaced: l?.surfaced ?? 0,
@@ -223,7 +225,7 @@ export function renderScoresSection(s: Scores): string[] {
   return [
     "", `## Scores (${s.windowDays} days)`, "",
     ...(used.length ? ["| Item | Surfaced | Pulled | Cited | Use | Noise | Violated |", "|---|---|---|---|---|---|---|",
-      ...used.map((x) => `| ${x.itemId} | ${x.surfaced} | ${x.shown} | ${x.cited} | ${pct(x.useRate)} | ${pct(x.noiseRate)} | ${pct(x.violationRate)} |`)] : ["No items surfaced."]),
+      ...used.map((x) => `| ${x.itemId} | ${x.surfaced} | ${x.pullRate} | ${x.cited} | ${pct(x.useRate)} | ${pct(x.noiseRate)} | ${pct(x.violationRate)} |`)] : ["No items surfaced."]),
     "", `- Never fired (${never.length}): ${never.slice(0, 20).join(", ") || "none"}${never.length > 20 ? ", …" : ""}`,
     `- Tier contribution: ${Object.entries(s.tierContribution).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
     `- Per-agent coverage (surfaced): ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,

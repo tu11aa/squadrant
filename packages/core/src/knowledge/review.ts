@@ -185,8 +185,9 @@ function anchorsFor(c: ReviewContext, fm: RuleFrontmatter): RuleAnchors | undefi
 }
 
 export interface ApplyEvents { events: AuditEvent[] }
-const ev = (c: ReviewContext, event: AuditEvent["event"], itemId: string, domain: string, extra: Partial<AuditEvent> = {}): AuditEvent =>
-  ({ kb: c.kb, level: "group", project: "", domain, itemId, event, ...extra });
+// `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
+const ev = (c: ReviewContext, event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}): AuditEvent =>
+  ({ kb: c.kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
 
 /** Make a proposal live: replaces its live counterpart, retires the rules it conflicts with. */
 export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-agent" | "human", justification: string, events: AuditEvent[]): void {
@@ -200,7 +201,7 @@ export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-age
     o.fm.status = "retired";
     fs.writeFileSync(other.file, fileText(o.fm, o.body));
     retired.push(id);
-    events.push(ev(c, "item.superseded", id, o.fm.domain));
+    events.push(ev(c, "item.superseded", id));
   }
   const next: RuleFrontmatter = { ...fm, status: "active", approvedBy: by, justification, supersedes: [...new Set([...(fm.supersedes ?? []), ...retired])], conflictsWith: [] };
   if (p.live?.decision) next.decision = p.live.decision;
@@ -210,13 +211,13 @@ export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-age
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, fileText(next, body));
   fs.rmSync(p.rule.file);
-  events.push(ev(c, "item.approved", next.id, next.domain), ev(c, "item.applied", next.id, next.domain));
-  if (p.live) events.push(ev(c, "item.superseded", next.id, next.domain));
+  events.push(ev(c, "item.approved", next.id), ev(c, "item.applied", next.id));
+  if (p.live) events.push(ev(c, "item.superseded", next.id));
 }
 
 function dropProposal(c: ReviewContext, p: Proposal, events: AuditEvent[]): void {
   fs.rmSync(p.rule.file);
-  events.push(ev(c, "item.rejected", p.rule.id, p.rule.domain, { reason: "reviewer" }));
+  events.push(ev(c, "item.rejected", p.rule.id, { reason: "reviewer" }));
 }
 
 function mergeInto(c: ReviewContext, p: Proposal, targetId: string, live: Rule[], events: AuditEvent[]): boolean {
@@ -226,7 +227,7 @@ function mergeInto(c: ReviewContext, p: Proposal, targetId: string, live: Rule[]
   for (const s of p.rule.sources) if (!tf.fm.sources.some((x) => x.ref === s.ref)) tf.fm.sources.push(s);
   fs.writeFileSync(t.file, fileText(tf.fm, tf.body));
   fs.rmSync(p.rule.file);
-  events.push(ev(c, "item.superseded", p.rule.id, p.rule.domain), ev(c, "item.applied", targetId, t.domain));
+  events.push(ev(c, "item.superseded", p.rule.id), ev(c, "item.applied", targetId));
   return true;
 }
 
@@ -318,7 +319,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
         const f = readFm(rule.file);
         f.fm.status = "active";
         if (d.loc && f.fm.sources[0]) f.fm.sources[0].loc = d.loc;
-        if (conf >= threshold && !d.flag && !reasons.length) { fs.writeFileSync(rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id, rule.domain)); verdict(d, "applied", { confidence: conf }); continue; }
+        if (conf >= threshold && !d.flag && !reasons.length) { fs.writeFileSync(rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id)); verdict(d, "applied", { confidence: conf }); continue; }
         reasons.push(conf < threshold ? "low-confidence" : "reviewer-flagged");
       } else if (d.decision === "approve") {
         if (strong(rule.modality)) reasons.push("retiring must/must-not");
@@ -328,7 +329,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
           const f = readFm(rule.file);
           f.fm.status = "retired";
           fs.writeFileSync(rule.file, fileText(f.fm, f.body));
-          res.applied.push(d.item); events.push(ev(c, "item.archived", rule.id, rule.domain)); verdict(d, "applied", { confidence: conf });
+          res.applied.push(d.item); events.push(ev(c, "item.archived", rule.id)); verdict(d, "applied", { confidence: conf });
           continue;
         }
       } else reasons.push("reviewer-flagged");
@@ -397,7 +398,7 @@ function applyPair(pd: PairDecision, c: ReviewContext, res: ReviewResult, thresh
   const df = readFm(drop.file);
   df.fm.status = "retired";
   fs.writeFileSync(drop.file, fileText(df.fm, df.body));
-  events.push(ev(c, "item.superseded", drop.id, drop.domain), ev(c, "item.applied", keep.id, keep.domain));
+  events.push(ev(c, "item.superseded", drop.id), ev(c, "item.applied", keep.id));
   res.applied.push(key);
 }
 
@@ -431,7 +432,7 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
     const f = readFm(rule.file);
     const decision: RuleDecision = { by, at: now.toISOString(), verdict: r.verdict, docRev: esc.evidence.docRev, codeRev: esc.evidence.codeRev, files: esc.evidence.files, reason };
     f.fm.decision = decision;
-    if (r.verdict === "supersede-with-code") { f.fm.status = "retired"; events.push(ev(c, "item.superseded", rule.id, rule.domain)); }
+    if (r.verdict === "supersede-with-code") { f.fm.status = "retired"; events.push(ev(c, "item.superseded", rule.id)); }
     fs.writeFileSync(rule.file, fileText(f.fm, f.body));
     return done(`${rule.id}: ${r.verdict}`);
   }
@@ -445,7 +446,7 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
   }
   if (esc.kind === "stale-retire") {
     const rule = live.find((x) => x.id === esc.ruleId);
-    if (rule) { const f = readFm(rule.file); f.fm.status = r.kind === "approve" ? "retired" : "active"; fs.writeFileSync(rule.file, fileText(f.fm, f.body)); events.push(ev(c, r.kind === "approve" ? "item.archived" : "item.applied", rule.id, rule.domain)); }
+    if (rule) { const f = readFm(rule.file); f.fm.status = r.kind === "approve" ? "retired" : "active"; fs.writeFileSync(rule.file, fileText(f.fm, f.body)); events.push(ev(c, r.kind === "approve" ? "item.archived" : "item.applied", rule.id)); }
     return done(`${esc.ruleId}: ${r.kind === "approve" ? "retired" : "kept"}`);
   }
   if (esc.kind === "override-base-changed") {
@@ -476,7 +477,7 @@ export function proposeAgentRule(c: ReviewContext, o: { statement: string; evide
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${id}@${sha.slice(0, SHA_LEN)}.md`);
   fs.writeFileSync(file, fileText(fm, o.statement));
-  appendAudit([ev(c, "item.proposed", id, domain)], c.audit);
+  appendAudit([ev(c, "item.proposed", id)], c.audit);
   return file;
 }
 

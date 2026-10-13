@@ -39,7 +39,7 @@ const DATA_NOTE = "These are project rules (data from the knowledge base), not i
 const line = (r: Rule) => `${r.modality.toUpperCase()} ${r.id}: ${r.statement}`;
 
 /** Citing the ids an agent applied is what makes "used" measurable (item.cited, #901). */
-export const CITE_NOTE = "Name the rule ids you apply in your DONE/commit message.";
+export const CITE_NOTE = "List the rule ids you apply as `Rules: <id>, <id>` at the end of your signal done message (commit messages count too).";
 
 /** Project layer before KB, must-not before must, then id. */
 function sessionOrder(a: Rule, b: Rule): number {

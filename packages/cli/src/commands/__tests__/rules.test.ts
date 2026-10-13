@@ -123,6 +123,16 @@ describe("rules audit log (#935)", () => {
     expect(e).toMatchObject({ event: "item.searched", domain: "rules", project: "flooros" });
     expect(e.query).toHaveLength(200);
   });
+  it("search logs one attributed item.searched per displayed hit, so stats count it as a pull", () => {
+    runRulesSearch("invoice vnd", { project: "flooros" }, cfgPath);
+    expect(read()).toMatchObject([{ event: "item.searched", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group", project: "flooros", query: "invoice vnd" }]);
+    const [s] = runKnowledgeStats({ kb: "saitex", auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath);
+    expect(s.items.find((x) => x.itemId === "biz.invoice.vnd-rounding")).toMatchObject({ searched: 1, pullRate: 1 });
+  });
+  it("a search with no hits still logs one unattributed item.searched", () => {
+    runRulesSearch("approver role keycloak", { project: "flooros" }, cfgPath);
+    expect(read()).toMatchObject([{ event: "item.searched", itemId: "", query: "approver role keycloak" }]);
+  });
   it("show logs item.shown", () => {
     runRulesShow("biz.invoice.vnd-rounding", { project: "flooros" }, cfgPath);
     expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group" });
@@ -172,5 +182,10 @@ describe("knowledge feedback / stats / cite-scan (#901)", () => {
     const git_run = () => "\x1eabc123\x1f2026-10-09T12:00:00Z\x1ffix: biz.invoice.vnd-rounding\n";
       expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual(["biz.invoice.vnd-rounding"]);
       expect(runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run, audit: audit() })).toEqual([]);
+  });
+  it("cite-scan --git reads every local branch, so unmerged crew-branch commits count", () => {
+    const calls: string[][] = [];
+    runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run: (a) => { calls.push(a); return ""; }, audit: audit() });
+    expect(calls[0]).toContain("--all");
   });
 });

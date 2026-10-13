@@ -107,8 +107,9 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
   const { kb, kbRoot, rulesDir } = opts;
   const res: ApplyResult = { created: [], merged: [], proposed: [], superseded: [], stale: [], rejected: [], doclingFlags: [], idOverrides: [] };
   const events: AuditEvent[] = [];
-  const ev = (event: AuditEvent["event"], itemId: string, domain: string, extra: Partial<AuditEvent> = {}) =>
-    events.push({ kb, level: "group", project: "", domain, itemId, event, ...extra });
+  // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
+  const ev = (event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}) =>
+    events.push({ kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
 
   const loaded = loadRulesDir(rulesDir, `kb:${kb}`);
   const work = new Map<string, Work>();
@@ -142,7 +143,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     if (!offset) {
       tot.dropped++;
       res.rejected.push({ id: cand.id, source: cand.source, reason: "ungrounded" });
-      ev("item.rejected", cand.id, cand.domain, { reason: "ungrounded" });
+      ev("item.rejected", cand.id, { reason: "ungrounded" });
       continue;
     }
 
@@ -176,7 +177,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       };
       work.set(id, { fm, body: bodyOf(), file: path.join(rulesDir, cand.domain, `${id}.md`), dirty: true, isNew: true });
       res.created.push(id);
-      ev("item.applied", id, cand.domain);
+      ev("item.applied", id);
       continue;
     }
 
@@ -200,11 +201,11 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       fs.writeFileSync(path.join(dir, other.replace(/\.md$/, ".superseded")), matter.stringify(old.content, { ...old.data, supersededBy: path.basename(file) }));
       fs.rmSync(path.join(dir, other));
       res.superseded.push(other.replace(/\.md$/, ""));
-      ev("item.superseded", id, fm.domain);
+      ev("item.superseded", id);
     }
     fs.writeFileSync(file, text);
     res.proposed.push(`${id}@${st.sha.slice(0, SHA_LEN)}`);
-    ev("item.proposed", id, fm.domain);
+    ev("item.proposed", id);
   }
 
   // A rule whose every source was fully re-swept this pass, but which no candidate matched, is stale.

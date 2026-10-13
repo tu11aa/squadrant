@@ -272,6 +272,7 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     // 6. write-stage audit events and the never-compacted verdicts log
     const names = auditEvents().map((e) => e.event);
     expect(names).toEqual(expect.arrayContaining(["item.approved", "item.applied", "item.superseded"]));
+    expect(new Set(auditEvents().map((e) => e.domain))).toEqual(new Set(["rules"]));
     const verdicts = fs.readFileSync(path.join(kbRoot(), "verdicts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(verdicts.map((v) => v.outcome ?? v.resolution?.kind)).toEqual(["escalated", "approve"]);
   });
