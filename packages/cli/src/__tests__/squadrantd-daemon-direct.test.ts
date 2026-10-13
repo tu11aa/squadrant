@@ -560,10 +560,14 @@ describe("squadrantd daemon-direct (#332)", () => {
     // (cursor not yet advanced) when we fire tick #2.
     let releaseSend!: () => void;
     const sendGate = new Promise<void>((resolve) => { releaseSend = resolve; });
+    // Resolved the first time send is entered, so the test can await tick #1
+    // being in-flight instead of guessing with a sleep.
+    let sendEntered!: () => void;
+    const sendEnteredP = new Promise<void>((resolve) => { sendEntered = resolve; });
     const sent: Array<{ text: string }> = [];
     const cmux = {
       sent,
-      send: async (_surface: PaneRef, text: string) => { sent.push({ text }); await sendGate; },
+      send: async (_surface: PaneRef, text: string) => { sent.push({ text }); sendEntered(); await sendGate; },
       listSurfaces: async () => [],
       readScreen: async () => null,
       isAvailable: async () => true,
@@ -581,7 +585,7 @@ describe("squadrantd daemon-direct (#332)", () => {
     // Fire tick #1 (does not resolve — blocked inside send awaiting the gate).
     const tick1 = handle.tickDelivery!();
     // Let tick #1 reach the blocked send.
-    await new Promise((r) => setTimeout(r, 10));
+    await sendEnteredP;
     // Fire tick #2 while tick #1 is still in-flight → guard must skip it.
     await handle.tickDelivery!();
     // tick #2 returned immediately (skipped); only tick #1's send is pending.
