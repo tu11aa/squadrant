@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { appendAudit, compactAudit, computeScores, scanAndLogCitations, scoreKb, renderScoresSection, mentionsId, appendVerdict, type AuditEvent, type AuditRecord } from "../knowledge/index.js";
+import { appendAudit, compactAudit, computeScores, scanAndLogCitations, scanCitations, readBranchOnlyMessages, scoreKb, renderScoresSection, mentionsId, appendVerdict, type AuditEvent, type AuditRecord } from "../knowledge/index.js";
 
 const NOW = new Date("2026-10-10T00:00:00Z");
 const rec = (day: string, e: Partial<AuditRecord> & { event: string }): AuditRecord =>
@@ -133,8 +134,63 @@ describe("compaction and citations", () => {
     appendAudit([ev({ event: "item.searched", query: "force push" })], sink(new Date("2026-10-09T00:00:00Z")));
     expect(scanAndLogCitations({ text: "Rules: git.no-force-push.", ref: "git:1", project: "flooros", sink: sink() })).toEqual(["git.no-force-push"]);
   });
+  it("batch scan reads the audit log once for N texts and gives the same results as one-by-one", () => {
+    appendAudit([ev(), ev({ itemId: "git.other" })], sink(new Date("2026-10-09T00:00:00Z")));
+    const texts = Array.from({ length: 20 }, (_, i) => ({ text: i % 2 ? "Rules: git.no-force-push" : "Rules: git.other, git.unseen", ref: `git:${i}`, at: new Date("2026-10-09T12:00:00Z") }));
+    const auditReads = vi.spyOn(fs, "readFileSync");
+    const got = scanCitations(texts, { project: "flooros", sink: sink() });
+    const reads = auditReads.mock.calls.filter(([f]) => String(f).startsWith(dir)).length;
+    auditReads.mockRestore();
+    expect(reads).toBe(1);
+    expect(got).toEqual(texts.map((t) => (t.text.includes("git.other") ? "git.other" : "git.no-force-push")));
+    expect(scanCitations(texts, { project: "flooros", sink: sink() })).toEqual([]);  // idempotent by ref
+    const cited = fs.readFileSync(path.join(dir, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.event === "item.cited");
+    expect(cited).toHaveLength(20);
+  });
+  it("a batch honours each text's own timestamp", () => {
+    appendAudit([ev()], sink(new Date("2026-10-09T00:00:00Z")));
+    expect(scanCitations([
+      { text: "git.no-force-push", ref: "a", at: new Date("2026-10-08T00:00:00Z") },
+      { text: "git.no-force-push", ref: "b", at: new Date("2026-10-09T12:00:00Z") },
+    ], { project: "flooros", sink: sink() })).toEqual(["git.no-force-push"]);
+  });
   it("ignores deliveries after the text was written", () => {
     appendAudit([ev()], sink(new Date("2026-10-09T00:00:00Z")));
     expect(scanAndLogCitations({ text: "git.no-force-push", ref: "r", project: "flooros", at: new Date("2026-10-08T00:00:00Z"), sink: sink() })).toEqual([]);
+  });
+});
+
+describe("readBranchOnlyMessages", () => {
+  let repo: string;
+  const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+  const run = (a: string[]) => spawnSync("git", a, { encoding: "utf8" }).stdout ?? "";
+  const commit = (msg: string) => { fs.writeFileSync(path.join(repo, "f"), msg); git("add", "f"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg); };
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), "kb-branch-"));
+    git("init", "-q", "-b", "develop");
+    commit("base: git.no-force-push on develop");
+  });
+  afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+  it("returns only the commits on the current branch that no other branch has", () => {
+    git("checkout", "-qb", "crew/x");
+    commit("feat: one\n\nRules: git.no-force-push");
+    commit("feat: two");
+    expect(readBranchOnlyMessages(repo, run).map((c) => c.text.trim().split("\n")[0])).toEqual(["feat: two", "feat: one"]);
+  });
+  it("still sees the branch's commits after it was pushed, but not the base's", () => {
+    git("update-ref", "refs/remotes/origin/develop", "develop");
+    git("checkout", "-qb", "crew/x");
+    commit("feat: pushed");
+    git("update-ref", "refs/remotes/origin/crew/x", "HEAD");
+    expect(readBranchOnlyMessages(repo, run).map((c) => c.text.trim())).toEqual(["feat: pushed"]);
+  });
+  it("is bounded by max", () => {
+    git("checkout", "-qb", "crew/x");
+    for (const m of ["a", "b", "c"]) commit(m);
+    expect(readBranchOnlyMessages(repo, run, 2)).toHaveLength(2);
+  });
+  it("returns nothing outside a git repo", () => {
+    expect(readBranchOnlyMessages(path.join(repo, "nope"), run)).toEqual([]);
   });
 });

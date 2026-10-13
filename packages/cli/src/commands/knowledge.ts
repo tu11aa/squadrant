@@ -14,7 +14,7 @@ import {
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
-  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, readGitMessages,
+  resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
 import type { RuleModality } from "@squadrant/shared";
@@ -410,7 +410,7 @@ export function runKnowledgeCiteScan(o: { project: string; text?: string; git?: 
   const run = o.git_run ?? ((args: string[]) => spawnSync("git", args, { encoding: "utf8" }).stdout ?? "");
   if (o.git) {
     const since = new Date((o.audit?.now?.() ?? new Date()).getTime() - (o.sinceDays ?? 30) * 86400000);
-    return readGitMessages(o.git, since, run).flatMap((c) => scanAndLogCitations({ text: c.text, ref: `git:${c.sha}`, project: o.project, at: c.at, sink: o.audit }));
+    return scanCitations(readGitMessages(o.git, since, run).map((c) => ({ text: c.text, ref: `git:${c.sha}`, at: c.at })), { project: o.project, sink: o.audit });
   }
   if (!o.text) throw new Error("Pass --text <message> or --git <repo>");
   return scanAndLogCitations({ text: o.text, ref: o.ref ?? "manual", project: o.project, sink: o.audit });
