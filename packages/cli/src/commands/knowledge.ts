@@ -10,7 +10,7 @@ import {
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
-  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata,
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
@@ -69,6 +69,13 @@ export function runKnowledgeSources(kb: string, configPath = DEFAULT_CONFIG_PATH
   return loadSources(kbDir(cfg, kb));
 }
 
+export function runKnowledgeSourcesRemove(kb: string, entryPath: string, opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): RemoveSourceResult {
+  assertKbName(kb);
+  const cfg = loadConfig(configPath);
+  if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
+  return removeSource(kbDir(cfg, kb), kbRulesDir(cfg, kb), entryPath, { ...opts, kbName: kb });
+}
+
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
 
 knowledgeCommand
@@ -92,8 +99,19 @@ knowledgeCommand
 
 knowledgeCommand
   .command("sources <kb>")
-  .description("List the trusted sources of a knowledge base")
-  .action((kb: string) => {
+  .description("List the trusted sources of a knowledge base; --remove drops one and strips its refs from rules")
+  .option("--remove <path>", "remove the sources.yaml entry with this exact path; rules left with no source become stale")
+  .option("--dry-run", "with --remove: print what would change, write nothing")
+  .action((kb: string, o: { remove?: string; dryRun?: boolean }) => {
+    if (o.dryRun && !o.remove) throw new Error("--dry-run only applies to --remove");
+    if (o.remove) {
+      const r = runKnowledgeSourcesRemove(kb, o.remove, { dryRun: o.dryRun });
+      const stripped = r.stripped.length - r.stale.length;
+      console.log(`${r.dryRun ? "would remove" : "removed"} ${o.remove}: ${r.stripped.length} rules lose a ref, ${r.stale.length} left with no source (stale), ${stripped} keep another source`);
+      for (const id of r.stale) console.log(chalk.yellow(`  stale: ${id}`));
+      if (r.dryRun) console.log(chalk.dim("dry run: nothing written"));
+      return;
+    }
     const { sources, errors } = runKnowledgeSources(kb);
     if (!sources.length && !errors.length) console.log("(no sources — edit sources.yaml)");
     for (const s of sources) {

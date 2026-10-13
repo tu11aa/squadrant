@@ -29,6 +29,10 @@ You are the **reviewer** for one knowledge base pass. Code enforces every hard r
 5. **Apply.** `squadrant knowledge review <kb> --apply decisions.json`.
 6. **Close.** `squadrant knowledge reconcile <kb> [--full] --finish` writes REPORT.md, advances the schedule and sends the captain a one-line count.
 
+## Stale rules from a removed source
+
+`squadrant knowledge sources <kb> --remove <path>` can leave rules with no source (status `stale`, empty `sources`). They appear in the packet's `stale` list like any other. Retire (`approve`) one only if its statement is still unsupported; a `reject` (keep) on a source-less rule always escalates (`no-source`), and the operator cannot keep it either: they must add a source to the rule or retire it.
+
 ## Always escalated (code enforces this, whatever your confidence)
 
 - two `company`-priority sources in conflict

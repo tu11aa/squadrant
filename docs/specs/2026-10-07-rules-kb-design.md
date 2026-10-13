@@ -229,6 +229,8 @@ Unanswered items stay `proposed` and never go live by default.
 
 **Manual run:** `squadrant knowledge reconcile <kb> [--full] [--now]`.
 
+**Retiring a source:** `squadrant knowledge sources <kb> --remove <path> [--dry-run]` strips that entry's refs from every rule, marks rules left with no source `stale` (still delivered until the reviewer retires them; a `must`/`must-not` retire escalates), and drops the entry from `sources.yaml`. Only `stale`/`retired` rules may have an empty `sources` list.
+
 ## 6. Delivery
 
 **Core command:** `squadrant rules match --project <p> --event prompt|read|session --path <f> --text <t> --session <id>`
