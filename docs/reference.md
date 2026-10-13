@@ -540,7 +540,7 @@ Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squa
 
 `squadrant knowledge ingest <kb> [--dry-run] [--json] [--local-model] [--max-sections n]` checks every `sources.yaml` entry (mtime + size first, sha only on a difference), converts changed files with `markitdown` into `<kb>/.converted/` (md/txt pass through; a failed conversion is reported and skipped), and prints the section plan for the [`knowledge-extract`](../plugin/skills/knowledge-extract/SKILL.md) skill. `--dry-run` prints the token estimate and writes nothing. `knowledgeBases.<kb>.maxSectionsPerPass` (default 40) caps one pass; the remainder carries to the next. A `sensitivity: local-only` source is skipped unless `--local-model` is passed.
 
-`sources.yaml` entries take `path`, `priority` (`company` > `project` > `agent`), optional `domain`, `sensitivity: local-only`, and `review: required`. A `review: required` source never makes live rules on its own: `apply` sends its new candidates to `_proposed/` (see Classify below). `squadrant knowledge sources <kb>` shows the flag.
+`sources.yaml` entries take `path`, `priority` (`company` > `project` > `agent`), optional `domain`, `sensitivity: local-only`, and `review: required`. A `review: required` source never makes live rules on its own: `apply` sends its new candidates to `_proposed/` (see Classify below). The gate is decided by the entry's `path` glob, not by files on disk, so a renamed or deleted raw file stays gated. `apply` and `review` refuse to run while `sources.yaml` has errors (a dropped entry would silently remove the gate). `squadrant knowledge sources <kb>` shows the flag.
 
 The skill's output is a candidates JSON file. `squadrant knowledge apply <kb> candidates.json` does the mechanical rest:
 

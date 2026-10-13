@@ -121,12 +121,16 @@ export function expandSource(kbRoot: string, entry: KnowledgeSourceEntry): strin
   return walkFiles(root).filter((f) => re.test(f.split(path.sep).join("/"))).sort();
 }
 
-/** Refs of every file listed by a `review: required` source entry. */
-export function gatedRefs(kbRoot: string, sources: KnowledgeSourceEntry[]): Set<string> {
-  const out = new Set<string>();
-  for (const e of sources) if (e.review === "required") for (const f of expandSource(kbRoot, e)) out.add(refFor(kbRoot, f));
-  return out;
+/** Does a sources.yaml entry cover this rule source ref? Works after the files are gone (the glob is matched, not expanded). */
+export function sourceCovers(kbRoot: string, entry: KnowledgeSourceEntry, ref: string): boolean {
+  const abs = path.resolve(kbRoot, expandHome(entry.path));
+  const file = fileForRef(kbRoot, ref);
+  return /[*?]/.test(entry.path) ? globToRegExp(abs.split(path.sep).join("/")).test(file.split(path.sep).join("/")) : abs === file;
 }
+
+/** Is this ref under a `review: required` entry? Decided by the entry's path, so a renamed or deleted file stays gated. */
+export const isGatedRef = (kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): boolean =>
+  sources.some((e) => e.review === "required" && sourceCovers(kbRoot, e, ref));
 
 const sha256 = (file: string) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 

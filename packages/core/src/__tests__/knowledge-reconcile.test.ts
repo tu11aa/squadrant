@@ -307,6 +307,24 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     expect(fs.existsSync(f)).toBe(true);
   });
 
+  it("a gated proposal stays gated after its raw file is gone, for approve, reject and merge-into", async () => {
+    await ingest();
+    applyV1();
+    const pdir = path.join(kbRulesDir(cfg, "t"), "_proposed");
+    const f = path.join(pdir, fs.readdirSync(pdir).find((n) => n.endsWith(".md"))!);
+    const m = matter(fs.readFileSync(f, "utf8"));
+    fs.writeFileSync(f, matter.stringify(m.content, { ...m.data, conflictsWith: [] }));
+    const key = path.basename(f, ".md");
+    fs.rmSync(path.join(kbRoot(), "raw"), { recursive: true });
+    const gated = ctx({ sources: [{ path: "raw/**", priority: "company", review: "required" }] });
+    for (const decision of ["approve", "reject", "merge-into:biz.rounding.vnd-half-up"] as const) {
+      const r = applyDecisions({ decisions: [{ item: key, decision, confidence: 0.95, justification: "ok" }] }, gated);
+      expect(r.applied).toEqual([]);
+      expect(r.escalated[0].reasons).toContain("review-required");
+      expect(fs.existsSync(f)).toBe(true);
+    }
+  });
+
   it("low confidence and reviewer flags escalate", async () => {
     await ingest();
     applyV1();

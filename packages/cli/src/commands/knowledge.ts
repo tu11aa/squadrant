@@ -198,10 +198,12 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  // A broken errata.yaml must stop apply: ignoring it would let stale passages go live.
+  // A broken errata.yaml or sources.yaml must stop apply: ignoring it would let stale passages go live, or drop a review: required gate.
   const { errata, errors } = loadErrata(kbDir(cfg, kb));
   if (errors.length) throw new Error(`errata.yaml: ${errors.join("; ")}`);
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources: loadSources(kbDir(cfg, kb)).sources, errata });
+  const { sources, errors: sourceErrors } = loadSources(kbDir(cfg, kb));
+  if (sourceErrors.length) throw new Error(`sources.yaml: ${sourceErrors.join("; ")}`);
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources, errata });
 }
 
 knowledgeCommand
@@ -240,7 +242,9 @@ function reviewContext(kb: string, configPath: string): ReviewContext {
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return { cfg, kb, sources: loadSources(kbDir(cfg, kb)).sources, projects };
+  const { sources, errors } = loadSources(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`sources.yaml: ${errors.join("; ")}`);
+  return { cfg, kb, sources, projects };
 }
 
 export function runKnowledgeReviewApply(kb: string, file: string, configPath = DEFAULT_CONFIG_PATH) {
