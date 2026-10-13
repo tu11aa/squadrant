@@ -57,6 +57,15 @@ describe("apply with errata (spec 2026-10-13 §4.2)", () => {
     expect(loadRulesDir(rulesDir, "kb:t").rules.map((x) => x.id)).toEqual(["biz.invoice.issue-window"]);
   });
 
+  it("an erratum hit on a review: required source is rejected, not sent to _proposed/", async () => {
+    await ingest();
+    const gated = [{ path: "raw/**", priority: "agent" as const, review: "required" as const }];
+    const r = applyCandidates(billing(cands()), { kb: "t", kbRoot: kb, rulesDir, sources: gated, errata: [erratum(VND)] });
+    expect(r.rejected.map((x) => x.reason)).toEqual(["errata:bill.stale"]);
+    expect(r.proposed.some((p) => p.startsWith("biz.rounding.vnd-half-up@"))).toBe(false);
+    expect(fs.readdirSync(path.join(rulesDir, PROPOSED_DIR)).some((n) => n.startsWith("biz.rounding.vnd-half-up@"))).toBe(false);
+  });
+
   it("a rejection is not counted as a dropped candidate for the docling flag", async () => {
     await ingest();
     const r = apply(billing(cands()), [erratum(VND)]);
@@ -108,6 +117,16 @@ describe("validate and REPORT.md with errata", () => {
     const r = validateKb({ rulesDir, kbRoot: kb, sources: [], errata: [{ id: "a.err", ref: "raw/a.md", quote: "alpha beta", reason: "stale" }] });
     expect(r.ok).toBe(true);
     expect(r.checks).toContainEqual({ level: "warn", message: expect.stringContaining("coding.a: grounded in erratum a.err") });
+  });
+
+  it("no warning once the rule is retired or stale", () => {
+    fs.writeFileSync(path.join(kb, "raw", "a.md"), "alpha beta gamma");
+    fs.mkdirSync(path.join(rulesDir, "coding"), { recursive: true });
+    for (const status of ["retired", "stale"]) {
+      fs.writeFileSync(path.join(rulesDir, "coding", "a.md"), rule("beta").replace("status: active", `status: ${status}`));
+      const r = validateKb({ rulesDir, kbRoot: kb, sources: [], errata: [{ id: "a.err", ref: "raw/a.md", quote: "alpha beta", reason: "stale" }] });
+      expect(r.checks.some((c) => c.level === "warn")).toBe(false);
+    }
   });
 
   it("no warning when the rule's quote is elsewhere in the file", () => {

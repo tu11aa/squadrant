@@ -127,8 +127,8 @@ export function validateKb(opts: {
       const span = findQuote(hay, src.quote);
       if (span) {
         verified++;
-        const live = !path.relative(opts.rulesDir, r.file).split(path.sep).includes(PROPOSED_DIR);
-        const err = live ? (opts.errata ?? []).find((e) => e.ref === src.ref && ((o) => !!o && spansOverlap(o, span))(findQuote(hay, e.quote))) : undefined;
+        const active = r.status === "active" && !path.relative(opts.rulesDir, r.file).split(path.sep).includes(PROPOSED_DIR);
+        const err = active ? (opts.errata ?? []).find((e) => e.ref === src.ref && ((o) => !!o && spansOverlap(o, span))(findQuote(hay, e.quote))) : undefined;
         if (err) checks.push({ level: "warn", message: `${r.id}: grounded in erratum ${err.id} (${err.reason}); re-check or retire it (${r.file})` });
       }
       else if (convertible) notIngested++;

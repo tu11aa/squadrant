@@ -128,12 +128,9 @@ export function sourceCovers(kbRoot: string, entry: KnowledgeSourceEntry, ref: s
   return /[*?]/.test(entry.path) ? globToRegExp(abs.split(path.sep).join("/")).test(file.split(path.sep).join("/")) : abs === file;
 }
 
-/** Refs of every file listed by a `review: required` source entry. */
-export function gatedRefs(kbRoot: string, sources: KnowledgeSourceEntry[]): Set<string> {
-  const out = new Set<string>();
-  for (const e of sources) if (e.review === "required") for (const f of expandSource(kbRoot, e)) out.add(refFor(kbRoot, f));
-  return out;
-}
+/** Is this ref under a `review: required` entry? Decided by the entry's path, so a renamed or deleted file stays gated. */
+export const isGatedRef = (kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): boolean =>
+  sources.some((e) => e.review === "required" && sourceCovers(kbRoot, e, ref));
 
 const sha256 = (file: string) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 

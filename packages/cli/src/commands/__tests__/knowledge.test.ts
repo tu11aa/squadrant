@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
-import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply, runKnowledgeSourcesRemove } from "../knowledge.js";
+import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply, runKnowledgeSourcesRemove, runKnowledgeReviewApply } from "../knowledge.js";
 import { kbRulesDir, kbDir, readIndex } from "@squadrant/core";
 
 let dir: string;
@@ -192,5 +192,17 @@ describe("knowledge sources --remove", () => {
     expect(runKnowledgeSources("saitex", cfgPath).sources.map((s) => s.path)).toEqual(["raw/**"]);
     expect(fs.readFileSync(file, "utf8")).toContain("status: stale");
     expect(runKnowledgeValidate("saitex", cfgPath).ok).toBe(true);
+  });
+});
+
+describe("sources.yaml errors stop apply and review", () => {
+  it("a bad review value does not silently drop the gate", () => {
+    const r = runKnowledgeInit("saitex", cfgPath);
+    fs.writeFileSync(path.join(r.dir, "sources.yaml"), "- path: raw/**\n  priority: agent\n  review: yes\n");
+    const cand = path.join(dir, "c.json");
+    fs.writeFileSync(cand, JSON.stringify({ candidates: [] }));
+    expect(() => runKnowledgeApply("saitex", cand, cfgPath)).toThrow(/sources\.yaml.*review/);
+    fs.writeFileSync(cand, JSON.stringify({ decisions: [] }));
+    expect(() => runKnowledgeReviewApply("saitex", cand, cfgPath)).toThrow(/sources\.yaml.*review/);
   });
 });

@@ -10,7 +10,7 @@ import {
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
 import { computeAnchor } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { convertedFile, gatedRefs, readState } from "./ingest.js";
+import { convertedFile, isGatedRef, readState } from "./ingest.js";
 import { orphanedErrata } from "./errata.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
@@ -129,7 +129,6 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
   const totals = new Map<string, { total: number; dropped: number }>();
   const touched = new Set<string>();
   const complete = new Set(input.complete ?? []);
-  const gated = gatedRefs(kbRoot, opts.sources ?? []);
 
   for (const cand of input.candidates) {
     const problems = validateCandidate(cand);
@@ -186,7 +185,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       continue;
     }
 
-    if (!target && contradicted.length === 0 && !gated.has(cand.source)) {
+    if (!target && contradicted.length === 0 && !isGatedRef(kbRoot, opts.sources ?? [], cand.source)) {
       const fm: Fm = {
         id, domain: cand.domain, modality: cand.modality, status: "active",
         ...(cand.triggers ? { triggers: cand.triggers } : {}),
