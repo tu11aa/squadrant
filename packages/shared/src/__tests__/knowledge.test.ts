@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import {
-  validateRuleFrontmatter, validateSourceEntry, subscribedKbs, resolveKbConfig,
+  validateRuleFrontmatter, validateSourceEntry, validateErratum, subscribedKbs, resolveKbConfig,
   DEFAULT_DOMAIN_CAP, getDefaultConfig, kbPath, kbConfigs, projectRulesHome,
 } from "../index.js";
 import type { SquadrantConfig } from "../index.js";
@@ -110,5 +110,17 @@ describe("group inheritance + KB config (#936)", () => {
     expect(projectRulesHome(c, "flooros")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex", "projects", "flooros", "rules"));
     expect(projectRulesHome(c, "docs")).toBe(path.join("/d", "docs", "rules"));
     expect(projectRulesHome(c, "lone")).toBeUndefined();
+  });
+});
+
+describe("validateErratum", () => {
+  const ok = { id: "onb.pre-commit-tools", ref: "raw/a.html", quote: "Runs ESLint.", reason: "The hook runs lint-staged only." };
+  it("accepts the required fields and the optional ones", () => {
+    expect(validateErratum(ok)).toEqual([]);
+    expect(validateErratum({ ...ok, evidence: [".husky/pre-commit:35"], checked: "flooros@a951f69", by: "operator", at: "2026-10-08", decision: "dec.x" })).toEqual([]);
+  });
+  it("rejects a bad id and missing fields", () => {
+    expect(validateErratum({ ...ok, id: "Bad Id", quote: "" })).toEqual(expect.arrayContaining([expect.stringContaining("id"), expect.stringContaining("quote")]));
+    expect(validateErratum({ ...ok, evidence: "x" })).toEqual([expect.stringContaining("evidence")]);
   });
 });

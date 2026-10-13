@@ -547,10 +547,13 @@ The skill's output is a candidates JSON file. `squadrant knowledge apply <kb> ca
 | Step | Behaviour |
 |---|---|
 | Quote check | Normalised (whitespace, line-break hyphenation, smart quotes/dashes, ligatures); not found ⇒ rejected as `ungrounded` (audit `item.rejected`). The char `offset` in `.converted/` is recorded. >20% of a source dropped ⇒ "try docling". |
+| Errata | `<kb>/errata.yaml` (optional, git-tracked, next to `sources.yaml`) lists stale passages: `id`, `ref`, `quote`, `reason`, and optional `evidence[]`, `checked`, `by`, `at`, `decision`. A candidate whose grounded span overlaps an erratum span in the same `ref` is **rejected** as `errata:<id>` (audit `item.rejected`). It never goes live and never goes to `_proposed/`, so a settled question is not asked again. An erratum whose quote is no longer found in the source is reported as **orphaned** (the raw file changed): printed by `apply` and listed under "Errata to re-check" in `REPORT.md`. An invalid `errata.yaml` stops `apply`. No file means no change. |
 | Id matching | A quote overlapping an existing rule's `offset` in the same source takes that rule's id, whatever the model chose. |
 | Classify | new ⇒ `active` (from a `review: required` source ⇒ `_proposed/` instead; a same-meaning candidate for a live rule still merges there); same id + same meaning ⇒ source added, `offset` updated; meaning changed or contradiction ⇒ `shared/rules/_proposed/<id>@<sha>.md` (old stays active); source rule missing from a fully swept source ⇒ `stale`. A second change while a proposal is pending renames the older one to `.superseded` (audit `item.superseded`). |
 | Anchors | For each project subscribed to the KB, the repo is searched for `keywords + expanded`; matching `paths`/`symbols` go in `anchors.<project>`. |
 | Index | `index.json` is recompiled. |
+
+`squadrant knowledge validate <kb>` also loads `errata.yaml` (invalid entries fail) and warns on any live rule whose source quote overlaps an erratum passage, which catches errata added after the rule went live.
 
 `item.proposed`, `item.superseded`, `item.applied` and `item.rejected` go to the audit log. Re-running on unchanged sources changes no ids and no files. A pending proposal shares its id with the live rule by design; `validate` and `reindex` do not count that as a duplicate.
 

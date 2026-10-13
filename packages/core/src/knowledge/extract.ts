@@ -5,12 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import {
-  RULE_ID_RE, RULE_MODALITIES, type KnowledgeSourceEntry, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
+  RULE_ID_RE, RULE_MODALITIES, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
 import { computeAnchor } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
 import { convertedFile, gatedRefs, readState } from "./ingest.js";
+import { orphanedErrata } from "./errata.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
 import { findQuote, needsDocling, normalizeText, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
@@ -46,6 +47,8 @@ export interface ApplyOptions {
   projects?: { name: string; root: string }[];
   /** sources.yaml entries; a candidate from a `review: required` source never goes live on its own. */
   sources?: KnowledgeSourceEntry[];
+  /** errata.yaml entries; a candidate overlapping one is rejected as `errata:<id>` (never sent to `_proposed/`). */
+  errata?: KnowledgeErratum[];
   audit?: AuditSink;
   now?: () => Date;
 }
@@ -60,6 +63,8 @@ export interface ApplyResult {
   doclingFlags: { ref: string; dropped: number; total: number }[];
   /** id the model chose → id actually used, when the offset matcher overrode it. */
   idOverrides: { from: string; to: string }[];
+  /** Errata whose quote is no longer found in a source that had candidates: the raw file changed, re-check them. */
+  orphanedErrata: { id: string; ref: string }[];
 }
 
 type Fm = RuleFrontmatter & Record<string, unknown>;
@@ -107,7 +112,7 @@ function upsertSource(fm: Fm, src: RuleSourceRef): boolean {
 
 export function applyCandidates(input: CandidateFile, opts: ApplyOptions): ApplyResult {
   const { kb, kbRoot, rulesDir } = opts;
-  const res: ApplyResult = { created: [], merged: [], proposed: [], superseded: [], stale: [], rejected: [], doclingFlags: [], idOverrides: [] };
+  const res: ApplyResult = { created: [], merged: [], proposed: [], superseded: [], stale: [], rejected: [], doclingFlags: [], idOverrides: [], orphanedErrata: [] };
   const events: AuditEvent[] = [];
   // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
   const ev = (event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}) =>
@@ -147,6 +152,15 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
       tot.dropped++;
       res.rejected.push({ id: cand.id, source: cand.source, reason: "ungrounded" });
       ev("item.rejected", cand.id, { reason: "ungrounded" });
+      continue;
+    }
+
+    // Errata (spec 2026-10-13 §4.2): a stale passage is rejected, never proposed, so a settled question is not re-asked.
+    const hit = (opts.errata ?? []).find((e) => e.ref === cand.source && ((o) => !!o && spansOverlap(o, offset))(findQuote(hay!, e.quote)));
+    if (hit) {
+      tot.total--; // not a conversion problem: keep it out of the docling ratio
+      res.rejected.push({ id: cand.id, source: cand.source, reason: `errata:${hit.id}` });
+      ev("item.rejected", cand.id, { reason: `errata:${hit.id}` });
       continue;
     }
 
@@ -238,6 +252,8 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     const text = serialize(w.fm, w.body);
     if (!fs.existsSync(w.file) || fs.readFileSync(w.file, "utf8") !== text) fs.writeFileSync(w.file, text);
   }
+
+  res.orphanedErrata = orphanedErrata(kbRoot, opts.errata ?? [], totals.keys());
 
   for (const [ref, t] of totals) if (needsDocling(t.dropped, t.total)) res.doclingFlags.push({ ref, ...t });
 

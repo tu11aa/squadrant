@@ -10,7 +10,7 @@ import {
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
-  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup,
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
   ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
@@ -123,9 +123,13 @@ export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PAT
   const cfg = loadConfig(configPath);
   if (!fs.existsSync(kbDir(cfg, kb))) throw new Error(`Knowledge base '${kb}' does not exist. Run: squadrant knowledge init ${kb}`);
   const { sources, errors } = loadSources(kbDir(cfg, kb));
-  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, domains: kbConfigs(cfg)[kb]?.domains });
-  const srcChecks = errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` }));
-  return { checks: [...srcChecks, ...res.checks], ok: res.ok && !errors.length };
+  const { errata, errors: errataErrors } = loadErrata(kbDir(cfg, kb));
+  const res = validateKb({ rulesDir: kbRulesDir(cfg, kb), kbRoot: kbDir(cfg, kb), sources, errata, domains: kbConfigs(cfg)[kb]?.domains });
+  const srcChecks = [
+    ...errors.map((e) => ({ level: "fail" as const, message: `sources.yaml: ${e}` })),
+    ...errataErrors.map((e) => ({ level: "fail" as const, message: `errata.yaml: ${e}` })),
+  ];
+  return { checks: [...srcChecks, ...res.checks], ok: res.ok && !srcChecks.length };
 }
 
 knowledgeCommand
@@ -194,7 +198,10 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources: loadSources(kbDir(cfg, kb)).sources });
+  // A broken errata.yaml must stop apply: ignoring it would let stale passages go live.
+  const { errata, errors } = loadErrata(kbDir(cfg, kb));
+  if (errors.length) throw new Error(`errata.yaml: ${errors.join("; ")}`);
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources: loadSources(kbDir(cfg, kb)).sources, errata });
 }
 
 knowledgeCommand
@@ -222,6 +229,7 @@ knowledgeCommand
     console.log(`created ${r.created.length}, merged ${r.merged.length}, proposed ${r.proposed.length}, superseded ${r.superseded.length}, stale ${r.stale.length}, rejected ${r.rejected.length}`);
     for (const x of r.rejected) console.log(chalk.red(`  ✘ ${x.id} (${x.source}): ${x.reason}`));
     for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
+    for (const e of r.orphanedErrata) console.log(chalk.yellow(`  errata ${e.id} (${e.ref}): quote no longer found; the raw file changed, re-check it`));
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
 

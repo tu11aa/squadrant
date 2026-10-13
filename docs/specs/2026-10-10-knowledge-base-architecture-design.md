@@ -75,7 +75,7 @@ _user  (profile)                    ← every session, every project
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
   <company>/        (git)               # e.g. saitex, lumilabs
-    sources.yaml  raw/  .converted/     # rules spec §3, now under the KB root
+    sources.yaml  errata.yaml  raw/  .converted/   # rules spec §3, now under the KB root; errata.yaml: lifecycle spec §4
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
     REPORT.md                           # latest reconcile + scores, per KB

@@ -51,6 +51,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 ```
 ~/squadrant/kb/<kb>/               # its own git repo
   sources.yaml            # trusted sources: the only way in
+  errata.yaml             # optional: stale source passages `apply` rejects (2026-10-13 lifecycle spec §4); never produces rules
   raw/                    # operator drops files here; free-form subfolders
   .converted/<src>.md     # markitdown output + .sha (regenerable cache)
   shared/rules/<domain>/<id>.md   # coding | system | business | security | … (applies to every project in the KB)
@@ -133,13 +134,15 @@ conflictsWith: []
    - **First-ingest cost guard:** `knowledge reconcile --dry-run` prints a token estimate, and `maxSectionsPerPass` bounds a single pass. Any remainder carries over to the next pass.
 4. **Verify mechanically** (code, no LLM):
    - **Quote verification.** Normalize both sides: collapse whitespace, rejoin line-break hyphenation, fold smart quotes and dashes, expand ligatures, then search. If the quote is not found, the candidate is dropped and `rule.rejected.ungrounded` is logged. If the quote is found, its `offset` is recorded. When more than 20% of a source's candidates are dropped, `REPORT.md` flags the source as "conversion likely poor, try docling".
+   - **Errata.** A grounded candidate whose span overlaps an `errata.yaml` entry for the same source is rejected as `errata:<id>` (logged `item.rejected`). It is not sent to `_proposed/`. An erratum whose quote is no longer found is reported as orphaned. `knowledge validate` warns on a live rule grounded in an erratum passage.
    - The schema is valid, the modality is in the allowed set, and the globs parse.
    - **Mechanical id matching overrides the LLM.** A candidate whose quote span overlaps an existing rule's `offset` in the same source takes that rule's id. This prevents id churn from LLM non-determinism.
 5. **Classify the change:**
 
    | Candidate | Result |
    |---|---|
-   | New rule | `active` |
+   | Overlaps an `errata.yaml` passage | rejected, `errata:<id>` (no rule, no proposal) |
+   | New rule | `active` (from a `review: required` source: `_proposed/`) |
    | Same id, same meaning | add the source to `sources[]` and update `offset` |
    | Same id, **meaning changed** | written to `_proposed/<id>@<sha>.md`; the old version stays active (D5) |
    | A previous rule from this source is missing | `stale`, still delivered until retired |
