@@ -97,7 +97,7 @@ knowledgeCommand
     const { sources, errors } = runKnowledgeSources(kb);
     if (!sources.length && !errors.length) console.log("(no sources — edit sources.yaml)");
     for (const s of sources) {
-      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}`);
+      console.log(`  ${s.priority.padEnd(8)} ${s.path}${s.domain ? `  [${s.domain}]` : ""}${s.sensitivity ? chalk.yellow("  local-only") : ""}${s.review ? chalk.cyan("  review: required") : ""}`);
     }
     for (const e of errors) console.log(chalk.red(`  ✘ ${e}`));
     if (errors.length) process.exitCode = 1;
@@ -194,7 +194,7 @@ export function runKnowledgeApply(kb: string, candidatesFile: string, configPath
   const projects = Object.entries(cfg.projects)
     .filter(([name, pc]) => pc.path && subscribedKbs(cfg, name).includes(kb))
     .map(([name, pc]) => ({ name, root: resolveHome(pc.path) }));
-  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects });
+  return applyCandidates(input, { kb, kbRoot: kbDir(cfg, kb), rulesDir: kbRulesDir(cfg, kb), projects, sources: loadSources(kbDir(cfg, kb)).sources });
 }
 
 knowledgeCommand

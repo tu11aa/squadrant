@@ -292,6 +292,21 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     expect(loadKbRules(cfg, "t").rules.find((r) => r.id === "biz.invoice.issue-window-30d")!.status).toBe("active");
   });
 
+  it("a gated proposal at confidence 0.95 still escalates and is never approved by the reviewer", async () => {
+    await ingest();
+    applyV1();
+    const pdir = path.join(kbRulesDir(cfg, "t"), "_proposed");
+    const f = path.join(pdir, fs.readdirSync(pdir).find((n) => n.endsWith(".md"))!);
+    const m = matter(fs.readFileSync(f, "utf8"));
+    fs.writeFileSync(f, matter.stringify(m.content, { ...m.data, conflictsWith: [] }));
+    const key = path.basename(f, ".md");
+    const gated = ctx({ sources: [{ path: "raw/**", priority: "company", review: "required" }] });
+    const r = applyDecisions({ decisions: [{ item: key, decision: "approve", confidence: 0.95, justification: "ok" }] }, gated);
+    expect(r.applied).toEqual([]);
+    expect(r.escalated[0].reasons).toEqual(["review-required"]);
+    expect(fs.existsSync(f)).toBe(true);
+  });
+
   it("low confidence and reviewer flags escalate", async () => {
     await ingest();
     applyV1();

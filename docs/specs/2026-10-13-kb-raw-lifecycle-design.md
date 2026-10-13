@@ -1,6 +1,6 @@
 # KB Raw → Rules Lifecycle: Design
 
-- **Status:** draft for operator review (2026-10-13). Plan only, no code yet.
+- **Status:** decided 2026-10-13 (§12). Phase 1 built; see the phase table in §8.
 - **Epic:** #893 · **Builds on:** [`2026-10-07-rules-kb-design.md`](2026-10-07-rules-kb-design.md) (D3, D4, §4, §5) and [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) (K10, §4.1)
 - **Diagram:** [`docs/diagrams/2026-10-13-kb-raw-lifecycle.html`](../diagrams/2026-10-13-kb-raw-lifecycle.html)
 
@@ -190,14 +190,14 @@ The replay is a short script a crew writes and runs once. It is not a new CLI co
 
 ## 8. Phases
 
-| # | Phase | Repo | Effort |
-|---|---|---|---|
-| 0 | This spec + diagram | squadrant | done |
-| 1 | `review: required`: shared type + validator, `apply` routing, always-escalate in `review`, tests, docs | squadrant | S, ~0.5 day |
-| 2 | `errata.yaml`: shared type + validator, loader, `apply` filter, orphan report (apply + `REPORT.md`), `validate` check, tests, docs | squadrant | M, ~1 day |
-| 3 | `knowledge sources <kb> --remove <path> [--dry-run]`: strip refs, mark source-less rules stale, tests, docs | squadrant | S, ~0.5 day |
-| 4 | saitex migration: write `errata.yaml` (from 26 errata + 26 corrected rows) and about 10–15 decision records; edit `sources.yaml`; replay the branch; extract decisions; operator review | saitex KB | crew ~1 day + operator ~1–2 h for ~70 escalations |
-| 5 | `--remove` extracted, archive the folder, delete the branch, `validate` green | saitex KB | ~0.5 h |
+| # | Phase | Repo | Effort | Status |
+|---|---|---|---|---|
+| 0 | This spec + diagram | squadrant | - | done |
+| 1 | `review: required`: shared type + validator, `apply` routing, always-escalate in `review`, tests, docs | squadrant | S, ~0.5 day | **built** (feat/kb-review-required) |
+| 2 | `errata.yaml`: shared type + validator, loader, `apply` filter, orphan report (apply + `REPORT.md`), `validate` check, tests, docs | squadrant | M, ~1 day | planned |
+| 3 | `knowledge sources <kb> --remove <path> [--dry-run]`: strip refs, mark source-less rules stale, tests, docs | squadrant | S, ~0.5 day | planned |
+| 4 | saitex migration: write `errata.yaml` (from 26 errata + 26 corrected rows) and about 10–15 decision records; edit `sources.yaml`; replay the branch; extract decisions; operator review | saitex KB | crew ~1 day + operator ~1–2 h for ~70 escalations | planned |
+| 5 | `--remove` extracted, archive the folder, delete the branch, `validate` green | saitex KB | ~0.5 h | planned |
 
 **Ops hazard (Phase 4):** never check out a review branch in the live KB checkout. Inject serves whatever is checked out (10-12 incident, ~10 min). Use a separate worktree or clone.
 

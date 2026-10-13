@@ -121,6 +121,13 @@ export function expandSource(kbRoot: string, entry: KnowledgeSourceEntry): strin
   return walkFiles(root).filter((f) => re.test(f.split(path.sep).join("/"))).sort();
 }
 
+/** Refs of every file listed by a `review: required` source entry. */
+export function gatedRefs(kbRoot: string, sources: KnowledgeSourceEntry[]): Set<string> {
+  const out = new Set<string>();
+  for (const e of sources) if (e.review === "required") for (const f of expandSource(kbRoot, e)) out.add(refFor(kbRoot, f));
+  return out;
+}
+
 const sha256 = (file: string) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 /** mtime+size first; the sha is computed only when one of them differs (spec §4 step 1). */
