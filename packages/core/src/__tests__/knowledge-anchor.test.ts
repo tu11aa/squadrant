@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { computeAnchor } from "../knowledge/index.js";
+import { computeAnchor, type AnchorCache } from "../knowledge/index.js";
 
 const TRIG = { keywords: ["secret"], expanded: [] as string[] };
 let repo: string;
@@ -43,5 +43,36 @@ describe("computeAnchor file listing", () => {
     put("venv/lib/leak.py");
     put("__pycache__/leak.py");
     expect(computeAnchor(repo, TRIG)!.paths).toEqual(["src/real.py"]);
+  });
+
+  it("anchors files past the old 5000 mark (cap is high and injectable)", () => {
+    git("init", "-q");
+    for (let i = 0; i < 12; i++) put(`a${String(i).padStart(2, "0")}.py`, "x = 1\n");
+    put("zz/late.py");
+    git("add", ".");
+    expect(computeAnchor(repo, TRIG, undefined, 5)).toBeNull(); // 5-file cap cuts the late file
+    expect(computeAnchor(repo, TRIG, undefined, 100)!.paths).toEqual(["zz/late.py"]);
+  });
+
+  it("warns once when the safety cap truncates", () => {
+    git("init", "-q");
+    for (let i = 0; i < 6; i++) put(`f${i}.py`);
+    git("add", ".");
+    const warns: string[] = [];
+    const orig = console.warn; console.warn = (m: string) => { warns.push(m); };
+    try { computeAnchor(repo, TRIG, undefined, 3); } finally { console.warn = orig; }
+    expect(warns).toHaveLength(1);
+  });
+
+  it("a shared cache yields the same anchors as uncached", () => {
+    git("init", "-q");
+    put("src/a.py", "def secret_a(): pass\n");
+    put("src/b.py", "token = 1\n");
+    git("add", ".");
+    const cache: AnchorCache = new Map();
+    const t1 = { keywords: ["secret"], expanded: [] as string[] };
+    const t2 = { keywords: ["token"], expanded: ["secret"] };
+    for (const t of [t1, t2]) expect(computeAnchor(repo, t, cache)).toEqual(computeAnchor(repo, t));
+    expect(cache.size).toBe(1);
   });
 });

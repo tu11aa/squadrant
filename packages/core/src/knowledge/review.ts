@@ -11,7 +11,7 @@ import {
   type RuleFrontmatter, type RuleModality, type SquadrantConfig,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
-import { computeAnchor } from "./anchor.js";
+import { computeAnchor, type AnchorCache } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
 import { expandSource, fileForRef, isGatedRef, refFor } from "./ingest.js";
 import { kbDir, kbRulesDir, PROPOSED_DIR } from "./paths.js";
@@ -133,6 +133,8 @@ export interface ReviewContext {
   git?: GitSeam;
   /** project → repo root, for code-vs-doc and anchoring. */
   projects?: { name: string; root: string }[];
+  /** Repo scans shared across one review pass; set by applyDecisions, never persisted. */
+  anchorCache?: AnchorCache;
 }
 const nowOf = (c: ReviewContext) => c.now?.() ?? new Date();
 
@@ -180,7 +182,7 @@ function reindex(c: ReviewContext): void {
 
 function anchorsFor(c: ReviewContext, fm: RuleFrontmatter): RuleAnchors | undefined {
   const anchors: RuleAnchors = { ...(fm.anchors ?? {}) };
-  for (const p of c.projects ?? []) { const a = computeAnchor(p.root, fm.triggers); if (a) anchors[p.name] = a; }
+  for (const p of c.projects ?? []) { const a = computeAnchor(p.root, fm.triggers, c.anchorCache); if (a) anchors[p.name] = a; }
   return Object.keys(anchors).length ? anchors : undefined;
 }
 
@@ -278,6 +280,7 @@ export interface ReviewResult {
 }
 
 export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResult {
+  c = { ...c, anchorCache: new Map() };
   const now = nowOf(c);
   const kbRoot = kbDir(c.cfg, c.kb);
   const threshold = reconcileConfig(c.cfg, c.kb).autoApproveConfidence;

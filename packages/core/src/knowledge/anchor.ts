@@ -7,7 +7,8 @@ import type { RuleAnchors, RuleTriggers } from "@squadrant/shared";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", ".worktrees", ".planning", ".converted", ".venv", "venv", "__pycache__"]);
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt", ".swift", ".rb", ".php", ".cs", ".sol", ".sql", ".md"]);
-const MAX_FILES = 5000;
+// Safety cap only: with a git file list the scan is bounded; memory is bounded by MAX_FILE_BYTES per file.
+const MAX_FILES = 20000;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_PATHS = 5;
 const MAX_SYMBOLS = 10;
@@ -24,13 +25,13 @@ function gitFiles(root: string): string[] | null {
   } catch { return null; }
 }
 
-function* repoFiles(root: string): Generator<string> {
+function* repoFiles(root: string, maxFiles: number): Generator<string> {
   let count = 0;
   const listed = gitFiles(root);
   if (listed) {
     for (const rel of listed) {
       if (!CODE_EXT.has(path.extname(rel)) || rel.split("/").slice(0, -1).some((d) => SKIP_DIRS.has(d))) continue;
-      if (++count > MAX_FILES) return;
+      if (++count > maxFiles) { console.warn(`anchor: ${root} has more than ${maxFiles} code files; anchors cover only the first ${maxFiles}`); return; }
       yield path.join(root, rel);
     }
     return;
@@ -43,33 +44,45 @@ function* repoFiles(root: string): Generator<string> {
     for (const ent of ents) {
       if (ent.isDirectory()) { if (!SKIP_DIRS.has(ent.name)) stack.push(path.join(dir, ent.name)); }
       else if (ent.isFile() && CODE_EXT.has(path.extname(ent.name))) {
-        if (++count > MAX_FILES) return;
+        if (++count > maxFiles) { console.warn(`anchor: ${root} has more than ${maxFiles} code files; anchors cover only the first ${maxFiles}`); return; }
         yield path.join(dir, ent.name);
       }
     }
   }
 }
 
-/** Deterministic: top files by distinct-term hits (ties by path), plus symbols whose names contain a term. */
-export function computeAnchor(repoRoot: string, triggers?: RuleTriggers): RuleAnchors[string] | null {
-  const terms = anchorTerms(triggers);
-  if (!terms.length || !fs.existsSync(repoRoot)) return null;
-  const hits: { rel: string; score: number; symbols: string[] }[] = [];
-  for (const file of repoFiles(repoRoot)) {
-    let text: string;
+interface ScannedFile { rel: string; text: string; hay: string }
+/** Per-root scan results. Create one per apply/review pass and drop it after — never keep it process-wide. */
+export type AnchorCache = Map<string, ScannedFile[]>;
+
+function scanRepo(root: string, maxFiles: number): ScannedFile[] {
+  const out: ScannedFile[] = [];
+  for (const file of repoFiles(root, maxFiles)) {
     try {
       if (fs.statSync(file).size > MAX_FILE_BYTES) continue;
-      text = fs.readFileSync(file, "utf8");
+      const text = fs.readFileSync(file, "utf8");
+      const rel = path.relative(root, file).split(path.sep).join("/");
+      out.push({ rel, text, hay: `${path.relative(root, file)}\n${text}`.toLowerCase() });
     } catch { continue; }
-    const hay = `${path.relative(repoRoot, file)}\n${text}`.toLowerCase();
+  }
+  return out;
+}
+
+/** Deterministic: top files by distinct-term hits (ties by path), plus symbols whose names contain a term. */
+export function computeAnchor(repoRoot: string, triggers?: RuleTriggers, cache?: AnchorCache, maxFiles = MAX_FILES): RuleAnchors[string] | null {
+  const terms = anchorTerms(triggers);
+  if (!terms.length || !fs.existsSync(repoRoot)) return null;
+  let files = cache?.get(repoRoot);
+  if (!files) { files = scanRepo(repoRoot, maxFiles); cache?.set(repoRoot, files); }
+  const hits: { rel: string; score: number; text: string }[] = [];
+  for (const { rel, text, hay } of files) {
     const score = terms.filter((t) => hay.includes(t)).length;
     if (!score) continue;
-    const symbols = [...text.matchAll(SYMBOL_RE)].map((m) => m[1]).filter((s) => terms.some((t) => s.toLowerCase().includes(t)));
-    hits.push({ rel: path.relative(repoRoot, file).split(path.sep).join("/"), score, symbols });
+    hits.push({ rel, score, text });
   }
   if (!hits.length) return null;
   hits.sort((a, b) => b.score - a.score || (a.rel < b.rel ? -1 : 1));
   const top = hits.slice(0, MAX_PATHS);
-  const symbols = [...new Set(top.flatMap((h) => h.symbols))].sort().slice(0, MAX_SYMBOLS);
+  const symbols = [...new Set(top.flatMap((h) => [...h.text.matchAll(SYMBOL_RE)].map((m) => m[1]).filter((s) => terms.some((t) => s.toLowerCase().includes(t)))))].sort().slice(0, MAX_SYMBOLS);
   return { paths: top.map((h) => h.rel).sort(), ...(symbols.length ? { symbols } : {}) };
 }
