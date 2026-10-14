@@ -8,9 +8,9 @@ import {
   RULE_ID_RE, RULE_MODALITIES, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
-import { computeAnchor } from "./anchor.js";
+import { computeAnchor, type AnchorCache } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { convertedFile, isGatedRef, readState } from "./ingest.js";
+import { convertedFile, isGatedRef, readState, refCanon } from "./ingest.js";
 import { orphanedErrata } from "./errata.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
@@ -102,8 +102,8 @@ const sameMeaning = (existing: Work, c: Candidate): boolean => {
   return c.meaning === "same";
 };
 
-function upsertSource(fm: Fm, src: RuleSourceRef): boolean {
-  const i = fm.sources.findIndex((s) => s.ref === src.ref);
+function upsertSource(fm: Fm, src: RuleSourceRef, canon: (ref: string) => string): boolean {
+  const i = fm.sources.findIndex((s) => canon(s.ref) === canon(src.ref));
   if (i < 0) { fm.sources.push(src); return true; }
   if (JSON.stringify(fm.sources[i]) === JSON.stringify(src)) return false;
   fm.sources[i] = src;
@@ -128,7 +128,9 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
   const norm = new Map<string, Normalized[]>();
   const totals = new Map<string, { total: number; dropped: number }>();
   const touched = new Set<string>();
-  const complete = new Set(input.complete ?? []);
+  // One ref identity for every comparison below: a legacy `flooros/CLAUDE.md` and ingest's `~/saitex/flooros/CLAUDE.md` are the same source.
+  const canon = refCanon(kbRoot, opts.sources ?? []);
+  const complete = new Set((input.complete ?? []).map(canon));
 
   for (const cand of input.candidates) {
     const problems = validateCandidate(cand);
@@ -155,7 +157,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     }
 
     // Errata (spec 2026-10-13 §4.2): a stale passage is rejected, never proposed, so a settled question is not re-asked.
-    const hit = (opts.errata ?? []).find((e) => e.ref === cand.source && ((o) => !!o && spansOverlap(o, offset))(findQuote(hay!, e.quote)));
+    const hit = (opts.errata ?? []).find((e) => canon(e.ref) === canon(cand.source) && ((o) => !!o && spansOverlap(o, offset))(findQuote(hay!, e.quote)));
     if (hit) {
       tot.total--; // not a conversion problem: keep it out of the docling ratio
       res.rejected.push({ id: cand.id, source: cand.source, reason: `errata:${hit.id}` });
@@ -168,7 +170,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     for (const [wid, w] of work) {
       // Offsets were taken against the sha at extraction time; once the source changed, re-find the stored quote in the new text (an edited quote is gone, so keep its old span).
       const span = (s: RuleSourceRef) => (s.sha === st.sha ? s.offset : findQuote(hay!, s.quote) ?? s.offset);
-      if (w.fm.sources.some((s) => s.ref === cand.source && s.offset && ((o) => !!o && spansOverlap(o, offset))(span(s)))) { id = wid; break; }
+      if (w.fm.sources.some((s) => canon(s.ref) === canon(cand.source) && s.offset && ((o) => !!o && spansOverlap(o, offset))(span(s)))) { id = wid; break; }
     }
     if (id !== cand.id) res.idOverrides.push({ from: cand.id, to: id });
     touched.add(id);
@@ -179,7 +181,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     const bodyOf = () => cand.statement.trim() + (cand.rationale?.trim() ? `\n\n${cand.rationale.trim()}` : "");
 
     if (target && contradicted.length === 0 && sameMeaning(target, cand)) {
-      let changed = upsertSource(target.fm, src);
+      let changed = upsertSource(target.fm, src, canon);
       if (target.fm.status === "stale") { target.fm.status = "active"; changed = true; }
       if (changed) { target.dirty = true; res.merged.push(id); }
       continue;
@@ -212,7 +214,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     for (const other of fs.readdirSync(dir)) {
       if (!other.startsWith(`${id}@`) || !other.endsWith(".md") || path.join(dir, other) === file) continue;
       const old = matter(fs.readFileSync(path.join(dir, other), "utf8"));
-      if (!(old.data.sources as RuleSourceRef[] | undefined)?.some((s) => s.ref === cand.source)) continue;
+      if (!(old.data.sources as RuleSourceRef[] | undefined)?.some((s) => canon(s.ref) === canon(cand.source))) continue;
       // Source changed again while a proposal was pending: close the older one, classify this one afresh.
       fs.writeFileSync(path.join(dir, other.replace(/\.md$/, ".superseded")), matter.stringify(old.content, { ...old.data, supersededBy: path.basename(file) }));
       fs.rmSync(path.join(dir, other));
@@ -227,19 +229,20 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
   // A rule whose every source was fully re-swept this pass, but which no candidate matched, is stale.
   for (const [id, w] of work) {
     if (touched.has(id) || w.fm.status !== "active" || w.isNew) continue;
-    if (w.fm.sources.length && w.fm.sources.every((s) => complete.has(s.ref))) {
+    if (w.fm.sources.length && w.fm.sources.every((s) => complete.has(canon(s.ref)))) {
       w.fm.status = "stale";
       w.dirty = true;
       res.stale.push(id);
     }
   }
 
-  // Per-project anchors for every rule written this pass.
+  // Per-project anchors for every rule written this pass (repo scanned once per root).
+  const anchorCache: AnchorCache = new Map();
   for (const w of work.values()) {
     if (!w.dirty || !opts.projects?.length) continue;
     const anchors: RuleAnchors = { ...(w.fm.anchors ?? {}) };
     for (const p of opts.projects) {
-      const a = computeAnchor(p.root, w.fm.triggers);
+      const a = computeAnchor(p.root, w.fm.triggers, anchorCache);
       if (a) anchors[p.name] = a;
     }
     if (Object.keys(anchors).length) w.fm.anchors = anchors;
@@ -252,7 +255,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     if (!fs.existsSync(w.file) || fs.readFileSync(w.file, "utf8") !== text) fs.writeFileSync(w.file, text);
   }
 
-  res.orphanedErrata = orphanedErrata(kbRoot, opts.errata ?? [], totals.keys());
+  res.orphanedErrata = orphanedErrata(kbRoot, opts.sources ?? [], opts.errata ?? [], totals.keys());
 
   for (const [ref, t] of totals) if (needsDocling(t.dropped, t.total)) res.doclingFlags.push({ ref, ...t });
 

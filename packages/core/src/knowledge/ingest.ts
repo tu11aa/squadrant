@@ -71,7 +71,6 @@ export function refFor(kbRoot: string, file: string): string {
   const home = os.homedir();
   return file.startsWith(home + path.sep) ? `~/${path.relative(home, file).split(path.sep).join("/")}` : file;
 }
-export const fileForRef = (kbRoot: string, ref: string): string => path.resolve(kbRoot, expandHome(ref));
 
 const cacheKey = (ref: string) =>
   `${ref.replace(/[^A-Za-z0-9._-]+/g, "_")}.${crypto.createHash("sha1").update(ref).digest("hex").slice(0, 6)}`;
@@ -121,16 +120,52 @@ export function expandSource(kbRoot: string, entry: KnowledgeSourceEntry): strin
   return walkFiles(root).filter((f) => re.test(f.split(path.sep).join("/"))).sort();
 }
 
-/** Does a sources.yaml entry cover this rule source ref? Works after the files are gone (the glob is matched, not expanded). */
-export function sourceCovers(kbRoot: string, entry: KnowledgeSourceEntry, ref: string): boolean {
-  const abs = path.resolve(kbRoot, expandHome(entry.path));
-  const file = fileForRef(kbRoot, ref);
-  return /[*?]/.test(entry.path) ? globToRegExp(abs.split(path.sep).join("/")).test(file.split(path.sep).join("/")) : abs === file;
+/** Files a rule ref may name, in lookup order: as written (`~/`, absolute, else KB-relative), then a relative ref under
+ *  every ancestor of a declared source path (legacy refs like `kb/extracted/x.md` were written relative to `~/saitex`). */
+export function refCandidates(kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): string[] {
+  const asIs = path.resolve(kbRoot, expandHome(ref));
+  if (path.isAbsolute(expandHome(ref))) return [asIs];
+  const bases = new Set<string>([kbRoot]);
+  for (const s of sources) {
+    let d = path.resolve(kbRoot, expandHome(s.path.split(/[*?[{]/)[0]));
+    for (let i = 0; i < 6 && d !== path.dirname(d); i++) { d = path.dirname(d); bases.add(d); }
+  }
+  return [...new Set([asIs, ...[...bases].map((b) => path.join(b, ref))])];
 }
+
+const isFile = (f: string) => fs.existsSync(f) && fs.statSync(f).isFile();
+/** The ref's file on this machine, if it exists. */
+export const resolveSourceRef = (kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): string | undefined =>
+  refCandidates(kbRoot, sources, ref).find(isFile);
+
+const entryCovers = (kbRoot: string, entry: KnowledgeSourceEntry, file: string): boolean => {
+  const abs = path.resolve(kbRoot, expandHome(entry.path));
+  return /[*?]/.test(entry.path) ? globToRegExp(abs.split(path.sep).join("/")).test(file.split(path.sep).join("/")) : abs === file;
+};
+
+/** The one file a ref names: the first candidate that exists; once the files are gone, the first one a declared source covers; else the ref as written. */
+export function refPath(kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): string {
+  const cands = refCandidates(kbRoot, sources, ref);
+  return cands.find(isFile) ?? cands.find((f) => sources.some((e) => entryCovers(kbRoot, e, f))) ?? cands[0];
+}
+
+/** Ref identity: maps a ref to the form ingest writes for its file, so `kb/extracted/x.md` and `~/saitex/kb/extracted/x.md` compare equal. Memoized per call site. */
+export function refCanon(kbRoot: string, sources: KnowledgeSourceEntry[]): (ref: string) => string {
+  const memo = new Map<string, string>();
+  return (ref) => {
+    let c = memo.get(ref);
+    if (c === undefined) { c = refFor(kbRoot, refPath(kbRoot, sources, ref)); memo.set(ref, c); }
+    return c;
+  };
+}
+
+/** Does a sources.yaml entry cover this rule source ref? Works after the files are gone (the glob is matched, not expanded). */
+export const sourceCovers = (kbRoot: string, sources: KnowledgeSourceEntry[], entry: KnowledgeSourceEntry, ref: string): boolean =>
+  entryCovers(kbRoot, entry, refPath(kbRoot, sources, ref));
 
 /** Is this ref under a `review: required` entry? Decided by the entry's path, so a renamed or deleted file stays gated. */
 export const isGatedRef = (kbRoot: string, sources: KnowledgeSourceEntry[], ref: string): boolean =>
-  sources.some((e) => e.review === "required" && sourceCovers(kbRoot, e, ref));
+  sources.some((e) => e.review === "required" && sourceCovers(kbRoot, sources, e, ref));
 
 const sha256 = (file: string) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 

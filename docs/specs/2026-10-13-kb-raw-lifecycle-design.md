@@ -172,13 +172,13 @@ We do **not** write `decision` blocks or `verdicts.jsonl` lines from the log. A 
 
 1. Add `shared/decisions/**` (`priority: company`) and set `review: required` on `raw/**`.
 2. Extract `shared/decisions/**` and `raw/**` on `main`. The plan lists live rules, so the extractor reuses their ids. Same-meaning candidates **merge**: the new ref is added and the rule stays live (the branch shows this works: 44 merges).
-3. `squadrant knowledge sources <kb> --remove '~/saitex/kb/extracted/**' --dry-run` lists every rule that would lose its last source. Then without `--dry-run`: the entry leaves `sources.yaml`, every `extracted/` ref is stripped, and rules left with no source become `stale`. Stale rules are still delivered until the reviewer retires them, and retiring a `must`/`must-not` already escalates. (Built: a `stale` or `retired` rule may now have an empty `sources` list; the validator still requires one for every other status, and a source-less rule cannot be kept active: keep decisions escalate or are refused.)
+3. `squadrant knowledge sources <kb> --remove '~/saitex/kb/extracted/**' --dry-run` lists every rule that would lose its last source. The saitex rules cite these files in the legacy form `kb/extracted/x.md`; refs are matched by the file they name, not by string, so the legacy refs are covered too, also after the folder is archived (fix/kb-legacy-ref-resolution). Then without `--dry-run`: the entry leaves `sources.yaml`, every `extracted/` ref is stripped, and rules left with no source become `stale`. Stale rules are still delivered until the reviewer retires them, and retiring a `must`/`must-not` already escalates. (Built: a `stale` or `retired` rule may now have an empty `sources` list; the validator still requires one for every other status, and a source-less rule cannot be kept active: keep decisions escalate or are refused.)
 4. Expected after step 2, from §2: 48 rules re-sourced from raw or `CLAUDE.md`, 16 from decision records, 2 by hand. Target: zero rules stale at step 3.
 5. Move `~/saitex/kb/extracted/` to `~/saitex/kb/archive/extracted-2026-10-13/`, next to the existing `archive/2026-10-07/`. Nothing reads it after that.
 
 ## 7. Branch `extract/raw-2026-10-12`
 
-It forks at `12108f4`, before the operator's two 13 Oct commits (`6127047` approved 8 proposals, `dd29c45` amended a testing rule). Merging it means conflicts in `verdicts.jsonl`, `index.json` and that rule. Its anchors also hold noise: `anchor.ts` walks `.venv/` (e.g. `.venv/lib/python3.13/site-packages/huggingface_hub/_oidc.py`), and one `loc` is `'ON'`.
+It forks at `12108f4`, before the operator's two 13 Oct commits (`6127047` approved 8 proposals, `dd29c45` amended a testing rule). Merging it means conflicts in `verdicts.jsonl`, `index.json` and that rule. Its anchors also hold noise: `anchor.ts` walked `.venv/` (fixed in 0.28.1: it now lists files via `git ls-files -co --exclude-standard`, with the walk as non-git fallback) (e.g. `.venv/lib/python3.13/site-packages/huggingface_hub/_oidc.py`), and one `loc` is `'ON'`.
 
 | Option | Cost | Verdict |
 |---|---|---|
@@ -201,7 +201,7 @@ The replay is a short script a crew writes and runs once. It is not a new CLI co
 
 **Ops hazard (Phase 4):** never check out a review branch in the live KB checkout. Inject serves whatever is checked out (10-12 incident, ~10 min). Use a separate worktree or clone.
 
-Phases 1–3 are independent (one crew each, or one crew in sequence). Phase 4 needs 1–3 released. Not in scope: the anchor walk skipping `.venv/` and gitignored dirs (found in §7, a separate small fix).
+Phases 1–3 are independent (one crew each, or one crew in sequence). Phase 4 needs 1–3 released. Not in scope: the anchor walk skipping `.venv/` and gitignored dirs (found in §7; fixed separately in 0.28.1).
 
 ## 9. Multi-agent
 

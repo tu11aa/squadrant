@@ -1,10 +1,9 @@
 // packages/core/src/knowledge/store.ts
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import matter from "gray-matter";
 import { validateRuleFrontmatter, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleFrontmatter } from "@squadrant/shared";
-import { convertedFile, PASS_THROUGH, readState } from "./ingest.js";
+import { convertedFile, PASS_THROUGH, readState, refCanon, resolveSourceRef } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { findQuote, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
 
@@ -78,19 +77,6 @@ export function loadRulesDir(dir: string, layer: string, opts: { includeProposed
 
 export interface KbCheck { level: "ok" | "fail" | "warn" | "skip"; message: string }
 
-const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
-
-/** Candidate files for a rule's source ref: as-is, under the KB dir, or under any ancestor of a declared source path. */
-function resolveSourceRef(ref: string, kbRoot: string, sources: KnowledgeSourceEntry[]): string | undefined {
-  const bases = new Set<string>([kbRoot]);
-  for (const s of sources) {
-    let d = path.resolve(kbRoot, expandHome(s.path.split(/[*?[{]/)[0]));
-    for (let i = 0; i < 6 && d !== path.dirname(d); i++) { d = path.dirname(d); bases.add(d); }
-  }
-  const cands = [path.resolve(kbRoot, expandHome(ref)), ...[...bases].map((b) => path.join(b, ref))];
-  return cands.find((c) => fs.existsSync(c) && fs.statSync(c).isFile());
-}
-
 /** CI-style KB check: invalid files, duplicate ids, quote-in-source, optional allowed domains. */
 export function validateKb(opts: {
   rulesDir: string; kbRoot: string; sources: KnowledgeSourceEntry[]; domains?: string[]; errata?: KnowledgeErratum[];
@@ -109,14 +95,15 @@ export function validateKb(opts: {
 
   // Ground against the same text `knowledge apply` used: the converted cache when ingested, else the original.
   const cache = new Map<string, { hay: Normalized[]; convertible: boolean }>();
+  const canon = refCanon(opts.kbRoot, opts.sources);
   let verified = 0, unresolved = 0, notIngested = 0;
   for (const r of rules) {
     r.sources.forEach((src, i) => {
-      const file = resolveSourceRef(src.ref, opts.kbRoot, opts.sources);
+      const file = resolveSourceRef(opts.kbRoot, opts.sources, src.ref);
       if (!file) { unresolved++; return; }
       const key = `${src.ref}\0${file}`;
       if (!cache.has(key)) {
-        const conv = readState(opts.kbRoot, src.ref) ? convertedFile(opts.kbRoot, src.ref) : null;
+        const conv = readState(opts.kbRoot, canon(src.ref)) ? convertedFile(opts.kbRoot, canon(src.ref)) : null;
         const cached = !!conv && fs.existsSync(conv);
         cache.set(key, {
           hay: normalizedViews(fs.readFileSync(cached ? conv! : file, "utf8")),
@@ -128,7 +115,7 @@ export function validateKb(opts: {
       if (span) {
         verified++;
         const active = r.status === "active" && !path.relative(opts.rulesDir, r.file).split(path.sep).includes(PROPOSED_DIR);
-        const err = active ? (opts.errata ?? []).find((e) => e.ref === src.ref && ((o) => !!o && spansOverlap(o, span))(findQuote(hay, e.quote))) : undefined;
+        const err = active ? (opts.errata ?? []).find((e) => canon(e.ref) === canon(src.ref) && ((o) => !!o && spansOverlap(o, span))(findQuote(hay, e.quote))) : undefined;
         if (err) checks.push({ level: "warn", message: `${r.id}: grounded in erratum ${err.id} (${err.reason}); re-check or retire it (${r.file})` });
       }
       else if (convertible) notIngested++;

@@ -11,9 +11,9 @@ import {
   type RuleFrontmatter, type RuleModality, type SquadrantConfig,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
-import { computeAnchor } from "./anchor.js";
+import { computeAnchor, type AnchorCache } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
-import { expandSource, fileForRef, isGatedRef, refFor } from "./ingest.js";
+import { isGatedRef, refCanon, refPath, sourceCovers } from "./ingest.js";
 import { kbDir, kbRulesDir, PROPOSED_DIR } from "./paths.js";
 import { reconcileConfig } from "./schedule.js";
 import { loadRulesDir } from "./store.js";
@@ -133,15 +133,16 @@ export interface ReviewContext {
   git?: GitSeam;
   /** project → repo root, for code-vs-doc and anchoring. */
   projects?: { name: string; root: string }[];
+  /** Repo scans shared across one review pass; set by applyDecisions, never persisted. */
+  anchorCache?: AnchorCache;
 }
 const nowOf = (c: ReviewContext) => c.now?.() ?? new Date();
 
-/** priority of a source ref: `agent:` refs are agent; otherwise the sources.yaml entry that lists the file. */
+/** priority of a source ref: `agent:` refs are agent; otherwise the first sources.yaml entry that covers the ref. */
 export function priorityOfRef(c: ReviewContext, ref: string): Priority {
   if (ref.startsWith("agent:")) return "agent";
   const root = kbDir(c.cfg, c.kb);
-  for (const e of c.sources) for (const f of expandSource(root, e)) if (refFor(root, f) === ref) return e.priority;
-  return "project";
+  return c.sources.find((e) => sourceCovers(root, c.sources, e, ref))?.priority ?? "project";
 }
 export function priorityOfRule(c: ReviewContext, r: Pick<Rule, "sources">): Priority {
   return r.sources.map((s) => priorityOfRef(c, s.ref)).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])[0] ?? "project";
@@ -180,7 +181,7 @@ function reindex(c: ReviewContext): void {
 
 function anchorsFor(c: ReviewContext, fm: RuleFrontmatter): RuleAnchors | undefined {
   const anchors: RuleAnchors = { ...(fm.anchors ?? {}) };
-  for (const p of c.projects ?? []) { const a = computeAnchor(p.root, fm.triggers); if (a) anchors[p.name] = a; }
+  for (const p of c.projects ?? []) { const a = computeAnchor(p.root, fm.triggers, c.anchorCache); if (a) anchors[p.name] = a; }
   return Object.keys(anchors).length ? anchors : undefined;
 }
 
@@ -224,7 +225,8 @@ function mergeInto(c: ReviewContext, p: Proposal, targetId: string, live: Rule[]
   const t = live.find((r) => r.id === targetId);
   if (!t) return false;
   const tf = readFm(t.file);
-  for (const s of p.rule.sources) if (!tf.fm.sources.some((x) => x.ref === s.ref)) tf.fm.sources.push(s);
+  const canon = refCanon(kbDir(c.cfg, c.kb), c.sources);
+  for (const s of p.rule.sources) if (!tf.fm.sources.some((x) => canon(x.ref) === canon(s.ref))) tf.fm.sources.push(s);
   fs.writeFileSync(t.file, fileText(tf.fm, tf.body));
   fs.rmSync(p.rule.file);
   events.push(ev(c, "item.superseded", p.rule.id), ev(c, "item.applied", targetId));
@@ -247,7 +249,7 @@ export function evaluateCodeConflict(c: ReviewContext, rule: Rule, cc: CodeConfl
   const root = proj?.root;
   const code = root ? g.lastCommit(root, cc.files) : null;
   const kbRoot = kbDir(c.cfg, c.kb);
-  const docDates = rule.sources.map((s) => g.docDate(fileForRef(kbRoot, s.ref))).filter((d): d is string => !!d).sort();
+  const docDates = rule.sources.map((s) => g.docDate(refPath(kbRoot, c.sources, s.ref))).filter((d): d is string => !!d).sort();
   const docDate = docDates[docDates.length - 1];
   const docRev = docRevOf(rule);
   const evidence = { docRev, codeRev: code?.rev ?? "unknown", files: cc.files, project: cc.project };
@@ -278,6 +280,7 @@ export interface ReviewResult {
 }
 
 export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResult {
+  c = { ...c, anchorCache: new Map() };
   const now = nowOf(c);
   const kbRoot = kbDir(c.cfg, c.kb);
   const threshold = reconcileConfig(c.cfg, c.kb).autoApproveConfidence;
@@ -395,7 +398,8 @@ function applyPair(pd: PairDecision, c: ReviewContext, res: ReviewResult, thresh
   const reasons = [...(pd.confidence < threshold ? ["low-confidence"] : []), ...(strong(drop.modality) && drop.modality !== keep.modality ? ["retiring must/must-not"] : [])];
   if (reasons.length) { esc(reasons); return; }
   const kf = readFm(keep.file);
-  for (const s of drop.sources) if (!kf.fm.sources.some((x) => x.ref === s.ref)) kf.fm.sources.push(s);
+  const canon = refCanon(kbRoot, c.sources);
+  for (const s of drop.sources) if (!kf.fm.sources.some((x) => canon(x.ref) === canon(s.ref))) kf.fm.sources.push(s);
   kf.fm.supersedes = [...new Set([...(kf.fm.supersedes ?? []), drop.id])];
   fs.writeFileSync(keep.file, fileText(kf.fm, kf.body));
   const df = readFm(drop.file);

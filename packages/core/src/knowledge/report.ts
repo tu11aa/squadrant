@@ -6,6 +6,7 @@ import type { FullPassFindings } from "./fullpass.js";
 import { loadErrata, orphanedErrata } from "./errata.js";
 import { loadKbRules } from "./layers.js";
 import { kbDir } from "./paths.js";
+import { loadSources } from "./sources.js";
 import { readEscalations } from "./review.js";
 import { renderScoresSection, type Scores } from "./scores.js";
 import type { PassKind } from "./schedule.js";
@@ -31,7 +32,7 @@ export function renderReport(cfg: SquadrantConfig, kb: string, o: { pass: PassKi
   const info = esc.filter((e) => !e.needsYou);
   if (info.length) L.push("", `## For information (${info.length})`, "", ...info.map((e) => `- **${e.key}**: ${e.explanation}`));
   const { errata, errors: errataErrors } = loadErrata(kbDir(cfg, kb));
-  const orphans = orphanedErrata(kbDir(cfg, kb), errata);
+  const orphans = orphanedErrata(kbDir(cfg, kb), loadSources(kbDir(cfg, kb)).sources, errata);
   if (orphans.length || errataErrors.length) {
     L.push("", `## Errata to re-check (${orphans.length + errataErrors.length})`, "",
       ...orphans.map((e) => `- **${e.id}** (${e.ref}): quote no longer found in the source; the raw file changed. Re-check it in errata.yaml.`),

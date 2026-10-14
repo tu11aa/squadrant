@@ -169,11 +169,12 @@ describe("knowledge ingest / apply", () => {
       source: "raw/p.md", id: "biz.invoice.window", domain: "business", modality: "must",
       statement: "Issue invoices within 5 days.", quote: "Invoices must be issued within 5 days.",
     }] }));
+    const prevAuditDir = process.env.SQUADRANT_AUDIT_DIR;
     process.env.SQUADRANT_AUDIT_DIR = path.join(dir, "audit");
     try {
       expect(runKnowledgeApply("saitex", cand, cfgPath).created).toEqual(["biz.invoice.window"]);
       expect(runKnowledgeApply("saitex", cand, cfgPath)).toMatchObject({ created: [], merged: [] });
-    } finally { delete process.env.SQUADRANT_AUDIT_DIR; }
+    } finally { if (prevAuditDir === undefined) delete process.env.SQUADRANT_AUDIT_DIR; else process.env.SQUADRANT_AUDIT_DIR = prevAuditDir; }
     expect(readIndex(kbRoot, "saitex").index?.rules.map((r) => r.id)).toEqual(["biz.invoice.window"]);
     expect((await runKnowledgeIngest("saitex", {}, cfgPath)).sources).toEqual([]);
   });

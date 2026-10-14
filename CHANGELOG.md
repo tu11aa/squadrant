@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-14
+
+Fixes found while migrating the saitex KB (lifecycle Phase 4). PRs #970-#972.
+
+### Fixed
+
+- **Legacy rule refs are recognised everywhere.** Rules that cite a source in the older migrate-relative form (`kb/extracted/x.md`, `flooros/CLAUDE.md`) now match their `~/...` entry in `sources.yaml` in `knowledge sources --remove`, `review: required` gating, `knowledge apply` (id-match, merge, errata) and `knowledge review` merges and priority. Before, `--remove` matched 0 rules on such a KB. Matching still works after the source files are deleted (#970).
+- **Rule anchors ignore gitignored files.** Anchors list files from `git ls-files` (tracked + untracked-not-ignored), so `.venv/` and other ignored paths no longer show up. The repo is scanned once per apply/review pass, and the file cap went from 5000 to 20000 with a warning instead of silent truncation, so large repos are no longer cut off (#971).
+- **Tests no longer write to the real knowledge audit log.** A vitest setup file points `SQUADRANT_AUDIT_DIR` at a per-worker temp dir (#972).
+
 ## [0.28.0] - 2026-10-13
 
 The rules KB now owns the whole path from raw documents to rules (spec `docs/specs/2026-10-13-kb-raw-lifecycle-design.md`, diagram `docs/diagrams/2026-10-13-kb-raw-lifecycle.html`), and `knowledge stats` can finally tell whether rules are used. PRs #963-#967.
