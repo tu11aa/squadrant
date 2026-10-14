@@ -81,7 +81,7 @@ export function removeSource(kbRoot: string, rulesDir: string, entryPath: string
   const res: RemoveSourceResult = { dryRun: !!opts.dryRun, entryRemoved: true, stripped: [], stale: [] };
   const writes: { file: string; text: string }[] = [];
   for (const rule of loadRulesDir(rulesDir, "kb").rules) {
-    const kept = rule.sources.filter((s) => !sourceCovers(kbRoot, entry, s.ref));
+    const kept = rule.sources.filter((s) => !sourceCovers(kbRoot, sources, entry, s.ref));
     if (kept.length === rule.sources.length) continue;
     res.stripped.push(rule.id);
     const parsed = matter(fs.readFileSync(rule.file, "utf8"), { engines: { javascript: () => { throw new Error("only YAML front matter is allowed"); } } });
