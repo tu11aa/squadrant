@@ -29,7 +29,7 @@ function* repoFiles(root: string): Generator<string> {
   const listed = gitFiles(root);
   if (listed) {
     for (const rel of listed) {
-      if (!CODE_EXT.has(path.extname(rel))) continue;
+      if (!CODE_EXT.has(path.extname(rel)) || rel.split("/").slice(0, -1).some((d) => SKIP_DIRS.has(d))) continue;
       if (++count > MAX_FILES) return;
       yield path.join(root, rel);
     }

@@ -27,6 +27,16 @@ describe("computeAnchor file listing", () => {
     expect(computeAnchor(repo, TRIG)!.paths).toEqual(["src/tracked.py", "src/untracked.py"]);
   });
 
+  it("in a git repo, drops tracked files under SKIP_DIRS segments (parity with the walk)", () => {
+    git("init", "-q");
+    put("src/real.py");
+    put("dist/bundle.js");
+    put("packages/a/node_modules/x/leak.js");
+    put("build/out.py");
+    git("add", ".");
+    expect(computeAnchor(repo, TRIG)!.paths).toEqual(["src/real.py"]);
+  });
+
   it("falls back to the walk (skipping .venv/venv/__pycache__) when not a git repo", () => {
     put("src/real.py");
     put(".venv/lib/leak.py");
