@@ -8,7 +8,7 @@ import {
   RULE_ID_RE, RULE_MODALITIES, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleAnchors, type RuleFrontmatter, type RuleModality, type RuleSourceRef, type RuleTriggers,
 } from "@squadrant/shared";
 import { appendAudit, type AuditEvent, type AuditSink } from "./audit.js";
-import { computeAnchor } from "./anchor.js";
+import { computeAnchor, type AnchorCache } from "./anchor.js";
 import { compileIndex, writeIndex } from "./index-file.js";
 import { convertedFile, isGatedRef, readState, refCanon } from "./ingest.js";
 import { orphanedErrata } from "./errata.js";
@@ -236,12 +236,13 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     }
   }
 
-  // Per-project anchors for every rule written this pass.
+  // Per-project anchors for every rule written this pass (repo scanned once per root).
+  const anchorCache: AnchorCache = new Map();
   for (const w of work.values()) {
     if (!w.dirty || !opts.projects?.length) continue;
     const anchors: RuleAnchors = { ...(w.fm.anchors ?? {}) };
     for (const p of opts.projects) {
-      const a = computeAnchor(p.root, w.fm.triggers);
+      const a = computeAnchor(p.root, w.fm.triggers, anchorCache);
       if (a) anchors[p.name] = a;
     }
     if (Object.keys(anchors).length) w.fm.anchors = anchors;

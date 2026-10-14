@@ -178,7 +178,7 @@ We do **not** write `decision` blocks or `verdicts.jsonl` lines from the log. A 
 
 ## 7. Branch `extract/raw-2026-10-12`
 
-It forks at `12108f4`, before the operator's two 13 Oct commits (`6127047` approved 8 proposals, `dd29c45` amended a testing rule). Merging it means conflicts in `verdicts.jsonl`, `index.json` and that rule. Its anchors also hold noise: `anchor.ts` walks `.venv/` (e.g. `.venv/lib/python3.13/site-packages/huggingface_hub/_oidc.py`), and one `loc` is `'ON'`.
+It forks at `12108f4`, before the operator's two 13 Oct commits (`6127047` approved 8 proposals, `dd29c45` amended a testing rule). Merging it means conflicts in `verdicts.jsonl`, `index.json` and that rule. Its anchors also hold noise: `anchor.ts` walked `.venv/` (fixed in 0.28.1: it now lists files via `git ls-files -co --exclude-standard`, with the walk as non-git fallback) (e.g. `.venv/lib/python3.13/site-packages/huggingface_hub/_oidc.py`), and one `loc` is `'ON'`.
 
 | Option | Cost | Verdict |
 |---|---|---|
@@ -201,7 +201,7 @@ The replay is a short script a crew writes and runs once. It is not a new CLI co
 
 **Ops hazard (Phase 4):** never check out a review branch in the live KB checkout. Inject serves whatever is checked out (10-12 incident, ~10 min). Use a separate worktree or clone.
 
-Phases 1–3 are independent (one crew each, or one crew in sequence). Phase 4 needs 1–3 released. Not in scope: the anchor walk skipping `.venv/` and gitignored dirs (found in §7, a separate small fix).
+Phases 1–3 are independent (one crew each, or one crew in sequence). Phase 4 needs 1–3 released. Not in scope: the anchor walk skipping `.venv/` and gitignored dirs (found in §7; fixed separately in 0.28.1).
 
 ## 9. Multi-agent
 
