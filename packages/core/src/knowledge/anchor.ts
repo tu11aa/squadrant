@@ -1,10 +1,11 @@
 // packages/core/src/knowledge/anchor.ts — per-project anchors (rules spec §4 step 6, #897).
 // Searches a project's repo for a rule's keywords + expanded terms and records where they occur.
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import type { RuleAnchors, RuleTriggers } from "@squadrant/shared";
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", ".worktrees", ".planning", ".converted"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", ".worktrees", ".planning", ".converted", ".venv", "venv", "__pycache__"]);
 const CODE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt", ".swift", ".rb", ".php", ".cs", ".sol", ".sql", ".md"]);
 const MAX_FILES = 5000;
 const MAX_FILE_BYTES = 256 * 1024;
@@ -15,8 +16,25 @@ const SYMBOL_RE = /\b(?:function|class|interface|type|const|let|var|enum|def|fn|
 export const anchorTerms = (t?: RuleTriggers): string[] =>
   [...new Set([...(t?.keywords ?? []), ...(t?.expanded ?? [])].map((s) => s.toLowerCase().trim()).filter((s) => s.length >= 3))].sort();
 
+/** Tracked + untracked-but-not-ignored files, or null when root isn't a git repo / git fails. */
+function gitFiles(root: string): string[] | null {
+  try {
+    const out = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+    return out.split("\0").filter(Boolean).sort();
+  } catch { return null; }
+}
+
 function* repoFiles(root: string): Generator<string> {
   let count = 0;
+  const listed = gitFiles(root);
+  if (listed) {
+    for (const rel of listed) {
+      if (!CODE_EXT.has(path.extname(rel))) continue;
+      if (++count > MAX_FILES) return;
+      yield path.join(root, rel);
+    }
+    return;
+  }
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop()!;
