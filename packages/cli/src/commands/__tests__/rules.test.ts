@@ -13,6 +13,7 @@ let cfgPath: string;
 const rule = (id: string, status = "active", extra = "") =>
   `---\nid: ${id}\ndomain: business\nmodality: must\nstatus: ${status}\n${extra}sources:\n  - { ref: raw/Policy-v3.pdf, sha: s, loc: "p.12", quote: q }\n---\nVND amounts are rounded half-up.\n`;
 
+const baseAuditDir = process.env.SQUADRANT_AUDIT_DIR; // hermetic dir from test/setup-env.ts
 beforeEach(() => {
   process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-rules-"));
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-rules-"));
@@ -29,7 +30,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   fs.rmSync(process.env.SQUADRANT_AUDIT_DIR!, { recursive: true, force: true });
-  delete process.env.SQUADRANT_AUDIT_DIR;
+  if (baseAuditDir === undefined) delete process.env.SQUADRANT_AUDIT_DIR; else process.env.SQUADRANT_AUDIT_DIR = baseAuditDir;
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

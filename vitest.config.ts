@@ -11,6 +11,7 @@ export default defineConfig({
     // stack and exhaust RAM. Capping cockpit to 2 forks keeps its footprint
     // ~200 MB while the suite is small/fast (~3s). teardownTimeout guards
     // against a hung worker wedging shutdown.
+    setupFiles: ["test/setup-env.ts"],
     pool: "forks",
     poolOptions: { forks: { minForks: 1, maxForks: 2 } },
     teardownTimeout: 10_000,
