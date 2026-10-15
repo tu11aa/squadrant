@@ -179,7 +179,7 @@ export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath 
 
 knowledgeCommand
   .command("migrate")
-  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report)")
+  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report). Also part of: squadrant migrate kb")
   .option("--dry-run", "show what would move")
   .action((opts: { dryRun?: boolean }) => {
     const report = runKnowledgeMigrate(opts);
