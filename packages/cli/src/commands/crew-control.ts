@@ -3,14 +3,13 @@ import { Command } from "commander";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest, scanCitations, readBranchOnlyMessages, type AuditSink, type CiteText } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ProjectUsage } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
-import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
+import { DAEMON_SOCK_PATH, TERMINAL_STATES, stateRoot, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
@@ -190,7 +189,7 @@ export function buildSignalRequest(
     taskId?: string;
     /** Explicit override (codex); falls back to SQUADRANT_CREW_PROJECT env. */
     project?: string;
-    /** Injectable for tests; defaults to writing under ~/.config/squadrant/state/_results. */
+    /** Injectable for tests; defaults to writing under stateRoot()/_results. */
     writeResult?: (id: string, payload: string) => string;
   },
 ): { kind: "event"; project: string; event: ControlEvent } {
@@ -223,7 +222,7 @@ export function buildSignalRequest(
 
 /** Default writer used by the `signal done` subcommand. Tests inject their own. */
 function defaultWriteResult(id: string, payload: string): string {
-  const dir = join(homedir(), ".config", "squadrant", "state", "_results");
+  const dir = join(stateRoot(), "_results");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${id}.txt`);
   writeFileSync(file, payload);

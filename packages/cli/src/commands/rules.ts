@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, DEFAULT_CONFIG_PATH, CONFIG_DIR, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
+  loadConfig, DEFAULT_CONFIG_PATH, stateRoot, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
 import {
   resolveProjectRules, searchRules, computeRulesInjection, withBudget, INJECT_BUDGET_MS, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
@@ -154,7 +154,7 @@ export async function runRulesMatch(
     const cfg = loadConfig(configPath);
     return computeRulesInjection({
       event: mapped as "session-start", cfg, env, cwd, project: opts.project, audit: opts.audit, agent: opts.agent,
-      stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+      stateRoot: opts.stateRoot ?? stateRoot(),
       payload: { session_id: opts.session, cwd, prompt: opts.text, tool_name: "Read", tool_input: { file_path: opts.path } },
     });
   }, INJECT_BUDGET_MS);

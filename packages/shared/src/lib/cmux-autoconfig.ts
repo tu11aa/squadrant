@@ -11,15 +11,15 @@
 // CLI or the daemon-start re-check — renders the result. squadrant NEVER restarts
 // cmux for the user (that disrupts live sessions); we write config and prompt.
 import { existsSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensureSocketAutomation } from "./cmux-config.js";
 import { probeCmuxDaemonDirect, type ProbeVerdict } from "./cmux-probe.js";
 import { readConfigFileSync, writeConfigFileSync } from "./config-io.js";
+import { stateRoot } from "./state-paths.js";
 
 /** One-time prompt marker, alongside the daemon state. */
 export function defaultStatePath(): string {
-  return join(homedir(), ".config", "squadrant", "state", "cmux-autoconfig.json");
+  return join(stateRoot(), "cmux-autoconfig.json");
 }
 
 export interface AutoConfigResult {

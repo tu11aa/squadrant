@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH, stateRoot,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
@@ -254,7 +254,7 @@ knowledgeCommand
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
 
-const defaultStateRoot = () => path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+const defaultStateRoot = () => stateRoot();
 
 function reviewContext(kb: string, configPath: string): ReviewContext {
   const cfg = requireKb(kb, configPath);

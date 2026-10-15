@@ -4,8 +4,8 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig, kbConfigs, workspacePath, type SquadrantConfig } from "@squadrant/shared";
-import { readIndex, kbDir, findLegacyKbs, findLegacyOverlays } from "@squadrant/core";
+import { loadConfig, kbConfigs, workspacePath, stateRoot, legacyStateDir, stateSeedMarkerPath, daemonLogPath, type SquadrantConfig } from "@squadrant/shared";
+import { readIndex, kbDir, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
@@ -234,6 +234,34 @@ export function knowledgeDoctorLines(
   return lines;
 }
 
+/**
+ * #983 6a: state moved from ~/.config/squadrant to stateRoot(). Warn (never
+ * FAIL) while the legacy dir still holds data, and while launchd still writes
+ * the daemon log to the pre-move path (only a re-bootstrap moves it).
+ */
+export function stateDoctorLines(o: {
+  root: string; legacy: string; loadedLogPath: string | null; desiredLogPath: string;
+}): { label: string; ok: boolean; hint?: string; warnOnly: true }[] {
+  const lines: { label: string; ok: boolean; hint?: string; warnOnly: true }[] = [];
+  let legacyHasData = false;
+  try { legacyHasData = fs.readdirSync(o.legacy).length > 0; } catch { /* absent */ }
+  if (legacyHasData && path.resolve(o.legacy) !== path.resolve(o.root)) {
+    lines.push({
+      label: `legacy state dir still holds data: ${o.legacy}`, ok: false, warnOnly: true,
+      hint: fs.existsSync(stateSeedMarkerPath(o.root))
+        ? `already copied to ${o.root}; nothing reads it now. Kept as a rollback copy, never deleted`
+        : `not copied yet. Restart the daemon (squadrant heal daemon) to copy it into ${o.root}`,
+    });
+  }
+  if (o.loadedLogPath !== null && o.loadedLogPath !== o.desiredLogPath) {
+    lines.push({
+      label: `daemon log still written to ${o.loadedLogPath}`, ok: false, warnOnly: true,
+      hint: `run: squadrant heal daemon (reloads the launchd plist; the log moves to ${o.desiredLogPath})`,
+    });
+  }
+  return lines;
+}
+
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
   .action(async () => {
@@ -354,6 +382,12 @@ export const doctorCommand = new Command("doctor")
         else results.push(check(l.label, l.ok, l.hint));
       }
     } catch { /* no config yet — the config check below reports it */ }
+
+    const stateLines = stateDoctorLines({
+      root: stateRoot(), legacy: legacyStateDir(),
+      loadedLogPath: loadedDaemonLogPath(`gui/${process.getuid?.() ?? 0}/${LABEL}`), desiredLogPath: daemonLogPath(),
+    });
+    for (const l of stateLines) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
 
     results.push(
       check(

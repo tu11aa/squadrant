@@ -6,8 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { loadConfig, resolveHome, DAEMON_SOCK_PATH, CONFIG_DIR, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, resolveHome, DAEMON_SOCK_PATH, stateRoot as defaultStateRoot, type SquadrantConfig } from "@squadrant/shared";
 import { sendRequest } from "./protocol.js";
 import { readCaptainAddress } from "./captain-record.js";
 import { captainSocketPath } from "./captain-channel.js";
@@ -45,7 +44,7 @@ export async function probeCaptainChannel(
     socketAccepts?: (socketPath: string) => Promise<boolean>;
   } = {},
 ): Promise<boolean> {
-  const stateRoot = opts.stateRoot ?? join(CONFIG_DIR, "state");
+  const stateRoot = opts.stateRoot ?? defaultStateRoot();
   const addr = readCaptainAddress(stateRoot, project);
   if (!addr) return false;
   if (addr.agent === "opencode") {

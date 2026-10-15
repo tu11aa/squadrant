@@ -10,6 +10,9 @@ const dirs = {
   SQUADRANT_AUDIT_DIR: "squadrant-test-audit-",
   SQUADRANT_WORKSPACE_DIR: "squadrant-test-workspace-",
   SQUADRANT_ARCHIVE_DIR: "squadrant-test-archive-",
+  // #983 6a: the daemon state root (~/.local/state/squadrant): mailboxes, task
+  // store, results and sessions.json must never land in the live state.
+  SQUADRANT_STATE_DIR: "squadrant-test-state-",
 };
 const made: string[] = [];
 for (const [env, prefix] of Object.entries(dirs)) {

@@ -7,12 +7,11 @@
 // independently try/caught with a short timeout — a thrown or hung probe yields
 // `unknown` and NEVER propagates, so one bad probe can never crash a tick.
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import type { SquadrantConfig } from "@squadrant/shared";
 import { loadConfig } from "@squadrant/shared";
-import { resolveCmuxBin } from "@squadrant/shared";
+import { resolveCmuxBin, sessionsPath, legacySessionsPath, resolveReadPath } from "@squadrant/shared";
 
 export type ProbeState = "alive" | "stale" | "gone" | "unknown";
 
@@ -199,8 +198,6 @@ export async function runExternalProbes(
 
 // ── Default real-I/O runners (dashboard process; not unit-tested) ──────────────
 
-const SESSIONS_PATH = join(homedir(), ".config", "squadrant", "sessions.json");
-
 /** Resolve a bare binary name against the PATH dirs (dependency-free `which`). */
 function onPath(cli: string): boolean {
   const dirs = (process.env.PATH ?? "").split(":").filter(Boolean);
@@ -209,7 +206,8 @@ function onPath(cli: string): boolean {
 
 /** Distinct templateHash values recorded across all workspaces in sessions.json. */
 function readSessionsHashes(): string[] {
-  const raw = JSON.parse(readFileSync(SESSIONS_PATH, "utf-8")) as {
+  // #983 6a: moved to stateRoot(); read the legacy file until launch rewrites it.
+  const raw = JSON.parse(readFileSync(resolveReadPath(sessionsPath(), legacySessionsPath()), "utf-8")) as {
     workspaces?: Record<string, { templateHash?: string }>;
   };
   const hashes = Object.values(raw.workspaces ?? {})

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
+import { loadConfig, stateRoot as defaultStateRoot, sessionsPath, legacySessionsPath, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
@@ -40,7 +40,6 @@ export type { StartupDeliveryOptions } from "@squadrant/core";
 
 const CMUX_APP = "/Applications/cmux.app";
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
-const SESSIONS_PATH = path.join(os.homedir(), ".config", "squadrant", "sessions.json");
 
 // #697: an off-by-default feature must not alter the launch command or touch
 // the filesystem. Only wire the captain messaging socket when captain
@@ -242,7 +241,7 @@ export const launchCommand = new Command("launch")
         ? runtimes.forProject(projectName, config)
         : runtimes.global(config);
 
-      const stateRoot = path.join(os.homedir(), ".config", "squadrant", "state");
+      const stateRoot = defaultStateRoot();
       const isOpencodeCaptain = role === "captain" && agentName === "opencode" && !!projectName;
 
       if (isOpencodeCaptain && !isOpencodeCaptainDir(cwd)) {
@@ -322,7 +321,8 @@ export const launchCommand = new Command("launch")
           cwd,
           forceFreshOverride: opts.fresh,
           keepOverride: opts.keep,
-          sessionsPath: SESSIONS_PATH,
+          sessionsPath: sessionsPath(),
+          legacySessionsPath: legacySessionsPath(),
           templatesDir: TEMPLATES_DIR,
           agentCmdFactory: (forceFresh) => {
             const captainChannelEnabled = shouldWireCaptainChannel(agentName, config);
@@ -474,7 +474,7 @@ export const launchCommand = new Command("launch")
       // Interactive: pick captains, then launch in parallel.
       ensureCmuxReady(!!opts.headless);
 
-      const sessions = loadSessions(SESSIONS_PATH);
+      const sessions = loadSessions(sessionsPath(), legacySessionsPath());
       const entries: CaptainEntry[] = Object.entries(config.projects).map(([name, proj]) => ({
         projectName: name,
         captainName: proj.captainName,

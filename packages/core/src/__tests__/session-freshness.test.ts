@@ -144,3 +144,23 @@ describe("recordSession", () => {
     expect(sessions.workspaces["ws-new"]).toBeDefined();
   });
 });
+
+// ── #983 6a: sessions.json moved to stateRoot(); legacy is read-only ──────────
+
+describe("legacy sessions.json fallback (#983 6a)", () => {
+  it("reads the legacy file until the new one exists; writes land in the new path only", () => {
+    const legacy = path.join(tmpDir, "legacy-sessions.json");
+    const today = new Date().toISOString().slice(0, 10);
+    const hash = computeTemplateHash("captain", templatesDir);
+    saveSessions(legacy, { workspaces: { "cap-a": { lastLaunched: today, templateHash: hash } } });
+    const opts = { sessionsPath, legacySessionsPath: legacy, templatesDir };
+
+    expect(loadSessions(sessionsPath, legacy).workspaces["cap-a"]).toBeDefined();
+    expect(shouldStartFresh("cap-a", "captain", opts)).toEqual({ fresh: false });
+
+    recordSession("cap-b", "captain", opts);
+    const written = loadSessions(sessionsPath);
+    expect(Object.keys(written.workspaces).sort()).toEqual(["cap-a", "cap-b"]);
+    expect(Object.keys(loadSessions(legacy).workspaces)).toEqual(["cap-a"]);
+  });
+});

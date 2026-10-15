@@ -13,12 +13,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stateRoot } from "@squadrant/shared";
 
 const hoisted = vi.hoisted(() => ({ home: "", roleAgent: "opencode" }));
 
-// Redirect the home directory to a throwaway temp dir so the real
-// writePerCrewOpencodeConfig (unchanged, no fs mocking) writes there instead of
-// the developer's ~/.config/squadrant/state.
+// Redirect the home directory to a throwaway temp dir so nothing under the
+// developer's real home is touched. The real writePerCrewOpencodeConfig (no fs
+// mocking) writes under stateRoot() — the SQUADRANT_STATE_DIR temp dir from
+// test/setup-env.ts.
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
   const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -128,8 +130,7 @@ describe("opencode captain permission auto-approval (CLI edge)", () => {
 
   it("prefixes OPENCODE_CONFIG pointing at an allow-all captain config", async () => {
     const cmd = await runLaunchAndGetCmd();
-    const expectedPath = join(
-      hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json",
+    const expectedPath = join(stateRoot(), "demo", "captain", "opencode.json",
     );
     expect(cmd).toBe(`OPENCODE_CONFIG=${expectedPath} opencode --port 61099`);
 

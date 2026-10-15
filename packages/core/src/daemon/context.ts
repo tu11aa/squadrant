@@ -3,13 +3,12 @@
 // Kept here (not in squadrantd.ts) so daemon/* modules can import this file
 // without creating a circular dependency on the host entrypoint.
 // squadrantd.ts re-exports SquadrantdOpts and defaultIsPidAlive for backward compat.
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn as realSpawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { createStore } from "../store.js";
 import { createDaemon } from "./reduce.js";
-import { loadConfig, DAEMON_SOCK_PATH } from "@squadrant/shared";
+import { loadConfig, DAEMON_SOCK_PATH, stateRoot as defaultStateRoot } from "@squadrant/shared";
 import type { TaskRecord, ControlEvent, Gate, AutoConfigResult } from "@squadrant/shared";
 import type { Socket } from "node:net";
 import type { PaneRef } from "@squadrant/shared";
@@ -184,7 +183,7 @@ export interface DaemonContext {
  *  Late-bound fields are zero-initialized and MUST be set by start.ts
  *  (or squadrantd.ts for drivers) before any event, timer, or socket fires. */
 export function buildContext(opts: SquadrantdOpts): DaemonContext {
-  const stateRoot = opts.stateRoot ?? join(homedir(), ".config", "squadrant", "state");
+  const stateRoot = opts.stateRoot ?? defaultStateRoot();
   const sockPath = opts.sockPath ?? DAEMON_SOCK_PATH;
   const store = createStore(stateRoot);
   const bootedAt = Date.now();

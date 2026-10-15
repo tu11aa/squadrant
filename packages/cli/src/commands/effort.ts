@@ -9,6 +9,7 @@ import {
   loadProjectOverride,
   saveProjectOverride,
   DEFAULT_CONFIG_PATH,
+  stateRoot as defaultStateRoot,
 } from "@squadrant/shared";
 import type { SquadrantConfig, Effort } from "@squadrant/shared";
 import { appendCaptainMessage } from "@squadrant/core";
@@ -176,7 +177,7 @@ export const effortCommand = new Command("effort")
       const config = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       const driver = registry.global(config);
-      const stateRoot = path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+      const stateRoot = defaultStateRoot();
       const append = (project: string, text: string) =>
         appendCaptainMessage({ stateRoot, project, text, source: "daemon" });
       await notifyCaptainsOfEffort(effort, config, driver, process.cwd(), append, options.project);

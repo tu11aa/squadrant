@@ -9,11 +9,9 @@
 // and are intentionally out of scope for this command.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { stateRoot as defaultStateRoot } from "@squadrant/shared";
 import type { AgentSession } from "../drivers/types.js";
 
-/** Squadrant's state root — mirrors the CLI/daemon default. */
-export const SQUADRANT_STATE_DIR = join(homedir(), ".config", "squadrant", "state");
 
 interface CaptainRecord {
   agent?: string;
@@ -23,14 +21,14 @@ interface CaptainRecord {
 }
 
 export interface OpencodeSessionListDeps {
-  /** Defaults to SQUADRANT_STATE_DIR. Injectable for tests. */
+  /** Defaults to stateRoot(). Injectable for tests. */
   stateRoot?: string;
   readdir?: (dir: string) => string[];
   readFile?: (path: string) => string;
 }
 
 export function listOpencodeSessions(deps: OpencodeSessionListDeps = {}): AgentSession[] {
-  const stateRoot = deps.stateRoot ?? SQUADRANT_STATE_DIR;
+  const stateRoot = deps.stateRoot ?? defaultStateRoot();
   const readdir = deps.readdir ?? ((d: string) => readdirSync(d));
   const readFile = deps.readFile ?? ((p: string) => readFileSync(p, "utf8"));
 

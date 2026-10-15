@@ -206,6 +206,8 @@ export interface LaunchOneOpts {
    */
   keepOverride?: boolean;
   sessionsPath: string;
+  /** #983 6a: pre-move sessions.json, read until `sessionsPath` exists. */
+  legacySessionsPath?: string;
   templatesDir: string;
   /**
    * CLI-edge factory: called with the resolved forceFresh flag so the CLI can
@@ -237,6 +239,7 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
   if (!forceFresh) {
     const auto = shouldStartFresh(opts.workspaceName, opts.role, {
       sessionsPath: opts.sessionsPath,
+      legacySessionsPath: opts.legacySessionsPath,
       templatesDir: opts.templatesDir,
     });
     if (auto.fresh && opts.keepOverride && auto.reason !== "first launch") {
@@ -256,6 +259,7 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
   const agentCmd = opts.role === "captain" ? `SQUADRANT_ROLE=captain ${builtCmd}` : builtCmd;
   recordSession(opts.workspaceName, opts.role, {
     sessionsPath: opts.sessionsPath,
+    legacySessionsPath: opts.legacySessionsPath,
     templatesDir: opts.templatesDir,
   });
 

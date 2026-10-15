@@ -1,8 +1,8 @@
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_CONFIG_PATH, resolveNotify, loadProjectOverride } from "@squadrant/shared";
+import { loadConfig, DEFAULT_CONFIG_PATH, resolveNotify, loadProjectOverride, stateRoot } from "@squadrant/shared";
 import type { NotifyConfig, TelegramConfig, CrewTier } from "@squadrant/shared";
 import {
   createTelegramClient,
@@ -45,9 +45,9 @@ export {
   runTelegramPostSetup,
 };
 
-/** Daemon state root (mirrors buildContext): ~/.config/squadrant/state. */
+/** Daemon state root (mirrors buildContext). */
 function defaultStateRoot(): string {
-  return join(dirname(DEFAULT_CONFIG_PATH), "state");
+  return stateRoot();
 }
 
 // Reads a secret from stdin, printing "*" per character. The caller must print
