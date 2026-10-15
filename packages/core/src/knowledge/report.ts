@@ -44,7 +44,7 @@ export function renderReport(cfg: SquadrantConfig, kb: string, o: { pass: PassKi
       `- Surfaced: ${Object.values(usage.surfaced).reduce((a, b) => a + b, 0)} times across ${Object.keys(usage.surfaced).length} rules.`,
       `- Never surfaced (re-check triggers): ${usage.neverSurfaced.join(", ") || "none"}`,
       `- Noisy (narrow triggers): ${usage.noisy.join(", ") || "none"}`,
-      `- Violation feedback (reword): ${usage.violated.join(", ") || "none"}`,
+      `- Violated in graded feedback (reword): ${usage.violated.join(", ") || "none"}`,
       `- Domains over cap: ${caps.map((c) => `${c.domain} (${c.count}/${c.cap})`).join(", ") || "none"}`);
   }
   if (o.scores) L.push(...renderScoresSection(o.scores));

@@ -283,13 +283,18 @@ The audit log is append-only, one JSON line per event, at `~/.local/state/squadr
 | Decisions | `decision`: question type, input, answer, confidence, justification, applied or escalated, operator override. Stored in a separate `verdicts.jsonl` (renamed from `decisions.jsonl`; "decisions" is reserved for the Decisions domain) that is **never compacted**. This is the future eval set for Jev/Quyet. |
 | Delivery | `rule.surfaced`, `rule.suppressed` (budget / dedup / threshold), `match.error`, each with tier, score and tokens |
 | Pull | `rule.searched`, `rule.shown` |
-| Outcome | `rule.outcome` (followed / violated / n-a). In v1 its only source is `squadrant knowledge feedback <id> --violated\|--noise\|--wrong`, used by the operator or by agents. Sampled diffs and mechanical checks are deferred. |
+| Outcome | `rule.outcome` (followed / violated / noise / wrong), tagged with a `source` (#945; records without one read as `operator`). Sources today: `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong [--source operator\|review\|… --task <id>]` (operator, or the captain grading at review), and reconcile's `flag-violation` (`source: "reconcile"`). Sampled diffs (judge) and mechanical checks are deferred to after the 2026-10-27 review ([outcome signals spec](2026-10-15-rule-outcome-signals-research.md) §0). |
+
+Delivery events (surfaced / shown / searched) carry `task` from `SQUADRANT_CREW_TASK_ID` when it is set, on every agent's path (it's stamped in `appendAudit`), so `squadrant knowledge surfaced --task <id>` can list the rules a crew was given. The captain's review checklist (captain-ops skill) grades those with `--source review --task <id>`.
 
 **Scores** are computed by code (no LLM) and written to `REPORT.md` on every pass:
 - fire rate
 - never-fired in 30 days
 - noise rate
-- violation rate
+- violation rate (violated ÷ surfaced; only graded sources: `operator`, `review`, later `judge`, `check`)
+- evaluated (followed + violated) and compliance rate (followed ÷ evaluated, shown at n ≥ 3), next to violation rate
+- code violations: reconcile `flag-violation` outcomes, reported separately. They measure codebase drift, so they're kept out of violation rate and the usage review's "reword" list
+- outcomes by source (crew self-reports, if any, are shown but not counted)
 - tier contribution (is T1 worth it, and is T2 needed?)
 - reviewer agreement (tunes `autoApproveConfidence`)
 - per-agent coverage (catches a broken adapter)

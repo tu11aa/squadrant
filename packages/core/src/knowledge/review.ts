@@ -309,6 +309,8 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
       if (v.action === "flag-violation") {
         escalate({ key: `violation:${target.id}`, kind: "code-violation", ruleId: target.id, reasons: ["doc newer than code"], explanation: v.explanation, needsYou: false });
         res.violations.push(target.id);
+        // #945 A4: recorded as a reconcile outcome; scores keep it out of violationRate (codeViolations).
+        events.push(ev(c, "item.outcome", target.id, { outcome: "violated", source: "reconcile", project: d.codeConflict.project }));
       } else if (v.action === "escalate") {
         escalate({ key: `code-vs-doc:${target.id}`, kind: "code-vs-doc", ruleId: target.id, reasons: ["code-vs-doc"], explanation: v.explanation, evidence: v.evidence, confidence: conf });
         verdict(d, "escalated", { reasons: ["code-vs-doc"], confidence: conf });
