@@ -73,12 +73,12 @@ echo "$PROJECT_JSON"
 
 If empty `{}`: not inside a known squadrant project — build the report from **session context + git only**, and skip steps 2–3 below.
 
-Otherwise note `name` and `spokeVault` for the next steps.
+Otherwise note `name` for the next steps.
 
 **2. Read the handoff WITHOUT consuming it** (note the `--keep` — never drop the `--keep`, or you destroy the next session's startup context):
 
 ```bash
-~/.config/squadrant/scripts/read-handoff.sh "<spokeVault>" --keep
+~/.config/squadrant/scripts/read-handoff.sh "<name>" --keep
 ```
 
 `{"exists": false}` means none — fine, skip it.
@@ -86,7 +86,7 @@ Otherwise note `name` and `spokeVault` for the next steps.
 **3. Read the latest daily-log** (if any):
 
 ```bash
-ls -t "<spokeVault>"/daily-logs/*.md 2>/dev/null | head -1
+ls -t ~/squadrant/workspace/"<name>"/artifacts/daily-logs/*.md 2>/dev/null | head -1
 ```
 
 Read that one file for `Completed` / `In Progress` / `Blocked` / `Tomorrow`.

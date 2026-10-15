@@ -34,7 +34,7 @@ Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runti
 1. **Fetch and gather facts:** `squadrant handoff facts {project} --fetch` (updates remote refs so branch state is verified, not stale).
 2. **Check branchState flags:** Act on `upstreamStatus` (`behind`, `diverged`, `upstream-gone`) explicitly.
 3. **Identify current state:** List live crews (`squadrant crew list`) and current task.
-4. **Read handoff:** `~/.config/squadrant/scripts/read-handoff.sh {spokeVaultPath}` to load previous session context.
+4. **Read handoff:** `~/.config/squadrant/scripts/read-handoff.sh {project}` to load previous session context.
 
 ## Session Lifecycle
 

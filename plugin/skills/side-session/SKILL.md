@@ -61,7 +61,7 @@ If the topic already contains all of this, it confirms and proceeds. Otherwise i
 1. Side session produces a result (root cause / artifact).
 2. Session asks: "Notify the primary captain now? (y/n)"
 3. On yes:
-   - Writes durable record: {spokeVault}/side-handoffs/<topic>.md
+   - Writes durable record: ~/squadrant/workspace/<project>/side-handoffs/<topic>.md
    - Sends: squadrant runtime send <project> "🗒 Side handoff [<role>] — <topic> ..."
 4. Primary captain receives handoff delivered daemon-direct via cmux (#332).
 5. Captain does NOT auto-spawn a crew — waits for user's go.
