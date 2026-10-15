@@ -1,6 +1,7 @@
 # Rule outcome signals: research (#945)
 
 Status: direction picked 2026-10-15 (see §0). Only §0's "now" scope is approved for implementation.
+Implemented: Phase A "now" scope (A1, A2, A4, A5). §5 test 7 is reframed now that A3 is dropped: the delivery `task` field is stamped the same way on the codex/opencode path as on Claude's.
 
 ## 0. Operator decision (2026-10-15)
 

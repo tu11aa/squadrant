@@ -300,8 +300,12 @@ On CREW REVIEW or CREW DONE:
 | Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
 | Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
-3. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+3. **Grade the rules the crew was given** (only if the project subscribes to a knowledge base; #945). While the diff is open:
+   - `squadrant knowledge surfaced --task <task-id>` lists the rules delivered to that task (task id from `squadrant crew status <project>`).
+   - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
+   - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
+4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
+5. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 
