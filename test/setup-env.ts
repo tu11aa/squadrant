@@ -13,6 +13,9 @@ const dirs = {
   // #983 6a: the daemon state root (~/.local/state/squadrant): mailboxes, task
   // store, results and sessions.json must never land in the live state.
   SQUADRANT_STATE_DIR: "squadrant-test-state-",
+  // #982: the operator profile KB and the Claude native-memory root the bridge reads.
+  SQUADRANT_USER_KB_DIR: "squadrant-test-user-kb-",
+  SQUADRANT_NATIVE_MEMORY_ROOT: "squadrant-test-native-memory-",
 };
 const made: string[] = [];
 for (const [env, prefix] of Object.entries(dirs)) {
