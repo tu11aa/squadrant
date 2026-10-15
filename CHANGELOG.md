@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-15
+
+Rule outcome signals for the rules KB (#945 Phase A), and squadrant's files are reorganised by lifecycle (KB epic #893 phase 6, #983): exchange files move to `~/squadrant/workspace/<project>/`, daemon state moves to `~/.local/state/squadrant/`. PRs #985-#988.
+
+**Upgrade:** after installing, run `squadrant heal daemon` (restarts the daemon, which copies the old state once, and moves the daemon log), then `squadrant migrate kb --dry-run` and `squadrant migrate kb`. Nothing is deleted; the old locations are still read for this version.
+
+### Added
+
+- **`squadrant knowledge surfaced --task <id>`** lists the rules delivered to a crew task (surfaced, shown or searched), so the captain can grade them at review. The captain-ops review checklist now has that step (#985).
+- **Rule outcomes record who graded them.** `knowledge feedback` takes `--source operator|review|crew|reconcile|judge|check` (default `operator`) and `--task <id>`. Delivery events carry the crew `task` on every agent's path. Reconcile's code-violation flag now logs a `violated` outcome with `source: "reconcile"` (#985).
+- **Compliance scoring.** Scores add `evaluated`, `complianceRate` (followed ÷ evaluated, shown from 3 evaluations, as a `Compliance` column next to `Violated` in `REPORT.md`), `codeViolations` and outcome counts per source. Only operator, review, judge and check grades move the rates; crew self-reports are shown but not counted; reconcile violations are reported as `codeViolations`, outside the violation rate (#985).
+- **`squadrant migrate kb [--dry-run]`.** Moves handoffs, side handoffs, the captain session registry, reports and daily logs from the Obsidian spokes to `~/squadrant/workspace/<project>/`, archives retired hub files and the already-copied legacy daemon state and log under `~/squadrant/archive/<date>/`, and runs the existing `knowledge migrate` moves. Never deletes, never overwrites, idempotent (#986, #987).
+
+### Changed
+
+- **Per-project exchange lives in `~/squadrant/workspace/<project>/`** (`handoff.json`, `handoffs/`, `side-handoffs/`, `inbox/`, `artifacts/`). The handoff scripts keep their arguments and also accept a project name; the old spoke path is still read for one version. New projects no longer get an Obsidian vault scaffold; the obsidian workspace driver and `spokeVault`/`hubVault` are deprecated. Learnings and wiki stay in the spoke until KB phase 4b (#986).
+- **Daemon state lives in `~/.local/state/squadrant/`** (`$SQUADRANT_STATE_DIR`, then `$XDG_STATE_HOME/squadrant`; a non-default `SQUADRANT_CONFIG` keeps its state beside it). The daemon copies the old `~/.config/squadrant/state` once on first boot (no overwrite, marker file, never deletes). The daemon log moves to `~/.local/state/squadrant/logs/squadrantd.log` on the next `squadrant heal daemon`. The socket and lock stay in `~/.config/squadrant` (#987).
+- **`squadrant doctor`** warns about an unmigrated spoke/hub, a missing workspace dir, a legacy state dir with data, and a daemon log still at the old path (#986-#988).
+- **`squadrant projects add`** rejects project names that would collide with state entries (`audit`, `logs`, `inbox`, `rules-inject`, and names starting with `_` or `.`) (#987).
+
 ## [0.28.1] - 2026-10-14
 
 Fixes found while migrating the saitex KB (lifecycle Phase 4). PRs #970-#972.
