@@ -28,5 +28,4 @@ export * from "./lib/tool-compat.js";
 export * from "./lib/canonical-source.js";
 export * from "./lib/daily-logs.js";
 export * from "./lib/session-name.js";
-export * from "./lib/vault-layout.js";
 export * from "./daemon-keys.js";

@@ -6,6 +6,7 @@ import {
   loadConfig,
   saveConfig,
   resolveHome,
+  ensureWorkspace,
   ProjectConfig,
 } from "@squadrant/shared";
 import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
@@ -20,28 +21,6 @@ export function restartAfterProjectsAdd(opts: {
     console.log(chalk.dim("  (daemon not running — change applies on next start)"));
   } else if (outcome === "skipped-opt-out") {
     console.log(chalk.dim("  (run 'squadrant heal daemon' to apply)"));
-  }
-}
-
-function findPackageRoot(): string {
-  let dir = path.dirname(new URL(import.meta.url).pathname);
-  while (dir !== "/") {
-    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
-    dir = path.dirname(dir);
-  }
-  return process.cwd();
-}
-
-function copyDirRecursive(src: string, dest: string): void {
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
   }
 }
 
@@ -79,7 +58,7 @@ const addCmd = new Command("add")
   .argument("<name>", "Project name")
   .argument("<path>", "Path to project directory")
   .option("--captain <name>", "Captain workspace name (default: <project>-captain)")
-  .option("--spoke <path>", "Spoke vault path (default: ~/squadrant-hub/spokes/<name>)")
+  .option("--spoke <path>", "Legacy spoke vault path, deprecated (#983): still used for learnings/wiki until KB phase 4b (default: ~/squadrant-hub/spokes/<name>)")
   .option("--group <name>", "Project group name (siblings share context)")
   .option("--group-role <role>", "Role within the group (auto-set to 'primary' if first in group)")
   .option("--no-restart", "skip daemon restart after registration")
@@ -167,26 +146,8 @@ const addCmd = new Command("add")
     console.log(chalk.green(`\n  ✔ Project '${name}' registered`));
     restartAfterProjectsAdd({ noRestart: opts.restart === false });
 
-    // Scaffold spoke vault from template
-    const pkgRoot = findPackageRoot();
-    const spokeTemplate = path.join(pkgRoot, "obsidian", "spoke");
-
-    if (fs.existsSync(spokeVault)) {
-      console.log(chalk.yellow(`  ⚠ Spoke vault already exists at ${spokeVault}, skipping scaffold`));
-    } else if (fs.existsSync(spokeTemplate)) {
-      copyDirRecursive(spokeTemplate, spokeVault);
-      // Update project field in status.md frontmatter
-      const statusPath = path.join(spokeVault, "status.md");
-      if (fs.existsSync(statusPath)) {
-        const content = fs.readFileSync(statusPath, "utf-8");
-        const updated = content.replace(/^project: unnamed/m, `project: ${name}`);
-        fs.writeFileSync(statusPath, updated);
-      }
-      console.log(chalk.green(`  ✔ Spoke vault scaffolded at ${spokeVault}`));
-    } else {
-      fs.mkdirSync(spokeVault, { recursive: true });
-      console.log(chalk.yellow(`  ⚠ Spoke template not found; created empty dir at ${spokeVault}`));
-    }
+    // #983: exchange lives in workspace/<p>/; no Obsidian spoke scaffold (or #538's dead status.md).
+    console.log(chalk.green(`  ✔ Workspace at ${ensureWorkspace(name)}`));
 
     console.log("");
   });

@@ -9,14 +9,14 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, resolveHome, ensureSpokeLayout, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
+import { loadConfig, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd,
 } from "@squadrant/agents";
 import {
-  RuntimeRegistry, createCmuxDriver, createObsidianDriver, WorkspaceRegistry,
+  RuntimeRegistry, createCmuxDriver,
   isInsideCmux, cmuxLocal, classifyStartupSurface, classifyOpencodeStartupSurface, getFreePort,
 } from "@squadrant/workspaces";
 import {
@@ -450,19 +450,11 @@ export const launchCommand = new Command("launch")
 
     if (opts.all) {
       // Launch all captains. Command is no longer auto-launched (#42).
-      const hubPath = resolveHome(config.hubVault);
-      fs.mkdirSync(hubPath, { recursive: true });
-
       console.log(chalk.bold("\nLaunching all captain workspaces\n"));
 
       for (const [name, proj] of Object.entries(config.projects)) {
         const projPath = resolveHome(proj.path);
-        const spokePath = resolveHome(proj.spokeVault);
-        if (!fs.existsSync(spokePath)) {
-          const spokeDriver = new WorkspaceRegistry({ obsidian: createObsidianDriver }).forProject(name, config);
-          await ensureSpokeLayout(spokeDriver);
-          console.log(chalk.cyan(`  ✔ Created spoke vault at ${spokePath}`));
-        }
+        ensureWorkspace(name); // #983: exchange dir; no Obsidian spoke scaffold
         console.log(chalk.bold(`\n  Captain: ${proj.captainName} (${name})`));
         await launchOne(proj.captainName, "captain", projPath, config.defaults.permissions?.captain || "auto", false, true, name);
       }
@@ -498,17 +490,12 @@ export const launchCommand = new Command("launch")
 
       console.log(chalk.bold(`\nLaunching ${selected.length} captain workspace(s) in parallel\n`));
 
-      // Discover + create spoke vaults in parallel (different directories, safe).
+      // Create workspace dirs + launch in parallel (different directories, safe).
       await Promise.all(selected.map(async (name) => {
         const proj = config.projects[name];
         const projPath = resolveHome(proj.path);
 
-        const spokePath = resolveHome(proj.spokeVault);
-        if (!fs.existsSync(spokePath)) {
-          const spokeDriver = new WorkspaceRegistry({ obsidian: createObsidianDriver }).forProject(name, config);
-          await ensureSpokeLayout(spokeDriver);
-          console.log(chalk.cyan(`  ✔ Created spoke vault at ${spokePath}`));
-        }
+        ensureWorkspace(name); // #983: exchange dir; no Obsidian spoke scaffold
 
         console.log(chalk.bold(`\n  Captain: ${proj.captainName} (${name})`));
         await launchOne(proj.captainName, "captain", projPath, config.defaults.permissions?.captain || "auto", false, true, name);
@@ -529,13 +516,7 @@ export const launchCommand = new Command("launch")
       const proj = config.projects[project];
       const projPath = resolveHome(proj.path);
 
-      // Ensure spoke vault exists
-      const spokePath = resolveHome(proj.spokeVault);
-      if (!fs.existsSync(spokePath)) {
-        const spokeDriver = new WorkspaceRegistry({ obsidian: createObsidianDriver }).forProject(project, config);
-        await ensureSpokeLayout(spokeDriver);
-        console.log(chalk.cyan(`  ✔ Created spoke vault at ${spokePath}`));
-      }
+      ensureWorkspace(project); // #983: exchange dir; no Obsidian spoke scaffold
 
       console.log(
         chalk.bold(

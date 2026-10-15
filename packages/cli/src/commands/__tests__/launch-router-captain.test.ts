@@ -117,7 +117,7 @@ vi.mock("@squadrant/shared", async () => {
       },
     }),
     resolveHome: (p: string) => p,
-    ensureSpokeLayout: vi.fn(),
+    ensureWorkspace: vi.fn(),
   };
 });
 

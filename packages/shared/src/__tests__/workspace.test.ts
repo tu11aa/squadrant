@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { workspaceRoot, workspacePath, archiveRoot, WORKSPACE_SUBDIRS } from "../workspace.js";
+import fs from "node:fs";
+import { workspaceRoot, workspacePath, archiveRoot, ensureWorkspace, WORKSPACE_SUBDIRS } from "../workspace.js";
 
 describe("workspace paths (#983 6b)", () => {
   const saved = { ws: process.env.SQUADRANT_WORKSPACE_DIR, ar: process.env.SQUADRANT_ARCHIVE_DIR };
@@ -33,5 +34,15 @@ describe("workspace paths (#983 6b)", () => {
     expect(saved.ws).toBeTruthy();
     expect(saved.ar).toBeTruthy();
     expect(saved.ws!.startsWith(os.homedir() + path.sep + "squadrant")).toBe(false);
+  });
+
+  it("ensureWorkspace creates the subdirs, is idempotent, and leaves existing files alone", () => {
+    process.env.SQUADRANT_WORKSPACE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-ws-"));
+    const dir = ensureWorkspace("p");
+    fs.writeFileSync(path.join(dir, "handoffs", "keep.json"), "{}");
+    expect(ensureWorkspace("p")).toBe(dir);
+    expect(fs.readdirSync(dir).sort()).toEqual([...WORKSPACE_SUBDIRS].sort());
+    expect(fs.readFileSync(path.join(dir, "handoffs", "keep.json"), "utf8")).toBe("{}");
+    fs.rmSync(process.env.SQUADRANT_WORKSPACE_DIR, { recursive: true, force: true });
   });
 });
