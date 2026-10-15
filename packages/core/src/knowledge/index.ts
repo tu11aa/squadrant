@@ -22,3 +22,4 @@ export * from "./scores.js";
 export * from "./cite.js";
 export * from "./profile.js";
 export * from "./profile-write.js";
+export * from "./profile-bridge.js";
