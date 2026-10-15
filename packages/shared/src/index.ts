@@ -4,6 +4,7 @@ export * from "./provider-preset.js";
 export * from "./project-config.js";
 export * from "./effort.js";
 export * from "./knowledge.js";
+export * from "./workspace.js";
 export * from "./router-model.js";
 export * from "./types/runtime.js";
 export * from "./types/liveness.js";

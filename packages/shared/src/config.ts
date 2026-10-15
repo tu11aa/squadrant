@@ -9,6 +9,7 @@ import type { KnowledgeKbConfig } from "./knowledge.js";
 export interface ProjectConfig {
   path: string;
   captainName: string;
+  /** @deprecated #983: exchange moved to workspacePath(project); still read for dual-read, migrate and learnings/wiki until phase 4b. */
   spokeVault: string;
   host: string;
   group?: string;
@@ -233,6 +234,7 @@ export interface SquadrantConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _squadrantVersion?: string;
   commandName: string;
+  /** @deprecated #983: the Obsidian hub is retired (`squadrant migrate kb` archives it); kept as an alias for one version. */
   hubVault: string;
   projects: Record<string, ProjectConfig>;
   agents?: Record<string, AgentEntry>;
