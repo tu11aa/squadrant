@@ -18,6 +18,8 @@ describe("stateDoctorLines (#983 6a)", () => {
     expect(stateDoctorLines(base())).toEqual([]);
     fs.mkdirSync(legacy, { recursive: true });
     expect(stateDoctorLines(base())).toEqual([]);
+    fs.mkdirSync(path.join(legacy, "proj", "tasks"), { recursive: true }); // left empty by `migrate kb`
+    expect(stateDoctorLines(base())).toEqual([]);
   });
 
   it("flags a legacy state dir that still holds data (warn only)", () => {
@@ -33,7 +35,7 @@ describe("stateDoctorLines (#983 6a)", () => {
     fs.writeFileSync(path.join(legacy, "liveness.json"), "{}");
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, ".seeded-from-legacy"), "{}");
-    expect(stateDoctorLines(base())[0].hint).toMatch(/already copied/);
+    expect(stateDoctorLines(base())[0].hint).toMatch(/already copied.*squadrant migrate kb/);
   });
 
   it("ignores the legacy dir when it IS the state root (isolated SQUADRANT_CONFIG)", () => {

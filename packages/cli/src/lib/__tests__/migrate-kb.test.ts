@@ -13,9 +13,11 @@ describe("migrateKb (#983)", () => {
   let ws: string;
   let archive: string;
   let configDir: string;
+  let localState: string;
+  let launchdLog: string | null;
   let cfg: SquadrantConfig;
   const saved = { ws: process.env.SQUADRANT_WORKSPACE_DIR, ar: process.env.SQUADRANT_ARCHIVE_DIR };
-  const opts = (dryRun: boolean) => ({ dryRun, configDir, today: "2026-10-15" });
+  const opts = (dryRun: boolean) => ({ dryRun, configDir, stateRoot: localState, launchdLogPath: () => launchdLog, today: "2026-10-15" });
 
   const put = (p: string, body = path.basename(p)) => {
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -41,6 +43,8 @@ describe("migrateKb (#983)", () => {
     ws = path.join(tmp, "workspace");
     archive = path.join(tmp, "archive");
     configDir = path.join(tmp, ".config", "squadrant");
+    localState = path.join(tmp, ".local", "state", "squadrant");
+    launchdLog = null;
     process.env.SQUADRANT_WORKSPACE_DIR = ws;
     process.env.SQUADRANT_ARCHIVE_DIR = archive;
 
@@ -72,10 +76,12 @@ describe("migrateKb (#983)", () => {
     put(path.join(ws, "alpha", "captain-sessions.jsonl"), '{"sessionId":"new"}\n');
     put(path.join(ws, "alpha", "handoffs", "2026-10-01.json"), "new-1");
 
-    // ~/.config state: moves in 6a, reported as pending here
+    // legacy ~/.config state (#983 6a): the daemon already seeded it into the new root, so it is archived
     put(path.join(configDir, "config.json"), "{}");
-    put(path.join(configDir, "daemon.db"));
+    put(path.join(configDir, "state", "alpha", "tasks", "t1.json"), "{}");
+    put(path.join(configDir, "state", "liveness.json"), "{}");
     put(path.join(configDir, "squadrantd.log"));
+    put(path.join(localState, ".seeded-from-legacy"), "{}");
 
     cfg = {
       hubVault: hub,
@@ -111,7 +117,8 @@ describe("migrateKb (#983)", () => {
     expect(row(path.join(hub, "daily-logs"))).toMatchObject({ action: "would-archive" });
     expect(row(path.join(hub, "wiki"))).toMatchObject({ action: "would-archive", note: "3 files" });
     expect(row(path.join(hub, "learnings"))).toMatchObject({ action: "skipped" });
-    expect(rows.find((r) => r.kb === "state")).toMatchObject({ action: "pending", note: expect.stringContaining("6a") });
+    expect(row(path.join(configDir, "state"))).toMatchObject({ action: "would-archive", to: path.join(day, "config", "state"), note: "2 files" });
+    expect(row(path.join(configDir, "squadrantd.log"))).toMatchObject({ action: "would-archive", to: path.join(day, "config", "squadrantd.log") });
     expect(rows.find((r) => r.kb === "saitex")).toMatchObject({ action: "would-move" });
     expect(rows.some((r) => r.from.includes("learnings") && r.from.includes("spokes"))).toBe(false);
   });
@@ -143,13 +150,32 @@ describe("migrateKb (#983)", () => {
     expect(fs.existsSync(path.join(spoke, "learnings", "l1.md"))).toBe(true);
     expect(fs.existsSync(path.join(hub, "dashboard.md"))).toBe(true);
     expect(fs.existsSync(path.join(hub, "projects", "notes.txt"))).toBe(true);
-    expect(fs.existsSync(path.join(configDir, "daemon.db"))).toBe(true);
+    expect(fs.existsSync(path.join(archive, "2026-10-15", "config", "state", "alpha", "tasks", "t1.json"))).toBe(true);
+    expect(fs.existsSync(path.join(archive, "2026-10-15", "config", "squadrantd.log"))).toBe(true);
+    expect(fs.existsSync(path.join(configDir, "config.json"))).toBe(true); // config is never touched
 
     const settled = snapshot();
     const again = migrateKb(cfg, opts(false));
     expect(done(again)).toEqual([]);
     expect(again.filter((r) => r.action.startsWith("would-"))).toEqual([]);
     expect(snapshot()).toEqual(settled);
+  });
+
+  it("leaves the legacy state alone (with a note) until the daemon has seeded the new root", () => {
+    fs.rmSync(path.join(localState, ".seeded-from-legacy"));
+    const before = snapshot();
+    const rows = migrateKb(cfg, opts(false)).filter((r) => r.kb === "state");
+    expect(rows).toEqual([expect.objectContaining({ action: "skipped", from: path.join(configDir, "state"), note: expect.stringContaining("not seeded yet") })]);
+    const after = snapshot();
+    for (const f of Object.keys(before).filter((p) => p.startsWith(".config"))) expect(after[f]).toBe(before[f]);
+  });
+
+  it("archives the state but not the log while launchd still writes the legacy log", () => {
+    launchdLog = path.join(configDir, "squadrantd.log");
+    const rows = migrateKb(cfg, opts(false)).filter((r) => r.kb === "state");
+    expect(rows).toContainEqual(expect.objectContaining({ action: "archived", from: path.join(configDir, "state") }));
+    expect(rows).toContainEqual(expect.objectContaining({ action: "skipped", from: launchdLog, note: expect.stringContaining("heal daemon") }));
+    expect(fs.existsSync(launchdLog)).toBe(true);
   });
 
   it("is a no-op on a home with nothing to migrate", () => {

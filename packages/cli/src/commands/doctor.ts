@@ -244,12 +244,15 @@ export function stateDoctorLines(o: {
 }): { label: string; ok: boolean; hint?: string; warnOnly: true }[] {
   const lines: { label: string; ok: boolean; hint?: string; warnOnly: true }[] = [];
   let legacyHasData = false;
-  try { legacyHasData = fs.readdirSync(o.legacy).length > 0; } catch { /* absent */ }
+  try {
+    // files only: `migrate kb` archives the files and leaves the (empty) dirs behind
+    legacyHasData = fs.readdirSync(o.legacy, { recursive: true, withFileTypes: true }).some((e) => !e.isDirectory());
+  } catch { /* absent */ }
   if (legacyHasData && path.resolve(o.legacy) !== path.resolve(o.root)) {
     lines.push({
       label: `legacy state dir still holds data: ${o.legacy}`, ok: false, warnOnly: true,
       hint: fs.existsSync(stateSeedMarkerPath(o.root))
-        ? `already copied to ${o.root}; nothing reads it now. Kept as a rollback copy, never deleted`
+        ? `already copied to ${o.root}; nothing reads it now. Archive it with: squadrant migrate kb (moves it under ~/squadrant/archive/<date>/config/, deletes nothing)`
         : `not copied yet. Restart the daemon (squadrant heal daemon) to copy it into ${o.root}`,
     });
   }
