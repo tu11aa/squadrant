@@ -1,13 +1,28 @@
 #!/bin/bash
-# Usage: read-handoff.sh <spoke-vault-path> [--keep]
-# Reads and prints handoff.json, then archives it to handoffs/<date>.json
-# (unless --keep). Captain calls this on session startup to load previous
-# context.
+# Usage: read-handoff.sh <project|workspace-path|spoke-vault-path> [--keep]
+# Reads and prints workspace/<project>/handoff.json, then archives it to
+# workspace/<project>/handoffs/<date>.json (unless --keep). Captain calls this
+# on session startup to load previous context. Only the basename of the first
+# arg is used (#983).
 set -euo pipefail
 
-VAULT="${1:?Usage: read-handoff.sh <vault-path> [--keep]}"
+TARGET="${1:?Usage: read-handoff.sh <project-or-vault-path> [--keep]}"
 KEEP="${2:-}"
+PROJECT="$(basename "$TARGET")"
+VAULT="${SQUADRANT_WORKSPACE_DIR:-$HOME/squadrant/workspace}/$PROJECT"
 HANDOFF_FILE="$VAULT/handoff.json"
+
+# #983 dual-read (one version): a handoff written before the move still sits
+# in the old spoke vault — the path passed in, or the default hub location.
+if [ ! -f "$HANDOFF_FILE" ]; then
+  for LEGACY in "$TARGET" "$HOME/squadrant-hub/spokes/$PROJECT"; do
+    case "$LEGACY" in */*) ;; *) continue ;; esac
+    if [ -f "$LEGACY/handoff.json" ]; then
+      HANDOFF_FILE="$LEGACY/handoff.json"
+      break
+    fi
+  done
+fi
 
 if [ ! -f "$HANDOFF_FILE" ]; then
   echo '{"exists": false}'

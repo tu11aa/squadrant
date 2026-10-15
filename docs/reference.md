@@ -27,7 +27,7 @@ guided first run — come back here when you need the details.
   - [Crew Lifecycle & Delivery](#crew-lifecycle--delivery)
   - [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)
   - [Projection (Cross-Agent Config Sync)](#projection-cross-agent-config-sync)
-  - [Obsidian Vaults (Hub-and-Spoke)](#obsidian-vaults-hub-and-spoke)
+  - [Storage layout: workspace (#983)](#storage-layout-workspace-983)
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
 - [Config](#config)
@@ -43,8 +43,9 @@ guided first run — come back here when you need the details.
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor` | Health check — verify dependencies |
+| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
 | `squadrant projects list` | List registered projects |
-| `squadrant projects add <name> <path>` | Register a project |
+| `squadrant projects add <name> <path>` | Register a project (creates `~/squadrant/workspace/<name>/`; no Obsidian spoke scaffold since #983) |
 | `squadrant projects remove <name>` | Unregister a project |
 | `squadrant dashboard [--once]` | Print a one-shot status grid for all projects to the terminal. |
 | `squadrant dashboard --pane [--direction <dir>] [--interval <s>]` | Open a refreshing sidebar pane in the current cmux workspace. |
@@ -319,7 +320,7 @@ Workspaces run on a pluggable **runtime driver** (currently only `cmux`). Each p
 
 ### Workspace Abstraction
 
-Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `squadrant workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
+Vault storage (hub + per-project spokes) runs behind a pluggable **workspace driver** (currently only `obsidian`, **deprecated** since #983: exchange files moved to `~/squadrant/workspace/<p>/`, see [Storage layout](#storage-layout-workspace-983); the driver still serves the spoke learnings/wiki until KB phase 4b). Filesystem operations — `read`, `write`, `list`, `exists`, `mkdir` — go through the driver instead of `fs` directly. Each project may override the global default via its `workspace` field. Bash scripts call `squadrant workspace <op>` to read/write vault data without hardcoding paths. New backends (Notion, plain-md, S3) are added as driver files in `@squadrant/workspaces` (`packages/workspaces/workspaces/`) — see `docs/specs/archive/2026-04-21-plugin-system-workspace-design.md`.
 
 ### Notifier Abstraction
 
@@ -501,17 +502,45 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
 
 opencode additionally gets squadrant's skills projected as **loadable skill dirs**, not just inlined markdown. On every `squadrant` invocation and on daemon boot, the shipped `plugin/skills/<name>/SKILL.md` files are synced (copy-if-changed + prune) into the **user-scope** opencode skills dir `~/.config/opencode/skills/<name>/SKILL.md`, so `skill <name>` resolves in an opencode captain/crew/side session — parity with claude's `--plugin-dir`. User-scope is deliberate: it serves every project and every opencode session without writing into managed project repos (where it would drift), and it is reconciled from the shipped source on every run so an install/update can't leave it stale. Each synced dir carries a `.squadrant-managed` marker — only marked dirs are refreshed or pruned, and a name collision with a user-authored opencode skill is reported as a skip rather than clobbered. Skills without loadable frontmatter (`handback`, `takeover`) are not projected. ([#791](https://github.com/tu11aa/squadrant/issues/791))
 
-### Obsidian Vaults (Hub-and-Spoke)
+### Storage layout: workspace (#983)
 
-- **Hub vault** (`~/squadrant-hub`) — cross-project dashboard + hub wiki
-- **Spoke vaults** — per-project status, learnings, and wiki
+KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~/squadrant/workspace/<project>/`** (it replaces `<hubVault>/spokes/<project>/` for these files):
+
+```
+~/squadrant/workspace/<project>/
+  handoff.json            # live handoff (write-handoff.sh); read-handoff.sh archives it into handoffs/
+  captain-sessions.jsonl  # captain session registry (SessionStart hook, read by `handoff facts`)
+  handoffs/               # archived handoffs, <date>[-N].json
+  side-handoffs/          # side-session records, <topic>.md
+  inbox/
+  artifacts/              # dated, immutable: reports/ research/ findings/ recaps/ plans/ daily-logs/
+```
+
+- `workspacePath(project)` in `@squadrant/shared` is the one helper. `SQUADRANT_WORKSPACE_DIR` overrides the root (`SQUADRANT_ARCHIVE_DIR` does the same for `~/squadrant/archive`).
+- `projects add` and `launch` create the dirs. New projects get no Obsidian spoke scaffold (and no `status.md`, #538).
+- The scripts keep their argv: `write-handoff.sh`, `read-handoff.sh` and `record-side-handoff.sh` take a project name, a workspace path, or an old spoke path, and use only its basename as the project. (A custom `--spoke` path whose basename is not the project name maps to the wrong workspace dir.)
+- **Dual-read for one version.** `read-handoff.sh` falls back to `handoff.json` in the old spoke (the path passed in, or `~/squadrant-hub/spokes/<p>/`). `handoff facts` reads checkpoints and session records from both, and `standup`/`retro` read daily logs from both.
+- Learnings, captured skills and the wiki stay in the spoke until KB phase 4b. `spokeVault`/`hubVault` stay in the config as deprecated aliases. `record-learning.sh` / `capture-skill.sh` / `wiki-ingest.sh` create a missing spoke dir; `wiki-query.sh` / `wiki-log.sh` are a no-op on one.
+
+**`squadrant migrate kb [--dry-run]`** moves an existing home to this layout (KB spec §10). It prints one line per batch: `would-move`/`moved`, `would-archive`/`archived`, `skipped`, `copied` (cross-device: the original stays) or `pending`.
+
+| From | To |
+|---|---|
+| spoke `handoff.json`, `captain-sessions.jsonl`, `handoffs/`, `side-handoffs/` | `workspace/<p>/…` (a registry that already exists in the workspace gets the old lines appended; the old file is archived) |
+| spoke `reports/ research/ findings/ recaps/ plans/ daily-logs/` | `workspace/<p>/artifacts/<kind>/` |
+| spoke `artifacts/` | `workspace/<p>/artifacts/` |
+| hub `CLAUDE.md`, `projects/*.md`, `daily-logs/`, `wiki/` + `learnings/` when they hold only scaffold files | `~/squadrant/archive/<date>/hub/…` |
+| `~/.config/squadrant/{daemon.db,state,*.log}` | reported as `pending 6a` (the state move is #983 part 6a) |
+| `<hubVault>/knowledge/<kb>/`, spoke `knowledge/rules/` | same as `squadrant knowledge migrate` (kept as an alias) |
+
+Directories are merged file by file. A file whose target already exists is reported `skipped` and left in place, never overwritten. Nothing is deleted, and a second run moves nothing. `squadrant doctor` warns while a spoke or the hub still holds files to migrate, and when a project has no workspace dir yet.
 
 ### Knowledge System (opt-in writes)
 
 - **Status** — `write-status.sh` does not exist and nothing else writes `status.md` today; existing files are left in place as history but are no longer read by `squadrant status`/`standup`/`retro` ([#630](https://github.com/tu11aa/squadrant/issues/630) tracks a real persisted work-tracking store).
 - **Dashboard** — `squadrant dashboard --pane` opens a refreshing sidebar pane in cmux that lists every project's live state, queried from the squadrant daemon's task records. `squadrant dashboard sync-hub` mirrors each spoke `status.md` into `{hubVault}/projects/` so the hub vault's `dashboard.md` Dataview query renders the same data inside Obsidian.
-- **Handoff files** — captain writes when in-flight work needs to survive into tomorrow; skipped on uneventful sessions.
-- **Daily logs** — captain writes when the day produced something worth a log; not on a schedule.
+- **Handoff files** — captain writes when in-flight work needs to survive into tomorrow; skipped on uneventful sessions. Live in `~/squadrant/workspace/<p>/` (#983).
+- **Daily logs** — captain writes when the day produced something worth a log; not on a schedule. Live in `~/squadrant/workspace/<p>/artifacts/daily-logs/` (#983).
 - **Learnings** — recorded when a captain encounters a genuinely surprising or reusable pattern.
 - **Wiki** — compiled, indexed knowledge pages in spoke vaults (`wiki/pages/`); promoted from learnings when worth maintaining.
 - **Hub Wiki** — cross-project knowledge aggregated by an on-demand `squadrant command --task wiki-aggregate` run.
@@ -585,7 +614,7 @@ These formats follow each agent's documentation and have **not been live-verifie
 
 ### Session Continuity
 
-- **Handoff files** — captain writes context on shutdown, reads on startup
+- **Handoff files** — captain writes context on shutdown, reads on startup (`~/squadrant/workspace/<p>/handoff.json`, archived to `handoffs/`)
 - **Session freshness** — auto-detects new day or template changes, forces fresh context
 - **claude-mem** — cross-session memory via MCP plugin
 

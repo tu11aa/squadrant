@@ -1,9 +1,11 @@
 #!/bin/bash
-# Usage: record-side-handoff.sh <spoke-vault-path> <topic> <role> <summary>
-# Writes a durable handoff record to {spokeVault}/side-handoffs/<topic-slug>.md
+# Usage: record-side-handoff.sh <project|workspace-path|spoke-vault-path> <topic> <role> <summary>
+# Writes a durable handoff record to workspace/<project>/side-handoffs/<topic-slug>.md
+# (#983: was {spokeVault}/side-handoffs/). Only the basename of the first arg is used.
 set -euo pipefail
 
-VAULT="${1:?Usage: record-side-handoff.sh <vault-path> <topic> <role> <summary>}"
+TARGET="${1:?Usage: record-side-handoff.sh <project-or-vault-path> <topic> <role> <summary>}"
+VAULT="${SQUADRANT_WORKSPACE_DIR:-$HOME/squadrant/workspace}/$(basename "$TARGET")"
 TOPIC="${2:?}"
 ROLE="${3:?}"
 SUMMARY="${4:?}"

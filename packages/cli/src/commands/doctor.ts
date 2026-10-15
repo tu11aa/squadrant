@@ -4,12 +4,13 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig, kbConfigs, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, kbConfigs, workspacePath, type SquadrantConfig } from "@squadrant/shared";
 import { readIndex, kbDir, findLegacyKbs, findLegacyOverlays } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
+import { migrateKb } from "../lib/migrate-kb.js";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -182,6 +183,23 @@ export function checkOptional(label: string, present: boolean, enables: string, 
   return present;
 }
 
+/** #983: legacy spoke/hub layout still holding exchange data, and projects with no workspace dir yet. Warn only. */
+export function workspaceDoctorLines(cfg: SquadrantConfig): { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] {
+  const pending = migrateKb(cfg, { dryRun: true })
+    .filter((r) => r.action.startsWith("would-") && (r.kb.startsWith("workspace:") || r.kb === "archive"));
+  const lines: { label: string; ok: boolean; hint?: string; warnOnly?: boolean }[] = [];
+  if (pending.length) {
+    lines.push({
+      label: `spoke/hub layout not yet migrated: ${pending.length} item(s) to move to ~/squadrant/workspace or archive`,
+      ok: false, warnOnly: true, hint: "run: squadrant migrate kb --dry-run, then squadrant migrate kb (deletes nothing)",
+    });
+  }
+  for (const name of Object.keys(cfg.projects ?? {})) {
+    lines.push({ label: `workspace dir for '${name}' exists`, ok: fs.existsSync(workspacePath(name)), warnOnly: true, hint: `created on the next: squadrant launch ${name}` });
+  }
+  return lines;
+}
+
 /** #896: rules-KB doctor lines. Empty when no KB is configured, so users without a KB see no new FAILs (#876). */
 export function knowledgeDoctorLines(
   cfg: SquadrantConfig,
@@ -284,13 +302,9 @@ export const doctorCommand = new Command("doctor")
       "Run: squadrant init  to scaffold the hub vault",
     ));
 
-    for (const [name] of Object.entries(config.projects)) {
-      const spokeDriver = workspaces.forProject(name, config);
-      const probe = await spokeDriver.probe();
-      results.push(check(
-        `Workspace — spoke '${name}' reachable`,
-        probe.installed && probe.rootExists,
-      ));
+    for (const l of workspaceDoctorLines(config)) {
+      if (!l.ok) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
+      else results.push(check(l.label, l.ok));
     }
 
     // Probe notifier providers

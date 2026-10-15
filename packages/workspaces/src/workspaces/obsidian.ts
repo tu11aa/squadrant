@@ -20,6 +20,7 @@ function resolveInRoot(root: string, relative: string): string {
   return joined;
 }
 
+/** @deprecated #983: per-project exchange moved to workspacePath() (~/squadrant/workspace/<p>/); kept for the spoke learnings/wiki until KB phase 4b and existing vaults. */
 export function createObsidianDriver(scope: WorkspaceScope): WorkspaceDriver {
   const root = scope.root;
   if (typeof root !== "string" || root === "") {
