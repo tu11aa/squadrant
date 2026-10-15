@@ -5,7 +5,7 @@ import os from "node:os";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { kbRulesDir } from "@squadrant/core";
 import { runRulesMatch, runRulesSearch, runRulesShow, runRulesList, resolveRulesProject, formatRule, renderSearch, renderList, parseLimit } from "../rules.js";
-import { runKnowledgeFeedback, runKnowledgeStats, runKnowledgeCiteScan, renderStats } from "../knowledge.js";
+import { runKnowledgeFeedback, runKnowledgeStats, runKnowledgeCiteScan, renderStats, runKnowledgeSurfaced, renderSurfaced } from "../knowledge.js";
 import type { SearchHit } from "@squadrant/core";
 
 let dir: string;
@@ -188,5 +188,51 @@ describe("knowledge feedback / stats / cite-scan (#901)", () => {
     const calls: string[][] = [];
     runKnowledgeCiteScan({ project: "flooros", git: "/repo", git_run: (a) => { calls.push(a); return ""; }, audit: audit() });
     expect(calls[0]).toContain("--all");
+  });
+});
+
+describe("outcome sources and per-task delivery (#945)", () => {
+  const audit = (env: NodeJS.ProcessEnv = {}) => ({ dir: process.env.SQUADRANT_AUDIT_DIR!, now: () => new Date("2026-10-10T00:00:00Z"), machineId: "m1", env });
+  const events = () => fs.readFileSync(path.join(process.env.SQUADRANT_AUDIT_DIR!, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const t1 = { SQUADRANT_CREW_TASK_ID: "t1" };
+  beforeEach(() => {
+    const rd = path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), "business");
+    fs.writeFileSync(path.join(rd, "biz.tax.vat.md"), rule("biz.tax.vat", "active", "triggers:\n  keywords: [vat]\n").replace("modality: must", "modality: should").replace("VND amounts are rounded half-up.", "VAT is shown per line."));
+  });
+
+  it("feedback defaults to source operator; --source/--task are logged", () => {
+    runKnowledgeFeedback("biz.invoice.vnd-rounding", "violated", { project: "flooros", audit: audit(), env: {} }, cfgPath);
+    runKnowledgeFeedback("biz.invoice.vnd-rounding", "followed", { project: "flooros", audit: audit(), env: {}, source: "review", task: "t1" }, cfgPath);
+    const [a, b] = events();
+    expect(a).toMatchObject({ event: "item.outcome", outcome: "violated", source: "operator" });
+    expect(a).not.toHaveProperty("task");
+    expect(b).toMatchObject({ event: "item.outcome", outcome: "followed", source: "review", task: "t1" });
+  });
+  it("feedback rejects an unknown --source", () => {
+    expect(() => runKnowledgeFeedback("biz.invoice.vnd-rounding", "followed", { project: "flooros", audit: audit(), env: {}, source: "judge?" }, cfgPath)).toThrow(/--source/);
+  });
+
+  it("knowledge surfaced --task lists exactly the ids delivered to that task, deduped, with modality + statement", async () => {
+    await runRulesMatch({ project: "flooros", text: "round the invoice amount in vnd", session: "s1", env: t1, audit: audit(t1), stateRoot: path.join(dir, "state") }, cfgPath);
+    runRulesShow("biz.invoice.vnd-rounding", { project: "flooros", env: t1, audit: audit(t1) }, cfgPath);
+    runRulesSearch("vat", { project: "flooros", env: t1, audit: audit(t1) }, cfgPath);
+    runRulesSearch("vat", { project: "flooros", env: { SQUADRANT_CREW_TASK_ID: "t2" }, audit: audit({ SQUADRANT_CREW_TASK_ID: "t2" }) }, cfgPath);
+    runRulesShow("biz.invoice.vnd-rounding", { project: "flooros", env: {}, audit: audit() }, cfgPath);
+    const got = runKnowledgeSurfaced("t1", { auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath);
+    expect(got).toEqual([
+      { id: "biz.invoice.vnd-rounding", kb: "saitex", project: "flooros", modality: "must", statement: "VND amounts are rounded half-up.", events: ["item.surfaced", "item.shown"] },
+      { id: "biz.tax.vat", kb: "saitex", project: "flooros", modality: "should", statement: "VAT is shown per line.", events: ["item.searched"] },
+    ]);
+    expect(runKnowledgeSurfaced("t2", { auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath).map((x) => x.id)).toEqual(["biz.tax.vat"]);
+    expect(runKnowledgeSurfaced("nope", { auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath)).toEqual([]);
+    expect(renderSurfaced(got)[0]).toBe("biz.invoice.vnd-rounding  [must]  VND amounts are rounded half-up.");
+  });
+
+  it.each(["codex", "opencode", "claude"])("the %s delivery path stamps the same task from SQUADRANT_CREW_TASK_ID", async (agent) => {
+    await runRulesMatch({ project: "flooros", agent, text: "round the invoice amount in vnd", session: `s-${agent}`, env: t1, audit: audit(t1), stateRoot: path.join(dir, "state") }, cfgPath);
+    runRulesSearch("vat", { project: "flooros", env: t1, audit: audit(t1) }, cfgPath);
+    const delivered = events();
+    expect(delivered.map((e) => [e.event, e.task])).toEqual([["item.surfaced", "t1"], ["item.searched", "t1"]]);
+    expect(delivered[0].agent).toBe(agent);
   });
 });

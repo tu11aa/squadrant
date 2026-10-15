@@ -222,6 +222,8 @@ describe("code-vs-doc (operator decision 2026-10-09)", () => {
     const e = readEscalations(kbRoot());
     expect(e).toHaveLength(1);
     expect(e[0]).toMatchObject({ kind: "code-violation", needsYou: false });
+    expect(auditEvents().filter((x) => x.event === "item.outcome")).toMatchObject([{ itemId: "biz.round", outcome: "violated", source: "reconcile", project: "flooros" }]);
+    expect(auditEvents().find((x) => x.event === "item.outcome")).not.toHaveProperty("task");
   });
 });
 

@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { appendAudit, compactAudit, computeScores, scanAndLogCitations, scanCitations, readBranchOnlyMessages, scoreKb, renderScoresSection, mentionsId, appendVerdict, type AuditEvent, type AuditRecord } from "../knowledge/index.js";
+import { appendAudit, compactAudit, computeScores, usageReview, scanAndLogCitations, scanCitations, readBranchOnlyMessages, scoreKb, renderScoresSection, mentionsId, appendVerdict, type AuditEvent, type AuditRecord } from "../knowledge/index.js";
 
 const NOW = new Date("2026-10-10T00:00:00Z");
 const rec = (day: string, e: Partial<AuditRecord> & { event: string }): AuditRecord =>
@@ -80,9 +80,71 @@ describe("computeScores (table-driven)", () => {
   it("REPORT section carries counts and ids, never prompt text", () => {
     const text = renderScoresSection(s).join("\n");
     expect(text).toContain("## Scores (30 days)");
-    expect(text).toContain("| r.a | 4 | 1 | 2 | 50% | 25% | 25% |");
+    expect(text).toContain("| Violated | Compliance |");
+    expect(text).toContain("| r.a | 4 | 1 | 2 | 50% | 25% | 25% | n/a |");
     expect(text).toContain("Never fired (2): r.never, r.old");
     expect(text).toContain("claude 3, opencode 1");
+  });
+});
+
+describe("outcome sources (#945)", () => {
+  const out = (outcome: string, source?: string, itemId = "r.a") =>
+    rec("2026-10-05", { event: "item.outcome", outcome, itemId, ...(source ? { source } : {}) });
+  const surfaced = Array.from({ length: 4 }, () => rec("2026-10-01", { event: "item.surfaced" }));
+
+  it("evaluated/complianceRate count graded sources; crew is shown in bySource but not in rates", () => {
+    const s = computeScores({ kb: "saitex", now: NOW, records: [...surfaced, out("followed", "review"), out("followed", "review"), out("violated", "operator"), out("violated", "crew")] });
+    const a = s.items.find((x) => x.itemId === "r.a")!;
+    expect(a).toMatchObject({ followed: 2, violated: 1, evaluated: 3, complianceRate: 0.667, violationRate: 0.25, codeViolations: 0 });
+    expect(s.bySource).toEqual({ review: { followed: 2 }, operator: { violated: 1 }, crew: { violated: 1 } });
+  });
+
+  it("records without a source count as operator (back-compat)", () => {
+    const s = computeScores({ kb: "saitex", now: NOW, records: [...surfaced, out("violated")] });
+    expect(s.items[0]).toMatchObject({ violated: 1, violationRate: 0.25 });
+    expect(s.bySource).toEqual({ operator: { violated: 1 } });
+  });
+
+  it("complianceRate is null below 3 evaluations", () => {
+    const s = computeScores({ kb: "saitex", now: NOW, records: [...surfaced, out("followed", "review"), out("violated", "review")] });
+    expect(s.items[0]).toMatchObject({ evaluated: 2, complianceRate: null });
+  });
+
+  it("a reconcile violation is a codeViolation: violationRate and usageReview().violated exclude it", () => {
+    const recon = out("violated", "reconcile");
+    const s = computeScores({ kb: "saitex", now: NOW, records: [...surfaced, recon] });
+    expect(s.items[0]).toMatchObject({ codeViolations: 1, violated: 0, violationRate: 0, evaluated: 0 });
+    const rule = { id: "r.a", status: "active" } as never;
+    expect(usageReview([rule], [recon]).violated).toEqual([]);
+    expect(usageReview([rule], [out("violated")]).violated).toEqual(["r.a"]);
+    expect(renderScoresSection(s).join("\n")).toContain("Code violations (reconcile, not in rates): r.a 1");
+  });
+
+  it("REPORT shows per-source outcome counts", () => {
+    const s = computeScores({ kb: "saitex", now: NOW, records: [...surfaced, out("followed", "review"), out("violated", "crew")] });
+    expect(renderScoresSection(s).join("\n")).toContain("- Outcomes by source: crew violated 1; review followed 1");
+  });
+});
+
+describe("delivery events carry the crew task (#945)", () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "kb-task-")); });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const read = () => fs.readFileSync(path.join(dir, "2026-10.m1.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const e = (event: AuditEvent["event"]): AuditEvent => ({ kb: "saitex", level: "group", project: "flooros", domain: "rules", itemId: "r.a", event });
+  const sink = (env: NodeJS.ProcessEnv) => ({ dir, now: () => NOW, machineId: "m1", env });
+
+  it("surfaced/shown/searched get task from SQUADRANT_CREW_TASK_ID; other events do not", () => {
+    appendAudit([e("item.surfaced"), e("item.shown"), e("item.searched"), e("item.cited"), e("item.proposed")], sink({ SQUADRANT_CREW_TASK_ID: "t1" }));
+    expect(read().map((r) => r.task)).toEqual(["t1", "t1", "t1", undefined, undefined]);
+  });
+  it("no env var → no task field", () => {
+    appendAudit([e("item.surfaced")], sink({}));
+    expect(read()[0]).not.toHaveProperty("task");
+  });
+  it("an explicit task wins over the env", () => {
+    appendAudit([{ ...e("item.surfaced"), task: "t9" }], sink({ SQUADRANT_CREW_TASK_ID: "t1" }));
+    expect(read()[0].task).toBe("t9");
   });
 });
 

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import { projectRulesHome, resolveKbConfig, subscribedKbs, type Rule, type SquadrantConfig } from "@squadrant/shared";
-import { defaultAuditDir } from "./audit.js";
+import { defaultAuditDir, outcomeSource, RATED_SOURCES } from "./audit.js";
 import { loadKbRules } from "./layers.js";
 import { addEscalation, type Escalation } from "./review.js";
 import { kbDir } from "./paths.js";
@@ -57,7 +57,8 @@ export interface UsageReview {
   noisy: string[];
   violated: string[];
 }
-/** Never-surfaced → re-check triggers; noisy → narrow triggers; violated → reword. */
+/** Never-surfaced → re-check triggers; noisy → narrow triggers; violated → reword. Only graded outcomes
+ *  (RATED_SOURCES) count: a reconcile code-violation is codebase drift, not a wording problem (#945). */
 export function usageReview(rules: Rule[], events: AuditRecord[]): UsageReview {
   const surfaced: Record<string, number> = {};
   const noise: Record<string, number> = {};
@@ -65,7 +66,7 @@ export function usageReview(rules: Rule[], events: AuditRecord[]): UsageReview {
   for (const e of events) {
     if (!e.itemId) continue;
     if (e.event === "item.surfaced") surfaced[e.itemId] = (surfaced[e.itemId] ?? 0) + 1;
-    if (e.event === "item.outcome") {
+    if (e.event === "item.outcome" && RATED_SOURCES.has(outcomeSource(e))) {
       if (e.outcome === "noise") noise[e.itemId] = (noise[e.itemId] ?? 0) + 1;
       if (e.outcome === "violated") violated.add(e.itemId);
     }

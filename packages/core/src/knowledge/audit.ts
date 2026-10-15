@@ -26,14 +26,29 @@ export interface AuditEvent {
   query?: string;
   /** item.outcome: what the operator or agent reported. */
   outcome?: "followed" | "violated" | "noise" | "wrong";
+  /** item.outcome: who graded it (#945). Absent on old records, which read as "operator". */
+  source?: OutcomeSource;
+  /** The crew task the event belongs to. Delivery events get it from SQUADRANT_CREW_TASK_ID. */
+  task?: string;
   /** item.cited: where the id was seen (e.g. "crew-done", "git:<sha>"); with itemId it dedups re-scans. */
   ref?: string;
   /** item.rejected: why (e.g. "ungrounded"). */
   reason?: string;
 }
 
-/** Test seam: where and when to write. */
-export interface AuditSink { dir?: string; now?: () => Date; machineId?: string }
+export const OUTCOME_SOURCES = ["operator", "review", "crew", "reconcile", "judge", "check"] as const;
+export type OutcomeSource = (typeof OUTCOME_SOURCES)[number];
+/** An outcome's grader; records written before #945 have none and were all operator feedback. */
+export const outcomeSource = (e: Record<string, unknown>): string => (typeof e.source === "string" && e.source ? e.source : "operator");
+/** Sources whose outcomes count toward followed/violated rates. Crew self-reports are shown, not counted;
+ *  reconcile violations measure codebase drift and are reported as codeViolations (spec 2026-10-15 §4 A4/A5). */
+export const RATED_SOURCES: ReadonlySet<string> = new Set(["operator", "review", "judge", "check"]);
+
+/** Events that deliver an item to an agent; they carry the crew task so a task's rules can be listed. */
+export const DELIVERY_EVENTS: ReadonlySet<string> = new Set(["item.surfaced", "item.shown", "item.searched"]);
+
+/** Test seam: where and when to write, and the env the crew task id is read from. */
+export interface AuditSink { dir?: string; now?: () => Date; machineId?: string; env?: NodeJS.ProcessEnv }
 
 export const AUDIT_QUERY_CHARS = 200;
 
@@ -47,6 +62,7 @@ export function appendAudit(events: AuditEvent[], sink: AuditSink = {}): void {
   if (!events.length) return;
   try {
     const ts = (sink.now?.() ?? new Date()).toISOString();
+    const task = (sink.env ?? process.env).SQUADRANT_CREW_TASK_ID;
     const dir = sink.dir ?? defaultAuditDir();
     const file = path.join(dir, `${ts.slice(0, 7)}.${sink.machineId ?? auditMachineId()}.jsonl`);
     fs.mkdirSync(dir, { recursive: true });
@@ -54,7 +70,8 @@ export function appendAudit(events: AuditEvent[], sink: AuditSink = {}): void {
     try {
       for (const e of events) {
         const q = e.query === undefined ? {} : { query: e.query.slice(0, AUDIT_QUERY_CHARS) };
-        fs.writeSync(fd, JSON.stringify({ ts, ...e, ...q }) + "\n");
+        const t = task && e.task === undefined && DELIVERY_EVENTS.has(e.event) ? { task } : {};
+        fs.writeSync(fd, JSON.stringify({ ts, ...e, ...q, ...t }) + "\n");
       }
     } finally { fs.closeSync(fd); }
   } catch (err) {
