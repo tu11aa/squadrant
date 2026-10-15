@@ -22,7 +22,7 @@
 import { Command } from "commander";
 import path from "node:path";
 import os from "node:os";
-import { loadConfig, resolveWorktreeBase } from "@squadrant/shared";
+import { loadConfig, resolveWorktreeBase, workspacePath } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 import { squadrantdCall } from "./crew-control.js";
 import { gatherLiveRepoState, defaultCommandRunner } from "../lib/handoff-live-repo.js";
@@ -79,7 +79,11 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
   const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs, deps.fetch ?? false);
   const claudeMem = queryClaudeMem(deps.claudeMemDbPath ?? CLAUDE_MEM_DB_PATH, project);
 
-  const checkpoint = readNewestArchivedHandoff(proj.spokeVault, nowMs);
+  // #983: exchange lives in workspace/<p>/; the old spoke vault is still read for one version.
+  const vaults = [workspacePath(project), ...(proj.spokeVault ? [proj.spokeVault] : [])];
+  const checkpoint = vaults
+    .map((v) => readNewestArchivedHandoff(v, nowMs))
+    .reduce((a, b) => (!a || (b && b.ageMs < a.ageMs) ? b : a), null);
 
   const currentSessionId = deps.currentSessionId !== undefined ? deps.currentSessionId : (process.env.CLAUDE_CODE_SESSION_ID ?? null);
 
@@ -91,7 +95,7 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
     // exact self-read #650 originally hit. Skip the gap rather than risk it.
     registryNote = "current session id unknown (CLAUDE_CODE_SESSION_ID unset) — cannot safely exclude the running session, so the gap was skipped";
   } else {
-    const allRecords = readCaptainSessionRegistry(proj.spokeVault);
+    const allRecords = vaults.flatMap((v) => readCaptainSessionRegistry(v));
     if (allRecords.length === 0) {
       registryNote = "no session registry found yet for this project (#651's SessionStart hook may not have fired before now)";
     }

@@ -143,6 +143,32 @@ describe("runHandoffFacts", () => {
     expect(out.meta.checkpointFilename).toBe("2026-08-02.json");
   });
 
+  // #983: exchange moved to workspace/<p>/; the old spoke is still read for one version.
+  describe("workspace + spoke dual-read (#983)", () => {
+    const ws = () => path.join(process.env.SQUADRANT_WORKSPACE_DIR!, "squadrant");
+    afterEach(() => fs.rmSync(ws(), { recursive: true, force: true }));
+    const opts = { claudeMemDbPath: "/no/such.db", currentSessionId: "current", now: "2026-08-03T12:00:00.000Z", fetchTasks: async () => [] };
+
+    it("takes the newest checkpoint across workspace and spoke", async () => {
+      writeArchive(vault, "2026-08-01.json", { session: { currentState: "spoke, older" } });
+      writeArchive(ws(), "2026-08-02.json", { session: { currentState: "workspace, newer" } });
+      fs.utimesSync(path.join(vault, "handoffs", "2026-08-01.json"), new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-01T00:00:00.000Z"));
+      fs.utimesSync(path.join(ws(), "handoffs", "2026-08-02.json"), new Date("2026-08-02T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z"));
+
+      expect((await runHandoffFacts("squadrant", opts)).checkpoint?.filename).toBe("2026-08-02.json");
+    });
+
+    it("merges session records from the workspace and the spoke registry", async () => {
+      appendCaptainSession(vault, sessionRecord({ sessionId: "old", startedAt: "2026-08-03T01:00:00.000Z" }));
+      appendCaptainSession(ws(), sessionRecord({ sessionId: "new", startedAt: "2026-08-03T02:00:00.000Z" }));
+
+      const out = await runHandoffFacts("squadrant", opts);
+      expect(out.meta.registryNote).toBeNull();
+      expect(JSON.stringify(out)).toContain('"new"');
+      expect(JSON.stringify(out)).toContain('"old"');
+    });
+  });
+
   it("only reads transcripts for sessions AFTER the checkpoint (the gap) — not sessions the checkpoint already covers", async () => {
     const beforeTranscript = path.join(tmp, "before.jsonl");
     const afterTranscript = path.join(tmp, "after.jsonl");

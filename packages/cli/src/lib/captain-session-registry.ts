@@ -14,7 +14,7 @@ import { SESSION_WINDOW_MS } from "./handoff-facts.js";
 export { SESSION_WINDOW_MS };
 export const CAPTAIN_SESSION_REGISTRY_FILE = "captain-sessions.jsonl";
 
-/** Append one session record. Creates the spoke vault dir if needed. Never overwrites — the registry is a log, not a snapshot. */
+/** Append one session record. Creates the dir (the project workspace, #983) if needed. Never overwrites — the registry is a log, not a snapshot. */
 export function appendCaptainSession(spokeVault: string, record: CaptainSessionRecord): void {
   fs.mkdirSync(spokeVault, { recursive: true });
   const file = path.join(spokeVault, CAPTAIN_SESSION_REGISTRY_FILE);
