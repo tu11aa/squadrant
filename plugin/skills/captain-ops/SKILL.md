@@ -301,7 +301,7 @@ On CREW REVIEW or CREW DONE:
 | Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
 3. **Grade the rules the crew was given** (only if the project subscribes to a knowledge base; #945). While the diff is open:
-   - `squadrant knowledge surfaced --task <task-id>` lists the rules delivered to that task (task id from `squadrant crew status <project>`).
+   - `squadrant knowledge surfaced --task <task-id>` lists the rules delivered to that task (task id from `squadrant crew tasks <project>`).
    - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
    - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
 4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
