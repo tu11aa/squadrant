@@ -14,6 +14,7 @@ import {
   removeWorktree,
   worktreePath,
   resolveWorktreeBase,
+  workspacePath,
 } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
 import { SIDE_SESSION_ENV } from "./permission-gate.js";
@@ -49,13 +50,13 @@ export function sideNextAutoName(existingTitles: string[], project: string): str
 // ─── first-turn builder ───────────────────────────────────────────────────────
 
 /** Builds the first-turn message: topic + injected context the agent needs
- *  for handoff (spokeVault, project, role). For debug sessions, scratchWorktree
+ *  for handoff (workspace dir, project, role). For debug sessions, scratchWorktree
  *  is the isolated worktree path the session is running in. */
 export function buildSideFirstTurn(
   topic: string,
   project: string,
   role: string,
-  spokeVault: string,
+  workspace: string,
   scratchWorktree?: string,
 ): string {
   const lines = [
@@ -65,7 +66,7 @@ export function buildSideFirstTurn(
     "Side-session context (for handoff use):",
     `Project: ${project}`,
     `Role: ${role}`,
-    `Spoke vault: ${spokeVault}`,
+    `Workspace: ${workspace}`,
   ];
   if (scratchWorktree) {
     lines.push(`Scratch worktree: ${scratchWorktree}`);
@@ -166,7 +167,7 @@ export async function runSideSpawn(
     input.topic,
     input.project,
     input.role,
-    proj.spokeVault ?? "",
+    workspacePath(input.project),
     input.role === "debug" ? spawnCwd : undefined,
   );
   // #864: same spill as the crew path (#730) — a long multi-line topic pasted
