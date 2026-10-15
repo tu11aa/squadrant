@@ -195,7 +195,8 @@ export function workspaceDoctorLines(cfg: SquadrantConfig): { label: string; ok:
     });
   }
   for (const name of Object.keys(cfg.projects ?? {})) {
-    lines.push({ label: `workspace dir for '${name}' exists`, ok: fs.existsSync(workspacePath(name)), warnOnly: true, hint: `created on the next: squadrant launch ${name}` });
+    const exists = fs.existsSync(workspacePath(name));
+    lines.push({ label: `workspace dir for '${name}' ${exists ? "exists" : "missing"}`, ok: exists, warnOnly: true, hint: `created on the next: squadrant launch ${name}` });
   }
   return lines;
 }
