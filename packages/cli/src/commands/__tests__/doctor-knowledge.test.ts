@@ -56,7 +56,7 @@ describe("workspaceDoctorLines (#983)", () => {
     c.projects = project(spoke);
     const lines = workspaceDoctorLines(c);
     expect(lines).toContainEqual(expect.objectContaining({ label: expect.stringContaining("not yet migrated"), ok: false, warnOnly: true, hint: expect.stringContaining("squadrant migrate kb") }));
-    expect(lines).toContainEqual(expect.objectContaining({ label: "workspace dir for 'flooros' exists", ok: false, warnOnly: true }));
+    expect(lines).toContainEqual(expect.objectContaining({ label: "workspace dir for 'flooros' missing", ok: false, warnOnly: true }));
   });
 
   it("is quiet on a migrated home", () => {
@@ -64,6 +64,8 @@ describe("workspaceDoctorLines (#983)", () => {
     c.hubVault = hub;
     c.projects = project(path.join(hub, "spokes", "flooros"));
     fs.mkdirSync(path.join(hub, "ws", "flooros"), { recursive: true });
-    expect(workspaceDoctorLines(c).filter((l) => !l.ok)).toEqual([]);
+    const lines = workspaceDoctorLines(c);
+    expect(lines.filter((l) => !l.ok)).toEqual([]);
+    expect(lines).toContainEqual(expect.objectContaining({ label: "workspace dir for 'flooros' exists", ok: true }));
   });
 });
