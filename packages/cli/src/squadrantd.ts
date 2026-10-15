@@ -173,6 +173,23 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     );
   }
 
+  // #983 6a: state moved from ~/.config/squadrant to stateRoot(). One-time,
+  // no-overwrite copy of the legacy tree (never deletes). Only a daemon that
+  // will actually run seeds: after ALL refusal guards (the live-socket guard in
+  // the entry block and the checkout/worktree guards above), so a refused
+  // daemon can't write the marker while an old daemon still writes the legacy
+  // dir. Only the production daemon (default socket + default state root) —
+  // never a test or a dedicated-socket instance. A failure is logged, not fatal:
+  // no marker is written, so the next boot retries the copy.
+  if (isDefaultSocket && !opts.stateRoot) {
+    try {
+      const seed = seedStateFromLegacy();
+      if (seed.seeded) process.stderr.write(`[squadrantd] ${new Date().toISOString()} state seeded from legacy ${legacyStateDir()} → ${defaultStateRoot()}\n`);
+    } catch (err) {
+      process.stderr.write(`[squadrantd] ${new Date().toISOString()} legacy state seed failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+
   const ctx = buildContext(opts);
   const { stateRoot, store, log, spawn, writeResult, inFlightHeadlessIds, activeHeadlessKills } = ctx;
 
@@ -735,17 +752,6 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     if (await isDaemonSocketLive(DAEMON_SOCK_PATH)) {
       process.stderr.write(`[squadrantd] refusing to start: a live daemon already owns ${DAEMON_SOCK_PATH}\n`);
       process.exit(0);
-    }
-    // #983 6a: state moved from ~/.config/squadrant to stateRoot(). One-time,
-    // no-overwrite copy of the legacy tree (never deletes). Here — after the
-    // live-socket guard — so the old daemon is gone and can't still be writing
-    // the legacy dir. A failure is logged, not fatal: no marker is written, so
-    // the next boot retries the copy.
-    try {
-      const seed = seedStateFromLegacy();
-      if (seed.seeded) process.stderr.write(`[squadrantd] ${new Date().toISOString()} state seeded from legacy ${legacyStateDir()} → ${defaultStateRoot()}\n`);
-    } catch (err) {
-      process.stderr.write(`[squadrantd] ${new Date().toISOString()} legacy state seed failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }
     const h = startSquadrantd({
       sweepMs: 30000,

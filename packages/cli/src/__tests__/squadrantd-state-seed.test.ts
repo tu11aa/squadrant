@@ -3,9 +3,10 @@
 // seed copy the daemon sees the legacy task records, and the legacy dir is left
 // untouched. Temp dirs only; never the real home.
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { seedStateFromLegacy } from "@squadrant/shared";
 import { sendRequest } from "@squadrant/core";
 import { startSquadrantd } from "../squadrantd.js";
@@ -57,5 +58,33 @@ describe("squadrantd state root move (#983 6a)", () => {
 
     expect(readdirSync(legacy).sort()).toEqual(legacyEntries);
     expect(existsSync(join(root, ".seeded-from-legacy"))).toBe(true);
+  });
+});
+
+// Review fix: a daemon that is about to refuse (worktree / un-opted checkout /
+// live socket) must never seed — it would write the marker while the old
+// daemon keeps writing the legacy dir, and the real upgraded daemon would then
+// skip the copy. A real refused boot can't run under vitest (process.exit, real
+// socket), so pin the ordering structurally.
+describe("legacy seed ordering in squadrantd.ts (#983 6a)", () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "squadrantd.ts"), "utf8");
+
+  it("startSquadrantd seeds only after every checkout/worktree refusal, before buildContext", () => {
+    const fnStart = src.indexOf("export function startSquadrantd(");
+    const seedAt = src.indexOf("seedStateFromLegacy()", fnStart);
+    const lastRefusal = src.lastIndexOf("refusing to start", src.indexOf("const ctx = buildContext(opts);", fnStart));
+    expect(fnStart).toBeGreaterThan(-1);
+    expect(lastRefusal).toBeGreaterThan(fnStart);
+    expect(seedAt).toBeGreaterThan(lastRefusal);
+    expect(seedAt).toBeLessThan(src.indexOf("const ctx = buildContext(opts);", fnStart));
+    // exactly one seed call site, so the entry block can't seed before its own guards
+    expect(src.split("seedStateFromLegacy()").length - 1).toBe(1);
+  });
+
+  it("the entry block's live-socket refusal runs before startSquadrantd is called", () => {
+    const liveGuard = src.indexOf("refusing to start: a live daemon already owns");
+    const entryCall = src.indexOf("const h = startSquadrantd(");
+    expect(liveGuard).toBeGreaterThan(-1);
+    expect(entryCall).toBeGreaterThan(liveGuard);
   });
 });
