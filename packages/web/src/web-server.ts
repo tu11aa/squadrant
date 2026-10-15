@@ -7,8 +7,8 @@
 // (separate PID, read-only socket client) and bound to 127.0.0.1 with no auth.
 // Zero new deps: Node's built-in `http` + `EventSource` on the client.
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { dirname, join } from "node:path";
 import { sendRequest } from "@squadrant/core";
+import { daemonLogPath, legacyDaemonLogPath, resolveReadPath } from "@squadrant/shared";
 import type { DaemonSnapshot } from "@squadrant/core";
 import { mergeSnapshot, type FullSnapshot } from "./snapshot-merge.js";
 import { runExternalProbes, type ProbeRunners } from "./probes.js";
@@ -41,8 +41,8 @@ export interface WebServerOpts {
   host?: string;
   now?: () => number;
   probeTimeoutMs?: number;
-  /** Daemon log file to tail for the Logs tab. Defaults to `squadrantd.log`
-   *  alongside the daemon socket (both live in CONFIG_DIR). */
+  /** Daemon log file to tail for the Logs tab. Defaults to daemonLogPath()
+   *  (#983 6a), or the legacy ~/.config file while launchd still writes there. */
   logPath?: string;
 }
 
@@ -63,7 +63,7 @@ export async function startWebServer(opts: WebServerOpts): Promise<WebServerHand
   const now = opts.now ?? (() => Date.now());
   const clients = new Set<ServerResponse>();
   const logClients = new Set<ServerResponse>();
-  const logPath = opts.logPath ?? join(dirname(opts.sockPath), "squadrantd.log");
+  const logPath = opts.logPath ?? resolveReadPath(daemonLogPath(), legacyDaemonLogPath());
   const tailer = new LogTailer(logPath);
   let latest: FullSnapshot | null = null;
 

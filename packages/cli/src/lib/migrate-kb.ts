@@ -6,17 +6,23 @@
 // version already write to the workspace before the operator migrates.
 import fs from "node:fs";
 import path from "node:path";
-import { resolveHome, workspacePath, archiveRoot, CONFIG_DIR, type SquadrantConfig } from "@squadrant/shared";
-import { moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry } from "@squadrant/core";
+import {
+  resolveHome, workspacePath, archiveRoot, legacyStateDir, stateRoot, stateSeedMarkerPath, type SquadrantConfig,
+} from "@squadrant/shared";
+import { moveLegacyKbs, moveLegacyOverlays, loadedDaemonLogPath, LABEL, type KbMoveEntry } from "@squadrant/core";
 
 export interface MigrateKbEntry extends Omit<KbMoveEntry, "action"> {
-  action: KbMoveEntry["action"] | "would-archive" | "archived" | "pending";
+  action: KbMoveEntry["action"] | "would-archive" | "archived";
 }
 
 export interface MigrateKbOpts {
   dryRun?: boolean;
-  /** Where the daemon state still lives (6a moves it). Default: ~/.config/squadrant. */
+  /** Pre-#983 config dir holding the legacy `state/` and `squadrantd.log`. Default: dirname(legacyStateDir()). */
   configDir?: string;
+  /** Current state root; its seed marker gates archiving the legacy state. Default: stateRoot(). */
+  stateRoot?: string;
+  /** The log path launchd currently writes (null: not loaded). Default: `launchctl print`. */
+  launchdLogPath?: () => string | null;
   /** Archive subdir name, YYYY-MM-DD. Default: today. */
   today?: string;
 }
@@ -99,6 +105,33 @@ function migrateRegistry(kb: string, from: string, to: string, archived: string,
   return [{ kb, from, to, action: "moved", note: note.replace("merge", "merged") }];
 }
 
+function archiveLegacyState(opts: MigrateKbOpts, to: string, dryRun: boolean): MigrateKbEntry[] {
+  const configDir = opts.configDir ?? path.dirname(legacyStateDir());
+  const root = opts.stateRoot ?? stateRoot();
+  const legacyState = path.join(configDir, "state");
+  const legacyLog = path.join(configDir, "squadrantd.log");
+  if (path.resolve(legacyState) === path.resolve(root)) return []; // isolated SQUADRANT_CONFIG: it IS the live state
+  const hasState = filesUnder(legacyState).length > 0;
+  const hasLog = fs.existsSync(legacyLog);
+  if (!hasState && !hasLog) return [];
+  if (!fs.existsSync(stateSeedMarkerPath(root))) {
+    return [{
+      kb: "state", from: legacyState, to, action: "skipped",
+      note: `not seeded yet: the upgraded daemon copies it into ${root} on its next boot; re-run after that (nothing moved)`,
+    }];
+  }
+  const rows = transferDir("state", legacyState, path.join(to, "state"), true, dryRun);
+  if (hasLog) {
+    const launchdLog = (opts.launchdLogPath ?? (() => loadedDaemonLogPath(`gui/${process.getuid?.() ?? 0}/${LABEL}`)))();
+    if (launchdLog !== null && path.resolve(launchdLog) === path.resolve(legacyLog)) {
+      rows.push({ kb: "state", from: legacyLog, to: "", action: "skipped", note: "launchd still writes it: run squadrant heal daemon first" });
+    } else {
+      rows.push(...transferFile("state", legacyLog, path.join(to, "squadrantd.log"), true, dryRun));
+    }
+  }
+  return rows;
+}
+
 export function migrateKb(cfg: SquadrantConfig, opts: MigrateKbOpts = {}): MigrateKbEntry[] {
   const dryRun = !!opts.dryRun;
   const day = path.join(archiveRoot(), opts.today ?? new Date().toISOString().slice(0, 10));
@@ -136,14 +169,10 @@ export function migrateKb(cfg: SquadrantConfig, opts: MigrateKbOpts = {}): Migra
     }
   }
 
-  // 3. ~/.config state -> ~/.local/state: owned by #983 6a (stateRoot()), not this version
-  const configDir = opts.configDir ?? CONFIG_DIR;
-  const state = fs.existsSync(configDir)
-    ? fs.readdirSync(configDir).filter((f) => f === "daemon.db" || f === "state" || f.endsWith(".log"))
-    : [];
-  if (state.length) {
-    rows.push({ kb: "state", from: `${configDir}/{${state.join(",")}}`, to: "~/.local/state/squadrant/", action: "pending", note: "pending 6a: stateRoot() is not in this version; nothing moved" });
-  }
+  // 3. legacy ~/.config state + daemon log -> archive/<date>/config/ (#983 6a). The daemon itself
+  //    copies the legacy state into stateRoot() on boot (seed marker); only after that is the
+  //    legacy copy archive material. Not seeded yet: skip, never move live state.
+  rows.push(...archiveLegacyState(opts, path.join(day, "config"), dryRun));
 
   // 4. #936 knowledge migrate (KBs first: an overlay target may live inside a KB that was just moved)
   rows.push(...moveLegacyKbs(cfg, { dryRun }), ...moveLegacyOverlays(cfg, { dryRun }));

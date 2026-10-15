@@ -846,7 +846,9 @@ squadrant runtime list
 A name match is **not** sufficient — the workspace may be holding a session from a previous day. Check `sessions.json` against today before reusing:
 ```bash
 TODAY=$(date +%Y-%m-%d)
-LAST=$(python3 -c "import json; d=json.load(open('$HOME/.config/squadrant/sessions.json')); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" 2>/dev/null)
+S="${SQUADRANT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/squadrant}/sessions.json"
+[ -f "$S" ] || S="$HOME/.config/squadrant/sessions.json"  # pre-#983 location
+LAST=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" "$S" 2>/dev/null)
 [ "$LAST" = "$TODAY" ] && echo "fresh" || echo "stale"
 ```
 - `fresh` → reuse the existing workspace, proceed to step 5.

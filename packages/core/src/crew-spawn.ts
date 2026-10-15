@@ -29,6 +29,7 @@ import {
   resolveRouterModel,
   type ThinkingLevel,
   type BackendMode,
+  stateRoot,
 } from "@squadrant/shared";
 import { resolveBackend, assertBackendUsable, claudeEnvShadowsRouter } from "./router-resolution.js";
 import { buildRouterEnv, mergeClaudeEnvRouterSettings, renderEnvAssignments } from "./router/env.js";
@@ -84,7 +85,6 @@ import {
 import { reapCrewChildren } from "./crew-lifecycle.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
-const STATE_ROOT = path.join(os.homedir(), ".config", "squadrant", "state");
 
 // ─── ResolvedAgent ────────────────────────────────────────────────────────────
 
@@ -611,7 +611,7 @@ export async function runCrewSpawn(
     // ANTHROPIC_* still comes from the router env so the shim wins.
     const routerSettingsPath = Object.keys(routerEnv).length > 0
       ? deps.writeRouterSettings!({
-          stateRoot: STATE_ROOT,
+          stateRoot: stateRoot(),
           project: input.project,
           taskId: rec.id,
           env: mergeClaudeEnvRouterSettings(routerEnv, config.defaults.claudeEnv),
@@ -750,7 +750,7 @@ export async function runCrewSpawn(
     // An "ask" verdict from auto-gate leaves the prompt open → SSE bridge
     // surfaces it as task.approval.requested → blocked to the captain.
     const opencodeConfigPath = deps.writeOpencodeConfig({
-      stateRoot: STATE_ROOT,
+      stateRoot: stateRoot(),
       project: input.project,
       taskId: rec.id,
       // CP3 opt-in: --approval gates bash so the captain approves shell commands.

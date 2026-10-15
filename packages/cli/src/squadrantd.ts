@@ -3,7 +3,6 @@
 // concrete class instantiation and the launchd entry guard.
 import "./lib/suppress-sqlite-warning.js";
 import { join, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { buildContext, tickKnowledgeSchedule } from "@squadrant/core";
@@ -27,7 +26,10 @@ import type { PaneRef } from "@squadrant/shared";
 import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerSource,
          ClaudePeerRegistrySource, createOpencodeFactAdapter, syncShippedOpencodeSkills } from "@squadrant/agents";
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
-import { loadConfig, resolveCaptainChannelMode, TERMINAL_STATES, DAEMON_SOCK_PATH } from "@squadrant/shared";
+import {
+  loadConfig, resolveCaptainChannelMode, TERMINAL_STATES, DAEMON_SOCK_PATH, CONFIG_DIR, DEFAULT_CONFIG_PATH,
+  stateRoot as defaultStateRoot, legacyStateDir, seedStateFromLegacy,
+} from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
@@ -99,7 +101,7 @@ function buildTelegramBridge(
     log,
   });
   return createTelegramBridge({
-    cfg, stateRoot, configRoot: dirname(stateRoot), client, appendCaptainMessage, log,
+    cfg, stateRoot, configRoot: CONFIG_DIR, client, appendCaptainMessage, log,
     ensureCaptainAlive, runCommand, sendReply, deliverInbound, usageFor, lifecycle,
     // #321 registry prune. Read the file directly rather than via loadConfig():
     // loadConfig swallows every failure and returns defaults, so an unreadable
@@ -107,7 +109,7 @@ function buildTelegramBridge(
     // every link on the machine. `undefined` correctly means "don't prune".
     registeredProjects: () => {
       try {
-        const parsed = JSON.parse(readFileSync(join(dirname(stateRoot), "config.json"), "utf8")) as { projects?: Record<string, unknown> };
+        const parsed = JSON.parse(readFileSync(DEFAULT_CONFIG_PATH, "utf8")) as { projects?: Record<string, unknown> };
         return Object.keys(parsed.projects ?? {});
       } catch {
         return undefined;
@@ -169,6 +171,23 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       `('${SELF_PATH}') because SQUADRANT_DEV_DAEMON=1. Unreviewed local code is now the control plane ` +
       "for every registered project. Unset it and reinstall from npm to go back.\n",
     );
+  }
+
+  // #983 6a: state moved from ~/.config/squadrant to stateRoot(). One-time,
+  // no-overwrite copy of the legacy tree (never deletes). Only a daemon that
+  // will actually run seeds: after ALL refusal guards (the live-socket guard in
+  // the entry block and the checkout/worktree guards above), so a refused
+  // daemon can't write the marker while an old daemon still writes the legacy
+  // dir. Only the production daemon (default socket + default state root) —
+  // never a test or a dedicated-socket instance. A failure is logged, not fatal:
+  // no marker is written, so the next boot retries the copy.
+  if (isDefaultSocket && !opts.stateRoot) {
+    try {
+      const seed = seedStateFromLegacy();
+      if (seed.seeded) process.stderr.write(`[squadrantd] ${new Date().toISOString()} state seeded from legacy ${legacyStateDir()} → ${defaultStateRoot()}\n`);
+    } catch (err) {
+      process.stderr.write(`[squadrantd] ${new Date().toISOString()} legacy state seed failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 
   const ctx = buildContext(opts);
@@ -372,7 +391,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       // #786: build BOTH agent channels (claude peer + opencode http) and the
       // agent resolver, so captain-bound delivery routes by the captain's agent.
       void buildCaptainChannelsWithRetry({
-        stateRoot: join(homedir(), ".config", "squadrant", "state"),
+        stateRoot: ctx.stateRoot,
         configAgent: loadConfig().defaults.roles?.captain?.agent,
         log,
       })
@@ -660,7 +679,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
 function logCrashMarker(kind: "uncaughtException" | "unhandledRejection", err: unknown): void {
   const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
   process.stderr.write(`[squadrantd] ${new Date().toISOString()} ${kind} pid=${process.pid} error=${message}\n`);
-  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+  const stateRoot = defaultStateRoot();
   writeExitMarker(stateRoot, {
     ts: new Date().toISOString(),
     pid: process.pid,
@@ -738,7 +757,7 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       sweepMs: 30000,
       // #898: KB reconcile scheduler on the 60s tick. Enqueues to the home captain's mailbox; never spawns.
       knowledgeTick: async () => {
-        const stateRoot = join(homedir(), ".config", "squadrant", "state"); // same default as buildContext
+        const stateRoot = defaultStateRoot(); // same default as buildContext
         await tickKnowledgeSchedule({
           cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`),
           enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),

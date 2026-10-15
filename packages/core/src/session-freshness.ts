@@ -5,7 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
+import { readConfigFileSync, writeConfigFileSync, resolveReadPath } from "@squadrant/shared";
 
 export interface SessionRecord {
   lastLaunched: string; // YYYY-MM-DD
@@ -16,9 +16,12 @@ export interface SessionsFile {
   workspaces: Record<string, SessionRecord>;
 }
 
-export function loadSessions(sessionsPath: string): SessionsFile {
+/** #983 6a: `legacyPath` is the pre-move ~/.config location, read only until
+ *  the new file exists. Writes always go to `sessionsPath`. */
+export function loadSessions(sessionsPath: string, legacyPath?: string): SessionsFile {
   try {
-    return JSON.parse(readConfigFileSync(sessionsPath)) as SessionsFile;
+    const readPath = legacyPath ? resolveReadPath(sessionsPath, legacyPath) : sessionsPath;
+    return JSON.parse(readConfigFileSync(readPath)) as SessionsFile;
   } catch {
     return { workspaces: {} };
   }
@@ -55,9 +58,9 @@ export function computeTemplateHash(role: string, templatesDir: string): string 
 export function shouldStartFresh(
   workspaceName: string,
   role: string,
-  opts: { sessionsPath: string; templatesDir: string },
+  opts: { sessionsPath: string; legacySessionsPath?: string; templatesDir: string },
 ): { fresh: boolean; reason?: string } {
-  const sessions = loadSessions(opts.sessionsPath);
+  const sessions = loadSessions(opts.sessionsPath, opts.legacySessionsPath);
   const record = sessions.workspaces[workspaceName];
   const today = new Date().toISOString().slice(0, 10);
   const currentHash = computeTemplateHash(role, opts.templatesDir);
@@ -80,9 +83,9 @@ export function shouldStartFresh(
 export function recordSession(
   workspaceName: string,
   role: string,
-  opts: { sessionsPath: string; templatesDir: string },
+  opts: { sessionsPath: string; legacySessionsPath?: string; templatesDir: string },
 ): void {
-  const sessions = loadSessions(opts.sessionsPath);
+  const sessions = loadSessions(opts.sessionsPath, opts.legacySessionsPath);
   sessions.workspaces[workspaceName] = {
     lastLaunched: new Date().toISOString().slice(0, 10),
     templateHash: computeTemplateHash(role, opts.templatesDir),

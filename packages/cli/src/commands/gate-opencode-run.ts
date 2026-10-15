@@ -13,9 +13,9 @@
 
 import { spawn as nodeSpawn, type StdioOptions } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildRunPlan, supervise, type RunPlan, type SpawnedProc, type SupervisorDeps } from "@squadrant-ai/auto-gate";
+import { stateRoot } from "@squadrant/shared";
 
 /** How long after the auto-gate pipeline starts a non-zero supervise() exit
  *  still counts as a startup failure (→ fall back) rather than a normal
@@ -52,7 +52,7 @@ export interface GateOpencodeRunDeps {
 /** Per-project gate log under the squadrant state dir (#866). */
 function defaultGateLogPath(env: NodeJS.ProcessEnv = process.env): string {
   const project = env.SQUADRANT_CREW_PROJECT || "_shared";
-  return join(homedir(), ".config", "squadrant", "state", project, "auto-gate-opencode.log");
+  return join(stateRoot(), project, "auto-gate-opencode.log");
 }
 
 /** Today's plain behavior: opencode, no adapter. Used as the runtime fallback

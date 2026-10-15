@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stateRoot } from "@squadrant/shared";
 
 const hoisted = vi.hoisted(() => ({
   home: "",
@@ -128,7 +129,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const SETTINGS_PATH = (): string =>
-  join(hoisted.home, ".config", "squadrant", "state", "demo", "captain", "router-settings.json");
+  join(stateRoot(), "demo", "captain", "router-settings.json");
 
 async function runLaunchAndGetCmd(extraArgs: string[] = []): Promise<string> {
   const { launchCommand } = await import("../launch.js");

@@ -4,11 +4,9 @@
 // registered project's captain pane. No tracked task, no report-back.
 // Reuses the same delivery mechanism as `squadrant runtime send`.
 
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_CONFIG_PATH, resolveCaptainChannelMode } from "@squadrant/shared";
+import { loadConfig, resolveCaptainChannelMode, stateRoot as defaultStateRoot } from "@squadrant/shared";
 import { appendCaptainMessage, deliverToCaptain, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
 import { requireDaemon } from "../lib/require-daemon.js";
@@ -44,7 +42,7 @@ export async function runPing(project: string, message: string): Promise<Deliver
   const mode = resolveCaptainChannelMode(config.defaults);
   // #786: route by the captain's agent (launch record, else config) so an
   // opencode captain is reached over its HTTP channel, not the claude socket.
-  const stateRoot = join(homedir(), ".config", "squadrant", "state");
+  const stateRoot = defaultStateRoot();
   const { channels, agentFor } = mode === "off"
     ? { channels: {} as Record<string, ControlChannel>, agentFor: () => undefined }
     : await buildCaptainChannels({ stateRoot, configAgent: config.defaults.roles?.captain?.agent });
@@ -56,7 +54,6 @@ export async function runPing(project: string, message: string): Promise<Deliver
   });
 
   if (!handled) {
-    const stateRoot = join(dirname(DEFAULT_CONFIG_PATH), "state");
     await appendCaptainMessage({
       stateRoot,
       project,

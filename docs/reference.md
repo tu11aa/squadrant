@@ -30,6 +30,7 @@ guided first run — come back here when you need the details.
   - [Storage layout: workspace (#983)](#storage-layout-workspace-983)
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
+  - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Config](#config)
 
 ## Commands
@@ -43,7 +44,7 @@ guided first run — come back here when you need the details.
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor` | Health check — verify dependencies |
-| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
+| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
 | `squadrant projects list` | List registered projects |
 | `squadrant projects add <name> <path>` | Register a project (creates `~/squadrant/workspace/<name>/`; no Obsidian spoke scaffold since #983) |
 | `squadrant projects remove <name>` | Unregister a project |
@@ -358,7 +359,7 @@ notifications cannot be delivered to it. squadrant then:
 1. boots the captain as `opencode --session <id> --port <N>` (resume is explicit;
    `-c` is never used — inside one repo it also resumes crew-worktree sessions), and
 2. records its address (`port` + `sessionId`) in
-   `~/.config/squadrant/state/<project>/captain.json`, which the daemon uses to
+   `<stateRoot>/<project>/captain.json` (see [Runtime state](#runtime-state-localstatesquadrant-983)), which the daemon uses to
    deliver over opencode's HTTP API (`POST /session/<id>/prompt_async`).
 
 If a captain is not deliverable, the daemon raises a single actionable
@@ -522,7 +523,7 @@ KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~
 - **Dual-read for one version.** `read-handoff.sh` falls back to `handoff.json` in the old spoke (the path passed in, or `~/squadrant-hub/spokes/<p>/`). `handoff facts` reads checkpoints and session records from both, and `standup`/`retro` read daily logs from both.
 - Learnings, captured skills and the wiki stay in the spoke until KB phase 4b. `spokeVault`/`hubVault` stay in the config as deprecated aliases. `record-learning.sh` / `capture-skill.sh` / `wiki-ingest.sh` create a missing spoke dir; `wiki-query.sh` / `wiki-log.sh` are a no-op on one.
 
-**`squadrant migrate kb [--dry-run]`** moves an existing home to this layout (KB spec §10). It prints one line per batch: `would-move`/`moved`, `would-archive`/`archived`, `skipped`, `copied` (cross-device: the original stays) or `pending`.
+**`squadrant migrate kb [--dry-run]`** moves an existing home to this layout (KB spec §10). It prints one line per batch: `would-move`/`moved`, `would-archive`/`archived`, `skipped` or `copied` (cross-device: the original stays).
 
 | From | To |
 |---|---|
@@ -530,7 +531,7 @@ KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~
 | spoke `reports/ research/ findings/ recaps/ plans/ daily-logs/` | `workspace/<p>/artifacts/<kind>/` |
 | spoke `artifacts/` | `workspace/<p>/artifacts/` |
 | hub `CLAUDE.md`, `projects/*.md`, `daily-logs/`, `wiki/` + `learnings/` when they hold only scaffold files | `~/squadrant/archive/<date>/hub/…` |
-| `~/.config/squadrant/{daemon.db,state,*.log}` | reported as `pending 6a` (the state move is #983 part 6a) |
+| `~/.config/squadrant/state/`, `~/.config/squadrant/squadrantd.log` | `~/squadrant/archive/<date>/config/{state/,squadrantd.log}`. This happens only once the daemon has copied the state into `~/.local/state/squadrant` (the `.seeded-from-legacy` marker, see [Runtime state](#runtime-state-localstatesquadrant-983)); until then the row is `skipped` with a note. The log is `skipped` while launchd still writes it (run `squadrant heal daemon` first). `config.json` is never touched. |
 | `<hubVault>/knowledge/<kb>/`, spoke `knowledge/rules/` | same as `squadrant knowledge migrate` (kept as an alias) |
 
 Directories are merged file by file. A file whose target already exists is reported `skipped` and left in place, never overwritten. Nothing is deleted, and a second run moves nothing. `squadrant doctor` warns while a spoke or the hub still holds files to migrate, and when a project has no workspace dir yet.
@@ -618,6 +619,45 @@ These formats follow each agent's documentation and have **not been live-verifie
 - **Session freshness** — auto-detects new day or template changes, forces fresh context
 - **claude-mem** — cross-session memory via MCP plugin
 
+### Runtime state (`~/.local/state/squadrant`, #983)
+
+squadrant keeps its runtime state in XDG state, not in `~/.config`. `~/.config/squadrant/` holds config only, plus the daemon socket (`squadrant.sock`) and `daemon.lock`, which stay there.
+
+All of it resolves through one helper, `stateRoot()` in `@squadrant/shared`, and the first match wins:
+
+1. `$SQUADRANT_STATE_DIR`
+2. `dirname($SQUADRANT_CONFIG)/state`, but only when `SQUADRANT_CONFIG` points somewhere other than the default `~/.config/squadrant/config.json`. An isolated harness or e2e run that sets only `SQUADRANT_CONFIG` therefore never writes into the live mailbox or results. A `SQUADRANT_CONFIG` that names the default path falls through to step 3.
+3. `$XDG_STATE_HOME/squadrant`
+4. `~/.local/state/squadrant`
+
+```
+<stateRoot>/
+  <project>/            task store, captain.json, per-task agent configs, auto-gate-opencode.log
+  inbox/                captain mailboxes + delivery cursors
+  _results/  _shared/   crew results, cross-project state
+  rules-inject/         rules seen-set per session
+  knowledge-schedule.json  liveness.json  sessions.json  …
+  logs/squadrantd.log   daemon log (launchd stdout/stderr) = logsRoot()
+  .seeded-from-legacy   marker: the one-time legacy copy ran
+```
+
+The rules audit log keeps its own path, `~/.local/state/squadrant/audit/` (`SQUADRANT_AUDIT_DIR`).
+
+Because the layout is flat, a project dir shares a namespace with those entries. `squadrant projects add` therefore rejects the names `audit`, `logs`, `inbox` and `rules-inject`, and any name starting with `_` or `.`.
+
+**Upgrading from ≤ 0.28.x (dual-read for one version):**
+- **State copy.** On its first boot, the daemon copies the legacy `~/.config/squadrant/state` into the new root.
+  - Files already in the new root win, and nothing is deleted.
+  - It then writes `.seeded-from-legacy` and never copies again, so a mailbox entry or task record it consumed later is not brought back.
+  - If the copy fails, the daemon logs it and keeps booting; the next boot retries.
+- **`sessions.json`** (launch freshness) and the **daemon-log reader** (dashboard Logs tab, snapshot log stats) read the new path when it exists and fall back to the legacy file otherwise. Writes always go to the new path.
+- **launchd log path.** The plist is rewritten to `logsRoot()/squadrantd.log`, but launchd only re-reads `StandardErrorPath` when the service is bootstrapped. So the running daemon keeps logging to `~/.config/squadrant/squadrantd.log` until the next `squadrant heal daemon` (which now does the bootout and bootstrap when the loaded path is stale) or the next login. Until then the log readers use the legacy file, so the Logs tab never goes blank.
+- **`squadrant doctor`** warns (never FAILs) in two cases:
+  - the legacy state dir still holds files. Once they are copied, that dir is a rollback copy; `squadrant migrate kb` archives it.
+  - launchd is still writing the legacy log path.
+
+**Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
+
 ## Config
 
 `~/.config/squadrant/config.json`
@@ -698,7 +738,7 @@ The `defaults.gate` block is **optional** too — omit it and the U7 permission 
 
 Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GATE_ENGINE` (engine), `SQUADRANT_GATE_POLICY`, `SQUADRANT_GATE_TOOLS`, `SQUADRANT_GATE_MODEL`. Router-backed crews/captains inject `SQUADRANT_GATE=on`; the auto-gate host honours that env override even when no `defaults.gate` block is present.
 
-**opencode ([#828](https://github.com/tu11aa/squadrant/issues/828) P6-C phase 2).** opencode has no `PermissionRequest` hook, so `engine: "auto-gate"` works differently there: instead of a per-prompt hook call, an opencode crew/captain launch is wrapped end-to-end. With `mode: "on"` + `engine: "auto-gate"` + the engine credential present (`hasAutoGateCredential` — env `TYPESAFE_API_KEY` or `~/.auto-gate-key`), squadrant launches the pane with `squadrant gate opencode-run --port <n> [--session <id>]` instead of a bare `opencode …`. That hidden command calls the package's `buildRunPlan({ args, allocate })` with `allocate` resolving to the **same port** squadrant already allocated for its own SSE bridge (turn-end detection, CREW DONE, approval answering) — never a second port — then runs opencode and the package's `opencode watch` watcher as one supervised unit (`supervise`). **Ownership:** once a crew is gate-wrapped, the auto-gate watcher is the sole answerer of opencode `permission.asked` events; squadrant's own CP3 `--approval`/`gateBash` crew-approval flag (which also answers permission prompts, via the SSE bridge) is suppressed for that crew to avoid two answerers racing the same prompt. **The wrapped crew/captain's per-task `opencode.json` sets `bash` and `edit` to `"ask"`** (everything else, incl. `external_directory`, unchanged; unwrapped configs are byte-identical to before) — opencode only emits `permission.asked` for `ask` rules, so an allow-all config would leave the watcher nothing to decide. squadrant's SSE bridge only records/surfaces the prompt (`task.approval.requested` → blocked → captain/Telegram) and never answers on its own, so if auto-gate answers `ask` (uncertain) the prompt stays open and reaches the operator. For a gate-wrapped crew (detected from its per-task config having both `bash` and `edit` at `ask`) the bridge holds each `permission.asked` for a ~5s grace window and drops it if `permission.replied` arrives first — so prompts auto-gate answers never ping the captain/Telegram; only still-open ones surface (and a later reply returns the task blocked → working). CP3 `--approval` crews surface immediately, unchanged; auto-gate is the only automatic answerer. **Gate log ([#866](https://github.com/tu11aa/squadrant/issues/866)):** the watcher's output and squadrant's own supervise log never touch the pane TTY (they garbled the TUI and broke `squadrant crew answer`); both append to `~/.config/squadrant/state/<project>/auto-gate-opencode.log` (`_shared` when no project env is set), or are discarded if that file can't be opened. **Safety fallback:** if the credential is absent, or building/running the plan throws for any other reason, squadrant logs one warning and launches opencode directly, byte-identical to the gate-off command — a gate defect must never stop a crew from starting. `mode: "on"` + `engine: "router"` is a no-op for opencode (that engine only owns Claude's `PermissionRequest` hook); opencode is unaffected either way. See [Router Backend](#router-backend-harnessprovider-decoupling).
+**opencode ([#828](https://github.com/tu11aa/squadrant/issues/828) P6-C phase 2).** opencode has no `PermissionRequest` hook, so `engine: "auto-gate"` works differently there: instead of a per-prompt hook call, an opencode crew/captain launch is wrapped end-to-end. With `mode: "on"` + `engine: "auto-gate"` + the engine credential present (`hasAutoGateCredential` — env `TYPESAFE_API_KEY` or `~/.auto-gate-key`), squadrant launches the pane with `squadrant gate opencode-run --port <n> [--session <id>]` instead of a bare `opencode …`. That hidden command calls the package's `buildRunPlan({ args, allocate })` with `allocate` resolving to the **same port** squadrant already allocated for its own SSE bridge (turn-end detection, CREW DONE, approval answering) — never a second port — then runs opencode and the package's `opencode watch` watcher as one supervised unit (`supervise`). **Ownership:** once a crew is gate-wrapped, the auto-gate watcher is the sole answerer of opencode `permission.asked` events; squadrant's own CP3 `--approval`/`gateBash` crew-approval flag (which also answers permission prompts, via the SSE bridge) is suppressed for that crew to avoid two answerers racing the same prompt. **The wrapped crew/captain's per-task `opencode.json` sets `bash` and `edit` to `"ask"`** (everything else, incl. `external_directory`, unchanged; unwrapped configs are byte-identical to before) — opencode only emits `permission.asked` for `ask` rules, so an allow-all config would leave the watcher nothing to decide. squadrant's SSE bridge only records/surfaces the prompt (`task.approval.requested` → blocked → captain/Telegram) and never answers on its own, so if auto-gate answers `ask` (uncertain) the prompt stays open and reaches the operator. For a gate-wrapped crew (detected from its per-task config having both `bash` and `edit` at `ask`) the bridge holds each `permission.asked` for a ~5s grace window and drops it if `permission.replied` arrives first — so prompts auto-gate answers never ping the captain/Telegram; only still-open ones surface (and a later reply returns the task blocked → working). CP3 `--approval` crews surface immediately, unchanged; auto-gate is the only automatic answerer. **Gate log ([#866](https://github.com/tu11aa/squadrant/issues/866)):** the watcher's output and squadrant's own supervise log never touch the pane TTY (they garbled the TUI and broke `squadrant crew answer`); both append to `<stateRoot>/<project>/auto-gate-opencode.log` (`_shared` when no project env is set), or are discarded if that file can't be opened. **Safety fallback:** if the credential is absent, or building/running the plan throws for any other reason, squadrant logs one warning and launches opencode directly, byte-identical to the gate-off command — a gate defect must never stop a crew from starting. `mode: "on"` + `engine: "router"` is a no-op for opencode (that engine only owns Claude's `PermissionRequest` hook); opencode is unaffected either way. See [Router Backend](#router-backend-harnessprovider-decoupling).
 
 **Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
 

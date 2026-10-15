@@ -7,6 +7,7 @@ import {
   saveConfig,
   resolveHome,
   ensureWorkspace,
+  reservedStateNameError,
   ProjectConfig,
 } from "@squadrant/shared";
 import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
@@ -64,6 +65,12 @@ const addCmd = new Command("add")
   .option("--no-restart", "skip daemon restart after registration")
   .action((name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string; restart?: boolean }) => {
     const config = loadConfig();
+
+    const reserved = reservedStateNameError(name);
+    if (reserved) {
+      console.log(chalk.red(`\n  ✘ ${reserved}\n`));
+      process.exit(1);
+    }
 
     if (config.projects[name]) {
       console.log(chalk.yellow(`\n⚠ Project '${name}' already registered. Remove it first.\n`));
