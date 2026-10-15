@@ -52,7 +52,7 @@ When you have a root cause (with or without a draft patch):
 
    a. Write the durable vault record (replace placeholders with actual values from the "Side-session context" block in your first turn):
    ```bash
-   ~/.config/squadrant/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "debug" "<one-line root cause>"
+   ~/.config/squadrant/scripts/record-side-handoff.sh "<workspace>" "<topic>" "debug" "<one-line root cause>"
    ```
 
    b. Send the structured handoff to the primary captain via relay:
@@ -68,7 +68,7 @@ HANDOFF
 
 3. **On no:** keep working; you can trigger the handoff whenever you're ready.
 
-The `<project>`, `<spoke-vault>`, and `<name>` (your scratch branch) are in the "Side-session context" block of your first turn. The draft patch (if any) lives on the scratch branch — reference it by name; do NOT merge it.
+The `<project>`, `<workspace>`, and `<name>` (your scratch branch) are in the "Side-session context" block of your first turn. The draft patch (if any) lives on the scratch branch — reference it by name; do NOT merge it.
 
 ## Karpathy Discipline
 

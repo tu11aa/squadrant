@@ -28,13 +28,13 @@ Execute the 4-step startup contract defined in your system prompt.
    Check tasks from the same call — `liveRepo.liveCrews` lists every non-terminal crew task for this project. A `state: "blocked"` entry with a `question` is waiting on you right now.
 
 4. **Read handoff:**
-   `~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"`
+   `~/.config/squadrant/scripts/read-handoff.sh "{project}"` (reads `~/squadrant/workspace/{project}/handoff.json`)
    If a handoff exists, read the context carefully (`currentState`, `openBranches`, `nextSteps`, `blockedItems`, `decisions`). 
    If it reported `"exists": false`, reconstruct from the `handoff facts` output instead of cold-starting blind (check `checkpoint`, `gapSessions`, `claudeMem`). You do the synthesizing.
 
 5. **Additional Context (opt-in):**
    - Search **claude-mem** (`mem-search` skill) for your project name.
-   - Check `{spokeVault}/daily-logs/` for the most recent log.
+   - Check `~/squadrant/workspace/{project}/artifacts/daily-logs/` for the most recent log.
    - Check `{spokeVault}/learnings/` — selectively load relevant learnings.
    - Check `{spokeVault}/skills/` and `{spokeVault}/wiki/`.
    - Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
@@ -300,8 +300,12 @@ On CREW REVIEW or CREW DONE:
 | Good — matches the task, tests pass, no scope creep | **DEFAULT mode:** Surface diff summary to user and WAIT. Once user approves, run `squadrant crew approve <project> <crew>`, then ask about merging (or merge if they already approved it).<br><br>**DELEGATED mode:** Run `squadrant crew approve <project> <crew>`, then merge autonomously. |
 | Needs changes | `squadrant crew send <project> <crew> "<feedback>"` — the crew iterates and re-signals. Loop until approved. |
 
-3. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-4. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+3. **Grade the rules the crew was given** (only if the project subscribes to a knowledge base; #945). While the diff is open:
+   - `squadrant knowledge surfaced --task <task-id>` lists the rules delivered to that task (task id from `squadrant crew tasks <project>`).
+   - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
+   - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
+4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
+5. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 
@@ -390,7 +394,7 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 3. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
 
 ```bash
-~/.config/squadrant/scripts/write-handoff.sh "{spokeVaultPath}" '{
+~/.config/squadrant/scripts/write-handoff.sh "{project}" '{
   "currentState": "Brief description of where things stand",
   "openBranches": ["feat/branch-name — what it contains"],
   "nextSteps": ["First thing to do tomorrow", "Second thing"],

@@ -6,7 +6,11 @@ set -euo pipefail
 
 CMUX="/Applications/cmux.app/Contents/Resources/bin/cmux"
 TEMPLATES_DIR="${HOME}/.config/squadrant/templates"
-SESSIONS_FILE="${HOME}/.config/squadrant/sessions.json"
+# #983 6a: sessions.json lives in XDG state (mirrors stateRoot()). Read the
+# pre-move ~/.config file until the new one exists; writes go to the new path.
+SESSIONS_FILE="${SQUADRANT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/squadrant}/sessions.json"
+SESSIONS_READ="$SESSIONS_FILE"
+[ -f "$SESSIONS_READ" ] || SESSIONS_READ="${HOME}/.config/squadrant/sessions.json"
 NAME="${1:?Usage: spawn-workspace.sh <name> <cwd> [role] [--fresh]}"
 CWD="${2:?Usage: spawn-workspace.sh <name> <cwd> [role] [--fresh]}"
 ROLE="${3:-captain}"
@@ -18,12 +22,12 @@ FRESH=false
 # --- Session freshness check ---
 if [ "$FORCE_FRESH" = "--fresh" ]; then
   FRESH=true
-elif [ -f "$SESSIONS_FILE" ]; then
+elif [ -f "$SESSIONS_READ" ]; then
   # Check last launch date
   LAST_DATE=$(python3 -c "
 import json, sys
 try:
-    data = json.load(open('$SESSIONS_FILE'))
+    data = json.load(open('$SESSIONS_READ'))
     print(data.get('workspaces', {}).get('$NAME', {}).get('lastLaunched', ''))
 except: print('')
 " 2>/dev/null)
@@ -43,7 +47,7 @@ except: print('')
     STORED_HASH=$(python3 -c "
 import json
 try:
-    data = json.load(open('$SESSIONS_FILE'))
+    data = json.load(open('$SESSIONS_READ'))
     print(data.get('workspaces', {}).get('$NAME', {}).get('templateHash', ''))
 except: print('')
 " 2>/dev/null)
@@ -64,7 +68,7 @@ python3 -c "
 import json, os
 path = '$SESSIONS_FILE'
 try:
-    data = json.load(open(path))
+    data = json.load(open('$SESSIONS_READ'))
 except: data = {'workspaces': {}}
 data.setdefault('workspaces', {})['$NAME'] = {'lastLaunched': '$TODAY', 'templateHash': '$CURRENT_HASH'}
 os.makedirs(os.path.dirname(path), exist_ok=True)

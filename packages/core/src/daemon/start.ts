@@ -3,7 +3,7 @@
 // starts timers, and returns the DaemonHandle.
 // Concrete driver construction (CodexInteractiveDriver, DaemonCmux, etc.)
 // lives in the host (squadrantd.ts) — this file stays free of those imports.
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { readdir } from "node:fs/promises";
 import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
@@ -15,7 +15,10 @@ import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMark
 import { formatDownAlertText } from "./down-alert.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
-import { loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig } from "@squadrant/shared";
+import {
+  loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig,
+  stateRoot as defaultStateRoot, daemonLogPath, legacyDaemonLogPath, resolveReadPath,
+} from "@squadrant/shared";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./snapshot-gather.js";
 import type { SquadrantdOpts, DaemonContext } from "./context.js";
 
@@ -137,7 +140,12 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   }
 
   async function gatherSnapshotInputs(now: number): Promise<DaemonSnapshotInputs> {
-    const logPath = join(dirname(stateRoot), "squadrantd.log");
+    // #983 6a: the log lives in <stateRoot>/logs (= logsRoot() for the real
+    // daemon). launchd keeps writing the legacy ~/.config path until its plist
+    // is reloaded, so the real daemon falls back to it while the new file is absent.
+    const logPath = stateRoot === defaultStateRoot()
+      ? resolveReadPath(daemonLogPath(), legacyDaemonLogPath())
+      : join(stateRoot, "logs", "squadrantd.log");
     const tier2Projects = opts.registeredProjects ?? Object.keys(loadConfig().projects);
     const projects = await Promise.all(
       tier2Projects.map(async (project) => {

@@ -3,7 +3,7 @@
 // verdicts.jsonl lives in the KB repo and is never touched here.
 import fs from "node:fs";
 import path from "node:path";
-import { defaultAuditDir } from "./audit.js";
+import { defaultAuditDir, outcomeSource, RATED_SOURCES } from "./audit.js";
 import type { AuditRecord } from "./fullpass.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -15,10 +15,13 @@ const OUTCOMES = new Set(["followed", "violated", "noise", "wrong"]);
 
 export interface ItemCounts {
   surfaced: number; suppressed: number; searched: number; shown: number; cited: number;
+  /** Outcomes from RATED_SOURCES only. */
   followed: number; violated: number; noise: number; wrong: number;
+  /** Reconcile code-violations: codebase drift, kept out of the rates. */
+  codeViolations: number;
   chars: number; lastSurfaced?: string; lastUsed?: string;
 }
-const zero = (): ItemCounts => ({ surfaced: 0, suppressed: 0, searched: 0, shown: 0, cited: 0, followed: 0, violated: 0, noise: 0, wrong: 0, chars: 0 });
+const zero = (): ItemCounts => ({ surfaced: 0, suppressed: 0, searched: 0, shown: 0, cited: 0, followed: 0, violated: 0, noise: 0, wrong: 0, codeViolations: 0, chars: 0 });
 const later = (a: string | undefined, b: string | undefined) => (a && b ? (a > b ? a : b) : a ?? b);
 
 export interface Tally {
@@ -26,8 +29,10 @@ export interface Tally {
   domains: Record<string, { writes: number; reads: number }>;
   agents: Record<string, number>;
   tiers: Record<string, number>;
+  /** Outcome counts per source (all sources, rated or not): source → outcome → n. */
+  sources: Record<string, Record<string, number>>;
 }
-const emptyTally = (): Tally => ({ items: {}, domains: {}, agents: {}, tiers: {} });
+const emptyTally = (): Tally => ({ items: {}, domains: {}, agents: {}, tiers: {}, sources: {} });
 
 /** Fold audit records into counts. Events without an itemId (searches) still count toward domain reads; write
  *  events only count toward domain writes, so an id that was merely applied/rejected (e.g. on an unmerged
@@ -53,7 +58,15 @@ export function tally(records: AuditRecord[], into: Tally = emptyTally()): Tally
       case "item.searched": c.searched++; break;
       case "item.shown": c.shown++; break;
       case "item.cited": c.cited++; c.lastUsed = later(c.lastUsed, e.ts); break;
-      case "item.outcome": if (OUTCOMES.has(String(e.outcome))) c[e.outcome as "followed"]++; break;
+      case "item.outcome": {
+        if (!OUTCOMES.has(String(e.outcome))) break;
+        const src = outcomeSource(e), o = e.outcome as "followed" | "violated" | "noise" | "wrong";
+        const bySrc = (into.sources[src] ??= {});
+        bySrc[o] = (bySrc[o] ?? 0) + 1;
+        if (src === "reconcile" && o === "violated") c.codeViolations++;
+        else if (RATED_SOURCES.has(src)) c[o]++;
+        break;
+      }
     }
   }
   return into;
@@ -119,19 +132,29 @@ function mergeTally(into: Tally, from: Tally): void {
   for (const [k, v] of Object.entries(from.domains)) { const d = (into.domains[k] ??= { writes: 0, reads: 0 }); d.writes += v.writes; d.reads += v.reads; }
   for (const [k, v] of Object.entries(from.agents)) into.agents[k] = (into.agents[k] ?? 0) + v;
   for (const [k, v] of Object.entries(from.tiers)) into.tiers[k] = (into.tiers[k] ?? 0) + v;
+  into.sources ??= {};
+  for (const [src, os] of Object.entries(from.sources ?? {})) {
+    const t = (into.sources[src] ??= {});
+    for (const [o, n] of Object.entries(os)) t[o] = (t[o] ?? 0) + n;
+  }
 }
 
 // ── scores ───────────────────────────────────────────────────────────
 
 const ratio = (n: number, d: number) => (d ? Math.round((n / d) * 1000) / 1000 : null);
+export const COMPLIANCE_MIN_EVALUATED = 3;
 
 export interface ItemScore {
   domain: string; itemId: string;
   /** Last-30-day counts. */
   surfaced: number; suppressed: number; searched: number; shown: number; cited: number;
-  followed: number; violated: number; noise: number; wrong: number;
+  followed: number; violated: number; noise: number; wrong: number; codeViolations: number;
+  /** followed + violated (rated sources). */
+  evaluated: number;
   fireRate: number; pullRate: number;
   useRate: number | null; noiseRate: number | null; violationRate: number | null;
+  /** followed ÷ evaluated; null below COMPLIANCE_MIN_EVALUATED. */
+  complianceRate: number | null;
   lastSurfaced?: string; lastUsed?: string;
   neverFired30d: boolean;
   lifetimeSurfaced: number;
@@ -146,6 +169,8 @@ export interface Scores {
   perAgentCoverage: Record<string, number>;
   tierContribution: Record<string, number>;
   reviewerAgreement: { resolved: number; approved: number; rate: number | null };
+  /** Last-30-day outcome counts per source, including sources kept out of the rates (crew, reconcile). */
+  bySource: Record<string, Record<string, number>>;
 }
 
 export interface ScoreInput {
@@ -170,9 +195,11 @@ export function computeScores(i: ScoreInput): Scores {
     const l = life.items[key];
     return {
       domain, itemId, surfaced: w.surfaced, suppressed: w.suppressed, searched: w.searched, shown: w.shown, cited: w.cited,
-      followed: w.followed, violated: w.violated, noise: w.noise, wrong: w.wrong,
+      followed: w.followed, violated: w.violated, noise: w.noise, wrong: w.wrong, codeViolations: w.codeViolations,
+      evaluated: w.followed + w.violated,
       fireRate: w.surfaced, pullRate: w.shown + w.searched,
       useRate: ratio(w.cited, w.surfaced), noiseRate: ratio(w.noise, w.surfaced), violationRate: ratio(w.violated, w.surfaced),
+      complianceRate: w.followed + w.violated >= COMPLIANCE_MIN_EVALUATED ? ratio(w.followed, w.followed + w.violated) : null,
       lastSurfaced: l?.lastSurfaced, lastUsed: l?.lastUsed,
       neverFired30d: w.surfaced === 0 && (knownActive.has(key) || (l?.surfaced ?? 0) > 0), lifetimeSurfaced: l?.surfaced ?? 0,
     };
@@ -194,6 +221,7 @@ export function computeScores(i: ScoreInput): Scores {
     kb: i.kb, generatedAt: i.now.toISOString(), windowDays: SCORE_WINDOW_DAYS, items, domains,
     perAgentCoverage: win.agents, tierContribution: win.tiers,
     reviewerAgreement: { resolved: operator.length, approved, rate: ratio(approved, operator.length) },
+    bySource: win.sources,
   };
 }
 
@@ -222,14 +250,18 @@ export function renderScoresSection(s: Scores): string[] {
   const pct = (x: number | null) => (x === null ? "n/a" : `${Math.round(x * 100)}%`);
   const used = s.items.filter((x) => x.surfaced).sort((a, b) => b.surfaced - a.surfaced || a.itemId.localeCompare(b.itemId)).slice(0, 10);
   const never = s.items.filter((x) => x.neverFired30d).map((x) => x.itemId);
+  const code = s.items.filter((x) => x.codeViolations).map((x) => `${x.itemId} ${x.codeViolations}`);
+  const sources = Object.keys(s.bySource).sort().map((src) => `${src} ${Object.entries(s.bySource[src]).map(([o, n]) => `${o} ${n}`).join(", ")}`);
   return [
     "", `## Scores (${s.windowDays} days)`, "",
-    ...(used.length ? ["| Item | Surfaced | Pulled | Cited | Use | Noise | Violated |", "|---|---|---|---|---|---|---|",
-      ...used.map((x) => `| ${x.itemId} | ${x.surfaced} | ${x.pullRate} | ${x.cited} | ${pct(x.useRate)} | ${pct(x.noiseRate)} | ${pct(x.violationRate)} |`)] : ["No items surfaced."]),
+    ...(used.length ? ["| Item | Surfaced | Pulled | Cited | Use | Noise | Violated | Compliance |", "|---|---|---|---|---|---|---|---|",
+      ...used.map((x) => `| ${x.itemId} | ${x.surfaced} | ${x.pullRate} | ${x.cited} | ${pct(x.useRate)} | ${pct(x.noiseRate)} | ${pct(x.violationRate)} | ${pct(x.complianceRate)} |`)] : ["No items surfaced."]),
     "", `- Never fired (${never.length}): ${never.slice(0, 20).join(", ") || "none"}${never.length > 20 ? ", …" : ""}`,
     `- Tier contribution: ${Object.entries(s.tierContribution).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
     `- Per-agent coverage (surfaced): ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
     `- Reviewer agreement: ${pct(s.reviewerAgreement.rate)} (${s.reviewerAgreement.approved}/${s.reviewerAgreement.resolved} operator resolutions approved)`,
+    `- Outcomes by source: ${sources.join("; ") || "none"} (crew and reconcile are not in the rates)`,
+    `- Code violations (reconcile, not in rates): ${code.join(", ") || "none"}`,
     "", "| Domain | Writes/mo | Reads/mo | Chars per citation | Alarm |", "|---|---|---|---|---|",
     ...s.domains.map((d) => `| ${d.domain} | ${d.writesPerMonth} | ${d.readsPerMonth} | ${d.charsPerCitation ?? "n/a"} | ${d.deadDomain ? "DEAD (no activity 30d)" : ""} |`),
   ];

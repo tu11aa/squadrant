@@ -184,7 +184,7 @@
 
         <rect x="1005" y="80" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
         <text class="chip" x="1078" y="108" text-anchor="middle">workspaces/</text>
-        <text class="bs" x="1078" y="124" text-anchor="middle">ObsidianWorkspace</text>
+        <text class="bs" x="1078" y="124" text-anchor="middle">ObsidianWorkspace (deprecated)</text>
 
         <rect x="840" y="150" width="145" height="50" rx="8" fill="var(--panel)" stroke="var(--workspaces)" stroke-width="1.5"/>
         <text class="chip" x="913" y="178" text-anchor="middle">notifiers/cmux.ts</text>
@@ -292,7 +292,7 @@
           <tr><td><code style="color:var(--shared)">@squadrant/shared</code></td><td>Config schema, TypeScript types, leaf constants</td><td>—</td><td>Zero internal deps. Imported by everything.</td></tr>
           <tr><td><code style="color:var(--core)">@squadrant/core</code></td><td>Daemon logic, protocol, state-machine, task/crew bus, <code>AgentDriver</code> interface, dashboard state</td><td>shared</td><td>No concrete drivers — pure interfaces + orchestration.</td></tr>
           <tr><td><code style="color:var(--agents)">@squadrant/agents</code></td><td>AI driver seam: <code>claude.ts</code>, <code>codex.ts</code>, <code>opencode.ts</code>, <code>gemini.ts</code> + registry</td><td>core, shared</td><td>Implements <code>AgentDriver</code>. Swap here to add a new AI agent.</td></tr>
-          <tr><td><code style="color:var(--workspaces)">@squadrant/workspaces</code></td><td>Runtime (cmux), workspace (obsidian), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
+          <tr><td><code style="color:var(--workspaces)">@squadrant/workspaces</code></td><td>Runtime (cmux), workspace (obsidian, deprecated #983: exchange moved to <code>~/squadrant/workspace/&lt;p&gt;/</code>), notifier (cmux) drivers + registries</td><td>core, shared</td><td>Implements surface/workspace/notifier seams. Add tmux, Slack, etc. here.</td></tr>
           <tr><td><code style="color:var(--web)">@squadrant/web</code></td><td>Observability dashboard — bundled HTML/JS served by CLI</td><td>core, shared</td><td>Read-only UI; no agent-facing code. Bundled inline by CLI's tsup build.</td></tr>
           <tr><td><code style="color:var(--cli)">@squadrant/cli</code></td><td>CLI commands, bin entry (<code>dist/index.js</code>), daemon host (<code>dist/squadrantd.js</code>), templates, plugin dir</td><td>all packages</td><td>Root. Wires drivers. Two tsup entry points produce the two dist bundles.</td></tr>
         </tbody>

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendRequest, resolveCurrentProject, computeRulesInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
 import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite } from "@squadrant/agents";
-import { loadConfig, DAEMON_SOCK_PATH, CONFIG_DIR } from "@squadrant/shared";
+import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot } from "@squadrant/shared";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
@@ -104,14 +104,12 @@ function recordCaptainSessionStart(payload: unknown): void {
   try {
     const config = loadConfig();
     const project = resolveCurrentProject(config);
-    if (!project) return;
-    const proj = config.projects[project];
-    if (!proj) return;
+    if (!project || !config.projects[project]) return;
 
     const record = buildCaptainSessionRecord(payload, project, process.cwd(), new Date().toISOString());
     if (!record) return;
 
-    appendCaptainSession(proj.spokeVault, record);
+    appendCaptainSession(workspacePath(project), record);
   } catch {
     // Best-effort — a registry-write failure must never block the session.
   }
@@ -166,7 +164,7 @@ export async function rulesHookOutput(
   const ctx = await withBudget(() => computeRulesInjection({
     event: map.event, payload, env: opts.env, cwd: opts.cwd, project: opts.project, agent,
     cfg: (opts.loadCfg ?? loadConfig)(),
-    stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+    stateRoot: opts.stateRoot ?? stateRoot(),
   }), opts.budgetMs ?? INJECT_BUDGET_MS);
   if (!ctx) return "";
   return JSON.stringify({ hookSpecificOutput: { hookEventName: map.hookEventName, additionalContext: ctx } });

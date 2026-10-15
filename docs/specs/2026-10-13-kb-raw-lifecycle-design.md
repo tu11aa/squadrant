@@ -1,6 +1,6 @@
 # KB Raw → Rules Lifecycle: Design
 
-- **Status:** decided 2026-10-13 (§12). Phases 1–3 built; see the phase table in §8.
+- **Status:** migrated 2026-10-14. Phases 1–3 built; saitex migrated in Phases 4–5 (counts in §8). Decided 2026-10-13 (§12).
 - **Epic:** #893 · **Builds on:** [`2026-10-07-rules-kb-design.md`](2026-10-07-rules-kb-design.md) (D3, D4, §4, §5) and [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md) (K10, §4.1)
 - **Diagram:** [`docs/diagrams/2026-10-13-kb-raw-lifecycle.html`](../diagrams/2026-10-13-kb-raw-lifecycle.html)
 
@@ -196,8 +196,8 @@ The replay is a short script a crew writes and runs once. It is not a new CLI co
 | 1 | `review: required`: shared type + validator, `apply` routing, always-escalate in `review`, tests, docs | squadrant | S, ~0.5 day | **built** (feat/kb-review-required) |
 | 2 | `errata.yaml`: shared type + validator, loader, `apply` filter, orphan report (apply + `REPORT.md`), `validate` check, tests, docs | squadrant | M, ~1 day | **built** (feat/kb-errata) |
 | 3 | `knowledge sources <kb> --remove <path> [--dry-run]`: strip refs, mark source-less rules stale, tests, docs | squadrant | S, ~0.5 day | **built** (feat/kb-sources-remove) |
-| 4 | saitex migration: write `errata.yaml` (from 26 errata + 26 corrected rows) and about 10–15 decision records; edit `sources.yaml`; replay the branch; extract decisions; operator review | saitex KB | crew ~1 day + operator ~1–2 h for ~70 escalations | planned |
-| 5 | `--remove` extracted, archive the folder, delete the branch, `validate` green | saitex KB | ~0.5 h | planned |
+| 4 | saitex migration: write `errata.yaml` (from 26 errata + 26 corrected rows) and about 10–15 decision records; edit `sources.yaml`; replay the branch; extract decisions; operator review | saitex KB | crew ~1 day + operator ~1–2 h for ~70 escalations | **migrated 2026-10-14**: 84 errata, 16 decision records (9 rulings, 7 observed ClickUp practices); replay 49 merged, 71 proposed, 11 rejected by errata; operator review 60 approved, 10 rejected, 1 merged; live 83 → 143 |
+| 5 | `--remove` extracted, archive the folder, delete the branch, `validate` green | saitex KB | ~0.5 h | **migrated 2026-10-14**: 65 rules lost their `extracted/` ref, 59 kept another source, the 6 left without one (open questions to the lead) retired; live 137 |
 
 **Ops hazard (Phase 4):** never check out a review branch in the live KB checkout. Inject serves whatever is checked out (10-12 incident, ~10 min). Use a separate worktree or clone.
 

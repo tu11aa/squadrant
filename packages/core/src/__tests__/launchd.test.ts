@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
 import { execFileSync } from "node:child_process";
-import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall, isVersionUpgrade, isReadOnlyCrewCommand, READ_ONLY_CREW_SUBCOMMANDS, isReadOnlyTopLevelCommand, READ_ONLY_TOP_LEVEL_COMMANDS, decideForeignInstall, printForeignInstallError, printVersionUpgradeNotice } from "../launchd.js";
+import { renderPlist, LABEL, kickstartArgv, sanitizePathForPlist, programArgsBlock, AGENT_BINS, resolveAgentBinDirs, buildDaemonPath, isOperatorInitiatedCommand, OPERATOR_INITIATED_COMMANDS, parseProgramArgs, detectForeignInstall, isVersionUpgrade, isReadOnlyCrewCommand, READ_ONLY_CREW_SUBCOMMANDS, isReadOnlyTopLevelCommand, READ_ONLY_TOP_LEVEL_COMMANDS, decideForeignInstall, printForeignInstallError, printVersionUpgradeNotice, parseLaunchctlStderrPath } from "../launchd.js";
+import { daemonLogPath } from "@squadrant/shared";
 
 describe("launchd plist", () => {
   it("renders a KeepAlive RunAtLoad plist pointing at the daemon entry", () => {
@@ -24,6 +25,19 @@ describe("launchd plist", () => {
     const xml = renderPlist("/usr/local/bin/node", "/opt/squadrant/dist/control/squadrantd.js", p);
     expect(xml).toContain("<key>EnvironmentVariables</key>");
     expect(xml).toContain(`<key>PATH</key><string>${p}</string>`);
+  });
+
+  it("#983 6a: points launchd's stdout/stderr at logsRoot(), not ~/.config", () => {
+    const xml = renderPlist("/n", "/d/squadrantd.js");
+    expect(xml).toContain(`<key>StandardErrorPath</key><string>${daemonLogPath()}</string>`);
+    expect(xml).toContain(`<key>StandardOutPath</key><string>${daemonLogPath()}</string>`);
+    expect(xml).not.toContain(".config/squadrant/squadrantd.log");
+  });
+
+  it("#983 6a: parseLaunchctlStderrPath reads the log path launchd actually loaded", () => {
+    const out = "gui/501/x = {\n\tactive count = 1\n\tstderr path = /Users/me/.config/squadrant/squadrantd.log\n\tpid = 42\n}";
+    expect(parseLaunchctlStderrPath(out)).toBe("/Users/me/.config/squadrant/squadrantd.log");
+    expect(parseLaunchctlStderrPath("no such line")).toBeNull();
   });
 
   it("XML-escapes a PATH containing special chars", () => {

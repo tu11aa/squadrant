@@ -12,9 +12,14 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(__dirname, "../../../../../scripts/read-handoff.sh");
 
+// #983: the script reads/writes workspace/<basename(arg)>/, so the env points
+// HOME and the workspace root at temp dirs — never the operator's real home.
+let env: NodeJS.ProcessEnv;
+let tmp: string;
+
 function run(vault: string, ...args: string[]): { stdout: string; status: number } {
   try {
-    const stdout = execFileSync("bash", [SCRIPT, vault, ...args], { encoding: "utf8" });
+    const stdout = execFileSync("bash", [SCRIPT, vault, ...args], { encoding: "utf8", env, cwd: tmp });
     return { stdout, status: 0 };
   } catch (err) {
     const e = err as { stdout?: string; status?: number };
@@ -23,14 +28,17 @@ function run(vault: string, ...args: string[]): { stdout: string; status: number
 }
 
 describe("read-handoff.sh", () => {
-  let vault: string;
+  let vault: string; // the workspace dir the script resolves for project "p"
 
   beforeEach(() => {
-    vault = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-handoff-"));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-handoff-"));
+    env = { ...process.env, HOME: path.join(tmp, "home"), SQUADRANT_WORKSPACE_DIR: path.join(tmp, "ws") };
+    vault = path.join(tmp, "ws", "p");
+    fs.mkdirSync(vault, { recursive: true });
   });
 
   afterEach(() => {
-    fs.rmSync(vault, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   it("prints the exact not-exists sentinel when no handoff.json exists", () => {
@@ -102,5 +110,43 @@ describe("read-handoff.sh", () => {
       .map((f) => fs.readFileSync(path.join(archiveDir, f), "utf8"))
       .sort();
     expect(contents).toEqual([first, second].sort());
+  });
+
+  // #983 dual-read: a captain launched before the move still passes its old
+  // spoke path, and its pending handoff still sits there.
+  describe("dual-read of the pre-workspace spoke (#983)", () => {
+    const content = '{"written_at": "2026-10-14T00:00:00+00:00", "session": {"old": 1}}';
+
+    it("finds a handoff at the old spoke path passed as the arg and archives it into workspace/<p>/handoffs/", () => {
+      const spoke = path.join(tmp, "hub", "spokes", "p");
+      fs.mkdirSync(spoke, { recursive: true });
+      fs.writeFileSync(path.join(spoke, "handoff.json"), content);
+
+      const { stdout } = run(spoke);
+
+      expect(stdout).toBe(content);
+      expect(fs.existsSync(path.join(spoke, "handoff.json"))).toBe(false);
+      const archived = fs.readdirSync(path.join(vault, "handoffs"));
+      expect(archived).toHaveLength(1);
+      expect(fs.readFileSync(path.join(vault, "handoffs", archived[0]), "utf8")).toBe(content);
+    });
+
+    it("finds a handoff at the default ~/squadrant-hub/spokes/<p> when given only the project name", () => {
+      const spoke = path.join(tmp, "home", "squadrant-hub", "spokes", "p");
+      fs.mkdirSync(spoke, { recursive: true });
+      fs.writeFileSync(path.join(spoke, "handoff.json"), content);
+
+      expect(run("p").stdout).toBe(content);
+      expect(fs.readdirSync(path.join(vault, "handoffs"))).toHaveLength(1);
+    });
+
+    it("prefers the workspace handoff over a stale spoke one", () => {
+      const spoke = path.join(tmp, "hub", "spokes", "p");
+      fs.mkdirSync(spoke, { recursive: true });
+      fs.writeFileSync(path.join(spoke, "handoff.json"), content);
+      fs.writeFileSync(path.join(vault, "handoff.json"), '{"new": 1}');
+
+      expect(run(spoke, "--keep").stdout).toBe('{"new": 1}');
+    });
   });
 });

@@ -108,9 +108,8 @@ export async function runRuntimeSend(
 
   const finalProject = opts.command ? config.commandName : target!;
 
-  const { join, dirname } = await import("node:path");
-  const { DEFAULT_CONFIG_PATH } = await import("@squadrant/shared");
-  const stateRoot = join(dirname(DEFAULT_CONFIG_PATH), "state");
+  const { stateRoot: defaultStateRoot } = await import("@squadrant/shared");
+  const stateRoot = defaultStateRoot();
 
   // #566: never gate the send attempt itself on a liveness verdict — always
   // append, then confirm. Keeps the #529 draft-clobber protection (still

@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH,
+  loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH, stateRoot,
   type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
@@ -15,9 +15,10 @@ import {
   ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
   resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
+  readAuditRecords, DELIVERY_EVENTS, OUTCOME_SOURCES, type OutcomeSource,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
-import type { RuleModality } from "@squadrant/shared";
+import type { Rule, RuleModality } from "@squadrant/shared";
 import { resolveRulesProject } from "./rules.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
@@ -178,7 +179,7 @@ export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath 
 
 knowledgeCommand
   .command("migrate")
-  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report)")
+  .description("Move <hubVault>/knowledge/<kb>/ to ~/squadrant/kb/<kb>/ and <spokeVault>/knowledge/rules/ to each project's overlay home (never deletes; prints a report). Also part of: squadrant migrate kb")
   .option("--dry-run", "show what would move")
   .action((opts: { dryRun?: boolean }) => {
     const report = runKnowledgeMigrate(opts);
@@ -253,7 +254,7 @@ knowledgeCommand
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
   });
 
-const defaultStateRoot = () => path.join(path.dirname(DEFAULT_CONFIG_PATH), "state");
+const defaultStateRoot = () => stateRoot();
 
 function reviewContext(kb: string, configPath: string): ReviewContext {
   const cfg = requireKb(kb, configPath);
@@ -376,13 +377,22 @@ function kbConfigsHome(kb: string): string {
 export const FEEDBACK_OUTCOMES = ["followed", "violated", "noise", "wrong"] as const;
 type FeedbackOutcome = (typeof FEEDBACK_OUTCOMES)[number];
 
-/** Log an item.outcome for a rule the project resolves. Operator or agent may call it. */
-export function runKnowledgeFeedback(id: string, outcome: FeedbackOutcome, o: { project?: string; audit?: AuditSink; env?: NodeJS.ProcessEnv; cwd?: string }, configPath = DEFAULT_CONFIG_PATH): void {
+/** Log an item.outcome for a rule the project resolves. Operator or agent may call it; `source` says who graded it (#945). */
+export function runKnowledgeFeedback(
+  id: string, outcome: FeedbackOutcome,
+  o: { project?: string; audit?: AuditSink; env?: NodeJS.ProcessEnv; cwd?: string; source?: string; task?: string },
+  configPath = DEFAULT_CONFIG_PATH,
+): void {
+  const source = (o.source ?? "operator") as OutcomeSource;
+  if (!OUTCOME_SOURCES.includes(source)) throw new Error(`--source must be one of ${OUTCOME_SOURCES.join(", ")}, got '${o.source}'`);
   const cfg = loadConfig(configPath);
   const project = resolveRulesProject(cfg, o);
   const rule = resolveProjectRules(cfg, project).rules.find((r) => r.id === id);
   if (!rule) throw new Error(`No rule '${id}' for project '${project}'`);
-  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, agent: (o.env ?? process.env).SQUADRANT_AGENT }], o.audit);
+  appendAudit([{
+    ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, source,
+    ...(o.task ? { task: o.task } : {}), agent: (o.env ?? process.env).SQUADRANT_AGENT,
+  }], o.audit);
 }
 
 knowledgeCommand
@@ -390,11 +400,51 @@ knowledgeCommand
   .description("Report how a rule fared: --followed | --violated | --noise | --wrong (feeds scores and the next reconcile)")
   .option("--followed").option("--violated").option("--noise").option("--wrong")
   .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
-  .action((id: string, o: Record<string, unknown> & { project?: string }) => {
+  .option("--source <s>", `who graded it: ${OUTCOME_SOURCES.join(" | ")} (default operator)`)
+  .option("--task <id>", "the crew task the grade is about (see: knowledge surfaced --task)")
+  .action((id: string, o: Record<string, unknown> & { project?: string; source?: string; task?: string }) => {
     const picked = FEEDBACK_OUTCOMES.filter((k) => o[k]);
     if (picked.length !== 1) throw new Error("Pass exactly one of --followed, --violated, --noise, --wrong");
     runKnowledgeFeedback(id, picked[0], o);
     console.log(`recorded: ${id} ${picked[0]}`);
+  });
+
+export interface SurfacedItem { id: string; kb: string; project: string; modality: string; statement: string; events: string[] }
+
+/** Rules delivered to one crew task (surfaced/shown/searched events carrying `task`), deduped, in first-delivery order. */
+export function runKnowledgeSurfaced(task: string, o: { auditDir?: string } = {}, configPath = DEFAULT_CONFIG_PATH): SurfacedItem[] {
+  const cfg = loadConfig(configPath);
+  const rulesOf = new Map<string, Map<string, Rule>>();
+  const lookup = (project: string, id: string): Rule | undefined => {
+    if (!rulesOf.has(project)) {
+      rulesOf.set(project, new Map(cfg.projects[project] ? resolveProjectRules(cfg, project).rules.map((r) => [r.id, r]) : []));
+    }
+    return rulesOf.get(project)!.get(id);
+  };
+  const out = new Map<string, SurfacedItem>();
+  for (const r of readAuditRecords(undefined, new Date(0), o.auditDir)) {
+    if (r.task !== task || !r.itemId || !DELIVERY_EVENTS.has(r.event ?? "")) continue;
+    const project = r.project ?? "";
+    const seen = out.get(r.itemId);
+    if (seen) { if (!seen.events.includes(r.event!)) seen.events.push(r.event!); continue; }
+    const rule = lookup(project, r.itemId);
+    out.set(r.itemId, { id: r.itemId, kb: r.kb ?? "", project, modality: rule?.modality ?? "?", statement: rule?.statement ?? "(rule no longer resolves)", events: [r.event!] });
+  }
+  return [...out.values()];
+}
+
+export const renderSurfaced = (items: SurfacedItem[]): string[] =>
+  items.length ? items.map((x) => `${x.id}  [${x.modality}]  ${x.statement}`) : ["(no rules delivered to this task)"];
+
+knowledgeCommand
+  .command("surfaced")
+  .description("List the rules delivered to a crew task, for grading at review: knowledge feedback <id> --followed|--violated --source review --task <id>")
+  .requiredOption("--task <id>", "crew task id")
+  .option("--json")
+  .action((o: { task: string; json?: boolean }) => {
+    const items = runKnowledgeSurfaced(o.task);
+    if (o.json) console.log(JSON.stringify(items, null, 2));
+    else for (const l of renderSurfaced(items)) console.log(l);
   });
 
 export interface StatsOpts { kb?: string; project?: string; domain?: string; item?: string; json?: boolean; auditDir?: string; now?: Date }

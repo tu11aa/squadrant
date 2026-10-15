@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, DEFAULT_CONFIG_PATH, CONFIG_DIR, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
+  loadConfig, DEFAULT_CONFIG_PATH, stateRoot, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
 import {
   resolveProjectRules, searchRules, computeRulesInjection, withBudget, INJECT_BUDGET_MS, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
@@ -84,7 +84,7 @@ export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFA
   const shown = hits.slice(0, parseLimit(opts.limit));
   appendAudit(shown.length
     ? shown.map((h) => ({ ...ruleAuditScope(h.rule), project, domain: "rules", itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
-    : [{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query }], opts.audit);
+    : [{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query }], { env: opts.env, ...opts.audit });
   return hits;
 }
 
@@ -99,7 +99,7 @@ export function runRulesShow(id: string, opts: RulesOpts, configPath = DEFAULT_C
   const rule = rules.find((r) => r.id === id && statuses.includes(r.status));
   if (!rule) throw new Error(`No rule '${id}' for this project`);
   const project = resolveRulesProject(loadConfig(configPath), opts);
-  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], opts.audit);
+  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], { env: opts.env, ...opts.audit });
   return rule;
 }
 
@@ -154,7 +154,7 @@ export async function runRulesMatch(
     const cfg = loadConfig(configPath);
     return computeRulesInjection({
       event: mapped as "session-start", cfg, env, cwd, project: opts.project, audit: opts.audit, agent: opts.agent,
-      stateRoot: opts.stateRoot ?? join(CONFIG_DIR, "state"),
+      stateRoot: opts.stateRoot ?? stateRoot(),
       payload: { session_id: opts.session, cwd, prompt: opts.text, tool_name: "Read", tool_input: { file_path: opts.path } },
     });
   }, INJECT_BUDGET_MS);

@@ -16,10 +16,9 @@
 // complex; explicitly out of MVP scope).
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig } from "@squadrant/shared";
+import { loadConfig, stateRoot as defaultStateRoot } from "@squadrant/shared";
 import type { RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
@@ -402,7 +401,7 @@ export const healCommand = new Command("heal")
         }
         const config = loadConfig();
         const projects = opts.all ? Object.keys(config.projects) : [project as string];
-        const stateRoot = join(homedir(), ".config", "squadrant", "state");
+        const stateRoot = defaultStateRoot();
         const registry = new LivenessRegistry({ path: join(stateRoot, "liveness.json") });
         registry.load();
         const code = await runHealCaptain(projects, {

@@ -1,6 +1,6 @@
 ---
 name: daily-log
-description: Write an end-of-day log to your spoke vault. Use when session ends or user says "end of day" / "wrap up".
+description: Write an end-of-day log to your project workspace. Use when session ends or user says "end of day" / "wrap up".
 ---
 
 # Daily Log
@@ -11,11 +11,11 @@ Write a daily log before your session ends.
 
 ```bash
 DATE=$(date +"%Y-%m-%d")
-SPOKE_VAULT="{spokeVaultPath}"
-mkdir -p "$SPOKE_VAULT/daily-logs"
+LOG_DIR=~/squadrant/workspace/{project-name}/artifacts/daily-logs
+mkdir -p "$LOG_DIR"
 ```
 
-## Write to `{spokeVaultPath}/daily-logs/YYYY-MM-DD.md`
+## Write to `~/squadrant/workspace/{project-name}/artifacts/daily-logs/YYYY-MM-DD.md`
 
 ```markdown
 ---

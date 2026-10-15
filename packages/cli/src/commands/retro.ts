@@ -2,7 +2,6 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
-  readDailyLog,
   parseSection,
   getGitCommitsInRange,
   getMergedPRsInRange,
@@ -10,7 +9,7 @@ import {
   iso,
   daysAgo,
 } from "@squadrant/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
+import { readProjectDailyLog } from "../lib/project-daily-log.js";
 
 interface ProjectRetro {
   name: string;
@@ -40,18 +39,15 @@ async function getProjectRetro(
   project: ProjectConfig,
   fromStr: string,
   toStr: string,
-  registry: WorkspaceRegistry,
   config: SquadrantConfig,
 ): Promise<ProjectRetro> {
-  const workspace = registry.forProject(name, config);
-
   const shipped: string[] = [];
   const inProgress: string[] = [];
   const blocked: string[] = [];
   const decisions: string[] = [];
 
   for (const day of enumerateDays(new Date(fromStr), new Date(toStr))) {
-    const log = await readDailyLog(workspace, day);
+    const log = await readProjectDailyLog(name, config, day);
     if (!log) continue;
     shipped.push(...parseSection(log.content, "Completed"));
     inProgress.push(...parseSection(log.content, "In Progress"));
@@ -147,7 +143,6 @@ export const retroCommand = new Command("retro")
   .option("-r, --raw", "Raw markdown output (for pasting into Slack/Obsidian)")
   .action(async (opts) => {
     const config = loadConfig();
-    const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
     const projects = Object.entries(config.projects);
 
     if (projects.length === 0) {
@@ -180,7 +175,7 @@ export const retroCommand = new Command("retro")
     }
 
     const retros = await Promise.all(
-      targets.map(([name, proj]) => getProjectRetro(name, proj, fromStr, toStr, registry, config)),
+      targets.map(([name, proj]) => getProjectRetro(name, proj, fromStr, toStr, config)),
     );
     console.log(formatRetro(retros, fromStr, toStr, raw));
   });

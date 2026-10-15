@@ -37,7 +37,7 @@ When you have produced a result that deserves the primary captain's attention:
 
    a. Write the durable vault record (replace placeholders with actual values from the "Side-session context" block in your first turn):
    ```bash
-   ~/.config/squadrant/scripts/record-side-handoff.sh "<spoke-vault>" "<topic>" "research" "<one-line summary>"
+   ~/.config/squadrant/scripts/record-side-handoff.sh "<workspace>" "<topic>" "research" "<one-line summary>"
    ```
 
    b. Send the structured handoff to the primary captain via relay:
@@ -53,7 +53,7 @@ HANDOFF
 
 3. **On no:** keep working; you can trigger the handoff whenever you're ready.
 
-The `<project>` and `<spoke-vault>` values are in the "Side-session context" block of your first turn.
+The `<project>` and `<workspace>` values are in the "Side-session context" block of your first turn.
 
 ## Karpathy Discipline
 

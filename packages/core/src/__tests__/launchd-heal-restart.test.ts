@@ -23,6 +23,7 @@ vi.mock("node:fs", () => ({
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, openSync } from "node:fs";
 import { getDaemonPid, forceKickstartAndVerify, reregisterDaemon, renderPlist, daemonEntryPath, buildDaemonPath, LABEL } from "../launchd.js";
+import { daemonLogPath } from "@squadrant/shared";
 
 function mockExecFileSync(
   handlers: (cmd: string, args: readonly string[]) => string | undefined,
@@ -210,6 +211,52 @@ describe("reregisterDaemon (#729 — heal daemon must never claim success on a n
     expect(result.restarted).toBe(true);
     const kickstartCall = vi.mocked(execFileSync).mock.calls.find((c) => c[0] === "launchctl" && (c[1] as string[])[0] === "kickstart");
     expect(kickstartCall?.[1]).toContain("-k");
+  });
+
+  // #983 6a: the plist on disk already carries the new log path (ensureDaemon
+  // rewrote it), but launchd still has the legacy StandardErrorPath loaded —
+  // only bootout+bootstrap re-reads it, kickstart -k does not.
+  it("boots out and re-bootstraps when launchd still writes the legacy log path", () => {
+    const thisEntry = daemonEntryPath();
+    let printCalls = 0;
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "which") throw new Error("not found");
+      if (cmd === "launchctl" && args[0] === "print") {
+        printCalls += 1;
+        return `\tstderr path = /Users/me/.config/squadrant/squadrantd.log\n\tpid = ${printCalls === 1 ? 111 : 222}\n`;
+      }
+      if (cmd === "launchctl") return "";
+      return undefined;
+    });
+    stubMatchingPlist(thisEntry);
+
+    reregisterDaemon(process.execPath, { pollAttempts: 3, pollDelayMs: 1 });
+
+    const verbs = vi.mocked(execFileSync).mock.calls
+      .filter((c) => c[0] === "launchctl").map((c) => (c[1] as string[])[0]);
+    expect(verbs).toContain("bootout");
+    expect(verbs.indexOf("bootout")).toBeLessThan(verbs.indexOf("bootstrap"));
+  });
+
+  it("does not boot out when launchd already writes the new log path", () => {
+    const thisEntry = daemonEntryPath();
+    let printCalls = 0;
+    mockExecFileSync((cmd, args) => {
+      if (cmd === "which") throw new Error("not found");
+      if (cmd === "launchctl" && args[0] === "print") {
+        printCalls += 1;
+        return `\tstderr path = ${daemonLogPath()}\n\tpid = ${printCalls === 1 ? 111 : 222}\n`;
+      }
+      if (cmd === "launchctl") return "";
+      return undefined;
+    });
+    stubMatchingPlist(thisEntry);
+
+    reregisterDaemon(process.execPath, { pollAttempts: 3, pollDelayMs: 1 });
+
+    const verbs = vi.mocked(execFileSync).mock.calls
+      .filter((c) => c[0] === "launchctl").map((c) => (c[1] as string[])[0]);
+    expect(verbs).not.toContain("bootout");
   });
 
   it("throws (never reports success) when the plist matches AND the pid does not change", () => {

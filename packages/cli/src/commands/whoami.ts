@@ -2,11 +2,9 @@
 //
 // #669: `squadrant whoami` — resolve the agent session that is calling.
 // Read-only; never touches the daemon.
-import os from "node:os";
-import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveHome } from "@squadrant/shared";
+import { loadConfig, resolveHome, stateRoot as defaultStateRoot } from "@squadrant/shared";
 import { readCaptainAddress, createStore, realpathOrSelf } from "@squadrant/core";
 import { readClaudeStatusBySocketPath } from "@squadrant/agents";
 import { resolveWhoami, type WhoamiDeps, type WhoamiResult } from "../lib/whoami.js";
@@ -14,7 +12,7 @@ import { resolveWhoami, type WhoamiDeps, type WhoamiResult } from "../lib/whoami
 export interface WhoamiBuildOptions extends Partial<WhoamiDeps> {
   /** Injectable for tests; defaults to DEFAULT_CONFIG_PATH. */
   configPath?: string;
-  /** Injectable for tests; defaults to ~/.config/squadrant/state. */
+  /** Injectable for tests; defaults to stateRoot(). */
   stateRoot?: string;
 }
 
@@ -25,7 +23,7 @@ export function buildWhoamiDeps(opts: WhoamiBuildOptions = {}): WhoamiDeps {
   const projects = Object.fromEntries(
     Object.entries(config.projects).map(([n, p]) => [n, resolveHome(p.path)]),
   );
-  const root = stateRoot ?? path.join(os.homedir(), ".config", "squadrant", "state");
+  const root = stateRoot ?? defaultStateRoot();
   const store = createStore(root);
 
   const merged: WhoamiDeps = {

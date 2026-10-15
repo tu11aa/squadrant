@@ -286,7 +286,7 @@ function audit(
   appendAudit(items.map(({ rule, event, score }): AuditEvent => ({
     ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event, trigger,
     ...(score === undefined ? {} : { score }), chars: line(rule).length, agent: i.agent ?? "claude", ...(session ? { session } : {}),
-  })), i.audit);
+  })), { env: i.env, ...i.audit });
 }
 
 /** The additionalContext to inject for this hook, or null. Sync; callers wrap it in withBudget. */

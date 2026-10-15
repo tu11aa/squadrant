@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, type ProjectConfig, type SquadrantConfig } from "@squadrant/shared";
-import { readDailyLog, getGitCommits, iso, daysAgo } from "@squadrant/shared";
-import { createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
+import { getGitCommits, iso, daysAgo } from "@squadrant/shared";
+import { readProjectDailyLog } from "../lib/project-daily-log.js";
 
 interface ProjectStandup {
   name: string;
@@ -19,11 +19,9 @@ async function getProjectStandup(
   name: string,
   project: ProjectConfig,
   dateStr: string,
-  registry: WorkspaceRegistry,
   config: SquadrantConfig,
 ): Promise<ProjectStandup> {
-  const workspace = registry.forProject(name, config);
-  const log = await readDailyLog(workspace, dateStr);
+  const log = await readProjectDailyLog(name, config, dateStr);
   const gitCommits = getGitCommits(project.path, dateStr);
 
   return {
@@ -107,14 +105,13 @@ function formatStandup(standups: ProjectStandup[], dateStr: string, raw: boolean
 }
 
 export const standupCommand = new Command("standup")
-  .description("Generate daily standup report from spoke vault data and git logs (zero tokens)")
+  .description("Generate daily standup report from workspace daily logs and git logs (zero tokens)")
   .option("-p, --project <name>", "Show standup for a specific project only")
   .option("-a, --all", "Show all projects (default)")
   .option("-y, --yesterday", "Show yesterday's standup instead of today")
   .option("-r, --raw", "Output raw markdown (for pasting into Slack/chat)")
   .action(async (opts) => {
     const config = loadConfig();
-    const registry = new WorkspaceRegistry({ obsidian: createObsidianDriver });
     const projects = Object.entries(config.projects);
 
     if (projects.length === 0) {
@@ -138,7 +135,7 @@ export const standupCommand = new Command("standup")
     }
 
     const standups = await Promise.all(
-      targets.map(([name, proj]) => getProjectStandup(name, proj, dateStr, registry, config)),
+      targets.map(([name, proj]) => getProjectStandup(name, proj, dateStr, config)),
     );
     const output = formatStandup(standups, dateStr, raw);
     console.log(output);

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── mock setup (mirrors crew.test.ts pattern) ─────────────────────────────
@@ -304,7 +305,7 @@ describe("squadrant side spawn", () => {
     );
   });
 
-  it("sends topic + context block as first turn (includes spokeVault)", async () => {
+  it("sends topic + context block as first turn (includes the workspace path, #983)", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -318,8 +319,8 @@ describe("squadrant side spawn", () => {
     // Second sendToPane is the first-turn delivery (first is the CLI launch)
     const firstTurnCall = sendToPane.mock.calls[1];
     expect(firstTurnCall?.[1]).toContain("research oauth options");
-    expect(firstTurnCall?.[1]).toContain("~/hub/spokes/brove");
-    expect(firstTurnCall?.[1]).toContain("brove");
+    expect(firstTurnCall?.[1]).toContain(`Workspace: ${path.join(process.env.SQUADRANT_WORKSPACE_DIR!, "brove")}`);
+    expect(firstTurnCall?.[1]).not.toContain("~/hub/spokes/brove");
     expect(firstTurnCall?.[1]).toContain("research");
   });
 
@@ -471,17 +472,17 @@ describe("squadrant side spawn", () => {
 });
 
 describe("buildSideFirstTurn", () => {
-  it("includes topic, project, role, and spokeVault", () => {
+  it("includes topic, project, role, and the workspace path", () => {
     const result = buildSideFirstTurn(
       "research oauth options",
       "brove",
       "research",
-      "~/hub/spokes/brove",
+      "/ws/brove",
     );
     expect(result).toContain("research oauth options");
     expect(result).toContain("brove");
     expect(result).toContain("research");
-    expect(result).toContain("~/hub/spokes/brove");
+    expect(result).toContain("Workspace: /ws/brove");
   });
 
   it("puts the topic first (before the context block)", () => {

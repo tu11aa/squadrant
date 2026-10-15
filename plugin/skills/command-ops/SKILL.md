@@ -13,9 +13,9 @@ Run when session starts, or user says "morning", "catch up", "summary":
 
 1. **Check handoffs from all projects** (context from yesterday's sessions):
 ```bash
-for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
-  echo "=== $(basename $vault) ==="
-  ~/.config/squadrant/scripts/read-handoff.sh "$vault" --keep
+for project in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p) for p in json.loads(sys.stdin.read())['projects']]"); do
+  echo "=== $project ==="
+  ~/.config/squadrant/scripts/read-handoff.sh "$project" --keep
 done
 ```
 Handoffs contain: currentState, openBranches, nextSteps, blockedItems, decisions. Use these to understand where each project left off.
@@ -24,9 +24,9 @@ Handoffs contain: currentState, openBranches, nextSteps, blockedItems, decisions
 3. Read yesterday's logs:
 ```bash
 YESTERDAY=$(date -v-1d +"%Y-%m-%d")
-for vault in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p['spokeVault']) for p in json.loads(sys.stdin.read())['projects'].values()]"); do
-  echo "=== $vault ==="
-  cat "$vault/daily-logs/${YESTERDAY}.md" 2>/dev/null || echo "(no log)"
+for project in $(cat ~/.config/squadrant/config.json | python3 -c "import json,sys; [print(p) for p in json.loads(sys.stdin.read())['projects']]"); do
+  echo "=== $project ==="
+  cat ~/squadrant/workspace/"$project"/artifacts/daily-logs/"${YESTERDAY}.md" 2>/dev/null || echo "(no log)"
 done
 ```
 4. Run quick standup for context: `squadrant standup --yesterday --raw`
@@ -49,7 +49,9 @@ squadrant runtime list
 A name match is **not** sufficient — the workspace may be holding a session from a previous day. Check `sessions.json` against today before reusing:
 ```bash
 TODAY=$(date +%Y-%m-%d)
-LAST=$(python3 -c "import json; d=json.load(open('$HOME/.config/squadrant/sessions.json')); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" 2>/dev/null)
+S="${SQUADRANT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/squadrant}/sessions.json"
+[ -f "$S" ] || S="$HOME/.config/squadrant/sessions.json"  # pre-#983 location
+LAST=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('workspaces',{}).get('{captainName}',{}).get('lastLaunched',''))" "$S" 2>/dev/null)
 [ "$LAST" = "$TODAY" ] && echo "fresh" || echo "stale"
 ```
 - `fresh` → reuse the existing workspace, proceed to step 5.

@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { daemonLogPath, logsRoot } from "@squadrant/shared";
 
 export const LABEL = "com.squadrant.daemon";
 
@@ -189,7 +190,7 @@ export function buildDaemonPath(shellPath: string): string {
  * daemon and its spawned crew children resolve the provider binaries.
  */
 export function renderPlist(nodeBin: string, daemonEntry: string, pathEnv = ""): string {
-  const logPath = join(homedir(), ".config", "squadrant", "squadrantd.log");
+  const logPath = daemonLogPath(); // #983 6a: XDG state, was ~/.config/squadrant
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -341,6 +342,8 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
 function reconcilePlistAndService(drift: DaemonDrift): void {
   if (drift.changed) {
     mkdirSync(dirname(drift.plistPath), { recursive: true });
+    // launchd won't create the log's parent dir; without it stderr is dropped.
+    mkdirSync(logsRoot(), { recursive: true });
     writeFileSync(drift.plistPath, drift.desired);
   }
 
@@ -369,6 +372,27 @@ function applyDaemonDrift(drift: DaemonDrift): void {
   // because it races with bootout's exit handler and produces exit-113 when
   // the service hasn't finished unloading.
   execFileSync("launchctl", ["kickstart", drift.target], { stdio: "ignore" });
+}
+
+/**
+ * #983 6a: the stderr path launchd loaded for the service, from `launchctl
+ * print` output. Rewriting the plist does not change it — launchd only re-reads
+ * StandardErrorPath on bootstrap (`squadrant heal daemon`, or next login).
+ */
+export function parseLaunchctlStderrPath(printOutput: string): string | null {
+  const m = printOutput.match(/^\s*stderr path = (.+)$/m);
+  return m ? m[1].trim() : null;
+}
+
+/** The daemon log path launchd is currently writing, or null if not loaded. */
+export function loadedDaemonLogPath(target: string): string | null {
+  try {
+    return parseLaunchctlStderrPath(
+      execFileSync("launchctl", ["print", target], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -672,7 +696,11 @@ export function reregisterDaemon(
     // #751: snapshot the pid BEFORE reconcile (bootout+bootstrap) can itself
     // already start the new instance — see forceKickstartAndVerify's #751 note.
     const pidBeforeReconcile = getDaemonPid(drift.target);
-    reconcilePlistAndService(drift);
+    // #983 6a: launchd only re-reads StandardErrorPath on bootstrap, so a
+    // service still logging to the pre-move path needs the bootout too.
+    const loadedLog = loadedDaemonLogPath(drift.target);
+    const logMoved = loadedLog !== null && loadedLog !== daemonLogPath();
+    reconcilePlistAndService({ ...drift, programChanged: drift.programChanged || logMoved });
     const result = forceKickstartAndVerify(drift.target, { ...kickstartOpts, pidBefore: pidBeforeReconcile });
     if (!result.restarted) {
       throw new Error(

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { stateRoot } from "@squadrant/shared";
 
 const hoisted = vi.hoisted(() => ({
   home: "",
@@ -102,7 +103,7 @@ vi.mock("@squadrant/shared", async () => {
       },
     }),
     resolveHome: (p: string) => p,
-    ensureSpokeLayout: vi.fn(),
+    ensureWorkspace: vi.fn(),
   };
 });
 
@@ -142,7 +143,7 @@ describe("opencode captain gate wiring (#828 P6-C phase 2)", () => {
   it("#828: wrapped captain's opencode config asks for bash/edit so the watcher decides", async () => {
     hoisted.wrap = { wrap: true, warn: false, reason: "gate on, engine=auto-gate, credential present" };
     await runLaunchAndGetCmd();
-    const cfg = JSON.parse(readFileSync(join(hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json"), "utf-8"));
+    const cfg = JSON.parse(readFileSync(join(stateRoot(), "demo", "captain", "opencode.json"), "utf-8"));
     expect(cfg.permission.bash).toBe("ask");
     expect(cfg.permission.edit).toBe("ask");
     expect(cfg.permission.read).toBe("allow");
@@ -150,7 +151,7 @@ describe("opencode captain gate wiring (#828 P6-C phase 2)", () => {
 
   it("#828: unwrapped captain's opencode config stays allow-all", async () => {
     await runLaunchAndGetCmd();
-    const cfg = JSON.parse(readFileSync(join(hoisted.home, ".config", "squadrant", "state", "demo", "captain", "opencode.json"), "utf-8"));
+    const cfg = JSON.parse(readFileSync(join(stateRoot(), "demo", "captain", "opencode.json"), "utf-8"));
     expect(cfg.permission.bash).toBe("allow");
     expect(cfg.permission.edit).toBe("allow");
   });

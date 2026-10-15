@@ -89,7 +89,8 @@ _user  (profile)                    ← every session, every project
 ~/.local/state/squadrant/
   audit/YYYY-MM.<machine-id>.jsonl      # append-only, daemon-written
   scores.json                           # derived from audit
-  daemon.db, sessions, logs             # moved from ~/.config/squadrant
+  <project>/ inbox/ _results/ … sessions.json   # daemon state, moved from ~/.config/squadrant/state (#983 6a; there is no daemon.db)
+  logs/squadrantd.log                   # moved from ~/.config/squadrant
 
 ~/.cache/squadrant/index.db             # derived FTS (+ optional embeddings); safe to delete
 ~/.config/squadrant/config.json         # config only
@@ -184,7 +185,9 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 | Write | `item.proposed` `item.approved` `item.rejected` `item.applied` `item.promoted` `item.superseded` `item.archived` `kb.created` `write.daemon-bypass` |
 | Called | `item.surfaced` (push) · `item.suppressed` (budget/dedup/threshold) · `item.searched` / `item.shown` (pull) |
 | Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced, shown or returned by a search for that project. Captured automatically at `crew signal done\|review` (the message plus the crew branch's own commits, any agent); `knowledge cite-scan` covers the rest |
-| Outcome | `item.outcome` = followed / violated / noise / wrong, via `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong` (operator or agent), plus the domain signals below |
+| Outcome | `item.outcome` = followed / violated / noise / wrong, with `source` = operator / review / crew / reconcile / judge / check (absent = operator) and an optional `task`. Written by `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong [--source <s>] [--task <id>]` (operator or agent), by reconcile's code-violation flag (`source: "reconcile"`), plus the domain signals below (#945) |
+
+`task` on delivery events (`item.surfaced` / `item.shown` / `item.searched`) comes from `SQUADRANT_CREW_TASK_ID`, stamped centrally in `appendAudit`, so it's the same for every agent. `squadrant knowledge surfaced --task <id>` lists what a task was given.
 
 **Domain outcome signals:**
 - **Profile:** the operator repeats a correction that is already in the profile → `violated`.
@@ -196,9 +199,9 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 
 | Level | Metrics |
 |---|---|
-| Item | fire rate · pull rate · **use rate = cited ÷ surfaced** · noise rate · violation rate · `last_surfaced` / `last_used` · never-fired 30d |
+| Item | fire rate · pull rate · **use rate = cited ÷ surfaced** · noise rate · violation rate · evaluated (followed + violated) · **compliance rate = followed ÷ evaluated** (n ≥ 3) · code violations (reconcile, outside the rates) · `last_surfaced` / `last_used` · never-fired 30d |
 | Domain | **writes/month and reads/month, with a dead-domain alarm** (0 for 30 days) · chars injected per citation · per-agent coverage · proposal backlog age |
-| Rules-only | tier contribution and reviewer agreement (rules spec §7) |
+| Rules-only | tier contribution, reviewer agreement, outcomes by source (rules spec §7) |
 
 **Privacy** (from rules spec §7):
 - Prompt text in the log is truncated to 200 characters.
@@ -278,7 +281,7 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 |---|---|
 | `hub/spokes/<p>/{handoffs,side-handoffs}` | `workspace/<p>/…` |
 | `hub/spokes/<p>/{reports,findings,recaps,plans}` | `workspace/<p>/artifacts/` |
-| `~/.config/squadrant/{daemon.db,state,*.log}` | `~/.local/state/squadrant/` |
+| `~/.config/squadrant/{state/*,sessions.json,squadrantd.log}` | `~/.local/state/squadrant/{*,sessions.json,logs/}` (done in #983 6a: one-time boot copy, see reference.md "Runtime state") |
 | hub `CLAUDE.md`, `projects/*.md`, `daily-logs`, empty `wiki`/`learnings` | archive |
 
 **Knowledge migration** is one routing side-session per KB:

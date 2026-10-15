@@ -4,7 +4,7 @@
 // against a temp state root, seeds a task, and asserts the assembled
 // DaemonSnapshot shape (Tier 0/1/2). Pure assembly is covered in snapshot.test.ts.
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startSquadrantd } from "../squadrantd.js";
@@ -29,6 +29,10 @@ describe("squadrantd snapshot verb", () => {
       lastEvent: "", heartbeatBudgetMs: 1000,
       attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
 
+    // #983 6a: the daemon log lives under <stateRoot>/logs/, not beside the state dir.
+    mkdirSync(join(dir, "state", "logs"), { recursive: true });
+    writeFileSync(join(dir, "state", "logs", "squadrantd.log"), "[squadrantd] boot\n");
+
     const snap = await sendRequest(sock, { kind: "snapshot" }) as DaemonSnapshot;
 
     // Tier 0 — daemon self
@@ -37,7 +41,7 @@ describe("squadrantd snapshot verb", () => {
     expect(typeof snap.tier0.version).toBe("string");
     expect(["fresh", "stale"]).toContain(snap.tier0.build.state);
     expect(snap.tier0.sweep.lastSweepAt).toBeNull(); // sweepMs:0 → never swept
-    expect(typeof snap.tier0.log.sizeBytes).toBe("number");
+    expect(snap.tier0.log.sizeBytes).toBe("[squadrantd] boot\n".length);
 
     // Tier 1 — component health for the seeded project
     expect(snap.tier1.some((c) => c.project === "demo")).toBe(true);
