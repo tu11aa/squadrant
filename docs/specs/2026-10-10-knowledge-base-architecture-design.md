@@ -89,7 +89,8 @@ _user  (profile)                    ← every session, every project
 ~/.local/state/squadrant/
   audit/YYYY-MM.<machine-id>.jsonl      # append-only, daemon-written
   scores.json                           # derived from audit
-  daemon.db, sessions, logs             # moved from ~/.config/squadrant
+  <project>/ inbox/ _results/ … sessions.json   # daemon state, moved from ~/.config/squadrant/state (#983 6a; there is no daemon.db)
+  logs/squadrantd.log                   # moved from ~/.config/squadrant
 
 ~/.cache/squadrant/index.db             # derived FTS (+ optional embeddings); safe to delete
 ~/.config/squadrant/config.json         # config only
@@ -280,7 +281,7 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 |---|---|
 | `hub/spokes/<p>/{handoffs,side-handoffs}` | `workspace/<p>/…` |
 | `hub/spokes/<p>/{reports,findings,recaps,plans}` | `workspace/<p>/artifacts/` |
-| `~/.config/squadrant/{daemon.db,state,*.log}` | `~/.local/state/squadrant/` |
+| `~/.config/squadrant/{state/*,sessions.json,squadrantd.log}` | `~/.local/state/squadrant/{*,sessions.json,logs/}` (done in #983 6a: one-time boot copy, see reference.md "Runtime state") |
 | hub `CLAUDE.md`, `projects/*.md`, `daily-logs`, empty `wiki`/`learnings` | archive |
 
 **Knowledge migration** is one routing side-session per KB:

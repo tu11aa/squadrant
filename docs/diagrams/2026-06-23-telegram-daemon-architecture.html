@@ -188,7 +188,7 @@ notify{active,cap,crew}  GLOBAL defaults</pre>
     <p class="small">Read at daemon <b>boot</b> (cached). Global changes need a restart to affect the live daemon.</p>
   </div>
   <div class="card">
-    <h3>~/.config/squadrant/state/telegram-state.json</h3>
+    <h3>~/.local/state/squadrant/telegram-state.json <small>(stateRoot(), #983; was ~/.config/squadrant/state)</small></h3>
 <pre style="white-space:pre-wrap">offset    getUpdates cursor (at-least-once)
 topics{}  project → message_thread_id
 notify{}  project → live active bool</pre>
