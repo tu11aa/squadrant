@@ -293,13 +293,13 @@ Execute the 4-step startup contract defined in your system prompt.
    Check tasks from the same call — `liveRepo.liveCrews` lists every non-terminal crew task for this project. A `state: "blocked"` entry with a `question` is waiting on you right now.
 
 4. **Read handoff:**
-   `~/.config/squadrant/scripts/read-handoff.sh "{spokeVaultPath}"`
+   `~/.config/squadrant/scripts/read-handoff.sh "{project}"` (reads `~/squadrant/workspace/{project}/handoff.json`)
    If a handoff exists, read the context carefully (`currentState`, `openBranches`, `nextSteps`, `blockedItems`, `decisions`). 
    If it reported `"exists": false`, reconstruct from the `handoff facts` output instead of cold-starting blind (check `checkpoint`, `gapSessions`, `claudeMem`). You do the synthesizing.
 
 5. **Additional Context (opt-in):**
    - Search **claude-mem** (`mem-search` skill) for your project name.
-   - Check `{spokeVault}/daily-logs/` for the most recent log.
+   - Check `~/squadrant/workspace/{project}/artifacts/daily-logs/` for the most recent log.
    - Check `{spokeVault}/learnings/` — selectively load relevant learnings.
    - Check `{spokeVault}/skills/` and `{spokeVault}/wiki/`.
    - Crew lifecycle events (done / blocked / idle) are delivered to your captain pane automatically by the squadrant daemon via daemon-direct cmux delivery (#332). No relay setup required.
@@ -654,7 +654,7 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 3. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
 
 ```bash
-~/.config/squadrant/scripts/write-handoff.sh "{spokeVaultPath}" '{
+~/.config/squadrant/scripts/write-handoff.sh "{project}" '{
   "currentState": "Brief description of where things stand",
   "openBranches": ["feat/branch-name — what it contains"],
   "nextSteps": ["First thing to do tomorrow", "Second thing"],
