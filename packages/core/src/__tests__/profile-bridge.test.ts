@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import yaml from "js-yaml";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import { loadProfile, parseTrait } from "../knowledge/profile.js";
 import { keepItems, dropItems, type ProfileCtx } from "../knowledge/profile-write.js";
@@ -108,6 +109,20 @@ describe("runProfileBridge", () => {
     expect(live.summary).toBe("Interactive explainers");
     expect(live.body).toContain("New body A.");
     expect(run().proposed).toEqual([]);
+  });
+  it("dropping an update proposal records only the changed source and does not block later updates (review 6)", () => {
+    mem("-Users-tu-me-squadrant", "html.md", "feedback", "Interactive explainers", "Body A.");
+    mem("-Users-tu-saitex-flooros", "html.md", "feedback", "Interactive explainers", "Body B.");
+    run();
+    keepItems(ctx(), ["prof.html"]);
+    mem("-Users-tu-me-squadrant", "html.md", "feedback", "Interactive explainers", "Body A2.");
+    expect(run().proposed).toEqual(["prof.html.update"]);
+    expect(dropItems(ctx(), ["prof.html.update"], "not better")[0].ok).toBe(true);
+    const dropped = yaml.load(fs.readFileSync(path.join(ukb, "profile", "_dropped.yaml"), "utf8")) as Record<string, string>[];
+    expect(dropped).toEqual([expect.objectContaining({ source: "memory:-Users-tu-me-squadrant/html.md", updates: "prof.html", reason: "not better" })]);
+    expect(run().proposed).toEqual([]); // the same change is not asked again
+    mem("-Users-tu-me-squadrant", "html.md", "feedback", "Interactive explainers", "Body A3.");
+    expect(run().proposed).toEqual(["prof.html.update"]); // a new change is
   });
   it("after deleting profile-bridge.json nothing kept or dropped is re-proposed", async () => {
     mem("-Users-tu", "keep.md", "user", "Keep me", "k");

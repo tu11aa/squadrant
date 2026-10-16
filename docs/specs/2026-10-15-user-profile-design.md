@@ -133,6 +133,7 @@ This is a starting point. The operator decides each item at the first review.
   - Every keep sets `last_confirmed`.
 - **`--drop <id>[,…] --reason "<text>"`:**
   - A proposal is deleted. Only `{source, hash, reason, date}` goes to `_dropped.yaml`, never the body (P15).
+  - A dropped **update** proposal records only the sources that changed, each with its hash and `updates: prof.<slug>`. Only that exact change is skipped: if the note changes again, a new update is proposed (PR #993 review).
   - An active trait moves to `_archive/`.
 - **`--edit <id> --file -`:** replaces the fields and body, then keeps.
 - **No bulk keep.** There is no `--all`. The review output tells the agent to show every summary to the operator before keeping (P14).
@@ -204,7 +205,7 @@ Profile: 6 items pending review (`squadrant profile review`).
 - **Hash:** sha256 over the normalized `description` + body, ignoring the rest of the frontmatter (`metadata.modified` and `originSessionId` churn). It is recorded as the first 12 hex characters.
 - **Source ref:** `memory:<encoded-dir>/<file>#<hash12>`.
 - **Dedup is derived from files, not state.** A `(source, hash)` pair is skipped if it appears in any `sources:` under `profile/`, `_archive/` or `_proposed/`, or in `_dropped.yaml`. Wiping state never re-proposes items.
-  - **Dropped or archived = stop asking (S1 pre-flight Q5).** A source **path** listed in `_dropped.yaml` or in an `_archive/` trait is skipped whatever its hash. A dropped note does not come back even if it is edited later. To bring one back, add it by hand with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
+  - **Dropped or archived = stop asking (S1 pre-flight Q5).** A source **path** from a dropped **new-item** proposal in `_dropped.yaml`, or from an `_archive/` trait, is skipped whatever its hash. A dropped update proposal (`updates:` set) blocks only its exact `(source, hash)` pairs, so later edits of that note still raise updates. A dropped note does not come back even if it is edited later. To bring one back, add it by hand with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
 - **New items, grouped by file name.** All allowlisted dirs that contain the same file name produce **one** proposal `_proposed/<name>.md`. If `<name>` is already the id of an unrelated active or archived trait, or of a proposal that has none of these sources, the proposal is named `<name>-2` (then `-3`, …; S1 pre-flight Q6). It carries all the sources. Bodies that differ are concatenated under `## From <encoded-dir>` headings so the operator merges them at review. Today `interactive-html-explainers` and `no-claude-artifacts` each exist in two dirs with different bodies.
   - `summary` = the first native `description`, truncated at a word boundary to 140 characters, as a draft.
   - `kind: preference`, `audience: all`, `tier: core`.
@@ -282,6 +283,7 @@ Unit tests use fixture dirs only (`SQUADRANT_USER_KB_DIR`, `SQUADRANT_NATIVE_MEM
   - A body change gives a `.update.md` proposal.
   - After deleting `profile-bridge.json`, nothing already kept or dropped is re-proposed.
   - A dropped or archived note is not re-proposed after it is edited (Q5).
+  - A dropped update proposal records only its changed sources; the same change is not asked again, a later change is.
   - A file name that collides with an unrelated trait is proposed as `<name>-2` (Q6).
 - [ ] **Safety and timing:** the fixture memory root is byte-identical after the run. Boot triggers a run without an `inbox` dir. The 60-minute throttle and the no-overlap guard hold.
 

@@ -680,7 +680,7 @@ What each session gets:
 - **Grouping.** Files with the same name across dirs become one proposal with all their sources, and differing bodies are merged under `## From <dir>` headings. The summary is a draft built from the first `description`, which you approve or edit at review.
 - **Changes.** If a note behind a kept trait changes, the bridge writes `_proposed/<slug>.update.md`. Keeping it replaces the body and sources but **keeps your summary**.
 - **Dedup.** Deduplication comes from the files themselves (`sources:` and `_dropped.yaml`), so deleting the cache never brings anything back.
-- **Dropped stays dropped.** A note you dropped, or one behind an archived trait, does not come back even if it is edited later. To bring it back, add it with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
+- **Dropped stays dropped.** A note you dropped, or one behind an archived trait, does not come back even if it is edited later. Dropping an *update* proposal is different: it skips only that exact change, and a later edit of the note raises a new update. To bring it back, add it with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
 - **First run.** The first run imports today's memories as proposals for one review. Classify each one (profile, or route it to a project KB with `--drop <id> --reason "route: saitex rules"`).
 
 **Env overrides (tests, relocated homes).** `SQUADRANT_USER_KB_DIR` (`<userKb>`), `SQUADRANT_NATIVE_MEMORY_ROOT` (default `~/.claude/projects`), `SQUADRANT_AUDIT_DIR`, `SQUADRANT_STATE_DIR`.

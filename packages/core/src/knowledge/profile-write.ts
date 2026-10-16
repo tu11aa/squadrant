@@ -230,7 +230,8 @@ export function keepItems(ctx: ProfileCtx, ids: string[]): ProfileWriteResult[] 
   return ids.map((id) => keepOne(ctx, root, id));
 }
 
-export interface DroppedEntry { source: string; hash: string; reason: string; date: string }
+/** P15: never a body. `updates` marks a dropped update proposal: only that hash is skipped, later changes are re-proposed. */
+export interface DroppedEntry { source: string; hash: string; reason: string; date: string; updates?: string }
 
 export function readDropped(root: string): DroppedEntry[] {
   try {
@@ -249,9 +250,12 @@ export function dropItems(ctx: ProfileCtx, ids: string[], reason: string): Profi
     const date = today(ctx);
     const proposal = p.proposed.find((t) => t.id === id);
     if (proposal) {
-      const memory = proposal.sources.map((s) => /^(memory:.+)#([0-9a-f]{12})$/.exec(s)).filter((m): m is RegExpExecArray => !!m);
+      // An update proposal records only the sources that changed, so the trait can still get later updates.
+      const known = new Set(p.active.find((t) => t.id === proposal.updates)?.sources ?? []);
+      const memory = proposal.sources.filter((s) => !proposal.updates || !known.has(s))
+        .map((s) => /^(memory:.+)#([0-9a-f]{12})$/.exec(s)).filter((m): m is RegExpExecArray => !!m);
       const entries: DroppedEntry[] = memory.length
-        ? memory.map((m) => ({ source: m[1], hash: m[2], reason, date }))
+        ? memory.map((m) => ({ source: m[1], hash: m[2], reason, date, ...(proposal.updates ? { updates: proposal.updates } : {}) }))
         : [{ source: `proposal:${id}`, hash: sha12(proposal.body), reason, date }];
       const file = profileWritePath(root, DROPPED_FILE);
       fs.writeFileSync(file, yaml.dump([...readDropped(root), ...entries], { lineWidth: -1 }));

@@ -107,7 +107,8 @@ export function runProfileBridge(o: BridgeOpts): { proposed: string[] } {
   const known = new Set<string>([...p.active, ...p.archived, ...p.proposed].flatMap((t) => t.sources));
   for (const d of dropped) known.add(`${d.source}#${d.hash}`);
   // Q5: a dropped or archived note stays dropped, whatever its later edits ("drop = stop asking").
-  const blocked = new Set<string>([...dropped.map((d) => d.source), ...p.archived.flatMap((t) => t.sources.filter(isMemory).map(refOf))]);
+  // A dropped *update* only skips that exact hash (review 6); a dropped new item blocks the whole path.
+  const blocked = new Set<string>([...dropped.filter((d) => !d.updates).map((d) => d.source), ...p.archived.flatMap((t) => t.sources.filter(isMemory).map(refOf))]);
   const activeByRef = new Map<string, LoadedTrait>();
   for (const t of p.active) for (const s of t.sources.filter(isMemory)) activeByRef.set(refOf(s), t);
 
