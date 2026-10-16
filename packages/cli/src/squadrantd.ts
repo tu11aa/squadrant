@@ -5,7 +5,7 @@ import "./lib/suppress-sqlite-warning.js";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, statSync, existsSync } from "node:fs";
-import { buildContext, tickKnowledgeSchedule } from "@squadrant/core";
+import { buildContext, tickKnowledgeSchedule, maybeRunProfileBridge, bootProfileBridge } from "@squadrant/core";
 import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { shellQuote } from "@squadrant/core";
@@ -762,8 +762,12 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
           cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`),
           enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
         });
+        // #982: native-memory → profile bridge, hourly. Read-only on ~/.claude; proposals only.
+        await maybeRunProfileBridge({ cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`) });
       },
     });
+    // #982: the bridge also runs once at boot, outside the rotation tick (first fire after 60 s; skipped without an inbox dir).
+    void bootProfileBridge({ cfg: loadConfig(), stateRoot: defaultStateRoot(), log: (m) => process.stderr.write(`[squadrantd] ${m}\n`) });
     // #535: await stop() before exiting — it writes the exit marker and runs
     // teardown (bridges, in-flight headless kills) synchronously-then-async;
     // exiting immediately after firing it (not awaiting) raced process.exit()
