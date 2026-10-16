@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-hooks-")); // never write the real audit log
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
-import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput } from "../hooks.js";
+import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, PROFILE_HOOK_SUB } from "../hooks.js";
+import { serializeTrait } from "@squadrant/core";
 
 // #560: the "ask-question" sub fires from NativeHookSource's global
 // PreToolUse+AskUserQuestion matcher install (see native-hook-source.ts). It
@@ -233,5 +234,53 @@ describe("rulesHookOutput — codex / gemini / opencode adapters (#900)", () => 
   it("a sub that belongs to another agent injects nothing", async () => {
     expect(await run("gemini", "prompt-submit", { session_id: "x", prompt: "edit contracts/vault/Vault.sol" })).toBe("");
     expect(await run("codex", "chat-message", { session_id: "x", prompt: "edit contracts/vault/Vault.sol" })).toBe("");
+  });
+});
+
+describe("profileHookOutput (#982)", () => {
+  const ukb = fs.mkdtempSync(path.join(os.tmpdir(), "ukb-hooks-"));
+  fs.mkdirSync(path.join(ukb, "profile"), { recursive: true });
+  fs.writeFileSync(path.join(ukb, "profile", "a.md"), serializeTrait({ id: "prof.a", domain: "profile", level: "shared", status: "active", kind: "preference",
+    confirmed: true, summary: "Lead with a proposal.", audience: "all", tier: "core", sources: [], created: "2026-10-15", updated: "2026-10-15", body: "" }));
+  // A project with a rules KB, so a rules leak would be visible.
+  const cfg = getDefaultConfig();
+  const loadCfg = () => cfg;
+  const env = { SQUADRANT_USER_KB_DIR: ukb };
+
+  it("is the profile-session-start sub", () => expect(PROFILE_HOOK_SUB).toBe("profile-session-start"));
+  for (const [agent, name] of [["claude", "SessionStart"], ["codex", "SessionStart"], ["gemini", "SessionStart"], ["opencode", "session"]] as const) {
+    it(`${agent}: outputs only the profile block as its own additionalContext (${name})`, async () => {
+      const out = JSON.parse(await profileHookOutput({ session_id: "s" }, { env, cwd: "/tmp", agent, loadCfg }));
+      expect(out.hookSpecificOutput.hookEventName).toBe(name);
+      const ctx: string = out.hookSpecificOutput.additionalContext;
+      expect(ctx.startsWith("<squadrant-operator-profile>")).toBe(true);
+      expect(ctx.trim().endsWith("</squadrant-operator-profile>")).toBe(true);
+      expect(ctx).toContain("[prof.a] Lead with a proposal.");
+      expect(ctx).not.toMatch(/squadrant-project-rules|Rules KB:/);
+    });
+  }
+  it("fail-open: a missing _user, a throwing config or a blown budget give empty output", async () => {
+    expect(await profileHookOutput({}, { env: { SQUADRANT_USER_KB_DIR: path.join(ukb, "nope") }, cwd: "/tmp", loadCfg })).toBe("");
+    expect(await profileHookOutput({}, { env, cwd: "/tmp", loadCfg: () => { throw new Error("bad config"); } })).toBe("");
+    expect(await profileHookOutput({}, { env, cwd: "/tmp", loadCfg, budgetMs: -1 })).toBe("");
+    expect(await profileHookOutput({}, { env: { ...env, SQUADRANT_PROFILE_INJECT: "0" }, cwd: "/tmp", loadCfg })).toBe("");
+  });
+});
+
+describe("preToolUseGuard passes the _user path to the #556 guard (#982 review)", () => {
+  const crew = { SQUADRANT_CREW_TASK_ID: "t1", SQUADRANT_CREW_PROJECT: "p" };
+  const write = (file_path: string) => ({ tool_name: "Write", tool_input: { file_path } });
+  it("uses knowledgeBases._user.path from config", () => {
+    const cfg = getDefaultConfig();
+    cfg.knowledgeBases = { _user: { path: "/kb/me" } };
+    expect(preToolUseGuard(write("/kb/me/profile/x.md"), crew, "/Users/q", () => cfg).decision).toBe("deny");
+    expect(preToolUseGuard(write("/kb/other/x.md"), crew, "/Users/q", () => cfg).decision).toBe("allow");
+  });
+  it("uses SQUADRANT_USER_KB_DIR, and still guards when the config cannot load", () => {
+    const env = { ...crew, SQUADRANT_USER_KB_DIR: "/kb/env" };
+    expect(preToolUseGuard(write("/kb/env/profile/x.md"), env, "/Users/q", () => { throw new Error("bad config"); }).decision).toBe("deny");
+  });
+  it("a captain session is never denied", () => {
+    expect(preToolUseGuard(write("/kb/env/profile/x.md"), { SQUADRANT_USER_KB_DIR: "/kb/env" }, "/Users/q", () => getDefaultConfig()).decision).toBe("allow");
   });
 });

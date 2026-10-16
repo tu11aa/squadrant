@@ -20,12 +20,15 @@ type HookEntry = { matcher?: string; hooks: { type: "command"; command: string; 
 
 interface HookSpec { event: string; sub: string; matcher?: string }
 
+// #982: the operator profile has its own SessionStart command (its own additionalContext string), first in the read set.
 const CODEX_HOOKS: HookSpec[] = [
+  { event: "SessionStart", sub: "profile-session-start" },
   { event: "SessionStart", sub: "session-start" },
   { event: "UserPromptSubmit", sub: "prompt-submit" },
   { event: "PostToolUse", sub: "post-tool-use", matcher: "Bash" },
 ];
 const GEMINI_HOOKS: HookSpec[] = [
+  { event: "SessionStart", sub: "profile-session-start" },
   { event: "SessionStart", sub: "session-start" },
   { event: "BeforeAgent", sub: "before-agent" },
   { event: "AfterTool", sub: "after-tool", matcher: "read_file" },
@@ -97,10 +100,17 @@ function rules(sub, cwd, payload) {
   } catch { return null; }
 }
 
+// opencode has no session-start point: the operator profile (#982) rides on the first chat.message of each session.
 export const SquadrantRules = async ({ directory }) => {
   const args = new Map();
+  const profiled = new Set();
   return {
     "chat.message": async (input, output) => {
+      if (!profiled.has(input.sessionID)) {
+        profiled.add(input.sessionID);
+        const profile = rules("profile-session-start", directory, { session_id: input.sessionID });
+        if (profile) output.parts.push({ id: "prt_squadrant_profile_" + Date.now(), sessionID: input.sessionID, messageID: output.message?.id, type: "text", text: profile, synthetic: true });
+      }
       const prompt = (output.parts ?? []).filter((p) => p.type === "text" && !p.synthetic).map((p) => p.text).join("\\n");
       if (!prompt) return;
       const ctx = rules("chat-message", directory, { session_id: input.sessionID, prompt });

@@ -391,7 +391,8 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 1. **Daily log (opt-in):** if you accomplished something worth a daily log, use the `squadrant:daily-log` skill. Skip it if today was uneventful.
 2. **Wiki promotion (opt-in):** if a learning crystallized into reusable knowledge, promote to a wiki page using `squadrant:wiki-ops`. Otherwise skip.
-3. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
+3. **Profile corrections (#982):** note any lasting correction or preference the operator gave this session ("don't do X", "always Y") that is true in every project and not recorded yet: `squadrant profile add --kind correction --apply --file -` (or `--kind preference --apply` for an explicit "save to my profile"). Echo the printed summary line so the operator can fix the wording. Project- or company-specific items go to that KB's rules instead. If the session-start block showed `Profile: N items pending review`, offer `squadrant profile review`: show every summary, then keep/drop by id.
+4. **Handoff (opt-in but recommended for in-flight work):** if work is mid-flight, write a handoff so tomorrow's session can resume:
 
 ```bash
 ~/.config/squadrant/scripts/write-handoff.sh "{project}" '{
@@ -406,7 +407,7 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
-4. (Optional) If a Command session is running and you want to notify it:
+5. (Optional) If a Command session is running and you want to notify it:
    ```bash
    squadrant runtime send --command "Captain {project} ending session — handoff written."
    ```

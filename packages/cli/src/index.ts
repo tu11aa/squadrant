@@ -47,6 +47,7 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { knowledgeCommand } from "./commands/knowledge.js";
 import { migrateCommand } from "./commands/migrate.js";
 import { rulesCommand } from "./commands/rules.js";
+import { profileCommand } from "./commands/profile.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -183,6 +184,7 @@ program.addCommand(sessionsCommand);
 program.addCommand(knowledgeCommand);
 program.addCommand(migrateCommand);
 program.addCommand(rulesCommand);
+program.addCommand(profileCommand);
 program.addCommand(whoamiCommand);
 
 program.parseAsync().catch((e) => {

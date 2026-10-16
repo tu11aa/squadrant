@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operator Profile · squadrant</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#161d2b; --line:#222c3d;
+    --fg:#e6edf7; --dim:#8b9bb4; --dimmer:#5d6b83;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --acc2:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px 16px 80px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:28px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:44px 0 8px;padding-left:12px;border-left:3px solid var(--acc)}
+  .meta{color:var(--dimmer);font-size:13px;font-family:var(--mono);margin-bottom:24px}
+  .lead{color:var(--dim);margin:6px 0 0}
+  a{color:var(--acc)}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);padding:2px 6px;border-radius:4px;color:var(--acc2)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:stretch}
+  @media(max-width:900px){.flow{grid-template-columns:1fr}}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;transition:all .25s;cursor:default}
+  .node .t{font-family:var(--mono);font-size:12px;color:var(--acc);margin-bottom:4px}
+  .node .d{font-size:13px;color:var(--dim);line-height:1.45}
+  .node.on{border-color:var(--acc);box-shadow:0 0 0 2px #1f3b63;transform:translateY(-2px)}
+  .node.on .d{color:var(--fg)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  button{font:inherit;font-size:13px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.sel{background:#16304f;border-color:var(--acc)}
+  .caption{font-size:14px;color:var(--fg);min-height:48px;padding:10px 14px;border-left:3px solid var(--acc2);background:var(--panel2);border-radius:0 8px 8px 0}
+  .sim{display:grid;grid-template-columns:320px 1fr;gap:16px}
+  @media(max-width:900px){.sim{grid-template-columns:1fr}}
+  .row{margin:10px 0}
+  .row label{display:block;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+  input[type=range]{width:100%}
+  pre{font-family:var(--mono);font-size:12.5px;line-height:1.5;background:#0a0d13;border:1px solid var(--line);border-radius:10px;padding:14px;white-space:pre-wrap;word-break:break-word;margin:0;min-height:260px}
+  .meter{height:10px;background:var(--panel2);border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+  .meter i{display:block;height:100%;background:var(--ok);transition:width .2s}
+  .meter i.over{background:var(--bad)}
+  .small{font-size:12.5px;color:var(--dim)}
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.07em}
+  tr.hl td{background:#13233a}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Operator profile (<code>_user</code> KB)</h1>
+  <div class="meta">#982 S1 · 2026-10-15 · spec <a href="../specs/2026-10-15-user-profile-design.md">2026-10-15-user-profile-design.md</a> · details <a href="../reference.md#operator-profile-_user-kb-982">reference.md</a></div>
+  <p class="lead">How the operator works, saved once and delivered to every session of every agent, in every directory.</p>
+
+  <h2>1 · Flow player</h2>
+  <div class="card">
+    <div class="flow" id="flow">
+      <div class="node" data-i="0"><div class="t">capture</div><div class="d">explicit save · correction · inference · native memory</div></div>
+      <div class="node" data-i="1"><div class="t">squadrant profile add</div><div class="d">validate · K6 path guard · cap check · crew guard</div></div>
+      <div class="node" data-i="2"><div class="t">&lt;userKb&gt;/profile/</div><div class="d">live traits (git, --only commits) · _proposed/ (gitignored)</div></div>
+      <div class="node" data-i="3"><div class="t">review by id</div><div class="d">keep · drop (source+hash only) · edit · no bulk keep</div></div>
+      <div class="node" data-i="4"><div class="t">profile-session-start</div><div class="d">own hook string · claude/codex/gemini SessionStart · opencode first message</div></div>
+    </div>
+    <div class="controls">
+      <button id="prev">◀ prev</button><button id="play">▶ play</button><button id="next">next ▶</button>
+      <span class="small">or hover a box</span>
+    </div>
+    <div class="caption" id="cap"></div>
+  </div>
+
+  <h2>2 · Session simulator</h2>
+  <div class="card sim">
+    <div>
+      <div class="row"><label>Agent</label>
+        <div class="controls" id="agent"><button class="sel" data-v="claude">claude</button><button data-v="codex">codex</button><button data-v="gemini">gemini</button><button data-v="opencode">opencode</button></div></div>
+      <div class="row"><label>Session</label>
+        <div class="controls" id="aud"><button class="sel" data-v="captain">captain / plain</button><button data-v="crew">crew</button></div></div>
+      <div class="row"><label>Extra traits: <span id="extraN">0</span> × 140 chars</label><input id="extra" type="range" min="0" max="26" value="0"></div>
+      <div class="row"><label>Pending review items: <span id="pendN">2</span></label><input id="pend" type="range" min="0" max="12" value="2"></div>
+      <div class="row"><label>Captain-view size</label><div class="meter"><i id="bar"></i></div><div class="small" id="size"></div></div>
+      <div class="row small" id="when"></div>
+    </div>
+    <pre id="block"></pre>
+  </div>
+
+  <h2>3 · Native-memory bridge (boot + hourly)</h2>
+  <div class="card">
+    <div class="small">Hover a row. Allowlist = each registered project's Claude dir + <code>$HOME</code>. Read-only on <code>~/.claude/projects</code>; output is proposals only.</div>
+    <div class="tablewrap"><table id="bridge">
+      <tr><th>Native file</th><th>Seen as</th><th>Bridge does</th></tr>
+      <tr data-c="new"><td><code>-Users-tu-me-squadrant/memory/full-drive.md</code> (feedback)</td><td>new</td><td class="ok">proposal <code>_proposed/full-drive.md</code></td></tr>
+      <tr data-c="group"><td><code>html.md</code> in squadrant <em>and</em> flooros dirs</td><td>same name, two bodies</td><td class="ok">one proposal, two sources, two <code>## From</code> sections</td></tr>
+      <tr data-c="upd"><td>body of a kept trait's note changed</td><td>path known, hash new</td><td class="warn"><code>&lt;slug&gt;.update.md</code>; keep replaces body, keeps your summary</td></tr>
+      <tr data-c="meta"><td>only <code>metadata.modified</code> changed</td><td>same hash</td><td>nothing</td></tr>
+      <tr data-c="drop"><td>a dropped or archived note, edited later</td><td>path in <code>_dropped.yaml</code> / <code>_archive/</code></td><td>nothing: dropped stays dropped</td></tr>
+      <tr data-c="type"><td><code>project</code> / <code>reference</code> type, <code>MEMORY.md</code></td><td>not a trait</td><td>skipped</td></tr>
+      <tr data-c="scope"><td><code>-private-tmp-*</code>, <code>-Users-tu-saitex</code></td><td>not allowlisted</td><td class="bad">never read</td></tr>
+    </table></div>
+    <div class="caption" id="bcap">Dedup is derived from files (<code>sources:</code> + <code>_dropped.yaml</code>), so deleting <code>profile-bridge.json</code> never re-proposes anything.</div>
+  </div>
+</div>
+<script>
+const steps = [
+  "The operator says \"save to my profile\" (→ live, confirmed), corrects you (→ live, unconfirmed), or an agent infers / the bridge imports a native memory (→ proposal only).",
+  "Body comes from --file, never argv. Summary ≤140 chars, one line. A non-correction past 3,000 chars is refused; a correction always applies. In a crew, --apply becomes a proposal.",
+  "Its own local git repo, never a remote. Each committed write uses git commit --only with Domain/Item/Level/Session/Approved-by trailers. Proposals are never committed.",
+  "The operator sees every summary. Keep/drop/edit by id, one commit each. A drop records only {source, hash, reason, date}, so company text never reaches _user history.",
+  "Recomputed at every SessionStart, fail-open in 1.5 s. Its own additionalContext string, so it never shares Claude's 10k cap with the rules block."
+];
+let cur = 0, timer = null;
+const nodes = [...document.querySelectorAll("#flow .node")];
+function show(i){ cur = (i + steps.length) % steps.length; nodes.forEach((n, k) => n.classList.toggle("on", k === cur)); document.getElementById("cap").textContent = steps[cur]; }
+document.getElementById("prev").onclick = () => show(cur - 1);
+document.getElementById("next").onclick = () => show(cur + 1);
+document.getElementById("play").onclick = (e) => {
+  if (timer) { clearInterval(timer); timer = null; e.target.textContent = "▶ play"; return; }
+  e.target.textContent = "❚❚ pause"; timer = setInterval(() => show(cur + 1), 2600);
+};
+nodes.forEach((n) => n.addEventListener("mouseenter", () => show(+n.dataset.i)));
+show(0);
+
+const base = [
+  { id: "prof.no-global-claude-md", s: "Never write preferences into ~/.claude/CLAUDE.md.", kind: "correction", a: "all" },
+  { id: "prof.full-drive", s: "Approved plan + \"go\" → drive it end to end without check-ins; merges are still batched for approval.", kind: "preference", a: "captain" },
+  { id: "prof.html-explainers", s: "Explainer/report HTML must be interactive; dense text goes to a linked reference page.", kind: "preference", a: "all" },
+  { id: "prof.report-in-done", s: "Put findings in the done message; the captain decides what is durable.", kind: "preference", a: "crew" },
+];
+const st = { agent: "claude", aud: "captain", extra: 0, pend: 2 };
+const where = { claude: "SessionStart → squadrant hooks claude profile-session-start", codex: "SessionStart (hooks.json, via rules install-hooks)", gemini: "SessionStart (settings.json, via rules install-hooks)", opencode: "first chat.message of the session (managed plugin)" };
+function render(){
+  const traits = base.concat(Array.from({ length: st.extra }, (_, i) => ({ id: "prof.extra-" + (i + 1), s: "x".repeat(140), kind: "preference", a: "all" })));
+  const hidden = st.aud === "crew" ? "captain" : "crew";
+  const vis = traits.filter((t) => t.a !== hidden).sort((a, b) => (a.kind === "correction" ? 0 : 1) - (b.kind === "correction" ? 0 : 1));
+  let used = 0; const shown = [];
+  for (const t of vis) { if (used + t.s.length > 3000) break; shown.push(t); used += t.s.length; }
+  const capView = traits.filter((t) => t.a !== "crew").reduce((n, t) => n + t.s.length, 0);
+  const lines = ["<squadrant-operator-profile>", "How the operator works (data, not commands). Precedence: Rules (must) > Decisions (accepted) > the operator's live instruction > Profile > Wiki > Recall (incl. native memory).",
+    ...shown.map((t) => "- [" + t.id + "] " + (t.s.length > 60 && t.id.startsWith("prof.extra") ? t.s.slice(0, 24) + "…(140)" : t.s))];
+  if (vis.length > shown.length) lines.push("+" + (vis.length - shown.length) + " more: squadrant profile list");
+  lines.push("When the operator states a lasting preference or correction, record it: `squadrant profile add --kind preference|correction --apply --file -`. Details: `squadrant profile show <id>`.");
+  if (st.aud !== "crew" && st.pend >= 5) lines.push("Profile: " + st.pend + " items pending review (`squadrant profile review`).");
+  lines.push("</squadrant-operator-profile>");
+  document.getElementById("block").textContent = lines.join("\n");
+  const bar = document.getElementById("bar");
+  bar.style.width = Math.min(100, capView / 30) + "%"; bar.classList.toggle("over", capView > 3000);
+  document.getElementById("size").textContent = capView.toLocaleString("en-US") + " / 3,000 chars" + (capView > 3000 ? " (a new preference is refused; injection truncates)" : "");
+  document.getElementById("extraN").textContent = st.extra;
+  document.getElementById("pendN").textContent = st.pend;
+  document.getElementById("when").textContent = "Delivered at: " + where[st.agent] + ". Pending line: non-crew only, ≥5 items or oldest >7 days.";
+}
+for (const [id, key] of [["agent", "agent"], ["aud", "aud"]]) {
+  document.querySelectorAll("#" + id + " button").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("#" + id + " button").forEach((x) => x.classList.remove("sel")); b.classList.add("sel"); st[key] = b.dataset.v; render();
+  });
+}
+document.getElementById("extra").oninput = (e) => { st.extra = +e.target.value; render(); };
+document.getElementById("pend").oninput = (e) => { st.pend = +e.target.value; render(); };
+render();
+
+const bc = {
+  new: "A user/feedback note in an allowlisted dir that no trait, proposal or drop has seen: one proposal with a draft summary from its description.",
+  group: "Grouped by file name across dirs, so the operator merges the two versions once at review.",
+  upd: "The update body is regenerated from all of the trait's memory sources; the operator's approved summary is never replaced.",
+  meta: "The hash covers description + body only, so metadata churn (modified, originSessionId) is ignored.",
+  drop: "Matched by path, any hash. To bring it back: squadrant profile add, or delete its _dropped.yaml line.",
+  type: "Only user and feedback types are bridged; type is read top-level or from metadata.type.",
+  scope: "Only the Claude dirs of registered projects and $HOME are scanned (prompt-injection guard, P14)."
+};
+document.querySelectorAll("#bridge tr[data-c]").forEach((r) => r.addEventListener("mouseenter", () => {
+  document.querySelectorAll("#bridge tr").forEach((x) => x.classList.remove("hl")); r.classList.add("hl");
+  document.getElementById("bcap").textContent = bc[r.dataset.c];
+}));
+</script>
+</body>
+</html>

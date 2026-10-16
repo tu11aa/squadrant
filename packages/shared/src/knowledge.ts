@@ -206,6 +206,15 @@ export function kbPath(cfg: SquadrantConfig, kb: string): string {
   return resolveHome(kbConfigs(cfg)[kb]?.path ?? `${DEFAULT_KB_ROOT}/${kb}`);
 }
 
+/** The operator profile KB (#982). Never a rules KB; `KB_NAME_RE` rejects the name on purpose. */
+export const USER_KB = "_user";
+
+/** Root of the `_user` KB: `SQUADRANT_USER_KB_DIR`, else `knowledgeBases._user.path`, else ~/squadrant/kb/_user. */
+export function userKbDir(cfg?: SquadrantConfig, env: NodeJS.ProcessEnv = process.env): string {
+  if (env.SQUADRANT_USER_KB_DIR) return path.resolve(env.SQUADRANT_USER_KB_DIR);
+  return cfg ? kbPath(cfg, USER_KB) : resolveHome(`${DEFAULT_KB_ROOT}/${USER_KB}`);
+}
+
 /** The KB that holds the project's own items (KB spec §3 home resolution; auto-create is a later phase). */
 export function homeKb(cfg: SquadrantConfig, project: string): string | undefined {
   const pc = cfg.projects[project];

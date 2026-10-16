@@ -11,9 +11,9 @@
 import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { sendRequest, resolveCurrentProject, computeRulesInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
+import { sendRequest, resolveCurrentProject, computeRulesInjection, computeProfileInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
 import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite } from "@squadrant/agents";
-import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot } from "@squadrant/shared";
+import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } from "@squadrant/shared";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
@@ -170,6 +170,42 @@ export async function rulesHookOutput(
   return JSON.stringify({ hookSpecificOutput: { hookEventName: map.hookEventName, additionalContext: ctx } });
 }
 
+/** The sub-command every agent's profile hook calls (#982): its own command, so its own additionalContext string. */
+export const PROFILE_HOOK_SUB = "profile-session-start";
+
+/** hookEventName the agent expects back for its session-start point (opencode's plugin ignores it). */
+const SESSION_EVENT_NAME: Record<string, string> = { claude: "SessionStart", codex: "SessionStart", gemini: "SessionStart", opencode: "session" };
+
+/**
+ * #982: the operator profile block for any agent's session start. Output holds only the profile block, never
+ * rules. Never throws: an error, an empty `_user` or a blown budget yields "" (fail-open).
+ */
+export async function profileHookOutput(
+  payload: unknown,
+  opts: { env: NodeJS.ProcessEnv; cwd: string; agent?: string; loadCfg?: () => SquadrantConfig; budgetMs?: number },
+): Promise<string> {
+  const agent = opts.agent ?? "claude";
+  if (opts.env.SQUADRANT_PROFILE_INJECT === "0") return "";
+  const ctx = await withBudget(() => computeProfileInjection({
+    payload, env: opts.env, cwd: opts.cwd, agent, cfg: (opts.loadCfg ?? loadConfig)(),
+  }), opts.budgetMs ?? INJECT_BUDGET_MS);
+  if (!ctx) return "";
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: SESSION_EVENT_NAME[agent] ?? "SessionStart", additionalContext: ctx } });
+}
+
+/**
+ * #556 + #982: decide a crew PreToolUse call against the captain-memory dirs and the `_user` KB. A config
+ * error falls back to the env/default `_user` path rather than dropping the guard.
+ */
+export function preToolUseGuard(
+  payload: unknown, env: NodeJS.ProcessEnv, home: string, loadCfg: () => SquadrantConfig = loadConfig,
+): ReturnType<typeof decideCaptainMemoryWrite> {
+  const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
+  let ukb: string;
+  try { ukb = userKbDir(loadCfg(), env); } catch { ukb = userKbDir(undefined, env); }
+  return decideCaptainMemoryWrite(typeof p?.tool_name === "string" ? p.tool_name : "", p?.tool_input, env, home, ukb);
+}
+
 async function readStdinJson(): Promise<unknown> {
   let stdin = "";
   try { for await (const chunk of process.stdin) stdin += chunk as string; } catch { /* ignore */ }
@@ -195,6 +231,13 @@ export function hooksCommand(): Command {
       let payload: unknown = undefined;
       if (stdin.trim()) {
         try { payload = JSON.parse(stdin); } catch { /* ignore malformed */ }
+      }
+
+      // #982: the profile hook is its own command and emits nothing else (no rules, no lifecycle event).
+      if (sub === PROFILE_HOOK_SUB) {
+        const out = await profileHookOutput(payload, { env: process.env, cwd: process.cwd(), agent: "claude" });
+        if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
+        process.exit(0);
       }
 
       // #899: inject Rules KB context first, for every claude session (captain,
@@ -240,13 +283,7 @@ export function hooksCommand(): Command {
       // into the captain's long-term memory directory; report/propose is the
       // only allowed path there.
       if (sub === "pre-tool-use") {
-        const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
-        const guard = decideCaptainMemoryWrite(
-          typeof p?.tool_name === "string" ? p.tool_name : "",
-          p?.tool_input,
-          process.env,
-          homedir(),
-        );
+        const guard = preToolUseGuard(payload, process.env, homedir());
         if (guard.decision === "deny") {
           console.error(`[squadrant] denied crew write into captain memory (task ${taskId}): ${guard.reason}`);
           process.stdout.write(JSON.stringify({
@@ -275,11 +312,13 @@ export function hooksCommand(): Command {
   for (const agent of ["codex", "gemini", "opencode"]) {
     hooks
       .command(`${agent} <sub>`, { hidden: true })
-      .description(`internal: Rules KB injection for ${agent}`)
+      .description(`internal: Rules KB and operator profile injection for ${agent}`)
       .option("--project <name>", "project for rules injection (default: SQUADRANT_CREW_PROJECT, then cwd)")
       .action(async (sub: string, opts: { project?: string }) => {
         const payload = await readStdinJson();
-        const out = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project, agent });
+        const out = sub === PROFILE_HOOK_SUB
+          ? await profileHookOutput(payload, { env: process.env, cwd: process.cwd(), agent })
+          : await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project, agent });
         if (out) await new Promise<void>((resolve) => process.stdout.write(out, () => resolve()));
         process.exit(0);
       });
