@@ -730,6 +730,15 @@ export function isLinkedWorktree(
   return statFile(dotGit)?.isFile === true;
 }
 
+/**
+ * One 60 s knowledge tick: the KB reconcile scheduler, then the profile bridge (#982), each in its own try so a
+ * scheduler failure never skips the bridge. Never throws.
+ */
+export async function runKnowledgeTick(d: { schedule: () => Promise<unknown>; bridge: () => Promise<unknown>; log: (m: string) => void }): Promise<void> {
+  try { await d.schedule(); } catch (e) { d.log(`knowledge schedule tick failed: ${(e as Error).message}`); }
+  try { await d.bridge(); } catch (e) { d.log(`profile bridge tick failed: ${(e as Error).message}`); }
+}
+
 // Executed by launchd (ProgramArguments → this file's compiled .js).
 if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
   // Registered before any boot work so a crash during startup is still logged.
@@ -758,12 +767,16 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       // #898: KB reconcile scheduler on the 60s tick. Enqueues to the home captain's mailbox; never spawns.
       knowledgeTick: async () => {
         const stateRoot = defaultStateRoot(); // same default as buildContext
-        await tickKnowledgeSchedule({
-          cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`),
-          enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+        const log = (m: string) => process.stderr.write(`[squadrantd] ${m}\n`);
+        await runKnowledgeTick({
+          log,
+          schedule: () => tickKnowledgeSchedule({
+            cfg: loadConfig(), stateRoot, log,
+            enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+          }),
+          // #982: native-memory → profile bridge, hourly. Read-only on ~/.claude; proposals only.
+          bridge: () => maybeRunProfileBridge({ cfg: loadConfig(), stateRoot, log }),
         });
-        // #982: native-memory → profile bridge, hourly. Read-only on ~/.claude; proposals only.
-        await maybeRunProfileBridge({ cfg: loadConfig(), stateRoot, log: (m) => process.stderr.write(`[squadrantd] ${m}\n`) });
       },
     });
     // #982: the bridge also runs once at boot, outside the rotation tick (first fire after 60 s; skipped without an inbox dir).
