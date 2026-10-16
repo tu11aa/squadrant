@@ -767,7 +767,9 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
       },
     });
     // #982: the bridge also runs once at boot, outside the rotation tick (first fire after 60 s; skipped without an inbox dir).
-    void bootProfileBridge({ cfg: loadConfig(), stateRoot: defaultStateRoot(), log: (m) => process.stderr.write(`[squadrantd] ${m}\n`) });
+    try {
+      void bootProfileBridge({ cfg: loadConfig(), stateRoot: defaultStateRoot(), log: (m) => process.stderr.write(`[squadrantd] ${m}\n`) });
+    } catch (e) { process.stderr.write(`[squadrantd] profile bridge skipped at boot: ${(e as Error).message}\n`); }
     // #535: await stop() before exiting — it writes the exit marker and runs
     // teardown (bridges, in-flight headless kills) synchronously-then-async;
     // exiting immediately after firing it (not awaiting) raced process.exit()
