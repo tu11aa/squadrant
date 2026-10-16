@@ -53,6 +53,20 @@ describe("ensureUserKb (K6)", () => {
   });
 });
 
+describe("ensureUserKb reverse K6 (review 8)", () => {
+  it("refuses a _user path that is or contains $HOME, contains a registered project or KB, or sits under ~/.claude", () => {
+    const home = tmp("home-");
+    const proj = path.join(home, "me", "p");
+    const at = (dir: string, cfg = cfgWith({ p: proj })) => () => ensureUserKb(cfg, { SQUADRANT_USER_KB_DIR: dir }, home);
+    expect(at(home)).toThrow(/home/);
+    expect(at(path.dirname(home))).toThrow(/home/);
+    expect(at(path.join(home, "me"))).toThrow(/contains project p/);
+    expect(at(path.join(home, ".claude", "profile"))).toThrow(/\.claude/);
+    expect(at(path.join(home, "squadrant", "kb"), cfgWith({}, { saitex: path.join(home, "squadrant", "kb", "saitex") }))).toThrow(/contains KB saitex/);
+    expect(at(path.join(home, "squadrant", "kb", "_user"))()).toBe(path.join(home, "squadrant", "kb", "_user"));
+  });
+});
+
 describe("profileWritePath (K6)", () => {
   it("resolves inside <userKb>/profile and throws for anything outside", () => {
     const root = "/kb/_user";

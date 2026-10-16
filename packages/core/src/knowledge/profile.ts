@@ -1,6 +1,7 @@
 // packages/core/src/knowledge/profile.ts — the operator profile (`_user` KB) store (#982 S1).
 // Spec: docs/specs/2026-10-15-user-profile-design.md §3-§4. Files are the source of truth; git is history.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import yaml from "js-yaml";
@@ -155,11 +156,15 @@ export function profileWritePath(root: string, rel: string): string {
 
 const inside = (p: string, root: string) => p === root || p.startsWith(root + path.sep);
 
-/** K6: `_user` must not sit inside a registered project or another KB. */
-function assertUserKbPlacement(cfg: SquadrantConfig, root: string): void {
+/** K6: `_user` must not sit inside (or contain) $HOME, a registered project or another KB, nor live under ~/.claude. */
+function assertUserKbPlacement(cfg: SquadrantConfig, root: string, home: string): void {
+  const h = path.resolve(home);
+  if (inside(h, root)) throw new Error(`_user KB path ${root} is or contains the home dir ${h}; use a dedicated dir (K6)`);
+  if (inside(root, path.join(h, ".claude"))) throw new Error(`_user KB path ${root} is under ~/.claude; squadrant never writes there (K6)`);
   for (const [name, pc] of Object.entries(cfg.projects ?? {})) {
     const p = path.resolve(resolveHome(pc.path));
     if (inside(root, p)) throw new Error(`_user KB path ${root} is inside project ${name} (${p}); move it (K6)`);
+    if (inside(p, root)) throw new Error(`_user KB path ${root} contains project ${name} (${p}); move it (K6)`);
   }
   const kbs = new Set([
     ...Object.keys(kbConfigs(cfg)),
@@ -169,6 +174,7 @@ function assertUserKbPlacement(cfg: SquadrantConfig, root: string): void {
   for (const kb of kbs) {
     const p = path.resolve(kbPath(cfg, kb));
     if (inside(root, p)) throw new Error(`_user KB path ${root} is inside KB ${kb} (${p}); move it (K6)`);
+    if (inside(p, root)) throw new Error(`_user KB path ${root} contains KB ${kb} (${p}); move it (K6)`);
   }
 }
 
@@ -183,9 +189,9 @@ export function gitRun(root: string, args: string[]): string {
 }
 
 /** Create the `_user` KB on first use: its own local git repo, proposals ignored. Never adds a remote or registers config. */
-export function ensureUserKb(cfg: SquadrantConfig, env: NodeJS.ProcessEnv = process.env): string {
+export function ensureUserKb(cfg: SquadrantConfig, env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string {
   const root = userKbDir(cfg, env);
-  assertUserKbPlacement(cfg, root);
+  assertUserKbPlacement(cfg, root, home);
   fs.mkdirSync(path.join(root, PROFILE_DIR), { recursive: true });
   const ignore = path.join(root, ".gitignore");
   let text = "";
