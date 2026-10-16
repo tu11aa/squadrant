@@ -214,6 +214,9 @@ export interface ProfileCommit { verb: string; id: string; session?: string; app
  * The trailers are the parent spec §5 ones (the S3 daemon writer keeps the format). Never throws.
  */
 export function commitProfilePaths(root: string, paths: string[], c: ProfileCommit): { ok: boolean; warning?: string } {
+  // P15: proposals never reach history, whatever .gitignore says.
+  const proposal = paths.find((p) => p.split(/[\\/]/).includes(PROPOSED_PROFILE_DIR));
+  if (proposal) return { ok: false, warning: `profile: refusing to commit ${proposal}: proposals are never committed (P15)` };
   // Never let git walk up into an enclosing repo.
   if (!fs.existsSync(path.join(root, ".git"))) return { ok: false, warning: `profile: commit failed for ${c.id} (${root} is not a git repo); the file is kept: run squadrant profile list --check --fix` };
   const trailers = [`Domain: profile`, `Item: ${c.id}`, `Level: shared`, `Session: ${c.session || "-"}`, `Approved-by: ${c.approvedBy}`].join("\n");

@@ -118,6 +118,15 @@ describe("commitProfilePaths", () => {
     for (const t of ["Domain: profile", "Item: prof.x", "Level: shared", "Session: s1", "Approved-by: operator"]) expect(msg).toContain(t);
     expect(git(root, "diff", "--cached", "--name-only").trim()).toBe("profile/other.md");
   });
+  it("refuses to commit any _proposed path (review M2)", () => {
+    fs.mkdirSync(path.join(root, "profile", "_proposed"), { recursive: true });
+    fs.writeFileSync(path.join(root, "profile", "_proposed", "p.md"), "secret");
+    fs.rmSync(path.join(root, ".gitignore"));
+    const r = commitProfilePaths(root, ["profile/_proposed/p.md"], { verb: "add", id: "prof.p", approvedBy: "operator" });
+    expect(r.ok).toBe(false);
+    expect(r.warning).toMatch(/_proposed/);
+    expect(git(root, "log", "--all", "--name-only", "--format=")).not.toContain("_proposed");
+  });
   it("on failure the file stands and a warning is returned", () => {
     fs.writeFileSync(path.join(root, "profile", "y.md"), "y");
     fs.rmSync(path.join(root, ".git"), { recursive: true });

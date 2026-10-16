@@ -208,4 +208,14 @@ describe("profile list --check", () => {
     expect(f.fixed).toEqual(["profile/hand.md"]);
     expect(git(root, "status", "--porcelain", "--", "profile/hand.md")).toBe("");
   });
+  it("--fix never commits _proposed/ bodies, even when .gitignore is gone (review M2)", () => {
+    addTrait(ctx, { text: input("seed"), kind: "preference", apply: true, id: "seed" });
+    addTrait(ctx, { text: input("Proposed body."), kind: "preference", id: "prop" });
+    fs.rmSync(path.join(root, ".gitignore"));
+    git(root, "commit", "-qam", "drop ignore");
+    const r = checkProfile(ctx, true);
+    expect(r.fixed).toEqual([]);
+    expect(r.problems.join()).toMatch(/\.gitignore/);
+    expect(git(root, "log", "--all", "--name-only", "--format=")).not.toContain("_proposed");
+  });
 });

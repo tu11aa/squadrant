@@ -310,8 +310,14 @@ export function checkProfile(ctx: ProfileCtx, fix: boolean): { problems: string[
   let uncommitted: string[] = [];
   try {
     uncommitted = execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all", "--", PROFILE_DIR], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
-      .split("\n").filter(Boolean).map((l) => l.slice(3)).sort();
+      .split("\n").filter(Boolean).map((l) => l.slice(3))
+      .filter((f) => !f.startsWith(`${PROFILE_DIR}/${PROPOSED_PROFILE_DIR}/`)).sort();
   } catch { if (fs.existsSync(path.join(root, PROFILE_DIR))) problems.push(`${root} is not a git repo`); }
+  let ignore = "";
+  try { ignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8"); } catch { /* missing */ }
+  if (fs.existsSync(path.join(root, PROFILE_DIR)) && !ignore.split("\n").includes(`${PROFILE_DIR}/${PROPOSED_PROFILE_DIR}/`)) {
+    problems.push(".gitignore does not ignore profile/_proposed/ (the next profile write restores it)");
+  }
   const fixed: string[] = [];
   const warnings: string[] = [];
   if (fix) {
