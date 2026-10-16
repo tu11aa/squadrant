@@ -279,6 +279,9 @@ export function editItem(ctx: ProfileCtx, id: string, text: string, flags: { sum
   const p = loadProfile(root);
   const base = p.proposed.find((t) => t.id === id && !t.updates) ?? p.active.find((t) => t.id === id);
   if (!base) return fail(id, `${id} is not a new-trait proposal or an active trait (update proposals are kept or dropped)`);
+  if (base.status === "proposed" && [...p.active, ...p.archived].some((t) => t.id === id)) {
+    return fail(id, `${id} already exists as a live or archived trait; drop this proposal or edit that trait`);
+  }
   const { fm, body } = parseInput(text);
   const date = today(ctx);
   const next: Trait = {

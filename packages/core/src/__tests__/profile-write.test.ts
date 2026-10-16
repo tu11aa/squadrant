@@ -185,6 +185,12 @@ describe("profile review", () => {
     expect(read("p1.md")).toMatchObject({ summary: "Edited wording.", body: "Edited body.\n", confirmed: true, status: "active" });
     expect(commits(root)[0]).toBe("profile: edit prof.p1");
   });
+  it("--edit refuses a proposal whose id already exists as a live trait (review 5)", () => {
+    propose("seed", { body: "proposal body\n" });
+    const r = editItem(ctx, "prof.seed", input("Clobber."));
+    expect(r.error).toMatch(/exists/);
+    expect(read("seed.md").summary).toBe("seed");
+  });
   it("crew sessions are refused for keep, drop, edit and check --fix", () => {
     propose("p1");
     const crew = { ...ctx, env: { ...ctx.env, SQUADRANT_CREW_TASK_ID: "t1" } };
