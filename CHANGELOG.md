@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-16
+
+The operator profile: a personal `_user` KB holding how you work (preferences and corrections), shown to every session of every agent in every project at session start (KB epic #893, issue #982 slice S1; spec `docs/specs/2026-10-15-user-profile-design.md`, diagram `docs/diagrams/2026-10-15-operator-profile.html`). PR #993.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. On boot the daemon adds the profile `SessionStart` hook to `~/.claude/settings.json` (squadrant-managed entries only) and proposes your existing Claude `user`/`feedback` memories for review. Review them with `squadrant profile review`. codex and gemini need `squadrant rules install-hooks --agent codex|gemini` once.
+
+### Added
+
+- **`_user` KB** at `~/squadrant/kb/_user` (override with `SQUADRANT_USER_KB_DIR` or `knowledgeBases._user.path`), a local git repo created on first use. It may not sit inside a project or another KB, and may not be `$HOME` or under `~/.claude`.
+- **`squadrant profile add | review | list | show`.** Traits are preferences or corrections with a one-line summary (≤140 chars) and an audience (`all`, `captain`, `crew`). `add --kind correction --apply` takes effect at once and is listed for confirmation; `review` keeps, drops (with a reason) or edits proposals by id, with no bulk keep. Every write is one git commit of its own paths with trailers. Proposals are never committed. Crews can only propose.
+- **Profile at session start for every agent.** A `profile-session-start` hook (Claude/codex/gemini `SessionStart`, opencode's first message) injects the trait summaries: corrections first, capped at 3,000 characters per audience with `+N more`, in every directory including ones outside your projects. Captains also see how many items are pending review. A corrupt trait file is skipped; any error injects nothing (fail-open). Kill switch: `SQUADRANT_PROFILE_INJECT=0`.
+- **Native-memory bridge.** At daemon boot and hourly, Claude `user`/`feedback` memories from your registered projects and `$HOME` become profile proposals (grouped by file name; a changed note behind a kept trait becomes an update proposal). Native memory is only read, never written. A dropped note is not proposed again.
+- **Crew write guard** covers `<userKb>/` for Claude crews (#556); codex/opencode crews are guarded at the CLI, direct-write guard tracked in #994.
+
+### Changed
+
+- The captain-ops close-out step records operator corrections with `squadrant profile add --kind correction --apply`.
+- No squadrant code path writes `~/.claude/CLAUDE.md`, `AGENTS.md` or `GEMINI.md` for the profile.
+
 ## [0.29.0] - 2026-10-15
 
 Rule outcome signals for the rules KB (#945 Phase A), and squadrant's files are reorganised by lifecycle (KB epic #893 phase 6, #983): exchange files move to `~/squadrant/workspace/<project>/`, daemon state moves to `~/.local/state/squadrant/`. PRs #985-#988.
