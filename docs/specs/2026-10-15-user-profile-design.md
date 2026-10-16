@@ -3,6 +3,7 @@
 - **Status:** brainstormed with the operator 2026-10-15 (research side-session), all decisions approved in chat; spec reviewed by an agent and revised (blockers fixed, P12–P15 approved by the operator); **awaiting operator spec review**
 - **Issues:** #982 = S1 (KB epic #893, Phase 5) · #991 = S2 · #992 = S3 · **Research:** #894
 - **Depends on:** nothing for S1. S2 is blocked by #979 2a, S3 by #979 2b.
+- **Diagram:** [`../diagrams/2026-10-15-operator-profile.html`](../diagrams/2026-10-15-operator-profile.html)
 - **Parent spec:** [`2026-10-10-knowledge-base-architecture-design.md`](2026-10-10-knowledge-base-architecture-design.md). This spec **amends** its profile parts: §4.1 Profile row, §5 capture, §6 budget and delivery, §8 Profile reconcile, and §10 bridge. See §11.
 
 ## 1. Goal
@@ -113,6 +114,7 @@ This is a starting point. The operator decides each item at the first review.
 - **Echo:** every write prints `applied prof.<slug>: "<summary>" (captain 1,234/3,000 · crew 980/3,000)` or `proposed …`. The agent relays that line to the operator (P4).
 - **Crew guard (#556):**
   - With `SQUADRANT_CREW_TASK_ID` set, `--apply` is refused and the item lands in `_proposed/`.
+  - A crew is also refused for `review --keep`, `--drop`, `--edit` and `list --check --fix` (S1 pre-flight, captain-approved 2026-10-15). Otherwise a crew could confirm its own proposal and bypass K10. Crews may still `add` (as a proposal), `list`, `review --json` and `show`.
   - `decideCaptainMemoryWrite` (`agents/src/interactive/claude.ts`; the regex is at `:252`) is extended so that a crew `Write`/`Edit`/`MultiEdit`/`NotebookEdit`, or a `Bash` command that references `<userKb>/`, is denied too. The CLI guard alone could be bypassed by writing the file directly.
 - **Isolation guard (K6):** one function resolves every profile write path and throws unless the path is inside `<userKb>/profile/`. Every profile write goes through it.
 - **Commit:** every write to a committed path (`profile/*.md`, `_archive/`, `_dropped.yaml`) runs `git add -- <paths>` then `git commit --only -- <paths>`. That way concurrent writers (the CLI from several sessions, the daemon) never sweep each other's files.
@@ -125,7 +127,7 @@ This is a starting point. The operator decides each item at the first review.
 **Review (P5):** `squadrant profile review`
 - **The queue:** `--json` (or no TTY) prints `_proposed/*` plus active traits with `confirmed: false`. Each item shows its **id**, summary, kind, the **source dir** of each `memory:` source, and its evidence. Numbers are for display only.
 - **`--keep <id>[,<id>…]`:**
-  - A new-trait proposal moves to `profile/` with `confirmed: true`.
+  - A new-trait proposal moves to `profile/` with `confirmed: true`. It is refused when an active or archived trait already has that id (ids are never re-minted).
   - An update proposal replaces the body and `sources` of `updates:` but **keeps the existing summary**.
   - A correction gets `confirmed: true`.
   - Every keep sets `last_confirmed`.
@@ -162,7 +164,7 @@ Other commands:
   - Order: corrections first, then the other traits by `updated` (newest first), then by `id`.
   - If the summaries exceed 3,000 characters (P12, hand edits, races), take lines in that order until the next one would pass 3,000. Collapse the rest to `+N more: squadrant profile list`.
 - **Recomputed at each SessionStart event (P13).** `session_id` is optional; nothing is cached per session.
-- **Fail-open:** the block is computed inside `withBudget` (1.5 s). An error, an empty `_user`, or a result over budget injects nothing and exits 0. (`withBudget` cannot preempt synchronous I/O; it discards a late result.) Kill switch: `SQUADRANT_PROFILE_INJECT=0`.
+- **Fail-open:** the block is computed inside `withBudget` (1.5 s). An error, an empty `_user`, or a result over budget injects nothing and exits 0. A single corrupt trait file is skipped and logged to stderr, and the valid traits are still injected (S1 pre-flight Q4: one bad hand edit must not silence the whole profile; `profile list --check` reports it). (`withBudget` cannot preempt synchronous I/O; it discards a late result.) Kill switch: `SQUADRANT_PROFILE_INJECT=0`.
 - **Audit:** `item.surfaced` for each injected trait at each injection (`trigger: "session"`, `agent`, `session` if known). `project` is the resolved project, or `"_none"` for an unregistered cwd.
 
 ```
@@ -202,10 +204,11 @@ Profile: 6 items pending review (`squadrant profile review`).
 - **Hash:** sha256 over the normalized `description` + body, ignoring the rest of the frontmatter (`metadata.modified` and `originSessionId` churn). It is recorded as the first 12 hex characters.
 - **Source ref:** `memory:<encoded-dir>/<file>#<hash12>`.
 - **Dedup is derived from files, not state.** A `(source, hash)` pair is skipped if it appears in any `sources:` under `profile/`, `_archive/` or `_proposed/`, or in `_dropped.yaml`. Wiping state never re-proposes items.
-- **New items, grouped by file name.** All allowlisted dirs that contain the same file name produce **one** proposal `_proposed/<name>.md`. It carries all the sources. Bodies that differ are concatenated under `## From <encoded-dir>` headings so the operator merges them at review. Today `interactive-html-explainers` and `no-claude-artifacts` each exist in two dirs with different bodies.
+  - **Dropped or archived = stop asking (S1 pre-flight Q5).** A source **path** listed in `_dropped.yaml` or in an `_archive/` trait is skipped whatever its hash. A dropped note does not come back even if it is edited later. To bring one back, add it by hand with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
+- **New items, grouped by file name.** All allowlisted dirs that contain the same file name produce **one** proposal `_proposed/<name>.md`. If `<name>` is already the id of an unrelated active or archived trait, or of a proposal that has none of these sources, the proposal is named `<name>-2` (then `-3`, …; S1 pre-flight Q6). It carries all the sources. Bodies that differ are concatenated under `## From <encoded-dir>` headings so the operator merges them at review. Today `interactive-html-explainers` and `no-claude-artifacts` each exist in two dirs with different bodies.
   - `summary` = the first native `description`, truncated at a word boundary to 140 characters, as a draft.
   - `kind: preference`, `audience: all`, `tier: core`.
-- **Changed items:** if a source path matches a `memory:` source of an active trait but the hash differs, the bridge writes an update proposal `_proposed/<slug>.update.md` with `updates: prof.<slug>` and the new body. Keeping it does not change the summary (§4). The 2a loader must ignore `*.update.md` when it collects ids.
+- **Changed items:** if a source path matches a `memory:` source of an active trait but the hash differs, the bridge writes an update proposal `_proposed/<slug>.update.md` (id `prof.<slug>.update`) with `updates: prof.<slug>` and the new body. The body is regenerated from **all** of the trait's current memory sources (same `## From` grouping), so keeping it never drops another dir's section, and non-memory sources (`session:…`) are kept (S1 pre-flight Q7). A same-named file in another allowlisted dir joins that update instead of becoming a new trait. Keeping it does not change the summary (§4). The 2a loader must ignore `*.update.md` when it collects ids.
 - **Never writes** to `~/.claude/projects/**`. It runs in the daemon, so the #556 guard is unaffected.
 - **Classification** (profile vs. project rule, P1) is done by the agent with the operator at review. Project items are dropped with `--reason "route: saitex rules"` and the like.
 - **First run = the import.** Today it yields about 20 grouped proposals, which the operator works through in one review.
@@ -244,9 +247,9 @@ Unit tests use fixture dirs only (`SQUADRANT_USER_KB_DIR`, `SQUADRANT_NATIVE_MEM
 
 **Guards and isolation**
 - [ ] **K6:** `ensureUserKb` refuses a `_user` path (env or config) inside a registered project path or inside another KB dir. The write-path guard throws for any resolved path outside `<userKb>/profile/`.
-- [ ] **Crew guard (CLI):** `profile add --apply` with `SQUADRANT_CREW_TASK_ID` set lands in `_proposed/`.
+- [ ] **Crew guard (CLI):** `profile add --apply` with `SQUADRANT_CREW_TASK_ID` set lands in `_proposed/`; `review --keep/--drop/--edit` and `list --check --fix` are refused.
 - [ ] **Crew guard (#556):** `decideCaptainMemoryWrite` denies a crew `Write` to `<userKb>/profile/x.md` and a crew `Bash` that references `<userKb>/`. Captain and plain sessions are allowed.
-- [ ] **No CLAUDE.md:** no code path writes `~/.claude/CLAUDE.md`, `AGENTS.md` or `GEMINI.md`.
+- [ ] **No CLAUDE.md:** no profile code path (`ensureUserKb`, add, review, bridge, hook, installers) writes `~/.claude/CLAUDE.md`, `AGENTS.md` or `GEMINI.md`. (The pre-existing `squadrant projection --scope user` path does; the captain raises that with the operator separately and it is not touched here.)
 - [ ] **No company content:** after the bridge, a drop and a review, `git log -p` of `_user` contains no body of any dropped proposal. Neither the `saitex` KB repo nor squadrant's `docs/` contains profile text.
 
 **Write and review**
@@ -265,7 +268,7 @@ Unit tests use fixture dirs only (`SQUADRANT_USER_KB_DIR`, `SQUADRANT_NATIVE_MEM
 - [ ] **Audience:** a crew env sees `all` + `crew` and no pending line. A captain or plain session sees `all` + `captain` and the pending line at ≥5 items or with the oldest item >7 days; there is no pending line otherwise.
 - [ ] **Inject everywhere:** a cwd outside every registered project still gets the block (`project: "_none"` in audit).
 - [ ] **Overflow:** fixture traits totalling 3,400 chars inject corrections first, stay ≤3,000 in summaries, and end with `+N more`.
-- [ ] **Fail-open:** a corrupt trait file or a missing `_user` gives empty output and exit 0. Over budget gives null.
+- [ ] **Fail-open:** a missing `_user` gives empty output and exit 0; a corrupt trait file is skipped and logged while the valid traits are injected (Q4). Over budget gives null.
 - [ ] **Own output:** the `profile-session-start` command's output contains only the profile block, never rules text.
 - [ ] **opencode:** the generated plugin calls `profile-session-start` once per `sessionID` on the first `chat.message` and not on later messages.
 - [ ] **Hooks install:** `installClaudeHooks` adds and repairs the profile SessionStart entry without touching non-squadrant entries. The #900 installer writes the codex/gemini entries idempotently.
@@ -278,6 +281,8 @@ Unit tests use fixture dirs only (`SQUADRANT_USER_KB_DIR`, `SQUADRANT_NATIVE_MEM
   - A change only to `metadata.modified` proposes nothing.
   - A body change gives a `.update.md` proposal.
   - After deleting `profile-bridge.json`, nothing already kept or dropped is re-proposed.
+  - A dropped or archived note is not re-proposed after it is edited (Q5).
+  - A file name that collides with an unrelated trait is proposed as `<name>-2` (Q6).
 - [ ] **Safety and timing:** the fixture memory root is byte-identical after the run. Boot triggers a run without an `inbox` dir. The 60-minute throttle and the no-overlap guard hold.
 
 **Live (the captain runs these before the merge ask)**
