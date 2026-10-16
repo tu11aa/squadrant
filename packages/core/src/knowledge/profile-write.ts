@@ -193,7 +193,7 @@ function keepOne(ctx: ProfileCtx, root: string, id: string): ProfileWriteResult 
     fs.rmSync(proposal.file);
     const warnings = commit(ctx, root, [rel(root, file)], { verb: "keep", id: target.id, approvedBy: "operator" });
     auditEvent(ctx, "item.applied", target.id);
-    return { id, ok: true, line: `updated ${target.id}: "${target.summary}" (summary kept)`, warnings };
+    return { id, ok: true, line: `updated ${target.id}: "${target.summary}" (summary kept) ${sizesText(viewSizes(p.active))}`, warnings };
   }
   if (proposal) {
     if ([...p.active, ...p.archived].some((t) => t.id === id)) return fail(id, `${id} already exists as a live or archived trait; edit that one instead`);
@@ -213,7 +213,7 @@ function keepOne(ctx: ProfileCtx, root: string, id: string): ProfileWriteResult 
     const file = writeTrait(root, `${slugOf(id)}.md`, next);
     const warnings = commit(ctx, root, [rel(root, file)], { verb: "confirm", id, approvedBy: "operator" });
     auditEvent(ctx, "item.approved", id);
-    return { id, ok: true, line: `confirmed ${id}: "${next.summary}"`, warnings };
+    return { id, ok: true, line: `confirmed ${id}: "${next.summary}" ${sizesText(viewSizes(p.active))}`, warnings };
   }
   return fail(id, `${id} is not in the review queue`);
 }
@@ -262,7 +262,7 @@ export function dropItems(ctx: ProfileCtx, ids: string[], reason: string): Profi
       fs.rmSync(proposal.file);
       const warnings = commit(ctx, root, [rel(root, file)], { verb: "drop", id, approvedBy: "operator" });
       auditEvent(ctx, "item.rejected", id, { reason });
-      return { id, ok: true, line: `dropped ${id} (${reason})`, warnings };
+      return { id, ok: true, line: `dropped ${id} (${reason}) ${sizesText(viewSizes(p.active))}`, warnings };
     }
     const live = p.active.find((t) => t.id === id);
     if (live) {
@@ -270,7 +270,7 @@ export function dropItems(ctx: ProfileCtx, ids: string[], reason: string): Profi
       fs.rmSync(live.file);
       const warnings = commit(ctx, root, [rel(root, live.file), rel(root, to)], { verb: "archive", id, approvedBy: "operator" });
       auditEvent(ctx, "item.archived", id, { reason });
-      return { id, ok: true, line: `archived ${id} (${reason})`, warnings };
+      return { id, ok: true, line: `archived ${id} (${reason}) ${sizesText(viewSizes(p.active.filter((t) => t.id !== id)))}`, warnings };
     }
     return fail(id, `${id} is not a proposal or an active trait`);
   });

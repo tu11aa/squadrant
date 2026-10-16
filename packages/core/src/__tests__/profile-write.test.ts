@@ -191,6 +191,17 @@ describe("profile review", () => {
     expect(r.error).toMatch(/exists/);
     expect(read("seed.md").summary).toBe("seed");
   });
+  it("every keep, confirm, drop and archive line prints both view sizes (review 10)", () => {
+    const SIZES = /\(captain \d[\d,]*\/3,000 · crew \d[\d,]*\/3,000\)/;
+    fs.writeFileSync(path.join(root, "profile", "_proposed", "seed.update.md"), serializeTrait(trait("seed.update", "s", {
+      status: "proposed", confirmed: false, updates: "prof.seed", sources: [], body: "x\n" })));
+    expect(keepItems(ctx, ["prof.seed.update"])[0].line).toMatch(SIZES);
+    addTrait(ctx, { text: input("Don't do Y."), kind: "correction", apply: true, id: "c1" });
+    expect(keepItems(ctx, ["prof.c1"])[0].line).toMatch(SIZES);
+    propose("p1");
+    expect(dropItems(ctx, ["prof.p1"], "no")[0].line).toMatch(SIZES);
+    expect(dropItems(ctx, ["prof.c1"], "retired")[0].line).toMatch(SIZES);
+  });
   it("crew sessions are refused for keep, drop, edit and check --fix", () => {
     propose("p1");
     const crew = { ...ctx, env: { ...ctx.env, SQUADRANT_CREW_TASK_ID: "t1" } };
