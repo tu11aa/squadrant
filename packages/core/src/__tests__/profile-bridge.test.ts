@@ -154,6 +154,13 @@ describe("runProfileBridge", () => {
     write("seed");
     expect(run().proposed).toEqual(["prof.seed-2"]);
   });
+  it("two native names with the same slug in one run get distinct proposals (review 7)", () => {
+    mem("-Users-tu", "a_b.md", "user", "Underscore", "u");
+    mem("-Users-tu", "a-b.md", "user", "Dash", "d");
+    expect(run().proposed.sort()).toEqual(["prof.a-b", "prof.a-b-2"]);
+    expect(proposed()).toEqual(["a-b-2.md", "a-b.md"]);
+    expect(run().proposed).toEqual([]);
+  });
   it("safety: native memory is byte-identical after the run, and proposals are never committed", () => {
     mem("-Users-tu-me-squadrant", "a.md", "feedback", "A", "a");
     mem("-Users-tu", "b.md", "user", "B", "b");

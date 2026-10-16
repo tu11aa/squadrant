@@ -149,6 +149,7 @@ export function runProfileBridge(o: BridgeOpts): { proposed: string[] } {
       if (!taken.has(`prof.${slug}`) && ours) break;
       slug = `${baseSlug(name)}-${n}`;
     }
+    taken.add(`prof.${slug}`); // a later name with the same slug in this run must not overwrite it
     const first = g.find((i) => i.description) ?? g[0];
     writes.push({ rel: `${PROPOSED_PROFILE_DIR}/${slug}.md`, trait: {
       id: `prof.${slug}`, domain: "profile", level: "shared", status: "proposed", kind: "preference", confirmed: false,
