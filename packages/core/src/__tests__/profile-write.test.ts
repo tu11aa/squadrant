@@ -193,6 +193,7 @@ describe("profile review", () => {
   });
   it("every keep, confirm, drop and archive line prints both view sizes (review 10)", () => {
     const SIZES = /\(captain \d[\d,]*\/3,000 · crew \d[\d,]*\/3,000\)/;
+    fs.mkdirSync(path.join(root, "profile", "_proposed"), { recursive: true });
     fs.writeFileSync(path.join(root, "profile", "_proposed", "seed.update.md"), serializeTrait(trait("seed.update", "s", {
       status: "proposed", confirmed: false, updates: "prof.seed", sources: [], body: "x\n" })));
     expect(keepItems(ctx, ["prof.seed.update"])[0].line).toMatch(SIZES);
