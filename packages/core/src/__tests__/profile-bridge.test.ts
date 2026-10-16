@@ -8,7 +8,7 @@ import yaml from "js-yaml";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import { loadProfile, parseTrait } from "../knowledge/profile.js";
 import { keepItems, dropItems, type ProfileCtx } from "../knowledge/profile-write.js";
-import { runProfileBridge, maybeRunProfileBridge, bootProfileBridge, allowlistedDirs, coveredNativeFiles, PROFILE_BRIDGE_INTERVAL_MS } from "../knowledge/profile-bridge.js";
+import { draftSummary, runProfileBridge, maybeRunProfileBridge, bootProfileBridge, allowlistedDirs, coveredNativeFiles, PROFILE_BRIDGE_INTERVAL_MS } from "../knowledge/profile-bridge.js";
 
 for (const [k, v] of Object.entries({ GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" })) process.env[k] = v;
 
@@ -82,7 +82,17 @@ describe("runProfileBridge", () => {
     run();
     const t = parseTrait(fs.readFileSync(path.join(ukb, "profile", "_proposed", "long.md"), "utf8"));
     expect(t.summary.length).toBeLessThanOrEqual(140);
-    expect(t.summary.endsWith("word")).toBe(true);
+    expect(t.summary.endsWith("word…")).toBe(true);
+  });
+  it("draftSummary: word boundary plus an ellipsis within 140; short text unchanged (review 11)", () => {
+    expect(draftSummary("Short one.")).toBe("Short one.");
+    const long = "Explainer and report HTML must be interactive with a flow player, toggles, hover graphs and sliders; dense text goes elsewhere, not walls of text";
+    const d = draftSummary(long);
+    expect(d.length).toBeLessThanOrEqual(140);
+    expect(d.endsWith("…")).toBe(true);
+    expect(long.startsWith(d.slice(0, -1))).toBe(true);
+    expect(long.charAt(d.length - 1)).toBe(" "); // the cut lands on a word boundary
+    expect(draftSummary("x".repeat(200))).toBe("x".repeat(139) + "…");
   });
   it("dedup: a second run proposes nothing; a metadata.modified-only change proposes nothing", () => {
     mem("-Users-tu", "a.md", "user", "A", "body");

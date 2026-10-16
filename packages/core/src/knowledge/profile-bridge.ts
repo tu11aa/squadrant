@@ -80,13 +80,13 @@ function groupedBody(items: NativeItem[]): string {
   return `${items.map((i) => `## From ${i.dir}\n\n${i.body}`).join("\n\n")}\n`;
 }
 
-/** A draft summary: one line, cut at a word boundary to ≤140 chars. The operator approves the wording at review. */
+/** A draft summary: one line; past 140 chars it is cut at a word boundary and ends with "…", still ≤140. The operator approves the wording at review. */
 export function draftSummary(text: string): string {
   const s = text.replace(/\s+/g, " ").trim();
   if (s.length <= PROFILE_SUMMARY_MAX) return s;
-  const cut = s.slice(0, PROFILE_SUMMARY_MAX + 1);
-  const at = cut.lastIndexOf(" ");
-  return (at > 40 ? cut.slice(0, at) : s.slice(0, PROFILE_SUMMARY_MAX)).trim();
+  const at = s.slice(0, PROFILE_SUMMARY_MAX).lastIndexOf(" ");
+  const head = at > 40 ? s.slice(0, at) : s.slice(0, PROFILE_SUMMARY_MAX - 1);
+  return `${head.replace(/[\s,;:.\-–—]+$/, "")}…`;
 }
 
 const baseSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "memory";
