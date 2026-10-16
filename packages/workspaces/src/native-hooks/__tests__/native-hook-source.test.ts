@@ -284,7 +284,7 @@ describe("installClaudeHooks — #872 absolute CLI command", () => {
 
     const result = JSON.parse(written[0].content);
     expect(commandsOf(result.hooks.Stop)).toEqual(["my-tool on-stop", `${CLI} hooks claude stop`]);
-    expect(commandsOf(result.hooks.SessionStart)).toEqual([`${CLI} hooks claude session-start`]);
+    expect(commandsOf(result.hooks.SessionStart)).toEqual([`${CLI} hooks claude session-start`, `${CLI} hooks claude profile-session-start`]);
     expect(commandsOf(result.hooks.PermissionRequest)).toEqual([`${CLI} gate claude permission-request`]);
     expect(log.mock.calls.some(([m]) => /repointed 3 squadrant hook/.test(m))).toBe(true);
   });
@@ -1116,5 +1116,36 @@ describe("NativeHookSource — health() (B4)", () => {
     expect(src.health()).toEqual({ active: true, error: null });
     src.stop();
     expect(src.health()).toEqual({ active: false, error: null });
+  });
+});
+
+// #982: the operator profile has its own SessionStart command so it is its own additionalContext string.
+describe("installClaudeHooks — profile-session-start (#982)", () => {
+  const PROFILE = `${HOOK_CMD} claude profile-session-start`;
+  const commands = (s: Record<string, any>, ev: string) =>
+    (s.hooks[ev] as { hooks: { command: string }[] }[]).flatMap((e) => e.hooks.map((h) => h.command));
+
+  it("adds the profile SessionStart entry next to the lifecycle one", () => {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    const cmds = commands(JSON.parse(written[0].content), "SessionStart");
+    expect(cmds).toContain(PROFILE);
+    expect(cmds).toContain(`${HOOK_CMD} claude session-start`);
+  });
+
+  it("repairs a missing profile entry without touching non-squadrant entries, and is idempotent", () => {
+    const { opts, written } = makeInstallOpts();
+    installClaudeHooks(opts);
+    const s = JSON.parse(written[0].content);
+    s.hooks.SessionStart = s.hooks.SessionStart.filter((e: { hooks: { command: string }[] }) => !e.hooks.some((h) => h.command === PROFILE));
+    s.hooks.SessionStart.push({ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] });
+    const second = makeInstallOpts({ existingSettings: s });
+    installClaudeHooks(second.opts);
+    const repaired = JSON.parse(second.written[0].content);
+    expect(commands(repaired, "SessionStart")).toEqual(expect.arrayContaining([PROFILE, "my-own-hook"]));
+    expect(commands(repaired, "SessionStart").filter((c) => c === PROFILE)).toHaveLength(1);
+    const third = makeInstallOpts({ existingSettings: repaired });
+    installClaudeHooks(third.opts);
+    expect(third.written).toHaveLength(0);
   });
 });
