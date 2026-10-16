@@ -76,6 +76,10 @@ describe("validateTrait", () => {
     expect(validateTrait(trait({ confirmed: "yes" as never }), "x").join()).toMatch(/confirmed/);
     expect(validateTrait(trait(), "y").join()).toMatch(/file name/);
     expect(validateTrait(trait({ id: "x" }), "x").join()).toMatch(/prof\./);
+    // review fix: dates are sorted on at injection, so a missing or malformed one must make the file invalid
+    expect(validateTrait(trait({ updated: undefined as never }), "x").join()).toMatch(/updated/);
+    expect(validateTrait(trait({ created: "15/10/2026" }), "x").join()).toMatch(/created/);
+    expect(validateTrait(trait({ last_confirmed: 20261015 as never }), "x").join()).toMatch(/last_confirmed/);
   });
   it("round-trips through serialize/parse with dates kept as strings", () => {
     const t = trait({ sources: ["memory:-Users-a/x.md#abc123abc123"], triggers: { keywords: ["html"] } });

@@ -93,6 +93,15 @@ describe("computeProfileInjection", () => {
     expect(err.mock.calls.join()).toMatch(/broken\.md/);
     err.mockRestore();
   });
+  it("a hand-edited trait without `updated` is skipped, never silencing the rest (Q4)", () => {
+    put("a");
+    fs.writeFileSync(path.join(root, "profile", "noupd.md"), "---\nid: prof.noupd\ndomain: profile\nlevel: shared\nstatus: active\nkind: preference\nconfirmed: true\nsummary: No date.\naudience: all\ntier: core\nsources: []\ncreated: 2026-10-01\n---\n");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = run()!;
+    expect(out).toContain("[prof.a]");
+    expect(out).not.toContain("[prof.noupd]");
+    err.mockRestore();
+  });
   it("an empty _user (no traits, nothing pending) gives null; SQUADRANT_PROFILE_INJECT=0 disables it", () => {
     expect(run()).toBeNull();
     put("a");

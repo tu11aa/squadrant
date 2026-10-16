@@ -78,6 +78,7 @@ export function serializeTrait(t: Trait): string {
 }
 
 const isUpdateSlug = (slug: string) => slug.endsWith(UPDATE_SUFFIX);
+const isDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /** Problems with a trait read from `<slug>.md`; empty when valid. */
 export function validateTrait(t: Partial<Trait>, fileSlug: string): string[] {
@@ -100,6 +101,9 @@ export function validateTrait(t: Partial<Trait>, fileSlug: string): string[] {
   oneOf("tier", PROFILE_TIERS);
   if (typeof t.confirmed !== "boolean") p.push("confirmed must be true or false");
   if (!Array.isArray(t.sources) || !t.sources.every((s) => typeof s === "string")) p.push("sources must be a string array");
+  // Injection sorts on `updated`: a missing or malformed date must invalidate the file, never throw later.
+  for (const k of ["created", "updated"] as const) if (!isDate(t[k])) p.push(`${k} must be a YYYY-MM-DD date`);
+  if (t.last_confirmed !== undefined && !isDate(t.last_confirmed)) p.push("last_confirmed must be a YYYY-MM-DD date");
   if (isUpdateSlug(fileSlug) && t.updates !== `prof.${base}`) p.push(`updates must be prof.${base}`);
   return p;
 }
