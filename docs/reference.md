@@ -613,6 +613,80 @@ These formats follow each agent's documentation and have **not been live-verifie
 
 **Fallback pointer.** `squadrant projection emit` adds a short "look rules up with `squadrant rules search`" section to the codex/gemini/opencode projection of a project that subscribes to a KB. It is part of the marker body, so it is written only inside `<!-- squadrant:start/end -->` and disappears on the next emit after the project unsubscribes. Each emit logs one `item.fallback` audit entry (`trigger: "fallback"`, `agent`) per KB.
 
+### Operator profile (`_user` KB, #982)
+
+The profile is a small record of **how the operator works**: review style, autonomy, when to ask, recurring corrections. It reaches every session of every agent (claude, codex, opencode, gemini) in every directory, including directories that are not registered projects. It holds only what is true in every project. Anything tied to one repo or company belongs in that KB's rules or decisions. Spec: [`specs/2026-10-15-user-profile-design.md`](specs/2026-10-15-user-profile-design.md). Diagram: [`diagrams/2026-10-15-operator-profile.html`](diagrams/2026-10-15-operator-profile.html).
+
+**Storage.** `<userKb>/profile/<slug>.md` lives in its own local git repo. It is created on the first profile write (`git init`, plus a `.gitignore` for `profile/_proposed/`) and squadrant never adds a remote. `<userKb>` is `SQUADRANT_USER_KB_DIR`, else `knowledgeBases._user.path`, else `~/squadrant/kb/_user`. A path inside a registered project or inside another KB is refused (K6), and every profile write resolves through one guard that only allows `<userKb>/profile/`. Layout:
+- `profile/_archive/` holds retired traits.
+- `profile/_proposed/` holds proposals. It is gitignored and never committed.
+- `profile/_dropped.yaml` records dropped proposals as `{source, hash, reason, date}` only, never their bodies, so company content never reaches `_user` history.
+
+**Trait format.** Frontmatter fields:
+- `id: prof.<slug>` (matches the file name)
+- `domain: profile`, `level: shared`, `status`
+- `kind: preference|correction|procedure`, `confirmed`, `last_confirmed`
+- `summary`: ≤140 chars on one line, written as an instruction. It is the only text injected.
+- `audience: all|captain|crew`, `tier: core|situational`
+- optional `triggers` (stored now, used from S2)
+- `sources`, `created`, `updated`
+
+The body (why, how, examples) is read on demand.
+
+**Cap.** Core summaries are capped at **3,000 chars per audience view**. The captain view is `all` + `captain`; the crew view is `all` + `crew`. A non-correction apply that would pass the cap is refused with `core profile is N/3,000 chars: merge or archive traits first`. A correction always applies, with an `over cap: merge pending` warning. There is no limit on how many traits you keep.
+
+| Command | Purpose |
+|---|---|
+| `profile add --kind preference --apply --file -` | explicit "save to my profile": live, `confirmed: true` |
+| `profile add --kind correction --apply --file -` | a correction: live with `confirmed: false`, always applies, listed at the next review |
+| `profile add --kind … --file -` (no `--apply`) | an agent's inference: a proposal in `_proposed/`, never injected until kept |
+| `profile review [--json]` | the queue: proposals plus unconfirmed traits, each with id, summary, kind and source dir. It also lists native memory files that a kept trait now covers (squadrant never deletes them). No flags on a TTY gives an interactive walk-through |
+| `profile review --keep <id>[,…]` / `--drop <id>[,…] --reason "…"` / `--edit <id> --file -` | act by id, one commit per item. There is no bulk keep: the agent shows the operator every summary first |
+| `profile list [--all] [--check [--fix]]` | active traits and both view sizes. `--check` reports invalid or uncommitted files; `--fix` commits the valid ones |
+| `profile show <id>` | one trait in full |
+
+Body input always comes from `--file` (or `-` for stdin), never argv. `--summary`, `--audience` and `--tier` override the file. Every write prints `applied|proposed prof.<slug>: "<summary>" (captain N/3,000 · crew N/3,000)`, and the agent relays that line so the operator can fix the wording at once. Each committed write uses `git commit --only` with the trailers `Domain: profile`, `Item`, `Level: shared`, `Session`, `Approved-by`. Audit events are `item.proposed|applied|approved|rejected|archived|surfaced`, with `kb: "_user"` and `domain: "profile"`.
+
+**Crew guard.**
+- In a crew session (`SQUADRANT_CREW_TASK_ID` set), `profile add --apply` becomes a proposal. `review --keep/--drop/--edit` and `list --check --fix` are refused.
+- For claude crews, the #556 PreToolUse guard also denies `Write`/`Edit`/`MultiEdit`/`NotebookEdit` under `<userKb>/`, and any `Bash` command that names it, reads included. Crews use `squadrant profile show`.
+- Codex, opencode and gemini crews have no PreToolUse hook, so they are covered by the CLI guard only.
+
+**Delivery.** The profile has its **own** hook command, `squadrant hooks <agent> profile-session-start`. Its output holds only the `<squadrant-operator-profile>` block, so it is a separate `additionalContext` string and never competes with rules for Claude's 10,000-char-per-string limit.
+
+| Agent | Wiring | When |
+|---|---|---|
+| claude | `installClaudeHooks` (daemon boot, verified and repaired like the other squadrant hooks) | SessionStart |
+| codex | `squadrant rules install-hooks --agent codex` writes a `profile-session-start` SessionStart entry next to the rules one | SessionStart |
+| gemini | `squadrant rules install-hooks --agent gemini` | SessionStart |
+| opencode | the managed `squadrant-rules.js` plugin (opencode has no session-start point): on the first `chat.message` of each `sessionID`, before the rules part | first message |
+
+The codex, gemini and opencode installs are manual. **Re-run `squadrant rules install-hooks --agent <codex|gemini|opencode>` after upgrading squadrant** to pick up the profile entry.
+
+What each session gets:
+- **Audience.** A crew sees `all` + `crew`. A captain, or any plain session, sees `all` + `captain`.
+- **Content.** Active core traits, confirmed or not. Proposals are never shown.
+- **Order.** Corrections first, then newest `updated`, then id.
+- **Overflow.** Lines are taken in that order until the next one would pass 3,000 chars. The rest collapses to `+N more: squadrant profile list`.
+- **Pending line.** `Profile: N items pending review` appears only in non-crew sessions, and only when the queue has ≥5 items or its oldest item is more than 7 days old.
+- **No snapshot.** The block is recomputed at every SessionStart (startup, resume, compact, clear).
+- **Fail-open.** The block is built within a 1.5 s budget. An error, a missing `_user` or a blown budget injects nothing, and the hook still exits 0. A corrupt trait file is skipped and logged, and the valid traits are still injected.
+- **Kill switch.** `SQUADRANT_PROFILE_INJECT=0`.
+
+**Native-memory bridge.** Claude native memory keeps being written. The daemon copies it one way into proposals and never writes `~/.claude/projects/**`.
+- **When.** Once at daemon boot, then from the 60 s knowledge tick whenever the last run is ≥60 min old. Two runs never overlap. The last-run time is cached in `<stateRoot>/profile-bridge.json`, which holds no other state.
+- **Where.** Only allowlisted dirs: the encoded Claude dir of each registered project path, plus `$HOME`. Scratch, `/tmp` and parent dirs are never scanned.
+- **What.** Only `<dir>/memory/*.md` files whose `type` (top-level or `metadata.type`) is `user` or `feedback`. `MEMORY.md` is skipped.
+- **Grouping.** Files with the same name across dirs become one proposal with all their sources, and differing bodies are merged under `## From <dir>` headings. The summary is a draft built from the first `description`, which you approve or edit at review.
+- **Changes.** If a note behind a kept trait changes, the bridge writes `_proposed/<slug>.update.md`. Keeping it replaces the body and sources but **keeps your summary**.
+- **Dedup.** Deduplication comes from the files themselves (`sources:` and `_dropped.yaml`), so deleting the cache never brings anything back.
+- **Dropped stays dropped.** A note you dropped, or one behind an archived trait, does not come back even if it is edited later. To bring it back, add it with `squadrant profile add`, or delete its line from `_dropped.yaml` so the next bridge run proposes it again.
+- **First run.** The first run imports today's memories as proposals for one review. Classify each one (profile, or route it to a project KB with `--drop <id> --reason "route: saitex rules"`).
+
+**Env overrides (tests, relocated homes).** `SQUADRANT_USER_KB_DIR` (`<userKb>`), `SQUADRANT_NATIVE_MEMORY_ROOT` (default `~/.claude/projects`), `SQUADRANT_AUDIT_DIR`, `SQUADRANT_STATE_DIR`.
+
+**Never.** No profile code path writes `~/.claude/CLAUDE.md`, `AGENTS.md` or `GEMINI.md`. A test enforces this.
+
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup (`~/squadrant/workspace/<p>/handoff.json`, archived to `handoffs/`)
