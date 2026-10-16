@@ -193,9 +193,17 @@ export async function profileHookOutput(
   return JSON.stringify({ hookSpecificOutput: { hookEventName: SESSION_EVENT_NAME[agent] ?? "SessionStart", additionalContext: ctx } });
 }
 
-/** `_user` root for the #556 guard; a config error falls back to the env/default path rather than dropping the guard. */
-function guardUserKbDir(): string {
-  try { return userKbDir(loadConfig()); } catch { return userKbDir(); }
+/**
+ * #556 + #982: decide a crew PreToolUse call against the captain-memory dirs and the `_user` KB. A config
+ * error falls back to the env/default `_user` path rather than dropping the guard.
+ */
+export function preToolUseGuard(
+  payload: unknown, env: NodeJS.ProcessEnv, home: string, loadCfg: () => SquadrantConfig = loadConfig,
+): ReturnType<typeof decideCaptainMemoryWrite> {
+  const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
+  let ukb: string;
+  try { ukb = userKbDir(loadCfg(), env); } catch { ukb = userKbDir(undefined, env); }
+  return decideCaptainMemoryWrite(typeof p?.tool_name === "string" ? p.tool_name : "", p?.tool_input, env, home, ukb);
 }
 
 async function readStdinJson(): Promise<unknown> {
@@ -275,14 +283,7 @@ export function hooksCommand(): Command {
       // into the captain's long-term memory directory; report/propose is the
       // only allowed path there.
       if (sub === "pre-tool-use") {
-        const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
-        const guard = decideCaptainMemoryWrite(
-          typeof p?.tool_name === "string" ? p.tool_name : "",
-          p?.tool_input,
-          process.env,
-          homedir(),
-          guardUserKbDir(),
-        );
+        const guard = preToolUseGuard(payload, process.env, homedir());
         if (guard.decision === "deny") {
           console.error(`[squadrant] denied crew write into captain memory (task ${taskId}): ${guard.reason}`);
           process.stdout.write(JSON.stringify({

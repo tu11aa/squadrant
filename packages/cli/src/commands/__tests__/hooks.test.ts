@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-hooks-")); // never write the real audit log
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
-import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, PROFILE_HOOK_SUB } from "../hooks.js";
+import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, PROFILE_HOOK_SUB } from "../hooks.js";
 import { serializeTrait } from "@squadrant/core";
 
 // #560: the "ask-question" sub fires from NativeHookSource's global
@@ -264,5 +264,23 @@ describe("profileHookOutput (#982)", () => {
     expect(await profileHookOutput({}, { env, cwd: "/tmp", loadCfg: () => { throw new Error("bad config"); } })).toBe("");
     expect(await profileHookOutput({}, { env, cwd: "/tmp", loadCfg, budgetMs: -1 })).toBe("");
     expect(await profileHookOutput({}, { env: { ...env, SQUADRANT_PROFILE_INJECT: "0" }, cwd: "/tmp", loadCfg })).toBe("");
+  });
+});
+
+describe("preToolUseGuard passes the _user path to the #556 guard (#982 review)", () => {
+  const crew = { SQUADRANT_CREW_TASK_ID: "t1", SQUADRANT_CREW_PROJECT: "p" };
+  const write = (file_path: string) => ({ tool_name: "Write", tool_input: { file_path } });
+  it("uses knowledgeBases._user.path from config", () => {
+    const cfg = getDefaultConfig();
+    cfg.knowledgeBases = { _user: { path: "/kb/me" } };
+    expect(preToolUseGuard(write("/kb/me/profile/x.md"), crew, "/Users/q", () => cfg).decision).toBe("deny");
+    expect(preToolUseGuard(write("/kb/other/x.md"), crew, "/Users/q", () => cfg).decision).toBe("allow");
+  });
+  it("uses SQUADRANT_USER_KB_DIR, and still guards when the config cannot load", () => {
+    const env = { ...crew, SQUADRANT_USER_KB_DIR: "/kb/env" };
+    expect(preToolUseGuard(write("/kb/env/profile/x.md"), env, "/Users/q", () => { throw new Error("bad config"); }).decision).toBe("deny");
+  });
+  it("a captain session is never denied", () => {
+    expect(preToolUseGuard(write("/kb/env/profile/x.md"), { SQUADRANT_USER_KB_DIR: "/kb/env" }, "/Users/q", () => getDefaultConfig()).decision).toBe("allow");
   });
 });
