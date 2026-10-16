@@ -59,8 +59,11 @@ describe("profile isolation (#982 §9)", () => {
     for (const agent of ["claude", "codex", "gemini", "opencode"]) {
       expect(await profileHookOutput({}, { env: ctx.env, cwd: repo, agent, loadCfg: () => cfg })).toContain("operator-profile");
     }
-    for (const agent of ["codex", "gemini", "opencode"] as const) installRulesHooks(agent, { env: { HOME: home } });
-    installClaudeHooks({});
+    // Explicit targets: never rely on the HOME override reaching a default path (review 9).
+    installRulesHooks("codex", { target: path.join(home, ".codex", "hooks.json") });
+    installRulesHooks("gemini", { target: path.join(home, ".gemini", "settings.json") });
+    installRulesHooks("opencode", { target: path.join(home, ".config", "opencode", "plugin", "squadrant-rules.js") });
+    installClaudeHooks({ settingsPath: path.join(home, ".claude", "settings.json") });
     expect(fs.existsSync(path.join(home, ".claude", "settings.json"))).toBe(true); // the installers did run in the temp home
     const offenders = walk(home).filter((f) => INSTRUCTION_FILES.test(path.basename(f)));
     expect(offenders).toEqual([]);
