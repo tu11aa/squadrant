@@ -23,6 +23,8 @@ import type { LifecycleSource, LifecycleSourceDeps, LifecycleSnapshot, Lifecycle
 // AskUserQuestion is a TOOL, not an event — hook it via PreToolUse with a tool matcher.
 const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   ["SessionStart",     "session-start"],
+  // #982: the operator profile block — its own command, so its own additionalContext string; never a lifecycle event.
+  ["SessionStart",     "profile-session-start"],
   ["UserPromptSubmit", "prompt-submit"],
   ["PreToolUse",       "pre-tool-use"],
   ["Stop",             "stop"],

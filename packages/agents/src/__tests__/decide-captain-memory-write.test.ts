@@ -108,3 +108,25 @@ describe("decideCaptainMemoryWrite (#556)", () => {
     expect(result.decision).toBe("allow");
   });
 });
+
+describe("decideCaptainMemoryWrite — operator profile (_user KB, #982)", () => {
+  const UKB = `${HOME}/squadrant/kb/_user`;
+  it("denies a crew Write/Edit/MultiEdit/NotebookEdit under <userKb>/", () => {
+    expect(decideCaptainMemoryWrite("Write", { file_path: `${UKB}/profile/x.md` }, CREW_ENV, HOME, UKB)).toMatchObject({ decision: "deny", reason: expect.stringMatching(/profile/) });
+    expect(decideCaptainMemoryWrite("Edit", { file_path: `${UKB}/profile/_proposed/x.md` }, CREW_ENV, HOME, UKB).decision).toBe("deny");
+    expect(decideCaptainMemoryWrite("MultiEdit", { file_path: `${UKB}/.gitignore` }, CREW_ENV, HOME, UKB).decision).toBe("deny");
+    expect(decideCaptainMemoryWrite("NotebookEdit", { notebook_path: `${UKB}/n.ipynb` }, CREW_ENV, HOME, UKB).decision).toBe("deny");
+  });
+  it("denies a crew Bash that references <userKb>/ (absolute, ~ or $HOME form)", () => {
+    for (const command of [`echo x >> ${UKB}/profile/x.md`, "cat ~/squadrant/kb/_user/profile/x.md", "rm -rf $HOME/squadrant/kb/_user", 'cd "${HOME}/squadrant/kb/_user" && git commit']) {
+      expect(decideCaptainMemoryWrite("Bash", { command }, CREW_ENV, HOME, UKB).decision, command).toBe("deny");
+    }
+  });
+  it("allows the profile CLI, look-alike paths, and every captain/plain session", () => {
+    expect(decideCaptainMemoryWrite("Bash", { command: "squadrant profile add --kind correction --apply --file -" }, CREW_ENV, HOME, UKB).decision).toBe("allow");
+    expect(decideCaptainMemoryWrite("Write", { file_path: `${HOME}/squadrant/kb/_user2/x.md` }, CREW_ENV, HOME, UKB).decision).toBe("allow");
+    expect(decideCaptainMemoryWrite("Bash", { command: "ls ~/squadrant/kb/_users" }, CREW_ENV, HOME, UKB).decision).toBe("allow");
+    expect(decideCaptainMemoryWrite("Write", { file_path: `${UKB}/profile/x.md` }, CAPTAIN_ENV, HOME, UKB).decision).toBe("allow");
+    expect(decideCaptainMemoryWrite("Bash", { command: `cat ${UKB}/profile/x.md` }, CAPTAIN_ENV, HOME, UKB).decision).toBe("allow");
+  });
+});

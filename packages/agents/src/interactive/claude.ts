@@ -254,6 +254,23 @@ const CAPTAIN_MEMORY_PATH_RE = /\.claude\/projects\/.*\/memory\//;
 const DENY_REASON =
   "Crews do not write captain memory. Put the finding in your done/blocked message; the captain decides what is durable (#556).";
 
+// #982: the operator profile (_user KB) follows the same rule — crews propose
+// through `squadrant profile add` (which lands in _proposed/), never write it.
+const PROFILE_DENY_REASON =
+  "Crews do not write the operator profile. Propose it with `squadrant profile add --kind <k> --file -` (lands in _proposed/) and mention it in your done message (#556, #982).";
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Bash text that names `<userKb>` in its absolute, `~/`, `$HOME/` or `${HOME}/` form. */
+function bashReferencesDir(command: string, dir: string, home: string): boolean {
+  const forms = [dir];
+  if (dir.startsWith(home + "/")) {
+    const rel = dir.slice(home.length + 1);
+    forms.push(`~/${rel}`, `$HOME/${rel}`, `\${HOME}/${rel}`);
+  }
+  return forms.some((f) => new RegExp(`${escapeRe(f)}(?:/|$|[\\s"'\`;|&)])`).test(command));
+}
+
 // Tool → tool_input field that carries the target file path. MultiEdit shares
 // Edit's file_path; NotebookEdit uses its own notebook_path.
 const FILE_PATH_FIELD_BY_TOOL: Readonly<Record<string, string>> = {
@@ -281,13 +298,20 @@ export function decideCaptainMemoryWrite(
   toolInput: unknown,
   env: NodeJS.ProcessEnv,
   homeDir: string,
+  /** #982: the `_user` KB root (userKbDir()); crews may not write under it either. */
+  userKbDir?: string,
 ): MemoryWriteGuardResult {
   if (!env.SQUADRANT_CREW_TASK_ID) return { decision: "allow" };
+  const home = homeDir.endsWith("/") ? homeDir.slice(0, -1) : homeDir;
+  const ukb = userKbDir?.replace(/\/+$/, "");
 
   if (toolName === "Bash") {
     const command = (toolInput as { command?: unknown } | null | undefined)?.command;
     if (typeof command === "string" && CAPTAIN_MEMORY_PATH_RE.test(command)) {
       return { decision: "deny", reason: DENY_REASON };
+    }
+    if (typeof command === "string" && ukb && bashReferencesDir(command, ukb, home)) {
+      return { decision: "deny", reason: PROFILE_DENY_REASON };
     }
     return { decision: "allow" };
   }
@@ -296,7 +320,7 @@ export function decideCaptainMemoryWrite(
   if (!field) return { decision: "allow" };
   const filePath = (toolInput as Record<string, unknown> | null | undefined)?.[field];
   if (typeof filePath !== "string" || !filePath) return { decision: "allow" };
-  const home = homeDir.endsWith("/") ? homeDir.slice(0, -1) : homeDir;
+  if (ukb && (filePath === ukb || filePath.startsWith(ukb + "/"))) return { decision: "deny", reason: PROFILE_DENY_REASON };
   if (!filePath.startsWith(home)) return { decision: "allow" };
   if (!CAPTAIN_MEMORY_PATH_RE.test(filePath)) return { decision: "allow" };
   return { decision: "deny", reason: DENY_REASON };
