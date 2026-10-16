@@ -121,7 +121,7 @@ Per domain:
 | **Rules** | Unchanged from rules spec §3, plus `level` and `decidedBy: <decision id>` when a decision justifies the rule. |
 | **Decisions** | MADR-lite body: Context · Decision · Options considered · Consequences. `status: proposed\|accepted\|rejected\|superseded`, `supersededBy`, `decidedBy: operator`, `decidedAt`. **The body is immutable after `accepted`.** Only `status` and `supersededBy` change. |
 | **Wiki** | `topic`, `summary` (one line, used in the index), `last_verified`, optional `verify:` probe commands. Every claim paragraph cites a source. |
-| **Profile** | `trait`, `kind: preference\|correction\|procedure`, `confirmed: true\|false`, `last_confirmed`. Hard cap: the profile snapshot is ≤ 1,500 characters; over the cap, reconcile must merge before anything new applies. |
+| **Profile** | `id` (`prof.<slug>`) + `summary` (≤140 chars, one line, the only injected text), `kind: preference\|correction\|procedure`, `confirmed: true\|false`, `last_confirmed`, `audience: all\|captain\|crew`, `tier: core\|situational`, optional `triggers`. Cap: core summaries ≤ 3,000 chars per audience view; total traits uncapped; corrections always apply (amended 2026-10-15, see [`2026-10-15-user-profile-design.md`](2026-10-15-user-profile-design.md)). |
 
 ## 5. Write flow
 
@@ -161,12 +161,13 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 
 | When | Injected | Budget |
 |---|---|---|
-| Session start | profile snapshot (frozen per session) · active must/must-not rules · **one-line index** of wiki pages and accepted decisions for the read set | profile ≤ 1.5k chars; the rest ≈ 800 tokens, overflow collapsed to "+N more: `squadrant knowledge list`" |
+| Session start | profile core block in its **own** hook string, recomputed at each SessionStart event (not frozen) · active must/must-not rules · **one-line index** of wiki pages and accepted decisions for the read set, **excluding `_user`** | profile core ≤ 3k chars; the rest ≈ 800 tokens, overflow collapsed to "+N more: `squadrant knowledge list`" |
 | Prompt start | topic-matched rules, decisions and wiki summaries | ≤ 5 items, each shown once per session |
 | After Read | path-matched rules and wiki pages | same |
 
 - **One matcher for all domains.** Generalize the rules matcher (T0 glob/anchor/BM25, optional T1) to every domain. Wiki and decisions emit `triggers` like rules do: keywords, globs, `when`.
 - **Every injected item carries its id** (`[dec:flooros-redis-cache]`). The block footer asks: "If you apply an item, cite its id in your DONE / handoff."
+- **Profile delivery (amended 2026-10-15):** claude/codex/gemini get the profile on SessionStart through `squadrant hooks <agent> profile-session-start`; opencode on the first `chat.message` of each session. The situational tier (S2) injects at prompt start. See [`2026-10-15-user-profile-design.md`](2026-10-15-user-profile-design.md) §5.
 - **The precedence line is injected with the block:** Rules (must) > Decisions (accepted) > the operator's live instruction > Profile > Wiki > Recall.
 - **The merged view** (`knowledge list --project p`) labels each item with its origin (`[saitex/shared]`, `[… → overridden by flooros]`).
 - Non-Claude agents get the same text through their adapters (#900). Until then they get the AGENTS.md pointer to the CLI, which is visible in coverage scores.
@@ -219,7 +220,7 @@ There is one scheduler (rules spec D7): an incremental pass 7 days after the fir
 | Rules | raw-doc hash + code (#898 decision) | dedup, domain cap 150, stale → retired | auto-supersede on a code-vs-doc conflict |
 | Wiki | current repo/git + cited artifacts | merge duplicate pages, compress long pages, re-verify citations and `verify:` probes, orphans | keep a claim with a broken citation unmarked (it is injected with ⚠ until fixed) |
 | Decisions | itself (append-only) + whether code and wiki still match | link `superseded-by`, detect same-topic duplicates, escalate drift | edit or delete a record |
-| Profile | operator confirmation | merge duplicate traits, compress to the cap, re-ask about traits unconfirmed for 60 days | rewrite a contradicted trait without asking |
+| Profile | operator confirmation; run by the daemon with no home captain, output to `_user/profile/_proposed/` (amended 2026-10-15) | merge duplicate traits, compress to the cap, re-ask about traits unconfirmed for 60 days | rewrite a contradicted trait without asking |
 
 **Score-driven actions:**
 - unused for 60 days → archive proposal
@@ -289,7 +290,7 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 - Anything left over is archived.
 - The 2026-09-29 reconcile reports are inputs.
 
-**Native-memory bridge.** Claude native memory stays (Claude-only, used as recall). At reconcile time a read-only import offers its typed entries as `propose` candidates.
+**Native-memory bridge** (amended 2026-10-15, [`2026-10-15-user-profile-design.md`](2026-10-15-user-profile-design.md) §6). Claude native memory stays (Claude-only, used as recall) and keeps being written. The bridge runs at daemon boot and then hourly, not at reconcile time. It is one-way (native → `_user/profile/_proposed/`), never writes native memory, and scans only an allowlist: the Claude dirs of registered projects plus `$HOME`.
 
 **Issues:**
 - Close #885 and #886 with verdicts.
