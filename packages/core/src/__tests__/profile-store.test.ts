@@ -118,6 +118,12 @@ describe("commitProfilePaths", () => {
     for (const t of ["Domain: profile", "Item: prof.x", "Level: shared", "Session: s1", "Approved-by: operator"]) expect(msg).toContain(t);
     expect(git(root, "diff", "--cached", "--name-only").trim()).toBe("profile/other.md");
   });
+  it("commits even when the operator's git config signs commits (review 3: -c commit.gpgsign=false)", () => {
+    git(root, "config", "commit.gpgsign", "true");
+    git(root, "config", "gpg.program", "false");
+    fs.writeFileSync(path.join(root, "profile", "g.md"), "g");
+    expect(commitProfilePaths(root, ["profile/g.md"], { verb: "add", id: "prof.g", approvedBy: "operator" }).ok).toBe(true);
+  });
   it("refuses to commit any _proposed path (review M2)", () => {
     fs.mkdirSync(path.join(root, "profile", "_proposed"), { recursive: true });
     fs.writeFileSync(path.join(root, "profile", "_proposed", "p.md"), "secret");

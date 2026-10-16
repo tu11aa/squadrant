@@ -3,11 +3,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
 import yaml from "js-yaml";
 import { USER_KB, userKbDir, type SquadrantConfig } from "@squadrant/shared";
 import {
-  ARCHIVE_DIR, DROPPED_FILE, PROFILE_CORE_CAP, PROFILE_DIR, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
+  ARCHIVE_DIR, DROPPED_FILE, gitRun, PROFILE_CORE_CAP, PROFILE_DIR, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
   profileWritePath, serializeTrait, splitFrontmatter, validateTrait, viewSizes, type LoadedTrait, type ProfileCommit, type Trait,
   type TraitAudience, type TraitKind, type TraitTier,
 } from "./profile.js";
@@ -309,7 +308,7 @@ export function checkProfile(ctx: ProfileCtx, fix: boolean): { problems: string[
   const problems = p.errors.map((e) => `${rel(root, e.file)}: ${e.problems.join("; ")}`);
   let uncommitted: string[] = [];
   try {
-    uncommitted = execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all", "--", PROFILE_DIR], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    uncommitted = gitRun(root, ["status", "--porcelain", "--untracked-files=all", "--", PROFILE_DIR])
       .split("\n").filter(Boolean).map((l) => l.slice(3))
       .filter((f) => !f.startsWith(`${PROFILE_DIR}/${PROPOSED_PROFILE_DIR}/`)).sort();
   } catch { if (fs.existsSync(path.join(root, PROFILE_DIR))) problems.push(`${root} is not a git repo`); }

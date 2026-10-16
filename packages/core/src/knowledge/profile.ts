@@ -174,8 +174,12 @@ function assertUserKbPlacement(cfg: SquadrantConfig, root: string): void {
 
 const GITIGNORE_LINE = `${PROFILE_DIR}/${PROPOSED_PROFILE_DIR}/`;
 
-function gitRun(root: string, args: string[]): string {
-  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+/** Profile git calls run on the daemon loop too: bounded, and never blocked by a signing prompt. */
+export const PROFILE_GIT_TIMEOUT_MS = 10_000;
+
+export function gitRun(root: string, args: string[]): string {
+  return execFileSync("git", ["-C", root, "-c", "commit.gpgsign=false", ...args],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: PROFILE_GIT_TIMEOUT_MS });
 }
 
 /** Create the `_user` KB on first use: its own local git repo, proposals ignored. Never adds a remote or registers config. */
