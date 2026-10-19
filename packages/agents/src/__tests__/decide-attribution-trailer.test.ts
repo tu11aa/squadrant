@@ -7,7 +7,7 @@ import { decideAttributionTrailer, readAttributionDisabled } from "../interactiv
 const bash = (command: string, disabled = true) => decideAttributionTrailer("Bash", { command }, disabled);
 const CLAUDE = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>";
 
-describe("decideAttributionTrailer (#1004)", () => {
+describe("decideAttributionTrailer (#1007)", () => {
   it.each([
     ["Claude", "Co-Authored-By: Claude Opus 5.5 <noreply@claude.example>"],
     ["Anthropic email", "Co-Authored-By: Bot <noreply@anthropic.com>"],
@@ -73,7 +73,7 @@ describe("decideAttributionTrailer (#1004)", () => {
   });
 });
 
-describe("readAttributionDisabled (#1004)", () => {
+describe("readAttributionDisabled (#1007)", () => {
   const home = (settings?: string) => {
     const h = mkdtempSync(join(tmpdir(), "attrib-home-"));
     if (settings !== undefined) {

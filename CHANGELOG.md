@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-10-19
+
+Path moves keep their references. `squadrant migrate` now rewrites every file that cites a moved path, and `squadrant doctor` finds the references that point nowhere. This release also has fixes for a captain's first boot, crew skills, KB repo hygiene, and AI attribution trailers. PRs #1000, #1001, #1003, #1005.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. If you moved directories by hand before this release, run `squadrant doctor` to see the references left pointing at the old paths, then `squadrant migrate path <old> <new>` to fix them.
+
+### Added
+
+- **`squadrant migrate path <from> <to> [--dry-run]`** moves a file or directory you made, merging file by file. It never overwrites, removes only the empty directories it leaves behind, and never removes a file. It then rewrites every reference to it. If `<from>` is already gone and `<to>` exists, it only rewrites the references (#998).
+- **Reference sweep for every path move** (`migrate path` and `migrate kb`). It covers `~/…`, absolute and `$HOME/…` forms, including `file:` citations, in these places:
+  - agent native memory
+  - live and checkpoint workspace handoffs (older archived handoffs are only reported)
+  - KB repos (`raw/`, `.converted/` and `index.json` are skipped)
+  - each project's `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`
+
+  The original of every rewritten file is copied to `~/squadrant/archive/<date>/ref-sweep/` first. Rewrites in KB git repos are committed locally (never pushed). Profile source hashes and `_dropped.yaml` follow the rewrite, so the native-memory bridge doesn't queue spurious update proposals (#998).
+- **`squadrant doctor` dangling-reference check.** It is read-only, prints up to 5 entries per place (`-v` lists all), and ignores glob, placeholder and temp paths (#998).
+- **Attribution trailer guard.** When `~/.claude/settings.json` disables attribution (`attribution.commit: ""` or `includeCoAuthoredBy: false`), the squadrant `PreToolUse` hook denies `git commit|merge|rebase` and `gh pr create|edit|merge` commands that write an AI `Co-Authored-By:` or `Generated with Claude Code` line. The model used to hand-write these despite the setting. Commands that remove such lines (`sed`/`grep -v` in a rebase) and human co-authors still pass. It applies to captains and crews, and the crew templates carry the same rule for non-Claude crews (#1007).
+
+### Fixed
+
+- **`dispatch` booting a captain that has never run.** `launch` gets the warmup budget instead of a 15s cap, and failures report launch's exit code and stderr instead of "is squadrant installed?" (#999).
+- **`claude -c` after a failed first boot.** A Claude captain resumes only when a session transcript exists for its directory; otherwise it starts fresh, so a boot that never started Claude no longer leaves the captain stuck on "No conversation found to continue" (#999).
+- **`shutdown`** prints why a workspace couldn't be closed instead of hiding it (#999).
+- **Crews can load the skills they are told to use.** `knowledge-review`, `knowledge-extract` and `rules-ops` are in the crew skill set, and a test keeps the list in sync (#1002).
+- **KB repo clean after a reconcile.** `knowledge reconcile --finish` commits `REPORT.md`, and `scores.json`/`escalations.json` are ignored (appended to an existing `.gitignore` without touching operator lines) (#1002).
+
 ## [0.30.0] - 2026-10-16
 
 The operator profile: a personal `_user` KB holding how you work (preferences and corrections), shown to every session of every agent in every project at session start (KB epic #893, issue #982 slice S1; spec `docs/specs/2026-10-15-user-profile-design.md`, diagram `docs/diagrams/2026-10-15-operator-profile.html`). PR #993.

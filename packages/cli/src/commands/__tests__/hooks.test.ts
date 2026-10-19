@@ -285,7 +285,7 @@ describe("preToolUseGuard passes the _user path to the #556 guard (#982 review)"
   });
 });
 
-describe("attributionGuard wiring (#1004)", () => {
+describe("attributionGuard wiring (#1007)", () => {
   const homeWith = (settings: string) => {
     const h = fs.mkdtempSync(path.join(os.tmpdir(), "attrib-hook-"));
     fs.mkdirSync(path.join(h, ".claude"));

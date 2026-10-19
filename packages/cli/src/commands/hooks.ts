@@ -206,7 +206,7 @@ export function preToolUseGuard(
   return decideCaptainMemoryWrite(typeof p?.tool_name === "string" ? p.tool_name : "", p?.tool_input, env, home, ukb);
 }
 
-/** #1004: decide a PreToolUse call (captain or crew) against the operator's disabled-attribution setting. */
+/** #1007: decide a PreToolUse call (captain or crew) against the operator's disabled-attribution setting. */
 export function attributionGuard(
   payload: unknown, home: string,
 ): ReturnType<typeof decideAttributionTrailer> {
@@ -288,7 +288,7 @@ export function hooksCommand(): Command {
         process.exit(0);
       }
 
-      // #1004: attribution guard applies to captain and crew sessions alike,
+      // #1007: attribution guard applies to captain and crew sessions alike,
       // so it runs before the crew-only gate below.
       if (sub === "pre-tool-use") {
         const attr = attributionGuard(payload, homedir());

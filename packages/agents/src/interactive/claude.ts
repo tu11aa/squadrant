@@ -326,7 +326,7 @@ export function decideCaptainMemoryWrite(
   return { decision: "deny", reason: DENY_REASON };
 }
 
-// #1004: Claude Code's `attribution` setting only stops the HARNESS adding a
+// #1007: Claude Code's `attribution` setting only stops the HARNESS adding a
 // co-author trailer; the model also hand-writes one into `git commit -m` text.
 // When the operator disabled attribution, deny such a command so the agent
 // retries without it.
@@ -357,7 +357,7 @@ export function decideAttributionTrailer(
   const line = hit[1].trim().replace(/^["'\s]+|["'\s]+$/g, "");
   return {
     decision: "deny",
-    reason: `The operator disabled commit/PR attribution. Remove this line from the commit/PR text and retry: "${line}" (#1004).`,
+    reason: `The operator disabled commit/PR attribution. Remove this line from the commit/PR text and retry: "${line}" (#1007).`,
   };
 }
 
