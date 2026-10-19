@@ -10,10 +10,10 @@
 // `squadrant group dispatch` is a deprecated alias for this command (group.ts).
 
 import { Command } from "commander";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import chalk from "chalk";
 import { loadConfig } from "@squadrant/shared";
-import { dispatchToSibling, resolveCurrentProject } from "@squadrant/core";
+import { dispatchToSibling, resolveCurrentProject, GROUP_DISPATCH_WARMUP_TIMEOUT_MS } from "@squadrant/core";
 import type { Provider, Mode, TaskRecord } from "@squadrant/shared";
 
 export interface DispatchCliOpts {
@@ -35,13 +35,28 @@ export async function runDispatch(toProject: string, task: string, opts: Dispatc
     provider: opts.provider,
     mode: opts.mode,
     warmupTimeoutMs: opts.warmupTimeout,
-    bootCaptain: async (project) => {
-      try {
-        execSync(`squadrant launch ${project}`, { stdio: "ignore", timeout: 15_000 });
-      } catch {
-        throw new Error(`failed to launch captain for '${project}' — is squadrant installed?`);
+    bootCaptain: (project) => bootCaptain(project, opts.warmupTimeout ?? GROUP_DISPATCH_WARMUP_TIMEOUT_MS),
+  });
+}
+
+// #999: a first boot creates a cmux workspace and stays alive delivering the
+// startup prompt, which routinely outlasts the old 15s cap — so launch gets the
+// warmup budget, and its real failure (exit code + stderr) is reported instead
+// of a blanket "is squadrant installed?" that only ENOENT actually means.
+function bootCaptain(project: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("squadrant", ["launch", project], { encoding: "utf-8", timeout: timeoutMs }, (err, _stdout, stderr) => {
+      if (!err) return resolve();
+      const e = err as NodeJS.ErrnoException & { killed?: boolean };
+      if (e.code === "ENOENT") {
+        return reject(new Error(`failed to launch captain for '${project}' — is squadrant installed?`));
       }
-    },
+      if (e.killed) {
+        return reject(new Error(`'squadrant launch ${project}' did not finish within ${timeoutMs / 1000}s`));
+      }
+      const detail = String(stderr ?? "").trim();
+      reject(new Error(`'squadrant launch ${project}' failed (exit ${e.code ?? "?"})${detail ? `: ${detail}` : ""}`));
+    });
   });
 }
 
