@@ -278,6 +278,14 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 
 **Path moves.** One version reads both old and new paths; `squadrant migrate kb` moves files and prints a report; nothing is deleted, only archived.
 
+**References still resolve after a move (#998).** Every path move also sweeps the files that cite the moved paths:
+- agent native memory, per agent (today only Claude's `~/.claude/projects/*/memory`)
+- live workspace handoffs and side-handoffs
+- KB repos: rules, decisions, `errata.yaml`, `sources.yaml`, including `file:` citations
+- each registered project's `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`
+
+A dry run lists each hit as `file:line old -> new`. A real run backs each file up under `~/squadrant/archive/<date>/ref-sweep/` before rewriting it. Archived handoffs and KB `raw/` sources are never rewritten. `squadrant migrate path <from> <to>` does the same move and sweep for dirs the operator made, and `squadrant doctor` warns about cited home paths that no longer exist. See reference.md "Reference sweep".
+
 | From | To |
 |---|---|
 | `hub/spokes/<p>/{handoffs,side-handoffs}` | `workspace/<p>/…` |

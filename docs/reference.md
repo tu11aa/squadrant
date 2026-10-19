@@ -43,8 +43,9 @@ guided first run — come back here when you need the details.
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
-| `squadrant doctor` | Health check — verify dependencies |
-| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
+| `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
+| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Then rewrites references to the moved paths. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
+| `squadrant migrate path <from> <to> [--dry-run]` | Move a file or dir you made, with the same merge rules as `migrate kb`, then rewrite references to it. If `<from>` is already gone and `<to>` exists, it only rewrites the references. See [Reference sweep](#reference-sweep-998). |
 | `squadrant projects list` | List registered projects |
 | `squadrant projects add <name> <path>` | Register a project (creates `~/squadrant/workspace/<name>/`; no Obsidian spoke scaffold since #983) |
 | `squadrant projects remove <name>` | Unregister a project |
@@ -535,6 +536,29 @@ KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~
 | `<hubVault>/knowledge/<kb>/`, spoke `knowledge/rules/` | same as `squadrant knowledge migrate` (kept as an alias) |
 
 Directories are merged file by file. A file whose target already exists is reported `skipped` and left in place, never overwritten. Nothing is deleted, and a second run moves nothing. `squadrant doctor` warns while a spoke or the hub still holds files to migrate, and when a project has no workspace dir yet.
+
+#### Reference sweep (#998)
+
+Moving a path breaks every file that still cites the old one, such as a captain's native memory or today's handoff. So both `squadrant migrate kb` and **`squadrant migrate path <from> <to> [--dry-run]`** sweep references after they move something. They build an old → new path map from the moves they made, scan the sites below, and print one `ref` line per hit (`file:line old -> new`):
+
+| Site | Files | Rewritten? |
+|---|---|---|
+| `memory:<agent>` | agent native memory: Claude's `~/.claude/projects/*/memory/**` (`SQUADRANT_NATIVE_MEMORY_ROOT` overrides the root). Codex and opencode keep no per-project memory files, so they have no entry. | yes |
+| `workspace` | `workspace/<p>/handoff.json`, `workspace/<p>/side-handoffs/**` | yes |
+| `workspace-archive` | `workspace/<p>/handoffs/*.json` (archived handoffs) | no: `report-only` |
+| `kb` | `.md`/`.yaml` files in the KB repos under `~/squadrant/kb/` and any configured KB path: rules, decisions, wiki, `errata.yaml`, `sources.yaml`. `.git/`, `raw/` (sha-cited source documents), `.converted/` and the derived `index.json` are skipped. | yes |
+| `project` | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` at the root of each registered project's repo (a symlinked pair counts once) | yes |
+
+- A reference matches in its `~/…`, absolute (`/Users/<you>/…`) and `$HOME/…` forms, also inside `file:` citations, and is rewritten in the same form. Sub-paths follow the move (`~/a/work/x.md` → `~/new/x.md`). Path boundaries hold: `~/a/work` never matches `~/a/workshop` or `~/a/work.md`.
+- A file that was `skipped` (its target already existed) stayed where it was, so references to it are left alone.
+- `--dry-run` changes no bytes and prints `would-rewrite` lines. A real run first copies each file it rewrites to `~/squadrant/archive/<date>/ref-sweep/<path relative to $HOME>`, then prints `rewritten`. An earlier backup from the same day is kept, and the new one gets a `.1` suffix. A second run rewrites nothing.
+- `migrate path` moves `<from>` with the same rules as `migrate kb`: dirs are merged file by file, an existing target file is `skipped`, nothing is deleted, and emptied dirs stay behind. If `<from>` is gone and `<to>` exists, it only rewrites references, which fixes a move made by hand. If both are missing, or `<to>` is inside `<from>`, it exits with an error.
+
+```
+squadrant migrate path ~/saitex/kb/work ~/squadrant/workspace/flooros/artifacts/work --dry-run
+```
+
+**`squadrant doctor`** runs the read-only side over the same sites, excluding archived handoffs. For each `~/…`, `$HOME/…` or absolute home path that doesn't exist, it warns with `file:line`, once per site and at most 5 entries per site (`squadrant doctor -v` lists all). It ignores paths that contain a glob or placeholder (`*`, `<`, `{`, `...`) and temp or scratchpad paths (a `tmp`, `temp` or `scratchpad` segment).
 
 ### Knowledge System (opt-in writes)
 
