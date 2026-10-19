@@ -17,7 +17,7 @@ export class CmuxTimeoutError extends Error {
   }
 }
 
-import { DeferDelivery } from "@squadrant/core";
+import { DeferDelivery, CC_WORKING_RE } from "@squadrant/core";
 import { screenHasSplashMarker } from "@squadrant/core";
 
 /** True when running inside a cmux workspace (CMUX_WORKSPACE_ID is set). */
@@ -484,7 +484,6 @@ const CC_INITIALIZED_RE = /⏵⏵|Ctx Used|for shortcuts|accept edits/i;
 // "(1m 4s") — both confined to the live spinner line, never on an idle,
 // input-ready screen. Grounded in docs/reports/258-parse-bug-fixture.txt
 // (line 4: shell-wait, no counter; line 22: token-stream).
-const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt|\bshell still running\b|·\s*\d+\s*shell\b|\(\d+m?\s*\d*s\b/i;
 
 /**
  * Classify a captain surface's read-screen into the three states #292's

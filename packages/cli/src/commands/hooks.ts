@@ -17,6 +17,7 @@ import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } fro
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
+import { compactHandoffContext, appendAdditionalContext } from "../lib/compact-handoff.js";
 import { runGatePermissionRequest } from "./gate.js";
 
 const SOCK = DAEMON_SOCK_PATH;
@@ -258,7 +259,15 @@ export function hooksCommand(): Command {
 
       // #899: inject Rules KB context first, for every claude session (captain,
       // crew, plain). Await the write so a later process.exit can't truncate it.
-      const rulesOut = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project });
+      let rulesOut = await rulesHookOutput(sub, payload, { env: process.env, cwd: process.cwd(), project: opts.project });
+      // #1010: a captain whose context was just compacted gets its handoff back, folded into the
+      // same JSON document (stdout must stay one object). Fail-open: any error injects nothing.
+      if (sub === "session-start") {
+        try {
+          const project = opts.project ?? resolveCurrentProject(loadConfig());
+          rulesOut = appendAdditionalContext(rulesOut, compactHandoffContext(payload, process.env, project));
+        } catch { /* best-effort */ }
+      }
       if (rulesOut) await new Promise<void>((resolve) => process.stdout.write(rulesOut, () => resolve()));
 
       // #651: captain sessions have SQUADRANT_ROLE=captain but no crew env

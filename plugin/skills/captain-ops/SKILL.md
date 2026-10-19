@@ -407,6 +407,10 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
+### Rollover (context getting full, Claude captains)
+
+`/squadrant:rollover` (alias `/squadrant:roll`) does the three manual steps in one go: handoff + daily log → `squadrant captain compact {project}` (the daemon types `/compact` once your turn ends and the input box is clear) → after the compact, the SessionStart hook injects your latest handoff and you continue from `nextSteps`. The same re-injection happens for a `/compact` the operator types by hand.
+
 5. (Optional) If a Command session is running and you want to notify it:
    ```bash
    squadrant runtime send --command "Captain {project} ending session — handoff written."

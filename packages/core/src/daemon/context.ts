@@ -171,6 +171,8 @@ export interface DaemonContext {
   captainChannels?: Record<string, import("../control-channel.js").ControlChannel>;
   /** #786: the captain's agent for a project (launch record, else config). */
   captainAgentFor?: (project: string) => string | undefined;
+  /** #1010: queue a /compact for a project's captain (set by start.ts; absent without a cmux surface driver). */
+  requestCaptainCompact?: (project: string, focus?: string) => { queued: true };
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */

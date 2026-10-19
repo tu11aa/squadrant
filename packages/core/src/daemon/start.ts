@@ -8,6 +8,7 @@ import { readdir } from "node:fs/promises";
 import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
+import { createCaptainCompact } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, appendCaptainMessage } from "../mailbox.js";
@@ -320,6 +321,16 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     deliveryTimer.unref?.();
   }
 
+  let compactTimer: NodeJS.Timeout | undefined;
+  if (daemonCmux) {
+    const compact = createCaptainCompact({ cmux: daemonCmux, log, injectedSurfaces: ctx.opts.captainSurfaces });
+    ctx.requestCaptainCompact = compact.request;
+    if (opts.sweepMs && opts.sweepMs > 0) {
+      compactTimer = setInterval(() => { void compact.tick(); }, 1000);
+      compactTimer.unref?.();
+    }
+  }
+
   let probeTimer: NodeJS.Timeout | undefined;
   if (daemonCmux && opts.sweepMs && opts.sweepMs > 0) {
     probeTimer = setInterval(() => {
@@ -395,6 +406,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       // marks this shutdown as clean, not unclean.
       removeRunningMarker(stateRoot, log);
       if (deliveryTimer) clearInterval(deliveryTimer);
+      if (compactTimer) clearInterval(compactTimer);
       if (probeTimer) clearInterval(probeTimer);
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
