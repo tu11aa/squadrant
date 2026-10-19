@@ -43,8 +43,9 @@ guided first run — come back here when you need the details.
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
-| `squadrant doctor` | Health check — verify dependencies |
-| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
+| `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
+| `squadrant migrate kb [--dry-run]` | One-shot move to the KB storage layout: spoke exchange to `~/squadrant/workspace/<p>/`, retired hub files and the already-copied legacy `~/.config/squadrant` state to `~/squadrant/archive/<date>/`, plus `knowledge migrate`. Then rewrites references to the moved paths. Never deletes; idempotent. See [Storage layout](#storage-layout-workspace-983). |
+| `squadrant migrate path <from> <to> [--dry-run]` | Move a file or dir you made, with the same merge rules as `migrate kb`, then rewrite references to it. If `<from>` is already gone and `<to>` exists, it only rewrites the references. See [Reference sweep](#reference-sweep-998). |
 | `squadrant projects list` | List registered projects |
 | `squadrant projects add <name> <path>` | Register a project (creates `~/squadrant/workspace/<name>/`; no Obsidian spoke scaffold since #983) |
 | `squadrant projects remove <name>` | Unregister a project |
@@ -69,7 +70,7 @@ guided first run — come back here when you need the details.
 | `squadrant crew list <project>` | List live crews for a project |
 | `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
 | `squadrant whoami [--json]` | Show the agent session calling the command (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
-| `squadrant shutdown [project]` | Graceful shutdown |
+| `squadrant shutdown [project]` | Graceful shutdown. Closes the captain workspace whether or not it is pinned (unpins first, like `launch --fresh`); a refused close prints cmux's reason |
 | `squadrant effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
 | `squadrant gate mode [on\|off\|auto]` | Get or set the permission gate mode `defaults.gate.mode` (no arg prints current + source: env/config/default); no daemon bounce needed ([#854](https://github.com/tu11aa/squadrant/issues/854)) |
 | `squadrant gate status` | Show the effective gate mode/source, resolved engine, classifier model, and whether the engine's credential is present (never the value) |
@@ -77,7 +78,7 @@ guided first run — come back here when you need the details.
 | `squadrant config check` | Detect config drift vs the current default schema |
 | `squadrant heal [--dry-run\|daemon]` | Targeted, idempotent remediation for squadrant components (daemon, health) |
 | `squadrant ping <project> "<msg>"` | Fire-and-forget: deliver a message into any registered project's captain pane (no tracked task, no report-back) |
-| `squadrant dispatch <project> "<task>"` | Dispatch a tracked task to any registered project; reports back to the origin on settle. Same group additionally auto-accepts and boots the target captain if down — see [cross-project ping & dispatch](specs/2026-07-02-cross-project-ping-dispatch-design.md) |
+| `squadrant dispatch <project> "<task>"` | Dispatch a tracked task to any registered project; reports back to the origin on settle. Same group additionally auto-accepts and boots the target captain if down (`squadrant launch` gets the `--warmup-timeout` budget, default 120s; a failed launch reports its exit code + stderr — see #999) — see [cross-project ping & dispatch](specs/2026-07-02-cross-project-ping-dispatch-design.md) |
 | `squadrant group dispatch …` | **Deprecated alias** for `squadrant dispatch` — kept working, prints a deprecation note |
 | `squadrant cmux …` | cmux integration helpers |
 | `squadrant feedback` | Open opt-in feedback issue |
@@ -339,6 +340,8 @@ A per-tick pid floor (`kill(pid,0)`) arbitrates when sources disagree; provenanc
 
 **Captain-memory write gate (#556).** The unmatched `PreToolUse` hook entry (fires for every tool call, not just `AskUserQuestion`) doubles as a write gate on the captain's long-term memory directory (`~/.claude/projects/<encoded-cwd>/memory/`). Inside a crew session (`SQUADRANT_CREW_TASK_ID` set), a `Write`/`Edit`/`MultiEdit`/`NotebookEdit` targeting that directory, or a `Bash` command whose text references a path under it, is denied via `hookSpecificOutput.permissionDecision: "deny"` and logged to stderr — the pure decision logic (`decideCaptainMemoryWrite`, `packages/agents/src/interactive/claude.ts`) takes tool name/input/env/home dir and is unit-tested without spawning claude. Rule: crews report findings in their done/blocked message; captains decide what's durable. Captain/command sessions (no crew env vars) are unaffected.
 
+**Attribution trailer guard (#1007).** The same `PreToolUse` entry also enforces the operator's attribution choice, for captain and crew sessions alike (unlike the #556 gate). When `~/.claude/settings.json` has `attribution.commit === ""` (or legacy `includeCoAuthoredBy: false`), a `Bash` command running `git commit` (incl. `--amend`), `git merge`/`git rebase`, `gh pr create|edit|merge` whose text contains a `Co-Authored-By:` line naming Claude/Anthropic/Codex/OpenAI/Gemini/opencode, or a `Generated with … Claude Code` line, is denied; the deny reason names the exact line to remove so the agent can retry. Human `Co-Authored-By:` lines pass. The setting is read once per hook run and an unreadable file fails open. Claude Code's own setting only stops the harness adding the trailer — models hand-write it too. Pure logic: `decideAttributionTrailer` / `readAttributionDisabled` in `packages/agents/src/interactive/claude.ts`. Non-Claude crews are covered by a template rule only.
+
 **AFK auto-continue (#616).** Claude Code's AFK mode (`CLAUDE_AFK_TIMEOUT_MS` / `CLAUDE_AFK_COUNTDOWN_MS`) auto-resolves `AskUserQuestion` prompts with a synthetic no-answer after an idle timeout. squadrant never enables this itself; it is opt-in per machine via the [`defaults.claudeEnv`](#config) overlay (#615). Approval-class prompts are guarded by a safe-option-only clause in the captain/crew templates: if a question resolves without a human answer, treat it as *not* approval and take only the safe, reversible option (or none). We do not disable AFK outright because it defuses the modal-induced "delivery stuck" precondition of [#590](https://github.com/tu11aa/squadrant/issues/590) — a modal self-clears long before the stuck threshold fires. The real fix for answering while away is remote answer via Telegram ([#486](https://github.com/tu11aa/squadrant/issues/486)).
 
 ### Control/Captain Channel (#667)
@@ -503,6 +506,8 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
 
 opencode additionally gets squadrant's skills projected as **loadable skill dirs**, not just inlined markdown. On every `squadrant` invocation and on daemon boot, the shipped `plugin/skills/<name>/SKILL.md` files are synced (copy-if-changed + prune) into the **user-scope** opencode skills dir `~/.config/opencode/skills/<name>/SKILL.md`, so `skill <name>` resolves in an opencode captain/crew/side session — parity with claude's `--plugin-dir`. User-scope is deliberate: it serves every project and every opencode session without writing into managed project repos (where it would drift), and it is reconciled from the shipped source on every run so an install/update can't leave it stale. Each synced dir carries a `.squadrant-managed` marker — only marked dirs are refreshed or pruned, and a name collision with a user-authored opencode skill is reported as a skip rather than clobbered. Skills without loadable frontmatter (`handback`, `takeover`) are not projected. ([#791](https://github.com/tu11aa/squadrant/issues/791))
 
+Claude crews load a smaller plugin dir, `~/.config/squadrant/plugin-crew`, which holds only the skills a crew is told to use (`CREW_SKILLS` in `packages/shared/src/lib/runtime-sync.ts`): `karpathy-principles`, `takeover`, `handback`, `rules-ops`, `knowledge-review` and `knowledge-extract`. Captains and command sessions load the full `plugin` dir. A test fails if a crew template, the daemon's reconcile-due message or a crew skill names a skill missing from that list ([#1002](https://github.com/tu11aa/squadrant/issues/1002)). opencode crews read the user-scope skills dir above, which holds every skill.
+
 ### Storage layout: workspace (#983)
 
 KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~/squadrant/workspace/<project>/`** (it replaces `<hubVault>/spokes/<project>/` for these files):
@@ -536,6 +541,32 @@ KB spec K7 / §4 splits storage by lifecycle. Per-project exchange lives in **`~
 
 Directories are merged file by file. A file whose target already exists is reported `skipped` and left in place, never overwritten. Nothing is deleted, and a second run moves nothing. `squadrant doctor` warns while a spoke or the hub still holds files to migrate, and when a project has no workspace dir yet.
 
+#### Reference sweep (#998)
+
+Moving a path breaks every file that still cites the old one, such as a captain's native memory or today's handoff. So both `squadrant migrate kb` and **`squadrant migrate path <from> <to> [--dry-run]`** sweep references after they move something. They build an old → new path map from the moves they made, scan the sites below, and print one `ref` line per hit (`file:line old -> new`):
+
+| Site | Files | Rewritten? |
+|---|---|---|
+| `memory:<agent>` | agent native memory: Claude's `~/.claude/projects/*/memory/**` (`SQUADRANT_NATIVE_MEMORY_ROOT` overrides the root). Codex and opencode keep no per-project memory files, so they have no entry. | yes |
+| `workspace` | `workspace/<p>/handoff.json`, `workspace/<p>/side-handoffs/**` | yes |
+| `workspace-checkpoint` | the newest `workspace/<p>/handoffs/*.json`: the checkpoint `handoff facts` reads, picked by the same `readNewestArchivedHandoff`. `read-handoff.sh` archives `handoff.json` there, so it is usually the live handoff. Its mtime is kept, because `handoff facts` dates the checkpoint by it. | yes |
+| `workspace-archive` | the older `workspace/<p>/handoffs/*.json` (history) | no: `report-only` |
+| `kb` | `.md`/`.yaml` files in the KB repos under `~/squadrant/kb/` and any configured KB path: rules, decisions, wiki, `errata.yaml`, `sources.yaml`. `.git/`, `raw/` (sha-cited source documents), `.converted/` and the derived `index.json` are skipped. | yes |
+| `project` | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` at the root of each registered project's repo (a symlinked pair counts once) | yes |
+
+- A reference matches in its `~/…`, absolute (`/Users/<you>/…`) and `$HOME/…` forms, also inside `file:` citations, and is rewritten in the same form. Sub-paths follow the move (`~/a/work/x.md` → `~/new/x.md`). Path boundaries hold: `~/a/work` never matches `~/a/workshop` or `~/a/work.md`.
+- A file that was `skipped` (its target already existed) stayed where it was, so references to it are left alone.
+- `--dry-run` changes no bytes and prints `would-rewrite` lines. A real run first copies each file it rewrites to `~/squadrant/archive/<date>/ref-sweep/<path relative to $HOME>`, then prints `rewritten`. An earlier backup from the same day is kept, and the new one gets a `.1` suffix. A second run rewrites nothing.
+- **KB git repos.** A real run commits the files it rewrote in each KB repo, one commit per repo with the message `ref-sweep: <from> -> <to> (#998)` (`ref-sweep: N path moves (#998)` for `migrate kb`). It never pushes. It leaves out gitignored files (`_user` proposals, P15) and any file that was untracked or already differed from `HEAD` before the sweep, so your own pending edits never land in a ref-sweep commit. Those are named in a `not committed` note. A dry run commits nothing.
+- **Profile hashes.** A rewritten Claude memory note gets a new bridge hash. So that the profile bridge does not then propose an `.update` identical to the trait, the sweep refreshes `#<hash12>` in the `_user` sources that cite the note (traits, proposals, `_archive/`, `_dropped.yaml`), but only where the cited hash matched the note before the rewrite. Those lines show as `ref profile:` hits. See the profile spec §6.
+- `migrate path` moves `<from>` with the same rules as `migrate kb`: dirs are merged file by file, an existing target file is `skipped`, and no file is ever deleted. Afterwards the dirs left empty under `<from>` (and `<from>` itself, once empty) are removed bottom-up with `rmdir`, which cannot remove a file. That is reported as one `pruned` row (`would-prune` in a dry run). A dir that still holds a `skipped` file stays. If `<from>` is gone and `<to>` exists, it only rewrites references, which fixes a move made by hand. If both are missing, or `<to>` is inside `<from>`, it exits with an error.
+
+```
+squadrant migrate path ~/saitex/kb/work ~/squadrant/workspace/flooros/artifacts/work --dry-run
+```
+
+**`squadrant doctor`** runs the read-only side over the same sites, excluding archived history (the checkpoint handoff is checked). For each `~/…`, `$HOME/…` or absolute home path that doesn't exist, it warns with `file:line`, once per site and at most 5 entries per site (`squadrant doctor -v` lists all). It ignores paths that contain a glob or placeholder (`*`, `<`, `{`, `...`) and temp or scratchpad paths (a `tmp`, `temp` or `scratchpad` segment).
+
 ### Knowledge System (opt-in writes)
 
 - **Status** — `write-status.sh` does not exist and nothing else writes `status.md` today; existing files are left in place as history but are no longer read by `squadrant status`/`standup`/`retro` ([#630](https://github.com/tu11aa/squadrant/issues/630) tracks a real persisted work-tracking store).
@@ -549,7 +580,7 @@ Directories are merged file by file. A file whose target already exists is repor
 
 ### Knowledge bases (rules, #893 / #936)
 
-Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squadrant knowledge init <kb>` runs `git init`; a remote is optional; a default `.gitignore` keeps `raw/` and `.converted/` local — edit it to opt in; an existing `.gitignore` is never touched). Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
+Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squadrant knowledge init <kb>` runs `git init`; a remote is optional; a default `.gitignore` keeps `raw/` and `.converted/` local — edit it to opt in; `init` never touches an existing `.gitignore`. The default also ignores the reconcile runtime files `/scores.json` and `/escalations.json`, and `knowledge reconcile --finish` appends those two lines to an existing `.gitignore` that lacks them, leaving every other line as it is). Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
 
 ```json
 {
@@ -690,7 +721,7 @@ What each session gets:
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup (`~/squadrant/workspace/<p>/handoff.json`, archived to `handoffs/`)
-- **Session freshness** — auto-detects new day or template changes, forces fresh context
+- **Session freshness** — auto-detects new day or template changes, forces fresh context. A claude captain resumes with `-c` only when `~/.claude/projects/<cwd>/` already holds a transcript; otherwise it starts fresh, so a boot that never started claude can't leave the next launch stuck on "No conversation found to continue" (#999)
 - **claude-mem** — cross-session memory via MCP plugin
 
 ### Runtime state (`~/.local/state/squadrant`, #983)
@@ -835,7 +866,7 @@ Injected blocks end with one line asking the agent to list the rule ids it appli
   - Only deliveries made before the text or commit count. Only ids the audit log shows were delivered to that project in the last 7 days can be cited.
 - **`squadrant knowledge feedback <id> --followed|--violated|--noise|--wrong [--project p] [--source s] [--task id]`** logs an `item.outcome` with a `source` (`operator` by default; also `review`, `crew`, `reconcile`, `judge`, `check`) and an optional crew `task`. Records written before #945 have no `source` and count as `operator`. Reconcile's code-violation flag logs `violated` with `source: "reconcile"` itself.
 - **`squadrant knowledge surfaced --task <id> [--json]`** lists the rules delivered to that crew task (surfaced, shown or searched), deduped, as `<id>  [<modality>]  <statement>`. The captain runs it at review and grades the rules that apply to the diff with `knowledge feedback <id> --followed|--violated --source review --task <id>` (captain-ops skill).
-- **Scores** are computed by code, never by a model, over the last 30 days: fire rate (surfaced), pull rate (shown + searched; the `pulled` column), use rate (cited ÷ surfaced), noise rate, violation rate, evaluated (followed + violated), compliance rate (followed ÷ evaluated, `n/a` below 3 evaluations; the `Compliance` column next to `Violated`), code violations, `last_surfaced`/`last_used`, never-fired-30d; per domain writes/month, reads/month, chars injected per citation and a **dead-domain alarm** (no writes and no reads for 30 days); tier contribution; per-agent coverage; reviewer agreement (operator `approve` resolutions ÷ all operator resolutions in `verdicts.jsonl`); outcomes by source (`bySource`). Only `operator`, `review`, `judge` and `check` outcomes count toward followed/violated/noise/wrong and the rates. `crew` outcomes are shown in `bySource` but not counted. Reconcile `violated` outcomes are counted as `codeViolations` instead: they measure codebase drift, so they stay out of violation rate and out of the full pass's "reword" list. Every reconcile pass writes `<kb>/scores.json` and a `## Scores` section in `REPORT.md`. `squadrant knowledge stats [--kb k] [--project p] [--domain d] [--item id] [--json]` prints them on demand.
+- **Scores** are computed by code, never by a model, over the last 30 days: fire rate (surfaced), pull rate (shown + searched; the `pulled` column), use rate (cited ÷ surfaced), noise rate, violation rate, evaluated (followed + violated), compliance rate (followed ÷ evaluated, `n/a` below 3 evaluations; the `Compliance` column next to `Violated`), code violations, `last_surfaced`/`last_used`, never-fired-30d; per domain writes/month, reads/month, chars injected per citation and a **dead-domain alarm** (no writes and no reads for 30 days); tier contribution; per-agent coverage; reviewer agreement (operator `approve` resolutions ÷ all operator resolutions in `verdicts.jsonl`); outcomes by source (`bySource`). Only `operator`, `review`, `judge` and `check` outcomes count toward followed/violated/noise/wrong and the rates. `crew` outcomes are shown in `bySource` but not counted. Reconcile `violated` outcomes are counted as `codeViolations` instead: they measure codebase drift, so they stay out of violation rate and out of the full pass's "reword" list. Every reconcile pass writes `<kb>/scores.json` (git-ignored) and a `## Scores` section in `REPORT.md` (committed). `squadrant knowledge stats [--kb k] [--project p] [--domain d] [--item id] [--json]` prints them on demand.
 - **Rotation**: logs are monthly files. A full pass folds every month that ends before the 30-day scoring window into `YYYY-MM.<machine>.stats.json` (per-item counts, so lifetime totals and `last_used` survive) and removes the raw file. `verdicts.jsonl` is never compacted.
 - **Privacy**: query text is truncated to 200 characters, REPORT.md and notifications carry ids and counts only.
 
@@ -848,7 +879,7 @@ Per-KB settings (`knowledgeBases.<kb>.reconcile`, all optional): `incrementalAft
 | Command | Purpose |
 |---|---|
 | `knowledge reconcile <kb> [--full] [--now] [--dry-run]` | no flags: show schedule state. `--now`: request a pass from the home captain. `--dry-run`: show what would be requested |
-| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count |
+| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count. When the KB is its own git repo, `--finish` leaves it clean (#1002): it commits `REPORT.md` (and `.gitignore` when it has changes) with `--only`, so nothing else is swept in, and makes sure `scores.json` (derived from the audit log) and `escalations.json` (open review state) are ignored. A failed commit is logged and the file is kept |
 | `knowledge review <kb> --json` | reviewer packet |
 | `knowledge review <kb> --apply decisions.json` | apply typed reviewer decisions; at or above `autoApproveConfidence` they apply, otherwise they escalate |
 | `knowledge review <kb>` | interactive walk-through of open escalations (approve / reject / edit; keep-doc / supersede-with-code); `--resolve <key> --approve\|--reject\|--keep-doc\|--supersede-with-code --reason …` is the scripted form |

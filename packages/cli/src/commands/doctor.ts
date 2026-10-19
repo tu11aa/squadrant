@@ -11,6 +11,7 @@ import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
 import { migrateKb } from "../lib/migrate-kb.js";
+import { danglingRefs, refSites, type DanglingRef } from "../lib/ref-sweep.js";
 import {
   createCursorEmitter,
   createCodexEmitter,
@@ -266,9 +267,28 @@ export function stateDoctorLines(o: {
   return lines;
 }
 
+/**
+ * #998: cited home paths that no longer exist, one warning per site with at most `limit`
+ * file:line entries (`limit` Infinity: all of them). Read-only; warn only.
+ */
+export function refDoctorLines(refs: DanglingRef[], limit = 5): { label: string; hint: string; items: string[] }[] {
+  const bySite = new Map<string, DanglingRef[]>();
+  for (const r of refs) bySite.set(r.site, [...(bySite.get(r.site) ?? []), r]);
+  return [...bySite].map(([site, rs]) => {
+    const items = rs.slice(0, limit).map((r) => `${r.file}:${r.line}  ${r.ref}`);
+    if (rs.length > limit) items.push(`… and ${rs.length - limit} more (squadrant doctor --verbose lists all)`);
+    return {
+      label: `${rs.length} dangling path reference(s) in ${site}`,
+      hint: "moved it? run: squadrant migrate path <old> <new> (rewrites the references, backs up the originals)",
+      items,
+    };
+  });
+}
+
 export const doctorCommand = new Command("doctor")
   .description("Check system health and prerequisites")
-  .action(async () => {
+  .option("-v, --verbose", "list every dangling path reference, not just the first 5 per site")
+  .action(async (opts: { verbose?: boolean }) => {
     console.log(chalk.bold("\nSquadrant Doctor\n"));
 
     const results: boolean[] = [];
@@ -392,6 +412,11 @@ export const doctorCommand = new Command("doctor")
       loadedLogPath: loadedDaemonLogPath(`gui/${process.getuid?.() ?? 0}/${LABEL}`), desiredLogPath: daemonLogPath(),
     });
     for (const l of stateLines) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
+
+    for (const l of refDoctorLines(danglingRefs(refSites(config)), opts.verbose ? Infinity : 5)) {
+      console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${chalk.dim(` → ${l.hint}`)}`);
+      for (const item of l.items) console.log(chalk.dim(`         ${item}`));
+    }
 
     results.push(
       check(

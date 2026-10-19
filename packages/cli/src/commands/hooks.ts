@@ -12,7 +12,7 @@ import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendRequest, resolveCurrentProject, computeRulesInjection, computeProfileInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
-import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite } from "@squadrant/agents";
+import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite, decideAttributionTrailer, readAttributionDisabled } from "@squadrant/agents";
 import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } from "@squadrant/shared";
 import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
@@ -206,6 +206,22 @@ export function preToolUseGuard(
   return decideCaptainMemoryWrite(typeof p?.tool_name === "string" ? p.tool_name : "", p?.tool_input, env, home, ukb);
 }
 
+/** #1007: decide a PreToolUse call (captain or crew) against the operator's disabled-attribution setting. */
+export function attributionGuard(
+  payload: unknown, home: string,
+): ReturnType<typeof decideAttributionTrailer> {
+  const p = payload as { tool_name?: unknown; tool_input?: unknown } | undefined;
+  if (p?.tool_name !== "Bash") return { decision: "allow" };
+  return decideAttributionTrailer("Bash", p.tool_input, readAttributionDisabled(home));
+}
+
+function denyPreToolUse(reason: string | undefined): never {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
+  }));
+  process.exit(0);
+}
+
 async function readStdinJson(): Promise<unknown> {
   let stdin = "";
   try { for await (const chunk of process.stdin) stdin += chunk as string; } catch { /* ignore */ }
@@ -270,6 +286,16 @@ export function hooksCommand(): Command {
           },
         });
         process.exit(0);
+      }
+
+      // #1007: attribution guard applies to captain and crew sessions alike,
+      // so it runs before the crew-only gate below.
+      if (sub === "pre-tool-use") {
+        const attr = attributionGuard(payload, homedir());
+        if (attr.decision === "deny") {
+          console.error(`[squadrant] denied AI attribution trailer: ${attr.reason}`);
+          denyPreToolUse(attr.reason);
+        }
       }
 
       const taskId = process.env.SQUADRANT_CREW_TASK_ID;

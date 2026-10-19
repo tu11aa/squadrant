@@ -326,6 +326,58 @@ export function decideCaptainMemoryWrite(
   return { decision: "deny", reason: DENY_REASON };
 }
 
+// #1007: Claude Code's `attribution` setting only stops the HARNESS adding a
+// co-author trailer; the model also hand-writes one into `git commit -m` text.
+// When the operator disabled attribution, deny such a command so the agent
+// retries without it.
+const ATTRIBUTION_COMMAND_RE = /\bgit\b[^\n|;&]*?\s(?:commit|merge|rebase)\b|\bgh\s+pr\s+(?:create|edit|merge)\b/;
+// A trailer is only "written" where one can start: line start, right after the
+// opening quote of an -m/--message/--body/--subject value, or after a literal
+// \n escape. A pattern inside sed/grep/awk (preceded by `/`, `-v '`, `^`, ...)
+// is the operator REMOVING the trailer and must pass.
+const TRAILER_START = String.raw`(?:^|\\n|(?:-m|--message|--body|--subject)[=\s]*["'])[ \t]*`;
+const AI_CO_AUTHOR_RE = new RegExp(`${TRAILER_START}(co-authored-by:.*(?:claude|anthropic|noreply@anthropic\\.com|codex|openai|gemini|opencode).*)$`, "im");
+const GENERATED_WITH_RE = new RegExp(`${TRAILER_START}(?:[^\\w\\s]+[ \\t]*)?(generated with.*claude code.*)$`, "im");
+
+/**
+ * Pure: deny a Bash command that commits / opens a PR carrying an AI co-author
+ * or "Generated with Claude Code" line, when `attributionDisabled`. Human
+ * `Co-Authored-By:` lines are allowed.
+ */
+export function decideAttributionTrailer(
+  toolName: string,
+  toolInput: unknown,
+  attributionDisabled: boolean,
+): MemoryWriteGuardResult {
+  if (!attributionDisabled || toolName !== "Bash") return { decision: "allow" };
+  const command = (toolInput as { command?: unknown } | null | undefined)?.command;
+  if (typeof command !== "string" || !ATTRIBUTION_COMMAND_RE.test(command)) return { decision: "allow" };
+  const hit = AI_CO_AUTHOR_RE.exec(command) ?? GENERATED_WITH_RE.exec(command);
+  if (!hit) return { decision: "allow" };
+  const line = hit[1].trim().replace(/^["'\s]+|["'\s]+$/g, "");
+  return {
+    decision: "deny",
+    reason: `The operator disabled commit/PR attribution. Remove this line from the commit/PR text and retry: "${line}" (#1007).`,
+  };
+}
+
+/**
+ * True when ~/.claude/settings.json disables attribution:
+ * `attribution.commit === ""` or legacy `includeCoAuthoredBy === false`.
+ * Fails open (false) on a missing/unreadable/malformed file.
+ */
+export function readAttributionDisabled(homeDir: string): boolean {
+  try {
+    const s = JSON.parse(readFileSync(join(homeDir, ".claude", "settings.json"), "utf8")) as {
+      attribution?: { commit?: unknown };
+      includeCoAuthoredBy?: unknown;
+    };
+    return s.attribution?.commit === "" || s.includeCoAuthoredBy === false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Pure: resolve the real per-turn correlation id. Stop/PermissionRequest/
  * Notification payloads all carry prompt_id (a UUID that matches across

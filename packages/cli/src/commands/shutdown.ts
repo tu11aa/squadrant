@@ -35,8 +35,8 @@ async function closeMatching(
       await runtime.stop(ws.id);
       console.log(chalk.green(`  ✔ Closed: ${ws.name}`));
       closed.push(ws.name);
-    } catch {
-      console.log(chalk.red(`  ✘ Failed to close: ${ws.name}`));
+    } catch (e) {
+      console.log(chalk.red(`  ✘ Failed to close: ${ws.name} — ${(e as Error).message}`));
       failed.push(ws.name);
     }
   }
@@ -89,8 +89,8 @@ export const shutdownCommand = new Command("shutdown")
         try {
           await globalRuntime.stop(ws.id);
           console.log(chalk.green(`  ✔ Closed: ${ws.name}`));
-        } catch {
-          console.log(chalk.red(`  ✘ Failed to close: ${ws.name}`));
+        } catch (e) {
+          console.log(chalk.red(`  ✘ Failed to close: ${ws.name} — ${(e as Error).message}`));
         }
       }
       console.log("");

@@ -3,10 +3,29 @@
 // unit-tested without spawning real processes.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { ThinkingLevel } from "@squadrant/shared";
 import type { Role } from "./types.js";
 import type { CapabilityRegistry } from "./registry.js";
+
+/**
+ * #999: whether `claude -c` has a conversation to continue in `cwd`. Claude keeps
+ * transcripts at <projectsRoot>/<cwd, every non-alphanumeric → "-">/<id>.jsonl
+ * (same encoding as deriveTranscriptPath); `-c` exits "No conversation found to
+ * continue" when that directory holds none.
+ */
+export function hasClaudeSession(
+  cwd: string,
+  projectsRoot = path.join(os.homedir(), ".claude", "projects"),
+): boolean {
+  try {
+    return fs.readdirSync(path.join(projectsRoot, cwd.replace(/[^a-zA-Z0-9]/g, "-")))
+      .some((f) => f.endsWith(".jsonl"));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Build the shell command string that launches an agent session for a given

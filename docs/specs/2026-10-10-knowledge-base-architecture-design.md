@@ -78,7 +78,8 @@ _user  (profile)                    ← every session, every project
     sources.yaml  errata.yaml  raw/  .converted/   # rules spec §3, now under the KB root; errata.yaml: lifecycle spec §4
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
-    REPORT.md                           # latest reconcile + scores, per KB
+    REPORT.md                           # latest reconcile + scores, per KB; committed by `reconcile --finish`
+    scores.json  escalations.json       # derived scores + open review state; git-ignored, never committed (#1002)
   # each {domain}/ may contain _proposed/ and _archive/
 
 <project repo>/docs/{decisions,wiki,rules}/   # home = repo:docs (open-source projects)
@@ -88,7 +89,6 @@ _user  (profile)                    ← every session, every project
 
 ~/.local/state/squadrant/
   audit/YYYY-MM.<machine-id>.jsonl      # append-only, daemon-written
-  scores.json                           # derived from audit
   <project>/ inbox/ _results/ … sessions.json   # daemon state, moved from ~/.config/squadrant/state (#983 6a; there is no daemon.db)
   logs/squadrantd.log                   # moved from ~/.config/squadrant
 
@@ -277,6 +277,14 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 - #898's code-vs-doc rulings are stored as the `decision` block on the rule, as the 2026-10-09 operator comment specifies. Phase 3 (Decisions) migrates them into Decision records, and the rule keeps a `decidedBy` link.
 
 **Path moves.** One version reads both old and new paths; `squadrant migrate kb` moves files and prints a report; nothing is deleted, only archived.
+
+**References still resolve after a move (#998).** Every path move also sweeps the files that cite the moved paths:
+- agent native memory, per agent (today only Claude's `~/.claude/projects/*/memory`)
+- live workspace handoffs and side-handoffs, plus the newest archived handoff (the checkpoint `handoff facts` reads)
+- KB repos: rules, decisions, `errata.yaml`, `sources.yaml`, including `file:` citations
+- each registered project's `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`
+
+A dry run lists each hit as `file:line old -> new`. A real run backs each file up under `~/squadrant/archive/<date>/ref-sweep/` before rewriting it, and commits the rewrites in each KB git repo (never pushed; files with pending operator edits are left out). Older archived handoffs and KB `raw/` sources are never rewritten. When a rewritten Claude memory note backs a `_user` trait, its source hash is refreshed so the profile bridge raises no false update (profile spec §6). `squadrant migrate path <from> <to>` does the same move and sweep for dirs the operator made, and `squadrant doctor` warns about cited home paths that no longer exist. See reference.md "Reference sweep".
 
 | From | To |
 |---|---|

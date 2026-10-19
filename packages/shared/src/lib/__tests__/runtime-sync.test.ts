@@ -151,6 +151,9 @@ describe("ensureRuntimeSynced", () => {
     write(path.join(sourceRoot, "plugin", "skills", "karpathy-principles", "SKILL.md"), "karpathy");
     write(path.join(sourceRoot, "plugin", "skills", "takeover", "SKILL.md"), "takeover content");
     write(path.join(sourceRoot, "plugin", "skills", "handback", "SKILL.md"), "handback content");
+    for (const skill of ["rules-ops", "knowledge-review", "knowledge-extract"]) {
+      write(path.join(sourceRoot, "plugin", "skills", skill, "SKILL.md"), skill);
+    }
     write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"squadrant"}');
     // templates: flat target sourced from templates/, filtered by extension
     write(path.join(sourceRoot, "templates", "captain.claude.md"), "tmpl");
@@ -268,5 +271,32 @@ describe("ensureRuntimeSynced", () => {
     ensureRuntimeSynced({ sourceRoot, runtimeRoot });
 
     expect(fs.existsSync(path.join(runtimeRoot, "plugin-crew", "skills", "stale-skill"))).toBe(false);
+  });
+});
+
+// #1002: a crew told to use a skill outside the plugin-crew subset can't load it.
+describe("CREW_SKILLS covers every skill a crew is told to use", () => {
+  const repo = path.resolve(__dirname, "../../../../..");
+  const known = new Set(fs.readdirSync(path.join(repo, "plugin", "skills")));
+  // Sources whose skill mentions are instructions to a crew.
+  const crewFacing = [
+    "templates/crew.claude.md",
+    "templates/crew.generic.md",
+    "templates/crew.opencode.md",
+    "packages/core/src/knowledge/schedule.ts", // reconcile-due: "Spawn a crew with the knowledge-review skill"
+    ...CREW_SKILLS.map((s) => `plugin/skills/${s}/SKILL.md`), // a crew skill pointing at another skill
+  ];
+  // "the knowledge-review skill", "`squadrant:rules-ops` skill", "plugin/skills/karpathy-principles/SKILL.md"
+  const SKILL_RE = /`?(?:squadrant:)?([a-z][a-z0-9-]+)`?\s+skill\b|skills\/([a-z][a-z0-9-]+)\/SKILL\.md/g;
+
+  it.each(crewFacing)("%s", (rel) => {
+    const text = fs.readFileSync(path.join(repo, rel), "utf-8");
+    const named = [...text.matchAll(SKILL_RE)].map((m) => m[1] ?? m[2]).filter((n) => known.has(n));
+    expect(named.filter((n) => !CREW_SKILLS.includes(n))).toEqual([]);
+  });
+
+  it("finds the known crew-facing mentions (the regex still matches)", () => {
+    const text = fs.readFileSync(path.join(repo, "packages/core/src/knowledge/schedule.ts"), "utf-8");
+    expect([...text.matchAll(SKILL_RE)].map((m) => m[1] ?? m[2])).toContain("knowledge-review");
   });
 });
