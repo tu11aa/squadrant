@@ -36,7 +36,7 @@ describe("ref-sweep (#998)", () => {
       "env $HOME/a/work/z.md.",
       '{"p": "~/a/work/q.json"}',
     ].join("\n"));
-    const hits = sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b", "art")]]), site(mem), { dryRun: true, home });
+    const { hits } = sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b", "art")]]), site(mem), { dryRun: true, home });
     expect(hits.map((h) => [h.line, h.old, h.new])).toEqual([
       [1, "~/a/work", "~/b/art"],
       [2, `${home}/a/work/x.md`, `${home}/b/art/x.md`],
@@ -56,13 +56,13 @@ describe("ref-sweep (#998)", () => {
       `/other${home}/a/work`,
       "~~/a/work",
     ].join("\n"));
-    expect(sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b")]]), site(mem), { dryRun: true, home })).toEqual([]);
+    expect(sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b")]]), site(mem), { dryRun: true, home }).hits).toEqual([]);
   });
 
   it("apply mode backs the original up under archiveRoot()/<date>/ref-sweep/<path from home> before rewriting", () => {
     const body = "cite ~/a/work/x.md and ~/a/workshop\n";
     const mem = put(".claude/projects/p/memory/a.md", body);
-    const hits = sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b")]]), site(mem), { home, today: "2026-10-19" });
+    const { hits } = sweepRefs(new Map([[path.join(home, "a", "work"), path.join(home, "b")]]), site(mem), { home, today: "2026-10-19" });
     expect(hits).toMatchObject([{ action: "rewritten", old: "~/a/work/x.md", new: "~/b/x.md" }]);
     expect(fs.readFileSync(mem, "utf8")).toBe("cite ~/b/x.md and ~/a/workshop\n");
     const backup = path.join(archive, "2026-10-19", "ref-sweep", ".claude/projects/p/memory/a.md");
@@ -82,7 +82,7 @@ describe("ref-sweep (#998)", () => {
       { from: path.join(home, "a", "work"), to: path.join(home, "b"), action: "moved" },
       { from: path.join(home, "a", "work", "kept.md"), to: path.join(home, "b", "kept.md"), action: "skipped" },
     ]);
-    const hits = sweepRefs(map, [{ site: "workspace-archive", files: [archived], readOnly: true }, { site: "workspace", files: [live] }], { home });
+    const { hits } = sweepRefs(map, [{ site: "workspace-archive", files: [archived], readOnly: true }, { site: "workspace", files: [live] }], { home });
     expect(hits.map((h) => [h.site, h.action, h.old])).toEqual([
       ["workspace-archive", "report-only", "~/a/work/1.md"],
       ["workspace", "rewritten", "~/a/work/1.md"],

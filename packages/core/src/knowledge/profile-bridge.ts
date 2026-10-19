@@ -1,5 +1,7 @@
 // packages/core/src/knowledge/profile-bridge.ts — native Claude memory → profile proposals (#982 S1, spec §6).
-// One-way and read-only on the native side: squadrant never writes ~/.claude/projects/**.
+// One-way and read-only on the native side: the bridge never writes ~/.claude/projects/**. The one exception
+// is the operator-run `squadrant migrate` reference sweep (#998), which rewrites moved paths in native memory
+// and refreshes the matching `#hash` in `_user` sources with nativeNoteHash, so the bridge sees no change.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +48,16 @@ interface NativeItem { dir: string; file: string; name: string; description: str
 
 const normalize = (s: string) => s.replace(/\r\n/g, "\n").split("\n").map((l) => l.trimEnd()).join("\n").trim();
 
+// Hash only what the operator wrote: metadata.modified / originSessionId churn must not re-propose.
+const noteHash = (description: string, body: string) => sha12(`${description}\n${body}`);
+
+/** The `#hash12` of a native memory note's text, as the bridge records it. Null without frontmatter. */
+export function nativeNoteHash(text: string): string | null {
+  const parsed = splitFrontmatter(text);
+  if (!parsed) return null;
+  return noteHash(typeof parsed.fm.description === "string" ? normalize(parsed.fm.description) : "", normalize(parsed.body));
+}
+
 /** `user`/`feedback` memories in the allowlisted dirs. `type` is top-level or `metadata.type`; MEMORY.md is the index. */
 function scanNative(cfg: SquadrantConfig, env: NodeJS.ProcessEnv, home: string): NativeItem[] {
   const root = nativeMemoryRoot(env);
@@ -63,9 +75,8 @@ function scanNative(cfg: SquadrantConfig, env: NodeJS.ProcessEnv, home: string):
       if (typeof type !== "string" || !BRIDGED_TYPES.has(type)) continue;
       const description = typeof parsed.fm.description === "string" ? normalize(parsed.fm.description) : "";
       const body = normalize(parsed.body);
-      // Hash only what the operator wrote: metadata.modified / originSessionId churn must not re-propose.
       const ref = `memory:${dir}/${file}`;
-      items.push({ dir, file, name: file.slice(0, -3), description, body, ref, source: `${ref}#${sha12(`${description}\n${body}`)}` });
+      items.push({ dir, file, name: file.slice(0, -3), description, body, ref, source: `${ref}#${noteHash(description, body)}` });
     }
   }
   return items;

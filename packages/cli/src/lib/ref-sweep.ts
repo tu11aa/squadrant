@@ -8,7 +8,8 @@ import path from "node:path";
 import {
   archiveRoot, kbConfigs, kbPath, resolveHome, userKbDir, workspaceRoot, DEFAULT_KB_ROOT, type SquadrantConfig,
 } from "@squadrant/shared";
-import { nativeMemoryRoot } from "@squadrant/core";
+import { gitRun, nativeMemoryRoot, nativeNoteHash, readDropped, DROPPED_FILE, PROFILE_DIR } from "@squadrant/core";
+import { readNewestArchivedHandoff } from "./handoff-archive.js";
 
 /** Absolute old path -> absolute new path. A path mapped to itself is pinned: it stayed (a `skipped` file). */
 export type PathMap = Map<string, string>;
@@ -18,6 +19,8 @@ export interface RefSite {
   files: string[];
   /** Reported, never rewritten (archived handoffs are a record of what was true then). */
   readOnly?: boolean;
+  /** Keep the file's mtime on rewrite: `handoff facts` dates its checkpoint by it. */
+  keepMtime?: boolean;
 }
 
 export interface RefHit {
@@ -28,6 +31,10 @@ export interface RefHit {
   new: string;
   action: "would-rewrite" | "rewritten" | "report-only";
 }
+
+/** A file the sweep changes (or would): its text before and after, and the backup of a real run. */
+export interface SweptFile { site: string; file: string; before: string; after: string; backup?: string }
+export interface SweepResult { hits: RefHit[]; files: SweptFile[] }
 
 export interface DanglingRef { site: string; file: string; line: number; ref: string }
 
@@ -70,15 +77,22 @@ function archivedHandoffs(dir: string): string[] {
 
 const isFile = (f: string) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
 
+const kbRoot = (home: string) => path.join(home, DEFAULT_KB_ROOT.replace(/^~\//, ""));
+/** Each KB repo: the dirs under ~/squadrant/kb, the `_user` KB and every configured KB path. */
+const kbRepos = (cfg: SquadrantConfig, home: string) =>
+  [...new Set([...subdirs(kbRoot(home)), userKbDir(cfg), ...Object.keys(kbConfigs(cfg)).map((kb) => kbPath(cfg, kb))])];
+
 /** The files to scan, by site. A file reachable twice (nested KB roots, CLAUDE.md -> AGENTS.md symlink) is listed once. */
 export function refSites(cfg: SquadrantConfig, home = os.homedir()): RefSite[] {
   const projects = subdirs(workspaceRoot());
-  const kbRoots = [path.join(home, DEFAULT_KB_ROOT.replace(/^~\//, "")), userKbDir(cfg), ...Object.keys(kbConfigs(cfg)).map((kb) => kbPath(cfg, kb))];
+  // the newest archived handoff is the live checkpoint `handoff facts` reads; older ones are history
+  const checkpoints = projects.flatMap((p) => readNewestArchivedHandoff(p, Date.now())?.path ?? []);
   const sites: RefSite[] = [
     ...Object.entries(AGENT_MEMORY_DIRS).map(([agent, dirs]) => ({ site: `memory:${agent}`, files: dirs().flatMap(textFiles) })),
     { site: "workspace", files: projects.flatMap((p) => [path.join(p, "handoff.json"), ...textFiles(path.join(p, "side-handoffs"))]).filter(isFile) },
-    { site: "workspace-archive", readOnly: true, files: projects.flatMap((p) => archivedHandoffs(path.join(p, "handoffs"))) },
-    { site: "kb", files: kbRoots.flatMap(textFiles) },
+    { site: "workspace-checkpoint", keepMtime: true, files: checkpoints },
+    { site: "workspace-archive", readOnly: true, files: projects.flatMap((p) => archivedHandoffs(path.join(p, "handoffs"))).filter((f) => !checkpoints.includes(f)) },
+    { site: "kb", files: [kbRoot(home), ...kbRepos(cfg, home)].flatMap(textFiles) },
     { site: "project", files: Object.values(cfg.projects ?? {}).flatMap((pc) => INSTRUCTION_FILES.map((f) => path.join(resolveHome(pc.path), f))).filter(isFile) },
   ];
   const seen = new Set<string>();
@@ -117,39 +131,55 @@ function forms(p: string, home: string): [Form, string][] {
 /** `to` written the way the old path was (`~` stays `~` when `to` is under home). */
 const render = (form: Form, to: string, home: string) => (form !== "abs" && under(to, home) ? form + to.slice(home.length) : to);
 
+interface ApplyCtx { dryRun?: boolean; home: string; backupDir: string }
+
+/** One file, line by line: `edit` reports each change through `hit`. Read-only sites and dry runs only report. */
+function rewriteFile(
+  s: RefSite, file: string, edit: (line: string, hit: (old: string, next: string) => void) => string, c: ApplyCtx, out: SweepResult,
+): void {
+  const before = fs.readFileSync(file, "utf8");
+  const action = s.readOnly ? "report-only" : c.dryRun ? "would-rewrite" : "rewritten";
+  const fileHits: RefHit[] = [];
+  const after = before.split("\n").map((line, i) => edit(line, (old, next) => fileHits.push({ site: s.site, file, line: i + 1, old, new: next, action }))).join("\n");
+  if (!fileHits.length) return;
+  out.hits.push(...fileHits);
+  if (s.readOnly) return;
+  const swept: SweptFile = { site: s.site, file, before, after };
+  out.files.push(swept);
+  if (c.dryRun) return;
+  const { atime, mtime } = fs.statSync(file);
+  swept.backup = backup(file, c.backupDir, c.home);
+  fs.writeFileSync(file, after);
+  if (s.keepMtime) fs.utimesSync(file, atime, mtime);
+}
+
 /** Find (dry-run, read-only sites) or rewrite every reference to an old path. Rewritten files are backed up first. */
-export function sweepRefs(map: PathMap, sites: RefSite[], opts: { dryRun?: boolean; home?: string; today?: string } = {}): RefHit[] {
-  if (![...map].some(([from, to]) => path.resolve(from) !== path.resolve(to))) return [];
+export function sweepRefs(map: PathMap, sites: RefSite[], opts: { dryRun?: boolean; home?: string; today?: string } = {}): SweepResult {
+  const out: SweepResult = { hits: [], files: [] };
+  if (![...map].some(([from, to]) => path.resolve(from) !== path.resolve(to))) return out;
   const home = opts.home ?? os.homedir();
   const lookup = new Map<string, { form: Form; to: string }>();
   for (const [from, to] of map) for (const [form, text] of forms(path.resolve(from), home)) lookup.set(text, { form, to: path.resolve(to) });
   // longest first, so a pinned sub-path wins over its moved parent
   const alts = [...lookup.keys()].sort((a, b) => b.length - a.length).map(esc).join("|");
   const re = new RegExp(`${LEFT}(${alts})${RIGHT}${TAIL}`, "g");
-  const day = opts.today ?? new Date().toISOString().slice(0, 10);
-
-  const hits: RefHit[] = [];
+  const c = { dryRun: opts.dryRun, home, backupDir: backupDir(opts.today) };
   for (const s of sites) {
     for (const file of s.files) {
-      const text = fs.readFileSync(file, "utf8");
-      const fileHits: RefHit[] = [];
-      const action = s.readOnly ? "report-only" : opts.dryRun ? "would-rewrite" : "rewritten";
-      const out = text.split("\n").map((line, i) => line.replace(re, (match, head: string, tail: string) => {
+      rewriteFile(s, file, (line, hit) => line.replace(re, (match, head: string, tail: string) => {
         const { form, to } = lookup.get(head)!;
         const next = render(form, to, home) + tail;
         if (next === match) return match;
         const [sub] = splitTrail(tail);
-        fileHits.push({ site: s.site, file, line: i + 1, old: head + sub, new: render(form, to, home) + sub, action });
+        hit(head + sub, render(form, to, home) + sub);
         return next;
-      })).join("\n");
-      hits.push(...fileHits);
-      if (!fileHits.length || action !== "rewritten") continue;
-      backup(file, path.join(archiveRoot(), day, "ref-sweep"), home);
-      fs.writeFileSync(file, out);
+      }), c, out);
     }
   }
-  return hits;
+  return out;
 }
+
+const backupDir = (today?: string) => path.join(archiveRoot(), today ?? new Date().toISOString().slice(0, 10), "ref-sweep");
 
 /** Copy the original to <dir>/<path relative to home>; never overwrites an earlier backup (`.1`, `.2`, …). */
 function backup(file: string, dir: string, home: string): string {
@@ -159,6 +189,104 @@ function backup(file: string, dir: string, home: string): string {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(file, dest);
   return dest;
+}
+
+/**
+ * A rewritten Claude memory note gets a new bridge hash, and the bridge would then propose an update
+ * identical to the trait. So every `_user` source `memory:<dir>/<file>#<old>` whose old hash matched the note
+ * before the rewrite gets the new hash (traits, proposals, archive and `_dropped.yaml`). A note edited since it
+ * was bridged keeps its stale hash, so its real update is still proposed.
+ */
+function refreshProfileHashes(swept: SweptFile[], profileRoot: string, c: ApplyCtx, out: SweepResult): void {
+  const subs = new Map<string, string>(); // `memory:<dir>/<file>#<old>` -> new hash
+  for (const f of swept) {
+    const rel = path.relative(nativeMemoryRoot(), f.file).split(path.sep);
+    if (f.site !== "memory:claude" || rel.length !== 3 || rel[1] !== "memory") continue;
+    const [was, now] = [nativeNoteHash(f.before), nativeNoteHash(f.after)];
+    if (was && now && was !== now) subs.set(`memory:${rel[0]}/${rel[2]}#${was}`, now);
+  }
+  if (!subs.size) return;
+  const dir = path.join(profileRoot, PROFILE_DIR);
+  const tokens = new RegExp(`(${[...subs.keys()].map(esc).join("|")})(?![0-9a-f])`, "g");
+  // `_dropped.yaml` keeps source and hash apart: map the old hashes of matching entries
+  const dropped = new Map(readDropped(profileRoot).flatMap((d) => {
+    const now = subs.get(`${d.source}#${d.hash}`);
+    return now ? [[d.hash, now] as const] : [];
+  }));
+  const droppedRe = dropped.size ? new RegExp(`\\b(${[...dropped.keys()].join("|")})\\b`, "g") : null;
+  for (const file of textFiles(dir)) {
+    const isDropped = file === path.join(dir, DROPPED_FILE);
+    rewriteFile({ site: "profile", files: [] }, file, (line, hit) => {
+      if (isDropped) return droppedRe ? line.replace(droppedRe, (old) => { hit(old, dropped.get(old)!); return dropped.get(old)!; }) : line;
+      return line.replace(tokens, (token) => {
+        const next = token.replace(/#[0-9a-f]{12}$/, `#${subs.get(token)}`);
+        hit(token, next);
+        return next;
+      });
+    }, c, out);
+  }
+}
+
+/**
+ * Commit the rewritten files of each KB git repo (never push). A file that was untracked, gitignored
+ * (`_proposed/`) or already differed from HEAD before the sweep is left uncommitted and named in a note,
+ * so the operator's own pending edits never land in a ref-sweep commit.
+ */
+function commitKbRewrites(swept: SweptFile[], repos: string[], message: string): string[] {
+  const originals = new Map<string, Map<string, string>>(); // repo -> file -> content before the sweep
+  for (const f of swept) {
+    const repo = repos.filter((r) => under(f.file, r)).sort((a, b) => b.length - a.length)[0];
+    if (!repo || !f.backup) continue;
+    const files = originals.get(repo) ?? new Map<string, string>();
+    if (!files.has(f.file)) files.set(f.file, f.before);
+    originals.set(repo, files);
+  }
+  const notes: string[] = [];
+  for (const [repo, files] of originals) {
+    const rels = [...files.keys()].map((f) => path.relative(repo, f));
+    let ignored = new Set<string>();
+    try { ignored = new Set(gitRun(repo, ["check-ignore", "--", ...rels]).split("\n").filter(Boolean)); } catch { /* exit 1: none ignored */ }
+    const clean: string[] = [];
+    const left: string[] = [];
+    for (const [file, before] of files) {
+      const rel = path.relative(repo, file);
+      if (ignored.has(rel)) continue;
+      let head: string | null = null;
+      try { head = gitRun(repo, ["show", `HEAD:${rel}`]); } catch { /* untracked */ }
+      (head === before ? clean : left).push(rel);
+    }
+    if (clean.length) {
+      try {
+        gitRun(repo, ["add", "--", ...clean]);
+        gitRun(repo, ["commit", "-q", "--only", "-m", message, "--", ...clean]);
+        notes.push(`committed ${clean.length} file(s) in ${repo}: ${message}`);
+      } catch (err) {
+        notes.push(`commit failed in ${repo} (${String((err as Error).message).split("\n")[0]}); the rewrites are kept: ${clean.join(", ")}`);
+      }
+    }
+    if (left.length) notes.push(`not committed in ${repo} (untracked, or it had uncommitted edits before the sweep): ${left.join(", ")}`);
+  }
+  return notes;
+}
+
+/**
+ * What a `migrate` run does after its moves: sweep the references, refresh `_user` hashes of rewritten Claude
+ * memory notes, then (real run only) commit the rewrites in each KB git repo. Returns the hits and report notes.
+ */
+export function sweepMoves(
+  cfg: SquadrantConfig, map: PathMap, opts: { dryRun?: boolean; home?: string; today?: string } = {},
+): { refs: RefHit[]; notes: string[] } {
+  const home = opts.home ?? os.homedir();
+  const out = sweepRefs(map, refSites(cfg, home), opts);
+  if (out.files.some((f) => f.site === "memory:claude")) {
+    refreshProfileHashes(out.files, userKbDir(cfg), { dryRun: opts.dryRun, home, backupDir: backupDir(opts.today) }, out);
+  }
+  if (opts.dryRun || !out.files.length) return { refs: out.hits, notes: [] };
+  const moved = [...map].filter(([from, to]) => from !== to);
+  const tilde = (p: string) => (under(p, home) ? `~${p.slice(home.length)}` : p);
+  const label = moved.length === 1 ? `${tilde(moved[0][0])} -> ${tilde(moved[0][1])}` : `${moved.length} path moves`;
+  const repos = kbRepos(cfg, home).filter((r) => fs.existsSync(path.join(r, ".git")));
+  return { refs: out.hits, notes: commitKbRewrites(out.files, repos, `ref-sweep: ${label} (#998)`) };
 }
 
 /** The path map for a `migrate` report: moved/archived/copied rows map old -> new, `skipped` rows pin the path that stayed. */

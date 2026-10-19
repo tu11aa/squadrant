@@ -30,7 +30,10 @@ describe("doctor dangling path references (#998)", () => {
       "glob ~/saitex/kb/*.md and placeholder ~/squadrant/workspace/<p>/handoff.json and ~/x/{a,b}",
     ].join("\n"));
     put("squadrant/kb/saitex/shared/decisions/d1.md", "sources: [file:~/saitex/kb/extracted/gone.md]\n");
-    put("squadrant/workspace/flooros/handoffs/2026-10-01.json", '{"old": "~/gone/archived-only"}'); // archived: ignored
+    // archived history is ignored; the newest archived handoff is the live checkpoint and is checked
+    put("squadrant/workspace/flooros/handoffs/2026-10-01.json", '{"old": "~/gone/archived-only"}');
+    put("squadrant/workspace/flooros/handoffs/2026-10-19.json", '{"next": "~/saitex/kb/archive/extracted-2026-10-13/pr-rules.md"}');
+    fs.utimesSync(h("squadrant/workspace/flooros/handoffs/2026-10-01.json"), new Date("2026-10-01"), new Date("2026-10-01"));
     cfg = { projects: {}, knowledgeBases: { saitex: { path: h("squadrant/kb/saitex") } } } as unknown as SquadrantConfig;
   });
 

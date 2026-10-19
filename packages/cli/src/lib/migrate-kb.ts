@@ -10,10 +10,10 @@ import {
   resolveHome, workspacePath, archiveRoot, legacyStateDir, stateRoot, stateSeedMarkerPath, type SquadrantConfig,
 } from "@squadrant/shared";
 import { moveLegacyKbs, moveLegacyOverlays, loadedDaemonLogPath, LABEL, type KbMoveEntry } from "@squadrant/core";
-import { moveMap, refSites, sweepRefs, type RefHit } from "./ref-sweep.js";
+import { moveMap, sweepMoves, type RefHit } from "./ref-sweep.js";
 
 export interface MigrateKbEntry extends Omit<KbMoveEntry, "action"> {
-  action: KbMoveEntry["action"] | "would-archive" | "archived";
+  action: KbMoveEntry["action"] | "would-archive" | "archived" | "would-prune" | "pruned";
 }
 
 export interface MigrateKbOpts {
@@ -181,25 +181,53 @@ export function migrateKb(cfg: SquadrantConfig, opts: MigrateKbOpts = {}): Migra
 }
 
 /**
+ * Dirs under `dir` (and `dir`) left empty once their files moved, removed bottom-up with rmdir, which
+ * never removes a file. A dry run counts the dirs that would empty: every regular file moves except `staying`.
+ */
+function pruneEmptyDirs(dir: string, dryRun: boolean, staying: Set<string>): { count: number; empty: boolean } {
+  let count = 0;
+  let empty = true;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const sub = pruneEmptyDirs(full, dryRun, staying);
+      count += sub.count;
+      empty &&= sub.empty;
+    } else if (!dryRun || !e.isFile() || staying.has(full)) empty = false;
+  }
+  if (empty) {
+    if (!dryRun) fs.rmdirSync(dir);
+    count++;
+  }
+  return { count, empty };
+}
+
+/**
  * #998 `squadrant migrate path <from> <to>`: move an operator-made file or dir with the same rules
- * (merged file by file, never overwrites, `skipped` rows), then sweep every reference to it. With
- * <from> already gone and <to> present, only the references are rewritten.
+ * (merged file by file, never overwrites, `skipped` rows), prune the empty dirs it leaves, then sweep every
+ * reference to it. With <from> already gone and <to> present, only the references are rewritten.
  */
 export function migratePath(
   cfg: SquadrantConfig, fromArg: string, toArg: string, opts: { dryRun?: boolean; home?: string; today?: string } = {},
-): { rows: MigrateKbEntry[]; refs: RefHit[] } {
+): { rows: MigrateKbEntry[]; refs: RefHit[]; notes: string[] } {
   const from = path.resolve(resolveHome(fromArg));
   const to = path.resolve(resolveHome(toArg));
   if (from === to || to.startsWith(from + path.sep)) throw new Error(`${to} is ${from} or inside it`);
   const dryRun = !!opts.dryRun;
   let rows: MigrateKbEntry[] = [];
   if (fs.existsSync(from)) {
-    rows = fs.statSync(from).isDirectory() ? transferDir("path", from, to, false, dryRun) : transferFile("path", from, to, false, dryRun);
+    const isDir = fs.statSync(from).isDirectory();
+    rows = isDir ? transferDir("path", from, to, false, dryRun) : transferFile("path", from, to, false, dryRun);
+    if (isDir) {
+      const staying = new Set(rows.filter((r) => r.action === "skipped").map((r) => r.from));
+      const { count } = pruneEmptyDirs(from, dryRun, staying);
+      if (count) rows.push({ kb: "path", from, to: "", action: dryRun ? "would-prune" : "pruned", note: `${count} empty dir${count === 1 ? "" : "s"}; files are never removed` });
+    }
   } else if (!fs.existsSync(to)) {
     throw new Error(`neither ${from} nor ${to} exists`);
   }
   const map = moveMap(rows);
   // every file skipped: nothing moved, so references to <from> still resolve
   if (!map.has(from) && !(rows.length && rows.every((r) => r.action === "skipped"))) map.set(from, to);
-  return { rows, refs: sweepRefs(map, refSites(cfg, opts.home), opts) };
+  return { rows, ...sweepMoves(cfg, map, opts) };
 }
