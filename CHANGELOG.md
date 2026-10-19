@@ -24,7 +24,7 @@ Path moves keep their references. `squadrant migrate` now rewrites every file th
 
   The original of every rewritten file is copied to `~/squadrant/archive/<date>/ref-sweep/` first. Rewrites in KB git repos are committed locally (never pushed). Profile source hashes and `_dropped.yaml` follow the rewrite, so the native-memory bridge doesn't queue spurious update proposals (#998).
 - **`squadrant doctor` dangling-reference check.** It is read-only, prints up to 5 entries per place (`-v` lists all), and ignores glob, placeholder and temp paths (#998).
-- **Attribution trailer guard.** When `~/.claude/settings.json` disables attribution (`attribution.commit: ""` or `includeCoAuthoredBy: false`), the squadrant `PreToolUse` hook denies `git commit|merge|rebase` and `gh pr create|edit|merge` commands that write an AI `Co-Authored-By:` or `Generated with Claude Code` line. The model used to hand-write these despite the setting. Commands that remove such lines (`sed`/`grep -v` in a rebase) and human co-authors still pass. It applies to captains and crews, and the crew templates carry the same rule for non-Claude crews (#1004).
+- **Attribution trailer guard.** When `~/.claude/settings.json` disables attribution (`attribution.commit: ""` or `includeCoAuthoredBy: false`), the squadrant `PreToolUse` hook denies `git commit|merge|rebase` and `gh pr create|edit|merge` commands that write an AI `Co-Authored-By:` or `Generated with Claude Code` line. The model used to hand-write these despite the setting. Commands that remove such lines (`sed`/`grep -v` in a rebase) and human co-authors still pass. It applies to captains and crews, and the crew templates carry the same rule for non-Claude crews (#1007).
 
 ### Fixed
 
