@@ -36,11 +36,23 @@ describe("decideAttributionTrailer (#1004)", () => {
   it.each([
     "git commit --amend -m 'x\n\nCo-Authored-By: Claude <noreply@anthropic.com>'",
     "git merge feat -m 'm\n\nCo-Authored-By: Claude <noreply@anthropic.com>'",
-    "git rebase main -x 'true' # Co-Authored-By: Claude",
     "gh pr edit 3 --body 'Co-Authored-By: Claude <noreply@anthropic.com>'",
     "gh pr merge 3 --squash --body 'Co-Authored-By: Claude <noreply@anthropic.com>'",
   ])("denies on %s", (cmd) => {
     expect(bash(cmd).decision).toBe("deny");
+  });
+
+  it.each([
+    `git rebase develop --exec "git commit --amend -m \\"$(git log -1 --format=%B | sed '/^Co-Authored-By: Claude/d')\\""`,
+    `sed -i '/Co-Authored-By: Claude/d' msg.txt && git commit -F msg.txt`,
+    `git commit --amend -m "$(git log -1 --format=%B | grep -v 'Co-Authored-By: Claude')"`,
+    `git log --grep 'Co-Authored-By: Claude'`,
+  ])("allows commands that remove the trailer: %s", (cmd) => {
+    expect(bash(cmd).decision).toBe("allow");
+  });
+
+  it("denies a trailer after a literal \\n escape", () => {
+    expect(bash(`git commit -m "x\\n\\nCo-Authored-By: Claude <noreply@anthropic.com>"`).decision).toBe("deny");
   });
 
   it("allows a human co-author", () => {
