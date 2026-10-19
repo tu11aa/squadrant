@@ -40,7 +40,8 @@ const AGENT_MEMORY_DIRS: Record<string, () => string[]> = {
   claude: () => subdirs(nativeMemoryRoot()).map((d) => path.join(d, "memory")),
 };
 
-const INSTRUCTION_FILES = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+/** AGENTS.md first: it is canonical, and a CLAUDE.md symlinked to it is then listed once, by its real name. */
+const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"];
 /** KB `raw/` holds source documents whose sha rules cite; `.converted/` is a cache. */
 const SKIP_DIRS = new Set([".git", "node_modules", "raw", ".converted"]);
 /** Text files only: a KB's derived `index.json` is regenerated, never edited. */
