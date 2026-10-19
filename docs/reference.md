@@ -545,20 +545,23 @@ Moving a path breaks every file that still cites the old one, such as a captain'
 |---|---|---|
 | `memory:<agent>` | agent native memory: Claude's `~/.claude/projects/*/memory/**` (`SQUADRANT_NATIVE_MEMORY_ROOT` overrides the root). Codex and opencode keep no per-project memory files, so they have no entry. | yes |
 | `workspace` | `workspace/<p>/handoff.json`, `workspace/<p>/side-handoffs/**` | yes |
-| `workspace-archive` | `workspace/<p>/handoffs/*.json` (archived handoffs) | no: `report-only` |
+| `workspace-checkpoint` | the newest `workspace/<p>/handoffs/*.json`: the checkpoint `handoff facts` reads, picked by the same `readNewestArchivedHandoff`. `read-handoff.sh` archives `handoff.json` there, so it is usually the live handoff. Its mtime is kept, because `handoff facts` dates the checkpoint by it. | yes |
+| `workspace-archive` | the older `workspace/<p>/handoffs/*.json` (history) | no: `report-only` |
 | `kb` | `.md`/`.yaml` files in the KB repos under `~/squadrant/kb/` and any configured KB path: rules, decisions, wiki, `errata.yaml`, `sources.yaml`. `.git/`, `raw/` (sha-cited source documents), `.converted/` and the derived `index.json` are skipped. | yes |
 | `project` | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` at the root of each registered project's repo (a symlinked pair counts once) | yes |
 
 - A reference matches in its `~/…`, absolute (`/Users/<you>/…`) and `$HOME/…` forms, also inside `file:` citations, and is rewritten in the same form. Sub-paths follow the move (`~/a/work/x.md` → `~/new/x.md`). Path boundaries hold: `~/a/work` never matches `~/a/workshop` or `~/a/work.md`.
 - A file that was `skipped` (its target already existed) stayed where it was, so references to it are left alone.
 - `--dry-run` changes no bytes and prints `would-rewrite` lines. A real run first copies each file it rewrites to `~/squadrant/archive/<date>/ref-sweep/<path relative to $HOME>`, then prints `rewritten`. An earlier backup from the same day is kept, and the new one gets a `.1` suffix. A second run rewrites nothing.
-- `migrate path` moves `<from>` with the same rules as `migrate kb`: dirs are merged file by file, an existing target file is `skipped`, nothing is deleted, and emptied dirs stay behind. If `<from>` is gone and `<to>` exists, it only rewrites references, which fixes a move made by hand. If both are missing, or `<to>` is inside `<from>`, it exits with an error.
+- **KB git repos.** A real run commits the files it rewrote in each KB repo, one commit per repo with the message `ref-sweep: <from> -> <to> (#998)` (`ref-sweep: N path moves (#998)` for `migrate kb`). It never pushes. It leaves out gitignored files (`_user` proposals, P15) and any file that was untracked or already differed from `HEAD` before the sweep, so your own pending edits never land in a ref-sweep commit. Those are named in a `not committed` note. A dry run commits nothing.
+- **Profile hashes.** A rewritten Claude memory note gets a new bridge hash. So that the profile bridge does not then propose an `.update` identical to the trait, the sweep refreshes `#<hash12>` in the `_user` sources that cite the note (traits, proposals, `_archive/`, `_dropped.yaml`), but only where the cited hash matched the note before the rewrite. Those lines show as `ref profile:` hits. See the profile spec §6.
+- `migrate path` moves `<from>` with the same rules as `migrate kb`: dirs are merged file by file, an existing target file is `skipped`, and no file is ever deleted. Afterwards the dirs left empty under `<from>` (and `<from>` itself, once empty) are removed bottom-up with `rmdir`, which cannot remove a file. That is reported as one `pruned` row (`would-prune` in a dry run). A dir that still holds a `skipped` file stays. If `<from>` is gone and `<to>` exists, it only rewrites references, which fixes a move made by hand. If both are missing, or `<to>` is inside `<from>`, it exits with an error.
 
 ```
 squadrant migrate path ~/saitex/kb/work ~/squadrant/workspace/flooros/artifacts/work --dry-run
 ```
 
-**`squadrant doctor`** runs the read-only side over the same sites, excluding archived handoffs. For each `~/…`, `$HOME/…` or absolute home path that doesn't exist, it warns with `file:line`, once per site and at most 5 entries per site (`squadrant doctor -v` lists all). It ignores paths that contain a glob or placeholder (`*`, `<`, `{`, `...`) and temp or scratchpad paths (a `tmp`, `temp` or `scratchpad` segment).
+**`squadrant doctor`** runs the read-only side over the same sites, excluding archived history (the checkpoint handoff is checked). For each `~/…`, `$HOME/…` or absolute home path that doesn't exist, it warns with `file:line`, once per site and at most 5 entries per site (`squadrant doctor -v` lists all). It ignores paths that contain a glob or placeholder (`*`, `<`, `{`, `...`) and temp or scratchpad paths (a `tmp`, `temp` or `scratchpad` segment).
 
 ### Knowledge System (opt-in writes)
 

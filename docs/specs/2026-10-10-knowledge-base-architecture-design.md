@@ -280,11 +280,11 @@ The existing `knowledge.<kb>` (rules spec) moves under `knowledgeBases.<kb>`, an
 
 **References still resolve after a move (#998).** Every path move also sweeps the files that cite the moved paths:
 - agent native memory, per agent (today only Claude's `~/.claude/projects/*/memory`)
-- live workspace handoffs and side-handoffs
+- live workspace handoffs and side-handoffs, plus the newest archived handoff (the checkpoint `handoff facts` reads)
 - KB repos: rules, decisions, `errata.yaml`, `sources.yaml`, including `file:` citations
 - each registered project's `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`
 
-A dry run lists each hit as `file:line old -> new`. A real run backs each file up under `~/squadrant/archive/<date>/ref-sweep/` before rewriting it. Archived handoffs and KB `raw/` sources are never rewritten. `squadrant migrate path <from> <to>` does the same move and sweep for dirs the operator made, and `squadrant doctor` warns about cited home paths that no longer exist. See reference.md "Reference sweep".
+A dry run lists each hit as `file:line old -> new`. A real run backs each file up under `~/squadrant/archive/<date>/ref-sweep/` before rewriting it, and commits the rewrites in each KB git repo (never pushed; files with pending operator edits are left out). Older archived handoffs and KB `raw/` sources are never rewritten. When a rewritten Claude memory note backs a `_user` trait, its source hash is refreshed so the profile bridge raises no false update (profile spec §6). `squadrant migrate path <from> <to>` does the same move and sweep for dirs the operator made, and `squadrant doctor` warns about cited home paths that no longer exist. See reference.md "Reference sweep".
 
 | From | To |
 |---|---|
