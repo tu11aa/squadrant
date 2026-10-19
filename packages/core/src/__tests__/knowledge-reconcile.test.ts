@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import matter from "gray-matter";
 import { getDefaultConfig, type KnowledgeSourceEntry, type SquadrantConfig } from "@squadrant/shared";
 import {
   acquirePass, applyCandidates, applyDecisions, buildReviewPacket, changedRefs, checkOverrides, completePass, dedupPairs, domainCapExcess,
-  duePass, evaluateCodeConflict, finishReconcile, kbDir, kbRulesDir, loadKbRules, planIngest, proposeAgentRule, readEscalations,
+  duePass, ensureGitRepo, ensureKbGitignore, evaluateCodeConflict, finishReconcile, kbDir, kbRulesDir, loadKbRules, planIngest, proposeAgentRule, readEscalations,
   readSchedule, requestPass, resolveEscalation, tickKnowledgeSchedule, usageReview, writeSchedule, RUNNING_STALE_MS,
   type CandidateFile, type Converter, type GitSeam, type ReviewContext,
 } from "../knowledge/index.js";
@@ -438,5 +439,60 @@ describe("offset re-anchoring when a source changes", () => {
     const target = v1.candidates.find((c) => c.source === ref && c.id === "biz.invoice.issue-window")!;
     const res = applyCandidates({ candidates: [{ ...target, id: "model.picked.other-id" }] }, { kb: "t", kbRoot: kbRoot(), rulesDir: kbRulesDir(cfg, "t") });
     expect(res.idOverrides).toEqual([{ from: "model.picked.other-id", to: "biz.invoice.issue-window" }]);
+  });
+});
+
+describe("the KB repo is clean after --finish (#1002)", () => {
+  const git = (...args: string[]) => execFileSync("git", ["-C", kbRoot(), "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" });
+  beforeEach(() => {
+    // Hermetic git: no operator ~/.gitconfig, hooks or identity.
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    for (const k of ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]) vi.stubEnv(k, "t");
+    for (const k of ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"]) vi.stubEnv(k, "t@t");
+    liveRule("coding.a");
+    ensureGitRepo(kbRoot());
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** The reviewer committed its rule changes; review state (escalations.json) is on disk. */
+  function reviewerCommitted() {
+    fs.writeFileSync(path.join(kbRoot(), "escalations.json"), '{ "items": [] }\n');
+    git("add", "-A");
+    git("commit", "-q", "-m", "rules");
+  }
+
+  it("a new KB: defaults ignore the runtime files and REPORT.md is committed", async () => {
+    ensureKbGitignore(kbRoot());
+    reviewerCommitted();
+    await finishReconcile("t", deps());
+    expect(git("status", "--porcelain")).toBe("");
+    expect(git("log", "-1", "--format=%s")).toBe("knowledge: incremental reconcile report\n");
+    expect(git("ls-files")).toContain("REPORT.md");
+    expect(git("ls-files")).not.toMatch(/scores\.json|escalations\.json/);
+    // A second finish with the same report makes no commit and stays clean.
+    const head = git("rev-parse", "HEAD");
+    await finishReconcile("t", deps());
+    expect(git("status", "--porcelain")).toBe("");
+    expect(git("rev-list", "--count", `${head.trim()}..HEAD`).trim()).toBe("0");
+  });
+
+  it("an existing KB: the missing entries are appended once, operator lines kept", async () => {
+    const operator = "# mine\nraw/\n!raw/keep.md\nnotes.tmp";
+    fs.writeFileSync(path.join(kbRoot(), ".gitignore"), operator);
+    reviewerCommitted();
+    await finishReconcile("t", deps());
+    expect(git("status", "--porcelain")).toBe("");
+    const gi = fs.readFileSync(path.join(kbRoot(), ".gitignore"), "utf8");
+    expect(gi).toBe(`${operator}\n/scores.json\n/escalations.json\n`);
+    await finishReconcile("t", deps());
+    expect(fs.readFileSync(path.join(kbRoot(), ".gitignore"), "utf8")).toBe(gi);
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  it("a KB that is not its own repo is left alone", async () => {
+    fs.rmSync(path.join(kbRoot(), ".git"), { recursive: true });
+    await finishReconcile("t", deps());
+    expect(fs.existsSync(path.join(kbRoot(), ".gitignore"))).toBe(false);
   });
 });

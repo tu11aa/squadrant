@@ -120,11 +120,21 @@ export type ManagedTarget =
     }
   | { name: string; srcRel: string; mode: "subset"; skills: string[] };
 
-// Crew CLAUDE.md templates only ever tell a crew to apply karpathy-principles
-// (see templates/crew.claude.md, templates/crew.generic.md) — captain-ops,
-// telegram, wiki-ops, etc. are captain/command-only. Keep this list in sync
-// with what the crew templates actually reference.
-export const CREW_SKILLS = ["karpathy-principles", "takeover", "handback"];
+// Every skill a crew is told to use: by the crew templates (templates/crew.*.md),
+// by a daemon message that has the captain spawn a crew with a skill
+// (knowledge/schedule.ts: knowledge-review), or by another crew skill
+// (knowledge-review hands extraction to knowledge-extract). takeover/handback
+// are the operator's in-pane verbs. captain-ops, telegram, wiki-ops, etc. are
+// captain/command-only. runtime-sync.test.ts fails when a crew-facing source
+// names a skill missing here (#1002).
+export const CREW_SKILLS = [
+  "karpathy-principles",
+  "takeover",
+  "handback",
+  "rules-ops",
+  "knowledge-review",
+  "knowledge-extract",
+];
 
 export const MANAGED_TARGETS: ManagedTarget[] = [
   { name: "plugin", srcRel: "plugin", mode: "tree" },

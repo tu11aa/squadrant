@@ -29,13 +29,29 @@ export function ensureGitRepo(dir: string): boolean {
   try { execFileSync("git", ["init", "-q", dir], { stdio: "ignore" }); return true; } catch { return false; }
 }
 
-const KB_GITIGNORE = "# squadrant KB defaults: source documents stay local\nraw/\n.converted/\n";
+/** Runtime reconcile state written to the KB root: derived or per-machine, never committed (#1002). */
+export const KB_RUNTIME_IGNORES = ["/scores.json", "/escalations.json"];
+
+const KB_GITIGNORE = "# squadrant KB defaults: source documents stay local\nraw/\n.converted/\n"
+  + `# reconcile runtime state\n${KB_RUNTIME_IGNORES.join("\n")}\n`;
 
 /** Write the default .gitignore if the KB has none (#951). Never touches an existing one. Returns whether it wrote. */
 export function ensureKbGitignore(dir: string): boolean {
   const file = path.join(dir, ".gitignore");
   if (fs.existsSync(file)) return false;
   fs.writeFileSync(file, KB_GITIGNORE);
+  return true;
+}
+
+/** Append any missing KB_RUNTIME_IGNORES line to the KB's .gitignore (creating it if absent). Existing lines are kept as-is. Returns whether it wrote. */
+export function ensureKbRuntimeIgnores(dir: string): boolean {
+  const file = path.join(dir, ".gitignore");
+  let text = "";
+  try { text = fs.readFileSync(file, "utf8"); } catch { /* none yet */ }
+  const lines = text.split("\n").map((l) => l.trim());
+  const missing = KB_RUNTIME_IGNORES.filter((l) => !lines.includes(l));
+  if (!missing.length) return false;
+  fs.writeFileSync(file, `${text}${text && !text.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
   return true;
 }
 

@@ -78,7 +78,8 @@ _user  (profile)                    ← every session, every project
     sources.yaml  errata.yaml  raw/  .converted/   # rules spec §3, now under the KB root; errata.yaml: lifecycle spec §4
     shared/{rules,wiki,decisions}/
     projects/<p>/{rules,wiki,decisions}/
-    REPORT.md                           # latest reconcile + scores, per KB
+    REPORT.md                           # latest reconcile + scores, per KB; committed by `reconcile --finish`
+    scores.json  escalations.json       # derived scores + open review state; git-ignored, never committed (#1002)
   # each {domain}/ may contain _proposed/ and _archive/
 
 <project repo>/docs/{decisions,wiki,rules}/   # home = repo:docs (open-source projects)
@@ -88,7 +89,6 @@ _user  (profile)                    ← every session, every project
 
 ~/.local/state/squadrant/
   audit/YYYY-MM.<machine-id>.jsonl      # append-only, daemon-written
-  scores.json                           # derived from audit
   <project>/ inbox/ _results/ … sessions.json   # daemon state, moved from ~/.config/squadrant/state (#983 6a; there is no daemon.db)
   logs/squadrantd.log                   # moved from ~/.config/squadrant
 
