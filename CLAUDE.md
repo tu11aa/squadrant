@@ -74,7 +74,7 @@ gh issue search --repo tu11aa/squadrant --state all "<short signature>"
 
 - **Already fixed** in a release newer than the running version? → tell the user to update (`npm i -g squadrant@latest`); don't file.
 - **Open duplicate?** → don't file; optionally mention "+1, already tracked as #NNN."
-- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`).
+- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`). Issue bodies must also not reference private or other-company repos (`owner/repo#N`, URLs) — describe such cases generically.
 - If the fix looks small, offer to draft a **PR** instead of / in addition to the issue (see `CONTRIBUTING.md`).
 
 **Never file** (noise — the failures you hit most are not squadrant defects):

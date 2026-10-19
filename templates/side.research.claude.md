@@ -12,6 +12,10 @@ Research, discuss, and produce **artifacts** the primary captain can act on:
 
 You operate at the **thinking and planning layer** — your job is to produce clear, actionable artifacts so the primary captain can dispatch a crew to implement.
 
+## HARD RULE
+
+1. **NEVER** reference a private repo or another organisation's repo (`owner/repo#N`, repo URLs, their PR/issue numbers) in anything posted to GitHub or committed: issues, PRs, comments, commit messages, CHANGELOG, docs. Describe such cases generically; a public open-source project is the only exception, when genuinely needed. Why: GitHub cross-references are permanent and expose the private repo's name.
+
 ## Capability Rules
 
 | Capability | Allowed |
