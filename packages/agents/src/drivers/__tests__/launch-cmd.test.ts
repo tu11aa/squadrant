@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CapabilityRegistry } from "../registry.js";
-import { buildAgentCmd } from "../launch-cmd.js";
+import { buildAgentCmd, hasClaudeSession } from "../launch-cmd.js";
 import { createClaudeDriver } from "../claude.js";
 import { createOpencodeDriver } from "../opencode.js";
 import type { AgentDriver, AgentProbeResult } from "../types.js";
@@ -41,6 +41,27 @@ afterEach(() => {
 function makeRegistry(agents: Record<string, AgentDriver>): CapabilityRegistry {
   return new CapabilityRegistry(agents);
 }
+
+// ── hasClaudeSession (#999) ───────────────────────────────────────────────────
+
+describe("hasClaudeSession (#999)", () => {
+  it("is false when claude has no project dir for the cwd (never booted)", () => {
+    expect(hasClaudeSession("/work/flooros-core", path.join(tmpDir, "projects"))).toBe(false);
+  });
+
+  it("is false when the project dir holds no transcript (e.g. only memory/)", () => {
+    const root = path.join(tmpDir, "projects");
+    fs.mkdirSync(path.join(root, "-work-flooros-core", "memory"), { recursive: true });
+    expect(hasClaudeSession("/work/flooros-core", root)).toBe(false);
+  });
+
+  it("is true once a transcript exists under claude's cwd encoding", () => {
+    const root = path.join(tmpDir, "projects");
+    fs.mkdirSync(path.join(root, "-work-flooros-core--wt"), { recursive: true });
+    fs.writeFileSync(path.join(root, "-work-flooros-core--wt", "aee86b74.jsonl"), "{}\n");
+    expect(hasClaudeSession("/work/flooros-core/.wt", root)).toBe(true);
+  });
+});
 
 // ── Claude: fresh vs continue ─────────────────────────────────────────────────
 

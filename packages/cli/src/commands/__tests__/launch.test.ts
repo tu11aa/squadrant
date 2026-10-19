@@ -29,7 +29,12 @@ import { captainSessionName as coreCaptainSessionName } from "@squadrant/shared"
 import {
   deliverStartupPrompt, ensureCmuxReady, shouldWireCaptainChannel, resolveAnthropicRefusal,
   resolveCaptainSocketPath, resolveCaptainSessionName, pickResumeSessionId, isOpencodeCaptainDir,
+  resolveAgentFresh,
 } from "../launch.js";
+import { buildAgentCmd, CapabilityRegistry, createClaudeDriver } from "@squadrant/agents";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 describe("cmuxLocal (@squadrant/workspaces direct-cmux helper)", () => {
   beforeEach(() => {
@@ -387,5 +392,44 @@ describe("opencode captain launch helpers (#786)", () => {
     expect(isOpencodeCaptainDir("/tmp/definitely-not-a-repo-xyz")).toBe(false);
     execFileMock.mockReturnValueOnce("abc1234");
     expect(isOpencodeCaptainDir(process.cwd())).toBe(true);
+  });
+});
+
+// #999: sessions.json is recorded before the agent boots, so a first boot that
+// never started claude (e.g. `claude not found in PATH`) still reads as today's
+// session — and the next launch ran `claude -c`, which exits "No conversation
+// found to continue". Resume must depend on a transcript actually existing.
+describe("resolveAgentFresh (#999 claude -c only with a real session)", () => {
+  let projectsRoot: string;
+  const cwd = "/work/flooros-core"; // non-existent ⇒ realpathOrSelf keeps it as-is
+  const claudeCmd = (fresh: boolean) =>
+    buildAgentCmd("claude", new CapabilityRegistry({ claude: createClaudeDriver() }), "captain", fresh, "auto");
+
+  beforeEach(() => {
+    projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-claude-projects-"));
+  });
+  afterEach(() => {
+    fs.rmSync(projectsRoot, { recursive: true, force: true });
+  });
+
+  it("starts a claude captain fresh (no -c) when its prior boot never created a session", () => {
+    const fresh = resolveAgentFresh("claude", false, cwd, projectsRoot);
+    expect(fresh).toBe(true);
+    expect(claudeCmd(fresh)).not.toMatch(/^claude -c\b/);
+  });
+
+  it("still resumes (-c) a claude captain that has a real session", () => {
+    fs.mkdirSync(path.join(projectsRoot, "-work-flooros-core"));
+    fs.writeFileSync(path.join(projectsRoot, "-work-flooros-core", "s1.jsonl"), "{}\n");
+    const fresh = resolveAgentFresh("claude", false, cwd, projectsRoot);
+    expect(fresh).toBe(false);
+    expect(claudeCmd(fresh)).toMatch(/^claude -c\b/);
+  });
+
+  it("keeps an explicit/auto fresh decision, and leaves non-claude agents' resume rules alone", () => {
+    expect(resolveAgentFresh("claude", true, cwd, projectsRoot)).toBe(true);
+    // opencode resumes by explicit session id (#786), never by transcript dir.
+    expect(resolveAgentFresh("opencode", false, cwd, projectsRoot)).toBe(false);
+    expect(resolveAgentFresh("codex", false, cwd, projectsRoot)).toBe(false);
   });
 });

@@ -55,7 +55,7 @@ const ROUTER = {
 
 vi.mock("@squadrant/agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@squadrant/agents")>();
-  return { ...actual, buildAgentCmd: buildAgentCmdMock };
+  return { ...actual, buildAgentCmd: buildAgentCmdMock, hasClaudeSession: () => true };
 });
 
 // launch.ts imports fetchRouterCredentials from ./crew.js — stub only that.
