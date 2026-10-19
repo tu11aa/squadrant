@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 process.env.SQUADRANT_AUDIT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "audit-hooks-")); // never write the real audit log
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
-import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, PROFILE_HOOK_SUB } from "../hooks.js";
+import { mapHookSub, buildCaptainSessionRecord, rulesHookOutput, profileHookOutput, preToolUseGuard, attributionGuard, PROFILE_HOOK_SUB } from "../hooks.js";
 import { serializeTrait } from "@squadrant/core";
 
 // #560: the "ask-question" sub fires from NativeHookSource's global
@@ -282,5 +282,28 @@ describe("preToolUseGuard passes the _user path to the #556 guard (#982 review)"
   });
   it("a captain session is never denied", () => {
     expect(preToolUseGuard(write("/kb/env/profile/x.md"), { SQUADRANT_USER_KB_DIR: "/kb/env" }, "/Users/q", () => getDefaultConfig()).decision).toBe("allow");
+  });
+});
+
+describe("attributionGuard wiring (#1004)", () => {
+  const homeWith = (settings: string) => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), "attrib-hook-"));
+    fs.mkdirSync(path.join(h, ".claude"));
+    fs.writeFileSync(path.join(h, ".claude", "settings.json"), settings);
+    return h;
+  };
+  const commit = { tool_name: "Bash", tool_input: { command: 'git commit -m "x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"' } };
+  it("denies for any session when attribution is disabled in settings.json", () => {
+    const r = attributionGuard(commit, homeWith('{"attribution":{"commit":""}}'));
+    expect(r.decision).toBe("deny");
+    expect(r.reason).toMatch(/Co-Authored-By: Claude/);
+  });
+  it("allows when attribution is not disabled, or settings are unreadable", () => {
+    expect(attributionGuard(commit, homeWith("{}")).decision).toBe("allow");
+    expect(attributionGuard(commit, fs.mkdtempSync(path.join(os.tmpdir(), "attrib-none-"))).decision).toBe("allow");
+  });
+  it("ignores non-Bash payloads", () => {
+    expect(attributionGuard({ tool_name: "Write", tool_input: {} }, homeWith('{"attribution":{"commit":""}}')).decision).toBe("allow");
+    expect(attributionGuard(undefined, "/nonexistent").decision).toBe("allow");
   });
 });
