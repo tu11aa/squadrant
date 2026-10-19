@@ -13,7 +13,7 @@ import { loadConfig, stateRoot as defaultStateRoot, sessionsPath, legacySessions
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
-  CapabilityRegistry, buildAgentCmd,
+  CapabilityRegistry, buildAgentCmd, hasClaudeSession,
 } from "@squadrant/agents";
 import {
   RuntimeRegistry, createCmuxDriver,
@@ -95,6 +95,21 @@ export function pickResumeSessionId(
   if (fresh) return undefined;
   if (!record || record.agent !== agentName) return undefined;
   return record.sessionId;
+}
+
+/** #999: claude resumes with `-c` (newest conversation in the cwd), which exits
+ *  "No conversation found to continue" when there is none. sessions.json can't
+ *  tell: it is recorded before the agent boots, so a boot that never started
+ *  claude still reads as today's session. Resume only when a transcript exists.
+ *  Other agents keep their own resume rules (opencode: explicit id, #786). */
+export function resolveAgentFresh(
+  agentName: string,
+  forceFresh: boolean,
+  cwd: string,
+  claudeProjectsRoot?: string,
+): boolean {
+  if (forceFresh || agentName !== "claude") return forceFresh;
+  return !hasClaudeSession(realpathOrSelf(cwd), claudeProjectsRoot);
 }
 
 /** #786: opencode puts a commit-less directory in the shared `global` project
@@ -335,7 +350,11 @@ export const launchCommand = new Command("launch")
               ? { port: captainPort, sessionId: pickResumeSessionId(priorRecord, "opencode", forceFresh) }
               : undefined;
             opencodeResumeSessionId = captainBoot?.sessionId;
-            const baseCmd = buildAgentCmd(agentName, registry, role, forceFresh,
+            const agentFresh = resolveAgentFresh(agentName, forceFresh, cwd);
+            if (agentFresh && !forceFresh) {
+              console.log(chalk.cyan(`  ↻ no ${agentName} session to resume in ${cwd} — starting fresh`));
+            }
+            const baseCmd = buildAgentCmd(agentName, registry, role, agentFresh,
               route?.permissionMode ?? permissionMode,
               route?.model ?? model,
               TEMPLATES_DIR,

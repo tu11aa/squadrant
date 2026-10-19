@@ -70,7 +70,7 @@ guided first run — come back here when you need the details.
 | `squadrant crew list <project>` | List live crews for a project |
 | `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
 | `squadrant whoami [--json]` | Show the agent session calling the command (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
-| `squadrant shutdown [project]` | Graceful shutdown |
+| `squadrant shutdown [project]` | Graceful shutdown. Closes the captain workspace whether or not it is pinned (unpins first, like `launch --fresh`); a refused close prints cmux's reason |
 | `squadrant effort [max\|balance\|low]` | Get or set the global crew tokenomics dial (no arg prints current) |
 | `squadrant gate mode [on\|off\|auto]` | Get or set the permission gate mode `defaults.gate.mode` (no arg prints current + source: env/config/default); no daemon bounce needed ([#854](https://github.com/tu11aa/squadrant/issues/854)) |
 | `squadrant gate status` | Show the effective gate mode/source, resolved engine, classifier model, and whether the engine's credential is present (never the value) |
@@ -78,7 +78,7 @@ guided first run — come back here when you need the details.
 | `squadrant config check` | Detect config drift vs the current default schema |
 | `squadrant heal [--dry-run\|daemon]` | Targeted, idempotent remediation for squadrant components (daemon, health) |
 | `squadrant ping <project> "<msg>"` | Fire-and-forget: deliver a message into any registered project's captain pane (no tracked task, no report-back) |
-| `squadrant dispatch <project> "<task>"` | Dispatch a tracked task to any registered project; reports back to the origin on settle. Same group additionally auto-accepts and boots the target captain if down — see [cross-project ping & dispatch](specs/2026-07-02-cross-project-ping-dispatch-design.md) |
+| `squadrant dispatch <project> "<task>"` | Dispatch a tracked task to any registered project; reports back to the origin on settle. Same group additionally auto-accepts and boots the target captain if down (`squadrant launch` gets the `--warmup-timeout` budget, default 120s; a failed launch reports its exit code + stderr — see #999) — see [cross-project ping & dispatch](specs/2026-07-02-cross-project-ping-dispatch-design.md) |
 | `squadrant group dispatch …` | **Deprecated alias** for `squadrant dispatch` — kept working, prints a deprecation note |
 | `squadrant cmux …` | cmux integration helpers |
 | `squadrant feedback` | Open opt-in feedback issue |
@@ -717,7 +717,7 @@ What each session gets:
 ### Session Continuity
 
 - **Handoff files** — captain writes context on shutdown, reads on startup (`~/squadrant/workspace/<p>/handoff.json`, archived to `handoffs/`)
-- **Session freshness** — auto-detects new day or template changes, forces fresh context
+- **Session freshness** — auto-detects new day or template changes, forces fresh context. A claude captain resumes with `-c` only when `~/.claude/projects/<cwd>/` already holds a transcript; otherwise it starts fresh, so a boot that never started claude can't leave the next launch stuck on "No conversation found to continue" (#999)
 - **claude-mem** — cross-session memory via MCP plugin
 
 ### Runtime state (`~/.local/state/squadrant`, #983)

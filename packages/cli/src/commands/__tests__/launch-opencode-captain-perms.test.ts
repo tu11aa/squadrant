@@ -44,6 +44,7 @@ vi.mock("@squadrant/agents", () => ({
   createOpencodeDriver: vi.fn(() => ({})),
   CapabilityRegistry: vi.fn().mockImplementation(() => ({})),
   buildAgentCmd: buildAgentCmdMock,
+  hasClaudeSession: vi.fn(() => true),
 }));
 
 vi.mock("@squadrant/workspaces", () => ({
