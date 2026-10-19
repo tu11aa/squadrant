@@ -10,6 +10,7 @@ import {
   resolveHome, workspacePath, archiveRoot, legacyStateDir, stateRoot, stateSeedMarkerPath, type SquadrantConfig,
 } from "@squadrant/shared";
 import { moveLegacyKbs, moveLegacyOverlays, loadedDaemonLogPath, LABEL, type KbMoveEntry } from "@squadrant/core";
+import { moveMap, refSites, sweepRefs, type RefHit } from "./ref-sweep.js";
 
 export interface MigrateKbEntry extends Omit<KbMoveEntry, "action"> {
   action: KbMoveEntry["action"] | "would-archive" | "archived";
@@ -177,4 +178,28 @@ export function migrateKb(cfg: SquadrantConfig, opts: MigrateKbOpts = {}): Migra
   // 4. #936 knowledge migrate (KBs first: an overlay target may live inside a KB that was just moved)
   rows.push(...moveLegacyKbs(cfg, { dryRun }), ...moveLegacyOverlays(cfg, { dryRun }));
   return rows;
+}
+
+/**
+ * #998 `squadrant migrate path <from> <to>`: move an operator-made file or dir with the same rules
+ * (merged file by file, never overwrites, `skipped` rows), then sweep every reference to it. With
+ * <from> already gone and <to> present, only the references are rewritten.
+ */
+export function migratePath(
+  cfg: SquadrantConfig, fromArg: string, toArg: string, opts: { dryRun?: boolean; home?: string; today?: string } = {},
+): { rows: MigrateKbEntry[]; refs: RefHit[] } {
+  const from = path.resolve(resolveHome(fromArg));
+  const to = path.resolve(resolveHome(toArg));
+  if (from === to || to.startsWith(from + path.sep)) throw new Error(`${to} is ${from} or inside it`);
+  const dryRun = !!opts.dryRun;
+  let rows: MigrateKbEntry[] = [];
+  if (fs.existsSync(from)) {
+    rows = fs.statSync(from).isDirectory() ? transferDir("path", from, to, false, dryRun) : transferFile("path", from, to, false, dryRun);
+  } else if (!fs.existsSync(to)) {
+    throw new Error(`neither ${from} nor ${to} exists`);
+  }
+  const map = moveMap(rows);
+  // every file skipped: nothing moved, so references to <from> still resolve
+  if (!map.has(from) && !(rows.length && rows.every((r) => r.action === "skipped"))) map.set(from, to);
+  return { rows, refs: sweepRefs(map, refSites(cfg, opts.home), opts) };
 }
