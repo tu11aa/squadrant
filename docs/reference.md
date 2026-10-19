@@ -31,6 +31,7 @@ guided first run — come back here when you need the details.
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
+- [Captain rollover](#captain-rollover-1010)
 - [Config](#config)
 
 ## Commands
@@ -41,6 +42,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch <project>` | Start a specific project captain |
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
+| `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -762,6 +764,13 @@ Because the layout is flat, a project dir shares a namespace with those entries.
   - launchd is still writing the legacy log path.
 
 **Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
+
+## Captain rollover (#1010)
+
+`/squadrant:rollover` (alias `/squadrant:roll`) is a captain skill for Claude captains whose context is filling. In order, the captain writes a handoff (`write-handoff.sh`), writes the daily log, runs `squadrant captain compact <project>` as its last action and ends the turn. The operator types it once.
+
+- **`squadrant captain compact <project> [--focus <text>]`** sends `captain-compact` to the daemon and returns. The daemon polls (1 s) until the captain pane shows no turn in flight on two consecutive polls, then types `/compact <focus>` + Enter through the runtime driver using the same send guard as every pane delivery (draft, open modal/prompt and no-box all defer). It never types into a busy pane or an open prompt. After 10 minutes without a chance it drops the request and logs `captain-compact <project>: timed out … not compacted`. Default focus: "Keep the active task, open PRs/crews and decisions; the full state is in the handoff". Needs the cmux runtime; Claude captains only (Claude Code has no compact API and the peer socket can't run slash commands).
+- **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
 
 ## Config
 
