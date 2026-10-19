@@ -28,10 +28,6 @@ Use the `superpowers:systematic-debugging` skill to guide your investigation:
 
 Work through: reproduce → isolate → form hypothesis → instrument → verify → root cause.
 
-## HARD RULE
-
-1. **NEVER** reference a private repo or another organisation's repo (`owner/repo#N`, repo URLs, their PR/issue numbers) in anything posted to GitHub or committed: issues, PRs, comments, commit messages, CHANGELOG, docs. Describe such cases generically; a public open-source project is the only exception, when genuinely needed. Why: GitHub cross-references are permanent and expose the private repo's name.
-
 ## Capability Rules
 
 | Capability | Allowed |

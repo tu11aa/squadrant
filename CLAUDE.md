@@ -66,6 +66,8 @@ Every coding task in this repo (captain, crew, and direct edits) follows [`plugi
 
 ## Reporting squadrant bugs
 
+**Public repo — no private refs.** In this public repo, never reference private repos or other companies' repos (`owner/repo#N`, URLs, PR/issue numbers) in issues, PRs, comments, commits, CHANGELOG or docs; describe such cases generically. Public open-source projects only when needed. Why: GitHub cross-references are permanent and expose the private repo's name.
+
 **Captain** (interactive — can search, decide, and file): If you or a crew hit an error or behavior that looks like a defect in *squadrant itself* — a `squadrant`/`squadrantd` command throwing a stack trace through `dist/`/`packages/`, a daemon/socket crash (`ECONNREFUSED`/`EADDRINUSE`), an `ENOENT` or wrong path in a path squadrant computed, a state-machine invariant throw, or a lifecycle signal that should have fired and didn't — and it is **not** one of the noise cases below, then search `tu11aa/squadrant`:
 
 ```
@@ -74,7 +76,7 @@ gh issue search --repo tu11aa/squadrant --state all "<short signature>"
 
 - **Already fixed** in a release newer than the running version? → tell the user to update (`npm i -g squadrant@latest`); don't file.
 - **Open duplicate?** → don't file; optionally mention "+1, already tracked as #NNN."
-- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`). Issue bodies must also not reference private or other-company repos (`owner/repo#N`, URLs) — describe such cases generically.
+- **New?** → offer the user a one-line **y/n** to file (semi-auto — prompt, don't nag). On yes, file with title `[agent-report] <signature>`, label `bug`, and a body containing what happened, best-effort repro, environment (squadrant version + agent + version + OS + node), and a **redacted** error excerpt (banner + top few stack frames only — strip tokens like `ANTHROPIC_API_KEY`/`gh[pousr]_…`/Telegram `\d+:…`, and rewrite `/Users/<name>/…` → `~`).
 - If the fix looks small, offer to draft a **PR** instead of / in addition to the issue (see `CONTRIBUTING.md`).
 
 **Never file** (noise — the failures you hit most are not squadrant defects):
