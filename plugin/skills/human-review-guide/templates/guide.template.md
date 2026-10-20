@@ -96,9 +96,10 @@ Ticket: <id>. Size, base/stack position, gates run and findings.
 
 #### 3.1 <short title>
 - **Where:** `src/orders/service.ts:88` — `createOrder`
-- **What:** <what the code does>
 - **Gated by:** none | <gate> (partial: <what it covers>)
-- **Why:** <problem or constraint that forced it>
+- **What:** <what the code does>
+- **Why:** <the problem or need the reviewer sees: symptom, requirement, constraint>
+- **Cause:** <root cause: what in the code, data or design produced it; required for a bug fix, review finding or reversed choice, omit for a pure design choice>
 - **How solved:** <approach and trade-off>
 - [ ] **You judge:** <the concrete question only a human can answer>
 - **Axis (tags):** one or more of Correctness | Readability | Architecture | Security | Performance

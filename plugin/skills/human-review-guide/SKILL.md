@@ -69,19 +69,22 @@ Structured lists, each optional: **features added**, **bugs fixed**, **deliberat
 One entry per test (file path, what it proves). Give **each** its own concrete **manual mutation** where one makes sense, so the reviewer can confirm the tests are real: "change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `orders.service.test.ts › rejects empty cart` must go red." If it stays green, the test is decoration.
 
 ### 3. Implementation points
-Each point has the same seven fields:
+Each point has the same fields (order: Where / Gated by / What / Why / Cause / How solved / You judge / Axis):
 
 | Field | Content |
 |---|---|
 | **Where** | `file:line` **and** symbol name, verified at the head SHA |
-| **What** | What the code does |
 | **Gated by** | `none`, or `<gate> (partial: <what it covers>)`. Never a point a gate fully verified |
-| **Why** | The problem or constraint that forced it (often a bug found in review) |
+| **What** | What the code does |
+| **Why** | The problem or need the reviewer sees: symptom, requirement or constraint |
+| **Cause** | The root cause behind it: what in the code, data or design produced the problem. Required for a bug fix, a review finding or a reversed earlier choice; omit for a pure design choice (the HTML hides the row) |
 | **How solved** | The approach and its trade-off |
 | **You judge** | The concrete question only a human can answer (name a public contract, accept a trade-off, a duplicated helper as debt) |
 | **Axis** | One or more of Correctness / Readability / Architecture / Security / Performance |
 
 Balance: each point needs what, why and how plus the human question, but not a paragraph per line of the diff. Keep "what to verify" and "why it is built this way" in separate fields; the operator wants both.
+
+**Why vs Cause.** Why is what the reviewer sees; Cause is what produced it. Example: *Why:* "the stack diagram rendered object text"; *Cause:* "`h()` appended nested arrays without flattening, so `String(array)` leaked". Without the cause the reviewer cannot tell whether the fix hits the root or patches the symptom.
 
 ### Axis tags, no generic checklist
 The five axes (Correctness, Readability, Architecture, Security, Performance) are **tags on each point**, not a checklist. **Every checkbox on the page is a specific question about this PR** (a point's "You judge", a handoff item). A generic "is it readable?" box contradicts the core principle: the human reviews only what the gates missed. Progress counts judged points only.
@@ -137,7 +140,8 @@ Guidance for the agent writing the guide; it is not shown in the HTML.
 | "No gate covers this, but it's minor, I'll leave it out of the gaps" | A human catching it once is the cost; listing the gap with a suggested gate or ticket is what stops the next human paying it again. |
 | "The tests pass, so they test the right thing" | Run the mutation. A test that stays green when the code is broken proves nothing. |
 | "Line numbers are enough" | They drift on the next push. Symbol name plus SHA. |
-| "Short is better: just list the checks" | Without why and how solved the reviewer cannot judge the trade-off. Keep all seven fields. |
+| "Why is enough" | Why is the symptom. Without the cause the reviewer cannot tell whether the fix hits the root or patches the symptom. |
+| "Short is better: just list the checks" | Without why and how solved the reviewer cannot judge the trade-off. Keep all the fields (Cause when there is a defect behind the point). |
 | "I'll spin up a fresh agent to write the guide" | It lacks the why: the review findings and decisions. The agent in charge of the PRs writes it, reloading context from its handoff and the PR history if needed. |
 | "I'll post the guide on the PR so everyone sees it" | Never. It is the operator's private aid. Leaked guides get deleted, and edit history stays. |
 | "It's debt, we'll clean it up later" | Not accepted without a follow-up ticket. |
