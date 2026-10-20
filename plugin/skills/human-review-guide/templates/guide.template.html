@@ -151,7 +151,7 @@ const GUIDE = {
           what: "Defines the error code returned to clients.",
           why: "Clients must tell business errors from system errors.",
           /* no cause: a pure design choice, so the row is hidden */
-          how: "Stable string constant, not a number.",
+          solution: "Stable string constant, not a number.",
           judge: "This name is a public contract. Accept it?"
         },
         {
@@ -160,7 +160,7 @@ const GUIDE = {
           what: "Updates status and stock inside one transaction.",
           why: "Review found a double cancel doubled the stock.",
           cause: "`cancelOrder` read the status before taking the lock, so two requests both passed the check.",
-          how: "Lock the row, then check status; trades one lock for safety.",
+          solution: "Lock the row, then check status; trades one lock for safety.",
           judge: "Is a row lock acceptable on this hot path?"
         }
       ]
@@ -177,7 +177,7 @@ const GUIDE = {
           gatedBy: "none",
           what: "Keeps filters in the query string.",
           why: "Makes links shareable and Back work.",
-          how: "A small hook instead of a router extension.",
+          solution: "A small hook instead of a router extension.",
           judge: "Are the param names stable enough to become a contract?"
         }
       ]
@@ -194,7 +194,7 @@ const GUIDE = {
           what: "Sets the default limit to 100.",
           why: "Avoids unbounded carts.",
           cause: "The first release had no limit, and one client submitted a 10,000-item cart.",
-          how: "A constant with an env override.",
+          solution: "A constant with an env override.",
           judge: "Is 100 the right default?"
         }
       ]
@@ -230,7 +230,7 @@ const T = {
   ctx: { en: { features: "Features added", fixes: "Bugs fixed", notDone: "Deliberately not done", breaking: "Breaking changes", waitsOn: "Waits on" } },
   mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
   compare: { en: "Compare with the design live" }, compareOpen: { en: "Open" }, compareWhat: { en: "Compare" },
-  fields: { en: { where: "Where", gatedBy: "Gated by", what: "What", why: "Why", cause: "Cause", how: "How solved", judge: "You judge", axis: "Axis" } },
+  fields: { en: { where: "Where", gatedBy: "Gated by", what: "What", why: "Why", cause: "Cause", solution: "Solution", judge: "You judge", axis: "Axis" } },
   progress: { en: "Progress" },
   sevNone: { en: "(required)" }, addFinding: { en: "Finding for this point…" },
   notes: { en: "General notes for this PR" },
@@ -365,7 +365,7 @@ function pointView(pr, i, pt, onProgress) {
         h("dt", {}, F.what), h("dd", {}, rich(pt.what)),
         h("dt", {}, F.why), h("dd", {}, rich(pt.why)),
         ...(pt.cause ? [h("dt", {}, F.cause), h("dd", {}, rich(pt.cause))] : []),
-        h("dt", {}, F.how), h("dd", {}, rich(pt.how)),
+        h("dt", {}, F.solution), h("dd", {}, rich(pt.solution)),
         h("dt", {}, F.judge), h("dd", {}, h("label", { class: "chk" },
           h("input", { type: "checkbox", checked: j, onchange: (e) => { (state.judged[pr.id] = state.judged[pr.id] || {})[i] = e.target.checked; det.classList.toggle("judged", e.target.checked); save(); onProgress(); } }),
           h("strong", {}, rich(pt.judge)))),
