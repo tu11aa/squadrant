@@ -1,13 +1,13 @@
 ---
 name: human-review-guide
-description: Write the operator a short, well-sourced guide for the human gate of crew PRs, covering only what the automated gates did not cover or cannot judge, plus the gate gaps. Use when the operator says "review guide", "how should I review these PRs", "guide me through the PRs", "what should I focus on in review", "what do I check before merging", or is about to review one or more crew PRs by hand. One PR → answer in chat; several PRs → one local interactive HTML. The guide is LOCAL ONLY and is never posted anywhere. Captain skill.
+description: Write the operator a short, well-sourced guide for the human gate of crew PRs, covering only what the automated gates did not cover or cannot judge, plus the gate gaps. Use when the operator types `/squadrant:human-review-guide` (or `/human-review-guide`) or says "review guide", "how should I review these PRs", "guide me through the PRs", "what should I focus on in review", "what do I check before merging", or is about to review one or more crew PRs by hand. One PR → answer in chat; several PRs → one local interactive HTML. The guide is LOCAL ONLY and is never posted anywhere. Works in any squadrant session; the session that drove the PR(s) writes it.
 ---
 
 # human-review-guide — a local guide for the human review gate
 
 ## Core principle: the human gate covers only what the gates cannot see
 
-Code and rules are already reviewed by agents and gated: crew self-review, the captain's agent review, CI, lint, guard tests, knowledge-base rule checks, a repo's PR review tool. **The human gate exists only for what those gates cannot see or did not cover.** Two kinds of thing qualify:
+Code and rules are already reviewed by agents and gated: crew self-review, the owner's agent review, CI, lint, guard tests, knowledge-base rule checks, a repo's PR review tool. **The human gate exists only for what those gates cannot see or did not cover.** Two kinds of thing qualify:
 
 1. **Not covered** — no gate looked at it in this diff.
 2. **Only a human can judge it** — intent and scope, public contract names, architecture trade-offs, whether the tests test the right thing, a live comparison with a design or prototype.
@@ -16,11 +16,11 @@ Everything else is dropped from the guide, and the human is never asked to redo 
 
 This skill produces the guide that makes that review fast.
 
-Structure follows [addyosmani/agent-skills `code-review-and-quality`](https://github.com/addyosmani/agent-skills) (five axes, tests first, severity labels, verdict template, common rationalizations).
+Structure follows [addyosmani/agent-skills `code-review-and-quality`](https://github.com/addyosmani/agent-skills) (five axes, tests first, severity labels, common rationalizations).
 
 ## Who writes it
 
-**The agent in charge of the PR(s) writes the guide itself**, normally the captain that briefed, reviewed and drove them. It holds the context: why each choice was made, the review findings, the decisions taken since. Do **not** hand the guide, or its HTML, to a new crew, a side session or a fresh subagent; it lacks that context and produces a shallow guide. If you have rolled over or compacted, reload context first (your handoff, `gh pr view N --comments`, the commit history, the review findings) and then write it yourself.
+**The agent in charge of the PR(s) writes the guide itself**, whichever session briefed, reviewed and drove them (normally the captain). It holds the context: why each choice was made, the review findings, the decisions taken since. Do **not** hand the guide, or its HTML, to a new crew, a side session or a fresh subagent; it lacks that context and produces a shallow guide. If you have rolled over or compacted, reload context first (your handoff, `gh pr view N --comments`, the commit history, the review findings) and then write it yourself.
 
 ## LOCAL ONLY — never post the guide
 
@@ -41,13 +41,13 @@ Structure follows [addyosmani/agent-skills `code-review-and-quality`](https://gi
 
 Language: write the guide in the operator's own language, taken from their profile or preferences, else from the language of the conversation. Code identifiers, paths and commands stay untranslated. If their preferences ask for bilingual local docs, the HTML offers a language toggle between the operator's language and English; otherwise it has no toggle.
 
-In the HTML, each point's **You judge** is a checkbox; per-PR progress counts judged points plus checklist items, and a small bar sits in each PR's tab button. Copy buttons sit next to every `Where` anchor, test path and the open-code block; a header **Copy all anchors** button copies every anchor and test path.
+In the HTML, each point's **You judge** is a checkbox; per-PR progress counts judged points, and a small bar sits in each PR's tab button. Copy buttons sit next to every `Where` anchor, test path and the open-code block; a header **Copy all anchors** button copies every anchor and test path.
 
-The multi-PR HTML tabs are: **Read first** (summary table, stack diagram, gates, human-gate purpose, severity prefixes, how to open code, review order, merge order, collapse recommendation), then **one tab per PR in review order**, then **Verdict** (per-PR progress and verdict table, pending decisions, the before-handing checklist, the verdict template as a copyable block, common rationalizations). Per PR: checklist, progress bar, verdict selector and notes, saved locally. A **Copy my findings** button outputs Markdown per PR (verdict and progress, findings with severity prefixes, notes, and the points not yet judged) plus the gate gaps, for the operator to paste to the captain. It works at phone width with no horizontal scroll, in light and dark.
+The multi-PR HTML tabs are: **Read first** (summary table, stack diagram, gates, human-gate purpose, severity prefixes, how to open code, review order, merge order, collapse recommendation), then **one tab per PR in review order**, then **Verdict** (per-PR progress and verdict table, pending decisions and the before-handing list, each only when the guide data provides items). Per PR: progress bar, verdict selector and notes, saved locally. The verdict comes from the selector, the notes and **Copy my findings**; there is no separate verdict template block in the HTML. A **Copy my findings** button outputs Markdown per PR (verdict and progress, findings with severity prefixes, notes, and the points not yet judged) plus the gate gaps, for the operator to paste to the session that owns the PRs. It works at phone width with no horizontal scroll, in light and dark.
 
 Templates in this skill directory:
 - `templates/guide.template.md` — Markdown skeleton with the shared sections and the per-PR block.
-- `templates/guide.template.html` — self-contained interactive shell (tabs per PR with progress bars, collapsible points with a judged checkbox, copy buttons, structured context, per-test mutations, optional design-compare card, checklists with progress, per-PR verdict and notes, copy-findings, optional primary/English language toggle, light/dark). Opens as-is with invented sample data. **You fill it yourself** by copying the file next to the Markdown and replacing the `GUIDE` data object (a plain JS literal; the comment above it says how); keep the rest. No render step, no network, no storage required.
+- `templates/guide.template.html` — self-contained interactive shell (tabs per PR with progress bars, collapsible points with a judged checkbox, copy buttons, structured context, per-test mutations, optional design-compare card, per-PR verdict and notes, copy-findings, optional primary/English language toggle, light/dark). Opens as-is with invented sample data. **You fill it yourself** by copying the file next to the Markdown and replacing the `GUIDE` data object (a plain JS literal; the comment above it says how); keep the rest. No render step, no network, no storage required.
 
 ## Process
 
@@ -57,7 +57,7 @@ Templates in this skill directory:
 4. **List the gate gaps**: what should have been machine-checked but is not (a template no test renders, a rule enforced only by prose, a contract name no test pins). Give each a suggested new gate or a follow-up ticket.
 5. **Verify every anchor at the head SHA.** `git fetch origin`, then `git grep -n '<pattern>' origin/<branch> -- <path>` for each `Where`. State the head SHA at the top of the guide. Give both `file:line` and the symbol name.
 6. **Write the Markdown** yourself, then for several PRs fill the HTML template yourself from the same facts and open it locally (`open <file>`). Do not delegate either step.
-7. **Keep it in sync.** Review often runs while crews still push fixes. State the head SHA per PR. On **every** head update, refresh that PR's SHA and re-run the anchor check, update lines, and record decisions taken since (e.g. "owner chose X"). Update the HTML data block too; the page's saved checkboxes and notes are keyed by PR id, so they survive a re-render.
+7. **Keep it in sync.** Review often runs while crews still push fixes. State the head SHA per PR. On **every** head update, refresh that PR's SHA and re-run the anchor check, update lines, and record decisions taken since (e.g. "owner chose X"), and refresh or clear the pending-decisions list. Update the HTML data block too; the page's saved checkboxes and notes are keyed by PR id, so they survive a re-render.
 8. **Never post it** (rule above).
 
 ## Per-PR structure
@@ -83,12 +83,8 @@ Each point has the same seven fields:
 
 Balance: each point needs what, why and how plus the human question, but not a paragraph per line of the diff. Keep "what to verify" and "why it is built this way" in separate fields; the operator wants both.
 
-### 4. Five-axis checklist
-- **Correctness** — matches the stated intent and edge cases; errors handled; tests cover the behaviour, not the implementation.
-- **Readability** — names say what things are; no clever tricks where plain code works; comments explain why.
-- **Architecture** — fits existing patterns and layering; no new abstraction without a second user; dependencies point the right way.
-- **Security** — input validated at boundaries; auth and permission checks present; no secrets or user data in logs.
-- **Performance** — no unbounded loops, N+1 queries or avoidable work on a hot path.
+### Axis tags, no generic checklist
+The five axes (Correctness, Readability, Architecture, Security, Performance) are **tags on each point**, not a checklist. **Every checkbox on the page is a specific question about this PR** (a point's "You judge", a handoff item). A generic "is it readable?" box contradicts the core principle: the human reviews only what the gates missed. Progress counts judged points only.
 
 For UI changes add a **Compare with the design** card: what to open and what to compare (layout, labels, empty and error states), side by side in a browser.
 
@@ -115,8 +111,9 @@ Put these once at the top of the guide:
 - **Review order and why**, with time and focus level per PR. Default: contract/backend before UI; within a stack, stack order so each diff holds only its own change.
 - **Merge order** (usually stack order, bottom first).
 - **Collapse recommendation** — "should these be collapsed into fewer PRs for the lead?" Stacked PRs confuse a lead; one PR per ticket is often better. Give a recommendation and the reason, not just the question.
-- **Verdict template** per PR: Context / Correctness / Readability / Architecture / Security / Performance / Verification / Verdict (Approve · Request changes).
-- **Before handing to the lead** checklist: every `Critical`/required finding resolved; verdicts filled; anchors re-verified at current heads; **a follow-up ticket exists for every piece of accepted debt** ("we'll clean it up later" without a ticket is not accepted).
+- **Verdict** per PR: the HTML's selector (Approve · Request changes), notes and Copy my findings produce it. The Markdown may keep a short verdict line.
+- **Pending decisions** — data-driven, hidden when empty. Refresh or clear it on every head update; a stale line ("CI running") misleads the reviewer.
+- **Before handing to the lead** — only when there are items (`handoff` in the HTML data). Write concrete items tied to these PRs ("follow-up ticket filed for point 2", "`ORDER_EMPTY_CART` name confirmed with the owner"), never a generic list. Every piece of accepted debt gets a follow-up ticket: "we'll clean it up later" without one is not accepted.
 
 ## Pitfalls
 
@@ -126,10 +123,12 @@ Put these once at the top of the guide:
 - **Line numbers drift** when crews push fixes. Always give the symbol and the SHA; re-verify before handing over.
 - **Do not over-compress** into bare checks; **do not pad** with what machines verified.
 - Do not answer a crew's confirmation prompt "no" to sequence work; send instructions as a message instead.
-- A guide is not a verdict. The captain's own review still happens first; the human gate sits on top. Never merge on the guide's say-so; the review-gate contract in `captain-ops` still applies.
+- A guide is not a verdict. The owner's own review still happens first; the human gate sits on top. Never merge on the guide's say-so; the review-gate contract in `captain-ops` still applies.
 - Examples in the guide must come from the real PRs; never invent anchors. (The template's sample data is invented and must be replaced.)
 
 ## Common rationalizations
+
+Guidance for the agent writing the guide; it is not shown in the HTML.
 
 | Rationalization | Reality |
 |---|---|

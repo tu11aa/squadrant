@@ -101,33 +101,15 @@ Ticket: <id>. Size, base/stack position, gates run and findings.
 - **Why:** <problem or constraint that forced it>
 - **How solved:** <approach and trade-off>
 - [ ] **You judge:** <the concrete question only a human can answer>
-- **Axis:** one or more of Correctness | Readability | Architecture | Security | Performance
+- **Axis (tags):** one or more of Correctness | Readability | Architecture | Security | Performance
 
-### 4. Checklist
-- [ ] Correctness — matches intent, edge cases, errors handled, tests cover behaviour
-- [ ] Readability — names, plain code, comments explain why
-- [ ] Architecture — fits patterns and layering, no premature abstraction
-- [ ] Security — input validated, auth checked, no secrets in logs
-- [ ] Performance — no N+1, unbounded loops or hot-path waste
-- [ ] UI only: compared with the design live
-
-### 5. Verdict
-- Context:
-- Correctness:
-- Readability:
-- Architecture:
-- Security:
-- Performance:
-- Verification:
-- **Verdict:** Approve | Request changes
+### 4. Verdict
+Short line: **Approve** | **Request changes** (the HTML's selector, notes and Copy my findings produce it).
 
 ---
 
-## Pending decisions
-- <decision waiting on someone, optional>
+## Pending decisions (optional; refresh or clear on every head update)
+- <decision waiting on someone>
 
-## Before handing to the lead
-- [ ] Every required and `Critical:` finding resolved
-- [ ] Verdicts filled for each PR
-- [ ] Anchors and SHAs re-verified at current heads
-- [ ] A follow-up ticket exists for each piece of accepted debt
+## Before handing to the lead (optional; concrete items for these PRs only)
+- [ ] <e.g. follow-up ticket filed for point 2>

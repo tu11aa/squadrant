@@ -124,7 +124,8 @@ export type ManagedTarget =
 // by a daemon message that has the captain spawn a crew with a skill
 // (knowledge/schedule.ts: knowledge-review), or by another crew skill
 // (knowledge-review hands extraction to knowledge-extract). takeover/handback
-// are the operator's in-pane verbs. captain-ops, telegram, wiki-ops, etc. are
+// are the operator's in-pane verbs, and human-review-guide is one the operator
+// calls directly in any session. captain-ops, telegram, wiki-ops, etc. are
 // captain/command-only. runtime-sync.test.ts fails when a crew-facing source
 // names a skill missing here (#1002).
 export const CREW_SKILLS = [
@@ -134,6 +135,7 @@ export const CREW_SKILLS = [
   "rules-ops",
   "knowledge-review",
   "knowledge-extract",
+  "human-review-guide",
 ];
 
 export const MANAGED_TARGETS: ManagedTarget[] = [

@@ -50,3 +50,4 @@ You are a **project captain** for Squadrant. You lead ONE project. You are a **c
 - `squadrant:wiki-ops` — Compile knowledge into persistent wiki pages (ingest, query, cross-reference)
 - `squadrant:rules-ops` — Look up subscribed-KB rules (`squadrant rules search`) before briefing or reviewing
 - `squadrant:daily-log` — End-of-day log format (opt-in)
+- `squadrant:human-review-guide` — Local guide for the operator's human gate on crew PRs (`/squadrant:human-review-guide`; never posted)

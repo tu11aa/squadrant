@@ -55,6 +55,7 @@ label.chk input{margin-top:5px}
 .stack{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .stack .node{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:3px 10px}
 .muted{color:var(--muted)}
+#banner{background:var(--bad);color:#fff;padding:8px 12px;border-radius:8px;margin:8px 0 0;font-weight:600;overflow-wrap:anywhere}
 .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.on{opacity:1}
 .cp{padding:0 6px;margin-left:6px;font-size:12px;line-height:20px;border-radius:6px}
@@ -78,6 +79,7 @@ details.point.judged>summary::after{content:" ✓";color:var(--ok)}
       <button id="lang" aria-label="Language" data-lang="primary"></button>
       <button id="theme" aria-label="Theme"></button>
     </div>
+    <div id="banner" role="alert" hidden></div>
     <nav class="tabs" id="tabs" role="tablist"></nav>
   </header>
   <main id="main"></main>
@@ -90,13 +92,14 @@ details.point.judged>summary::after{content:" ✓";color:var(--ok)}
    Write every text field in the operator's own language (from their profile or the
    conversation). Code identifiers, paths, branches, SHAs and commands stay untranslated.
    - A text field is either a plain string or {primary, en}; `backticks` render as code.
-   - A list field (humanGate, pending, gates, gaps, context lists, compare.compare, tests,
-     rationalizations) is either an array of such fields or one list {primary:[...], en:[...]}.
+   - A list field (humanGate, pending, handoff, gates, gaps, context lists, compare.compare, tests) is either an array of such fields or one list {primary:[...], en:[...]}.
    - If the operator wants bilingual local docs, give both and set primaryLabel (the
      language's short name) and langCode; the header then shows a toggle between primary
      and English. Without primaryLabel there is no toggle.
    - UI labels are English; put translations in GUIDE.ui as {key: text} using the keys of T below.
-   - prs are listed in REVIEW order. Optional parts are simply left out. */
+   - prs are listed in REVIEW order. Optional parts are simply left out. Every checkbox on the
+     page must be a specific question about THESE PRs (a point's "You judge", a handoff item);
+     there are no generic checklists. `pending` is hidden when empty: refresh or clear it on every head update. */
 const GUIDE = {
   id: "sample-2026-01-15",
   title: { primary: "[primary] Human review: sample orders", en: "Human review: sample orders" },
@@ -194,8 +197,12 @@ const GUIDE = {
       ]
     }
   ],
-  /* optional: extra rationalizations for this guide; the standard table is built in */
-  rationalizations: []
+  /* optional, concrete items tied to THESE PRs (e.g. "follow-up ticket filed for point 2");
+     the "Before handing to the lead" section is hidden when this is empty or absent */
+  handoff: [
+    "Follow-up ticket filed for the error-code test gap (gate gap 1)",
+    "`ORDER_EMPTY_CART` name confirmed with the owner (#101 point 1)"
+  ]
 };
 
 /* ---------- UI strings (English; override per key via GUIDE.ui) ---------- */
@@ -221,9 +228,6 @@ const T = {
   mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
   compare: { en: "Compare with the design live" }, compareOpen: { en: "Open" }, compareWhat: { en: "Compare" },
   fields: { en: { where: "Where", what: "What", gatedBy: "Gated by", why: "Why", how: "How solved", judge: "You judge", axis: "Axis" } },
-  judged: { en: "Judged" },
-  checklist: { en: "4. Five-axis checklist" },
-  axes: { en: { Correctness: "Correctness: matches intent, edge cases, tests cover behaviour", Readability: "Readability: clear names, plain code, comments say why", Architecture: "Architecture: fits patterns, no premature abstraction", Security: "Security: input validated, auth checked, no secrets", Performance: "Performance: no N+1 or unbounded loops", Design: "Compared with the design live (UI only)" } },
   progress: { en: "Progress" },
   sevNone: { en: "(required)" }, addFinding: { en: "Finding for this point…" },
   notes: { en: "General notes for this PR" },
@@ -233,27 +237,16 @@ const T = {
   sumCols: { en: ["PR", "Progress", "Verdict"] },
   pending: { en: "Pending decisions" },
   before: { en: "Before handing to the lead" },
-  beforeItems: { en: ["Every required and Critical finding resolved", "Every PR has a verdict", "SHAs and anchors re-verified at current heads", "Every accepted debt has a follow-up ticket"] },
-  tplTitle: { en: "Verdict template (per PR)" },
-  tpl: { en: "Context:\nCorrectness:\nReadability:\nArchitecture:\nSecurity:\nPerformance:\nVerification:\nVerdict: Approve | Request changes" },
-  ratTitle: { en: "Common rationalizations" }, ratCols: { en: ["Rationalization", "Reality"] },
-  rats: { en: [
-    ["The agent review and CI passed, I can skim", "Those gates miss intent, contract names and test validity. That is what this gate is for."],
-    ["Let me double-check what CI already checked", "Don't. Spend the time on what no gate covered."],
-    ["The tests pass, so they test the right thing", "Run the manual mutation. A test that stays green when the code is broken proves nothing."],
-    ["It's debt, we'll clean it up later", "Not accepted without a follow-up ticket."]
-  ] },
   notJudged: { en: "Points not yet judged" },
   noStore: { en: "State cannot be saved in this browser; the page works but resets on reload." },
   prefix: { en: "Anchors at" }
 };
 const SEV = ["", "Critical:", "Consider:", "Nit:", "FYI"];
-const AXES = ["Correctness", "Readability", "Architecture", "Security", "Performance", "Design"];
 
 /* ---------- storage-safe state ---------- */
 const KEY = "hrg:" + GUIDE.id;
 let storeOk = true;
-let state = { lang: null, theme: null, tab: "read", checks: {}, judged: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
+let state = { lang: null, theme: null, tab: "read", judged: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
 function load() {
   try {
     const raw = window.localStorage.getItem(KEY);
@@ -312,12 +305,9 @@ async function copyText(text, out) {
 const cpBtn = (text) => h("button", { class: "cp", type: "button", title: "Copy", "aria-label": "Copy", onclick: () => copyText(text) }, "⧉");
 const ptitle = (pr) => "#" + pr.id + " " + g_(pr.title);
 const axesOf = (pt) => pt.axes || (pt.axis ? [pt.axis] : []);
-function prAxes(pr) { return AXES.filter(a => a !== "Design" || pr.compare); }
 function progressOf(pr) {
-  const c = state.checks[pr.id] || {}, j = state.judged[pr.id] || {};
-  const keys = prAxes(pr);
-  const done = keys.filter(k => c[k]).length + pr.points.filter((_, i) => j[i]).length;
-  return [done, keys.length + pr.points.length];
+  const j = state.judged[pr.id] || {};
+  return [pr.points.filter((_, i) => j[i]).length, pr.points.length];
 }
 function bar(done, total) { return h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done }, h("i", { style: "width:" + (total ? Math.round(100 * done / total) : 0) + "%" })); }
 function paintTabBars() {
@@ -399,10 +389,6 @@ function prView(pr) {
       h("p", {}, h("strong", {}, t("compareOpen") + ": "), rich(pr.compare.open)),
       h("strong", {}, t("compareWhat")), h("ul", { class: "ctx" }, list(pr.compare.compare).map(x => h("li", {}, rich(x)))))] : []),
     h("h3", {}, t("points")), ...pr.points.map((pt, i) => pointView(pr, i, pt, paint)),
-    h("h3", {}, t("checklist")),
-    h("div", { class: "card" }, prAxes(pr).map(a => h("label", { class: "chk" },
-      h("input", { type: "checkbox", checked: !!(state.checks[pr.id] || {})[a], onchange: (e) => { (state.checks[pr.id] = state.checks[pr.id] || {})[a] = e.target.checked; save(); paint(); } }),
-      h("span", {}, u("axes")[a])))),
     h("h3", {}, t("verdictLabel")),
     h("select", { "aria-label": t("verdictLabel"), onchange: (e) => { state.verdict[pr.id] = e.target.value; save(); } },
       Object.entries(u("verdicts")).map(([v, label]) => h("option", { value: v, selected: (state.verdict[pr.id] || "") === v }, label))),
@@ -439,12 +425,10 @@ function verdictView() {
   const root = h("section", {}, h("h2", {}, t("verdict")),
     table(u("sumCols"), GUIDE.prs.map(pr => { const [d, n] = progressOf(pr); return [ptitle(pr), (n ? Math.round(100 * d / n) : 0) + "% (" + d + "/" + n + ")", u("verdicts")[state.verdict[pr.id] || ""]]; })));
   if (list(GUIDE.pending).length) root.append(h("h3", {}, t("pending")), h("ul", {}, list(GUIDE.pending).map(x => h("li", {}, rich(x)))));
-  const tpl = u("tpl");
-  root.append(h("h3", {}, t("before")),
-    h("div", { class: "card" }, u("beforeItems").map((s, i) => h("label", { class: "chk" },
-      h("input", { type: "checkbox", checked: !!state.before[i], onchange: (e) => { state.before[i] = e.target.checked; save(); } }), h("span", {}, s)))),
-    h("h3", {}, t("tplTitle")), h("div", { class: "rowline" }, h("pre", { style: "flex:1" }, tpl), cpBtn(tpl)),
-    h("h3", {}, t("ratTitle")), table(u("ratCols"), [...u("rats"), ...list(GUIDE.rationalizations)]),
+  if (list(GUIDE.handoff).length) root.append(h("h3", {}, t("before")),
+    h("div", { class: "card" }, list(GUIDE.handoff).map((x, i) => h("label", { class: "chk" },
+      h("input", { type: "checkbox", checked: !!state.before[i], onchange: (e) => { state.before[i] = e.target.checked; save(); } }), h("span", {}, rich(x))))));
+  root.append(
     h("p", {}, h("button", { class: "primary", onclick: () => { out.value = findingsMarkdown(); copyText(out.value, out); } }, t("copy"))), out);
   return root;
 }
@@ -500,6 +484,8 @@ function selfCheck() {
     if (LEAK.test(document.body.innerText)) bad.push(x.id + " (object text)");
   });
   state.tab = prev; render();
+  const bn = document.getElementById("banner");
+  if (bn) { bn.hidden = !bad.length; bn.textContent = bad.length ? "Guide self-check failed: " + bad.join("; ") + ". A field has the wrong shape or skipped g_()/rich(); see the DATA comment." : ""; }
   if (bad.length) console.error("human-review-guide: self-check failed in tab(s): " + bad.join("; ") + " (a field has the wrong shape or skipped g_()/rich())");
 }
 load();
