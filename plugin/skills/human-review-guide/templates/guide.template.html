@@ -204,7 +204,7 @@ function h(tag, attrs, ...kids) {
     else if (v === true) el.setAttribute(k, "");
     else if (v !== false && v != null) el.setAttribute(k, v);
   }
-  for (const c of kids.flat()) if (c != null) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  for (const c of kids.flat(Infinity)) if (c != null) el.append(c.nodeType ? c : document.createTextNode(String(c)));
   return el;
 }
 /* state.lang is "primary" or "en" */
@@ -360,9 +360,17 @@ document.getElementById("lang").addEventListener("click", () => { state.lang = L
 document.getElementById("theme").addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : state.theme === "dark" ? null : "light"; save(); render();
 });
+/* self-check: a filled-in template that leaks an object into the text fails loudly */
+function selfCheck() {
+  const prev = state.tab;
+  const bad = tabsList().filter(x => { state.tab = x.id; render(); return document.body.innerText.includes("[object"); });
+  state.tab = prev; render();
+  if (bad.length) console.error("human-review-guide: '[object' text rendered in tab(s): " + bad.map(x => x.id).join(", "));
+}
 load();
 if (!state.lang) state.lang = "primary";
 render();
+selfCheck();
 </script>
 </body>
 </html>
