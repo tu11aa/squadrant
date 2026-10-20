@@ -32,6 +32,7 @@ guided first run — come back here when you need the details.
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Captain rollover](#captain-rollover-1010)
+- [Human review guide](#human-review-guide-1012)
 - [Config](#config)
 
 ## Commands
@@ -771,6 +772,16 @@ Because the layout is flat, a project dir shares a namespace with those entries.
 
 - **`squadrant captain compact <project> [--focus <text>]`** sends `captain-compact` to the daemon and returns. The daemon polls (1 s) until the captain pane shows no turn in flight on two consecutive polls, then types `/compact <focus>` + Enter through the runtime driver using the same send guard as every pane delivery (draft, open modal/prompt and no-box all defer). It never types into a busy pane or an open prompt. After 10 minutes without a chance it drops the request and logs `captain-compact <project>: timed out … not compacted`. Default focus: "Keep the active task, open PRs/crews and decisions; the full state is in the handoff". Needs the cmux runtime; Claude captains only (Claude Code has no compact API and the peer socket can't run slash commands).
 - **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
+
+## Human review guide (#1012)
+
+`squadrant:human-review-guide` is a captain skill (`plugin/skills/human-review-guide/`) that gives the operator a short, well-sourced guide for the **human gate** of crew PRs: intent and scope, public contracts, architecture trade-offs, test validity and a live comparison with the design. Machines (crew self-review, captain agent review, CI, guard tests) run first; the guide tells the human what is left.
+
+- **Mode.** One PR: answer in chat. Several PRs: a local `<workspace>/artifacts/review-guides/<date>-<topic>.md` plus an interactive `.html` (tabs: Read first, one per PR in review order, Verdict; summary table, stack diagram, review and merge order, collapse recommendation, checklists with progress, per-PR verdict and notes, "Copy my findings" with severity prefixes). The HTML is self-contained, works at phone width, in light and dark, and without storage. Written in the operator's language; a language toggle against English appears only when the operator's preferences ask for bilingual docs.
+- **Per PR.** Context, tests first with a manual mutation, implementation points (Where `file:line` + symbol, What, Why, How solved, You judge, Axis) and a five-axis checklist. Anchors are verified at the head SHA with `git grep -n` on `origin/<branch>`, the SHA is stated per PR and refreshed on every head update.
+- **Written by the owner.** The agent in charge of the PRs (normally the captain) writes it, never a fresh crew or subagent.
+- **Local only.** The guide is never posted on a PR, issue, tracker or chat. After a PR review tool run that may comment, read the comment back and strip anything beyond the tool's standard body; run such tools with commenting off while a guide request is fresh. A GitHub comment edit keeps history.
+- Templates: `templates/guide.template.md`, `templates/guide.template.html`. Captains load the skill from the full `plugin` dir; it is not in `CREW_SKILLS`.
 
 ## Config
 

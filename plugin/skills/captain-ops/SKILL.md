@@ -305,7 +305,8 @@ On CREW REVIEW or CREW DONE:
    - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
    - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
 4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-5. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+5. **Operator about to review by hand** ("review guide", "how should I review these PRs")? Use the `squadrant:human-review-guide` skill: one PR → chat answer, several → one local interactive HTML. You write it yourself (you hold the context), and it is never posted anywhere.
+6. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 

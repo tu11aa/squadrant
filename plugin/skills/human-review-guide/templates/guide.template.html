@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Human review guide</title>
+<!--
+  Human review guide shell. LOCAL ONLY: never publish or post this file.
+  Self-contained: no network, no libraries. Replace the GUIDE object below
+  (invented sample data) with the facts gathered for the real PRs; keep the rest.
+  Every localStorage access is wrapped in try/catch; the page works without it.
+-->
+<style>
+:root{--bg:#f7f7f9;--panel:#fff;--text:#1d1f24;--muted:#5d6370;--line:#dcdfe6;--accent:#2f5bea;--ok:#1a7f4b;--warn:#a15c00;--bad:#c0392b;--chip:#eef1f8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161a;--panel:#1d2026;--text:#e6e8ee;--muted:#9aa1b0;--line:#323744;--accent:#7b9cff;--ok:#4cc38a;--warn:#e0a24a;--bad:#ff7b6b;--chip:#272b34}}
+:root[data-theme="dark"]{--bg:#14161a;--panel:#1d2026;--text:#e6e8ee;--muted:#9aa1b0;--line:#323744;--accent:#7b9cff;--ok:#4cc38a;--warn:#e0a24a;--bad:#ff7b6b;--chip:#272b34}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:hidden}
+.wrap{max-width:980px;margin:0 auto;padding:0 16px 64px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0}
+header .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1 1 220px}
+h2{font-size:17px;margin:26px 0 8px}h3{font-size:15px;margin:18px 0 6px}
+.local{background:var(--bad);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.04em}
+button,select,textarea,input{font:inherit;color:var(--text)}
+button,select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}
+button:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+nav.tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0 2px;scrollbar-width:thin}
+nav.tabs button{white-space:nowrap;flex:0 0 auto}
+nav.tabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.bar{height:6px;background:var(--chip);border-radius:99px;overflow:hidden;margin:6px 0}
+.bar>i{display:block;height:100%;background:var(--ok);width:0;transition:width .2s}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+.tablewrap{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+code{background:var(--chip);padding:1px 5px;border-radius:5px;font:13px ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+pre{background:var(--chip);padding:10px;border-radius:8px;overflow-x:auto;max-width:100%}
+.chip{display:inline-block;background:var(--chip);border-radius:99px;padding:1px 9px;font-size:12px}
+.chip.High{color:var(--bad)}.chip.Medium{color:var(--warn)}.chip.Low{color:var(--ok)}
+details.point{border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel)}
+details.point>summary{cursor:pointer;padding:9px 12px;font-weight:600;list-style-position:inside}
+details.point .body{padding:0 12px 12px}
+dl.fields{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:6px 0}
+dl.fields dt{color:var(--muted);font-weight:600}dl.fields dd{margin:0;min-width:0;overflow-wrap:anywhere}
+@media (max-width:560px){dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}}
+.finding{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.finding input{flex:1 1 180px;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+textarea{width:100%;min-height:90px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+label.chk{display:flex;gap:8px;align-items:flex-start;padding:3px 0}
+label.chk input{margin-top:5px}
+.stack{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.stack .node{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:3px 10px}
+.muted{color:var(--muted)}
+.toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="row">
+      <h1 id="title"></h1>
+      <span class="local" id="local"></span>
+      <button id="lang" aria-label="Language" data-lang="primary"></button>
+      <button id="theme" aria-label="Theme"></button>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+  </header>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ---------- DATA: replace with the real guide. Sample data below is invented. ----------
+   Write every text field in the operator's own language (from their profile or the
+   conversation). Code identifiers, paths and commands stay untranslated.
+   - A text field is either a plain string or {primary, en}.
+   - If the operator wants bilingual local docs, fill both and set primaryLabel (e.g. the
+     language's short name) and langCode; the header then shows a toggle between primary and English.
+     With plain strings only, or no primaryLabel, no toggle is shown.
+   - UI labels are English by default; put translations in GUIDE.ui as {key: text} using
+     the keys of T below (arrays/objects keep the shape of T[key].en). */
+const GUIDE = {
+  id: "sample-2026-01-15",
+  title: "Human review: sample orders",
+  date: "2026-01-15",
+  primaryLabel: "Primary",
+  langCode: "en", /* BCP 47 code of the primary language, for the lang attribute */
+  ui: {},
+  gates: [
+    { gate: "Agent review", did: "3 rounds, all findings fixed", catches: "Logic bugs, edge cases" },
+    { gate: "CI vs base", did: "Green except failures already on base", catches: "Build, types, tests" }
+  ],
+  humanGate: ["Intent and scope", "Public contracts (field names, routes, error codes)", "Architecture trade-offs", "Do the tests test the right thing (mutation)", "Live comparison with the design"],
+  openCode: "git fetch origin\ngit worktree add ../review-orders origin/feat/orders-api   # read-only\ngit worktree add ../review-ui     origin/feat/orders-ui\ngh pr diff 101   # one PR's diff",
+  reviewOrder: "API first (the contract), then UI. Within a stack, follow stack order so each diff holds only its own change.",
+  mergeOrder: "#101, then #102 (bottom of the stack first).",
+  collapse: "Recommendation: collapse #102 into #101 for the ticket. Stacked PRs are hard for a lead to follow; one PR per ticket is clearer.",
+  stack: [["develop", "#101", "#102"]],
+  /* prs are listed in REVIEW order. Set ui:true on a PR to add the "compare with design" check. */
+  prs: [
+    {
+      id: "101", title: "Orders API: create and cancel", branch: "feat/orders-api", base: "develop",
+      size: "9 files, +420/−12", time: "30 min", focus: "High", gates: "CI green · agent review ✓", sha: "a1b2c3d",
+      context: { primary: "[primary language] Adds `createOrder` and `cancelOrder`. Does not: refunds. Breaking: none. Bottom of the stack.", en: "Adds `createOrder` and `cancelOrder`. Does not: refunds. Breaking: none. Bottom of the stack." },
+      tests: "`orders.service.test.ts` proves: empty cart rejected, cancelling a shipped order rejected.",
+      mutation: "Change `items.length === 0` to `false` at `src/orders/service.ts:88` (`createOrder`); test `rejects empty cart` must go red.",
+      points: [
+        {
+          title: "Error code naming", where: "src/orders/errors.ts:14 — ORDER_EMPTY_CART", axis: "Architecture",
+          what: "Defines the error code returned to clients.",
+          why: "Clients must tell business errors from system errors.",
+          how: "Stable string constant, not a number.",
+          judge: "This name is a public contract. Accept it?"
+        },
+        {
+          title: "Cancel transaction scope", where: "src/orders/service.ts:131 — cancelOrder", axis: "Correctness",
+          what: "Updates status and stock inside one transaction.",
+          why: "Review found a double cancel doubled the stock.",
+          how: "Lock the row, then check status; trades one lock for safety.",
+          judge: "Is a row lock acceptable on this hot path?"
+        }
+      ]
+    },
+    {
+      id: "102", title: "Orders UI: list page", branch: "feat/orders-ui", base: "#101", ui: true,
+      size: "14 files, +880/−40", time: "40 min", focus: "Medium", gates: "CI green · guard tests ✓", sha: "e4f5a6b",
+      context: "Order list page with filters and paging. Does not: export. Sits on #101.",
+      tests: "`OrderList.test.tsx` proves the status filter and the empty state.",
+      mutation: "Change `status === filter` to `true` at `src/ui/OrderList.tsx:57` (`applyFilter`); test `filters by status` must go red.",
+      points: [
+        {
+          title: "Filter state in URL", where: "src/ui/OrderList.tsx:33 — useFilterParams", axis: "Readability",
+          what: "Keeps filters in the query string.",
+          why: "Makes links shareable and Back work.",
+          how: "A small hook instead of a router extension.",
+          judge: "Are the param names stable enough to become a contract?"
+        }
+      ]
+    }
+  ]
+};
+
+/* ---------- UI strings (English; override per key via GUIDE.ui) ---------- */
+const T = {
+  local: { en: "LOCAL ONLY, DO NOT POST" },
+  readFirst: { en: "Read first" }, verdict: { en: "Verdict" },
+  summary: { en: "Summary" }, stack: { en: "Stack" },
+  gates: { en: "Gates already run (do not redo)" },
+  gateCols: { en: ["Gate", "Did", "Catches"] },
+  humanGate: { en: "What the human gate is for" },
+  severity: { en: "Severity prefixes" }, prefixCol: { en: ["Prefix", "Meaning"] },
+  sevRows: { en: [["(none)", "Required before merge"], ["Critical:", "Blocks merge"], ["Consider:", "Worth weighing"], ["Nit:", "Small, optional"], ["FYI", "Information"]] },
+  openCode: { en: "How to open the code" },
+  openNote: { en: "Lines in this guide are valid at the SHAs listed. If they drift, search by symbol." },
+  order: { en: "Review order" }, merge: { en: "Merge order" },
+  collapse: { en: "Collapse into fewer PRs for the lead?" },
+  cols: { en: ["PR", "Branch → base", "Size", "Est. time", "Focus", "Gates", "Head SHA"] },
+  context: { en: "1. Context" }, tests: { en: "2. Tests first" },
+  mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
+  fields: { en: { where: "Where", what: "What", why: "Why", how: "How solved", judge: "You judge", axis: "Axis" } },
+  checklist: { en: "4. Five-axis checklist" },
+  axes: { en: { Correctness: "Correctness: matches intent, edge cases, tests cover behaviour", Readability: "Readability: clear names, plain code, comments say why", Architecture: "Architecture: fits patterns, no premature abstraction", Security: "Security: input validated, auth checked, no secrets", Performance: "Performance: no N+1 or unbounded loops", Design: "Compared with the design live (UI only)" } },
+  progress: { en: "Progress" },
+  sevNone: { en: "(required)" }, addFinding: { en: "Finding for this point…" },
+  notes: { en: "General notes for this PR" },
+  verdictLabel: { en: "PR verdict" },
+  verdicts: { en: { "": "Not set", approve: "Approve", changes: "Request changes" } },
+  copy: { en: "Copy my findings" }, copied: { en: "Copied" }, copyFail: { en: "Copy failed, select the text below" },
+  before: { en: "Before handing to the lead" },
+  beforeItems: { en: ["Every required and Critical finding resolved", "Every PR has a verdict", "SHAs and anchors re-verified at current heads", "Every accepted debt has a follow-up ticket"] },
+  noStore: { en: "State cannot be saved in this browser; the page works but resets on reload." },
+  prefix: { en: "Anchors at" }, langBtn: { en: "Language" }
+};
+const SEV = ["", "Critical:", "Consider:", "Nit:", "FYI"];
+const AXES = ["Correctness", "Readability", "Architecture", "Security", "Performance", "Design"];
+
+/* ---------- storage-safe state ---------- */
+const KEY = "hrg:" + GUIDE.id;
+let storeOk = true;
+let state = { lang: null, theme: null, tab: "read", checks: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
+function load() {
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") state = Object.assign(state, o); }
+  } catch (e) { storeOk = false; }
+}
+function save() {
+  try { window.localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { storeOk = false; }
+}
+
+/* ---------- helpers ---------- */
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const k in (attrs || {})) {
+    const v = attrs[k];
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return el;
+}
+/* state.lang is "primary" or "en" */
+const L = () => (GUIDE.primaryLabel && state.lang === "primary") ? "primary" : "en";
+const isLang = (o) => o && typeof o === "object" && !Array.isArray(o) && (o.primary !== undefined || o.en !== undefined);
+/* guide text: {primary,en} or plain string */
+const g_ = (o) => isLang(o) ? (o[L()] ?? o.primary ?? o.en) : o;
+/* UI labels: GUIDE.ui override (primary mode only), else English */
+const u = (k) => (L() === "primary" && GUIDE.ui && GUIDE.ui[k] !== undefined) ? GUIDE.ui[k] : T[k].en;
+/* inline `code` spans inside translated text */
+function rich(s) {
+  const out = []; String(s).split(/(`[^`]+`)/).forEach(p => out.push(/^`[^`]+`$/.test(p) ? h("code", {}, p.slice(1, -1)) : p));
+  return out;
+}
+function table(cols, rows) {
+  return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(c => h("th", {}, c)))), h("tbody", {}, rows.map(r => h("tr", {}, r.map(c => h("td", {}, c)))))));
+}
+function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(() => t.classList.remove("on"), 1600); }
+function prAxes(pr) { return pr.axes || AXES.filter(a => a !== "Design" || pr.ui); }
+function progressOf(pr) {
+  const keys = prAxes(pr); const c = state.checks[pr.id] || {};
+  const done = keys.filter(k => c[k]).length; return [done, keys.length];
+}
+function bar(done, total) { return h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done }, h("i", { style: "width:" + (total ? Math.round(100 * done / total) : 0) + "%" })); }
+
+/* ---------- views ---------- */
+function readFirst() {
+  const g = GUIDE, t = u;
+  const root = h("section", {});
+  root.append(h("h2", {}, t("summary")),
+    table(u("cols"), g.prs.map(p => [rich("#" + p.id + " " + p.title), h("span", {}, h("code", {}, p.branch), " → ", h("code", {}, p.base.startsWith("#") ? p.base : p.base)), p.size, p.time, h("span", { class: "chip " + p.focus }, p.focus), p.gates, h("code", {}, p.sha)])),
+    h("h2", {}, t("stack")),
+    ...g.stack.map(chain => h("div", { class: "stack card" }, chain.map((n, i) => [i ? h("span", { class: "muted", "aria-label": "on top of" }, "←") : null, h("span", { class: "node" }, n)]))),
+    h("h2", {}, t("gates")), table(u("gateCols"), g.gates.map(x => [x.gate, g_(x.did), g_(x.catches)])),
+    h("h2", {}, t("humanGate")), h("ol", {}, g_(g.humanGate).map(s => h("li", {}, s))),
+    h("h2", {}, t("severity")), table([...u("prefixCol")], u("sevRows").map(r => [h("code", {}, r[0]), r[1]])),
+    h("h2", {}, t("openCode")), h("pre", {}, g.openCode), h("p", { class: "muted" }, t("openNote")),
+    h("h2", {}, t("order")), h("p", {}, g_(g.reviewOrder)), h("ol", {}, g.prs.map(p => h("li", {}, "#" + p.id + " " + p.title + " — " + p.time + ", " + p.focus))),
+    h("h2", {}, t("merge")), h("p", {}, g_(g.mergeOrder)),
+    h("h2", {}, t("collapse")), h("div", { class: "card" }, g_(g.collapse)));
+  return root;
+}
+
+function pointView(pr, i, pt) {
+  const F = u("fields"), id = pr.id + ":" + i;
+  const sel = h("select", { "aria-label": "severity", onchange: (e) => { state.sev[id] = e.target.value; save(); } },
+    SEV.map(s => h("option", { value: s, selected: (state.sev[id] || "") === s }, s || u("sevNone"))));
+  const inp = h("input", { type: "text", placeholder: u("addFinding"), value: state.finds[id] || "", oninput: (e) => { state.finds[id] = e.target.value; save(); } });
+  return h("details", { class: "point", open: i === 0 },
+    h("summary", {}, (i + 1) + ". " + pt.title + "  ", h("span", { class: "chip" }, pt.axis)),
+    h("div", { class: "body" },
+      h("dl", { class: "fields" },
+        h("dt", {}, F.where), h("dd", {}, h("code", {}, pt.where)),
+        h("dt", {}, F.what), h("dd", {}, rich(g_(pt.what))),
+        h("dt", {}, F.why), h("dd", {}, rich(g_(pt.why))),
+        h("dt", {}, F.how), h("dd", {}, rich(g_(pt.how))),
+        h("dt", {}, F.judge), h("dd", {}, h("strong", {}, rich(g_(pt.judge)))),
+        h("dt", {}, F.axis), h("dd", {}, pt.axis)),
+      h("div", { class: "finding" }, sel, inp)));
+}
+
+function prView(pr) {
+  const t = u;
+  const root = h("section", {});
+  const prog = h("div", {});
+  function paint() { const [d, n] = progressOf(pr); prog.replaceChildren(h("strong", {}, t("progress") + ": " + d + "/" + n), bar(d, n)); }
+  root.append(
+    h("h2", {}, "#" + pr.id + " " + pr.title),
+    h("p", { class: "muted" }, h("code", {}, pr.branch), " → ", h("code", {}, pr.base), "  · ", t("prefix") + " ", h("code", {}, pr.sha), "  · ", pr.size, " · ", pr.time, " · ", h("span", { class: "chip " + pr.focus }, pr.focus)),
+    prog,
+    h("h3", {}, t("context")), h("div", { class: "card" }, rich(g_(pr.context))),
+    h("h3", {}, t("tests")), h("div", { class: "card" }, h("p", {}, rich(g_(pr.tests))), h("p", {}, h("strong", {}, t("mutation") + ": "), rich(g_(pr.mutation)))),
+    h("h3", {}, t("points")), ...pr.points.map((pt, i) => pointView(pr, i, pt)),
+    h("h3", {}, t("checklist")),
+    h("div", { class: "card" }, prAxes(pr).map(a => h("label", { class: "chk" },
+      h("input", { type: "checkbox", checked: !!(state.checks[pr.id] || {})[a], onchange: (e) => { (state.checks[pr.id] = state.checks[pr.id] || {})[a] = e.target.checked; save(); paint(); } }),
+      h("span", {}, u("axes")[a])))),
+    h("h3", {}, t("verdictLabel")),
+    h("select", { "aria-label": t("verdictLabel"), onchange: (e) => { state.verdict[pr.id] = e.target.value; save(); } },
+      Object.entries(u("verdicts")).map(([v, label]) => h("option", { value: v, selected: (state.verdict[pr.id] || "") === v }, label))),
+    h("h3", {}, t("notes")),
+    h("textarea", { "aria-label": t("notes"), oninput: (e) => { state.notes[pr.id] = e.target.value; save(); } }, state.notes[pr.id] || ""));
+  paint();
+  return root;
+}
+
+function findingsMarkdown() {
+  const out = ["# " + g_(GUIDE.title) + " — " + GUIDE.date, ""];
+  GUIDE.prs.forEach(pr => {
+    const [d, n] = progressOf(pr), v = state.verdict[pr.id] || "";
+    out.push("## #" + pr.id + " " + pr.title + " (`" + pr.sha + "`)", "Verdict: " + (v ? u("verdicts")[v] : "—") + " · checklist " + d + "/" + n);
+    const lines = [];
+    pr.points.forEach((pt, i) => {
+      const id = pr.id + ":" + i, txt = (state.finds[id] || "").trim();
+      if (txt) lines.push("- " + (state.sev[id] ? state.sev[id] + " " : "") + "`" + pt.where + "` — " + txt);
+    });
+    if (lines.length) out.push("", ...lines);
+    const note = (state.notes[pr.id] || "").trim();
+    if (note) out.push("", "Notes:", note);
+    out.push("");
+  });
+  return out.join("\n").trim() + "\n";
+}
+
+function verdictView() {
+  const t = u;
+  const out = h("textarea", { readonly: true, "aria-label": "findings", style: "min-height:180px" });
+  const root = h("section", {}, h("h2", {}, t("verdict")));
+  GUIDE.prs.forEach(pr => {
+    const [d, n] = progressOf(pr), v = state.verdict[pr.id] || "";
+    root.append(h("div", { class: "card" }, h("strong", {}, "#" + pr.id + " " + pr.title), h("div", {}, t("progress") + ": " + d + "/" + n, bar(d, n)), h("div", {}, u("verdicts")[v])));
+  });
+  root.append(h("h3", {}, t("before")),
+    h("div", { class: "card" }, u("beforeItems").map((s, i) => h("label", { class: "chk" },
+      h("input", { type: "checkbox", checked: !!state.before[i], onchange: (e) => { state.before[i] = e.target.checked; save(); } }), h("span", {}, s)))),
+    h("p", {}, h("button", { class: "primary", onclick: () => copyFindings(out) }, t("copy"))), out);
+  return root;
+}
+
+async function copyFindings(out) {
+  const md = findingsMarkdown(); out.value = md;
+  try { await navigator.clipboard.writeText(md); toast(u("copied")); return; } catch (e) {}
+  try { out.focus(); out.select(); if (document.execCommand("copy")) { toast(u("copied")); return; } } catch (e) {}
+  toast(u("copyFail"));
+}
+
+/* ---------- shell ---------- */
+function tabsList() {
+  return [{ id: "read", label: u("readFirst") }, ...GUIDE.prs.map(p => ({ id: "pr" + p.id, label: "#" + p.id })), { id: "verdict", label: u("verdict") }];
+}
+function render() {
+  document.documentElement.lang = L() === "primary" ? (GUIDE.langCode || "en") : "en";
+  document.getElementById("title").textContent = g_(GUIDE.title);
+  document.getElementById("local").textContent = u("local");
+  const lb = document.getElementById("lang");
+  lb.hidden = !GUIDE.primaryLabel;
+  lb.textContent = L() === "primary" ? GUIDE.primaryLabel + " → EN" : "EN → " + GUIDE.primaryLabel;
+  lb.setAttribute("data-lang", L());
+  const th = state.theme || "auto";
+  document.getElementById("theme").textContent = "◐ " + th;
+  if (state.theme) document.documentElement.setAttribute("data-theme", state.theme); else document.documentElement.removeAttribute("data-theme");
+  const tabs = tabsList();
+  if (!tabs.some(x => x.id === state.tab)) state.tab = "read";
+  document.getElementById("tabs").replaceChildren(...tabs.map(x => h("button", { role: "tab", "aria-selected": String(x.id === state.tab), onclick: () => { state.tab = x.id; save(); render(); window.scrollTo(0, 0); } }, x.label)));
+  const main = document.getElementById("main");
+  let view;
+  if (state.tab === "read") view = readFirst();
+  else if (state.tab === "verdict") view = verdictView();
+  else view = prView(GUIDE.prs.find(p => "pr" + p.id === state.tab));
+  main.replaceChildren(...(storeOk ? [] : [h("p", { class: "card muted" }, u("noStore"))]), view);
+}
+document.getElementById("lang").addEventListener("click", () => { state.lang = L() === "primary" ? "en" : "primary"; save(); render(); });
+document.getElementById("theme").addEventListener("click", () => {
+  state.theme = state.theme === "light" ? "dark" : state.theme === "dark" ? null : "light"; save(); render();
+});
+load();
+if (!state.lang) state.lang = "primary";
+render();
+</script>
+</body>
+</html>
