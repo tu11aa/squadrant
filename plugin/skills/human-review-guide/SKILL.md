@@ -36,16 +36,18 @@ Structure follows [addyosmani/agent-skills `code-review-and-quality`](https://gi
 
 | Input | Output |
 |---|---|
-| **One PR** | Answer in chat, using the per-PR structure below. No file. |
+| **One PR** | Answer in chat, using the per-PR structure below. No file, unless the operator asks for the HTML too (then write both). |
 | **Several PRs** | One local file `<workspace>/artifacts/review-guides/<YYYY-MM-DD>-<topic>.md` (source of truth) plus an interactive `.html` filled from the same facts, opened locally with `open <file>`. |
 
 Language: write the guide in the operator's own language, taken from their profile or preferences, else from the language of the conversation. Code identifiers, paths and commands stay untranslated. If their preferences ask for bilingual local docs, the HTML offers a language toggle between the operator's language and English; otherwise it has no toggle.
 
-The multi-PR HTML tabs are: **Read first** (summary table, stack diagram, gates, human-gate purpose, severity prefixes, how to open code, review order, merge order, collapse recommendation), then **one tab per PR in review order**, then **Verdict**. Per PR: checklist, progress bar, verdict selector and notes, saved locally. A **Copy my findings** button outputs Markdown per PR with severity prefixes for the operator to paste to the captain. It works at phone width with no horizontal scroll, in light and dark.
+In the HTML, each point's **You judge** is a checkbox; per-PR progress counts judged points plus checklist items, and a small bar sits in each PR's tab button. Copy buttons sit next to every `Where` anchor, test path and the open-code block; a header **Copy all anchors** button copies every anchor and test path.
+
+The multi-PR HTML tabs are: **Read first** (summary table, stack diagram, gates, human-gate purpose, severity prefixes, how to open code, review order, merge order, collapse recommendation), then **one tab per PR in review order**, then **Verdict** (per-PR progress and verdict table, pending decisions, the before-handing checklist, the verdict template as a copyable block, common rationalizations). Per PR: checklist, progress bar, verdict selector and notes, saved locally. A **Copy my findings** button outputs Markdown per PR (verdict and progress, findings with severity prefixes, notes, and the points not yet judged) plus the gate gaps, for the operator to paste to the captain. It works at phone width with no horizontal scroll, in light and dark.
 
 Templates in this skill directory:
 - `templates/guide.template.md` — Markdown skeleton with the shared sections and the per-PR block.
-- `templates/guide.template.html` — self-contained interactive shell (tabs per PR, collapsible points, checkboxes with progress, per-PR verdict and notes, copy-findings, optional primary/English language toggle, light/dark). Opens as-is with invented sample data. **You fill it yourself** by copying the file next to the Markdown and replacing the `GUIDE` data object (a plain JS literal; the comment above it says how); keep the rest. No render step, no network, no storage required.
+- `templates/guide.template.html` — self-contained interactive shell (tabs per PR with progress bars, collapsible points with a judged checkbox, copy buttons, structured context, per-test mutations, optional design-compare card, checklists with progress, per-PR verdict and notes, copy-findings, optional primary/English language toggle, light/dark). Opens as-is with invented sample data. **You fill it yourself** by copying the file next to the Markdown and replacing the `GUIDE` data object (a plain JS literal; the comment above it says how); keep the rest. No render step, no network, no storage required.
 
 ## Process
 
@@ -61,10 +63,10 @@ Templates in this skill directory:
 ## Per-PR structure
 
 ### 1. Context
-What the PR does; what it deliberately does not do; breaking changes; size (files, +/−); base and stack position; which automated gates already ran and what they found.
+Structured lists, each optional: **features added**, **bugs fixed**, **deliberately not done**, **breaking changes**, **waits on** (blocked by other people or PRs), plus the ticket id. Also size (files, +/−), base and stack position, and which automated gates already ran and what they found.
 
 ### 2. Tests first
-Which tests prove what. Then one concrete **manual mutation** so the reviewer can confirm the tests are real: "change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `orders.service.test.ts › rejects empty cart` must go red." If it stays green, the test is decoration.
+One entry per test (file path, what it proves). Give **each** its own concrete **manual mutation** where one makes sense, so the reviewer can confirm the tests are real: "change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `orders.service.test.ts › rejects empty cart` must go red." If it stays green, the test is decoration.
 
 ### 3. Implementation points
 Each point has the same seven fields:
@@ -77,7 +79,7 @@ Each point has the same seven fields:
 | **Why** | The problem or constraint that forced it (often a bug found in review) |
 | **How solved** | The approach and its trade-off |
 | **You judge** | The concrete question only a human can answer (name a public contract, accept a trade-off, a duplicated helper as debt) |
-| **Axis** | Correctness / Readability / Architecture / Security / Performance |
+| **Axis** | One or more of Correctness / Readability / Architecture / Security / Performance |
 
 Balance: each point needs what, why and how plus the human question, but not a paragraph per line of the diff. Keep "what to verify" and "why it is built this way" in separate fields; the operator wants both.
 
@@ -88,7 +90,7 @@ Balance: each point needs what, why and how plus the human question, but not a p
 - **Security** — input validated at boundaries; auth and permission checks present; no secrets or user data in logs.
 - **Performance** — no unbounded loops, N+1 queries or avoidable work on a hot path.
 
-For UI changes add: **compare with the design/prototype live**, side by side, in a browser.
+For UI changes add a **Compare with the design** card: what to open and what to compare (layout, labels, empty and error states), side by side in a browser.
 
 ## Shared sections (several PRs)
 
@@ -108,8 +110,8 @@ Put these once at the top of the guide:
   | `FYI` | Information | Nothing |
 
 - **How to open the code** — read-only worktrees per stack (`git worktree add <dir> origin/<branch>`), `gh pr diff N` for one PR's diff. The lines in the guide are valid at the stated SHAs; if they drift, search by symbol.
-- **Summary table** — one row per PR: PR, `branch → base`, size (files, +/−), estimated review time, focus level (High/Medium/Low), automated-gate status, and the **head SHA** the anchors were verified at.
-- **Stack diagram** — which PR sits on which, e.g. `develop ← A ← B ← C`.
+- **Summary table** — numbered in review order, one row per PR: PR, ticket, `branch → base`, size (files, +/−), estimated review time, focus level (High/Medium/Low), automated-gate status, and the **head SHA** the anchors were verified at.
+- **Stack diagram** — which PR sits on which, one lane per stack, each starting at the base branch, e.g. `develop ← A ← B` and `develop ← C`.
 - **Review order and why**, with time and focus level per PR. Default: contract/backend before UI; within a stack, stack order so each diff holds only its own change.
 - **Merge order** (usually stack order, bottom first).
 - **Collapse recommendation** — "should these be collapsed into fewer PRs for the lead?" Stacked PRs confuse a lead; one PR per ticket is often better. Give a recommendation and the reason, not just the question.

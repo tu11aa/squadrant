@@ -57,6 +57,15 @@ label.chk input{margin-top:5px}
 .muted{color:var(--muted)}
 .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.on{opacity:1}
+.cp{padding:0 6px;margin-left:6px;font-size:12px;line-height:20px;border-radius:6px}
+nav.tabs button .mini{display:block;height:3px;border-radius:3px;background:var(--line);margin-top:3px;overflow:hidden}
+nav.tabs button .mini i{display:block;height:100%;width:0;background:var(--ok)}
+nav.tabs button[aria-selected="true"] .mini{background:rgba(255,255,255,.35)}
+nav.tabs button[aria-selected="true"] .mini i{background:#fff}
+ul.ctx{margin:2px 0 8px;padding-left:20px}
+details.point.judged>summary::after{content:" ✓";color:var(--ok)}
+.rowline{display:flex;gap:6px;align-items:flex-start}
+.rowline>*:first-child{min-width:0;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -65,6 +74,7 @@ label.chk input{margin-top:5px}
     <div class="row">
       <h1 id="title"></h1>
       <span class="local" id="local"></span>
+      <button id="copyall"></button>
       <button id="lang" aria-label="Language" data-lang="primary"></button>
       <button id="theme" aria-label="Theme"></button>
     </div>
@@ -78,47 +88,60 @@ label.chk input{margin-top:5px}
 "use strict";
 /* ---------- DATA: replace with the real guide. Sample data below is invented. ----------
    Write every text field in the operator's own language (from their profile or the
-   conversation). Code identifiers, paths and commands stay untranslated.
-   - A text field is either a plain string or {primary, en}.
-   - If the operator wants bilingual local docs, fill both and set primaryLabel (e.g. the
-     language's short name) and langCode; the header then shows a toggle between primary and English.
-     With plain strings only, or no primaryLabel, no toggle is shown.
-   - UI labels are English by default; put translations in GUIDE.ui as {key: text} using
-     the keys of T below (arrays/objects keep the shape of T[key].en). */
+   conversation). Code identifiers, paths, branches, SHAs and commands stay untranslated.
+   - A text field is either a plain string or {primary, en}; `backticks` render as code.
+   - If the operator wants bilingual local docs, give both and set primaryLabel (the
+     language's short name) and langCode; the header then shows a toggle between primary
+     and English. Without primaryLabel there is no toggle.
+   - UI labels are English; put translations in GUIDE.ui as {key: text} using the keys of T below.
+   - prs are listed in REVIEW order. Optional parts are simply left out. */
 const GUIDE = {
   id: "sample-2026-01-15",
-  title: "Human review: sample orders",
+  title: { primary: "[primary] Human review: sample orders", en: "Human review: sample orders" },
   date: "2026-01-15",
   primaryLabel: "Primary",
-  langCode: "en", /* BCP 47 code of the primary language, for the lang attribute */
+  langCode: "en", /* BCP 47 code of the primary language */
   ui: {},
-  /* coverage map: what each gate covers IN THIS DIFF. The guide holds only what no gate covered or only a human can judge. */
+  /* coverage map: what each gate covers IN THIS DIFF */
   gates: [
-    { gate: "Agent review", did: "3 rounds on src/orders/*, all findings fixed", catches: "Logic bugs, edge cases" },
+    { gate: { primary: "[primary] Agent review", en: "Agent review" }, did: "3 rounds on `src/orders/*`, all findings fixed", catches: "Logic bugs, edge cases" },
     { gate: "CI vs base", did: "Green except failures already on base", catches: "Build, types, tests" }
   ],
-  /* gaps: should be machine-checked, no gate covers. Each needs a suggested gate or ticket. */
+  /* gaps: should be machine-checked, no gate covers; each needs a suggested gate or ticket */
   gaps: [
-    { gap: "Error codes are only documented in prose; no test pins them", where: "#101 src/orders/errors.ts", fix: "Add a contract test listing the codes; follow-up ticket" },
-    { gap: "The list page template is not rendered by any test", where: "#102 src/ui/OrderList.tsx", fix: "Add a render/snapshot test" }
+    { gap: "Error codes are documented in prose only; no test pins them", where: "#101 src/orders/errors.ts", fix: "Add a contract test listing the codes; follow-up ticket" },
+    { gap: "The list page is not rendered by any test", where: "#102 src/ui/OrderList.tsx", fix: "Add a render/snapshot test" }
   ],
   humanGate: ["Intent and scope", "Public contracts (field names, routes, error codes)", "Architecture trade-offs", "Do the tests test the right thing (mutation)", "Live comparison with the design"],
   openCode: "git fetch origin\ngit worktree add ../review-orders origin/feat/orders-api   # read-only\ngit worktree add ../review-ui     origin/feat/orders-ui\ngh pr diff 101   # one PR's diff",
-  reviewOrder: "API first (the contract), then UI. Within a stack, follow stack order so each diff holds only its own change.",
-  mergeOrder: "#101, then #102 (bottom of the stack first).",
+  reviewOrder: "API first (the contract), then UI, then the independent PR. Within a stack, follow stack order so each diff holds only its own change.",
+  mergeOrder: "#101, then #102 (bottom of the stack first); #103 any time.",
   collapse: "Recommendation: collapse #102 into #101 for the ticket. Stacked PRs are hard for a lead to follow; one PR per ticket is clearer.",
-  stack: [["develop", "#101", "#102"]],
-  /* prs are listed in REVIEW order. Set ui:true on a PR to add the "compare with design" check. */
+  /* one lane per stack, each starting at the base branch */
+  stack: [["develop", "#101", "#102"], ["develop", "#103"]],
+  pending: [
+    "Owner decision: is `ORDER_EMPTY_CART` the final error code name?",
+    { primary: "[primary] Design sign-off on the empty state is pending", en: "Design sign-off on the empty state is pending" }
+  ],
   prs: [
     {
-      id: "101", title: "Orders API: create and cancel", branch: "feat/orders-api", base: "develop",
-      size: "9 files, +420/−12", time: "30 min", focus: "High", gates: "CI green · agent review ✓", sha: "a1b2c3d",
-      context: { primary: "[primary language] Adds `createOrder` and `cancelOrder`. Does not: refunds. Breaking: none. Bottom of the stack.", en: "Adds `createOrder` and `cancelOrder`. Does not: refunds. Breaking: none. Bottom of the stack." },
-      tests: "`orders.service.test.ts` proves: empty cart rejected, cancelling a shipped order rejected.",
-      mutation: "Change `items.length === 0` to `false` at `src/orders/service.ts:88` (`createOrder`); test `rejects empty cart` must go red.",
+      id: "101", ticket: "TICKET-1", title: { primary: "[primary] Orders API: create and cancel", en: "Orders API: create and cancel" },
+      branch: "feat/orders-api", base: "develop", size: "9 files, +420/−12", time: "30 min", focus: "High",
+      gates: "CI green · agent review ✓", sha: "a1b2c3d",
+      context: {
+        features: ["`createOrder` and `cancelOrder` endpoints"],
+        fixes: ["Double cancel no longer doubles stock"],
+        notDone: ["Refunds"],
+        breaking: [],
+        waitsOn: []
+      },
+      tests: [
+        { where: "src/orders/orders.service.test.ts", text: "rejects empty cart; rejects cancelling a shipped order", mutation: "Change `items.length === 0` to `false` at `src/orders/service.ts:88` (`createOrder`); `rejects empty cart` must go red." },
+        { where: "src/orders/cancel.test.ts", text: { primary: "[primary] cancelling twice keeps stock constant", en: "cancelling twice keeps stock constant" } }
+      ],
       points: [
         {
-          title: "Error code naming", where: "src/orders/errors.ts:14 — ORDER_EMPTY_CART", axis: "Architecture",
+          title: { primary: "[primary] Error code naming", en: "Error code naming" }, where: "src/orders/errors.ts:14 — ORDER_EMPTY_CART", axes: ["Architecture", "Readability"],
           gatedBy: "none",
           what: "Defines the error code returned to clients.",
           why: "Clients must tell business errors from system errors.",
@@ -126,7 +149,7 @@ const GUIDE = {
           judge: "This name is a public contract. Accept it?"
         },
         {
-          title: "Cancel transaction scope", where: "src/orders/service.ts:131 — cancelOrder", axis: "Correctness",
+          title: "Cancel transaction scope", where: "src/orders/service.ts:131 — cancelOrder", axes: ["Correctness"],
           gatedBy: "Agent review (partial: found the double cancel; not the lock cost)",
           what: "Updates status and stock inside one transaction.",
           why: "Review found a double cancel doubled the stock.",
@@ -136,14 +159,14 @@ const GUIDE = {
       ]
     },
     {
-      id: "102", title: "Orders UI: list page", branch: "feat/orders-ui", base: "#101", ui: true,
+      id: "102", ticket: "TICKET-1", title: "Orders UI: list page", branch: "feat/orders-ui", base: "#101",
       size: "14 files, +880/−40", time: "40 min", focus: "Medium", gates: "CI green · guard tests ✓", sha: "e4f5a6b",
-      context: "Order list page with filters and paging. Does not: export. Sits on #101.",
-      tests: "`OrderList.test.tsx` proves the status filter and the empty state.",
-      mutation: "Change `status === filter` to `true` at `src/ui/OrderList.tsx:57` (`applyFilter`); test `filters by status` must go red.",
+      context: { features: ["Order list with status filter and paging"], notDone: ["Export"], waitsOn: ["#101 merged"] },
+      tests: [{ where: "src/ui/OrderList.test.tsx", text: "status filter and empty state", mutation: "Change `status === filter` to `true` at `src/ui/OrderList.tsx:57` (`applyFilter`); `filters by status` must go red." }],
+      compare: { open: "The prototype's list screen next to the running page", compare: ["Column order and labels", "Empty state", "Filter chips and paging controls"] },
       points: [
         {
-          title: "Filter state in URL", where: "src/ui/OrderList.tsx:33 — useFilterParams", axis: "Readability",
+          title: "Filter state in URL", where: "src/ui/OrderList.tsx:33 — useFilterParams", axes: ["Readability"],
           gatedBy: "none",
           what: "Keeps filters in the query string.",
           why: "Makes links shareable and Back work.",
@@ -151,8 +174,26 @@ const GUIDE = {
           judge: "Are the param names stable enough to become a contract?"
         }
       ]
+    },
+    {
+      id: "103", ticket: "TICKET-2", title: "Config: order limits", branch: "feat/order-limits", base: "develop",
+      size: "3 files, +40/−2", time: "10 min", focus: "Low", gates: "CI green", sha: "0a9b8c7",
+      context: { features: ["`MAX_ITEMS` setting"] },
+      tests: [{ where: "src/config/limits.test.ts", text: "default and override" }],
+      points: [
+        {
+          title: "Default value", where: "src/config/limits.ts:9 — MAX_ITEMS", axes: ["Correctness"],
+          gatedBy: "CI (partial: the default is asserted, its suitability is not)",
+          what: "Sets the default limit to 100.",
+          why: "Avoids unbounded carts.",
+          how: "A constant with an env override.",
+          judge: "Is 100 the right default?"
+        }
+      ]
     }
-  ]
+  ],
+  /* optional: extra rationalizations for this guide; the standard table is built in */
+  rationalizations: []
 };
 
 /* ---------- UI strings (English; override per key via GUIDE.ui) ---------- */
@@ -161,10 +202,10 @@ const T = {
   readFirst: { en: "Read first" }, verdict: { en: "Verdict" },
   summary: { en: "Summary" }, stack: { en: "Stack" },
   gates: { en: "Gates already run: coverage map (do not redo)" },
+  gateCols: { en: ["Gate", "Covers in this diff", "Catches"] },
   gaps: { en: "Gate gaps: should be machine-checked, no gate covers" },
   gapCols: { en: ["Gap", "Where", "Suggested gate or ticket"] },
   gatedBy: { en: "Gated by" },
-  gateCols: { en: ["Gate", "Did", "Catches"] },
   humanGate: { en: "What the human gate is for" },
   severity: { en: "Severity prefixes" }, prefixCol: { en: ["Prefix", "Meaning"] },
   sevRows: { en: [["(none)", "Required before merge"], ["Critical:", "Blocks merge"], ["Consider:", "Worth weighing"], ["Nit:", "Small, optional"], ["FYI", "Information"]] },
@@ -172,10 +213,13 @@ const T = {
   openNote: { en: "Lines in this guide are valid at the SHAs listed. If they drift, search by symbol." },
   order: { en: "Review order" }, merge: { en: "Merge order" },
   collapse: { en: "Collapse into fewer PRs for the lead?" },
-  cols: { en: ["PR", "Branch → base", "Size", "Est. time", "Focus", "Gates", "Head SHA"] },
+  cols: { en: ["#", "PR", "Ticket", "Branch → base", "Size", "Est. time", "Focus", "Gates", "Head SHA"] },
   context: { en: "1. Context" }, tests: { en: "2. Tests first" },
+  ctx: { en: { features: "Features added", fixes: "Bugs fixed", notDone: "Deliberately not done", breaking: "Breaking changes", waitsOn: "Waits on" } },
   mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
+  compare: { en: "Compare with the design live" }, compareOpen: { en: "Open" }, compareWhat: { en: "Compare" },
   fields: { en: { where: "Where", what: "What", gatedBy: "Gated by", why: "Why", how: "How solved", judge: "You judge", axis: "Axis" } },
+  judged: { en: "Judged" },
   checklist: { en: "4. Five-axis checklist" },
   axes: { en: { Correctness: "Correctness: matches intent, edge cases, tests cover behaviour", Readability: "Readability: clear names, plain code, comments say why", Architecture: "Architecture: fits patterns, no premature abstraction", Security: "Security: input validated, auth checked, no secrets", Performance: "Performance: no N+1 or unbounded loops", Design: "Compared with the design live (UI only)" } },
   progress: { en: "Progress" },
@@ -183,11 +227,23 @@ const T = {
   notes: { en: "General notes for this PR" },
   verdictLabel: { en: "PR verdict" },
   verdicts: { en: { "": "Not set", approve: "Approve", changes: "Request changes" } },
-  copy: { en: "Copy my findings" }, copied: { en: "Copied" }, copyFail: { en: "Copy failed, select the text below" },
+  copy: { en: "Copy my findings" }, copyAll: { en: "Copy all anchors" }, copied: { en: "Copied" }, copyFail: { en: "Copy failed, select the text below" },
+  sumCols: { en: ["PR", "Progress", "Verdict"] },
+  pending: { en: "Pending decisions" },
   before: { en: "Before handing to the lead" },
   beforeItems: { en: ["Every required and Critical finding resolved", "Every PR has a verdict", "SHAs and anchors re-verified at current heads", "Every accepted debt has a follow-up ticket"] },
+  tplTitle: { en: "Verdict template (per PR)" },
+  tpl: { en: "Context:\nCorrectness:\nReadability:\nArchitecture:\nSecurity:\nPerformance:\nVerification:\nVerdict: Approve | Request changes" },
+  ratTitle: { en: "Common rationalizations" }, ratCols: { en: ["Rationalization", "Reality"] },
+  rats: { en: [
+    ["The agent review and CI passed, I can skim", "Those gates miss intent, contract names and test validity. That is what this gate is for."],
+    ["Let me double-check what CI already checked", "Don't. Spend the time on what no gate covered."],
+    ["The tests pass, so they test the right thing", "Run the manual mutation. A test that stays green when the code is broken proves nothing."],
+    ["It's debt, we'll clean it up later", "Not accepted without a follow-up ticket."]
+  ] },
+  notJudged: { en: "Points not yet judged" },
   noStore: { en: "State cannot be saved in this browser; the page works but resets on reload." },
-  prefix: { en: "Anchors at" }, langBtn: { en: "Language" }
+  prefix: { en: "Anchors at" }
 };
 const SEV = ["", "Critical:", "Consider:", "Nit:", "FYI"];
 const AXES = ["Correctness", "Readability", "Architecture", "Security", "Performance", "Design"];
@@ -195,7 +251,7 @@ const AXES = ["Correctness", "Readability", "Architecture", "Security", "Perform
 /* ---------- storage-safe state ---------- */
 const KEY = "hrg:" + GUIDE.id;
 let storeOk = true;
-let state = { lang: null, theme: null, tab: "read", checks: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
+let state = { lang: null, theme: null, tab: "read", checks: {}, judged: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
 function load() {
   try {
     const raw = window.localStorage.getItem(KEY);
@@ -222,76 +278,123 @@ function h(tag, attrs, ...kids) {
 /* state.lang is "primary" or "en" */
 const L = () => (GUIDE.primaryLabel && state.lang === "primary") ? "primary" : "en";
 const isLang = (o) => o && typeof o === "object" && !Array.isArray(o) && (o.primary !== undefined || o.en !== undefined);
-/* guide text: {primary,en} or plain string */
+/* guide text: {primary,en} or plain string. EVERY text field of the guide goes through g_ */
 const g_ = (o) => isLang(o) ? (o[L()] ?? o.primary ?? o.en) : o;
 /* UI labels: GUIDE.ui override (primary mode only), else English */
 const u = (k) => (L() === "primary" && GUIDE.ui && GUIDE.ui[k] !== undefined) ? GUIDE.ui[k] : T[k].en;
-/* inline `code` spans inside translated text */
-function rich(s) {
-  const out = []; String(s).split(/(`[^`]+`)/).forEach(p => out.push(/^`[^`]+`$/.test(p) ? h("code", {}, p.slice(1, -1)) : p));
-  return out;
+/* guide text with inline `code` spans; text field -> nodes */
+function rich(o) {
+  const s = g_(o); if (s == null) return [];
+  return String(s).split(/(`[^`]+`)/).map(p => /^`[^`]+`$/.test(p) ? h("code", {}, p.slice(1, -1)) : p);
 }
+/* cells: strings (or {primary,en}) go through rich, nodes pass through */
 function table(cols, rows) {
-  return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(c => h("th", {}, c)))), h("tbody", {}, rows.map(r => h("tr", {}, r.map(c => h("td", {}, c)))))));
+  const cell = (c) => (c && c.nodeType) ? c : rich(c);
+  return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(c => h("th", {}, c)))), h("tbody", {}, rows.map(r => h("tr", {}, r.map(c => h("td", {}, cell(c))))))));
 }
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(() => t.classList.remove("on"), 1600); }
-function prAxes(pr) { return pr.axes || AXES.filter(a => a !== "Design" || pr.ui); }
+async function copyText(text, out) {
+  try { await navigator.clipboard.writeText(text); toast(u("copied")); return; } catch (e) {}
+  try {
+    const ta = out || h("textarea", { style: "position:fixed;left:-9999px" });
+    if (!out) { ta.value = text; document.body.append(ta); }
+    ta.focus(); ta.select();
+    const ok = document.execCommand("copy");
+    if (!out) ta.remove();
+    if (ok) { toast(u("copied")); return; }
+  } catch (e) {}
+  toast(u("copyFail"));
+}
+const cpBtn = (text) => h("button", { class: "cp", type: "button", title: "Copy", "aria-label": "Copy", onclick: () => copyText(text) }, "⧉");
+const ptitle = (pr) => "#" + pr.id + " " + g_(pr.title);
+const axesOf = (pt) => pt.axes || (pt.axis ? [pt.axis] : []);
+function prAxes(pr) { return AXES.filter(a => a !== "Design" || pr.compare); }
 function progressOf(pr) {
-  const keys = prAxes(pr); const c = state.checks[pr.id] || {};
-  const done = keys.filter(k => c[k]).length; return [done, keys.length];
+  const c = state.checks[pr.id] || {}, j = state.judged[pr.id] || {};
+  const keys = prAxes(pr);
+  const done = keys.filter(k => c[k]).length + pr.points.filter((_, i) => j[i]).length;
+  return [done, keys.length + pr.points.length];
 }
 function bar(done, total) { return h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done }, h("i", { style: "width:" + (total ? Math.round(100 * done / total) : 0) + "%" })); }
+function paintTabBars() {
+  GUIDE.prs.forEach(pr => {
+    const el = document.querySelector('#tabs [data-pr="' + pr.id + '"] i'); if (!el) return;
+    const [d, n] = progressOf(pr); el.style.width = (n ? Math.round(100 * d / n) : 0) + "%";
+  });
+}
+function anchorsText() {
+  return GUIDE.prs.map(pr => "# " + ptitle(pr) + " (" + pr.sha + ")\n" +
+    pr.tests.map(t => "test: " + t.where).join("\n") + "\n" + pr.points.map(pt => pt.where).join("\n")).join("\n\n") + "\n";
+}
 
 /* ---------- views ---------- */
 function readFirst() {
   const g = GUIDE, t = u;
   const root = h("section", {});
   root.append(h("h2", {}, t("summary")),
-    table(u("cols"), g.prs.map(p => [rich("#" + p.id + " " + p.title), h("span", {}, h("code", {}, p.branch), " → ", h("code", {}, p.base.startsWith("#") ? p.base : p.base)), p.size, p.time, h("span", { class: "chip " + p.focus }, p.focus), p.gates, h("code", {}, p.sha)])),
+    table(u("cols"), g.prs.map((p, i) => [String(i + 1), ptitle(p), p.ticket || "", h("span", {}, h("code", {}, p.branch), " → ", h("code", {}, p.base)), p.size, p.time, h("span", { class: "chip " + p.focus }, p.focus), p.gates, h("code", {}, p.sha)])),
     h("h2", {}, t("stack")),
     ...g.stack.map(chain => h("div", { class: "stack card" }, chain.map((n, i) => [i ? h("span", { class: "muted", "aria-label": "on top of" }, "←") : null, h("span", { class: "node" }, n)]))),
-    h("h2", {}, t("gates")), table(u("gateCols"), g.gates.map(x => [x.gate, g_(x.did), g_(x.catches)])),
-    h("h2", {}, t("gaps")), table(u("gapCols"), (g.gaps || []).map(x => [rich(g_(x.gap)), x.where, rich(g_(x.fix))])),
-    h("h2", {}, t("humanGate")), h("ol", {}, g_(g.humanGate).map(s => h("li", {}, s))),
+    h("h2", {}, t("gates")), table(u("gateCols"), g.gates.map(x => [g_(x.gate), x.did, x.catches])),
+    h("h2", {}, t("gaps")), table(u("gapCols"), (g.gaps || []).map(x => [x.gap, x.where, x.fix])),
+    h("h2", {}, t("humanGate")), h("ol", {}, g.humanGate.map(s => h("li", {}, rich(s)))),
     h("h2", {}, t("severity")), table([...u("prefixCol")], u("sevRows").map(r => [h("code", {}, r[0]), r[1]])),
-    h("h2", {}, t("openCode")), h("pre", {}, g.openCode), h("p", { class: "muted" }, t("openNote")),
-    h("h2", {}, t("order")), h("p", {}, g_(g.reviewOrder)), h("ol", {}, g.prs.map(p => h("li", {}, "#" + p.id + " " + p.title + " — " + p.time + ", " + p.focus))),
-    h("h2", {}, t("merge")), h("p", {}, g_(g.mergeOrder)),
-    h("h2", {}, t("collapse")), h("div", { class: "card" }, g_(g.collapse)));
+    h("h2", {}, t("openCode")), h("div", { class: "rowline" }, h("pre", { style: "flex:1" }, g.openCode), cpBtn(g.openCode)), h("p", { class: "muted" }, t("openNote")),
+    h("h2", {}, t("order")), h("p", {}, rich(g.reviewOrder)), h("ol", {}, g.prs.map(p => h("li", {}, ptitle(p) + " — " + p.time + ", " + p.focus))),
+    h("h2", {}, t("merge")), h("p", {}, rich(g.mergeOrder)),
+    h("h2", {}, t("collapse")), h("div", { class: "card" }, rich(g.collapse)));
   return root;
 }
 
-function pointView(pr, i, pt) {
+function ctxView(pr) {
+  const c = pr.context || {}, labels = u("ctx");
+  const parts = Object.keys(labels).filter(k => Array.isArray(c[k]) && c[k].length)
+    .map(k => [h("strong", {}, labels[k]), h("ul", { class: "ctx" }, c[k].map(x => h("li", {}, rich(x))))]);
+  return h("div", { class: "card" }, parts.length ? parts : h("span", { class: "muted" }, "—"));
+}
+
+function pointView(pr, i, pt, onProgress) {
   const F = u("fields"), id = pr.id + ":" + i;
   const sel = h("select", { "aria-label": "severity", onchange: (e) => { state.sev[id] = e.target.value; save(); } },
     SEV.map(s => h("option", { value: s, selected: (state.sev[id] || "") === s }, s || u("sevNone"))));
   const inp = h("input", { type: "text", placeholder: u("addFinding"), value: state.finds[id] || "", oninput: (e) => { state.finds[id] = e.target.value; save(); } });
-  return h("details", { class: "point", open: i === 0 },
-    h("summary", {}, (i + 1) + ". " + pt.title + "  ", h("span", { class: "chip" }, pt.axis)),
+  const j = !!(state.judged[pr.id] || {})[i];
+  const det = h("details", { class: "point" + (j ? " judged" : ""), open: i === 0 },
+    h("summary", {}, (i + 1) + ". ", rich(pt.title), "  ", axesOf(pt).map(a => h("span", { class: "chip" }, a + " "))),
     h("div", { class: "body" },
       h("dl", { class: "fields" },
-        h("dt", {}, F.where), h("dd", {}, h("code", {}, pt.where)),
-        h("dt", {}, F.what), h("dd", {}, rich(g_(pt.what))),
-        h("dt", {}, F.gatedBy), h("dd", {}, rich(g_(pt.gatedBy) || "none")),
-        h("dt", {}, F.why), h("dd", {}, rich(g_(pt.why))),
-        h("dt", {}, F.how), h("dd", {}, rich(g_(pt.how))),
-        h("dt", {}, F.judge), h("dd", {}, h("strong", {}, rich(g_(pt.judge)))),
-        h("dt", {}, F.axis), h("dd", {}, pt.axis)),
+        h("dt", {}, F.where), h("dd", { class: "rowline" }, h("code", {}, pt.where), cpBtn(pt.where)),
+        h("dt", {}, F.what), h("dd", {}, rich(pt.what)),
+        h("dt", {}, F.gatedBy), h("dd", {}, rich(pt.gatedBy || "none")),
+        h("dt", {}, F.why), h("dd", {}, rich(pt.why)),
+        h("dt", {}, F.how), h("dd", {}, rich(pt.how)),
+        h("dt", {}, F.judge), h("dd", {}, h("label", { class: "chk" },
+          h("input", { type: "checkbox", checked: j, onchange: (e) => { (state.judged[pr.id] = state.judged[pr.id] || {})[i] = e.target.checked; det.classList.toggle("judged", e.target.checked); save(); onProgress(); } }),
+          h("strong", {}, rich(pt.judge)))),
+        h("dt", {}, F.axis), h("dd", {}, axesOf(pt).join(" + "))),
       h("div", { class: "finding" }, sel, inp)));
+  return det;
 }
 
 function prView(pr) {
   const t = u;
   const root = h("section", {});
   const prog = h("div", {});
-  function paint() { const [d, n] = progressOf(pr); prog.replaceChildren(h("strong", {}, t("progress") + ": " + d + "/" + n), bar(d, n)); }
+  function paint() { const [d, n] = progressOf(pr); prog.replaceChildren(h("strong", {}, t("progress") + ": " + d + "/" + n), bar(d, n)); paintTabBars(); }
   root.append(
-    h("h2", {}, "#" + pr.id + " " + pr.title),
-    h("p", { class: "muted" }, h("code", {}, pr.branch), " → ", h("code", {}, pr.base), "  · ", t("prefix") + " ", h("code", {}, pr.sha), "  · ", pr.size, " · ", pr.time, " · ", h("span", { class: "chip " + pr.focus }, pr.focus)),
+    h("h2", {}, ptitle(pr)),
+    h("p", { class: "muted" }, h("code", {}, pr.branch), " → ", h("code", {}, pr.base), pr.ticket ? "  · " + pr.ticket : "", "  · ", t("prefix") + " ", h("code", {}, pr.sha), "  · ", pr.size, " · ", pr.time, " · ", h("span", { class: "chip " + pr.focus }, pr.focus)),
     prog,
-    h("h3", {}, t("context")), h("div", { class: "card" }, rich(g_(pr.context))),
-    h("h3", {}, t("tests")), h("div", { class: "card" }, h("p", {}, rich(g_(pr.tests))), h("p", {}, h("strong", {}, t("mutation") + ": "), rich(g_(pr.mutation)))),
-    h("h3", {}, t("points")), ...pr.points.map((pt, i) => pointView(pr, i, pt)),
+    h("h3", {}, t("context")), ctxView(pr),
+    h("h3", {}, t("tests")),
+    ...pr.tests.map(x => h("div", { class: "card" },
+      h("div", { class: "rowline" }, h("code", {}, x.where), cpBtn(x.where)),
+      h("p", {}, rich(x.text)),
+      x.mutation ? h("p", {}, h("strong", {}, t("mutation") + ": "), rich(x.mutation)) : null)),
+    ...(pr.compare ? [h("h3", {}, t("compare")), h("div", { class: "card" },
+      h("p", {}, h("strong", {}, t("compareOpen") + ": "), rich(pr.compare.open)),
+      h("strong", {}, t("compareWhat")), h("ul", { class: "ctx" }, (pr.compare.compare || []).map(x => h("li", {}, rich(x)))))] : []),
+    h("h3", {}, t("points")), ...pr.points.map((pt, i) => pointView(pr, i, pt, paint)),
     h("h3", {}, t("checklist")),
     h("div", { class: "card" }, prAxes(pr).map(a => h("label", { class: "chk" },
       h("input", { type: "checkbox", checked: !!(state.checks[pr.id] || {})[a], onchange: (e) => { (state.checks[pr.id] = state.checks[pr.id] || {})[a] = e.target.checked; save(); paint(); } }),
@@ -309,77 +412,79 @@ function findingsMarkdown() {
   const out = ["# " + g_(GUIDE.title) + " — " + GUIDE.date, ""];
   GUIDE.prs.forEach(pr => {
     const [d, n] = progressOf(pr), v = state.verdict[pr.id] || "";
-    out.push("## #" + pr.id + " " + pr.title + " (`" + pr.sha + "`)", "Verdict: " + (v ? u("verdicts")[v] : "—") + " · checklist " + d + "/" + n);
-    const lines = [];
+    out.push("## " + ptitle(pr) + " (`" + pr.sha + "`)", "Verdict: " + (v ? u("verdicts")[v] : "—") + " · progress " + d + "/" + n);
+    const lines = [], open = [];
     pr.points.forEach((pt, i) => {
       const id = pr.id + ":" + i, txt = (state.finds[id] || "").trim();
       if (txt) lines.push("- " + (state.sev[id] ? state.sev[id] + " " : "") + "`" + pt.where + "` — " + txt);
+      if (!(state.judged[pr.id] || {})[i]) open.push("- `" + pt.where + "` — " + g_(pt.judge));
     });
     if (lines.length) out.push("", ...lines);
     const note = (state.notes[pr.id] || "").trim();
     if (note) out.push("", "Notes:", note);
+    if (open.length) out.push("", u("notJudged") + ":", ...open);
     out.push("");
   });
+  if ((GUIDE.gaps || []).length) out.push("## " + u("gaps"), "", ...GUIDE.gaps.map(x => "- " + g_(x.gap) + " (" + x.where + ") → " + g_(x.fix)), "");
   return out.join("\n").trim() + "\n";
 }
 
 function verdictView() {
   const t = u;
   const out = h("textarea", { readonly: true, "aria-label": "findings", style: "min-height:180px" });
-  const root = h("section", {}, h("h2", {}, t("verdict")));
-  GUIDE.prs.forEach(pr => {
-    const [d, n] = progressOf(pr), v = state.verdict[pr.id] || "";
-    root.append(h("div", { class: "card" }, h("strong", {}, "#" + pr.id + " " + pr.title), h("div", {}, t("progress") + ": " + d + "/" + n, bar(d, n)), h("div", {}, u("verdicts")[v])));
-  });
+  const root = h("section", {}, h("h2", {}, t("verdict")),
+    table(u("sumCols"), GUIDE.prs.map(pr => { const [d, n] = progressOf(pr); return [ptitle(pr), (n ? Math.round(100 * d / n) : 0) + "% (" + d + "/" + n + ")", u("verdicts")[state.verdict[pr.id] || ""]]; })));
+  if ((GUIDE.pending || []).length) root.append(h("h3", {}, t("pending")), h("ul", {}, GUIDE.pending.map(x => h("li", {}, rich(x)))));
+  const tpl = u("tpl");
   root.append(h("h3", {}, t("before")),
     h("div", { class: "card" }, u("beforeItems").map((s, i) => h("label", { class: "chk" },
       h("input", { type: "checkbox", checked: !!state.before[i], onchange: (e) => { state.before[i] = e.target.checked; save(); } }), h("span", {}, s)))),
-    h("p", {}, h("button", { class: "primary", onclick: () => copyFindings(out) }, t("copy"))), out);
+    h("h3", {}, t("tplTitle")), h("div", { class: "rowline" }, h("pre", { style: "flex:1" }, tpl), cpBtn(tpl)),
+    h("h3", {}, t("ratTitle")), table(u("ratCols"), [...u("rats"), ...(GUIDE.rationalizations || [])]),
+    h("p", {}, h("button", { class: "primary", onclick: () => { out.value = findingsMarkdown(); copyText(out.value, out); } }, t("copy"))), out);
   return root;
-}
-
-async function copyFindings(out) {
-  const md = findingsMarkdown(); out.value = md;
-  try { await navigator.clipboard.writeText(md); toast(u("copied")); return; } catch (e) {}
-  try { out.focus(); out.select(); if (document.execCommand("copy")) { toast(u("copied")); return; } } catch (e) {}
-  toast(u("copyFail"));
 }
 
 /* ---------- shell ---------- */
 function tabsList() {
-  return [{ id: "read", label: u("readFirst") }, ...GUIDE.prs.map(p => ({ id: "pr" + p.id, label: "#" + p.id })), { id: "verdict", label: u("verdict") }];
+  return [{ id: "read", label: u("readFirst") }, ...GUIDE.prs.map(p => ({ id: "pr" + p.id, label: "#" + p.id, pr: p.id })), { id: "verdict", label: u("verdict") }];
 }
 function render() {
   document.documentElement.lang = L() === "primary" ? (GUIDE.langCode || "en") : "en";
   document.getElementById("title").textContent = g_(GUIDE.title);
   document.getElementById("local").textContent = u("local");
+  document.getElementById("copyall").textContent = u("copyAll");
   const lb = document.getElementById("lang");
   lb.hidden = !GUIDE.primaryLabel;
   lb.textContent = L() === "primary" ? GUIDE.primaryLabel + " → EN" : "EN → " + GUIDE.primaryLabel;
   lb.setAttribute("data-lang", L());
-  const th = state.theme || "auto";
-  document.getElementById("theme").textContent = "◐ " + th;
+  document.getElementById("theme").textContent = "◐ " + (state.theme || "auto");
   if (state.theme) document.documentElement.setAttribute("data-theme", state.theme); else document.documentElement.removeAttribute("data-theme");
   const tabs = tabsList();
   if (!tabs.some(x => x.id === state.tab)) state.tab = "read";
-  document.getElementById("tabs").replaceChildren(...tabs.map(x => h("button", { role: "tab", "aria-selected": String(x.id === state.tab), onclick: () => { state.tab = x.id; save(); render(); window.scrollTo(0, 0); } }, x.label)));
+  document.getElementById("tabs").replaceChildren(...tabs.map(x => h("button", { role: "tab", "data-pr": x.pr, "aria-selected": String(x.id === state.tab), onclick: () => { state.tab = x.id; save(); render(); window.scrollTo(0, 0); } },
+    x.label, x.pr ? h("span", { class: "mini" }, h("i", {})) : null)));
   const main = document.getElementById("main");
   let view;
   if (state.tab === "read") view = readFirst();
   else if (state.tab === "verdict") view = verdictView();
   else view = prView(GUIDE.prs.find(p => "pr" + p.id === state.tab));
   main.replaceChildren(...(storeOk ? [] : [h("p", { class: "card muted" }, u("noStore"))]), view);
+  paintTabBars();
 }
+document.getElementById("copyall").addEventListener("click", () => copyText(anchorsText()));
 document.getElementById("lang").addEventListener("click", () => { state.lang = L() === "primary" ? "en" : "primary"; save(); render(); });
 document.getElementById("theme").addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : state.theme === "dark" ? null : "light"; save(); render();
 });
-/* self-check: a filled-in template that leaks an object into the text fails loudly */
+/* self-check: a filled-in template that leaks an object or an element into the text fails loudly.
+   Matches only String(obj) forms, so a guide that quotes the word "[object" is not flagged. */
+const LEAK = /\[object (Object|Array|Undefined|Null|(HTML|SVG)\w*Element)\]/;
 function selfCheck() {
   const prev = state.tab;
-  const bad = tabsList().filter(x => { state.tab = x.id; render(); return document.body.innerText.includes("[object"); });
+  const bad = tabsList().filter(x => { state.tab = x.id; render(); return LEAK.test(document.body.innerText); });
   state.tab = prev; render();
-  if (bad.length) console.error("human-review-guide: '[object' text rendered in tab(s): " + bad.map(x => x.id).join(", "));
+  if (bad.length) console.error("human-review-guide: object text rendered in tab(s): " + bad.map(x => x.id).join(", ") + " (a text field skipped g_()/rich())");
 }
 load();
 if (!state.lang) state.lang = "primary";

@@ -76,11 +76,21 @@ gh pr diff <N>                               # one PR's diff
 ## PR #A — <title> (`feat/a` → `develop`, head `<sha>`)
 
 ### 1. Context
-What it does. What it deliberately does not do. Breaking changes. Size. Base/stack position. Gates run and findings.
+Ticket: <id>. Size, base/stack position, gates run and findings.
+- **Features added:** <list, optional>
+- **Bugs fixed:** <list, optional>
+- **Deliberately not done:** <list, optional>
+- **Breaking changes:** <list, optional>
+- **Waits on:** <other people or PRs, optional>
 
 ### 2. Tests first
-- `<test file> › <case>` proves <behaviour>.
-- **Mutation:** change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `<test>` must go red.
+- `src/orders/orders.service.test.ts` proves <behaviour>.
+  - **Mutation:** change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `<case>` must go red.
+- `<another test path>` proves <behaviour>. (one mutation per test where one makes sense)
+
+### 2b. Compare with the design (UI PRs only)
+- **Open:** <what to open>
+- **Compare:** <layout, labels, empty and error states>
 
 ### 3. Implementation points
 
@@ -90,8 +100,8 @@ What it does. What it deliberately does not do. Breaking changes. Size. Base/sta
 - **Gated by:** none | <gate> (partial: <what it covers>)
 - **Why:** <problem or constraint that forced it>
 - **How solved:** <approach and trade-off>
-- **You judge:** <the concrete question only a human can answer>
-- **Axis:** Correctness | Readability | Architecture | Security | Performance
+- [ ] **You judge:** <the concrete question only a human can answer>
+- **Axis:** one or more of Correctness | Readability | Architecture | Security | Performance
 
 ### 4. Checklist
 - [ ] Correctness — matches intent, edge cases, errors handled, tests cover behaviour
@@ -112,6 +122,9 @@ What it does. What it deliberately does not do. Breaking changes. Size. Base/sta
 - **Verdict:** Approve | Request changes
 
 ---
+
+## Pending decisions
+- <decision waiting on someone, optional>
 
 ## Before handing to the lead
 - [ ] Every required and `Critical:` finding resolved
