@@ -151,7 +151,7 @@ describe("ensureRuntimeSynced", () => {
     write(path.join(sourceRoot, "plugin", "skills", "karpathy-principles", "SKILL.md"), "karpathy");
     write(path.join(sourceRoot, "plugin", "skills", "takeover", "SKILL.md"), "takeover content");
     write(path.join(sourceRoot, "plugin", "skills", "handback", "SKILL.md"), "handback content");
-    for (const skill of ["rules-ops", "knowledge-review", "knowledge-extract"]) {
+    for (const skill of ["rules-ops", "knowledge-review", "knowledge-extract", "human-review-guide"]) {
       write(path.join(sourceRoot, "plugin", "skills", skill, "SKILL.md"), skill);
     }
     write(path.join(sourceRoot, "plugin", ".claude-plugin", "plugin.json"), '{"name":"squadrant"}');

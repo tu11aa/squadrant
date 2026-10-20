@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Human review guide</title>
+<!--
+  Human review guide shell. LOCAL ONLY: never publish or post this file.
+  Self-contained: no network, no libraries. Replace the GUIDE object below
+  (invented sample data) with the facts gathered for the real PRs; keep the rest.
+  Every localStorage access is wrapped in try/catch; the page works without it.
+-->
+<style>
+:root{--bg:#f7f7f9;--panel:#fff;--text:#1d1f24;--muted:#5d6370;--line:#dcdfe6;--accent:#2f5bea;--ok:#1a7f4b;--warn:#a15c00;--bad:#c0392b;--chip:#eef1f8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161a;--panel:#1d2026;--text:#e6e8ee;--muted:#9aa1b0;--line:#323744;--accent:#7b9cff;--ok:#4cc38a;--warn:#e0a24a;--bad:#ff7b6b;--chip:#272b34}}
+:root[data-theme="dark"]{--bg:#14161a;--panel:#1d2026;--text:#e6e8ee;--muted:#9aa1b0;--line:#323744;--accent:#7b9cff;--ok:#4cc38a;--warn:#e0a24a;--bad:#ff7b6b;--chip:#272b34}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:hidden}
+.wrap{max-width:980px;margin:0 auto;padding:0 16px 64px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0}
+header .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1 1 220px}
+h2{font-size:17px;margin:26px 0 8px}h3{font-size:15px;margin:18px 0 6px}
+.local{background:var(--bad);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;letter-spacing:.04em}
+button,select,textarea,input{font:inherit;color:var(--text)}
+button,select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}
+button:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+nav.tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0 2px;scrollbar-width:thin}
+nav.tabs button{white-space:nowrap;flex:0 0 auto}
+nav.tabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.bar{height:6px;background:var(--chip);border-radius:99px;overflow:hidden;margin:6px 0}
+.bar>i{display:block;height:100%;background:var(--ok);width:0;transition:width .2s}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+.tablewrap{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+code{background:var(--chip);padding:1px 5px;border-radius:5px;font:13px ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+pre{background:var(--chip);padding:10px;border-radius:8px;overflow-x:auto;max-width:100%}
+.chip{display:inline-block;background:var(--chip);border-radius:99px;padding:1px 9px;font-size:12px}
+.chip.High{color:var(--bad)}.chip.Medium{color:var(--warn)}.chip.Low{color:var(--ok)}
+details.point{border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel)}
+details.point>summary{cursor:pointer;padding:9px 12px;font-weight:600;list-style-position:inside}
+details.point .body{padding:0 12px 12px}
+dl.fields{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:6px 0}
+dl.fields dt{color:var(--muted);font-weight:600}dl.fields dd{margin:0;min-width:0;overflow-wrap:anywhere}
+@media (max-width:560px){dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}}
+.finding{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.finding input{flex:1 1 180px;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+textarea{width:100%;min-height:90px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+label.chk{display:flex;gap:8px;align-items:flex-start;padding:3px 0}
+label.chk input{margin-top:5px}
+.stack{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.stack .node{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:3px 10px}
+.muted{color:var(--muted)}
+#banner{background:var(--bad);color:#fff;padding:8px 12px;border-radius:8px;margin:8px 0 0;font-weight:600;overflow-wrap:anywhere}
+.toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:7px 14px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.on{opacity:1}
+.cp{padding:0 6px;margin-left:6px;font-size:12px;line-height:20px;border-radius:6px}
+nav.tabs button .mini{display:block;height:3px;border-radius:3px;background:var(--line);margin-top:3px;overflow:hidden}
+nav.tabs button .mini i{display:block;height:100%;width:0;background:var(--ok)}
+nav.tabs button[aria-selected="true"] .mini{background:rgba(255,255,255,.35)}
+nav.tabs button[aria-selected="true"] .mini i{background:#fff}
+ul.ctx{margin:2px 0 8px;padding-left:20px}
+details.point.judged>summary::after{content:" ✓";color:var(--ok)}
+.rowline{display:flex;gap:6px;align-items:flex-start}
+.rowline>*:first-child{min-width:0;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="row">
+      <h1 id="title"></h1>
+      <span class="local" id="local"></span>
+      <button id="copyall"></button>
+      <button id="lang" aria-label="Language" data-lang="primary"></button>
+      <button id="theme" aria-label="Theme"></button>
+    </div>
+    <div id="banner" role="alert" hidden></div>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+  </header>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+/* ---------- DATA: replace with the real guide. Sample data below is invented. ----------
+   Write every text field in the operator's own language (from their profile or the
+   conversation). Code identifiers, paths, branches, SHAs and commands stay untranslated.
+   - A text field is either a plain string or {primary, en}; `backticks` render as code.
+   - A list field (humanGate, pending, handoff, gates, gaps, context lists, compare.compare, tests) is either an array of such fields or one list {primary:[...], en:[...]}.
+   - If the operator wants bilingual local docs, give both and set primaryLabel (the
+     language's short name) and langCode; the header then shows a toggle between primary
+     and English. Without primaryLabel there is no toggle.
+   - UI labels are English; put translations in GUIDE.ui as {key: text} using the keys of T below.
+   - prs are listed in REVIEW order. Optional parts are simply left out. Every checkbox on the
+     page must be a specific question about THESE PRs (a point's "You judge", a handoff item);
+     there are no generic checklists. `pending` is hidden when empty: refresh or clear it on every head update. */
+const GUIDE = {
+  id: "sample-2026-01-15",
+  title: { primary: "[primary] Human review: sample orders", en: "Human review: sample orders" },
+  date: "2026-01-15",
+  primaryLabel: "Primary",
+  langCode: "en", /* BCP 47 code of the primary language */
+  ui: {},
+  /* coverage map: what each gate covers IN THIS DIFF */
+  gates: [
+    { gate: { primary: "[primary] Agent review", en: "Agent review" }, did: "3 rounds on `src/orders/*`, all findings fixed", catches: "Logic bugs, edge cases" },
+    { gate: "CI vs base", did: "Green except failures already on base", catches: "Build, types, tests" }
+  ],
+  /* gaps: should be machine-checked, no gate covers; each needs a suggested gate or ticket */
+  gaps: [
+    { gap: "Error codes are documented in prose only; no test pins them", where: "#101 src/orders/errors.ts", fix: "Add a contract test listing the codes; follow-up ticket" },
+    { gap: "The list page is not rendered by any test", where: "#102 src/ui/OrderList.tsx", fix: "Add a render/snapshot test" }
+  ],
+  humanGate: ["Intent and scope", "Public contracts (field names, routes, error codes)", "Architecture trade-offs", "Do the tests test the right thing (mutation)", "Live comparison with the design"],
+  openCode: "git fetch origin\ngit worktree add ../review-orders origin/feat/orders-api   # read-only\ngit worktree add ../review-ui     origin/feat/orders-ui\ngh pr diff 101   # one PR's diff",
+  reviewOrder: "API first (the contract), then UI, then the independent PR. Within a stack, follow stack order so each diff holds only its own change.",
+  mergeOrder: "#101, then #102 (bottom of the stack first); #103 any time.",
+  collapse: "Recommendation: collapse #102 into #101 for the ticket. Stacked PRs are hard for a lead to follow; one PR per ticket is clearer.",
+  /* one lane per stack, each starting at the base branch */
+  stack: [["develop", "#101", "#102"], ["develop", "#103"]],
+  pending: [
+    "Owner decision: is `ORDER_EMPTY_CART` the final error code name?",
+    { primary: "[primary] Design sign-off on the empty state is pending", en: "Design sign-off on the empty state is pending" }
+  ],
+  prs: [
+    {
+      id: "101", ticket: "TICKET-1", title: { primary: "[primary] Orders API: create and cancel", en: "Orders API: create and cancel" },
+      branch: "feat/orders-api", base: "develop", size: "9 files, +420/−12", time: "30 min", focus: "High",
+      gates: "CI green · agent review ✓", sha: "a1b2c3d",
+      context: {
+        features: ["`createOrder` and `cancelOrder` endpoints"],
+        fixes: ["Double cancel no longer doubles stock"],
+        notDone: ["Refunds"],
+        breaking: [],
+        waitsOn: []
+      },
+      tests: [
+        { where: "src/orders/orders.service.test.ts", text: "rejects empty cart; rejects cancelling a shipped order", mutation: "Change `items.length === 0` to `false` at `src/orders/service.ts:88` (`createOrder`); `rejects empty cart` must go red." },
+        { where: "src/orders/cancel.test.ts", text: { primary: "[primary] cancelling twice keeps stock constant", en: "cancelling twice keeps stock constant" } }
+      ],
+      points: [
+        {
+          title: { primary: "[primary] Error code naming", en: "Error code naming" }, where: "src/orders/errors.ts:14 — ORDER_EMPTY_CART", axes: ["Architecture", "Readability"],
+          gatedBy: "none",
+          what: "Defines the error code returned to clients.",
+          why: "Clients must tell business errors from system errors.",
+          /* no cause: a pure design choice, so the row is hidden */
+          solution: "Stable string constant, not a number.",
+          judge: "This name is a public contract. Accept it?"
+        },
+        {
+          title: "Cancel transaction scope", where: "src/orders/service.ts:131 — cancelOrder", axes: ["Correctness"],
+          gatedBy: "Agent review (partial: found the double cancel; not the lock cost)",
+          what: "Updates status and stock inside one transaction.",
+          why: "Review found a double cancel doubled the stock.",
+          cause: "`cancelOrder` read the status before taking the lock, so two requests both passed the check.",
+          solution: "Lock the row, then check status; trades one lock for safety.",
+          judge: "Is a row lock acceptable on this hot path?"
+        }
+      ]
+    },
+    {
+      id: "102", ticket: "TICKET-1", title: "Orders UI: list page", branch: "feat/orders-ui", base: "#101",
+      size: "14 files, +880/−40", time: "40 min", focus: "Medium", gates: "CI green · guard tests ✓", sha: "e4f5a6b",
+      context: { features: ["Order list with status filter and paging"], notDone: ["Export"], waitsOn: ["#101 merged"] },
+      tests: [{ where: "src/ui/OrderList.test.tsx", text: "status filter and empty state", mutation: "Change `status === filter` to `true` at `src/ui/OrderList.tsx:57` (`applyFilter`); `filters by status` must go red." }],
+      compare: { open: "The prototype's list screen next to the running page", compare: ["Column order and labels", "Empty state", "Filter chips and paging controls"] },
+      points: [
+        {
+          title: "Filter state in URL", where: "src/ui/OrderList.tsx:33 — useFilterParams", axes: ["Readability"],
+          gatedBy: "none",
+          what: "Keeps filters in the query string.",
+          why: "Makes links shareable and Back work.",
+          solution: "A small hook instead of a router extension.",
+          judge: "Are the param names stable enough to become a contract?"
+        }
+      ]
+    },
+    {
+      id: "103", ticket: "TICKET-2", title: "Config: order limits", branch: "feat/order-limits", base: "develop",
+      size: "3 files, +40/−2", time: "10 min", focus: "Low", gates: "CI green", sha: "0a9b8c7",
+      context: { features: ["`MAX_ITEMS` setting"] },
+      tests: [{ where: "src/config/limits.test.ts", text: "default and override" }],
+      points: [
+        {
+          title: "Default value", where: "src/config/limits.ts:9 — MAX_ITEMS", axes: ["Correctness"],
+          gatedBy: "CI (partial: the default is asserted, its suitability is not)",
+          what: "Sets the default limit to 100.",
+          why: "Avoids unbounded carts.",
+          cause: "The first release had no limit, and one client submitted a 10,000-item cart.",
+          solution: "A constant with an env override.",
+          judge: "Is 100 the right default?"
+        }
+      ]
+    }
+  ],
+  /* optional, concrete items tied to THESE PRs (e.g. "follow-up ticket filed for point 2");
+     the "Before handing to the lead" section is hidden when this is empty or absent */
+  handoff: [
+    "Follow-up ticket filed for the error-code test gap (gate gap 1)",
+    "`ORDER_EMPTY_CART` name confirmed with the owner (#101 point 1)"
+  ]
+};
+
+/* ---------- UI strings (English; override per key via GUIDE.ui) ---------- */
+const T = {
+  local: { en: "LOCAL ONLY, DO NOT POST" },
+  readFirst: { en: "Read first" }, verdict: { en: "Verdict" },
+  summary: { en: "Summary" }, stack: { en: "Stack" },
+  gates: { en: "Gates already run: coverage map (do not redo)" },
+  gateCols: { en: ["Gate", "Covers in this diff", "Catches"] },
+  gaps: { en: "Gate gaps: should be machine-checked, no gate covers" },
+  gapCols: { en: ["Gap", "Where", "Suggested gate or ticket"] },
+  gatedBy: { en: "Gated by" },
+  humanGate: { en: "What the human gate is for" },
+  severity: { en: "Severity prefixes" }, prefixCol: { en: ["Prefix", "Meaning"] },
+  sevRows: { en: [["(none)", "Required before merge"], ["Critical:", "Blocks merge"], ["Consider:", "Worth weighing"], ["Nit:", "Small, optional"], ["FYI", "Information"]] },
+  openCode: { en: "How to open the code" },
+  openNote: { en: "Lines in this guide are valid at the SHAs listed. If they drift, search by symbol." },
+  order: { en: "Review order" }, merge: { en: "Merge order" },
+  collapse: { en: "Collapse into fewer PRs for the lead?" },
+  cols: { en: ["#", "PR", "Ticket", "Branch → base", "Size", "Est. time", "Focus", "Gates", "Head SHA"] },
+  context: { en: "1. Context" }, tests: { en: "2. Tests first" },
+  ctx: { en: { features: "Features added", fixes: "Bugs fixed", notDone: "Deliberately not done", breaking: "Breaking changes", waitsOn: "Waits on" } },
+  mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
+  compare: { en: "Compare with the design live" }, compareOpen: { en: "Open" }, compareWhat: { en: "Compare" },
+  fields: { en: { where: "Where", gatedBy: "Gated by", what: "What", why: "Why", cause: "Cause", solution: "Solution", judge: "You judge", axis: "Axis" } },
+  progress: { en: "Progress" },
+  sevNone: { en: "(required)" }, addFinding: { en: "Finding for this point…" },
+  notes: { en: "General notes for this PR" },
+  verdictLabel: { en: "PR verdict" },
+  verdicts: { en: { "": "Not set", approve: "Approve", changes: "Request changes" } },
+  copy: { en: "Copy my findings" }, copyAll: { en: "Copy all anchors" }, copied: { en: "Copied" }, copyFail: { en: "Copy failed, select the text below" },
+  sumCols: { en: ["PR", "Progress", "Verdict"] },
+  pending: { en: "Pending decisions" },
+  before: { en: "Before handing to the lead" },
+  notJudged: { en: "Points not yet judged" },
+  noStore: { en: "State cannot be saved in this browser; the page works but resets on reload." },
+  prefix: { en: "Anchors at" }
+};
+const SEV = ["", "Critical:", "Consider:", "Nit:", "FYI"];
+
+/* ---------- storage-safe state ---------- */
+const KEY = "hrg:" + GUIDE.id;
+let storeOk = true;
+let state = { lang: null, theme: null, tab: "read", judged: {}, before: {}, verdict: {}, notes: {}, finds: {}, sev: {} };
+function load() {
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") state = Object.assign(state, o); }
+  } catch (e) { storeOk = false; }
+}
+function save() {
+  try { window.localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { storeOk = false; }
+}
+
+/* ---------- helpers ---------- */
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const k in (attrs || {})) {
+    const v = attrs[k];
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return el;
+}
+/* state.lang is "primary" or "en" */
+const L = () => (GUIDE.primaryLabel && state.lang === "primary") ? "primary" : "en";
+const isLang = (o) => o && typeof o === "object" && !Array.isArray(o) && (o.primary !== undefined || o.en !== undefined);
+/* guide text: {primary,en} or plain string. EVERY text field of the guide goes through g_ */
+const g_ = (o) => isLang(o) ? (o[L()] ?? o.primary ?? o.en) : o;
+/* list fields: a plain array, or one bilingual list {primary:[...],en:[...]}; items are resolved by g_/rich */
+const list = (o) => { const a = g_(o); return Array.isArray(a) ? a : (a == null ? [] : [a]); };
+/* UI labels: GUIDE.ui override (primary mode only), else English */
+const u = (k) => (L() === "primary" && GUIDE.ui && GUIDE.ui[k] !== undefined) ? GUIDE.ui[k] : T[k].en;
+/* guide text with inline `code` spans; text field -> nodes */
+function rich(o) {
+  const s = g_(o); if (s == null) return [];
+  return String(s).split(/(`[^`]+`)/).map(p => /^`[^`]+`$/.test(p) ? h("code", {}, p.slice(1, -1)) : p);
+}
+/* cells: strings (or {primary,en}) go through rich, nodes pass through */
+function table(cols, rows) {
+  const cell = (c) => (c && c.nodeType) ? c : rich(c);
+  return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(c => h("th", {}, c)))), h("tbody", {}, rows.map(r => h("tr", {}, r.map(c => h("td", {}, cell(c))))))));
+}
+function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("on"); setTimeout(() => t.classList.remove("on"), 1600); }
+async function copyText(text, out) {
+  try { await navigator.clipboard.writeText(text); toast(u("copied")); return; } catch (e) {}
+  try {
+    const ta = out || h("textarea", { style: "position:fixed;left:-9999px" });
+    if (!out) { ta.value = text; document.body.append(ta); }
+    ta.focus(); ta.select();
+    const ok = document.execCommand("copy");
+    if (!out) ta.remove();
+    if (ok) { toast(u("copied")); return; }
+  } catch (e) {}
+  toast(u("copyFail"));
+}
+const cpBtn = (text) => h("button", { class: "cp", type: "button", title: "Copy", "aria-label": "Copy", onclick: () => copyText(text) }, "⧉");
+const ptitle = (pr) => "#" + pr.id + " " + g_(pr.title);
+const axesOf = (pt) => pt.axes || (pt.axis ? [pt.axis] : []);
+function progressOf(pr) {
+  const j = state.judged[pr.id] || {};
+  return [pr.points.filter((_, i) => j[i]).length, pr.points.length];
+}
+function bar(done, total) { return h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": total, "aria-valuenow": done }, h("i", { style: "width:" + (total ? Math.round(100 * done / total) : 0) + "%" })); }
+function paintTabBars() {
+  GUIDE.prs.forEach(pr => {
+    const el = document.querySelector('#tabs [data-pr="' + pr.id + '"] i'); if (!el) return;
+    try { const [d, n] = progressOf(pr); el.style.width = (n ? Math.round(100 * d / n) : 0) + "%"; } catch (e) { /* surfaced by the tab's own render and selfCheck */ }
+  });
+}
+function anchorsText() {
+  return GUIDE.prs.map(pr => "# " + ptitle(pr) + " (" + pr.sha + ")\n" +
+    list(pr.tests).map(t => "test: " + t.where).join("\n") + "\n" + pr.points.map(pt => pt.where).join("\n")).join("\n\n") + "\n";
+}
+
+/* ---------- views ---------- */
+function readFirst() {
+  const g = GUIDE, t = u;
+  const root = h("section", {});
+  root.append(h("h2", {}, t("summary")),
+    table(u("cols"), g.prs.map((p, i) => [String(i + 1), ptitle(p), p.ticket || "", h("span", {}, h("code", {}, p.branch), " → ", h("code", {}, p.base)), p.size, p.time, h("span", { class: "chip " + p.focus }, p.focus), p.gates, h("code", {}, p.sha)])),
+    h("h2", {}, t("stack")),
+    ...g.stack.map(chain => h("div", { class: "stack card" }, chain.map((n, i) => [i ? h("span", { class: "muted", "aria-label": "on top of" }, "←") : null, h("span", { class: "node" }, n)]))),
+    h("h2", {}, t("gates")), table(u("gateCols"), list(g.gates).map(x => [g_(x.gate), x.did, x.catches])),
+    h("h2", {}, t("gaps")), table(u("gapCols"), list(g.gaps).map(x => [x.gap, x.where, x.fix])),
+    h("h2", {}, t("humanGate")), h("ol", {}, list(g.humanGate).map(s => h("li", {}, rich(s)))),
+    h("h2", {}, t("severity")), table([...u("prefixCol")], u("sevRows").map(r => [h("code", {}, r[0]), r[1]])),
+    h("h2", {}, t("openCode")), h("div", { class: "rowline" }, h("pre", { style: "flex:1" }, g.openCode), cpBtn(g.openCode)), h("p", { class: "muted" }, t("openNote")),
+    h("h2", {}, t("order")), h("p", {}, rich(g.reviewOrder)), h("ol", {}, g.prs.map(p => h("li", {}, ptitle(p) + " — " + p.time + ", " + p.focus))),
+    h("h2", {}, t("merge")), h("p", {}, rich(g.mergeOrder)),
+    h("h2", {}, t("collapse")), h("div", { class: "card" }, rich(g.collapse)));
+  return root;
+}
+
+function ctxView(pr) {
+  const c = pr.context || {}, labels = u("ctx");
+  const parts = Object.keys(labels).filter(k => list(c[k]).length)
+    .map(k => [h("strong", {}, labels[k]), h("ul", { class: "ctx" }, list(c[k]).map(x => h("li", {}, rich(x))))]);
+  return h("div", { class: "card" }, parts.length ? parts : h("span", { class: "muted" }, "—"));
+}
+
+function pointView(pr, i, pt, onProgress) {
+  const F = u("fields"), id = pr.id + ":" + i;
+  const sel = h("select", { "aria-label": "severity", onchange: (e) => { state.sev[id] = e.target.value; save(); } },
+    SEV.map(s => h("option", { value: s, selected: (state.sev[id] || "") === s }, s || u("sevNone"))));
+  const inp = h("input", { type: "text", placeholder: u("addFinding"), value: state.finds[id] || "", oninput: (e) => { state.finds[id] = e.target.value; save(); } });
+  const j = !!(state.judged[pr.id] || {})[i];
+  const det = h("details", { class: "point" + (j ? " judged" : ""), open: i === 0 },
+    h("summary", {}, (i + 1) + ". ", rich(pt.title), "  ", axesOf(pt).map(a => h("span", { class: "chip" }, a + " "))),
+    h("div", { class: "body" },
+      h("dl", { class: "fields" },
+        h("dt", {}, F.where), h("dd", { class: "rowline" }, h("code", {}, pt.where), cpBtn(pt.where)),
+        h("dt", {}, F.gatedBy), h("dd", {}, rich(pt.gatedBy || "none")),
+        h("dt", {}, F.what), h("dd", {}, rich(pt.what)),
+        h("dt", {}, F.why), h("dd", {}, rich(pt.why)),
+        ...(pt.cause ? [h("dt", {}, F.cause), h("dd", {}, rich(pt.cause))] : []),
+        h("dt", {}, F.solution), h("dd", {}, rich(pt.solution)),
+        h("dt", {}, F.judge), h("dd", {}, h("label", { class: "chk" },
+          h("input", { type: "checkbox", checked: j, onchange: (e) => { (state.judged[pr.id] = state.judged[pr.id] || {})[i] = e.target.checked; det.classList.toggle("judged", e.target.checked); save(); onProgress(); } }),
+          h("strong", {}, rich(pt.judge)))),
+        h("dt", {}, F.axis), h("dd", {}, axesOf(pt).join(" + "))),
+      h("div", { class: "finding" }, sel, inp)));
+  return det;
+}
+
+function prView(pr) {
+  const t = u;
+  const root = h("section", {});
+  const prog = h("div", {});
+  function paint() { const [d, n] = progressOf(pr); prog.replaceChildren(h("strong", {}, t("progress") + ": " + d + "/" + n), bar(d, n)); paintTabBars(); }
+  root.append(
+    h("h2", {}, ptitle(pr)),
+    h("p", { class: "muted" }, h("code", {}, pr.branch), " → ", h("code", {}, pr.base), pr.ticket ? "  · " + pr.ticket : "", "  · ", t("prefix") + " ", h("code", {}, pr.sha), "  · ", pr.size, " · ", pr.time, " · ", h("span", { class: "chip " + pr.focus }, pr.focus)),
+    prog,
+    h("h3", {}, t("context")), ctxView(pr),
+    h("h3", {}, t("tests")),
+    ...list(pr.tests).map(x => h("div", { class: "card" },
+      h("div", { class: "rowline" }, h("code", {}, x.where), cpBtn(x.where)),
+      h("p", {}, rich(x.text)),
+      x.mutation ? h("p", {}, h("strong", {}, t("mutation") + ": "), rich(x.mutation)) : null)),
+    ...(pr.compare ? [h("h3", {}, t("compare")), h("div", { class: "card" },
+      h("p", {}, h("strong", {}, t("compareOpen") + ": "), rich(pr.compare.open)),
+      h("strong", {}, t("compareWhat")), h("ul", { class: "ctx" }, list(pr.compare.compare).map(x => h("li", {}, rich(x)))))] : []),
+    h("h3", {}, t("points")), ...pr.points.map((pt, i) => pointView(pr, i, pt, paint)),
+    h("h3", {}, t("verdictLabel")),
+    h("select", { "aria-label": t("verdictLabel"), onchange: (e) => { state.verdict[pr.id] = e.target.value; save(); } },
+      Object.entries(u("verdicts")).map(([v, label]) => h("option", { value: v, selected: (state.verdict[pr.id] || "") === v }, label))),
+    h("h3", {}, t("notes")),
+    h("textarea", { "aria-label": t("notes"), oninput: (e) => { state.notes[pr.id] = e.target.value; save(); } }, state.notes[pr.id] || ""));
+  paint();
+  return root;
+}
+
+function findingsMarkdown() {
+  const out = ["# " + g_(GUIDE.title) + " — " + GUIDE.date, ""];
+  GUIDE.prs.forEach(pr => {
+    const [d, n] = progressOf(pr), v = state.verdict[pr.id] || "";
+    out.push("## " + ptitle(pr) + " (`" + pr.sha + "`)", "Verdict: " + (v ? u("verdicts")[v] : "—") + " · progress " + d + "/" + n);
+    const lines = [], open = [];
+    pr.points.forEach((pt, i) => {
+      const id = pr.id + ":" + i, txt = (state.finds[id] || "").trim();
+      if (txt) lines.push("- " + (state.sev[id] ? state.sev[id] + " " : "") + "`" + pt.where + "` — " + txt);
+      if (!(state.judged[pr.id] || {})[i]) open.push("- `" + pt.where + "` — " + g_(pt.judge));
+    });
+    if (lines.length) out.push("", ...lines);
+    const note = (state.notes[pr.id] || "").trim();
+    if (note) out.push("", "Notes:", note);
+    if (open.length) out.push("", u("notJudged") + ":", ...open);
+    out.push("");
+  });
+  if (list(GUIDE.gaps).length) out.push("## " + u("gaps"), "", ...list(GUIDE.gaps).map(x => "- " + g_(x.gap) + " (" + x.where + ") → " + g_(x.fix)), "");
+  return out.join("\n").trim() + "\n";
+}
+
+function verdictView() {
+  const t = u;
+  const out = h("textarea", { readonly: true, "aria-label": "findings", style: "min-height:180px" });
+  const root = h("section", {}, h("h2", {}, t("verdict")),
+    table(u("sumCols"), GUIDE.prs.map(pr => { const [d, n] = progressOf(pr); return [ptitle(pr), (n ? Math.round(100 * d / n) : 0) + "% (" + d + "/" + n + ")", u("verdicts")[state.verdict[pr.id] || ""]]; })));
+  if (list(GUIDE.pending).length) root.append(h("h3", {}, t("pending")), h("ul", {}, list(GUIDE.pending).map(x => h("li", {}, rich(x)))));
+  if (list(GUIDE.handoff).length) root.append(h("h3", {}, t("before")),
+    h("div", { class: "card" }, list(GUIDE.handoff).map((x, i) => h("label", { class: "chk" },
+      h("input", { type: "checkbox", checked: !!state.before[i], onchange: (e) => { state.before[i] = e.target.checked; save(); } }), h("span", {}, rich(x))))));
+  root.append(
+    h("p", {}, h("button", { class: "primary", onclick: () => { out.value = findingsMarkdown(); copyText(out.value, out); } }, t("copy"))), out);
+  return root;
+}
+
+/* ---------- shell ---------- */
+function tabsList() {
+  return [{ id: "read", label: u("readFirst") }, ...GUIDE.prs.map(p => ({ id: "pr" + p.id, label: "#" + p.id, pr: p.id })), { id: "verdict", label: u("verdict") }];
+}
+function buildView(tab) {
+  if (tab === "read") return readFirst();
+  if (tab === "verdict") return verdictView();
+  return prView(GUIDE.prs.find(p => "pr" + p.id === tab));
+}
+function render() {
+  document.documentElement.lang = L() === "primary" ? (GUIDE.langCode || "en") : "en";
+  document.getElementById("title").textContent = g_(GUIDE.title);
+  document.getElementById("local").textContent = u("local");
+  document.getElementById("copyall").textContent = u("copyAll");
+  const lb = document.getElementById("lang");
+  lb.hidden = !GUIDE.primaryLabel;
+  lb.textContent = L() === "primary" ? GUIDE.primaryLabel + " → EN" : "EN → " + GUIDE.primaryLabel;
+  lb.setAttribute("data-lang", L());
+  document.getElementById("theme").textContent = "◐ " + (state.theme || "auto");
+  if (state.theme) document.documentElement.setAttribute("data-theme", state.theme); else document.documentElement.removeAttribute("data-theme");
+  const tabs = tabsList();
+  if (!tabs.some(x => x.id === state.tab)) state.tab = "read";
+  document.getElementById("tabs").replaceChildren(...tabs.map(x => h("button", { role: "tab", "data-pr": x.pr, "aria-selected": String(x.id === state.tab), onclick: () => { state.tab = x.id; save(); render(); window.scrollTo(0, 0); } },
+    x.label, x.pr ? h("span", { class: "mini" }, h("i", {})) : null)));
+  const main = document.getElementById("main");
+  let view;
+  try { view = buildView(state.tab); }
+  catch (e) {
+    console.error("human-review-guide: tab '" + state.tab + "' failed to render: " + (e && e.message));
+    view = h("div", { class: "card", role: "alert", style: "border-color:var(--bad)" }, h("strong", {}, "Render error in tab '" + state.tab + "'"), h("pre", {}, String(e && e.message)), h("p", { class: "muted" }, "A guide field has the wrong shape. See the DATA comment at the top of this file."));
+  }
+  main.replaceChildren(...(storeOk ? [] : [h("p", { class: "card muted" }, u("noStore"))]), view);
+  paintTabBars();
+}
+document.getElementById("copyall").addEventListener("click", () => copyText(anchorsText()));
+document.getElementById("lang").addEventListener("click", () => { state.lang = L() === "primary" ? "en" : "primary"; save(); render(); });
+document.getElementById("theme").addEventListener("click", () => {
+  state.theme = state.theme === "light" ? "dark" : state.theme === "dark" ? null : "light"; save(); render();
+});
+/* self-check: a filled-in template that leaks an object or an element into the text fails loudly.
+   Matches only String(obj) forms, so a guide that quotes the word "[object" is not flagged. */
+const LEAK = /\[object (Object|Array|Undefined|Null|(HTML|SVG)\w*Element)\]/;
+function selfCheck() {
+  const prev = state.tab, bad = [];
+  tabsList().forEach(x => {
+    state.tab = x.id;
+    try { buildView(x.id); } catch (e) { bad.push(x.id + " (threw: " + (e && e.message) + ")"); return; }
+    render();
+    if (LEAK.test(document.body.innerText)) bad.push(x.id + " (object text)");
+  });
+  state.tab = prev; render();
+  const bn = document.getElementById("banner");
+  if (bn) { bn.hidden = !bad.length; bn.textContent = bad.length ? "Guide self-check failed: " + bad.join("; ") + ". A field has the wrong shape or skipped g_()/rich(); see the DATA comment." : ""; }
+  if (bad.length) console.error("human-review-guide: self-check failed in tab(s): " + bad.join("; ") + " (a field has the wrong shape or skipped g_()/rich())");
+}
+load();
+if (!state.lang) state.lang = "primary";
+render();
+selfCheck();
+</script>
+</body>
+</html>
