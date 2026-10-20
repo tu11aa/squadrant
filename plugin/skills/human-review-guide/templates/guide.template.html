@@ -92,9 +92,15 @@ const GUIDE = {
   primaryLabel: "Primary",
   langCode: "en", /* BCP 47 code of the primary language, for the lang attribute */
   ui: {},
+  /* coverage map: what each gate covers IN THIS DIFF. The guide holds only what no gate covered or only a human can judge. */
   gates: [
-    { gate: "Agent review", did: "3 rounds, all findings fixed", catches: "Logic bugs, edge cases" },
+    { gate: "Agent review", did: "3 rounds on src/orders/*, all findings fixed", catches: "Logic bugs, edge cases" },
     { gate: "CI vs base", did: "Green except failures already on base", catches: "Build, types, tests" }
+  ],
+  /* gaps: should be machine-checked, no gate covers. Each needs a suggested gate or ticket. */
+  gaps: [
+    { gap: "Error codes are only documented in prose; no test pins them", where: "#101 src/orders/errors.ts", fix: "Add a contract test listing the codes; follow-up ticket" },
+    { gap: "The list page template is not rendered by any test", where: "#102 src/ui/OrderList.tsx", fix: "Add a render/snapshot test" }
   ],
   humanGate: ["Intent and scope", "Public contracts (field names, routes, error codes)", "Architecture trade-offs", "Do the tests test the right thing (mutation)", "Live comparison with the design"],
   openCode: "git fetch origin\ngit worktree add ../review-orders origin/feat/orders-api   # read-only\ngit worktree add ../review-ui     origin/feat/orders-ui\ngh pr diff 101   # one PR's diff",
@@ -113,6 +119,7 @@ const GUIDE = {
       points: [
         {
           title: "Error code naming", where: "src/orders/errors.ts:14 — ORDER_EMPTY_CART", axis: "Architecture",
+          gatedBy: "none",
           what: "Defines the error code returned to clients.",
           why: "Clients must tell business errors from system errors.",
           how: "Stable string constant, not a number.",
@@ -120,6 +127,7 @@ const GUIDE = {
         },
         {
           title: "Cancel transaction scope", where: "src/orders/service.ts:131 — cancelOrder", axis: "Correctness",
+          gatedBy: "Agent review (partial: found the double cancel; not the lock cost)",
           what: "Updates status and stock inside one transaction.",
           why: "Review found a double cancel doubled the stock.",
           how: "Lock the row, then check status; trades one lock for safety.",
@@ -136,6 +144,7 @@ const GUIDE = {
       points: [
         {
           title: "Filter state in URL", where: "src/ui/OrderList.tsx:33 — useFilterParams", axis: "Readability",
+          gatedBy: "none",
           what: "Keeps filters in the query string.",
           why: "Makes links shareable and Back work.",
           how: "A small hook instead of a router extension.",
@@ -151,7 +160,10 @@ const T = {
   local: { en: "LOCAL ONLY, DO NOT POST" },
   readFirst: { en: "Read first" }, verdict: { en: "Verdict" },
   summary: { en: "Summary" }, stack: { en: "Stack" },
-  gates: { en: "Gates already run (do not redo)" },
+  gates: { en: "Gates already run: coverage map (do not redo)" },
+  gaps: { en: "Gate gaps: should be machine-checked, no gate covers" },
+  gapCols: { en: ["Gap", "Where", "Suggested gate or ticket"] },
+  gatedBy: { en: "Gated by" },
   gateCols: { en: ["Gate", "Did", "Catches"] },
   humanGate: { en: "What the human gate is for" },
   severity: { en: "Severity prefixes" }, prefixCol: { en: ["Prefix", "Meaning"] },
@@ -163,7 +175,7 @@ const T = {
   cols: { en: ["PR", "Branch → base", "Size", "Est. time", "Focus", "Gates", "Head SHA"] },
   context: { en: "1. Context" }, tests: { en: "2. Tests first" },
   mutation: { en: "Manual mutation" }, points: { en: "3. Implementation points" },
-  fields: { en: { where: "Where", what: "What", why: "Why", how: "How solved", judge: "You judge", axis: "Axis" } },
+  fields: { en: { where: "Where", what: "What", gatedBy: "Gated by", why: "Why", how: "How solved", judge: "You judge", axis: "Axis" } },
   checklist: { en: "4. Five-axis checklist" },
   axes: { en: { Correctness: "Correctness: matches intent, edge cases, tests cover behaviour", Readability: "Readability: clear names, plain code, comments say why", Architecture: "Architecture: fits patterns, no premature abstraction", Security: "Security: input validated, auth checked, no secrets", Performance: "Performance: no N+1 or unbounded loops", Design: "Compared with the design live (UI only)" } },
   progress: { en: "Progress" },
@@ -239,6 +251,7 @@ function readFirst() {
     h("h2", {}, t("stack")),
     ...g.stack.map(chain => h("div", { class: "stack card" }, chain.map((n, i) => [i ? h("span", { class: "muted", "aria-label": "on top of" }, "←") : null, h("span", { class: "node" }, n)]))),
     h("h2", {}, t("gates")), table(u("gateCols"), g.gates.map(x => [x.gate, g_(x.did), g_(x.catches)])),
+    h("h2", {}, t("gaps")), table(u("gapCols"), (g.gaps || []).map(x => [rich(g_(x.gap)), x.where, rich(g_(x.fix))])),
     h("h2", {}, t("humanGate")), h("ol", {}, g_(g.humanGate).map(s => h("li", {}, s))),
     h("h2", {}, t("severity")), table([...u("prefixCol")], u("sevRows").map(r => [h("code", {}, r[0]), r[1]])),
     h("h2", {}, t("openCode")), h("pre", {}, g.openCode), h("p", { class: "muted" }, t("openNote")),
@@ -259,6 +272,7 @@ function pointView(pr, i, pt) {
       h("dl", { class: "fields" },
         h("dt", {}, F.where), h("dd", {}, h("code", {}, pt.where)),
         h("dt", {}, F.what), h("dd", {}, rich(g_(pt.what))),
+        h("dt", {}, F.gatedBy), h("dd", {}, rich(g_(pt.gatedBy) || "none")),
         h("dt", {}, F.why), h("dd", {}, rich(g_(pt.why))),
         h("dt", {}, F.how), h("dd", {}, rich(g_(pt.how))),
         h("dt", {}, F.judge), h("dd", {}, h("strong", {}, rich(g_(pt.judge)))),

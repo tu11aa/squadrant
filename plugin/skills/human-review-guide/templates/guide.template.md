@@ -24,12 +24,20 @@ Anchors verified with `git grep -n <pattern> origin/<branch>` at these heads (re
 develop ← #A ← #B ← #C
 ```
 
-### 0.3 Gates already run (do not redo)
+### 0.3 Gates already run: coverage map (do not redo)
 
-| Gate | What it did | Bug class it catches |
+| Gate | What it covers in this diff | Bug class it catches |
 |---|---|---|
-| Agent review (several rounds) | <findings fixed> | Logic bugs, edge cases |
+| Agent review (several rounds) | <files/areas, findings fixed> | Logic bugs, edge cases |
 | CI vs base | <result> | Build, types, tests |
+
+The guide holds only what no gate covered, or only a human can judge.
+
+### 0.3b Gate gaps (should be machine-checked, no gate covers)
+
+| Gap | Where it shows | Suggested new gate or follow-up ticket |
+|---|---|---|
+| <e.g. a template no test renders> | <PR / file> | <e.g. add a render test; ticket #N> |
 
 ### 0.4 What the human gate is for
 
@@ -79,6 +87,7 @@ What it does. What it deliberately does not do. Breaking changes. Size. Base/sta
 #### 3.1 <short title>
 - **Where:** `src/orders/service.ts:88` — `createOrder`
 - **What:** <what the code does>
+- **Gated by:** none | <gate> (partial: <what it covers>)
 - **Why:** <problem or constraint that forced it>
 - **How solved:** <approach and trade-off>
 - **You judge:** <the concrete question only a human can answer>

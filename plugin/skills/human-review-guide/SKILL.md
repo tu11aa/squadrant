@@ -1,11 +1,20 @@
 ---
 name: human-review-guide
-description: Write the operator a short, well-sourced guide for the human gate of crew PRs. Use when the operator says "review guide", "how should I review these PRs", "guide me through the PRs", "what should I focus on in review", "what do I check before merging", or is about to review one or more crew PRs by hand. One PR → answer in chat; several PRs → one local interactive HTML. The guide is LOCAL ONLY and is never posted anywhere. Captain skill.
+description: Write the operator a short, well-sourced guide for the human gate of crew PRs, covering only what the automated gates did not cover or cannot judge, plus the gate gaps. Use when the operator says "review guide", "how should I review these PRs", "guide me through the PRs", "what should I focus on in review", "what do I check before merging", or is about to review one or more crew PRs by hand. One PR → answer in chat; several PRs → one local interactive HTML. The guide is LOCAL ONLY and is never posted anywhere. Captain skill.
 ---
 
 # human-review-guide — a local guide for the human review gate
 
-Machines already review crew PRs: crew self-review, the captain's agent review, a repo's PR review tool, CI, guard tests. They catch local bugs. The **human gate** is for what they cannot judge: intent and scope, public contracts and names, architecture trade-offs, whether the tests test the right thing, and a live comparison with a design or prototype. This skill produces the guide that makes that review fast.
+## Core principle: the human gate covers only what the gates cannot see
+
+Code and rules are already reviewed by agents and gated: crew self-review, the captain's agent review, CI, lint, guard tests, knowledge-base rule checks, a repo's PR review tool. **The human gate exists only for what those gates cannot see or did not cover.** Two kinds of thing qualify:
+
+1. **Not covered** — no gate looked at it in this diff.
+2. **Only a human can judge it** — intent and scope, public contract names, architecture trade-offs, whether the tests test the right thing, a live comparison with a design or prototype.
+
+Everything else is dropped from the guide, and the human is never asked to redo it. The guide also records the **gate gaps**: things that *should* have been machine-checked but no gate covers, each with a suggested new gate or follow-up ticket, so a human catches it once and a machine catches it next time.
+
+This skill produces the guide that makes that review fast.
 
 Structure follows [addyosmani/agent-skills `code-review-and-quality`](https://github.com/addyosmani/agent-skills) (five axes, tests first, severity labels, verdict template, common rationalizations).
 
@@ -41,11 +50,13 @@ Templates in this skill directory:
 ## Process
 
 1. **Gather facts, do not recall.** PR list, base/head branches and SHAs, sizes, commit headlines (`gh pr view N --json number,title,headRefName,headRefOid,baseRefName,additions,deletions,changedFiles,commits`), gate results, CI result against the base branch, open decisions and unresolved review threads.
-2. **Pick the points that need a human**: public contracts and names, security-sensitive code (auth, SQL, input handling), the most complex mechanism, deliberate debt, breaking changes. Skip what a machine verified (formatting, types, trivially covered branches).
-3. **Verify every anchor at the head SHA.** `git fetch origin`, then `git grep -n '<pattern>' origin/<branch> -- <path>` for each `Where`. State the head SHA at the top of the guide. Give both `file:line` and the symbol name.
-4. **Write the Markdown** yourself, then for several PRs fill the HTML template yourself from the same facts and open it locally (`open <file>`). Do not delegate either step.
-5. **Keep it in sync.** Review often runs while crews still push fixes. State the head SHA per PR. On **every** head update, refresh that PR's SHA and re-run the anchor check, update lines, and record decisions taken since (e.g. "owner chose X"). Update the HTML data block too; the page's saved checkboxes and notes are keyed by PR id, so they survive a re-render.
-6. **Never post it** (rule above).
+2. **Build the gate coverage map** for the PR(s): every gate that ran (agent review rounds, CI, lint, guard tests, KB rule checks, the repo's PR review tool) and what it covers *in this diff*. Read the gate output; do not assume a gate covers a file because it exists.
+3. **Pick the points from the map.** A point goes in only if no gate covered it, or only a human can judge it (public contracts and names, intent, trade-offs, test validity, live UI; plus security-sensitive code, the most complex mechanism, deliberate debt and breaking changes when no gate covered them). Give each point a `Gated by` value. Drop what a gate verified.
+4. **List the gate gaps**: what should have been machine-checked but is not (a template no test renders, a rule enforced only by prose, a contract name no test pins). Give each a suggested new gate or a follow-up ticket.
+5. **Verify every anchor at the head SHA.** `git fetch origin`, then `git grep -n '<pattern>' origin/<branch> -- <path>` for each `Where`. State the head SHA at the top of the guide. Give both `file:line` and the symbol name.
+6. **Write the Markdown** yourself, then for several PRs fill the HTML template yourself from the same facts and open it locally (`open <file>`). Do not delegate either step.
+7. **Keep it in sync.** Review often runs while crews still push fixes. State the head SHA per PR. On **every** head update, refresh that PR's SHA and re-run the anchor check, update lines, and record decisions taken since (e.g. "owner chose X"). Update the HTML data block too; the page's saved checkboxes and notes are keyed by PR id, so they survive a re-render.
+8. **Never post it** (rule above).
 
 ## Per-PR structure
 
@@ -56,12 +67,13 @@ What the PR does; what it deliberately does not do; breaking changes; size (file
 Which tests prove what. Then one concrete **manual mutation** so the reviewer can confirm the tests are real: "change `<expr>` at `src/orders/service.ts:88` (`createOrder`); `orders.service.test.ts › rejects empty cart` must go red." If it stays green, the test is decoration.
 
 ### 3. Implementation points
-Each point has the same six fields:
+Each point has the same seven fields:
 
 | Field | Content |
 |---|---|
 | **Where** | `file:line` **and** symbol name, verified at the head SHA |
 | **What** | What the code does |
+| **Gated by** | `none`, or `<gate> (partial: <what it covers>)`. Never a point a gate fully verified |
 | **Why** | The problem or constraint that forced it (often a bug found in review) |
 | **How solved** | The approach and its trade-off |
 | **You judge** | The concrete question only a human can answer (name a public contract, accept a trade-off, a duplicated helper as debt) |
@@ -82,7 +94,8 @@ For UI changes add: **compare with the design/prototype live**, side by side, in
 
 Put these once at the top of the guide:
 
-- **Gates already run** — table: gate, what it did, bug class it catches. The reviewer does not redo machine work.
+- **Gates already run** — the coverage map as a table: gate, what it covers in this diff, bug class it catches. The reviewer does not redo machine work.
+- **Gate gaps** — table: gap (what should be machine-checked but no gate covers), where it shows in the PR, suggested new gate or follow-up ticket. The human catches it once; the ticket makes a machine catch it next time.
 - **What the human gate is for** — intent and scope, public contracts, architecture trade-offs, test validity (mutation), live visual comparison.
 - **Severity prefixes** for comments:
 
@@ -106,6 +119,8 @@ Put these once at the top of the guide:
 ## Pitfalls
 
 - **Subagents act publicly on conversation-level requests.** See LOCAL ONLY.
+- **Re-checking machine work.** Asking the human to verify what CI, lint or a guard test already proved wastes the gate. If you are unsure a gate covered something, read its output; if it did not, it is a point with `Gated by: none`.
+- **Silent gaps.** A point with `Gated by: none` that a machine could have caught is also a gate gap; record it in Gate gaps, not only as a point.
 - **Line numbers drift** when crews push fixes. Always give the symbol and the SHA; re-verify before handing over.
 - **Do not over-compress** into bare checks; **do not pad** with what machines verified.
 - Do not answer a crew's confirmation prompt "no" to sequence work; send instructions as a message instead.
@@ -117,9 +132,11 @@ Put these once at the top of the guide:
 | Rationalization | Reality |
 |---|---|
 | "The agent review and CI passed, the human gate can be a skim" | Those gates miss intent, contract names and test validity. That is exactly what the human gate is for. |
+| "Let me double-check what CI already checked" | Don't. The human gate covers only what gates cannot see. Build the coverage map, drop covered items, and spend the time on the rest. |
+| "No gate covers this, but it's minor, I'll leave it out of the gaps" | A human catching it once is the cost; listing the gap with a suggested gate or ticket is what stops the next human paying it again. |
 | "The tests pass, so they test the right thing" | Run the mutation. A test that stays green when the code is broken proves nothing. |
 | "Line numbers are enough" | They drift on the next push. Symbol name plus SHA. |
-| "Short is better: just list the checks" | Without why and how solved the reviewer cannot judge the trade-off. Keep all six fields. |
+| "Short is better: just list the checks" | Without why and how solved the reviewer cannot judge the trade-off. Keep all seven fields. |
 | "I'll spin up a fresh agent to write the guide" | It lacks the why: the review findings and decisions. The agent in charge of the PRs writes it, reloading context from its handoff and the PR history if needed. |
 | "I'll post the guide on the PR so everyone sees it" | Never. It is the operator's private aid. Leaked guides get deleted, and edit history stays. |
 | "It's debt, we'll clean it up later" | Not accepted without a follow-up ticket. |
