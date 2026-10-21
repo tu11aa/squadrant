@@ -316,12 +316,35 @@ export interface SquadrantConfig {
      *    on      channel leads; the pane becomes the fallback
      *  Per-project override via projects/<name>.json (existing deep merge). */
     controlChannel?: ControlChannelConfig;
+    /** #1015 context meter + boundary rollover suggestions. Suggest/warn only —
+     *  squadrant never compacts a session on its own. Absent ⇒ built-in defaults.
+     *  Per-project override via projects/<name>.json (resolveContextBudget). */
+    contextBudget?: Partial<ContextBudget>;
   };
   metrics: {
     enabled: boolean;
     path: string;
   };
 }
+
+/** #1015 thresholds, in tokens of live context. */
+export interface ContextBudget {
+  /** Master switch for suggestions/warnings (the meter itself always reads). */
+  enabled: boolean;
+  /** Captain context at/above which a boundary yields a rollover suggestion. */
+  captainSoft: number;
+  /** Captain context at/above which a louder warning fires (no boundary needed). */
+  captainHard: number;
+  /** Crew context at/above which `crew send` hints at a fresh crew. */
+  crewSoft: number;
+}
+
+export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
+  enabled: true,
+  captainSoft: 150_000,
+  captainHard: 350_000,
+  crewSoft: 150_000,
+};
 
 export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.homedir(), ".config", "squadrant", "config.json");
 export const CONFIG_DIR = path.dirname(DEFAULT_CONFIG_PATH);

@@ -291,8 +291,8 @@ describe("gatherLiveRepoState", () => {
     const state = gatherLiveRepoState("REPO", "main", tasks, runner, NOW);
 
     expect(state.liveCrews).toEqual([
-      { name: "crew-1", state: "working", task: "fix bug", question: undefined, branch: "crew/crew-1" },
-      { name: "crew-2", state: "blocked", task: "add feature", question: "which approach?", branch: "crew/crew-2" },
+      { name: "crew-1", state: "working", task: "fix bug", context: "unknown", question: undefined, branch: "crew/crew-1" },
+      { name: "crew-2", state: "blocked", task: "add feature", context: "unknown", question: "which approach?", branch: "crew/crew-2" },
     ]);
   });
 
@@ -315,7 +315,7 @@ describe("gatherLiveRepoState", () => {
     it("keeps an approved crew whose PR is open, labelled pr-open, with reviewNote + PR", () => {
       const state = gatherLiveRepoState("REPO", "main", [approved], fakeRunner(base("OPEN\n")), NOW);
       expect(state.liveCrews).toEqual([
-        expect.objectContaining({ name: "crew-pr", reviewStage: "pr-open", reviewNote: "tests green", prUrl: "https://github.com/x/y/pull/7", branch: "crew/crew-pr" }),
+        expect.objectContaining({ name: "crew-pr", reviewStage: "pr-open", context: "unknown", reviewNote: "tests green", prUrl: "https://github.com/x/y/pull/7", branch: "crew/crew-pr" }),
       ]);
     });
 

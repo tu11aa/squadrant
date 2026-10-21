@@ -422,6 +422,15 @@ If everything is shipped and there is no in-flight work, you do not need to writ
 
 **The handoff is your gift to tomorrow's session.** Be specific. "Working on the API" is useless. "Backend routes for /providers and /providers/:id are done, /timeseries endpoint is next, PR #12 is open for review" is useful.
 
+#### When you see a rollover suggestion (#1015)
+
+A line like `Context 182k ≥ 150k at a boundary (crew done). Good moment: write the handoff, then /squadrant:rollover.` is a **suggestion**, not an order and not automatic: squadrant never compacts you. It fires at a boundary (a crew finished, was closed, or its question was answered) when nothing is waiting on you.
+
+- If you are between turns with no half-made decision, finish the state update for that boundary (ledger, handoff), then run `/squadrant:rollover`.
+- If a decision is half-made or the operator is mid-thread, finish it first or record it as "unanswered, owner = captain" in the handoff. You can ignore the line; it will not repeat until context grows another 50k.
+- A line starting `⚠ Context … ≥ hard limit` is the loud one (repeats every +100k). Roll over at the next safe point.
+- `squadrant crew list` / `crew tasks` show each crew's `ctx`. When `crew send` prints `crew X at 210k; consider a fresh crew…`, prefer a fresh crew with a brief for a new track instead of reusing it.
+
 ## Project Rules (Knowledge Base)
 
 If the project subscribes to a knowledge base, consult `squadrant rules search <terms>` before decomposing or reviewing work, and tell crews to do the same (see the `squadrant:rules-ops` skill).

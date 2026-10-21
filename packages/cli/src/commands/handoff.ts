@@ -31,6 +31,7 @@ import { queryClaudeMem } from "../lib/handoff-claude-mem.js";
 import { extractTranscriptTail } from "../lib/handoff-transcript.js";
 import { readNewestArchivedHandoff } from "../lib/handoff-archive.js";
 import { readCaptainSessionRegistry, selectGapSessions } from "../lib/captain-session-registry.js";
+import { captainContext } from "../lib/captain-context.js";
 import { assembleHandoffFacts, SESSION_WINDOW_MS } from "../lib/handoff-facts.js";
 import type { HandoffFacts, SessionWithTranscript } from "../lib/handoff-facts.js";
 
@@ -123,6 +124,7 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
     registryNote,
     usedFallbackWindow,
     fallbackWindowMs,
+    captainContext: captainContext(project),
   });
 }
 

@@ -45,8 +45,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:938
   - packages/core/src/daemon/reduce.ts:505
   - packages/core/src/daemon/reduce.ts:560
-  - packages/core/src/daemon/start.ts:91
-  - packages/core/src/daemon/start.ts:95
+  - packages/core/src/daemon/start.ts:93
+  - packages/core/src/daemon/start.ts:97
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
@@ -54,9 +54,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:623
   - packages/agents/src/interactive/claude.ts:648
   - packages/cli/src/commands/hooks.ts:49
-  - packages/cli/src/squadrantd.ts:518
-  - packages/cli/src/squadrantd.ts:563
-  - packages/cli/src/squadrantd.ts:594
+  - packages/cli/src/squadrantd.ts:519
+  - packages/cli/src/squadrantd.ts:564
+  - packages/cli/src/squadrantd.ts:595
   - packages/core/src/daemon/reduce.ts:636
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
@@ -64,25 +64,25 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:590
   - packages/agents/src/interactive/claude.ts:618
   - packages/agents/src/interactive/claude.ts:633
-  - packages/cli/src/commands/crew-control.ts:212
-  - packages/cli/src/squadrantd.ts:521
-  - packages/cli/src/squadrantd.ts:566
-  - packages/cli/src/squadrantd.ts:597
+  - packages/cli/src/commands/crew-control.ts:213
+  - packages/cli/src/squadrantd.ts:522
+  - packages/cli/src/squadrantd.ts:567
+  - packages/cli/src/squadrantd.ts:598
   - packages/core/src/auto-gate.ts:100
   - packages/core/src/daemon/interactive-probe.ts:202
   - packages/core/src/daemon/reduce.ts:726
 - `task.review`
-  - packages/cli/src/commands/crew-control.ts:216
+  - packages/cli/src/commands/crew-control.ts:217
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
-  - packages/cli/src/commands/crew-control.ts:206
-  - packages/cli/src/commands/crew-control.ts:404
+  - packages/cli/src/commands/crew-control.ts:207
+  - packages/cli/src/commands/crew-control.ts:405
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
   - packages/agents/src/headless-launcher.ts:79
   - packages/agents/src/headless-launcher.ts:89
-  - packages/cli/src/commands/crew-control.ts:218
+  - packages/cli/src/commands/crew-control.ts:219
   - packages/core/src/crew-spawn.ts:399
   - packages/core/src/daemon/interactive-probe.ts:197
   - packages/core/src/daemon/reduce.ts:863
@@ -94,9 +94,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/normalize.ts:42
   - packages/agents/src/interactive/claude.ts:601
   - packages/agents/src/opencode/sse-bridge.ts:242
-  - packages/cli/src/squadrantd.ts:516
-  - packages/cli/src/squadrantd.ts:561
-  - packages/cli/src/squadrantd.ts:592
+  - packages/cli/src/squadrantd.ts:517
+  - packages/cli/src/squadrantd.ts:562
+  - packages/cli/src/squadrantd.ts:593
   - packages/core/src/daemon/reduce.ts:758
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
@@ -144,14 +144,14 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:643
-  - packages/cli/src/squadrantd.ts:511
-  - packages/cli/src/squadrantd.ts:556
-  - packages/cli/src/squadrantd.ts:587
+  - packages/cli/src/squadrantd.ts:512
+  - packages/cli/src/squadrantd.ts:557
+  - packages/cli/src/squadrantd.ts:588
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
-  - packages/cli/src/commands/crew-control.ts:130
+  - packages/cli/src/commands/crew-control.ts:131
 - `crew.takeover.ended`
-  - packages/cli/src/commands/crew-control.ts:136
+  - packages/cli/src/commands/crew-control.ts:137
 
 ## Known zero-producer variants (allowlisted)
 
