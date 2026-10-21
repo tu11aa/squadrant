@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest, scanCitations, readBranchOnlyMessages, type AuditSink, type CiteText } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ProjectUsage } from "@squadrant/core";
+import { formatContext, meterTask } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
 import { DAEMON_SOCK_PATH, TERMINAL_STATES, stateRoot, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
@@ -345,6 +346,12 @@ function defaultGetCommitSubject(cwd: string): string {
   }
 }
 
+/** #1015: the PR number from the URL `gh pr create` prints (`…/pull/<n>`), if it has one. */
+function parsePrNumber(url: string): number | undefined {
+  const m = /\/pull\/(\d+)/.exec(url);
+  return m ? Number(m[1]) : undefined;
+}
+
 /**
  * `squadrant crew approve` — the accept side of the #599 review gate. Only
  * valid on a task in 'review' state (set by `squadrant crew signal review`):
@@ -395,7 +402,7 @@ export async function runCrewApprove(
   await deps.call({
     kind: "event",
     project,
-    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}`, source: "approve" },
+    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}`, source: "approve", pr: { url: prUrl, number: parsePrNumber(prUrl), branch } },
   });
 
   return prUrl;
@@ -510,7 +517,9 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
         usage = u ?? undefined;
       }
-      process.stdout.write(formatCompactTasks(records, { compact, ...(usage ? { usage } : {}) }) + "\n");
+      // #1015: live context per non-terminal task ("unknown" where it can't be measured).
+      const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
+      process.stdout.write(formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) }) + "\n");
     });
 
   // #592: delivery goes through the SAME path 'crew send' uses (runCrewSend)

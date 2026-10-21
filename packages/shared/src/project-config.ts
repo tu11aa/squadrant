@@ -4,7 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ModelRoutingConfig } from "./config.js";
+import type { ModelRoutingConfig, ContextBudget } from "./config.js";
+import { DEFAULT_CONTEXT_BUDGET } from "./config.js";
 import { readConfigFileSync, writeConfigFileSync } from "./lib/config-io.js";
 
 export type CrewTier = "all" | "alert_only" | "done_only" | "none";
@@ -18,9 +19,13 @@ export interface NotifyConfig {
 /** Per-project override layer. Every key optional; mirrors the global settings. */
 export interface ProjectOverrideConfig {
   telegram?: { notify?: Partial<NotifyConfig> };
+  /** #1017: crew-event tier for the captain pane (same CrewTier model as Telegram). */
+  captain?: { notify?: { crew?: CrewTier } };
   // Reserved future tenants (resolver is already generic; consumers not yet wired):
   effort?: "max" | "balance" | "low";
   models?: Partial<ModelRoutingConfig>;
+  /** #1015 per-project context thresholds. */
+  contextBudget?: Partial<ContextBudget>;
 }
 
 function defaultRoot(): string {
@@ -57,6 +62,13 @@ export function saveProjectOverride(name: string, patch: ProjectOverrideConfig, 
 
 export const DEFAULT_NOTIFY: NotifyConfig = { active: false, cap: true, crew: "alert_only" };
 
+/** #1017: the captain pane defaults to actionable-only; `all` adds informational digests. */
+export const DEFAULT_CAPTAIN_CREW_TIER: CrewTier = "alert_only";
+
+export function resolveCaptainCrewTier(override: ProjectOverrideConfig): CrewTier {
+  return override.captain?.notify?.crew ?? DEFAULT_CAPTAIN_CREW_TIER;
+}
+
 const CREW_RANK: Record<CrewTier, number> = { none: 0, done_only: 1, alert_only: 2, all: 3 };
 export function crewRank(tier: CrewTier): number {
   return CREW_RANK[tier];
@@ -81,4 +93,22 @@ export function resolveNotify(
   if (globalNotify) n = deepMerge(n, globalNotify);
   if (override.telegram?.notify) n = deepMerge(n, override.telegram.notify);
   return n;
+}
+
+/** #1015: built-in → global defaults.contextBudget → projects/<name>.json, per-key.
+ *  Non-numeric/negative threshold values are ignored so a typo can't disable a limit silently. */
+export function resolveContextBudget(
+  globalBudget: Partial<ContextBudget> | undefined,
+  override: ProjectOverrideConfig,
+): ContextBudget {
+  const out: ContextBudget = { ...DEFAULT_CONTEXT_BUDGET };
+  for (const layer of [globalBudget, override.contextBudget]) {
+    if (!layer) continue;
+    if (typeof layer.enabled === "boolean") out.enabled = layer.enabled;
+    for (const k of ["captainSoft", "captainHard", "crewSoft"] as const) {
+      const v = layer[k];
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+    }
+  }
+  return out;
 }

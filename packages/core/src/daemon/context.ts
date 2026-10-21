@@ -64,6 +64,10 @@ export interface SquadrantdOpts {
    *  builds the real one only when config.telegram is present (and not under vitest,
    *  since pushLifecycle is composed onto notify and would hit the network). */
   telegramBridge?: TelegramBridge;
+  /** #1017: override the per-project captain-pane crew tier (tests). Default: project override → alert_only. */
+  captainCrewTier?: (project: string) => import("@squadrant/shared").CrewTier;
+  /** #1017: quiet window before a crew's informational events leave as one digest (default 60s). */
+  captainDigestWindowMs?: number;
   /** Inject a fake router service for tests. */
   routerService?: RouterService;
   /** B4: registered LifecycleSource instances (cmux-store/native-hook/codex-appserver),
@@ -95,6 +99,10 @@ export interface SquadrantdOpts {
    *  registration, no I/O — safe to force in tests. Defaults to false, so
    *  behavior is unchanged unless a test opts in. */
   forceStartEventsSource?: boolean;
+  /** #1015: project → the captain's Claude transcript path (null when unknown).
+   *  Supplied by the host (the session registry lives in the CLI package). Absent ⇒
+   *  the context advisor is not constructed — zero behavior change. Suggest/warn only. */
+  captainTranscript?: (project: string) => string | null;
 }
 
 export function defaultIsPidAlive(pid: number): boolean {
@@ -171,6 +179,15 @@ export interface DaemonContext {
   captainChannels?: Record<string, import("../control-channel.js").ControlChannel>;
   /** #786: the captain's agent for a project (launch record, else config). */
   captainAgentFor?: (project: string) => string | undefined;
+  /** #1010: queue a /compact for a project's captain (set by start.ts; absent without a cmux surface driver). */
+  requestCaptainCompact?: (project: string, focus?: string) => { queued: true };
+  /** #1015: true while a captain compact is armed/running for the project — the delivery loop
+   *  must not type or send, and must not advance the cursor (set by start.ts). */
+  captainCompactHolds?: (project: string) => boolean;
+  /** #1015: the SessionStart(source=compact) hook arrived — end the delivery hold. */
+  captainCompactDone?: (project: string) => void;
+  /** #1015: true while the delivery loop is mid-pass (set by createDelivery). */
+  deliveryBusy?: () => boolean;
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */

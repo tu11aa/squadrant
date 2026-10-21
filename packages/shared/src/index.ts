@@ -30,3 +30,4 @@ export * from "./lib/daily-logs.js";
 export * from "./lib/session-name.js";
 export * from "./lib/state-paths.js";
 export * from "./daemon-keys.js";
+export * from "./lib/bound-message.js";

@@ -31,6 +31,9 @@ guided first run — come back here when you need the details.
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
+- [Captain rollover](#captain-rollover-1010)
+- [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
+- [Human review guide](#human-review-guide-1012)
 - [Config](#config)
 
 ## Commands
@@ -41,6 +44,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch <project>` | Start a specific project captain |
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
+| `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -440,9 +444,38 @@ $ squadrant crew answer myproj video 1
 
 - **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/squadrant/issues/332)).
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
+- **Captain-pane noise tiers (#1017)** — only *actionable* crew events take a captain turn by default: `done`, `review`, `blocked` (with its question), `failed`, `task.turn.failed`, `task.timeout`, an idle turn-end addressed to the captain, and the one-shot stall escalation. Plain idle, first-stall and quiet are *informational*: silent in the pane, still visible in `squadrant crew tasks`. See [Captain-pane notification tiers](#captain-pane-notification-tiers-1017).
 - **Blocked crews re-notify** — a `CREW BLOCKED` push is not one-shot. A *different* question arriving while a crew is already blocked fires a fresh notification (an identical repeat stays suppressed — the first question wins, [#174](https://github.com/tu11aa/squadrant/issues/174)), and a crew that stays blocked past ~30 minutes gets exactly one `CREW BLOCKED REMINDER` (explicitly the same question, never a new one), then stays quiet for the rest of that episode ([#857](https://github.com/tu11aa/squadrant/issues/857)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
 - **Status: superseded for claude by the control channel.** The semantic heartbeat above still runs, but delivery confirmation for claude crews now comes from an agent receipt (`controlChannel=on`), not pane inference — see [Control/Captain Channel (#667)](#controlcaptain-channel-667).
+
+#### Captain-pane notification tiers (#1017)
+
+Every crew lifecycle event used to become a full captain turn; most (plain idle, stalled, quiet) needed no action but each re-read the whole captain context. The captain pane now uses the **same `CrewTier` model as Telegram**, set per project in `~/.config/squadrant/projects/<name>.json`:
+
+```json
+{ "captain": { "notify": { "crew": "alert_only" } } }
+```
+
+| Tier | Captain pane receives |
+|---|---|
+| `none` | nothing |
+| `done_only` | `done`, `failed` |
+| `alert_only` *(default)* | everything except informational events: `done`, `failed`, `blocked`, `review`, `approval/input requested`, `task.timeout`, `task.turn.failed`, `task.warn`/reminders, an **addressed idle** (below), the **stall escalation** (below) |
+| `all` | everything above **plus** informational events, coalesced into **one `CREW DIGEST` per crew** after a 60 s quiet window (flushed first when an actionable event for that crew arrives; never delivered for a crew that has since finished) |
+
+Informational events always stay in the task record, so `squadrant crew tasks` shows them. Telegram has its own independent tier and is unchanged. Delivery into the pane still goes through the normal mailbox/delivery loop, which defers while the captain is mid-turn.
+
+**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`, bounded to 1500 chars with a `[truncated, N more chars]` marker) rides on `task.turn.completed` as `lastMessage`. Delivery is language-neutral and deterministic (no LLM, no keywords):
+
+- the **first turn-end after a captain message** to that crew (`crew send`/dispatch) is the *reply*: the daemon stamps `reply` on it and always delivers it, text word for word (`CREW IDLE … (word for word)`), bypassing the #210 debounce — this matters because crews often never run `crew signal done` (#278);
+- a turn-end whose last non-code-fence line ends with `?` is *addressed* and delivered the same way (Claude maps it to `task.blocked` with the whole message as the question, instead of only the last line);
+- a **later self-resume** turn-end that has text but no captain message in between is a *plain end of turn*: informational, silent by default;
+- a turn-end with **no text** from a provider that has no text source (Codex, OpenCode) keeps today's generic `CREW IDLE … awaiting your reply` (still subject to the #210 debounce). For **Claude**, the text-less lifecycle sources (cmux-store, native-hook) race the Stop hook: the daemon moves the state at once but defers the push for `idleTextGraceMs` (default 3 s) so the hook's text decides (reply / question → delivered with text, plain → silent, in either arrival order, exactly once). If no text arrives, a generic `CREW IDLE` is sent only when a reply is pending (the captain spoke); otherwise it stays silent.
+
+**Stalls fire once.** `CREW STALLED` names the hung tool and how long it has run (e.g. `still running Bash ~11min`) and fires once per stall episode (until the crew's next turn boundary / blocked / terminal state). If the crew is still stalled with no tool result after `stallEscalationMs` (default 30 min, `DaemonDeps`), exactly one `CREW STALLED … ESCALATION` is pushed, which is actionable at the default tier, so a truly hung crew is never invisible. The source only knows the tool *name*, not its command line.
+
+Multi-agent: Claude supplies the turn-end text. Codex (app-server) and OpenCode (control channel) turn-end events currently carry no final-message text, so their idle events keep today's generic `CREW IDLE` behaviour; when their payloads gain the text they only need to set `lastMessage` on `task.turn.completed`, and self-resume turn-ends then become silent too.
 
 ### Telegram (Two-Way, opt-in)
 
@@ -506,7 +539,7 @@ The user-level projection now also inlines `templates/captain.generic.md` and `t
 
 opencode additionally gets squadrant's skills projected as **loadable skill dirs**, not just inlined markdown. On every `squadrant` invocation and on daemon boot, the shipped `plugin/skills/<name>/SKILL.md` files are synced (copy-if-changed + prune) into the **user-scope** opencode skills dir `~/.config/opencode/skills/<name>/SKILL.md`, so `skill <name>` resolves in an opencode captain/crew/side session — parity with claude's `--plugin-dir`. User-scope is deliberate: it serves every project and every opencode session without writing into managed project repos (where it would drift), and it is reconciled from the shipped source on every run so an install/update can't leave it stale. Each synced dir carries a `.squadrant-managed` marker — only marked dirs are refreshed or pruned, and a name collision with a user-authored opencode skill is reported as a skip rather than clobbered. Skills without loadable frontmatter (`handback`, `takeover`) are not projected. ([#791](https://github.com/tu11aa/squadrant/issues/791))
 
-Claude crews load a smaller plugin dir, `~/.config/squadrant/plugin-crew`, which holds only the skills a crew is told to use (`CREW_SKILLS` in `packages/shared/src/lib/runtime-sync.ts`): `karpathy-principles`, `takeover`, `handback`, `rules-ops`, `knowledge-review` and `knowledge-extract`. Captains and command sessions load the full `plugin` dir. A test fails if a crew template, the daemon's reconcile-due message or a crew skill names a skill missing from that list ([#1002](https://github.com/tu11aa/squadrant/issues/1002)). opencode crews read the user-scope skills dir above, which holds every skill.
+Claude crews load a smaller plugin dir, `~/.config/squadrant/plugin-crew`, which holds only the skills a crew is told to use (`CREW_SKILLS` in `packages/shared/src/lib/runtime-sync.ts`): `karpathy-principles`, `takeover`, `handback`, `rules-ops`, `knowledge-review`, `knowledge-extract` and `human-review-guide`. Captains and command sessions load the full `plugin` dir. A test fails if a crew template, the daemon's reconcile-due message or a crew skill names a skill missing from that list ([#1002](https://github.com/tu11aa/squadrant/issues/1002)). opencode crews read the user-scope skills dir above, which holds every skill.
 
 ### Storage layout: workspace (#983)
 
@@ -763,6 +796,105 @@ Because the layout is flat, a project dir shares a namespace with those entries.
 
 **Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
 
+## Captain rollover (#1010)
+
+`/squadrant:rollover` (alias `/squadrant:roll`) is a captain skill for Claude captains whose context is filling. In order, the captain writes a handoff (`write-handoff.sh`), writes the daily log, runs `squadrant captain compact <project>` as its last action and ends the turn. The operator types it once.
+
+- **`squadrant captain compact <project> [--focus <text>]`** sends `captain-compact` to the daemon and returns. The daemon polls (1 s) until the captain pane shows no turn in flight on two consecutive polls, then types `/compact <focus>` + Enter through the runtime driver using the same send guard as every pane delivery (draft, open modal/prompt and no-box all defer). It never types into a busy pane or an open prompt. After 10 minutes without a chance it drops the request and logs `captain-compact <project>: timed out … not compacted`. Default focus: "Keep the active task, open PRs/crews and decisions; the full state is in the handoff". Needs the cmux runtime; Claude captains only (Claude Code has no compact API and the peer socket can't run slash commands).
+- **Compact/delivery mutex (#1015).** A message is never in flight across a compact. In two phases: (1) *draining* — the request waits, on top of the idle check, until the project's mailbox has no undelivered entries (delivery keeps running, bounded by the 10-minute timeout above; last reason `undelivered-mail`). (2) *frozen* — the instant the idle check passes, the daemon sets a delivery hold for that project **before** typing `/compact` (no `await` between the final check and the hold; if a delivery pass is mid-flight it releases and retries next tick). While held, the delivery loop skips the project, including between entries of a pass: nothing is typed or sent over the peer socket, the cursor does not advance, and entries stay on the durable mailbox. The hold ends when the `SessionStart` hook with `source: "compact"` arrives (the hook sends `captain-compact-done` to the daemon after emitting its context), or after 3 minutes (`COMPACT_HOLD_MS`) if it never does. Held entries then deliver in order. If the send guard defers, the hold is released (nothing was typed). Nothing compacts on its own — this only makes an operator- or captain-initiated compact safe. **Known limit:** the hold covers only daemon-initiated compacts (`squadrant captain compact` / rollover). A `/compact` the operator types by hand is not held, and delivery may type into the pane around it.
+- **Live ledger (#1015).** `crew approve` records `branch`, `prUrl`, `prNumber` and `reviewStage: "pr-open"` on the task record (via the `pr` field of the approve-sourced `task.done`). The task is still terminal (`done`), but `squadrant handoff facts` → `liveRepo.liveCrews` keeps it, labelled `reviewStage: "pr-open"` ("awaiting human review"), with `reviewNote`, branch and PR URL. `merged`/`closed` is resolved lazily: each read runs `gh pr view <url> --json state` and drops the crew once the PR is merged or closed; if `gh` cannot answer the crew stays listed. No daemon polling.
+- **Re-injected ledger block (#1015).** After a compact the hook also adds a `Live crew ledger` block: one line per non-terminal, PR-open or open-tab crew (a crew that signalled done but whose tab is still open reads `done: awaiting captain review`; crews that are closed with no open PR are dropped) (name, state or "awaiting human review", a task summary — the first brief line naming an issue, else its first non-heading line, ~120 chars — branch (`crew/<name>` for live crews, the recorded one once approved), PR, operator hold, the open question word for word, review note) plus the count and short previews (first 5, 100 chars each) of undelivered mailbox entries. Bounded to 4000 chars; truncation is stated in the block. Sample:
+
+  ```
+  Live crew ledger (daemon state at compact time):
+  - noise [blocked] | question: "Rebase onto develop, or merge?"
+  - ledger [awaiting human review] | branch crew/ledger | PR https://github.com/x/y/pull/9 | review note: tests green
+  Undelivered mailbox: 2 message(s) still queued — they arrive after this context, in order:
+    #12 task.done (c1): CREW DONE c1 — shipped
+    #13 task.done (c2): CREW BLOCKED c2
+  ```
+- **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
+
+## Context meter & rollover suggestions (#1015)
+
+Squadrant measures live context for captains and crews and **suggests** a rollover at the right moment. It never compacts a session on its own and never types `/compact`: suggestions and warnings only, the operator or captain decides (profile `prof.never-auto-compact`).
+
+**Meter.** `{ tokens, windowTokens?, pct?, measuredAt }` or `unknown`, from `@squadrant/core` (`context-meter.ts`).
+
+| Agent | Source |
+|---|---|
+| Claude (captain and crews) | Tail of the session transcript (`~/.claude/projects/<escaped-cwd>/<session>.jsonl`): `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of the latest assistant call. Tail read only (128 KB, doubling up to 4 MB if the tail has no usage), cached by mtime + size, lines sharing a message id counted once, all-zero synthetic usage skipped. The line parser is shared with `squadrant tokens` (#626). `windowTokens`/`pct` only appear when the model name states the window (a `[1m]` suffix). |
+| Codex | `unknown`. Token data lives in the app-server thread, not in a file squadrant can tail cheaply. |
+| OpenCode | `unknown`. Tokens live in opencode's own session store; no cheap, stable read yet. |
+
+- A **crew's** transcript is found from `TaskRecord.sessionId` + `cwd` when the record carries the session id, otherwise as the newest transcript in the crew's own worktree dir written since the task was created (one crew per worktree).
+- A **captain's** transcript is the newest `claude` record in the project's `captain-sessions.jsonl` registry (#651, written by the SessionStart hook).
+- Shown as a `ctx` value in `squadrant crew list` and `squadrant crew tasks` (non-terminal tasks), and in `squadrant handoff facts` (`captainContext` plus `liveCrews[].context`). `unknown` is printed as `unknown`.
+
+**Captain suggestions** (daemon, one line through the normal captain mailbox, e.g. `Context 182k ≥ 150k at a boundary (crew done). Good moment: write the handoff, then /squadrant:rollover.`):
+
+- Boundaries: a crew reached `done`, was closed (`cancelled`), or its `blocked` question was answered.
+- Fires only when a boundary happened **and** captain context ≥ `captainSoft`. Suppressed while any crew is `blocked` on a question or the captain mailbox has undelivered entries; the boundary waits (up to 30 min) and fires when that clears.
+- Rate limit: one suggestion per boundary, and again only after a further +50k of growth. A context drop below the last mark (a rollover) resets it.
+- **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
+- Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
+
+**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider a fresh crew with a brief instead of reusing it` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+
+**Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
+
+```json
+{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000 } } }
+```
+
+Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+
+## Captain discussion threads (#1016)
+
+The captain coordinates crews; deep discussion with the operator happens in a **thread**, a fork of the captain session scoped to one topic. Crew lifecycle events never go to a thread (threads are not crews; the daemon delivers only to the captain). When the decision is settled, the thread **parks**: the captain receives ONE decision message, never the discussion, which keeps it small enough to roll over. Spec: [`docs/specs/2026-10-21-captain-threads.md`](specs/2026-10-21-captain-threads.md). Diagram: [`docs/diagrams/2026-10-21-captain-threads.html`](diagrams/2026-10-21-captain-threads.html).
+
+| Command | Does |
+|---|---|
+| `squadrant thread open <project> "<topic>" [--crew <name>...]` | Forks the captain into a new tab `💬 <project>:<id>` (id = topic slug) and sends the thread prompt as the first turn. Claude: `claude --resume <captain> --fork-session --session-id <new>` plus the captain's own flags under its own name `-n squadrant-thread-<project>-<id>` (plugins, model, effort, and the captain prompt as a byte-identical copy `threads/thread.claude.md`, so cmux liveness never counts the thread as a second captain). |
+| `squadrant thread park <project> <id>` | Asks the open thread to write its decision record. |
+| `squadrant thread park <project> <id> --decision-file <path\|->` | Run by the thread itself: stores the record, appends ONE `captain.message` to the captain mailbox, appends one line `[thread <id>] <topic>: <decision>` to `handoff.json` `session.decisions`, closes the tab. The session id is kept. |
+| `squadrant thread resume <project> <id>` | Parked thread. Within 1h of its last activity: `claude --resume <thread session>` plus a delta (crew ledger now, decisions from other threads since it parked). Later: a fresh fork of the current captain plus this topic's earlier decision records. |
+| `squadrant thread close <project> <id>` | Marks it closed (terminal) and closes a live tab. |
+| `squadrant thread list <project> [--all]` / `show <project> <id> [--json]` | Read the registry. |
+
+- **Registry:** `<stateRoot>/<project>/threads/<id>.json`, next to crew task records: `{ id, project, topic, crews, state: open|parked|closed, agent, mode: fork|seed, sessionId, forkedAt, lastActiveAt, parkedAt, surfaceId, decisions[] }`. States: `open → parked | closed`, `parked → open | closed`, `closed` is terminal.
+- **Decision record** (JSON the thread writes): `{ "question", "decision", "reasons": [], "rejected": [], "actions": [{ "crew", "action" }] }`; `at` is stamped by the CLI. `question` and `decision` are required.
+- **Captain message** (short form):
+
+  ```text
+  💬 Thread decision — Auth cache (thread auth-cache)
+  Q: Cache auth tokens in app-core?
+  Decision: Yes, 10 min TTL, invalidate on logout
+  Why: cuts p95 login by 40%; logout path already emits an event
+  Rejected: no cache — too slow; 1h TTL — stale roles
+  Actions: crew-a → add TTL cache in app-core; crew-b → no change
+  Full record: squadrant thread show app auth-cache
+  ```
+- **Handoff:** if no live `handoff.json` exists (startup archives it), the line is appended to a copy of the newest archived handoff, so a later compact still re-injects the full context. `write-handoff.sh` replaces the file; the captain carries the `[thread …]` lines over.
+- **Cap:** `defaults.maxThreads` (default 3) open threads; `open` and `resume` refuse past it. Parked threads run no process.
+- **Prompt cache.** The thread instructions go in the first turn, never in the system prompt: a fork keeps the captain's cache prefix only while system prompt, tools and model match. Measured on a throwaway 188k-token session: the fork's first call read 171,960 tokens from cache and wrote 15,790 (a plain `--resume` read 171,960 and wrote 18,651); with `--session-id` 187,726 read / 7,355 written. Wall time was about 6 s per call, the same as a resume.
+- **Environment:** the thread runs with `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=<id>`, so it is not registered as the captain (`captain-sessions.jsonl`) and is gated like the captain by the U7 permission gate.
+- **Agents without fork (codex, opencode, gemini):** `thread open` starts a fresh interactive session seeded with the thread prompt, the live crew ledger and the topic's decision records, and prints a note (not an error). Resume always re-seeds. opencode uses its interactive driver command. codex and gemini run their plain interactive CLI, because their drivers build only headless one-shots. A Claude captain with no registered session falls back the same way.
+- **Triage:** the captain templates and `squadrant:captain-ops` carry the 3-level triage of crew questions (1 operator ↔ crew, 2 captain answers with a cited source, 3 thread). Crews list what they settled directly with the operator in their done message (`Decided with operator: …`).
+
+## Human review guide (#1012)
+
+`squadrant:human-review-guide` is a general skill (`plugin/skills/human-review-guide/`, `/squadrant:human-review-guide` in any session) that gives the operator a short, well-sourced guide for the **human gate** of crew PRs: intent and scope, public contracts, architecture trade-offs, test validity and a live comparison with the design. Machines (crew self-review, captain agent review, CI, lint, guard tests, KB rule checks, a repo's PR review tool) run first; the human gate covers only what those gates cannot see or did not cover.
+
+- **Gate coverage map.** Before picking points the captain maps every gate that ran to what it covers in this diff. A point enters the guide only if no gate covered it or only a human can judge it, and carries a `Gated by` field (`none` or `<gate> (partial: …)`). What a gate verified is dropped and never re-asked.
+- **Gate gaps.** Things that should be machine-checked but no gate covers (a template no test renders, a rule enforced only by prose) are listed with a suggested new gate or follow-up ticket, so a human catches each once and a machine next time.
+
+- **Mode.** One PR: answer in chat (no file unless the operator asks for the HTML too, then both). Several PRs: a local `<workspace>/artifacts/review-guides/<date>-<topic>.md` plus an interactive `.html` (tabs: Read first, one per PR in review order, Verdict; summary table, stack diagram, review and merge order, collapse recommendation, each point's "You judge" as a checkbox counted in per-PR progress (also shown as a bar in the tab), copy buttons on anchors, test paths and the open-code block plus a header "Copy all anchors", optional design-compare card, a Verdict tab with a per-PR table plus pending decisions and a before-handing list that appear only when the guide data provides items, and "Copy my findings" with severity prefixes, the points not yet judged and the gate gaps). The HTML is self-contained, works at phone width, in light and dark, and without storage. Written in the operator's language; a language toggle against English appears only when the operator's preferences ask for bilingual docs.
+- **Per PR.** Context (features, fixes, not done, breaking, waits on), tests first with a manual mutation per test, implementation points (Where `file:line` + symbol, Gated by, What, Why, Cause, Solution, You judge, Axis as tags). Every checkbox is a specific question about the PR; there is no generic checklist. Anchors are verified at the head SHA with `git grep -n` on `origin/<branch>`, the SHA is stated per PR and refreshed on every head update.
+- **Written by the owner.** The session that drove the PRs (normally the captain) writes it, never a fresh crew or subagent.
+- **Local only.** The guide is never posted on a PR, issue, tracker or chat. After a PR review tool run that may comment, read the comment back and strip anything beyond the tool's standard body; run such tools with commenting off while a guide request is fresh. A GitHub comment edit keeps history.
+- Templates: `templates/guide.template.md`, `templates/guide.template.html`. It is in `CREW_SKILLS`, so crew and side sessions get it too; captains load it from the full `plugin` dir.
+
 ## Config
 
 `~/.config/squadrant/config.json`
@@ -794,6 +926,7 @@ Because the layout is flat, a project dir shares a namespace with those entries.
   },
   "defaults": {
     "maxCrew": 5,
+    "maxThreads": 3,
     "worktreeDir": ".worktrees",
     "teammateMode": "in-process",
     "permissions": {

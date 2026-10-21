@@ -10,6 +10,7 @@ import { createAttach } from "@squadrant/core";
 import { startDaemon } from "@squadrant/core";
 import { shellQuote } from "@squadrant/core";
 import { isDaemonSocketLive } from "@squadrant/core";
+import { captainTranscriptPath } from "./lib/captain-context.js";
 import { appendCaptainMessage, createTelegramClient, createTelegramBridge, createEnsureCaptainAlive, writeExitMarker, createRouterService, shouldBuildRouterService, createInboundLifecycle, createCaptainPaneReader, notePaneScreen } from "@squadrant/core";
 import { reduceLifecycle } from "@squadrant/core";
 import type { TelegramBridge } from "@squadrant/core";
@@ -764,6 +765,8 @@ if (process.argv[1] && process.argv[1].endsWith("squadrantd.js")) {
     }
     const h = startSquadrantd({
       sweepMs: 30000,
+      // #1015: captain context meter source for boundary rollover suggestions (suggest/warn only).
+      captainTranscript: captainTranscriptPath,
       // #898: KB reconcile scheduler on the 60s tick. Enqueues to the home captain's mailbox; never spawns.
       knowledgeTick: async () => {
         const stateRoot = defaultStateRoot(); // same default as buildContext

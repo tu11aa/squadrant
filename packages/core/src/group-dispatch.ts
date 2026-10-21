@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
+import { sep } from "node:path";
 import { loadConfig, resolveHome, DAEMON_SOCK_PATH, stateRoot as defaultStateRoot, type SquadrantConfig } from "@squadrant/shared";
 import { sendRequest } from "./protocol.js";
 import { readCaptainAddress } from "./captain-record.js";
@@ -16,14 +17,27 @@ import type { TaskRecord, Provider, Mode } from "@squadrant/shared";
 export const GROUP_DISPATCH_WARMUP_TIMEOUT_MS = 120_000;
 export const GROUP_DISPATCH_WARMUP_POLL_MS = 1_000;
 
+/** Project whose path contains `cwd` on a directory boundary; the longest path
+ *  wins so a nested project beats its parent and `app-core` never matches `app` (#1018). */
+export function projectForPath(cwd: string, projects: Record<string, { path: string }>): string | null {
+  const trim = (p: string) => (p.length > 1 ? p.replace(/[\\/]+$/, "") : p);
+  const target = trim(cwd);
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const [name, proj] of Object.entries(projects)) {
+    const root = trim(resolveHome(proj.path));
+    if (!root) continue;
+    if ((target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)) && root.length > bestLen) {
+      best = name;
+      bestLen = root.length;
+    }
+  }
+  return best;
+}
+
 /** Resolve the current project name by matching cwd against config paths. */
 export function resolveCurrentProject(config: SquadrantConfig): string | null {
-  const cwd = process.cwd();
-  for (const [name, proj] of Object.entries(config.projects)) {
-    const resolvedPath = resolveHome(proj.path);
-    if (cwd.startsWith(resolvedPath)) return name;
-  }
-  return null;
+  return projectForPath(process.cwd(), config.projects);
 }
 
 /** Probe a project's captain control channel directly (#799). Injectable so

@@ -43,12 +43,14 @@ function formatUsageFooter(usage: ProjectUsage): string {
   return lines.join("\n");
 }
 
-export function formatTaskLine(record: TaskRecord): string {
+/** `ctx` (#1015): live context label ("182k" / "unknown"); the column is omitted when not given. */
+export function formatTaskLine(record: TaskRecord, ctx?: string): string {
   const sid = shortId(record.id);
   const title = record.task
     .split("\n")[0]
     .slice(0, 60);
-  return `${sid}  ${record.provider}  ${record.state}  ${record.lastEvent}  ${title}`;
+  const ctxCol = ctx !== undefined ? `ctx ${ctx}  ` : "";
+  return `${sid}  ${record.provider}  ${record.state}  ${record.lastEvent}  ${ctxCol}${title}`;
 }
 
 export function filterTasks(
@@ -67,7 +69,7 @@ export function filterTasks(
 
 export function formatCompactTasks(
   records: TaskRecord[],
-  opts: { compact?: boolean; stateOnly?: boolean; usage?: ProjectUsage },
+  opts: { compact?: boolean; stateOnly?: boolean; usage?: ProjectUsage; ctxLabel?: (r: TaskRecord) => string | undefined },
 ): string {
   if (records.length === 0) {
     return "(no tasks match filter)";
@@ -84,7 +86,7 @@ export function formatCompactTasks(
   let out = "";
   if (active.length > 0) {
     if (held.length > 0) out += `active (${active.length}):\n`;
-    out += active.map(r => (held.length > 0 ? "  " : "") + formatTaskLine(r)).join("\n");
+    out += active.map(r => (held.length > 0 ? "  " : "") + formatTaskLine(r, opts.ctxLabel?.(r))).join("\n");
   }
   if (held.length > 0) {
     if (out) out += "\n";
@@ -93,7 +95,7 @@ export function formatCompactTasks(
       const m = Math.round((Date.now() - r.operatorHold!.since) / 60000);
       const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
       const note = r.operatorHold!.note ? ` · "${r.operatorHold!.note}"` : "";
-      return `  ${formatTaskLine(r)} · held ${hm}${note}`;
+      return `  ${formatTaskLine(r, opts.ctxLabel?.(r))} · held ${hm}${note}`;
     }).join("\n");
   }
   if (opts.usage && opts.usage.requests > 0) {

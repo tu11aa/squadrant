@@ -5,6 +5,8 @@ import readline from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveHome } from "@squadrant/shared";
+import { parseTranscriptLine, escapeClaudeProjectPath } from "@squadrant/core";
+import type { AssistantUsage } from "@squadrant/core";
 
 /**
  * Attributes token spend across captain vs crews, and boot prefix vs
@@ -20,58 +22,9 @@ import { loadConfig, resolveHome } from "@squadrant/shared";
 
 export const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
-export interface AssistantUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export interface ParsedTranscriptLine {
-  /** Raw ISO timestamp string from the line, if present — every line type
-   *  (user, assistant, attachment, ...) carries one; only a handful of
-   *  metadata-only line types (e.g. "mode", "queue-operation") omit it. */
-  timestamp: string | null;
-  usage: AssistantUsage | null;
-}
-
-/** Pure. Parse one raw JSONL transcript line into its timestamp and (if it's
- *  an assistant message with a usage block) usage numbers. User turns,
- *  tool-result lines, and unparsable lines get usage: null. */
-export function parseTranscriptLine(rawLine: string): ParsedTranscriptLine {
-  const line = rawLine.trim();
-  if (!line) return { timestamp: null, usage: null };
-  let obj: unknown;
-  try {
-    obj = JSON.parse(line);
-  } catch {
-    return { timestamp: null, usage: null };
-  }
-  const entry = obj as {
-    type?: string;
-    timestamp?: string;
-    message?: { role?: string; usage?: Record<string, number> };
-  };
-  const timestamp = typeof entry?.timestamp === "string" ? entry.timestamp : null;
-  if (entry?.type !== "assistant" || entry.message?.role !== "assistant") return { timestamp, usage: null };
-  const usage = entry.message?.usage;
-  if (!usage) return { timestamp, usage: null };
-  return {
-    timestamp,
-    usage: {
-      input: usage.input_tokens ?? 0,
-      output: usage.output_tokens ?? 0,
-      cacheRead: usage.cache_read_input_tokens ?? 0,
-      cacheWrite: usage.cache_creation_input_tokens ?? 0,
-    },
-  };
-}
-
-/** Pure. Convenience wrapper over `parseTranscriptLine` for callers that only
- *  need the usage numbers (e.g. unit tests). */
-export function parseAssistantUsage(rawLine: string): AssistantUsage | null {
-  return parseTranscriptLine(rawLine).usage;
-}
+// #1015: the line parser lives in core (shared with the context meter).
+export { parseTranscriptLine, parseAssistantUsage, escapeClaudeProjectPath } from "@squadrant/core";
+export type { AssistantUsage, ParsedTranscriptLine } from "@squadrant/core";
 
 export interface Turn {
   /** input + cache_creation + cache_read for this call — the full context sent. */
@@ -158,13 +111,6 @@ export async function aggregateTranscriptFile(filePath: string): Promise<Session
     foldTranscriptLine(agg, line, state);
   }
   return agg;
-}
-
-/** Pure. Mirrors Claude Code's own transcript-path escaping (also used by
- *  `deriveTranscriptPath` in packages/agents/src/interactive/claude.ts):
- *  every non-alphanumeric character in the cwd becomes "-". */
-export function escapeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 /** Pure. A crew worktree's escaped cwd is the captain's slug plus the

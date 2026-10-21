@@ -116,6 +116,9 @@ describe("isGateSession (#782)", () => {
   it("is true for a captain session (SQUADRANT_ROLE=captain)", () => {
     expect(isGateSession({ SQUADRANT_ROLE: "captain" })).toBe(true);
   });
+  it("is true for a captain discussion thread (SQUADRANT_ROLE=thread, #1016)", () => {
+    expect(isGateSession({ SQUADRANT_ROLE: "thread" })).toBe(true);
+  });
   it("is false for an operator session with no markers", () => {
     expect(isGateSession({ SQUADRANT_ROLE: "command" })).toBe(false);
     expect(isGateSession({})).toBe(false);

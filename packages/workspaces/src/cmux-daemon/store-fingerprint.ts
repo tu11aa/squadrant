@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { resolveHome } from "@squadrant/shared";
 import type { RuntimeLivenessRecord, Role } from "@squadrant/shared";
-import { defaultIsPidAlive } from "@squadrant/core";
+import { defaultIsPidAlive, projectForPath } from "@squadrant/core";
 
 interface RawSession {
   sessionId?: string; pid?: number | null; cwd?: string; isRestorable?: boolean;
@@ -75,11 +74,7 @@ function roleFromTemplate(args: string[] | undefined): Role | "unknown" {
 }
 
 function projectFromCwd(cwd: string, projects: Record<string, { path: string }>): string | undefined {
-  for (const [name, p] of Object.entries(projects)) {
-    const projPath = resolveHome(p.path);
-    if (cwd === projPath || cwd.startsWith(`${projPath}/`)) return name;
-  }
-  return undefined;
+  return projectForPath(cwd, projects) ?? undefined;
 }
 
 /**

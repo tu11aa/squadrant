@@ -49,6 +49,16 @@ export function createServer(
         const { assembleDaemonSnapshot } = await import("../snapshot.js");
         return assembleDaemonSnapshot(await gatherSnapshotInputs(now), now);
       }
+      // #1010: queue a captain /compact; the daemon types it once the captain is idle.
+      if (msg.kind === "captain-compact") {
+        if (!ctx.requestCaptainCompact) throw new Error("captain compact needs the cmux runtime — the daemon has no pane driver");
+        return ctx.requestCaptainCompact(msg.project as string, msg.focus as string | undefined);
+      }
+      // #1015: SessionStart(source=compact) reached this captain — end the delivery hold.
+      if (msg.kind === "captain-compact-done") {
+        ctx.captainCompactDone?.(msg.project as string);
+        return { ok: true };
+      }
       if (msg.kind === "event") {
         return ctx.d.handle(msg);
       }

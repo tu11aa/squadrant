@@ -258,6 +258,8 @@ If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attemp
 
 ### Handling CREW IDLE / BLOCKED
 
+Since #1017 a plain end-of-turn, the first stall, and CREW QUIET no longer reach your pane (they stay in `crew tasks`); a CREW IDLE you do see carries the crew's own message word for word — read it before spot-checking. One `CREW STALLED … ESCALATION` (30 min, no tool result) is the "really hung" signal.
+
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
 - **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
 - **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).
@@ -277,6 +279,34 @@ On CREW IDLE, do a **single on-demand spot-check** (allowed — not a polling lo
 This is the captain-side backstop: even if the completion-protocol imperative is skipped, the lifecycle still terminalizes because the captain classifies intent instead of letting the task strand at IDLE. The same BLOCKED-on-a-real-prompt case applies whether the daemon fires an explicit CREW BLOCKED event or you only notice via a spot-check on IDLE.
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
+
+### Crew Question Triage & Discussion Threads (#1016)
+
+Every crew question (CREW BLOCKED, a question in a CREW IDLE, a `runtime send`) gets a level. **You decide the level yourself**; the operator can override it at any time ("push this to a thread" / "let the crew handle it"). Follow the override and record it (the handoff `decisions`, or the thread's record).
+
+| Level | When | Your action |
+|---|---|---|
+| **1 · Operator ↔ crew** | Local to that crew's task, touches no other crew, changes no settled decision | One line to the operator: "crew A asks X — local, answer it in crew A's tab". **No model upgrade**: switching a crew's model mid-session drops its prompt cache. The crew lists what it settled with the operator in its done message (`Decided with operator: …`); read that line when it lands. |
+| **2 · Captain answers** | The answer already exists in a decision, the brief, a rule or the handoff | `crew send` the answer and **cite the source** ("per handoff decision …", "rule `x.y`", "brief §Scope"). |
+| **3 · Thread** | Needs a new operator decision, spans several crews, or changes an earlier decision | Open or resume a thread (below) on your own, then give the operator the tab name. Do not hold the discussion in your own pane. |
+
+Escalation is allowed: when a level-1 conversation turns out to span crews, the operator or the crew pushes it up to a thread.
+
+**Threads.** A thread is a fork of your own session for one topic (claude: `--resume <captain> --fork-session`; it shares your prompt-cache prefix, so it starts warm and on your model). Crew events never go to a thread — they keep coming to you.
+
+```bash
+squadrant thread list <project>                       # registry: id, state, topic, related crews, last decision
+squadrant thread open <project> "<topic>" --crew crew-a --crew crew-b   # new tab "💬 <project>:<id>"
+squadrant thread resume <project> <id>                # matching topic exists and is parked
+squadrant thread park <project> <id>                  # ask the thread to write its record and park
+squadrant thread close <project> <id>                 # topic finished (PR merged, ticket closed)
+squadrant thread show <project> <id>                  # full decision records
+```
+
+- **Dedup first:** `thread list` and pick the matching topic before opening a new one. Resume within ~1h of its last activity reuses the same session plus a delta (crew state now + decisions made since it parked); later it forks fresh from you with the topic's earlier decision records.
+- **Cap:** `defaults.maxThreads` open threads (default 3). Parked threads cost nothing and run no process.
+- **Park → you get ONE message** starting `💬 Thread decision — <topic>`: question, decision, why, rejected options, per-crew actions. It is also appended as one line to the handoff's `decisions` (`[thread <id>] …`). Act on the per-crew actions (`crew send`), then move on — you receive the decision, never the discussion.
+- **Agents without fork** (codex, opencode): the thread is a fresh session seeded from the crew ledger and the topic's decision records; `thread open` prints a note saying so. It knows only what is written down.
 
 ### Handling CREW REVIEW or CREW DONE (Assessment Gate)
 
@@ -305,7 +335,8 @@ On CREW REVIEW or CREW DONE:
    - For each listed rule that **applies to this diff**, record what you saw: `squadrant knowledge feedback <rule-id> --followed|--violated --source review --task <task-id>` (`--wrong` if the rule itself is wrong).
    - Skip the rules that don't apply. Don't guess: grade only what the diff shows. These grades are the high-confidence signal behind `complianceRate` and `violationRate` in the KB's REPORT.md.
 4. **Never auto-terminalize** by emitting `task.done` directly — always go through `squadrant crew approve`.
-5. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
+5. **Operator about to review by hand** ("review guide", "how should I review these PRs")? Use the `squadrant:human-review-guide` skill: one PR → chat answer, several → one local interactive HTML. You write it yourself (you hold the context), and it is never posted anywhere.
+6. Do **not** re-send the original task or close the crew while it's awaiting review — `crew close` on a `review`-state task discards work that hasn't been pushed anywhere yet.
 
 ## When Crew is Fully Finished (After Approval)
 
@@ -405,7 +436,13 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 }'
 ```
 
+`write-handoff.sh` replaces the whole file: carry over every `[thread <id>] …` line already in `handoff.json`'s `decisions` (parked threads appended them).
+
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
+
+### Rollover (context getting full, Claude captains)
+
+`/squadrant:rollover` (alias `/squadrant:roll`) does the three manual steps in one go: handoff + daily log → `squadrant captain compact {project}` (the daemon types `/compact` once your turn ends and the input box is clear) → after the compact, the SessionStart hook injects your latest handoff and you continue from `nextSteps`. The same re-injection happens for a `/compact` the operator types by hand.
 
 5. (Optional) If a Command session is running and you want to notify it:
    ```bash
@@ -414,6 +451,15 @@ If everything is shipped and there is no in-flight work, you do not need to writ
    Skip this entirely if no Command session is up — Command is on-demand now.
 
 **The handoff is your gift to tomorrow's session.** Be specific. "Working on the API" is useless. "Backend routes for /providers and /providers/:id are done, /timeseries endpoint is next, PR #12 is open for review" is useful.
+
+#### When you see a rollover suggestion (#1015)
+
+A line like `Context 182k ≥ 150k at a boundary (crew done). Good moment: write the handoff, then /squadrant:rollover.` is a **suggestion**, not an order and not automatic: squadrant never compacts you. It fires at a boundary (a crew finished, was closed, or its question was answered) when nothing is waiting on you.
+
+- If you are between turns with no half-made decision, finish the state update for that boundary (ledger, handoff), then run `/squadrant:rollover`.
+- If a decision is half-made or the operator is mid-thread, finish it first or record it as "unanswered, owner = captain" in the handoff. You can ignore the line; it will not repeat until context grows another 50k.
+- A line starting `⚠ Context … ≥ hard limit` is the loud one (repeats every +100k). Roll over at the next safe point.
+- `squadrant crew list` / `crew tasks` show each crew's `ctx`. When `crew send` prints `crew X at 210k; consider a fresh crew…`, prefer a fresh crew with a brief for a new track instead of reusing it.
 
 ## Project Rules (Knowledge Base)
 
