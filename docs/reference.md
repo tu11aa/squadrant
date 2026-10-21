@@ -465,15 +465,16 @@ Every crew lifecycle event used to become a full captain turn; most (plain idle,
 
 Informational events always stay in the task record, so `squadrant crew tasks` shows them. Telegram has its own independent tier and is unchanged. Delivery into the pane still goes through the normal mailbox/delivery loop, which defers while the captain is mid-turn.
 
-**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`, bounded to 1500 chars with a `[truncated, N more chars]` marker) is classified by a deterministic heuristic — no LLM:
+**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`, bounded to 1500 chars with a `[truncated, N more chars]` marker) rides on `task.turn.completed` as `lastMessage`. Delivery is language-neutral and deterministic (no LLM, no keywords):
 
-- the last non-code-fence line ends with `?` → **addressed**; Claude maps this to `task.blocked` with the whole message as the question (as before, now word for word instead of only the last line);
-- otherwise, the final paragraph mentions the word *captain* (e.g. `Captain: PR is ready`) → **addressed**: delivered as `CREW IDLE … (word for word)` with the text, bypassing the #210 debounce, no `crew read` needed;
-- anything else → **plain end of turn**: informational, silent by default.
+- the **first turn-end after a captain message** to that crew (`crew send`/dispatch) is the *reply*: the daemon stamps `reply` on it and always delivers it, text word for word (`CREW IDLE … (word for word)`), bypassing the #210 debounce — this matters because crews often never run `crew signal done` (#278);
+- a turn-end whose last non-code-fence line ends with `?` is *addressed* and delivered the same way (Claude maps it to `task.blocked` with the whole message as the question, instead of only the last line);
+- a **later self-resume** turn-end that has text but no captain message in between is a *plain end of turn*: informational, silent by default;
+- a turn-end with **no text** (Codex, OpenCode, or an unresolvable Claude message) is never classified plain: it keeps today's generic `CREW IDLE … awaiting your reply` (still subject to the #210 debounce).
 
 **Stalls fire once.** `CREW STALLED` names the hung tool and how long it has run (e.g. `still running Bash ~11min`) and fires once per stall episode (until the crew's next turn boundary / blocked / terminal state). If the crew is still stalled with no tool result after `stallEscalationMs` (default 30 min, `DaemonDeps`), exactly one `CREW STALLED … ESCALATION` is pushed, which is actionable at the default tier, so a truly hung crew is never invisible. The source only knows the tool *name*, not its command line.
 
-Multi-agent: Claude supplies the turn-end text. Codex (app-server) and OpenCode (control channel) turn-end events currently carry no final-message text, so their idle events classify as plain and follow the same tier switch (silent by default, digested under `all`); when their payloads gain the text they only need to set `lastMessage` on `task.turn.completed`.
+Multi-agent: Claude supplies the turn-end text. Codex (app-server) and OpenCode (control channel) turn-end events currently carry no final-message text, so their idle events keep today's generic `CREW IDLE` behaviour; when their payloads gain the text they only need to set `lastMessage` on `task.turn.completed`, and self-resume turn-ends then become silent too.
 
 ### Telegram (Two-Way, opt-in)
 

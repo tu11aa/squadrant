@@ -35,22 +35,24 @@ describe("classifyTurnEnd (#1017)", () => {
   it("a ? inside a code fence is ignored", () => {
     expect(classifyTurnEnd("Done.\n```\nwhy?\n```")).toBe("plain");
   });
-  it("final paragraph naming the captain → addressed", () => {
-    expect(classifyTurnEnd("Summary of work.\n\nCaptain: PR is ready for review.")).toBe("addressed");
-  });
-  it("captain mentioned only in an earlier paragraph → plain", () => {
-    expect(classifyTurnEnd("As the captain asked, I did X.\n\nAll tests pass.")).toBe("plain");
+  it("is language-neutral: no keyword rule", () => {
+    expect(classifyTurnEnd("Captain: PR is ready for review.")).toBe("plain");
+    expect(classifyTurnEnd("Xong, đã sửa A và B.\nBạn muốn merge luôn không?")).toBe("addressed");
   });
 });
 
 describe("captainPaneAllows (#1017)", () => {
   const idle: ControlEvent = { type: "task.turn.completed", id: "t", turnId: "1", lastMessage: "ok" };
   const addressed: ControlEvent = { type: "task.turn.completed", id: "t", turnId: "1", lastMessage: "Ready?" };
+  const reply: ControlEvent = { type: "task.turn.completed", id: "t", turnId: "1", lastMessage: "Done: changed A and B.", reply: true };
+  const noText: ControlEvent = { type: "task.turn.completed", id: "t", turnId: "1" };
   const stalled: ControlEvent = { type: "task.stalled", id: "t", heartbeatBudgetMs: 1, tool: "Bash" };
   const escalated: ControlEvent = { ...stalled, escalated: true } as ControlEvent;
   const quiet: ControlEvent = { type: "task.quiet", id: "t", quietMs: 1 };
   const cases: Array<[string, ControlEvent, Record<CrewTier, boolean>]> = [
     ["plain idle", idle, { none: false, done_only: false, alert_only: false, all: true }],
+    ["reply to captain (plain text)", reply, { none: false, done_only: false, alert_only: true, all: true }],
+    ["turn-end with no text (codex/opencode)", noText, { none: false, done_only: false, alert_only: true, all: true }],
     ["addressed idle", addressed, { none: false, done_only: false, alert_only: true, all: true }],
     ["first stall", stalled, { none: false, done_only: false, alert_only: false, all: true }],
     ["escalated stall", escalated, { none: false, done_only: false, alert_only: true, all: true }],
@@ -162,30 +164,72 @@ describe("stall episodes + hard escalation (#1017)", () => {
 });
 
 describe("content-carrying idle (#1017)", () => {
-  it("an addressed turn-end carries the crew's text word for word and bypasses the #210 debounce", async () => {
+  function setup() {
     const dir = mkdtempSync(join(tmpdir(), "noise-"));
     const store = createStore(dir);
     const calls: Array<{ message: string; event: ControlEvent }> = [];
     let t = 100_000;
     const d = createDaemon({ store, now: () => t, notify: async (a) => { calls.push(a); } });
+    const ev = (e: ControlEvent) => d.handle({ kind: "event", project: "demo", event: e });
+    return { store, calls, ev, adv: (ms: number) => { t += ms; } };
+  }
+  const end = (id: string, n: number, lastMessage?: string): ControlEvent =>
+    ({ type: "task.turn.completed", id, turnId: String(n), ...(lastMessage ? { lastMessage } : {}) });
+
+  it("a question turn-end carries the text word for word and bypasses the #210 debounce", async () => {
+    const { store, calls, ev, adv } = setup();
     store.put(rec("i1"));
-    await d.handle({ kind: "event", project: "demo", event: { type: "task.started", id: "i1" } }); // captain turn → debounce window
-    t += 1000;
+    await ev({ type: "task.started", id: "i1" });
+    adv(1000);
     const text = "Found two failing specs.\nShould I fix them here or file a follow-up?";
-    await d.handle({ kind: "event", project: "demo", event: { type: "task.turn.completed", id: "i1", turnId: "1", lastMessage: text } });
+    await ev(end("i1", 1, text));
     expect(calls).toHaveLength(1);
     expect(calls[0].message).toContain(text);
   });
-  it("a plain turn-end inside the debounce window is still suppressed", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "noise-"));
-    const store = createStore(dir);
-    const calls: unknown[] = [];
-    let t = 100_000;
-    const d = createDaemon({ store, now: () => t, notify: async (a) => { calls.push(a); } });
+
+  it("a plain-text reply right after a captain message is delivered word for word", async () => {
+    const { store, calls, ev, adv } = setup();
     store.put(rec("i2"));
-    await d.handle({ kind: "event", project: "demo", event: { type: "task.started", id: "i2" } });
-    t += 1000;
-    await d.handle({ kind: "event", project: "demo", event: { type: "task.turn.completed", id: "i2", turnId: "1", lastMessage: "done" } });
+    await ev({ type: "task.started", id: "i2" }); // captain spoke (crew send)
+    adv(60_000); // well outside the debounce window
+    await ev(end("i2", 1, "Done: changed A and B, tests pass."));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain("Done: changed A and B, tests pass.");
+  });
+
+  it("a later self-resume turn-end with no captain message in between is silent-class (plain)", async () => {
+    const { store, calls, ev, adv } = setup();
+    store.put(rec("i3"));
+    await ev({ type: "task.started", id: "i3" });
+    adv(60_000);
+    await ev(end("i3", 1, "Done: A."));          // the reply
+    await ev({ type: "task.turn.started", id: "i3", turnId: "2" }); // self-resume
+    await ev(end("i3", 2, "Also tidied B."));
+    expect(calls).toHaveLength(2); // both reach notify; the pane tier drops the second
+    expect(captainPaneAllows("alert_only", calls[0].event)).toBe(true);
+    expect(captainPaneAllows("alert_only", calls[1].event)).toBe(false);
+    expect((calls[1].event as any).reply).toBeUndefined();
+  });
+
+  it("a turn-end with no lastMessage is delivered as the generic CREW IDLE", async () => {
+    const { store, calls, ev, adv } = setup();
+    store.put(rec("i4"));
+    adv(60_000);
+    await ev(end("i4", 1));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toMatch(/CREW IDLE.*awaiting your reply/);
+    expect(captainPaneAllows("alert_only", calls[0].event)).toBe(true);
+  });
+
+  it("a plain turn-end inside the debounce window is still suppressed (no text → debounced as today)", async () => {
+    const { store, calls, ev, adv } = setup();
+    store.put(rec("i5"));
+    await ev({ type: "task.started", id: "i5" });
+    await ev(end("i5", 0, "first")); // consume the reply
+    calls.length = 0;
+    await ev({ type: "task.started", id: "i5" });
+    adv(1000);
+    await ev(end("i5", 1));
     expect(calls).toHaveLength(0);
   });
 });
@@ -296,9 +340,10 @@ describe("backlog coalescing keeps addressed turn-ends (#1017)", () => {
     const entries = [
       e(1, "task.turn.completed", { lastMessage: "ok" }),
       e(2, "task.turn.completed", { lastMessage: "Merge now or wait?" }),
-      e(3, "task.review"),
+      e(3, "task.turn.completed", { lastMessage: "Done: A.", reply: true }),
+      e(4, "task.review"),
     ];
     const d = coalesceBacklog(entries, { now: 2000, taskState: () => "review" });
-    expect(d.map((x) => x.action)).toEqual(["skip", "deliver", "deliver"]);
+    expect(d.map((x) => x.action)).toEqual(["skip", "deliver", "deliver", "deliver"]);
   });
 });

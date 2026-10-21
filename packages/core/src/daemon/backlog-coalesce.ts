@@ -34,7 +34,8 @@ const STUCK_ALERT_RE = /^⚠️ (DELIVERY STUCK|CAPTAIN NOT DELIVERABLE)/;
 // droppable transient, however many events queue behind it.
 function isTransient(entry: MailboxEntry): boolean {
   if (!TRANSIENT_KINDS.has(entry.kind)) return false;
-  return !(entry.kind === "task.turn.completed" && classifyTurnEnd(entry.payload?.lastMessage as string | undefined) === "addressed");
+  if (entry.kind !== "task.turn.completed") return true;
+  return entry.payload?.reply !== true && classifyTurnEnd(entry.payload?.lastMessage as string | undefined) !== "addressed";
 }
 
 /** Pure. Returns one decision per input entry, in input order. Never mutates

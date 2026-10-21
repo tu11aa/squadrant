@@ -159,7 +159,9 @@ export type ControlEvent =
   | { type: "task.turn.started"; id: string; turnId: string }
   // #1017: lastMessage = the crew's final assistant text for the turn (bounded),
   // when the agent's turn-end payload carries one. Core classifies it.
-  | { type: "task.turn.completed"; id: string; turnId: string; lastMessage?: string }
+  // `reply` is stamped by the daemon (never an agent): this is the first turn-end
+  // after a captain message to the crew, i.e. the answer to the captain.
+  | { type: "task.turn.completed"; id: string; turnId: string; lastMessage?: string; reply?: boolean }
   // #763: a crew's turn died on an API error (e.g. 529/overload) — Claude's
   // StopFailure hook. Anti-#2576: NOT task.failed — a hook may never
   // terminalize a task. Structurally identical to task.turn.completed (same

@@ -6,43 +6,40 @@ import type { ControlEvent, CrewTier } from "@squadrant/shared";
 import { tierIncludes } from "../telegram/tiers.js";
 
 /**
- * Turn-end classifier (deterministic, no LLM). A crew's final message is
- * "addressed" to the captain — and so worth a captain turn — when the last
- * non-code-fence line ends with "?" (a direct question) OR the final paragraph
- * names the captain (e.g. "Captain: PR is ready", "…let me know, captain").
- * Everything else is a plain end of turn: silent, ledger only.
+ * Turn-end text classifier (deterministic, language-neutral, no LLM): the text is
+ * "addressed" when its last non-code-fence line ends with "?" (a direct question).
+ * Anything else is "plain". Whether a turn-end is a *reply to the captain* is not
+ * a text question at all — the daemon stamps `reply` on the first turn-end after a
+ * captain message (see reduce.ts), so no keyword in any language is needed.
  */
 export function classifyTurnEnd(text: string | undefined): "addressed" | "plain" {
   if (!text?.trim()) return "plain";
   let inFence = false;
   let lastLine = "";
-  const paragraphs: string[][] = [[]];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith("```")) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    if (line === "") { if (paragraphs.at(-1)!.length) paragraphs.push([]); continue; }
+    if (inFence || line === "") continue;
     lastLine = line;
-    paragraphs.at(-1)!.push(line);
   }
-  if (lastLine.endsWith("?")) return "addressed";
-  const lastParagraph = (paragraphs.at(-1)!.length ? paragraphs.at(-1)! : paragraphs.at(-2) ?? []).join(" ");
-  return /\bcaptain\b/i.test(lastParagraph) ? "addressed" : "plain";
+  return lastLine.endsWith("?") ? "addressed" : "plain";
 }
 
-/** A turn-end whose text is addressed to the captain: delivered as actionable, word for word. */
+/** A turn-end WITH text that is a reply to the captain or ends in a question: delivered word for word. */
 export function isAddressedTurnEnd(ev: ControlEvent): boolean {
-  return ev.type === "task.turn.completed" && classifyTurnEnd(ev.lastMessage) === "addressed";
+  return ev.type === "task.turn.completed" && !!ev.lastMessage?.trim() && (ev.reply === true || classifyTurnEnd(ev.lastMessage) === "addressed");
 }
 
 /**
- * Informational = a push that needs no captain action: plain idle, the first
+ * Informational = a push that needs no captain action: plain idle (text, no reply), the first
  * stall (the one-shot hard escalation is actionable), CREW QUIET. Notify-only
  * warnings (task.warn, undelivered first turn) are never informational.
  */
 export function isInformational(ev: ControlEvent): boolean {
   switch (ev.type) {
-    case "task.turn.completed": return !isAddressedTurnEnd(ev);
+    // Only a turn-end WITH text can be classified plain. No text (Codex/OpenCode, or an
+    // unresolvable Claude message) keeps today's generic CREW IDLE behaviour.
+    case "task.turn.completed": return !!ev.lastMessage?.trim() && !isAddressedTurnEnd(ev);
     case "task.stalled": return !ev.escalated;
     case "task.quiet":
     case "task.idle": return true;

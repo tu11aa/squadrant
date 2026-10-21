@@ -366,6 +366,9 @@ export function createDaemon(deps: DaemonDeps) {
   // (turn boundary, blocked, terminal) — see applyEvent.
   const stallEpisode = new Map<string, string>();
   const stallEscalated = new Set<string>();
+  // #1017: crews the captain has spoken to since their last turn-end — the next
+  // turn-end is the reply and is always delivered (language-neutral, no text sniffing).
+  const replyPending = new Set<string>();
   // #466: per-task debounce for first-turn resend attempts — avoids hammering
   // a still-not-ready pane with pastes every sweep tick.
   const resendAttemptedAt = new Map<string, number>();
@@ -381,7 +384,8 @@ export function createDaemon(deps: DaemonDeps) {
     }
     const cur = store.get(project, event.id);
     if (!cur) throw new Error(`unknown task ${event.id}`);
-    if (event.type === "task.started") lastCaptainTurnAt.set(event.id, now());
+    if (event.type === "task.started") { lastCaptainTurnAt.set(event.id, now()); replyPending.add(event.id); }
+    if (event.type === "task.turn.completed" && replyPending.has(event.id)) event = { ...event, reply: true };
     if (event.type === "task.session.ended" && !TERMINAL_STATES.has(cur.state)) {
       const liveness = deps.isSurfaceAlive ? await deps.isSurfaceAlive(cur) : "unknown";
       if (liveness !== "gone") return cur; // alive/unknown: no-op, keep current state
@@ -389,6 +393,7 @@ export function createDaemon(deps: DaemonDeps) {
     const next = reduce(cur, event, now());
     if (next !== cur) {
       store.put(next); // skip redundant write on terminal no-ops
+      if (event.type === "task.turn.completed" && next.state === "awaiting-input") replyPending.delete(next.id);
       if (next.state !== "working" && next.state !== "stalled") { stallEpisode.delete(next.id); stallEscalated.delete(next.id); }
       firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id), cur);
     }
