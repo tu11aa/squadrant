@@ -12,11 +12,12 @@ const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n -
 
 const SUMMARY_CHARS = 120;
 
-/** What the crew is for: the first line naming an issue (#N), else the first non-heading line of the brief. */
+/** What the crew is for: the first `#N` and the title text after it, else the first non-heading line of the brief. */
 export function taskSummary(task: string): string {
+  const issue = /#\d+[^\r\n]*/.exec(task)?.[0];
+  if (issue) return clip(oneLine(issue.includes("(") ? issue : issue.replace(/[)\s]+$/, "")), SUMMARY_CHARS);
   const lines = task.split(/\r?\n/).map((l) => l.replace(/^[\s>*-]+/, "").trim()).filter(Boolean);
-  const pick = lines.find((l) => /#\d+/.test(l)) ?? lines.find((l) => !l.startsWith("#")) ?? lines[0] ?? "";
-  return clip(oneLine(pick), SUMMARY_CHARS);
+  return clip(oneLine(lines.find((l) => !l.startsWith("#")) ?? lines[0] ?? ""), SUMMARY_CHARS);
 }
 
 function crewLine(c: LiveCrewSummary): string {

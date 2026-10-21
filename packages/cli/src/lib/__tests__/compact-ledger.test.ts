@@ -26,13 +26,18 @@ describe("renderLiveLedger", () => {
 
   it("gives every crew a task summary and branch", () => {
     const out = renderLiveLedger([{ name: "noise", state: "working", task: "## Objective\nFix #1017 cut crew IDLE noise in the captain pane\nmore", branch: "crew/noise" }], []);
-    expect(out).toContain("- noise [working] | Fix #1017 cut crew IDLE noise in the captain pane | branch crew/noise");
+    expect(out).toContain("- noise [working] | #1017 cut crew IDLE noise in the captain pane | branch crew/noise");
   });
 
   it("summary skips headings, strips bullets and clips to ~120 chars", () => {
     expect(taskSummary("## Objective\n- Implement the thing")).toBe("Implement the thing");
     expect(taskSummary("x".repeat(300)).length).toBe(120);
     expect(taskSummary("")).toBe("");
+  });
+
+  it("builds the summary from the first #N and its title, not a leading path", () => {
+    const task = "Read and execute the brief at /private/tmp/claude-501/x/scratchpad/brief-noise.md (GitHub issue #1017: cut captain noise from crew IDLE/STALLED/QUIET)";
+    expect(taskSummary(task)).toBe("#1017: cut captain noise from crew IDLE/STALLED/QUIET");
   });
 
   it("labels a done crew with an open tab as awaiting captain review", () => {
