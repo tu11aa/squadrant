@@ -65,6 +65,18 @@ describe("generic role templates — audit", () => {
     expect(readTemplate(f)).toContain("end the message with `Rules: <id>, <id>`");
   });
 
+  it.each(["crew.claude.md", "crew.generic.md", "crew.opencode.md"])("%s carries the level-1 trace (decisions settled with the operator) in the done message (#1016)", (f) => {
+    expect(readTemplate(f)).toContain("Decided with operator: <question> → <answer>");
+  });
+
+  it.each(["captain.claude.md", "captain.generic.md"])("%s carries the 3-level crew-question triage with threads (#1016)", (f) => {
+    const body = readTemplate(f);
+    expect(body).toMatch(/3-level triage/);
+    expect(body).toMatch(/squadrant thread open/);
+    expect(body).toMatch(/squadrant thread resume/);
+    expect(body).toMatch(/override/);
+  });
+
   it("captain.generic.md uses the squadrant crew spawn primitive", () => {
     const body = readTemplate("captain.generic.md");
     expect(body).toMatch(/squadrant crew spawn/);

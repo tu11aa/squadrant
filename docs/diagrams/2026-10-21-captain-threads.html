@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Captain Threads · squadrant</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#161d2b; --line:#222c3d;
+    --fg:#e6edf7; --dim:#8b9bb4; --dimmer:#5d6b83;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --acc2:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#f6f8fa; --panel:#ffffff; --panel2:#f0f3f7; --line:#d0d7de;
+      --fg:#1f2328; --dim:#57606a; --dimmer:#6e7781; --acc:#0969da; --acc2:#8250df;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px 16px 80px}
+  .wrap{max-width:1100px;margin:0 auto}
+  h1{font-size:28px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:40px 0 8px;padding-left:12px;border-left:3px solid var(--acc)}
+  .meta{color:var(--dimmer);font-size:13px;font-family:var(--mono);margin-bottom:20px}
+  .lead{color:var(--dim);margin:6px 0 0}
+  a{color:var(--acc)}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);padding:2px 6px;border-radius:4px;color:var(--acc2)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .lanes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  @media(max-width:800px){.lanes{grid-template-columns:1fr}}
+  .lane{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;min-height:150px;transition:all .25s}
+  .lane .t{font-family:var(--mono);font-size:12px;color:var(--acc);margin-bottom:6px}
+  .lane .d{font-size:13.5px;color:var(--dim);line-height:1.5;white-space:pre-line}
+  .lane.on{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 30%,transparent)}
+  .lane.on .d{color:var(--fg)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  button{font:inherit;font-size:13px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.sel{border-color:var(--acc);color:var(--acc)}
+  .caption{font-size:14px;min-height:48px;padding:10px 14px;border-left:3px solid var(--acc2);background:var(--panel2);border-radius:0 8px 8px 0}
+  input[type=range]{width:100%}
+  .verdict{font-family:var(--mono);font-size:13.5px;padding:10px 12px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);margin-top:10px;white-space:pre-wrap}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.07em}
+  tr.hl td{background:color-mix(in srgb,var(--acc) 12%,transparent)}
+  .langbar{float:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="langbar controls"><button id="lang-en" class="sel">EN</button><button id="lang-vi">VI</button></div>
+  <h1 data-i18n="title">Captain discussion threads</h1>
+  <div class="meta">#1016 · 2026-10-21 · spec <a href="../specs/2026-10-21-captain-threads.md">2026-10-21-captain-threads.md</a> · usage <a href="../reference.md#captain-discussion-threads-1016">reference.md</a></div>
+  <p class="lead" data-i18n="lead">The captain coordinates. A thread (a fork of the captain for one topic) holds the discussion with the operator, then parks back one decision.</p>
+
+  <h2 data-i18n="h-flow">Step through a thread's life</h2>
+  <div class="card">
+    <div class="lanes">
+      <div class="lane" id="l-captain"><div class="t">captain</div><div class="d" id="d-captain"></div></div>
+      <div class="lane" id="l-thread"><div class="t">🧵 thread</div><div class="d" id="d-thread"></div></div>
+      <div class="lane" id="l-crews"><div class="t">crews / daemon</div><div class="d" id="d-crews"></div></div>
+    </div>
+    <div class="controls">
+      <button id="prev">◀</button><button id="next">▶</button>
+      <span class="meta" id="stepno" style="margin:0"></span>
+    </div>
+    <div class="caption" id="caption"></div>
+  </div>
+
+  <h2 data-i18n="h-resume">Resume rule</h2>
+  <div class="card">
+    <label for="mins" class="meta" data-i18n="mins">Minutes since the thread last parked</label>
+    <input type="range" id="mins" min="0" max="240" value="20">
+    <div class="verdict" id="resume-verdict"></div>
+  </div>
+
+  <h2 data-i18n="h-triage">Triage a crew question</h2>
+  <div class="card">
+    <div class="controls">
+      <button data-q="local" class="sel" data-i18n="q-local">Local to one crew</button>
+      <button data-q="known" data-i18n="q-known">Already decided somewhere</button>
+      <button data-q="cross" data-i18n="q-cross">Spans crews / new decision</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th data-i18n="th-level">Level</th><th data-i18n="th-action">Captain action</th></tr></thead>
+      <tbody>
+        <tr data-row="local"><td>1 · operator ↔ crew</td><td data-i18n="a1">One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists "Decided with operator: …" in its done message.</td></tr>
+        <tr data-row="known"><td>2 · captain answers</td><td data-i18n="a2">Answer the crew and cite the source (decision, brief, rule, handoff).</td></tr>
+        <tr data-row="cross"><td>3 · thread</td><td data-i18n="a3">thread list → resume the matching topic, or thread open; give the operator the tab.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="meta" data-i18n="override">The operator can override the level at any time.</p>
+  </div>
+</div>
+<script>
+const T = {
+  en: {
+    title: "Captain discussion threads",
+    lead: "The captain coordinates. A thread (a fork of the captain for one topic) holds the discussion with the operator, then parks back one decision.",
+    "h-flow": "Step through a thread's life", "h-resume": "Resume rule", "h-triage": "Triage a crew question",
+    mins: "Minutes since the thread last parked",
+    "q-local": "Local to one crew", "q-known": "Already decided somewhere", "q-cross": "Spans crews / new decision",
+    "th-level": "Level", "th-action": "Captain action",
+    a1: "One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists \"Decided with operator: …\" in its done message.",
+    a2: "Answer the crew and cite the source (decision, brief, rule, handoff).",
+    a3: "thread list → resume the matching topic, or thread open; give the operator the tab.",
+    override: "The operator can override the level at any time.",
+    same: m => `≤ 60 min → RESUME the same session\nclaude --resume <thread session>\n+ delta: crew ledger now, decisions from other threads since it parked\n(cache still warm: ${60 - m} min left)`,
+    fresh: m => `> 60 min → FORK FRESH from the current captain\nclaude --resume <captain> --fork-session --session-id <new>\n+ this topic's earlier decision records\n(cache cold for ${m - 60} min — same cost, never stale)`,
+    steps: [
+      ["Crew-a and crew-b both ask about the auth cache. It spans crews → level 3.", "—", "crew-a: blocked\ncrew-b: blocked", "captain", "Triage picks level 3: the question spans two crews."],
+      ["thread list → no match\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "🧵 app:auth-cache\nforked from the captain (warm cache, same model)\nfirst turn = thread prompt", "—", "thread", "The fork shares the captain's prompt-cache prefix: the first call reads it from cache (Step 0: 171,960 tokens read, 15,790 written)."],
+      ["stays small: no discussion here", "operator ↔ thread: options, trade-offs", "crew-c: done → event goes to the CAPTAIN", "crews", "Crew events never enter a thread. The discussion is never interrupted."],
+      ["—", "settled → squadrant thread park app auth-cache --decision-file -", "—", "thread", "The thread writes its decision record (question, decision, why, rejected, per-crew actions)."],
+      ["mailbox: ONE message\n🧵 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "tab closed\nstate = parked, session id kept", "—", "captain", "The captain receives the decision, not the discussion, so it can still roll over safely."],
+      ["crew send crew-a \"add TTL cache\"\ncrew send crew-b \"no change\"", "parked (no process, no tokens)", "crews act", "crews", "The captain acts on the per-crew actions."],
+    ],
+  },
+  vi: {
+    title: "Thread thảo luận của captain",
+    lead: "Captain điều phối. Thread (một nhánh fork của captain cho một chủ đề) giữ phần thảo luận với operator, rồi park lại đúng một quyết định.",
+    "h-flow": "Từng bước vòng đời một thread", "h-resume": "Quy tắc resume", "h-triage": "Phân loại câu hỏi của crew",
+    mins: "Số phút kể từ lần park gần nhất",
+    "q-local": "Chỉ trong một crew", "q-known": "Đã có quyết định", "q-cross": "Liên crew / quyết định mới",
+    "th-level": "Mức", "th-action": "Captain làm gì",
+    a1: "Một dòng cho operator: trả lời ngay trong tab của crew đó. Không đổi model. Crew ghi \"Decided with operator: …\" trong tin done.",
+    a2: "Captain trả lời crew và dẫn nguồn (quyết định, brief, rule, handoff).",
+    a3: "thread list → resume chủ đề khớp, hoặc thread open; đưa operator tên tab.",
+    override: "Operator có thể đổi mức bất cứ lúc nào.",
+    same: m => `≤ 60 phút → RESUME đúng session cũ\nclaude --resume <thread session>\n+ delta: ledger crew hiện tại, quyết định của thread khác từ lúc park\n(cache còn ấm: còn ${60 - m} phút)`,
+    fresh: m => `> 60 phút → FORK MỚI từ captain hiện tại\nclaude --resume <captain> --fork-session --session-id <new>\n+ các decision record trước của chủ đề này\n(cache đã nguội ${m - 60} phút — chi phí như nhau, không bị cũ)`,
+    steps: [
+      ["crew-a và crew-b cùng hỏi về auth cache. Liên crew → mức 3.", "—", "crew-a: blocked\ncrew-b: blocked", "captain", "Captain chọn mức 3: câu hỏi liên quan hai crew."],
+      ["thread list → không có\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "🧵 app:auth-cache\nfork từ captain (cache ấm, cùng model)\nturn đầu = thread prompt", "—", "thread", "Fork dùng chung prefix prompt-cache với captain: lần gọi đầu đọc từ cache (Step 0: đọc 171.960 token, ghi 15.790)."],
+      ["captain vẫn nhỏ: không thảo luận ở đây", "operator ↔ thread: phương án, đánh đổi", "crew-c: done → sự kiện về CAPTAIN", "crews", "Sự kiện crew không bao giờ vào thread. Thảo luận không bị ngắt."],
+      ["—", "đã chốt → squadrant thread park app auth-cache --decision-file -", "—", "thread", "Thread ghi decision record (câu hỏi, quyết định, lý do, phương án bỏ, việc cho từng crew)."],
+      ["mailbox: MỘT tin\n🧵 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "đóng tab\nstate = parked, giữ session id", "—", "captain", "Captain nhận quyết định, không nhận cuộc thảo luận, nên vẫn rollover an toàn."],
+      ["crew send crew-a \"add TTL cache\"\ncrew send crew-b \"no change\"", "parked (không process, không token)", "crew thực hiện", "crews", "Captain giao việc theo từng crew."],
+    ],
+  },
+};
+let lang = "en", step = 0, q = "local";
+const $ = id => document.getElementById(id);
+function render(){
+  const t = T[lang];
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { const v = t[el.dataset.i18n]; if (typeof v === "string") el.textContent = v; });
+  const s = t.steps[step];
+  $("d-captain").textContent = s[0]; $("d-thread").textContent = s[1]; $("d-crews").textContent = s[2];
+  ["captain","thread","crews"].forEach(k => $("l-" + k).classList.toggle("on", s[3] === k));
+  $("caption").textContent = s[4];
+  $("stepno").textContent = `${step + 1} / ${t.steps.length}`;
+  const m = +$("mins").value;
+  const v = $("resume-verdict");
+  v.textContent = m <= 60 ? t.same(m) : t.fresh(m);
+  v.className = "verdict " + (m <= 60 ? "ok" : "warn");
+  document.querySelectorAll("[data-row]").forEach(r => r.classList.toggle("hl", r.dataset.row === q));
+  document.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("sel", b.dataset.q === q));
+  $("lang-en").classList.toggle("sel", lang === "en"); $("lang-vi").classList.toggle("sel", lang === "vi");
+}
+$("prev").onclick = () => { step = (step + T[lang].steps.length - 1) % T[lang].steps.length; render(); };
+$("next").onclick = () => { step = (step + 1) % T[lang].steps.length; render(); };
+$("mins").oninput = render;
+document.querySelectorAll("[data-q]").forEach(b => b.onclick = () => { q = b.dataset.q; render(); });
+$("lang-en").onclick = () => { lang = "en"; render(); };
+$("lang-vi").onclick = () => { lang = "vi"; render(); };
+render();
+</script>
+</body>
+</html>

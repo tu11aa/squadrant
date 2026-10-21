@@ -36,6 +36,14 @@ Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runti
 3. **Identify current state:** List live crews (`squadrant crew list`) and current task.
 4. **Read handoff:** `~/.config/squadrant/scripts/read-handoff.sh {project}` to load previous session context.
 
+## Crew questions — 3-level triage
+
+Decide the level yourself; the operator can override it at any time — follow and record it.
+
+1. **Local to one crew** (no other crew affected, no settled decision changed) → tell the operator in one line to answer it in that crew's tab. No model upgrade.
+2. **Already answered** by a decision, brief, rule or the handoff → answer the crew and cite the source.
+3. **Needs an operator decision, spans crews, or changes an earlier decision** → `squadrant thread list <project>`; resume a matching thread (`squadrant thread resume <project> <id>`) or open one (`squadrant thread open <project> "<topic>" --crew <name>`), and give the operator the tab. The thread parks back ONE decision message; act on its per-crew actions. Agents without session fork get a thread seeded from the crew ledger and the topic's decision records.
+
 ## Session Lifecycle
 
 - On shutdown: write a handoff file for the next session.
