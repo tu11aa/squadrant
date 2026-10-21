@@ -86,6 +86,14 @@ function archivedHandoff(overrides: Partial<ArchivedHandoff> = {}): ArchivedHand
 // #651 correction: the newest archived handoff is a CHECKPOINT read in
 // full; only sessions AFTER it (the gap) get their transcripts read — not
 // a union of everything in some fixed window.
+describe("assembleHandoffFacts context (#1015)", () => {
+  it("carries the captain context, defaulting to unknown", () => {
+    expect(assembleHandoffFacts(live(), null, [], null, NOW).captainContext).toBe("unknown");
+    const m = { tokens: 182_000, measuredAt: 1 };
+    expect(assembleHandoffFacts(live(), null, [], null, NOW, { captainContext: m }).captainContext).toEqual(m);
+  });
+});
+
 describe("assembleHandoffFacts", () => {
   it("stamps meta with generatedAt", () => {
     const out = assembleHandoffFacts(live(), null, [], null, NOW);

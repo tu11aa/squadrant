@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
+import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
 import type { PanePlacement, BackendMode, PaneRef } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
@@ -12,6 +12,8 @@ import {
   runCrewRead as coreRunCrewRead,
   runCrewClose as coreRunCrewClose,
   runCrewList as coreRunCrewList,
+  formatContext,
+  meterTask,
   runCrewAnswer as coreRunCrewAnswer,
   buildRouterCredentialsRequest,
   type CrewSpawnInput,
@@ -23,6 +25,7 @@ import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
 import { tailLines } from "./crew-output.js";
+import { hintForCrewSend } from "../lib/crew-context-hint.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 import { commandExists } from "./doctor.js";
@@ -337,7 +340,9 @@ crewCommand
       if (active.length > 0) {
         console.log(`active (${active.length}):`);
         for (const { c, t } of active) {
-          console.log(`  ${c.name.padEnd(10)} ${t ? t.state : "unknown"}  (${c.surfaceId})`);
+          // #1015: live context ("unknown" where the agent has no meter).
+          const ctx = t ? `  ctx ${formatContext(meterTask(t))}` : "";
+          console.log(`  ${c.name.padEnd(10)} ${t ? t.state : "unknown"}${ctx}  (${c.surfaceId})`);
         }
       }
       if (held.length > 0) {
@@ -346,7 +351,7 @@ crewCommand
           const m = Math.round((Date.now() - t.operatorHold.since) / 60000);
           const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
           const note = t.operatorHold.note ? ` · "${t.operatorHold.note}"` : "";
-          console.log(`  ${c.name.padEnd(10)} ${t.state} · held ${hm}${note}  (${c.surfaceId})`);
+          console.log(`  ${c.name.padEnd(10)} ${t.state} · ctx ${formatContext(meterTask(t))} · held ${hm}${note}  (${c.surfaceId})`);
         }
       }
     } catch (err) {
@@ -366,6 +371,13 @@ crewCommand
   .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
+      // #1015: hint only — never blocks or alters the send.
+      try {
+        const budget = resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project));
+        const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
+        const hint = hintForCrewSend(name, resolveApproveTarget(tasks, name), budget);
+        if (hint) console.log(chalk.yellow(`⚠ ${hint}`));
+      } catch { /* hint is best-effort */ }
       const { reopened } = await runCrewSend(project, name, resolvedMessage, opts);
       // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
       // gave the captain no way to tell a stale terminal record was revived.

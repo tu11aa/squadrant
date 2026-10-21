@@ -99,6 +99,10 @@ export interface SquadrantdOpts {
    *  registration, no I/O — safe to force in tests. Defaults to false, so
    *  behavior is unchanged unless a test opts in. */
   forceStartEventsSource?: boolean;
+  /** #1015: project → the captain's Claude transcript path (null when unknown).
+   *  Supplied by the host (the session registry lives in the CLI package). Absent ⇒
+   *  the context advisor is not constructed — zero behavior change. Suggest/warn only. */
+  captainTranscript?: (project: string) => string | null;
 }
 
 export function defaultIsPidAlive(pid: number): boolean {

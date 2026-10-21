@@ -4,7 +4,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ModelRoutingConfig } from "./config.js";
+import type { ModelRoutingConfig, ContextBudget } from "./config.js";
+import { DEFAULT_CONTEXT_BUDGET } from "./config.js";
 import { readConfigFileSync, writeConfigFileSync } from "./lib/config-io.js";
 
 export type CrewTier = "all" | "alert_only" | "done_only" | "none";
@@ -23,6 +24,8 @@ export interface ProjectOverrideConfig {
   // Reserved future tenants (resolver is already generic; consumers not yet wired):
   effort?: "max" | "balance" | "low";
   models?: Partial<ModelRoutingConfig>;
+  /** #1015 per-project context thresholds. */
+  contextBudget?: Partial<ContextBudget>;
 }
 
 function defaultRoot(): string {
@@ -90,4 +93,22 @@ export function resolveNotify(
   if (globalNotify) n = deepMerge(n, globalNotify);
   if (override.telegram?.notify) n = deepMerge(n, override.telegram.notify);
   return n;
+}
+
+/** #1015: built-in → global defaults.contextBudget → projects/<name>.json, per-key.
+ *  Non-numeric/negative threshold values are ignored so a typo can't disable a limit silently. */
+export function resolveContextBudget(
+  globalBudget: Partial<ContextBudget> | undefined,
+  override: ProjectOverrideConfig,
+): ContextBudget {
+  const out: ContextBudget = { ...DEFAULT_CONTEXT_BUDGET };
+  for (const layer of [globalBudget, override.contextBudget]) {
+    if (!layer) continue;
+    if (typeof layer.enabled === "boolean") out.enabled = layer.enabled;
+    for (const k of ["captainSoft", "captainHard", "crewSoft"] as const) {
+      const v = layer[k];
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+    }
+  }
+  return out;
 }

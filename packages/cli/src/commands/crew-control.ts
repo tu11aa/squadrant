@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { sendRequest, scanCitations, readBranchOnlyMessages, type AuditSink, type CiteText } from "@squadrant/core";
 import { ensureDaemon } from "@squadrant/core";
 import type { ProjectUsage } from "@squadrant/core";
+import { formatContext, meterTask } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
 import { DAEMON_SOCK_PATH, TERMINAL_STATES, stateRoot, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
@@ -516,7 +517,9 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
         usage = u ?? undefined;
       }
-      process.stdout.write(formatCompactTasks(records, { compact, ...(usage ? { usage } : {}) }) + "\n");
+      // #1015: live context per non-terminal task ("unknown" where it can't be measured).
+      const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
+      process.stdout.write(formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) }) + "\n");
     });
 
   // #592: delivery goes through the SAME path 'crew send' uses (runCrewSend)

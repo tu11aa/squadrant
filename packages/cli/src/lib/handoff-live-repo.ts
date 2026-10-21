@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TERMINAL_STATES, crewBranch } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
+import { meterTask } from "@squadrant/core";
 import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-facts.js";
 import { gatherBranchState } from "./handoff-branch-state.js";
 
@@ -114,6 +115,8 @@ export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, proj
       question: t.question,
       operatorHold: t.operatorHold,
       reviewNote: t.reviewNote,
+      // #1015: live context, shown for every live crew incl. done + pr-open ones.
+      context: meterTask(t),
       // #1015: live crews have no recorded branch yet; it is derived from the name (approved ones recorded theirs).
       branch: t.branch ?? crewBranch(t.name ?? t.id),
       prUrl: t.prUrl,

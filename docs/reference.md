@@ -32,6 +32,7 @@ guided first run — come back here when you need the details.
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
 - [Captain rollover](#captain-rollover-1010)
+- [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
 - [Config](#config)
 
@@ -813,6 +814,40 @@ Because the layout is flat, a project dir shares a namespace with those entries.
     #13 task.done (c2): CREW BLOCKED c2
   ```
 - **Re-injection.** On `SessionStart` with `source: "compact"` in a captain session (`SQUADRANT_ROLE=captain`, no crew env), the hook adds the project's handoff plus "Context was just compacted. This is your handoff; continue from nextSteps." to `additionalContext`, in the same JSON document as the rules block. The live `handoff.json` is preferred (the rollover skill just wrote it and nothing has archived it); otherwise the newest archived handoff is used. Crews, plain sessions and the `startup|resume|clear` sources get nothing. It also covers a `/compact` the operator types by hand.
+
+## Context meter & rollover suggestions (#1015)
+
+Squadrant measures live context for captains and crews and **suggests** a rollover at the right moment. It never compacts a session on its own and never types `/compact`: suggestions and warnings only, the operator or captain decides (profile `prof.never-auto-compact`).
+
+**Meter.** `{ tokens, windowTokens?, pct?, measuredAt }` or `unknown`, from `@squadrant/core` (`context-meter.ts`).
+
+| Agent | Source |
+|---|---|
+| Claude (captain and crews) | Tail of the session transcript (`~/.claude/projects/<escaped-cwd>/<session>.jsonl`): `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` of the latest assistant call. Tail read only (128 KB, doubling up to 4 MB if the tail has no usage), cached by mtime + size, lines sharing a message id counted once, all-zero synthetic usage skipped. The line parser is shared with `squadrant tokens` (#626). `windowTokens`/`pct` only appear when the model name states the window (a `[1m]` suffix). |
+| Codex | `unknown`. Token data lives in the app-server thread, not in a file squadrant can tail cheaply. |
+| OpenCode | `unknown`. Tokens live in opencode's own session store; no cheap, stable read yet. |
+
+- A **crew's** transcript is found from `TaskRecord.sessionId` + `cwd` when the record carries the session id, otherwise as the newest transcript in the crew's own worktree dir written since the task was created (one crew per worktree).
+- A **captain's** transcript is the newest `claude` record in the project's `captain-sessions.jsonl` registry (#651, written by the SessionStart hook).
+- Shown as a `ctx` value in `squadrant crew list` and `squadrant crew tasks` (non-terminal tasks), and in `squadrant handoff facts` (`captainContext` plus `liveCrews[].context`). `unknown` is printed as `unknown`.
+
+**Captain suggestions** (daemon, one line through the normal captain mailbox, e.g. `Context 182k ≥ 150k at a boundary (crew done). Good moment: write the handoff, then /squadrant:rollover.`):
+
+- Boundaries: a crew reached `done`, was closed (`cancelled`), or its `blocked` question was answered.
+- Fires only when a boundary happened **and** captain context ≥ `captainSoft`. Suppressed while any crew is `blocked` on a question or the captain mailbox has undelivered entries; the boundary waits (up to 30 min) and fires when that clears.
+- Rate limit: one suggestion per boundary, and again only after a further +50k of growth. A context drop below the last mark (a rollover) resets it.
+- **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
+- Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
+
+**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider a fresh crew with a brief instead of reusing it` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+
+**Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
+
+```json
+{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000 } } }
+```
+
+Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
 
 ## Human review guide (#1012)
 

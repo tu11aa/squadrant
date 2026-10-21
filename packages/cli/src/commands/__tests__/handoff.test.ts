@@ -92,7 +92,7 @@ describe("runHandoffFacts", () => {
 
     expect(out.meta).toMatchObject({ generatedAt: "2026-08-03T00:00:00.000Z" });
     expect((out.liveRepo as { liveCrews: unknown[] }).liveCrews).toEqual([
-      { name: "crew-1", state: "blocked", task: "do the thing", question: "which way?", branch: "crew/crew-1" },
+      { name: "crew-1", state: "blocked", task: "do the thing", context: "unknown", question: "which way?", branch: "crew/crew-1" },
     ]);
     expect(out).not.toHaveProperty("session");
     expect(out).not.toHaveProperty("reconstructed");

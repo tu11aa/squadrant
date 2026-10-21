@@ -12,12 +12,14 @@ import { createCaptainCompact } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage } from "../mailbox.js";
+import { createContextAdvisor, boundaryOf } from "../context-suggest.js";
+import { readClaudeContext, contextTokens } from "../context-meter.js";
 import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
 import { formatDownAlertText } from "./down-alert.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import {
-  loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig,
+  loadConfig, TERMINAL_STATES, ensureCmuxAutoConfig, loadProjectOverride, resolveContextBudget,
   stateRoot as defaultStateRoot, daemonLogPath, legacyDaemonLogPath, resolveReadPath,
 } from "@squadrant/shared";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./snapshot-gather.js";
@@ -104,6 +106,46 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   });
 
   ctx.d = d;
+
+  // #1015: boundary-based rollover suggestions. Suggest/warn only — appends one
+  // line to the captain mailbox and never compacts anything. Built only when the
+  // host supplies a captain-transcript lookup.
+  const captainTranscript = opts.captainTranscript;
+  const advisor = captainTranscript
+    ? createContextAdvisor({
+        now: () => Date.now(),
+        budgetFor: (project) => resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project)),
+        captainTokens: (project) => {
+          const p = captainTranscript(project);
+          return p ? contextTokens(readClaudeContext(p)) : null;
+        },
+        hasOpenQuestion: (project) => store.list(project).some((t) => t.state === "blocked" && !t.operatorHold),
+        mailboxBacklog: async (project) => {
+          const cursor = await readCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER });
+          return (await mailboxStats(stateRoot, project)).maxSeq > (cursor?.lastAckedSeq ?? 0);
+        },
+        enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
+        log,
+      })
+    : undefined;
+  if (advisor) {
+    // Watch task transitions for boundaries: a crew reached done / was closed,
+    // or its blocked question was answered. Observation only — the result and
+    // errors of the real handler pass through untouched.
+    const handle = d.handle.bind(d);
+    d.handle = async (req) => {
+      const target = req.kind === "event" ? { project: req.project, id: req.event.id }
+        : req.kind === "reply" ? { project: req.project, id: req.id } : null;
+      const before = target ? store.get(target.project, target.id)?.state : undefined;
+      const res = await handle(req);
+      if (target && before) {
+        const after = store.get(target.project, target.id)?.state;
+        const kind = boundaryOf(before, after);
+        if (kind) advisor.noteBoundary(target.project, kind);
+      }
+      return res;
+    };
+  }
 
   // ── Health + snapshot ─────────────────────────────────────────────────────
 
@@ -361,6 +403,15 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     timer.unref?.();
   }
 
+  // #1015: evaluate pending boundaries / hard threshold. Cheap: transcript tail reads are mtime-cached.
+  let contextTimer: NodeJS.Timeout | undefined;
+  if (advisor && opts.sweepMs && opts.sweepMs > 0) {
+    contextTimer = setInterval(() => {
+      void advisor.tick(opts.registeredProjects ?? Object.keys(loadConfig().projects));
+    }, 15_000);
+    contextTimer.unref?.();
+  }
+
   const rotationInterval = opts.rotationIntervalMs ?? 60_000;
   const mboxCfg = {
     maxBytes: opts.mailboxConfig?.maxBytes ?? 5 * 1024 * 1024,
@@ -416,6 +467,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       if (deliveryTimer) clearInterval(deliveryTimer);
       if (compactTimer) clearInterval(compactTimer);
       if (probeTimer) clearInterval(probeTimer);
+      if (contextTimer) clearInterval(contextTimer);
       if (timer) clearInterval(timer);
       if (rotationTimer) clearInterval(rotationTimer);
       try { ctx.cmuxEventsBridge.stop(); } catch { /* best-effort */ }

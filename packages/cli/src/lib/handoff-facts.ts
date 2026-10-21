@@ -24,6 +24,8 @@
 // not interpretation — by construction every gapSession therefore has no
 // handoff of its own (if it had written one, THAT would be the checkpoint).
 
+import type { ContextMeter } from "@squadrant/core";
+
 export interface LiveOpenPR {
   number: number;
   title: string;
@@ -34,6 +36,8 @@ export interface LiveCrewSummary {
   name: string;
   state: string;
   task: string;
+  /** #1015: live context ("unknown" where the agent has no meter). Filled by the gatherer in handoff.ts. */
+  context?: ContextMeter;
   question?: string;
   operatorHold?: { since: number; note?: string; lastNudgeAt?: number };
   /** #1015: the crew's own summary from `signal review`. */
@@ -204,6 +208,8 @@ export interface HandoffFacts {
     registryNote: string | null;
   };
   liveRepo: HandoffFactsLiveRepo;
+  /** #1015: the captain's own live context; "unknown" when its transcript can't be found. */
+  captainContext: ContextMeter;
   claudeMem: ClaudeMemSummary | null;
   /** The newest archived handoff, read in full — the baseline everything before it is covered by. Null if none exists yet. */
   checkpoint: ArchivedHandoff | null;
@@ -254,6 +260,7 @@ export interface AssembleHandoffFactsExtras {
   usedFallbackWindow?: boolean;
   /** The fallback window actually used, only meaningful when usedFallbackWindow is true. */
   fallbackWindowMs?: number;
+  captainContext?: ContextMeter;
 }
 
 /** Pure. Wraps already-gathered facts into {meta, liveRepo, claudeMem, checkpoint, gapSessions} with provenance — no synthesis. */
@@ -280,6 +287,7 @@ export function assembleHandoffFacts(
       registryNote: extras.registryNote ?? null,
     },
     liveRepo: { ...live, staleWarning: staleWarning(live) },
+    captainContext: extras.captainContext ?? "unknown",
     claudeMem,
     checkpoint,
     gapSessions: sortedGap,

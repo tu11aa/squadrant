@@ -52,4 +52,6 @@ export type { PeerFirstTurnDeps, PeerFirstTurnResult } from "./peer-first-turn.j
 export * from "./captain-channel.js";
 export * from "./captain-record.js";
 export * from "./opencode-session.js";
+export * from "./context-meter.js";
+export * from "./context-suggest.js";
 export * from "./knowledge/index.js";
