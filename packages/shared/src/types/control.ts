@@ -157,7 +157,11 @@ export type ControlEvent =
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }
-  | { type: "task.turn.completed"; id: string; turnId: string }
+  // #1017: lastMessage = the crew's final assistant text for the turn (bounded),
+  // when the agent's turn-end payload carries one. Core classifies it.
+  // `reply` is stamped by the daemon (never an agent): this is the first turn-end
+  // after a captain message to the crew, i.e. the answer to the captain.
+  | { type: "task.turn.completed"; id: string; turnId: string; lastMessage?: string; reply?: boolean }
   // #763: a crew's turn died on an API error (e.g. 529/overload) — Claude's
   // StopFailure hook. Anti-#2576: NOT task.failed — a hook may never
   // terminalize a task. Structurally identical to task.turn.completed (same
@@ -182,7 +186,8 @@ export type ControlEvent =
   // call (PreToolUse with no matching PostToolUse past TOOL_STALL_BUDGET_MS),
   // letting the notifier render "still running {tool} ~{N}min" instead of the
   // generic headless "no heartbeat" message.
-  | { type: "task.stalled"; id: string; heartbeatBudgetMs: number; tool?: string; elapsedMs?: number }
+  // #1017: escalated = the one-shot hard escalation (no tool result for the hard budget).
+  | { type: "task.stalled"; id: string; heartbeatBudgetMs: number; tool?: string; elapsedMs?: number; escalated?: boolean }
   // task.idle is the interactive analogue of task.stalled: the watchdog has
   // already moved an idle interactive task to 'awaiting-input', and this carries
   // the accurate (non-alarming) notify payload to the captain.

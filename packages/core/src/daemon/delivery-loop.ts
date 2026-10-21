@@ -3,7 +3,9 @@
 import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor, type MailboxEntry } from "../mailbox.js";
 import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
-import { loadConfig, TERMINAL_STATES } from "@squadrant/shared";
+import { loadConfig, TERMINAL_STATES, loadProjectOverride, resolveCaptainCrewTier, type CrewTier } from "@squadrant/shared";
+import { captainPaneAllows, isInformational, InformationalDigest } from "./captain-noise.js";
+import { crewTag } from "./reduce.js";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { coalesceBacklog } from "./backlog-coalesce.js";
 import { deriveCaptainState } from "../liveness.js";
@@ -281,6 +283,18 @@ export function createDelivery(
   // ctx.notifyFault with the real one in production (see context.ts).
   const notifyFault = ctx.notifyFault ?? (() => {});
 
+  // #1017: captain-pane crew tier (per-project override, default alert_only) and
+  // the per-crew digest for informational events under tier `all`.
+  const captainCrewTier: (project: string) => CrewTier =
+    opts.captainCrewTier ?? ((project) => resolveCaptainCrewTier(loadProjectOverride(project)));
+  const digest = new InformationalDigest((key, message) => {
+    const sep = key.indexOf(":");
+    const project = key.slice(0, sep);
+    const record = store.get(project, key.slice(sep + 1));
+    if (!record || TERMINAL_STATES.has(record.state)) return; // stale: the crew has since finished
+    void appendEntry({ project, message, record, event: { type: "task.quiet", id: record.id, quietMs: 0 } });
+  }, opts.captainDigestWindowMs ?? 60_000);
+
   // ── Default push-notification wiring (mailbox-injector spec) ─────────────
   const defaultNotify = async (args: {
     project: string;
@@ -304,6 +318,21 @@ export function createDelivery(
     if (fresh && TERMINAL_STATES.has(fresh.state) && fresh.state !== args.record.state) {
       return;
     }
+    // #1017: same CrewTier model as Telegram. Informational events (plain idle,
+    // first stall, quiet) take no captain turn by default; under tier `all` they
+    // coalesce into one digest per crew. Actionable events flush that crew's
+    // pending digest first (order preserved) and are delivered unchanged.
+    const tier = captainCrewTier(args.project);
+    if (!captainPaneAllows(tier, args.event)) return;
+    const digestKey = `${args.project}:${args.record.id}`;
+    if (tier === "all" && isInformational(args.event)) {
+      digest.push(digestKey, crewTag(args.record), args.event, args.message);
+      return;
+    }
+    digest.flush(digestKey);
+    await appendEntry(args);
+  };
+  const appendEntry = async (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }): Promise<void> => {
     try {
       await appendToMailbox({
         stateRoot,

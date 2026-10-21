@@ -258,6 +258,8 @@ If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attemp
 
 ### Handling CREW IDLE / BLOCKED
 
+Since #1017 a plain end-of-turn, the first stall, and CREW QUIET no longer reach your pane (they stay in `crew tasks`); a CREW IDLE you do see carries the crew's own message word for word — read it before spot-checking. One `CREW STALLED … ESCALATION` (30 min, no tool result) is the "really hung" signal.
+
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
 - **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
 - **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).

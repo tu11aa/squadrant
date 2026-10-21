@@ -18,6 +18,8 @@ export interface NotifyConfig {
 /** Per-project override layer. Every key optional; mirrors the global settings. */
 export interface ProjectOverrideConfig {
   telegram?: { notify?: Partial<NotifyConfig> };
+  /** #1017: crew-event tier for the captain pane (same CrewTier model as Telegram). */
+  captain?: { notify?: { crew?: CrewTier } };
   // Reserved future tenants (resolver is already generic; consumers not yet wired):
   effort?: "max" | "balance" | "low";
   models?: Partial<ModelRoutingConfig>;
@@ -56,6 +58,13 @@ export function saveProjectOverride(name: string, patch: ProjectOverrideConfig, 
 }
 
 export const DEFAULT_NOTIFY: NotifyConfig = { active: false, cap: true, crew: "alert_only" };
+
+/** #1017: the captain pane defaults to actionable-only; `all` adds informational digests. */
+export const DEFAULT_CAPTAIN_CREW_TIER: CrewTier = "alert_only";
+
+export function resolveCaptainCrewTier(override: ProjectOverrideConfig): CrewTier {
+  return override.captain?.notify?.crew ?? DEFAULT_CAPTAIN_CREW_TIER;
+}
 
 const CREW_RANK: Record<CrewTier, number> = { none: 0, done_only: 1, alert_only: 2, all: 3 };
 export function crewRank(tier: CrewTier): number {

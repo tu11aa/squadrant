@@ -166,7 +166,7 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(1);
     expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
     expect(calls[0].message).toMatch(/re-send/i);
-    expect(calls[0].event.type).toBe("task.quiet"); // reuses task.quiet as notify vehicle
+    expect(calls[0].event.type).toBe("task.warn"); // actionable warn vehicle (#1017: never informational task.quiet)
   });
 
   // #466: same crew but WITH firstTurnConfirmedAt set → normal "deep thinking" path.
@@ -211,7 +211,7 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(1);
     expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
     expect(calls[0].message).toMatch(/re-send/i);
-    expect(calls[0].event.type).toBe("task.quiet");
+    expect(calls[0].event.type).toBe("task.warn");
   });
 
   // A `submitted` crew within the undelivered budget must NOT fire (no false alarm).
@@ -905,7 +905,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
 
     it("delivers CREW IDLE for a self-idle turn-end long after the captain's last turn", async () => {
       const store = createStore(dir);
-      store.put(rec("t-self", { state: "working" }));
+      store.put(rec("t-self", { state: "working", provider: "opencode" })); // no text source: generic CREW IDLE (#1017)
       const calls: any[] = [];
       let nowMs = 10_000;
       const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });
@@ -919,7 +919,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
 
     it("delivers CREW IDLE for a turn-end with no prior captain turn at all", async () => {
       const store = createStore(dir);
-      store.put(rec("t-none", { state: "working" }));
+      store.put(rec("t-none", { state: "working", provider: "opencode" })); // no text source: generic CREW IDLE (#1017)
       const calls: any[] = [];
       const d = createDaemon({ store, now: () => 50_000, notify: async (a) => { calls.push(a); } });
       await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-none", turnId: "turn-1" } });
@@ -933,7 +933,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
     // message must read calm rather than like a possible stall.
     it("uses calm 'awaiting your reply' phrasing, not the old alarming 'review and reply or close' wording (#522)", async () => {
       const store = createStore(dir);
-      store.put(rec("t-calm", { state: "working" }));
+      store.put(rec("t-calm", { state: "working", provider: "opencode" })); // no text source: generic CREW IDLE (#1017)
       const calls: any[] = [];
       const d = createDaemon({ store, now: () => 50_000, notify: async (a) => { calls.push(a); } });
       await d.handle({ kind: "event", project: "p", event: { type: "task.turn.completed", id: "t-calm", turnId: "turn-1" } });
@@ -980,7 +980,7 @@ describe("daemon – blocked crew resume path (#183)", () => {
     // to prove the flood is silenced end-to-end.
     it("a genuinely in-flight tool call absorbs repeated turn.completed flaps with ZERO CREW IDLE fires (#492)", async () => {
       const store = createStore(dir);
-      store.put(rec("t-flood", { state: "working" }));
+      store.put(rec("t-flood", { state: "working", provider: "opencode" })); // no text source: generic CREW IDLE (#1017)
       const calls: any[] = [];
       let nowMs = 100_000; // long past any captain-turn debounce window
       const d = createDaemon({ store, now: () => nowMs, notify: async (a) => { calls.push(a); } });

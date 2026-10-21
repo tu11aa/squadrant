@@ -396,7 +396,7 @@ describe("defaultNotify staleness guard (#594b)", () => {
       project: "demo",
       message: "CREW IDLE [claude/t1]: turn ended, awaiting your reply.",
       record: snapshot,
-      event: { type: "task.turn.completed", id: "t1", turnId: "x" },
+      event: { type: "task.turn.completed", id: "t1", turnId: "x", lastMessage: "Ready for the next step, captain?" },
     });
 
     const stats = await mailboxStats(stateRoot, "demo");
@@ -438,7 +438,7 @@ describe("defaultNotify staleness guard (#594b)", () => {
       project: "demo",
       message: "CREW IDLE [claude/t1]: turn ended, awaiting your reply.",
       record: snapshot,
-      event: { type: "task.turn.completed", id: "t1", turnId: "x" },
+      event: { type: "task.turn.completed", id: "t1", turnId: "x", lastMessage: "Ready for the next step, captain?" },
     });
 
     const stats = await mailboxStats(stateRoot, "demo");
