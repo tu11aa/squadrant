@@ -90,10 +90,28 @@ function gatherOpenPRs(runner: CommandRunner, projectPath: string): LiveOpenPR[]
   }
 }
 
-function gatherLiveCrews(tasks: TaskRecord[]): LiveCrewSummary[] {
+/** #1015: resolve an approved crew's PR lazily via gh. Unknown (gh down) keeps it listed — never hide an open review. */
+function prStillOpen(runner: CommandRunner, projectPath: string, t: TaskRecord): boolean {
+  const out = tryRun(runner, "gh", ["pr", "view", t.prUrl ?? String(t.prNumber), "--json", "state", "--jq", ".state"], projectPath);
+  const state = out?.trim();
+  return !(state === "MERGED" || state === "CLOSED");
+}
+
+export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, projectPath: string): LiveCrewSummary[] {
   return tasks
-    .filter((t) => !TERMINAL_STATES.has(t.state))
-    .map((t) => ({ name: t.name ?? t.id, state: t.state, task: t.task, question: t.question, operatorHold: t.operatorHold }));
+    // #1015: an approved crew is terminal (`done`) but stays live while its PR awaits human review/merge.
+    .filter((t) => !TERMINAL_STATES.has(t.state) || (t.reviewStage === "pr-open" && prStillOpen(runner, projectPath, t)))
+    .map((t) => ({
+      name: t.name ?? t.id,
+      state: t.state,
+      task: t.task,
+      question: t.question,
+      operatorHold: t.operatorHold,
+      reviewNote: t.reviewNote,
+      branch: t.branch,
+      prUrl: t.prUrl,
+      reviewStage: t.reviewStage === "pr-open" ? ("pr-open" as const) : undefined,
+    }));
 }
 
 /** ahead_by from GitHub's compare API — exact, server-computed, no local objects needed. Only meaningful for a PUSHED branch. */
@@ -217,7 +235,7 @@ export function gatherLiveRepoState(
     aheadOfBaseSource,
     fetchAgeMs,
     openPRs: gatherOpenPRs(runner, projectPath),
-    liveCrews: gatherLiveCrews(tasks),
+    liveCrews: gatherLiveCrews(tasks, runner, projectPath),
     conflicts,
     branchState,
     unreleasedAheadOfReleaseBranch,

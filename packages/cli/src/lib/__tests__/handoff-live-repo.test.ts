@@ -296,6 +296,39 @@ describe("gatherLiveRepoState", () => {
     ]);
   });
 
+  describe("approved crews awaiting human review (#1015)", () => {
+    const approved = task({
+      name: "crew-pr", state: "done", task: "ship it", reviewNote: "tests green",
+      branch: "crew/crew-pr", prUrl: "https://github.com/x/y/pull/7", prNumber: 7, reviewStage: "pr-open",
+    });
+    const PR_VIEW = "gh pr view https://github.com/x/y/pull/7 --json state --jq .state";
+    const base = (prState: string | (() => string)): Record<string, string | (() => string)> => ({
+      "git -C REPO rev-parse --abbrev-ref HEAD": "develop\n",
+      "git -C REPO log -15 --oneline": "",
+      [REPO_VIEW]: () => { throw new Error("gh unavailable"); },
+      "git -C REPO rev-list --count origin/main..HEAD": "0\n",
+      [PR_LIST]: () => { throw new Error("gh unavailable"); },
+      ...branchStateDefaults("develop", "main"),
+      [PR_VIEW]: prState,
+    });
+
+    it("keeps an approved crew whose PR is open, labelled pr-open, with reviewNote + PR", () => {
+      const state = gatherLiveRepoState("REPO", "main", [approved], fakeRunner(base("OPEN\n")), NOW);
+      expect(state.liveCrews).toEqual([
+        expect.objectContaining({ name: "crew-pr", reviewStage: "pr-open", reviewNote: "tests green", prUrl: "https://github.com/x/y/pull/7", branch: "crew/crew-pr" }),
+      ]);
+    });
+
+    it.each(["MERGED", "CLOSED"])("drops it once the PR is %s", (st) => {
+      expect(gatherLiveRepoState("REPO", "main", [approved], fakeRunner(base(`${st}\n`)), NOW).liveCrews).toEqual([]);
+    });
+
+    it("keeps it listed when gh cannot answer — an open review is never hidden on a guess", () => {
+      const runner = fakeRunner(base(() => { throw new Error("offline"); }));
+      expect(gatherLiveRepoState("REPO", "main", [approved], runner, NOW).liveCrews).toHaveLength(1);
+    });
+  });
+
   it("degrades gracefully to safe defaults when every git and gh command fails", () => {
     const runner: CommandRunner = {
       run() {

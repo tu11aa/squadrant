@@ -126,6 +126,15 @@ export interface TaskRecord {
    *  confirmed. The watchdog uses this to emit CREW UNDELIVERED instead of the
    *  misleading "deep thinking" message for a crew that never received its task. */
   firstTurnConfirmedAt?: number;
+  /** #1015: the crew branch and the PR `crew approve` opened for it. Set only by the
+   *  approve-sourced task.done; the record is terminal (`done`) but the work is not
+   *  finished until a human merges the PR — `reviewStage` carries that. */
+  branch?: string;
+  prUrl?: string;
+  prNumber?: number;
+  /** #1015: human-review stage after approve. Set to `pr-open` by approve; `merged` /
+   *  `closed` are resolved lazily from `gh` when the handoff facts are read. */
+  reviewStage?: "pr-open" | "merged" | "closed";
 }
 
 export type ControlEvent =
@@ -144,7 +153,7 @@ export type ControlEvent =
   // any OTHER task.done while state === 'review' (a crew's own completion
   // protocol), so the gate can't be bypassed by crew habit; approve's stamped
   // done is the one path the veto lets through.
-  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean; source?: "approve" }
+  | { type: "task.done"; id: string; resultRef: string; message?: string; parseWarning?: boolean; source?: "approve"; pr?: { url: string; number?: number; branch: string } }
   | { type: "task.failed"; id: string; error: string; exitCode?: number }
   | { type: "task.session"; id: string; resumeRef: string }
   | { type: "task.turn.started"; id: string; turnId: string }

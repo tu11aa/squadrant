@@ -345,6 +345,12 @@ function defaultGetCommitSubject(cwd: string): string {
   }
 }
 
+/** #1015: the PR number from the URL `gh pr create` prints (`…/pull/<n>`), if it has one. */
+function parsePrNumber(url: string): number | undefined {
+  const m = /\/pull\/(\d+)/.exec(url);
+  return m ? Number(m[1]) : undefined;
+}
+
 /**
  * `squadrant crew approve` — the accept side of the #599 review gate. Only
  * valid on a task in 'review' state (set by `squadrant crew signal review`):
@@ -395,7 +401,7 @@ export async function runCrewApprove(
   await deps.call({
     kind: "event",
     project,
-    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}`, source: "approve" },
+    event: { type: "task.done", id: task.id, resultRef: "", message: `Approved — PR opened: ${prUrl}`, source: "approve", pr: { url: prUrl, number: parsePrNumber(prUrl), branch } },
   });
 
   return prUrl;

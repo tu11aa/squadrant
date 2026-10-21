@@ -168,6 +168,13 @@ Squadrant has two send paths, and each channel covers exactly one:
 | `crew send` → crew | `confirmedSendToPane` @ `crew.ts:70` | crew (usually opencode) | opencode HTTP |
 | daemon → captain (#332) | `CaptainDelivery` | captain (**always claude**) | claude UDS |
 
+**Compact hold (#1015).** A peer-socket `queued`/`accepted` result advances the mailbox cursor,
+so a message accepted around a `/compact` could be lost with the compacted context. The daemon
+therefore freezes captain delivery for a project from the moment `captain compact` passes its
+idle check (after the mailbox has drained) until the `SessionStart(source=compact)` hook reports
+back, bounded at 3 minutes. Held entries keep their place on the durable mailbox and deliver in
+order afterwards. See [`reference.md` § Captain rollover](../reference.md#captain-rollover-1010).
+
 **Addressing is predetermined on both sides — no discovery, no race.**
 
 - **claude:** launch captains with `--messaging-socket-path /tmp/cc-socks/squadrant-<taskId>.sock`

@@ -177,7 +177,17 @@ export function reduce(rec: TaskRecord, ev: ControlEvent, now: number): TaskReco
       if (rec.state === "review" && ev.source !== "approve") {
         return { ...rec, lastHeartbeat: now, lastEvent: ev.type };
       }
-      return { ...base, state: "done", resultRef: ev.resultRef, parseWarning: ev.parseWarning };
+      return {
+        ...base,
+        state: "done",
+        resultRef: ev.resultRef,
+        parseWarning: ev.parseWarning,
+        // #1015: only the approve-sourced done carries a PR; record it so the ledger
+        // can tell "approved, awaiting human merge" apart from "merged".
+        ...(ev.source === "approve" && ev.pr
+          ? { branch: ev.pr.branch, prUrl: ev.pr.url, prNumber: ev.pr.number, reviewStage: "pr-open" as const }
+          : {}),
+      };
     case "task.failed":
       return { ...base, state: "failed", error: ev.error, exitCode: ev.exitCode };
     case "task.cancelled":

@@ -173,6 +173,13 @@ export interface DaemonContext {
   captainAgentFor?: (project: string) => string | undefined;
   /** #1010: queue a /compact for a project's captain (set by start.ts; absent without a cmux surface driver). */
   requestCaptainCompact?: (project: string, focus?: string) => { queued: true };
+  /** #1015: true while a captain compact is armed/running for the project — the delivery loop
+   *  must not type or send, and must not advance the cursor (set by start.ts). */
+  captainCompactHolds?: (project: string) => boolean;
+  /** #1015: the SessionStart(source=compact) hook arrived — end the delivery hold. */
+  captainCompactDone?: (project: string) => void;
+  /** #1015: true while the delivery loop is mid-pass (set by createDelivery). */
+  deliveryBusy?: () => boolean;
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */

@@ -11,7 +11,7 @@ import { createDelivery } from "./delivery-loop.js";
 import { createCaptainCompact } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
-import { rotateIfNeeded, mailboxStats, readCursor, appendCaptainMessage } from "../mailbox.js";
+import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage } from "../mailbox.js";
 import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
 import { formatDownAlertText } from "./down-alert.js";
 import { projectHealth, deriveCaptainState, type ComponentHealth } from "../liveness.js";
@@ -323,8 +323,16 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
 
   let compactTimer: NodeJS.Timeout | undefined;
   if (daemonCmux) {
-    const compact = createCaptainCompact({ cmux: daemonCmux, log, injectedSurfaces: ctx.opts.captainSurfaces });
+    const compact = createCaptainCompact({
+      cmux: daemonCmux,
+      log,
+      injectedSurfaces: ctx.opts.captainSurfaces,
+      undeliveredCount: async (project) => (await readUndelivered(stateRoot, project)).length,
+      deliveryBusy: () => ctx.deliveryBusy?.() ?? false,
+    });
     ctx.requestCaptainCompact = compact.request;
+    ctx.captainCompactHolds = compact.holdsDelivery;
+    ctx.captainCompactDone = compact.compactDone;
     if (opts.sweepMs && opts.sweepMs > 0) {
       compactTimer = setInterval(() => { void compact.tick(); }, 1000);
       compactTimer.unref?.();

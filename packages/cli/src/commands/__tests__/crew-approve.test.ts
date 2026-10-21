@@ -110,7 +110,7 @@ describe("runCrewApprove (#599)", () => {
     expect(call).toHaveBeenLastCalledWith({
       kind: "event",
       project: "brove",
-      event: { type: "task.done", id: "t1", resultRef: "", message: "Approved — PR opened: https://github.com/x/y/pull/42", source: "approve" },
+      event: { type: "task.done", id: "t1", resultRef: "", message: "Approved — PR opened: https://github.com/x/y/pull/42", source: "approve", pr: { url: "https://github.com/x/y/pull/42", number: 42, branch: "crew/fix-579" } },
     });
     expect(prUrl).toBe("https://github.com/x/y/pull/42");
   });

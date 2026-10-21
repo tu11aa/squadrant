@@ -271,6 +271,7 @@
       </svg>
     </div>
     <div class="note">Stale-skip (#332): entries older than <code>sessionStartMs - STALE_THRESHOLD_MS</code> at daemon-boot are silently acked (cursor advanced, no delivery) — except <b>terminal kinds</b>, which always deliver even late. This stops a fresh daemon restart from replaying a captain's entire historical backlog, while guaranteeing a <code>task.blocked</code> or <code>task.done</code> is never silently dropped.</div>
+    <div class="note"><b>Compact hold (#1015):</b> while a captain <code>/compact</code> is armed or running, <code>deliveryTick()</code> skips that project entirely (also between entries of a pass). Nothing is typed, the cursor does not advance, and the entries wait on the mailbox. The hold ends on the <code>SessionStart(source=compact)</code> hook, or after 3 minutes.</div>
   </section>
 
   <!-- SLIDE 4: CaptainDelivery gate -->
