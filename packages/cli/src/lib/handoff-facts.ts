@@ -42,6 +42,8 @@ export interface LiveCrewSummary {
   prUrl?: string;
   /** #1015: set for an approved crew whose PR is still open — "awaiting human review". */
   reviewStage?: "pr-open";
+  /** #1015: the crew's tab is still open (so a terminal crew is awaiting the captain, not finished). */
+  tabOpen?: true;
 }
 
 export interface HandoffConflict {

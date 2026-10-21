@@ -119,11 +119,17 @@ function recordCaptainSessionStart(payload: unknown): void {
 }
 
 /** #1015: best-effort — a daemon that is down simply contributes no ledger. */
+async function runCrewList(project: string): Promise<Array<{ name: string }>> {
+  return (await import("./crew.js")).runCrewList(project);
+}
+
 async function compactLedgerContext(project: string): Promise<string> {
   try {
     const projPath = loadConfig().projects[project]?.path ?? process.cwd();
     const tasks = (await sendRequest(SOCK, { kind: "list", project })) as TaskRecord[];
-    const crews = gatherLiveCrews(tasks, defaultCommandRunner, projPath);
+    // Crews that signalled done but still have a tab are waiting on this captain — keep them.
+    const openTabs = await runCrewList(project).then((l) => new Set(l.map((c) => c.name))).catch(() => new Set<string>());
+    const crews = gatherLiveCrews(tasks, defaultCommandRunner, projPath, openTabs);
     return renderLiveLedger(crews, await readUndelivered(stateRoot(), project));
   } catch {
     return "";

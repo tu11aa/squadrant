@@ -35,6 +35,11 @@ describe("renderLiveLedger", () => {
     expect(taskSummary("")).toBe("");
   });
 
+  it("labels a done crew with an open tab as awaiting captain review", () => {
+    const out = renderLiveLedger([{ name: "w", state: "done", task: "ship it", tabOpen: true }], []);
+    expect(out).toContain("- w [done: awaiting captain review] | ship it");
+  });
+
   it("bounds its size and says it truncated", () => {
     const crews = Array.from({ length: 200 }, (_, i) => ({ name: `crew-${i}`, state: "working", task: "t", question: "q".repeat(50) }));
     const out = renderLiveLedger(crews, []);

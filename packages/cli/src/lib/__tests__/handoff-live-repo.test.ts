@@ -319,6 +319,13 @@ describe("gatherLiveRepoState", () => {
       ]);
     });
 
+    it("keeps a done crew whose tab is still open (awaiting captain review); drops one with no tab and no PR", () => {
+      const waiting = task({ id: "w", name: "crew-wait", state: "done", task: "finished" });
+      const gone = task({ id: "g", name: "crew-gone", state: "done", task: "finished" });
+      const state = gatherLiveRepoState("REPO", "main", [waiting, gone], fakeRunner(base("OPEN\n")), NOW, false, new Set(["crew-wait"]));
+      expect(state.liveCrews).toEqual([expect.objectContaining({ name: "crew-wait", state: "done", tabOpen: true, branch: "crew/crew-wait" })]);
+    });
+
     it.each(["MERGED", "CLOSED"])("drops it once the PR is %s", (st) => {
       expect(gatherLiveRepoState("REPO", "main", [approved], fakeRunner(base(`${st}\n`)), NOW).liveCrews).toEqual([]);
     });

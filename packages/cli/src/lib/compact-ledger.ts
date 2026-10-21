@@ -20,7 +20,10 @@ export function taskSummary(task: string): string {
 }
 
 function crewLine(c: LiveCrewSummary): string {
-  const parts = [`- ${c.name} [${c.reviewStage === "pr-open" ? "awaiting human review" : c.state}]`];
+  const label = c.reviewStage === "pr-open" ? "awaiting human review"
+    : c.state === "done" && c.tabOpen ? "done: awaiting captain review"
+    : c.state;
+  const parts = [`- ${c.name} [${label}]`];
   const summary = taskSummary(c.task ?? "");
   if (summary) parts.push(summary);
   if (c.branch) parts.push(`branch ${c.branch}`);

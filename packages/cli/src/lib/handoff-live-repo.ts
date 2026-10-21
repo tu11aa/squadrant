@@ -97,10 +97,16 @@ function prStillOpen(runner: CommandRunner, projectPath: string, t: TaskRecord):
   return !(state === "MERGED" || state === "CLOSED");
 }
 
-export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, projectPath: string): LiveCrewSummary[] {
+/**
+ * `openTabs` = names of crews whose tab/surface is still open (what `crew list` shows). A crew
+ * that signalled done and is waiting on the captain is terminal but not finished — it stays.
+ */
+export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, projectPath: string, openTabs: ReadonlySet<string> = new Set()): LiveCrewSummary[] {
   return tasks
     // #1015: an approved crew is terminal (`done`) but stays live while its PR awaits human review/merge.
-    .filter((t) => !TERMINAL_STATES.has(t.state) || (t.reviewStage === "pr-open" && prStillOpen(runner, projectPath, t)))
+    .filter((t) => !TERMINAL_STATES.has(t.state)
+      || (t.reviewStage === "pr-open" && prStillOpen(runner, projectPath, t))
+      || (t.name !== undefined && openTabs.has(t.name)))
     .map((t) => ({
       name: t.name ?? t.id,
       state: t.state,
@@ -112,6 +118,7 @@ export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, proj
       branch: t.branch ?? crewBranch(t.name ?? t.id),
       prUrl: t.prUrl,
       reviewStage: t.reviewStage === "pr-open" ? ("pr-open" as const) : undefined,
+      tabOpen: t.name !== undefined && openTabs.has(t.name) ? true : undefined,
     }));
 }
 
@@ -163,6 +170,7 @@ export function gatherLiveRepoState(
   runner: CommandRunner = defaultCommandRunner,
   now: number = Date.now(),
   fetch: boolean = false,
+  openTabs: ReadonlySet<string> = new Set(),
 ): LiveRepoState {
   const branch = (tryRun(runner, "git", ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"], projectPath) ?? "").trim();
   const detached = branch === "HEAD";
@@ -236,7 +244,7 @@ export function gatherLiveRepoState(
     aheadOfBaseSource,
     fetchAgeMs,
     openPRs: gatherOpenPRs(runner, projectPath),
-    liveCrews: gatherLiveCrews(tasks, runner, projectPath),
+    liveCrews: gatherLiveCrews(tasks, runner, projectPath, openTabs),
     conflicts,
     branchState,
     unreleasedAheadOfReleaseBranch,
