@@ -238,7 +238,7 @@ describe("captain-pane delivery + replay (#1017)", () => {
     // the crew finally asks the captain something, then finishes
     await d.handle({ kind: "event", project: "demo", event: { type: "task.turn.started", id: "r1", turnId: "q" } });
     await d.handle({ kind: "event", project: "demo", event: { type: "task.turn.completed", id: "r1", turnId: "q", lastMessage: "Tests pass. Merge now or wait for CI?" } });
-    await d.handle({ kind: "event", project: "demo", event: { type: "task.done", id: "r1" } });
+    await d.handle({ kind: "event", project: "demo", event: { type: "task.done", id: "r1", resultRef: "/r" } });
   }
 
   it("default tier: 15 informational events + 1 question + done → 2 captain deliveries, nothing actionable lost", async () => {
@@ -284,7 +284,7 @@ describe("captain-pane delivery + replay (#1017)", () => {
   it("tier none drops everything, even CREW DONE", async () => {
     const w = wire("none");
     w.store.put(rec("r4", { state: "awaiting-input" }));
-    await w.d.handle({ kind: "event", project: "demo", event: { type: "task.done", id: "r4" } });
+    await w.d.handle({ kind: "event", project: "demo", event: { type: "task.done", id: "r4", resultRef: "/r" } });
     expect((await mailboxStats((await entries(w), w.stateRoot), "demo")).maxSeq).toBe(0);
   });
 });
