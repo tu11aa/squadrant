@@ -291,8 +291,8 @@ describe("gatherLiveRepoState", () => {
     const state = gatherLiveRepoState("REPO", "main", tasks, runner, NOW);
 
     expect(state.liveCrews).toEqual([
-      { name: "crew-1", state: "working", task: "fix bug", question: undefined },
-      { name: "crew-2", state: "blocked", task: "add feature", question: "which approach?" },
+      { name: "crew-1", state: "working", task: "fix bug", question: undefined, branch: "crew/crew-1" },
+      { name: "crew-2", state: "blocked", task: "add feature", question: "which approach?", branch: "crew/crew-2" },
     ]);
   });
 

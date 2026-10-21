@@ -10,8 +10,19 @@ const PREVIEW_ENTRIES = 5;
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+const SUMMARY_CHARS = 120;
+
+/** What the crew is for: the first line naming an issue (#N), else the first non-heading line of the brief. */
+export function taskSummary(task: string): string {
+  const lines = task.split(/\r?\n/).map((l) => l.replace(/^[\s>*-]+/, "").trim()).filter(Boolean);
+  const pick = lines.find((l) => /#\d+/.test(l)) ?? lines.find((l) => !l.startsWith("#")) ?? lines[0] ?? "";
+  return clip(oneLine(pick), SUMMARY_CHARS);
+}
+
 function crewLine(c: LiveCrewSummary): string {
   const parts = [`- ${c.name} [${c.reviewStage === "pr-open" ? "awaiting human review" : c.state}]`];
+  const summary = taskSummary(c.task ?? "");
+  if (summary) parts.push(summary);
   if (c.branch) parts.push(`branch ${c.branch}`);
   if (c.prUrl) parts.push(`PR ${c.prUrl}`);
   if (c.operatorHold) parts.push("operator hold");

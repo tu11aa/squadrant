@@ -1,6 +1,6 @@
 // #1015: the live-ledger block re-injected after a captain compact.
 import { describe, it, expect } from "vitest";
-import { renderLiveLedger } from "../compact-ledger.js";
+import { renderLiveLedger, taskSummary } from "../compact-ledger.js";
 import type { MailboxEntry } from "@squadrant/core";
 
 const mail = (seq: number, message: string): MailboxEntry => ({ seq, ts: "t", kind: "task.done", name: "c1", message });
@@ -18,10 +18,21 @@ describe("renderLiveLedger", () => {
       ],
       [mail(12, "CREW DONE c1 — shipped"), mail(13, "CREW BLOCKED c2")],
     );
-    expect(out).toContain('- noise [blocked] | question: "Rebase onto develop, or merge?\nSecond line"');
-    expect(out).toContain("- ledger [awaiting human review] | branch crew/ledger | PR https://github.com/x/y/pull/9 | review note: tests green");
+    expect(out).toContain('- noise [blocked] | t | question: "Rebase onto develop, or merge?\nSecond line"');
+    expect(out).toContain("- ledger [awaiting human review] | t | branch crew/ledger | PR https://github.com/x/y/pull/9 | review note: tests green");
     expect(out).toContain("Undelivered mailbox: 2 message(s)");
     expect(out).toContain("#12 task.done (c1): CREW DONE c1 — shipped");
+  });
+
+  it("gives every crew a task summary and branch", () => {
+    const out = renderLiveLedger([{ name: "noise", state: "working", task: "## Objective\nFix #1017 cut crew IDLE noise in the captain pane\nmore", branch: "crew/noise" }], []);
+    expect(out).toContain("- noise [working] | Fix #1017 cut crew IDLE noise in the captain pane | branch crew/noise");
+  });
+
+  it("summary skips headings, strips bullets and clips to ~120 chars", () => {
+    expect(taskSummary("## Objective\n- Implement the thing")).toBe("Implement the thing");
+    expect(taskSummary("x".repeat(300)).length).toBe(120);
+    expect(taskSummary("")).toBe("");
   });
 
   it("bounds its size and says it truncated", () => {
