@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-21
+
+Captain context you can keep under control. The captain gets a context meter with rollover suggestions at safe boundaries (never an automatic compact), a one-command rollover, a crew ledger that survives a compact, and discussion threads: a fork of the captain per topic, so long discussions stop filling the captain's context. Crew IDLE/STALLED noise is cut. PRs #1011, #1013, #1019, #1020, #1021, #1022, #1024, #1025.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. Relaunch running captains to pick up the new template (3-level triage of crew questions).
+
+### Added
+
+- **Captain discussion threads** (`squadrant thread open|park|resume|close|list|show`). A thread forks the captain session (`claude --resume <captain> --fork-session`) into a `💬 <project>:<id>` tab for one topic; the fork reuses the captain's prompt cache. When the decision is settled, the thread parks: the captain gets ONE decision message (question, decision, reasons, rejected options, per-crew actions), the handoff gets one line, and the tab closes. Resume within ~1h reuses the same session plus a delta; later it forks fresh with the topic's earlier decisions. Agents without fork get a fresh session seeded from the crew ledger and decision records. Records live at `<stateRoot>/<project>/threads/<id>.json`; `defaults.maxThreads` caps open threads (default 3) (#1016).
+- **3-level triage of crew questions** in the captain templates and `captain-ops`: a question local to one crew goes to the operator in that crew's tab; one already answered by a decision, brief or rule is answered by the captain; a new decision or a cross-crew question goes to a thread. Crews list decisions settled directly with the operator as `Decided with operator: …` in their done message (#1016).
+- **`/squadrant:rollover`** (alias `/squadrant:roll`, Claude captains): writes the handoff and daily log, then `squadrant captain compact <project>` has the daemon type `/compact` once the captain is idle; after the compact the SessionStart hook hands the handoff back with "continue from nextSteps" (#1010).
+- **Context meter and boundary rollover suggestions.** Captain and crew context is measured from the transcript and shown in `crew list` and `handoff facts`. The daemon suggests a rollover only at a boundary (e.g. a crew just finished) once context passes a soft threshold (150k, then every +50k) and warns past a hard one (350k, then every +100k); `crew send` warns when the target crew is heavy. Thresholds in `defaults.contextBudget`. Nothing is ever compacted automatically (#1015).
+- **Crew ledger after a compact.** Task records keep `branch`, `prUrl`, `prNumber` and `reviewStage`; after a compact the captain gets a live ledger of its crews (state, issue summary, branch, "done: awaiting captain review") next to the handoff. Delivery is held while `/compact` runs and the mailbox is drained before it is sent (#1015).
+- **`squadrant:human-review-guide` skill**: a local guide for the operator's human gate of crew PRs; one PR in chat, several as one local interactive HTML. Never posted anywhere (#1012).
+
+### Changed
+
+- **Less crew noise for the captain** (`captain.notify.crew`, default `alert_only`). The first turn-end after a captain message is delivered word for word as the crew's reply; a turn-end ending in a question becomes BLOCKED; STALLED fires once per episode plus one escalation after 30 min; tier `all` gives a per-crew digest instead of a stream (#1017).
+
+### Fixed
+
+- **Project resolution by path prefix.** A path inside `~/x/app-core` no longer resolves to project `app`; matching is on directory boundaries, longest path wins. This made rollover inject the wrong project's handoff (#1018).
+- **Captain context meter showing `unknown`** when the newest captain-sessions record had no transcript; it now picks the newest record whose transcript exists (#1023).
+
 ## [0.30.1] - 2026-10-19
 
 Path moves keep their references. `squadrant migrate` now rewrites every file that cites a moved path, and `squadrant doctor` finds the references that point nowhere. This release also has fixes for a captain's first boot, crew skills, KB repo hygiene, and AI attribution trailers. PRs #1000, #1001, #1003, #1005.
