@@ -17,7 +17,7 @@ vi.mock("@squadrant/shared", () => ({
   CONFIG_DIR: "/tmp/squadrant",
 }));
 
-import { dispatchToSibling, isCaptainAlive, probeCaptainChannel } from "../group-dispatch.js";
+import { dispatchToSibling, isCaptainAlive, probeCaptainChannel, projectForPath, resolveCurrentProject } from "../group-dispatch.js";
 import { writeCaptainAddress } from "../captain-record.js";
 
 const makeConfig = (overrides: Record<string, any> = {}) => {
@@ -319,5 +319,47 @@ describe("probeCaptainChannel", () => {
     });
     const socketAccepts = vi.fn(async () => true);
     expect(await probeCaptainChannel("proj", { stateRoot: join(dir, "state"), socketAccepts })).toBe(true);
+  });
+});
+
+describe("projectForPath (#1018)", () => {
+  const app = { path: "/work/app" };
+  const appCore = { path: "/work/app-core" };
+
+  it("does not prefix-match a sibling dir, in either config order", () => {
+    expect(projectForPath("/work/app-core", { app, "app-core": appCore })).toBe("app-core");
+    expect(projectForPath("/work/app-core", { "app-core": appCore, app })).toBe("app-core");
+    expect(projectForPath("/work/app-core/src", { app, "app-core": appCore })).toBe("app-core");
+    expect(projectForPath("/work/app", { "app-core": appCore, app })).toBe("app");
+  });
+
+  it("returns null when only a prefix (not a directory) matches", () => {
+    expect(projectForPath("/work/app-core", { app })).toBeNull();
+  });
+
+  it("longest path wins for nested projects, in either order", () => {
+    const inner = { path: "/work/app/packages/inner" };
+    expect(projectForPath("/work/app/packages/inner/x", { app, inner })).toBe("inner");
+    expect(projectForPath("/work/app/packages/inner/x", { inner, app })).toBe("inner");
+    expect(projectForPath("/work/app/other", { inner, app })).toBe("app");
+  });
+
+  it("tolerates trailing slashes on config path and cwd", () => {
+    expect(projectForPath("/work/app", { app: { path: "/work/app/" } })).toBe("app");
+    expect(projectForPath("/work/app/", { app })).toBe("app");
+    expect(projectForPath("/work/app-core/", { app: { path: "/work/app/" } })).toBeNull();
+  });
+
+  it("matches the exact path", () => {
+    expect(projectForPath("/work/app", { app })).toBe("app");
+  });
+
+  it("resolveCurrentProject uses process.cwd()", () => {
+    const spy = vi.spyOn(process, "cwd").mockReturnValue("/work/app-core");
+    try {
+      expect(resolveCurrentProject({ projects: { app, "app-core": appCore } } as any)).toBe("app-core");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

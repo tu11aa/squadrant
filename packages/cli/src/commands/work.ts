@@ -1,8 +1,8 @@
-import path from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, resolveHome, TERMINAL_WORK_STATES, type SquadrantConfig, type WorkItem } from "@squadrant/shared";
+import { loadConfig, TERMINAL_WORK_STATES, type SquadrantConfig, type WorkItem } from "@squadrant/shared";
 import {
+  projectForPath,
   createWorkStore,
   createWorkItem,
   closeWorkItem,
@@ -16,11 +16,7 @@ import {
  *  `work list`/`work start` default to it (spec §4.5); `--all`/`--project`
  *  override. */
 export function detectCurrentProject(config: SquadrantConfig, cwd: string = process.cwd()): string | undefined {
-  for (const [name, proj] of Object.entries(config.projects)) {
-    const projPath = resolveHome(proj.path);
-    if (cwd === projPath || cwd.startsWith(projPath + path.sep)) return name;
-  }
-  return undefined;
+  return projectForPath(cwd, config.projects) ?? undefined;
 }
 
 /** Pure. Groups items into top-level roots (parent is null, or points at an
