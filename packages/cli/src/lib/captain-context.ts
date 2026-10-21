@@ -6,9 +6,10 @@ import { workspacePath, loadConfig } from "@squadrant/shared";
 import { readClaudeContext } from "@squadrant/core";
 import type { ContextMeter } from "@squadrant/core";
 import { readCaptainSessionRegistry } from "./captain-session-registry.js";
+import type { CaptainSessionRecord } from "./handoff-facts.js";
 
 /** Newest registered claude captain session for `project` whose transcript exists, else null. */
-export function captainTranscriptPath(project: string): string | null {
+export function captainSession(project: string): CaptainSessionRecord | null {
   try {
     const proj = loadConfig().projects[project];
     const vaults = [workspacePath(project), ...(proj?.spokeVault ? [proj.spokeVault] : [])];
@@ -16,10 +17,14 @@ export function captainTranscriptPath(project: string): string | null {
       .flatMap((v) => readCaptainSessionRegistry(v))
       .filter((r) => r.agent === "claude" && r.transcriptPath && fs.existsSync(r.transcriptPath))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
-    return newest ? newest.transcriptPath : null;
+    return newest ?? null;
   } catch {
     return null;
   }
+}
+
+export function captainTranscriptPath(project: string): string | null {
+  return captainSession(project)?.transcriptPath ?? null;
 }
 
 export function captainContext(project: string): ContextMeter {

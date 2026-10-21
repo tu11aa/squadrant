@@ -263,6 +263,8 @@ export interface SquadrantConfig {
   };
   defaults: {
     maxCrew: number;
+    /** #1016: cap on OPEN captain discussion threads (parked ones are free). Default: 3. */
+    maxThreads?: number;
     worktreeDir: string;
     teammateMode: string;
     permissions: PermissionConfig;
