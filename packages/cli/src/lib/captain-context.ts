@@ -14,9 +14,9 @@ export function captainTranscriptPath(project: string): string | null {
     const vaults = [workspacePath(project), ...(proj?.spokeVault ? [proj.spokeVault] : [])];
     const newest = vaults
       .flatMap((v) => readCaptainSessionRegistry(v))
-      .filter((r) => r.agent === "claude" && r.transcriptPath)
+      .filter((r) => r.agent === "claude" && r.transcriptPath && fs.existsSync(r.transcriptPath))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
-    return newest && fs.existsSync(newest.transcriptPath) ? newest.transcriptPath : null;
+    return newest ? newest.transcriptPath : null;
   } catch {
     return null;
   }
