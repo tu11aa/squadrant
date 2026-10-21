@@ -443,9 +443,37 @@ $ squadrant crew answer myproj video 1
 
 - **Daemon-direct delivery** — crew turns and handoffs are delivered straight to the cmux surface by the daemon. The old `notify-relay` supervisor was deleted; there is no relay process to keep alive ([#332](https://github.com/tu11aa/squadrant/issues/332)).
 - **Semantic heartbeat** — crews emit a lifecycle signal the captain reads as **CREW IDLE / QUIET / STALLED**, distinguishing "waiting for you" from "wedged" without scraping the pane ([#354](https://github.com/tu11aa/squadrant/issues/354)).
+- **Captain-pane noise tiers (#1017)** — only *actionable* crew events take a captain turn by default: `done`, `review`, `blocked` (with its question), `failed`, `task.turn.failed`, `task.timeout`, an idle turn-end addressed to the captain, and the one-shot stall escalation. Plain idle, first-stall and quiet are *informational*: silent in the pane, still visible in `squadrant crew tasks`. See [Captain-pane notification tiers](#captain-pane-notification-tiers-1017).
 - **Blocked crews re-notify** — a `CREW BLOCKED` push is not one-shot. A *different* question arriving while a crew is already blocked fires a fresh notification (an identical repeat stays suppressed — the first question wins, [#174](https://github.com/tu11aa/squadrant/issues/174)), and a crew that stays blocked past ~30 minutes gets exactly one `CREW BLOCKED REMINDER` (explicitly the same question, never a new one), then stays quiet for the rest of that episode ([#857](https://github.com/tu11aa/squadrant/issues/857)).
 - **`stopped` project status + orphan reap** — when a captain goes away, the daemon reaps its orphaned crews and marks the project `stopped` (intentional shutdown) rather than leaving stale tabs or faulting ([#324](https://github.com/tu11aa/squadrant/issues/324) / [#323](https://github.com/tu11aa/squadrant/issues/323) / [#388](https://github.com/tu11aa/squadrant/pull/388)).
 - **Status: superseded for claude by the control channel.** The semantic heartbeat above still runs, but delivery confirmation for claude crews now comes from an agent receipt (`controlChannel=on`), not pane inference — see [Control/Captain Channel (#667)](#controlcaptain-channel-667).
+
+#### Captain-pane notification tiers (#1017)
+
+Every crew lifecycle event used to become a full captain turn; most (plain idle, stalled, quiet) needed no action but each re-read the whole captain context. The captain pane now uses the **same `CrewTier` model as Telegram**, set per project in `~/.config/squadrant/projects/<name>.json`:
+
+```json
+{ "captain": { "notify": { "crew": "alert_only" } } }
+```
+
+| Tier | Captain pane receives |
+|---|---|
+| `none` | nothing |
+| `done_only` | `done`, `failed` |
+| `alert_only` *(default)* | everything except informational events: `done`, `failed`, `blocked`, `review`, `approval/input requested`, `task.timeout`, `task.turn.failed`, `task.warn`/reminders, an **addressed idle** (below), the **stall escalation** (below) |
+| `all` | everything above **plus** informational events, coalesced into **one `CREW DIGEST` per crew** after a 60 s quiet window (flushed first when an actionable event for that crew arrives; never delivered for a crew that has since finished) |
+
+Informational events always stay in the task record, so `squadrant crew tasks` shows them. Telegram has its own independent tier and is unchanged. Delivery into the pane still goes through the normal mailbox/delivery loop, which defers while the captain is mid-turn.
+
+**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`, bounded to 1500 chars with a `[truncated, N more chars]` marker) is classified by a deterministic heuristic — no LLM:
+
+- the last non-code-fence line ends with `?` → **addressed**; Claude maps this to `task.blocked` with the whole message as the question (as before, now word for word instead of only the last line);
+- otherwise, the final paragraph mentions the word *captain* (e.g. `Captain: PR is ready`) → **addressed**: delivered as `CREW IDLE … (word for word)` with the text, bypassing the #210 debounce, no `crew read` needed;
+- anything else → **plain end of turn**: informational, silent by default.
+
+**Stalls fire once.** `CREW STALLED` names the hung tool and how long it has run (e.g. `still running Bash ~11min`) and fires once per stall episode (until the crew's next turn boundary / blocked / terminal state). If the crew is still stalled with no tool result after `stallEscalationMs` (default 30 min, `DaemonDeps`), exactly one `CREW STALLED … ESCALATION` is pushed, which is actionable at the default tier, so a truly hung crew is never invisible. The source only knows the tool *name*, not its command line.
+
+Multi-agent: Claude supplies the turn-end text. Codex (app-server) and OpenCode (control channel) turn-end events currently carry no final-message text, so their idle events classify as plain and follow the same tier switch (silent by default, digested under `all`); when their payloads gain the text they only need to set `lastMessage` on `task.turn.completed`.
 
 ### Telegram (Two-Way, opt-in)
 

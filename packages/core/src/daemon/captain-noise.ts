@@ -50,15 +50,17 @@ export function isInformational(ev: ControlEvent): boolean {
   }
 }
 
-/** Does the captain pane take a captain turn for this event at this tier? */
+/**
+ * Does the captain pane take a captain turn for this event at this tier?
+ * `alert_only` (default) delivers everything that is not informational — including
+ * notify-only warnings, reminders and API-error turn-ends. `done_only` is the strict
+ * Telegram set (done/failed).
+ */
 export function captainPaneAllows(tier: CrewTier, ev: ControlEvent): boolean {
   if (tier === "none") return false;
   if (tier === "all") return true;
   if (isInformational(ev)) return false;
-  if (tierIncludes(tier, ev.type)) return true;
-  if (tier === "done_only") return false;
-  // alert_only extras: API-error turn end, addressed turn end, escalated stall.
-  return ev.type === "task.turn.failed" || isAddressedTurnEnd(ev) || (ev.type === "task.stalled" && ev.escalated === true);
+  return tier === "alert_only" ? true : tierIncludes(tier, ev.type);
 }
 
 const LABEL: Record<string, string> = {

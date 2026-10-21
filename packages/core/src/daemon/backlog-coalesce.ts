@@ -15,6 +15,7 @@
 import { TERMINAL_STATES, type TaskState } from "@squadrant/shared";
 import type { MailboxEntry } from "../mailbox.js";
 import { stalePrefix } from "./down-alert.js";
+import { classifyTurnEnd } from "./captain-noise.js";
 
 export type BacklogDecision =
   | { action: "deliver"; entry: MailboxEntry }
@@ -28,6 +29,13 @@ const TERMINAL_EVENT_STATE: Record<string, TaskState> = {
 };
 // The STUCK_ALERT_TEXT family in delivery-loop.ts.
 const STUCK_ALERT_RE = /^⚠️ (DELIVERY STUCK|CAPTAIN NOT DELIVERABLE)/;
+
+// #1017: an addressed turn-end carries the crew's words for the captain — never a
+// droppable transient, however many events queue behind it.
+function isTransient(entry: MailboxEntry): boolean {
+  if (!TRANSIENT_KINDS.has(entry.kind)) return false;
+  return !(entry.kind === "task.turn.completed" && classifyTurnEnd(entry.payload?.lastMessage as string | undefined) === "addressed");
+}
 
 /** Pure. Returns one decision per input entry, in input order. Never mutates
  *  the entries — annotated messages are returned on copies. */
@@ -64,7 +72,7 @@ function decide(
   }
 
   if (later) {
-    if (TRANSIENT_KINDS.has(entry.kind)) return { action: "skip", entry, reason: "superseded" };
+    if (isTransient(entry)) return { action: "skip", entry, reason: "superseded" };
     if (entry.kind === "task.review" && (later.has("task.review") || Object.keys(TERMINAL_EVENT_STATE).some((k) => later.has(k)))) {
       return { action: "skip", entry, reason: "superseded" };
     }
@@ -72,7 +80,7 @@ function decide(
 
   const state = entry.taskId ? opts.taskState(entry.taskId) : undefined;
   const nowTerminal = state !== undefined && TERMINAL_STATES.has(state) && state !== TERMINAL_EVENT_STATE[entry.kind];
-  if (nowTerminal && TRANSIENT_KINDS.has(entry.kind)) return { action: "skip", entry, reason: "task-terminal" };
+  if (nowTerminal && isTransient(entry)) return { action: "skip", entry, reason: "task-terminal" };
 
   if (!entry.message) return { action: "deliver", entry };
   const stale = stalePrefix(Date.parse(entry.ts), opts.now) ?? "";

@@ -748,3 +748,21 @@ describe("redactApiError (#763)", () => {
     expect(redactApiError("529 Overloaded")).toBe("529 Overloaded");
   });
 });
+
+describe("Stop carries the crew's own words (#1017)", () => {
+  const TID = "task-abc";
+  it("a trailing question → task.blocked with the whole message, not just the last line", () => {
+    const text = "Two specs fail on main.\nI can fix them here.\nShould I?";
+    expect(mapClaudeHookToEvent("Stop", { last_assistant_message: text }, TID))
+      .toMatchObject({ type: "task.blocked", question: text });
+  });
+  it("a plain statement → task.turn.completed with lastMessage for core to classify", () => {
+    expect(mapClaudeHookToEvent("Stop", { last_assistant_message: "Done. Pushed." }, TID))
+      .toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop", lastMessage: "Done. Pushed." });
+  });
+  it("lastMessage is bounded with a truncation marker", () => {
+    const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "x".repeat(5000) }, TID) as { lastMessage: string };
+    expect(ev.lastMessage.length).toBeLessThan(1700);
+    expect(ev.lastMessage).toMatch(/\[truncated, \d+ more chars\]$/);
+  });
+});
