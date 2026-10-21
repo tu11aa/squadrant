@@ -27,6 +27,11 @@ export function captainSessionName(project: string): string {
   return sanitizeSessionName(`squadrant-captain-${project}`);
 }
 
+/** #1016: a captain discussion thread — never mistaken for the captain it forked. */
+export function threadSessionName(project: string, threadId: string): string {
+  return sanitizeSessionName(`squadrant-thread-${project}-${threadId}`);
+}
+
 export function crewSessionName(project: string, crewName: string): string {
   return sanitizeSessionName(`squadrant-crew-${project}-${crewName}`);
 }

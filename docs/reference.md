@@ -849,6 +849,39 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 
 Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
 
+## Captain discussion threads (#1016)
+
+The captain coordinates crews; deep discussion with the operator happens in a **thread**, a fork of the captain session scoped to one topic. Crew lifecycle events never go to a thread (threads are not crews; the daemon delivers only to the captain). When the decision is settled, the thread **parks**: the captain receives ONE decision message, never the discussion, which keeps it small enough to roll over. Spec: [`docs/specs/2026-10-21-captain-threads.md`](specs/2026-10-21-captain-threads.md). Diagram: [`docs/diagrams/2026-10-21-captain-threads.html`](diagrams/2026-10-21-captain-threads.html).
+
+| Command | Does |
+|---|---|
+| `squadrant thread open <project> "<topic>" [--crew <name>...]` | Forks the captain into a new tab `💬 <project>:<id>` (id = topic slug) and sends the thread prompt as the first turn. Claude: `claude --resume <captain> --fork-session --session-id <new>` plus the captain's own flags under its own name `-n squadrant-thread-<project>-<id>` (plugins, model, effort, and the captain prompt as a byte-identical copy `threads/thread.claude.md`, so cmux liveness never counts the thread as a second captain). |
+| `squadrant thread park <project> <id>` | Asks the open thread to write its decision record. |
+| `squadrant thread park <project> <id> --decision-file <path\|->` | Run by the thread itself: stores the record, appends ONE `captain.message` to the captain mailbox, appends one line `[thread <id>] <topic>: <decision>` to `handoff.json` `session.decisions`, closes the tab. The session id is kept. |
+| `squadrant thread resume <project> <id>` | Parked thread. Within 1h of its last activity: `claude --resume <thread session>` plus a delta (crew ledger now, decisions from other threads since it parked). Later: a fresh fork of the current captain plus this topic's earlier decision records. |
+| `squadrant thread close <project> <id>` | Marks it closed (terminal) and closes a live tab. |
+| `squadrant thread list <project> [--all]` / `show <project> <id> [--json]` | Read the registry. |
+
+- **Registry:** `<stateRoot>/<project>/threads/<id>.json`, next to crew task records: `{ id, project, topic, crews, state: open|parked|closed, agent, mode: fork|seed, sessionId, forkedAt, lastActiveAt, parkedAt, surfaceId, decisions[] }`. States: `open → parked | closed`, `parked → open | closed`, `closed` is terminal.
+- **Decision record** (JSON the thread writes): `{ "question", "decision", "reasons": [], "rejected": [], "actions": [{ "crew", "action" }] }`; `at` is stamped by the CLI. `question` and `decision` are required.
+- **Captain message** (short form):
+
+  ```text
+  💬 Thread decision — Auth cache (thread auth-cache)
+  Q: Cache auth tokens in app-core?
+  Decision: Yes, 10 min TTL, invalidate on logout
+  Why: cuts p95 login by 40%; logout path already emits an event
+  Rejected: no cache — too slow; 1h TTL — stale roles
+  Actions: crew-a → add TTL cache in app-core; crew-b → no change
+  Full record: squadrant thread show app auth-cache
+  ```
+- **Handoff:** if no live `handoff.json` exists (startup archives it), the line is appended to a copy of the newest archived handoff, so a later compact still re-injects the full context. `write-handoff.sh` replaces the file; the captain carries the `[thread …]` lines over.
+- **Cap:** `defaults.maxThreads` (default 3) open threads; `open` and `resume` refuse past it. Parked threads run no process.
+- **Prompt cache.** The thread instructions go in the first turn, never in the system prompt: a fork keeps the captain's cache prefix only while system prompt, tools and model match. Measured on a throwaway 188k-token session: the fork's first call read 171,960 tokens from cache and wrote 15,790 (a plain `--resume` read 171,960 and wrote 18,651); with `--session-id` 187,726 read / 7,355 written. Wall time was about 6 s per call, the same as a resume.
+- **Environment:** the thread runs with `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=<id>`, so it is not registered as the captain (`captain-sessions.jsonl`) and is gated like the captain by the U7 permission gate.
+- **Agents without fork (codex, opencode, gemini):** `thread open` starts a fresh interactive session seeded with the thread prompt, the live crew ledger and the topic's decision records, and prints a note (not an error). Resume always re-seeds. opencode uses its interactive driver command. codex and gemini run their plain interactive CLI, because their drivers build only headless one-shots. A Claude captain with no registered session falls back the same way.
+- **Triage:** the captain templates and `squadrant:captain-ops` carry the 3-level triage of crew questions (1 operator ↔ crew, 2 captain answers with a cited source, 3 thread). Crews list what they settled directly with the operator in their done message (`Decided with operator: …`).
+
 ## Human review guide (#1012)
 
 `squadrant:human-review-guide` is a general skill (`plugin/skills/human-review-guide/`, `/squadrant:human-review-guide` in any session) that gives the operator a short, well-sourced guide for the **human gate** of crew PRs: intent and scope, public contracts, architecture trade-offs, test validity and a live comparison with the design. Machines (crew self-review, captain agent review, CI, lint, guard tests, KB rule checks, a repo's PR review tool) run first; the human gate covers only what those gates cannot see or did not cover.
@@ -893,6 +926,7 @@ Non-numeric or non-positive values are ignored. `enabled: false` silences sugges
   },
   "defaults": {
     "maxCrew": 5,
+    "maxThreads": 3,
     "worktreeDir": ".worktrees",
     "teammateMode": "in-process",
     "permissions": {

@@ -121,7 +121,8 @@ const FILE_PATH_FIELD_BY_TOOL: Readonly<Record<string, string>> = {
 export function isGateSession(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.SQUADRANT_CREW_TASK_ID)
     || env[SIDE_SESSION_ENV] === "1"
-    || env.SQUADRANT_ROLE === "captain";
+    || env.SQUADRANT_ROLE === "captain"
+    || env.SQUADRANT_ROLE === "thread"; // #1016: a captain fork gates like the captain
 }
 
 /** Env override > config > default `auto` (no-op). An invalid env value is

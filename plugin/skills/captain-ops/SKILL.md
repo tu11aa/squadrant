@@ -280,6 +280,34 @@ This is the captain-side backstop: even if the completion-protocol imperative is
 
 When a crew sends you a status message via `squadrant runtime send <project> "<message>"`, it lands in your captain pane. Acknowledge, then update your handoff if a meaningful decision was made.
 
+### Crew Question Triage & Discussion Threads (#1016)
+
+Every crew question (CREW BLOCKED, a question in a CREW IDLE, a `runtime send`) gets a level. **You decide the level yourself**; the operator can override it at any time ("push this to a thread" / "let the crew handle it"). Follow the override and record it (the handoff `decisions`, or the thread's record).
+
+| Level | When | Your action |
+|---|---|---|
+| **1 · Operator ↔ crew** | Local to that crew's task, touches no other crew, changes no settled decision | One line to the operator: "crew A asks X — local, answer it in crew A's tab". **No model upgrade**: switching a crew's model mid-session drops its prompt cache. The crew lists what it settled with the operator in its done message (`Decided with operator: …`); read that line when it lands. |
+| **2 · Captain answers** | The answer already exists in a decision, the brief, a rule or the handoff | `crew send` the answer and **cite the source** ("per handoff decision …", "rule `x.y`", "brief §Scope"). |
+| **3 · Thread** | Needs a new operator decision, spans several crews, or changes an earlier decision | Open or resume a thread (below) on your own, then give the operator the tab name. Do not hold the discussion in your own pane. |
+
+Escalation is allowed: when a level-1 conversation turns out to span crews, the operator or the crew pushes it up to a thread.
+
+**Threads.** A thread is a fork of your own session for one topic (claude: `--resume <captain> --fork-session`; it shares your prompt-cache prefix, so it starts warm and on your model). Crew events never go to a thread — they keep coming to you.
+
+```bash
+squadrant thread list <project>                       # registry: id, state, topic, related crews, last decision
+squadrant thread open <project> "<topic>" --crew crew-a --crew crew-b   # new tab "💬 <project>:<id>"
+squadrant thread resume <project> <id>                # matching topic exists and is parked
+squadrant thread park <project> <id>                  # ask the thread to write its record and park
+squadrant thread close <project> <id>                 # topic finished (PR merged, ticket closed)
+squadrant thread show <project> <id>                  # full decision records
+```
+
+- **Dedup first:** `thread list` and pick the matching topic before opening a new one. Resume within ~1h of its last activity reuses the same session plus a delta (crew state now + decisions made since it parked); later it forks fresh from you with the topic's earlier decision records.
+- **Cap:** `defaults.maxThreads` open threads (default 3). Parked threads cost nothing and run no process.
+- **Park → you get ONE message** starting `💬 Thread decision — <topic>`: question, decision, why, rejected options, per-crew actions. It is also appended as one line to the handoff's `decisions` (`[thread <id>] …`). Act on the per-crew actions (`crew send`), then move on — you receive the decision, never the discussion.
+- **Agents without fork** (codex, opencode): the thread is a fresh session seeded from the crew ledger and the topic's decision records; `thread open` prints a note saying so. It knows only what is written down.
+
 ### Handling CREW REVIEW or CREW DONE (Assessment Gate)
 
 CREW REVIEW and CREW DONE both mean the crew has paused and is waiting for your verdict (either explicitly asking for review, or claiming the work is done). Treat neither as final until you have reviewed.
@@ -407,6 +435,8 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
   "activeTasks": "Summary of task progress (e.g., 3/7 done)"
 }'
 ```
+
+`write-handoff.sh` replaces the whole file: carry over every `[thread <id>] …` line already in `handoff.json`'s `decisions` (parked threads appended them).
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 

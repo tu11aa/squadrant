@@ -123,7 +123,7 @@ async function runCrewList(project: string): Promise<Array<{ name: string }>> {
   return (await import("./crew.js")).runCrewList(project);
 }
 
-async function compactLedgerContext(project: string): Promise<string> {
+export async function compactLedgerContext(project: string): Promise<string> {
   try {
     const projPath = loadConfig().projects[project]?.path ?? process.cwd();
     const tasks = (await sendRequest(SOCK, { kind: "list", project })) as TaskRecord[];
