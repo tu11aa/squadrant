@@ -35,7 +35,7 @@ The captain did two jobs in one conversation: coordinating crews (little reasoni
 
 The fork reuses the cache only if the system prompt, tools and model are identical to the captain's. So:
 
-- the thread command is the captain's own `buildAgentCmd(… "captain" …)` output (same `--append-system-prompt-file`, `--plugin-dir`, `--model`, `--effort`, permission mode), plus `--resume <captain> --fork-session --session-id <uuid>`. The captain-only `-n` name and `--messaging-socket-path` are dropped;
+- the thread command is the captain's own `buildAgentCmd(… "captain" …)` output (same `--append-system-prompt-file`, `--plugin-dir`, `--model`, `--effort`, permission mode), plus `--resume <captain> --fork-session --session-id <uuid>`. The captain-only `--messaging-socket-path` is dropped, and the captain's `-n` name is replaced with `-n squadrant-thread-<project>-<id>` (Claude accepts `-n` with `--fork-session`; without it the fork shows the captain's name in its status line);
 - the thread instructions are sent as the **first user turn**, never as a system prompt.
 
 `--session-id` with `--fork-session` assigns the thread's session id up front, so resume needs no transcript discovery.

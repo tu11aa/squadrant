@@ -112,7 +112,7 @@ export function threadIdFor(topic: string, taken: Iterable<string>): string {
 }
 
 export function threadTitleFor(project: string, id: string): string {
-  return `🧵 ${project}:${id}`;
+  return `💬 ${project}:${id}`;
 }
 
 // ─── state machine ────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ export function parseDecisionRecord(raw: string, at: string): DecisionRecord {
 /** The ONE captain.message a park delivers — the short form of the record. */
 export function formatDecisionMessage(rec: ThreadRecord, d: DecisionRecord): string {
   const lines = [
-    `🧵 Thread decision — ${rec.topic} (thread ${rec.id})`,
+    `💬 Thread decision — ${rec.topic} (thread ${rec.id})`,
     `Q: ${d.question}`,
     `Decision: ${d.decision}`,
   ];
@@ -328,7 +328,7 @@ export interface ThreadDeps {
   captainSessionId: string | null;
   maxThreads: number;
   /** Agent launch command for this thread (no env prefix, no cd). */
-  agentCommand: (launch: ThreadLaunch) => string;
+  agentCommand: (launch: ThreadLaunch, threadId: string) => string;
   sendFirstTurn: (pane: PaneRef, text: string, preLaunchScreen: string) => Promise<{ delivered: boolean }>;
   /** Live crew ledger text ("" when none). */
   ledger: () => Promise<string>;
@@ -360,7 +360,7 @@ async function spawnThreadTab(rec: ThreadRecord, launch: ThreadLaunch, firstTurn
   });
   const preLaunchScreen = await deps.runtime.readPaneScreen(pane).catch(() => "");
   const env = `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=${rec.id}`;
-  await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch)}`);
+  await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch, rec.id)}`);
   await deps.sendFirstTurn(pane, spillOversizedFirstTurn(firstTurn, `thread-${rec.id}`), preLaunchScreen);
   return pane;
 }

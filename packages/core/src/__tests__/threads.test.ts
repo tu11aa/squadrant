@@ -132,7 +132,7 @@ describe("decision record", () => {
   it("formats the short captain message and a one-line handoff summary", () => {
     const rec = { id: "auth-cache", project: "app", topic: "Auth cache" } as ThreadRecord;
     const msg = formatDecisionMessage(rec, decision("t"));
-    expect(msg).toContain("🧵 Thread decision — Auth cache (thread auth-cache)");
+    expect(msg).toContain("💬 Thread decision — Auth cache (thread auth-cache)");
     expect(msg).toContain("Actions: crew-a → add TTL cache");
     expect(msg).toContain("squadrant thread show app auth-cache");
     expect(decisionHandoffLine(rec, decision("t"))).toBe("[thread auth-cache] Auth cache: Yes, 10 min TTL");

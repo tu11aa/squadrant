@@ -62,7 +62,7 @@
   <div class="card">
     <div class="lanes">
       <div class="lane" id="l-captain"><div class="t">captain</div><div class="d" id="d-captain"></div></div>
-      <div class="lane" id="l-thread"><div class="t">🧵 thread</div><div class="d" id="d-thread"></div></div>
+      <div class="lane" id="l-thread"><div class="t">💬 thread</div><div class="d" id="d-thread"></div></div>
       <div class="lane" id="l-crews"><div class="t">crews / daemon</div><div class="d" id="d-crews"></div></div>
     </div>
     <div class="controls">
@@ -114,10 +114,10 @@ const T = {
     fresh: m => `> 60 min → FORK FRESH from the current captain\nclaude --resume <captain> --fork-session --session-id <new>\n+ this topic's earlier decision records\n(cache cold for ${m - 60} min — same cost, never stale)`,
     steps: [
       ["Crew-a and crew-b both ask about the auth cache. It spans crews → level 3.", "—", "crew-a: blocked\ncrew-b: blocked", "captain", "Triage picks level 3: the question spans two crews."],
-      ["thread list → no match\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "🧵 app:auth-cache\nforked from the captain (warm cache, same model)\nfirst turn = thread prompt", "—", "thread", "The fork shares the captain's prompt-cache prefix: the first call reads it from cache (Step 0: 171,960 tokens read, 15,790 written)."],
+      ["thread list → no match\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "💬 app:auth-cache\nforked from the captain (warm cache, same model)\nfirst turn = thread prompt", "—", "thread", "The fork shares the captain's prompt-cache prefix: the first call reads it from cache (Step 0: 171,960 tokens read, 15,790 written)."],
       ["stays small: no discussion here", "operator ↔ thread: options, trade-offs", "crew-c: done → event goes to the CAPTAIN", "crews", "Crew events never enter a thread. The discussion is never interrupted."],
       ["—", "settled → squadrant thread park app auth-cache --decision-file -", "—", "thread", "The thread writes its decision record (question, decision, why, rejected, per-crew actions)."],
-      ["mailbox: ONE message\n🧵 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "tab closed\nstate = parked, session id kept", "—", "captain", "The captain receives the decision, not the discussion, so it can still roll over safely."],
+      ["mailbox: ONE message\n💬 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "tab closed\nstate = parked, session id kept", "—", "captain", "The captain receives the decision, not the discussion, so it can still roll over safely."],
       ["crew send crew-a \"add TTL cache\"\ncrew send crew-b \"no change\"", "parked (no process, no tokens)", "crews act", "crews", "The captain acts on the per-crew actions."],
     ],
   },
@@ -136,10 +136,10 @@ const T = {
     fresh: m => `> 60 phút → FORK MỚI từ captain hiện tại\nclaude --resume <captain> --fork-session --session-id <new>\n+ các decision record trước của chủ đề này\n(cache đã nguội ${m - 60} phút — chi phí như nhau, không bị cũ)`,
     steps: [
       ["crew-a và crew-b cùng hỏi về auth cache. Liên crew → mức 3.", "—", "crew-a: blocked\ncrew-b: blocked", "captain", "Captain chọn mức 3: câu hỏi liên quan hai crew."],
-      ["thread list → không có\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "🧵 app:auth-cache\nfork từ captain (cache ấm, cùng model)\nturn đầu = thread prompt", "—", "thread", "Fork dùng chung prefix prompt-cache với captain: lần gọi đầu đọc từ cache (Step 0: đọc 171.960 token, ghi 15.790)."],
+      ["thread list → không có\nthread open app \"Auth cache\" --crew crew-a --crew crew-b", "💬 app:auth-cache\nfork từ captain (cache ấm, cùng model)\nturn đầu = thread prompt", "—", "thread", "Fork dùng chung prefix prompt-cache với captain: lần gọi đầu đọc từ cache (Step 0: đọc 171.960 token, ghi 15.790)."],
       ["captain vẫn nhỏ: không thảo luận ở đây", "operator ↔ thread: phương án, đánh đổi", "crew-c: done → sự kiện về CAPTAIN", "crews", "Sự kiện crew không bao giờ vào thread. Thảo luận không bị ngắt."],
       ["—", "đã chốt → squadrant thread park app auth-cache --decision-file -", "—", "thread", "Thread ghi decision record (câu hỏi, quyết định, lý do, phương án bỏ, việc cho từng crew)."],
-      ["mailbox: MỘT tin\n🧵 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "đóng tab\nstate = parked, giữ session id", "—", "captain", "Captain nhận quyết định, không nhận cuộc thảo luận, nên vẫn rollover an toàn."],
+      ["mailbox: MỘT tin\n💬 Thread decision — Auth cache\nhandoff decisions += [thread auth-cache] …", "đóng tab\nstate = parked, giữ session id", "—", "captain", "Captain nhận quyết định, không nhận cuộc thảo luận, nên vẫn rollover an toàn."],
       ["crew send crew-a \"add TTL cache\"\ncrew send crew-b \"no change\"", "parked (không process, không token)", "crew thực hiện", "crews", "Captain giao việc theo từng crew."],
     ],
   },

@@ -855,7 +855,7 @@ The captain coordinates crews; deep discussion with the operator happens in a **
 
 | Command | Does |
 |---|---|
-| `squadrant thread open <project> "<topic>" [--crew <name>...]` | Forks the captain into a new tab `🧵 <project>:<id>` (id = topic slug) and sends the thread prompt as the first turn. Claude: `claude --resume <captain> --fork-session --session-id <new>` plus the captain's own flags (plugins, model, effort, and the captain prompt as a byte-identical copy `threads/thread.claude.md`, so cmux liveness never counts the thread as a second captain). |
+| `squadrant thread open <project> "<topic>" [--crew <name>...]` | Forks the captain into a new tab `💬 <project>:<id>` (id = topic slug) and sends the thread prompt as the first turn. Claude: `claude --resume <captain> --fork-session --session-id <new>` plus the captain's own flags under its own name `-n squadrant-thread-<project>-<id>` (plugins, model, effort, and the captain prompt as a byte-identical copy `threads/thread.claude.md`, so cmux liveness never counts the thread as a second captain). |
 | `squadrant thread park <project> <id>` | Asks the open thread to write its decision record. |
 | `squadrant thread park <project> <id> --decision-file <path\|->` | Run by the thread itself: stores the record, appends ONE `captain.message` to the captain mailbox, appends one line `[thread <id>] <topic>: <decision>` to `handoff.json` `session.decisions`, closes the tab. The session id is kept. |
 | `squadrant thread resume <project> <id>` | Parked thread. Within 1h of its last activity: `claude --resume <thread session>` plus a delta (crew ledger now, decisions from other threads since it parked). Later: a fresh fork of the current captain plus this topic's earlier decision records. |
@@ -867,7 +867,7 @@ The captain coordinates crews; deep discussion with the operator happens in a **
 - **Captain message** (short form):
 
   ```text
-  🧵 Thread decision — Auth cache (thread auth-cache)
+  💬 Thread decision — Auth cache (thread auth-cache)
   Q: Cache auth tokens in app-core?
   Decision: Yes, 10 min TTL, invalidate on logout
   Why: cuts p95 login by 40%; logout path already emits an event

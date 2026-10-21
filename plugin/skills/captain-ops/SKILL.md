@@ -296,7 +296,7 @@ Escalation is allowed: when a level-1 conversation turns out to span crews, the 
 
 ```bash
 squadrant thread list <project>                       # registry: id, state, topic, related crews, last decision
-squadrant thread open <project> "<topic>" --crew crew-a --crew crew-b   # new tab "🧵 <project>:<id>"
+squadrant thread open <project> "<topic>" --crew crew-a --crew crew-b   # new tab "💬 <project>:<id>"
 squadrant thread resume <project> <id>                # matching topic exists and is parked
 squadrant thread park <project> <id>                  # ask the thread to write its record and park
 squadrant thread close <project> <id>                 # topic finished (PR merged, ticket closed)
@@ -305,7 +305,7 @@ squadrant thread show <project> <id>                  # full decision records
 
 - **Dedup first:** `thread list` and pick the matching topic before opening a new one. Resume within ~1h of its last activity reuses the same session plus a delta (crew state now + decisions made since it parked); later it forks fresh from you with the topic's earlier decision records.
 - **Cap:** `defaults.maxThreads` open threads (default 3). Parked threads cost nothing and run no process.
-- **Park → you get ONE message** starting `🧵 Thread decision — <topic>`: question, decision, why, rejected options, per-crew actions. It is also appended as one line to the handoff's `decisions` (`[thread <id>] …`). Act on the per-crew actions (`crew send`), then move on — you receive the decision, never the discussion.
+- **Park → you get ONE message** starting `💬 Thread decision — <topic>`: question, decision, why, rejected options, per-crew actions. It is also appended as one line to the handoff's `decisions` (`[thread <id>] …`). Act on the per-crew actions (`crew send`), then move on — you receive the decision, never the discussion.
 - **Agents without fork** (codex, opencode): the thread is a fresh session seeded from the crew ledger and the topic's decision records; `thread open` prints a note saying so. It knows only what is written down.
 
 ### Handling CREW REVIEW or CREW DONE (Assessment Gate)

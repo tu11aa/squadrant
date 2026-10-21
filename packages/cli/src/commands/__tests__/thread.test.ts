@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getDefaultConfig } from "@squadrant/shared";
+import { getDefaultConfig, threadSessionName } from "@squadrant/shared";
 import {
   CapabilityRegistry, buildAgentCmd,
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
@@ -41,6 +41,14 @@ describe("threadAgentCommand (#1016)", () => {
     // Captain-only identity flags never leak into a thread.
     expect(cmd).not.toContain("--messaging-socket-path");
     expect(cmd).not.toMatch(/ -n /);
+  });
+
+  it("names the thread session itself (-n works with --fork-session), never the captain's name", () => {
+    const { templates, config, promptDir } = setup();
+    const cmd = threadAgentCommand({ kind: "fork", fromSessionId: "cap-1", sessionId: "thr-1" }, "claude", config, "/repo",
+      promptDir, reg, templates, threadSessionName("app", "auth-cache"));
+    expect(cmd).toContain(" -n squadrant-thread-app-auth-cache ");
+    expect(cmd).not.toContain("squadrant-captain-");
   });
 
   it("claude resume = --resume <thread session> without fork", () => {

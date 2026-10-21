@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig, stateRoot, workspacePath, resolveTextInput } from "@squadrant/shared";
+import { loadConfig, stateRoot, workspacePath, resolveTextInput, threadSessionName } from "@squadrant/shared";
 import type { SquadrantConfig } from "@squadrant/shared";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
@@ -39,7 +39,8 @@ function registry(): CapabilityRegistry {
 /**
  * The thread's launch command. Claude builds the captain's own command (same
  * system prompt, plugins, model, effort) so a fork reuses the captain's
- * prompt-cache prefix, minus the captain-only `-n` name and peer socket.
+ * prompt-cache prefix, minus the captain's peer socket, and with its own
+ * `-n` name so the thread never shows up as the captain.
  * The captain prompt file is passed as a byte-identical copy named
  * `thread.claude.md`: cmux liveness classifies a session's role from that
  * basename (store-fingerprint.ts), and `captain.*` would register the thread as
@@ -54,13 +55,14 @@ export function threadAgentCommand(
   promptDir: string,
   reg: CapabilityRegistry = registry(),
   templatesDir: string = TEMPLATES_DIR,
+  sessionName?: string,
 ): string {
   const roleConfig = config.defaults.roles?.captain;
   const { model, thinking } = resolveLaunchAgent({}, roleConfig, config.defaults.models?.captain);
   const permissionMode = config.defaults.permissions?.captain || "auto";
   if (agentName === "claude") {
     let cmd = buildAgentCmd("claude", reg, "captain", true, permissionMode, model, templatesDir,
-      undefined, undefined, thinking);
+      undefined, sessionName, thinking);
     const promptFile = cmd.match(/--append-system-prompt-file (\S+)/)?.[1];
     if (promptFile) {
       const copy = path.join(promptDir, "thread.claude.md");
@@ -111,7 +113,8 @@ async function threadDeps(project: string): Promise<ThreadDeps> {
     agent,
     captainSessionId: sessionId,
     maxThreads: config.defaults.maxThreads ?? DEFAULT_MAX_THREADS,
-    agentCommand: (launch) => threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg),
+    agentCommand: (launch, id) =>
+      threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg, TEMPLATES_DIR, threadSessionName(project, id)),
     sendFirstTurn: (pane, text, pre) => sendFirstTurnWhenReady(runtime, pane, text, pre),
     ledger: () => compactLedgerContext(project),
     newSessionId: randomUUID,
