@@ -40,6 +40,8 @@ The fork reuses the cache only if the system prompt, tools and model are identic
 
 `--session-id` with `--fork-session` assigns the thread's session id up front, so resume needs no transcript discovery.
 
+The captain prompt file is passed as a byte-identical copy, `<stateRoot>/<project>/threads/thread.claude.md`. cmux liveness classifies a session's role from that basename (`store-fingerprint.ts`), so `captain.claude.md` would register the thread as a second captain of the project. The cache keys on content, not path. A control test on a 60k-token session confirmed it: a fork with the original path read 38,818 tokens and wrote 21,743, the same numbers as with the copy, and the next fork with the copy read all 60,561 and wrote 0.
+
 ### Step 0 measurement (2026-10-21, claude 2.1.306, throwaway session, ~400 KB of docs as the first prompt)
 
 | Call | cache read | cache write | `duration_ms` | wall |
@@ -63,12 +65,13 @@ Level 1 leaves a trace: crews list `Decided with operator: <question> → <answe
 
 ## Multi-agent
 
-The fork is Claude-only. For codex, opencode or gemini captains, and for a Claude captain with no registered session, `thread open` starts a fresh interactive session seeded with the thread prompt, the live crew ledger and the topic's decision records. It prints a note, not an error. Resume always re-seeds. A seeded thread knows only what is written down.
+The fork is Claude-only. For codex, opencode or gemini captains, and for a Claude captain with no registered session, `thread open` starts a fresh interactive session seeded with the thread prompt, the live crew ledger and the topic's decision records. It prints a note, not an error. Resume always re-seeds. A seeded thread knows only what is written down. opencode runs through its interactive driver command. The codex and gemini drivers build only headless one-shot commands, so their threads run the plain interactive CLI (`codex`, `gemini`), and the operator answers that agent's own approval prompts in the tab.
 
 ## Environment and isolation
 
 Threads run with `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=<id>`:
 
+- with the `thread.claude.md` prompt copy, cmux liveness does not classify them as captains;
 - the SessionStart hook does not register them in `captain-sessions.jsonl`, so the context meter and the next fork keep pointing at the real captain;
 - `isGateSession` treats them like the captain for the U7 permission gate;
 - they are not crews, so no crew event, ledger entry or watchdog applies.

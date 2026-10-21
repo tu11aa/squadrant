@@ -154,6 +154,11 @@ describe("appendHandoffDecision", () => {
     const h = JSON.parse(fs.readFileSync(path.join(ws, "handoff.json"), "utf-8"));
     expect(h.session).toEqual({ currentState: "s", decisions: ["new"] });
   });
+  it("refuses to overwrite a corrupt live handoff", () => {
+    fs.writeFileSync(path.join(ws, "handoff.json"), "{broken");
+    expect(() => appendHandoffDecision(ws, "new", now)).toThrow(/not valid JSON/);
+    expect(fs.readFileSync(path.join(ws, "handoff.json"), "utf-8")).toBe("{broken");
+  });
   it("creates a minimal handoff when nothing exists", () => {
     appendHandoffDecision(ws, "new", now);
     expect(JSON.parse(fs.readFileSync(path.join(ws, "handoff.json"), "utf-8")).session).toEqual({ decisions: ["new"] });
@@ -207,6 +212,15 @@ describe("open/park/resume/close state machine", () => {
     expect(thread).toMatchObject({ state: "parked", sessionId: "thr-1" });
     expect(thread.surfaceId).toBeUndefined();
     await expect(parkThread("app", "auth-cache", decision("t"), { ...deps, workspaceDir: ws })).rejects.toThrow(/parked; cannot move to parked/);
+  });
+
+  it("a failed handoff write leaves the thread open, with no captain message, so park can be retried", async () => {
+    const { deps } = makeDeps();
+    await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    fs.writeFileSync(path.join(ws, "handoff.json"), "{broken");
+    await expect(parkThread("app", "auth-cache", decision("t"), { ...deps, workspaceDir: ws })).rejects.toThrow(/not valid JSON/);
+    expect(readThread(root, "app", "auth-cache")?.state).toBe("open");
+    expect(inbox("app")).toHaveLength(0);
   });
 
   it("resume within the window: same session + delta (ledger + newer decisions from other threads)", async () => {

@@ -3,6 +3,7 @@
 // lives in @squadrant/core (threads.ts).
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import chalk from "chalk";
@@ -16,7 +17,7 @@ import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/work
 import {
   openThread, requestPark, parkThread, resumeThread, closeThread,
   listThreads, requireThread, parseDecisionRecord, formatDecisionMessage,
-  DEFAULT_MAX_THREADS, threadTitleFor,
+  DEFAULT_MAX_THREADS, threadTitleFor, threadsDir,
   type ThreadDeps, type ThreadLaunch, type ThreadRecord,
 } from "@squadrant/core";
 import { captainSession } from "../lib/captain-context.js";
@@ -39,6 +40,10 @@ function registry(): CapabilityRegistry {
  * The thread's launch command. Claude builds the captain's own command (same
  * system prompt, plugins, model, effort) so a fork reuses the captain's
  * prompt-cache prefix, minus the captain-only `-n` name and peer socket.
+ * The captain prompt file is passed as a byte-identical copy named
+ * `thread.claude.md`: cmux liveness classifies a session's role from that
+ * basename (store-fingerprint.ts), and `captain.*` would register the thread as
+ * a second captain. The cache keys on content, not path (verified live).
  * Other agents get a plain interactive session (seed mode).
  */
 export function threadAgentCommand(
@@ -46,6 +51,7 @@ export function threadAgentCommand(
   agentName: string,
   config: SquadrantConfig,
   cwd: string,
+  promptDir: string,
   reg: CapabilityRegistry = registry(),
   templatesDir: string = TEMPLATES_DIR,
 ): string {
@@ -53,21 +59,33 @@ export function threadAgentCommand(
   const { model, thinking } = resolveLaunchAgent({}, roleConfig, config.defaults.models?.captain);
   const permissionMode = config.defaults.permissions?.captain || "auto";
   if (agentName === "claude") {
-    const cmd = buildAgentCmd("claude", reg, "captain", true, permissionMode, model, templatesDir,
+    let cmd = buildAgentCmd("claude", reg, "captain", true, permissionMode, model, templatesDir,
       undefined, undefined, thinking);
+    const promptFile = cmd.match(/--append-system-prompt-file (\S+)/)?.[1];
+    if (promptFile) {
+      const copy = path.join(promptDir, "thread.claude.md");
+      fs.mkdirSync(promptDir, { recursive: true });
+      fs.copyFileSync(promptFile, copy);
+      cmd = cmd.replace(`--append-system-prompt-file ${promptFile}`, `--append-system-prompt-file ${copy}`);
+    }
     const flags = launch.kind === "fork"
       ? ` --resume ${launch.fromSessionId} --fork-session --session-id ${launch.sessionId}`
       : launch.kind === "resume" ? ` --resume ${launch.sessionId}` : "";
     return `claude${flags}${cmd.slice("claude".length)}`;
   }
-  return reg.get(agentName)!.buildCommand({
-    prompt: "",
-    workdir: cwd,
-    role: "side",
-    interactive: true,
-    permissionMode,
-    ...(model ? { model } : {}),
-  });
+  if (agentName === "opencode") {
+    return reg.get(agentName)!.buildCommand({
+      prompt: "",
+      workdir: cwd,
+      role: "side",
+      interactive: true,
+      permissionMode,
+      ...(model ? { model } : {}),
+    });
+  }
+  // codex/gemini drivers only build headless one-shot commands; a thread is a
+  // conversation, so run the plain interactive CLI and type the first turn in.
+  return agentName;
 }
 
 async function threadDeps(project: string): Promise<ThreadDeps> {
@@ -93,7 +111,7 @@ async function threadDeps(project: string): Promise<ThreadDeps> {
     agent,
     captainSessionId: sessionId,
     maxThreads: config.defaults.maxThreads ?? DEFAULT_MAX_THREADS,
-    agentCommand: (launch) => threadAgentCommand(launch, agent, config, cwd, reg),
+    agentCommand: (launch) => threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg),
     sendFirstTurn: (pane, text, pre) => sendFirstTurnWhenReady(runtime, pane, text, pre),
     ledger: () => compactLedgerContext(project),
     newSessionId: randomUUID,

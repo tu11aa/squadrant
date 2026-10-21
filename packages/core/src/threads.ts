@@ -207,9 +207,19 @@ export function decisionHandoffLine(rec: ThreadRecord, d: DecisionRecord): strin
 export function appendHandoffDecision(workspaceDir: string, line: string, now: Date): void {
   const live = path.join(workspaceDir, "handoff.json");
   let doc: { written_at?: string; session?: Record<string, unknown> } = {};
+  let raw: string | null = null;
   try {
-    doc = JSON.parse(fs.readFileSync(live, "utf-8"));
-  } catch {
+    raw = fs.readFileSync(live, "utf-8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  if (raw !== null) {
+    try {
+      doc = JSON.parse(raw);
+    } catch {
+      throw new Error(`${live} is not valid JSON — not overwriting it; fix it and park again.`);
+    }
+  } else {
     const archived = newestArchived(path.join(workspaceDir, "handoffs"));
     if (archived) doc = archived;
   }
@@ -404,10 +414,10 @@ export async function requestPark(project: string, id: string, deps: Pick<Thread
 }
 
 /**
- * Park with a decision record: persist it, deliver exactly ONE captain.message,
- * append one handoff decision line, then close the tab (last — the thread
- * itself usually runs this command, and closing its tab ends it). The session
- * id is kept for resume.
+ * Park with a decision record: append one handoff decision line (first, so a
+ * failure leaves the thread open to retry), persist the record, deliver exactly
+ * ONE captain.message, then close the tab (last — the thread itself usually
+ * runs this command, and closing its tab ends it). The session id is kept.
  */
 export async function parkThread(
   project: string,
@@ -419,13 +429,13 @@ export async function parkThread(
   assertTransition(rec, "parked");
   const surfaceId = rec.surfaceId;
   const now = deps.now();
+  appendHandoffDecision(deps.workspaceDir, decisionHandoffLine(rec, decision), now);
   rec.decisions.push(decision);
   rec.state = "parked";
   rec.parkedAt = rec.lastActiveAt = now.toISOString();
   delete rec.surfaceId;
   writeThread(deps.stateRoot, rec);
   const seq = await appendCaptainMessage({ stateRoot: deps.stateRoot, project, text: formatDecisionMessage(rec, decision), source: "cli" });
-  appendHandoffDecision(deps.workspaceDir, decisionHandoffLine(rec, decision), now);
   if (surfaceId) await deps.runtime.closePane({ workspaceId: deps.workspaceId, surfaceId }).catch(() => {});
   return { thread: rec, seq };
 }
