@@ -36,6 +36,14 @@ export interface LiveCrewSummary {
   task: string;
   question?: string;
   operatorHold?: { since: number; note?: string; lastNudgeAt?: number };
+  /** #1015: the crew's own summary from `signal review`. */
+  reviewNote?: string;
+  branch?: string;
+  prUrl?: string;
+  /** #1015: set for an approved crew whose PR is still open — "awaiting human review". */
+  reviewStage?: "pr-open";
+  /** #1015: the crew's tab is still open (so a terminal crew is awaiting the captain, not finished). */
+  tabOpen?: true;
 }
 
 export interface HandoffConflict {

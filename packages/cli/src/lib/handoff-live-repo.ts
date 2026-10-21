@@ -19,7 +19,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TERMINAL_STATES } from "@squadrant/shared";
+import { TERMINAL_STATES, crewBranch } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
 import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-facts.js";
 import { gatherBranchState } from "./handoff-branch-state.js";
@@ -90,10 +90,36 @@ function gatherOpenPRs(runner: CommandRunner, projectPath: string): LiveOpenPR[]
   }
 }
 
-function gatherLiveCrews(tasks: TaskRecord[]): LiveCrewSummary[] {
+/** #1015: resolve an approved crew's PR lazily via gh. Unknown (gh down) keeps it listed — never hide an open review. */
+function prStillOpen(runner: CommandRunner, projectPath: string, t: TaskRecord): boolean {
+  const out = tryRun(runner, "gh", ["pr", "view", t.prUrl ?? String(t.prNumber), "--json", "state", "--jq", ".state"], projectPath);
+  const state = out?.trim();
+  return !(state === "MERGED" || state === "CLOSED");
+}
+
+/**
+ * `openTabs` = names of crews whose tab/surface is still open (what `crew list` shows). A crew
+ * that signalled done and is waiting on the captain is terminal but not finished — it stays.
+ */
+export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, projectPath: string, openTabs: ReadonlySet<string> = new Set()): LiveCrewSummary[] {
   return tasks
-    .filter((t) => !TERMINAL_STATES.has(t.state))
-    .map((t) => ({ name: t.name ?? t.id, state: t.state, task: t.task, question: t.question, operatorHold: t.operatorHold }));
+    // #1015: an approved crew is terminal (`done`) but stays live while its PR awaits human review/merge.
+    .filter((t) => !TERMINAL_STATES.has(t.state)
+      || (t.reviewStage === "pr-open" && prStillOpen(runner, projectPath, t))
+      || (t.name !== undefined && openTabs.has(t.name)))
+    .map((t) => ({
+      name: t.name ?? t.id,
+      state: t.state,
+      task: t.task,
+      question: t.question,
+      operatorHold: t.operatorHold,
+      reviewNote: t.reviewNote,
+      // #1015: live crews have no recorded branch yet; it is derived from the name (approved ones recorded theirs).
+      branch: t.branch ?? crewBranch(t.name ?? t.id),
+      prUrl: t.prUrl,
+      reviewStage: t.reviewStage === "pr-open" ? ("pr-open" as const) : undefined,
+      tabOpen: t.name !== undefined && openTabs.has(t.name) ? true : undefined,
+    }));
 }
 
 /** ahead_by from GitHub's compare API — exact, server-computed, no local objects needed. Only meaningful for a PUSHED branch. */
@@ -144,6 +170,7 @@ export function gatherLiveRepoState(
   runner: CommandRunner = defaultCommandRunner,
   now: number = Date.now(),
   fetch: boolean = false,
+  openTabs: ReadonlySet<string> = new Set(),
 ): LiveRepoState {
   const branch = (tryRun(runner, "git", ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"], projectPath) ?? "").trim();
   const detached = branch === "HEAD";
@@ -217,7 +244,7 @@ export function gatherLiveRepoState(
     aheadOfBaseSource,
     fetchAgeMs,
     openPRs: gatherOpenPRs(runner, projectPath),
-    liveCrews: gatherLiveCrews(tasks),
+    liveCrews: gatherLiveCrews(tasks, runner, projectPath, openTabs),
     conflicts,
     branchState,
     unreleasedAheadOfReleaseBranch,

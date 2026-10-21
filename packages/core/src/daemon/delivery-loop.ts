@@ -370,6 +370,7 @@ export function createDelivery(
   // Re-entrancy guard: each tick does multiple slow cmux subprocess calls and
   // can exceed the 1s interval.
   let delivering = false;
+  ctx.deliveryBusy = () => delivering;
 
   const deliveryCore = async () => {
     // Registry is the liveness authority (Task 4) — reconcile it from the
@@ -407,6 +408,9 @@ export function createDelivery(
         // (including the cmux round trips below) until nextAttemptAt.
         const backoff = projectBackoff.get(project);
         if (backoff && Date.now() < backoff.nextAttemptAt) continue;
+        // #1015: a captain /compact is armed or running — type nothing. Entries stay on the
+        // durable mailbox, the cursor does not move, and they deliver in order afterwards.
+        if (ctx.captainCompactHolds?.(project)) continue;
 
         const projCfg = cfg.projects?.[project];
         const captainTitle = project === cfg.commandName
@@ -447,6 +451,8 @@ export function createDelivery(
           taskState: (taskId) => store.get(project, taskId)?.state,
         });
         for (const [i, entry] of pending.entries()) {
+          // #1015: the hold can land mid-pass (between entries) — stop before typing the next one.
+          if (ctx.captainCompactHolds?.(project)) break;
           // #332 storm BUG 3: silently ack entries that pre-date this daemon
           // session by more than STALE_THRESHOLD_MS.
           // #890: stale-* outcomes are logged once per seq, not on every retry.

@@ -53,7 +53,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:594
   - packages/agents/src/interactive/claude.ts:619
   - packages/agents/src/interactive/claude.ts:644
-  - packages/cli/src/commands/hooks.ts:47
+  - packages/cli/src/commands/hooks.ts:49
   - packages/cli/src/squadrantd.ts:518
   - packages/cli/src/squadrantd.ts:563
   - packages/cli/src/squadrantd.ts:594
@@ -76,7 +76,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
   - packages/cli/src/commands/crew-control.ts:206
-  - packages/cli/src/commands/crew-control.ts:398
+  - packages/cli/src/commands/crew-control.ts:404
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
@@ -135,7 +135,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:1147
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:649
-  - packages/cli/src/commands/hooks.ts:51
+  - packages/cli/src/commands/hooks.ts:53
   - packages/core/src/crew-spawn.ts:706
   - packages/core/src/crew-spawn.ts:795
   - packages/core/src/daemon/reduce.ts:412

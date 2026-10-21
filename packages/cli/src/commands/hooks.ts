@@ -11,13 +11,15 @@
 import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { sendRequest, resolveCurrentProject, computeRulesInjection, computeProfileInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
+import { sendRequest, readUndelivered, resolveCurrentProject, computeRulesInjection, computeProfileInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
 import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite, decideAttributionTrailer, readAttributionDisabled } from "@squadrant/agents";
 import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } from "@squadrant/shared";
-import type { ControlEvent, SquadrantConfig } from "@squadrant/shared";
+import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
 import { appendCaptainSession } from "../lib/captain-session-registry.js";
-import { compactHandoffContext, appendAdditionalContext } from "../lib/compact-handoff.js";
+import { compactHandoffContext, appendAdditionalContext, isCaptainCompactStart } from "../lib/compact-handoff.js";
+import { renderLiveLedger } from "../lib/compact-ledger.js";
+import { gatherLiveCrews, defaultCommandRunner } from "../lib/handoff-live-repo.js";
 import { runGatePermissionRequest } from "./gate.js";
 
 const SOCK = DAEMON_SOCK_PATH;
@@ -113,6 +115,24 @@ function recordCaptainSessionStart(payload: unknown): void {
     appendCaptainSession(workspacePath(project), record);
   } catch {
     // Best-effort — a registry-write failure must never block the session.
+  }
+}
+
+/** #1015: best-effort — a daemon that is down simply contributes no ledger. */
+async function runCrewList(project: string): Promise<Array<{ name: string }>> {
+  return (await import("./crew.js")).runCrewList(project);
+}
+
+async function compactLedgerContext(project: string): Promise<string> {
+  try {
+    const projPath = loadConfig().projects[project]?.path ?? process.cwd();
+    const tasks = (await sendRequest(SOCK, { kind: "list", project })) as TaskRecord[];
+    // Crews that signalled done but still have a tab are waiting on this captain — keep them.
+    const openTabs = await runCrewList(project).then((l) => new Set(l.map((c) => c.name))).catch(() => new Set<string>());
+    const crews = gatherLiveCrews(tasks, defaultCommandRunner, projPath, openTabs);
+    return renderLiveLedger(crews, await readUndelivered(stateRoot(), project));
+  } catch {
+    return "";
   }
 }
 
@@ -266,6 +286,12 @@ export function hooksCommand(): Command {
         try {
           const project = opts.project ?? resolveCurrentProject(loadConfig());
           rulesOut = appendAdditionalContext(rulesOut, compactHandoffContext(payload, process.env, project));
+          if (project && isCaptainCompactStart(payload, process.env, project)) {
+            // #1015: the daemon's live crew ledger + undelivered mailbox, then lift the delivery
+            // hold — in that order, so nothing is typed into the box before the context is out.
+            rulesOut = appendAdditionalContext(rulesOut, await compactLedgerContext(project));
+            await sendToSock({ kind: "captain-compact-done", project }).catch(() => {});
+          }
         } catch { /* best-effort */ }
       }
       if (rulesOut) await new Promise<void>((resolve) => process.stdout.write(rulesOut, () => resolve()));

@@ -119,6 +119,18 @@ describe("state-machine reduce", () => {
     expect(next.resultRef).toBe("/r");
   });
 
+  it("approve-sourced task.done records branch + PR and opens the human-review stage (#1015)", () => {
+    const pr = { url: "https://github.com/x/y/pull/42", number: 42, branch: "crew/fix" };
+    const next = reduce(rec({ state: "review" }), { type: "task.done", id: "t1", resultRef: "", source: "approve", pr }, 5200);
+    expect(next).toMatchObject({ state: "done", branch: "crew/fix", prUrl: pr.url, prNumber: 42, reviewStage: "pr-open" });
+  });
+
+  it("a plain task.done never sets a review stage (#1015)", () => {
+    const next = reduce(rec({ state: "working" }), { type: "task.done", id: "t1", resultRef: "/r" }, 5200);
+    expect(next.reviewStage).toBeUndefined();
+    expect(next.prUrl).toBeUndefined();
+  });
+
   it("review + task.turn.started (crew resumes after feedback) → working (#605)", () => {
     const next = reduce(rec({ state: "review", reviewNote: "ready" }), { type: "task.turn.started", id: "t1", turnId: "ses_x" }, 5300);
     expect(next.state).toBe("working");

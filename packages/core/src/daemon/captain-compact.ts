@@ -16,6 +16,9 @@ export const CC_WORKING_RE = /↓\s*[\d.]+\s*k?\s*tokens?\b|esc to interrupt|\bs
 export const DEFAULT_COMPACT_FOCUS =
   "Keep the active task, open PRs/crews and decisions; the full state is in the handoff";
 export const COMPACT_TIMEOUT_MS = 10 * 60_000;
+/** #1015: how long after `/compact` is typed we keep holding delivery waiting for the
+ *  SessionStart(source=compact) hook. If it never arrives the hold lapses on its own. */
+export const COMPACT_HOLD_MS = 3 * 60_000;
 /** Consecutive idle polls required before typing — rides out a flicker between tool calls. */
 const IDLE_POLLS = 2;
 
@@ -30,13 +33,23 @@ export interface CaptainCompactDeps {
   injectedSurfaces?: Record<string, PaneRef>;
   /** Override for tests; defaults to the loaded config's captain title. */
   captainTitle?: (project: string) => string;
+  /** #1015: undelivered mailbox entries for the project. A compact waits for 0 so no
+   *  message is ever in flight across the compact boundary. Absent ⇒ not consulted. */
+  undeliveredCount?: (project: string) => Promise<number>;
+  /** #1015: true while the delivery loop is mid-pass (it may be about to type). */
+  deliveryBusy?: () => boolean;
+  holdMs?: number;
 }
 
 export function createCaptainCompact(deps: CaptainCompactDeps) {
   const { cmux, log } = deps;
   const now = deps.now ?? Date.now;
   const timeoutMs = deps.timeoutMs ?? COMPACT_TIMEOUT_MS;
+  const holdMs = deps.holdMs ?? COMPACT_HOLD_MS;
   const pending = new Map<string, Pending>();
+  /** #1015: projects whose delivery is frozen — from the moment the idle check passes until
+   *  the post-compact SessionStart hook (or `until`) ends the window. */
+  const holds = new Map<string, { until: number }>();
 
   const titleFor = (project: string): string => {
     if (deps.captainTitle) return deps.captainTitle(project);
@@ -58,6 +71,21 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
     return { queued: true };
   }
 
+  /** #1015: delivery must not type or send for this project while this is true. */
+  function holdsDelivery(project: string): boolean {
+    const h = holds.get(project);
+    if (!h) return false;
+    if (now() <= h.until) return true;
+    holds.delete(project);
+    log(`captain-compact ${project}: hold lapsed (no SessionStart(compact) within ${Math.round(holdMs / 1000)}s) — delivery resumed`);
+    return false;
+  }
+
+  /** #1015: SessionStart(source=compact) arrived for this captain — the window is over. */
+  function compactDone(project: string): void {
+    if (holds.delete(project)) log(`captain-compact ${project}: compact finished — delivery resumed`);
+  }
+
   async function tryOne(project: string, p: Pending): Promise<void> {
     if (now() > p.deadline) {
       pending.delete(project);
@@ -73,14 +101,32 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
       return;
     }
     if (++p.idlePolls < IDLE_POLLS) return;
+    // #1015: never let a message be in flight across the compact. Wait for the durable
+    // backlog to drain (delivery is still running), then freeze delivery synchronously —
+    // no await between the final check and setting the hold — and re-verify.
+    if (deps.undeliveredCount && (await deps.undeliveredCount(project)) > 0) {
+      p.idlePolls = 0;
+      p.lastReason = "undelivered-mail";
+      return;
+    }
+    holds.set(project, { until: now() + holdMs });
+    if (deps.deliveryBusy?.()) {
+      holds.delete(project);
+      p.idlePolls = 0;
+      p.lastReason = "delivery-in-flight";
+      return;
+    }
     try {
       await cmux.send(surface, `/compact ${p.focus}`, { agent: "claude" });
     } catch (e) {
+      holds.delete(project);
       if (!(e instanceof DeferDelivery)) throw e;
       p.idlePolls = 0;
       p.lastReason = e.reason;
       return;
     }
+    // Restart the window from the actual send; the hold persists until compactDone.
+    holds.set(project, { until: now() + holdMs });
     pending.delete(project);
     log(`captain-compact ${project}: /compact sent`);
   }
@@ -92,5 +138,5 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
     }
   }
 
-  return { request, tick, pendingCount: () => pending.size };
+  return { request, tick, holdsDelivery, compactDone, pendingCount: () => pending.size };
 }

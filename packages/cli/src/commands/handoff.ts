@@ -40,6 +40,11 @@ async function defaultFetchTasks(project: string): Promise<TaskRecord[]> {
   return (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
 }
 
+async function defaultFetchOpenTabs(project: string): Promise<string[]> {
+  const { runCrewList } = await import("./crew.js");
+  return (await runCrewList(project)).map((c) => c.name);
+}
+
 export interface HandoffFactsDeps {
   claudeMemDbPath?: string;
   now?: string;
@@ -48,6 +53,8 @@ export interface HandoffFactsDeps {
   currentSessionId?: string | null;
   fetchTasks?: (project: string) => Promise<TaskRecord[]>;
   runner?: CommandRunner;
+  /** Names of crews whose tab is still open. Default: `crew list` (cmux); a failure means none known. */
+  fetchOpenTabs?: (project: string) => Promise<string[]>;
   /** Opt-in: runs `git fetch origin` before computing branchState. Default false — this command stays read-only/side-effect-free unless the caller explicitly asks. */
   fetch?: boolean;
 }
@@ -76,7 +83,12 @@ export async function runHandoffFacts(project: string, deps: HandoffFactsDeps = 
   const nowMs = Date.parse(nowIso);
   const fallbackWindowMs = deps.windowMs ?? SESSION_WINDOW_MS;
 
-  const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs, deps.fetch ?? false);
+  let openTabs: string[] = [];
+  try {
+    openTabs = await (deps.fetchOpenTabs ?? defaultFetchOpenTabs)(project);
+  } catch { /* no cmux / not launched — fall back to task state alone */ }
+
+  const live = gatherLiveRepoState(proj.path, fallbackBaseBranch, tasks, deps.runner ?? defaultCommandRunner, nowMs, deps.fetch ?? false, new Set(openTabs));
   const claudeMem = queryClaudeMem(deps.claudeMemDbPath ?? CLAUDE_MEM_DB_PATH, project);
 
   // #983: exchange lives in workspace/<p>/; the old spoke vault is still read for one version.

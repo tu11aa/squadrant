@@ -13,14 +13,19 @@ export const COMPACT_NOTE = "Context was just compacted. This is your handoff; c
  * it and nothing has archived it yet), else the newest archived one — the same
  * selection `squadrant handoff facts` uses for its checkpoint.
  */
+/** #1015: SessionStart(source=compact) for a captain session (not a crew). */
+export function isCaptainCompactStart(payload: unknown, env: NodeJS.ProcessEnv, project: string | null | undefined): boolean {
+  return (payload as { source?: unknown } | null)?.source === "compact"
+    && env.SQUADRANT_ROLE === "captain" && !env.SQUADRANT_CREW_TASK_ID && !!project;
+}
+
 export function compactHandoffContext(
   payload: unknown,
   env: NodeJS.ProcessEnv,
   project: string | null | undefined,
   workspaceDir: (project: string) => string = workspacePath,
 ): string {
-  if ((payload as { source?: unknown } | null)?.source !== "compact") return "";
-  if (env.SQUADRANT_ROLE !== "captain" || env.SQUADRANT_CREW_TASK_ID || !project) return "";
+  if (!isCaptainCompactStart(payload, env, project) || !project) return "";
   const dir = workspaceDir(project);
   let handoff: string | null = null;
   try {

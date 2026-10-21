@@ -284,6 +284,14 @@ export async function* readFromCursor(opts: ReadFromCursorOpts): AsyncIterable<M
   }
 }
 
+/** #1015: entries the captain subscriber has not yet acked — the durable backlog. */
+export async function readUndelivered(stateRoot: string, project: string): Promise<MailboxEntry[]> {
+  const cursor = await readCursor({ stateRoot, project, subscriber: "captain" });
+  const out: MailboxEntry[] = [];
+  for await (const e of readFromCursor({ stateRoot, project, fromSeq: (cursor?.lastAckedSeq ?? 0) + 1 })) out.push(e);
+  return out;
+}
+
 /** Read-only Tier 2 observability stats for one project's mailbox (#44 dashboard). */
 export interface MailboxStats {
   /** Highest seq across the current log + rotated segments (0 when empty). */
