@@ -211,9 +211,9 @@ describe("content-carrying idle (#1017)", () => {
     expect((calls[1].event as any).reply).toBeUndefined();
   });
 
-  it("a turn-end with no lastMessage is delivered as the generic CREW IDLE", async () => {
+  it("a turn-end with no lastMessage (provider with no text source) is delivered as the generic CREW IDLE", async () => {
     const { store, calls, ev, adv } = setup();
-    store.put(rec("i4"));
+    store.put(rec("i4", { provider: "opencode" as any }));
     adv(60_000);
     await ev(end("i4", 1));
     expect(calls).toHaveLength(1);
@@ -237,7 +237,7 @@ describe("content-carrying idle (#1017)", () => {
 describe("captain-pane delivery + replay (#1017)", () => {
   afterEach(() => vi.useRealTimers());
 
-  function wire(tier: CrewTier) {
+  function wire(tier: CrewTier, idleTextGraceMs = 5000) {
     const stateRoot = mkdtempSync(join(tmpdir(), "noise-"));
     const store = createStore(stateRoot);
     const { defaultNotify } = createDelivery(
@@ -247,7 +247,7 @@ describe("captain-pane delivery + replay (#1017)", () => {
     let t = 1_000_000;
     // the daemon fires notify without awaiting it — track writes so tests can drain them
     const inFlight: Array<Promise<void>> = [];
-    const d = createDaemon({ store, now: () => t, notify: (a) => { const p = Promise.resolve(defaultNotify(a)); inFlight.push(p); return p; } });
+    const d = createDaemon({ store, now: () => t, idleTextGraceMs, notify: (a) => { const p = Promise.resolve(defaultNotify(a)); inFlight.push(p); return p; } });
     return { stateRoot, store, d, inFlight, at: (ms: number) => { t = ms; }, tick: (ms: number) => { t += ms; return t; } };
   }
 
@@ -345,5 +345,109 @@ describe("backlog coalescing keeps addressed turn-ends (#1017)", () => {
     ];
     const d = coalesceBacklog(entries, { now: 2000, taskState: () => "review" });
     expect(d.map((x) => x.action)).toEqual(["skip", "deliver", "deliver", "deliver"]);
+  });
+});
+
+// Production race: a claude crew's turn-end arrives from the Stop hook (text) AND from
+// the text-less cmux-store / native-hook lifecycle sources; whichever is first moves the
+// state, and the text-carrying one must still decide delivery.
+describe("claude turn-end source race (#1017)", () => {
+  function setup(grace?: number) {
+    const stateRoot = mkdtempSync(join(tmpdir(), "noise-"));
+    const store = createStore(stateRoot);
+    const { defaultNotify } = createDelivery(
+      { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: { captainCrewTier: () => "alert_only" } } as any,
+      undefined,
+    );
+    const inFlight: Array<Promise<void>> = [];
+    let t = 1_000_000;
+    const d = createDaemon({ store, now: () => t, idleTextGraceMs: grace ?? 5000, notify: (a) => { const p = Promise.resolve(defaultNotify(a)); inFlight.push(p); return p; } });
+    const ev = (e: ControlEvent) => d.handle({ kind: "event", project: "demo", event: e });
+    const delivered = async () => {
+      await Promise.all(inFlight);
+      const out: MailboxEntry[] = [];
+      for await (const e of readFromCursor({ stateRoot, project: "demo", fromSeq: 0 })) out.push(e);
+      return out;
+    };
+    const captainSpoke = async (id: string) => { await ev({ type: "task.started", id }); t += 60_000; };
+    return { store, ev, delivered, captainSpoke };
+  }
+  const textless = (id: string, src: string): ControlEvent => ({ type: "task.turn.completed", id, turnId: src });
+  const hook = (id: string, text: string): ControlEvent => ({ type: "task.turn.completed", id, turnId: "hook-stop", lastMessage: text });
+  const orders: Array<[string, (id: string, h: ControlEvent, ev: (e: ControlEvent) => Promise<unknown>) => Promise<void>]> = [
+    ["text-less first, then hook", async (id, h, ev) => { await ev(textless(id, "cmux-store")); await ev(textless(id, "native-hook")); await ev(h); }],
+    ["hook first, then text-less", async (id, h, ev) => { await ev(h); await ev(textless(id, "cmux-store")); await ev(textless(id, "native-hook")); }],
+  ];
+
+  for (const [name, run] of orders) {
+    it(`reply to the captain: delivered word for word exactly once (${name})`, async () => {
+      const { store, ev, delivered, captainSpoke } = setup();
+      store.put(rec("c1"));
+      await captainSpoke("c1");
+      await run("c1", hook("c1", "Done: changed A and B, tests pass."), ev);
+      const got = await delivered();
+      expect(got).toHaveLength(1);
+      expect(got[0].message).toContain("Done: changed A and B, tests pass.");
+    });
+
+    it(`plain self-resume: zero deliveries (${name})`, async () => {
+      const { store, ev, delivered, captainSpoke } = setup();
+      store.put(rec("c2"));
+      await captainSpoke("c2");
+      await run("c2", hook("c2", "Done: A."), ev);          // the reply (consumed)
+      await ev({ type: "task.turn.started", id: "c2", turnId: "2" });
+      const before = (await delivered()).length;
+      await run("c2", hook("c2", "Also tidied B."), ev);    // self-resume, no captain message
+      expect((await delivered()).length).toBe(before);
+    });
+  }
+
+  it("question (hook maps it to task.blocked): delivered once with the text, text-less first", async () => {
+    const { store, ev, delivered } = setup();
+    store.put(rec("c3"));
+    await ev(textless("c3", "cmux-store"));
+    await ev({ type: "task.blocked", id: "c3", reason: "crew asked a question (auto-detected)", question: "Found 2 failures.\nFix here?" });
+    await ev(textless("c3", "native-hook"));
+    const got = await delivered();
+    expect(got).toHaveLength(1);
+    expect(got[0].message).toContain("Fix here?");
+  });
+
+  it("question: hook first, then text-less → still once", async () => {
+    const { store, ev, delivered } = setup();
+    store.put(rec("c4"));
+    await ev({ type: "task.blocked", id: "c4", reason: "r", question: "Merge now?" });
+    await ev(textless("c4", "cmux-store"));
+    expect(await delivered()).toHaveLength(1);
+  });
+
+  it("hook missing, reply pending: generic CREW IDLE after the grace window, once", async () => {
+    const { store, ev, delivered, captainSpoke } = setup(20);
+    store.put(rec("c5"));
+    await captainSpoke("c5");
+    await ev(textless("c5", "cmux-store"));
+    await ev(textless("c5", "native-hook"));
+    expect(await delivered()).toHaveLength(0); // deferred, not yet decided
+    await new Promise((r) => setTimeout(r, 80));
+    const got = await delivered();
+    expect(got).toHaveLength(1);
+    expect(got[0].message).toMatch(/CREW IDLE.*awaiting your reply/);
+  });
+
+  it("hook missing, no reply pending (self-resume): silent", async () => {
+    const { store, ev, delivered } = setup(20);
+    store.put(rec("c6"));
+    await ev(textless("c6", "cmux-store"));
+    await new Promise((r) => setTimeout(r, 80));
+    expect(await delivered()).toHaveLength(0);
+  });
+
+  it("a provider with no text source (codex) keeps the generic CREW IDLE immediately", async () => {
+    const { store, ev, delivered } = setup();
+    store.put(rec("c7", { provider: "codex" as any }));
+    await ev(textless("c7", "codex-appserver"));
+    const got = await delivered();
+    expect(got).toHaveLength(1);
+    expect(got[0].message).toMatch(/CREW IDLE/);
   });
 });

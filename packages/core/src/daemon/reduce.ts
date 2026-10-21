@@ -65,6 +65,8 @@ export interface DaemonDeps {
   taskTimeoutMs?: number;
   /** #1017: no-tool-result window after which a stalled crew gets its single hard escalation. Defaults to DEFAULT_STALL_ESCALATION_MS (30 min). */
   stallEscalationMs?: number;
+  /** #1017: how long a text-less turn-end from a provider that also has a text-carrying source (claude: Stop hook) waits for that text before deciding. Defaults to DEFAULT_IDLE_TEXT_GRACE_MS. */
+  idleTextGraceMs?: number;
   /**
    * #466 self-heal: re-deliver a crew's first turn when the daemon detects it
    * never landed (firstTurnConfirmedAt still absent past firstTurnUndeliveredBudgetMs).
@@ -114,6 +116,12 @@ export const DEFAULT_BLOCKED_RENUDGE_MS = 30 * 60 * 1000;
 // escalation that always reaches the captain, even though the first stall is
 // informational. Configurable via DaemonDeps.stallEscalationMs.
 export const DEFAULT_STALL_ESCALATION_MS = 30 * 60 * 1000;
+
+// #1017: providers whose turn-end ALSO arrives with the final message text (claude:
+// Stop hook). Their text-less turn-ends (cmux-store / native-hook lifecycle sources)
+// race the hook and must not decide delivery alone.
+const TEXT_SOURCE_PROVIDERS: ReadonlySet<string> = new Set(["claude"]);
+export const DEFAULT_IDLE_TEXT_GRACE_MS = 3000;
 
 // #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
 // heartbeat continuously yet be stuck on one task — the stall watchdog won't
@@ -369,6 +377,16 @@ export function createDaemon(deps: DaemonDeps) {
   // #1017: crews the captain has spoken to since their last turn-end — the next
   // turn-end is the reply and is always delivered (language-neutral, no text sniffing).
   const replyPending = new Set<string>();
+  // #1017: text-less turn-end that already moved a text-source crew to
+  // awaiting-input, waiting up to the grace window for the text-carrying event.
+  const pendingIdle = new Map<string, { timer: ReturnType<typeof setTimeout>; event: ControlEvent }>();
+  const cancelPendingIdle = (id: string): boolean => {
+    const p = pendingIdle.get(id);
+    if (!p) return false;
+    clearTimeout(p.timer);
+    pendingIdle.delete(id);
+    return true;
+  };
   // #466: per-task debounce for first-turn resend attempts — avoids hammering
   // a still-not-ready pane with pastes every sweep tick.
   const resendAttemptedAt = new Map<string, number>();
@@ -385,7 +403,12 @@ export function createDaemon(deps: DaemonDeps) {
     const cur = store.get(project, event.id);
     if (!cur) throw new Error(`unknown task ${event.id}`);
     if (event.type === "task.started") { lastCaptainTurnAt.set(event.id, now()); replyPending.add(event.id); }
-    if (event.type === "task.turn.completed" && replyPending.has(event.id)) event = { ...event, reply: true };
+    const isTurnEnd = event.type === "task.turn.completed";
+    const hasText = event.type === "task.turn.completed" && !!event.lastMessage?.trim();
+    const textLessRace = isTurnEnd && !hasText && TEXT_SOURCE_PROVIDERS.has(cur.provider) && cur.state !== "awaiting-input";
+    // The reply stamp is applied by whichever event finally DECIDES delivery: the
+    // text-carrying one, or any turn-end of a provider with no text source.
+    if (event.type === "task.turn.completed" && replyPending.has(event.id) && !textLessRace && (hasText || !TEXT_SOURCE_PROVIDERS.has(cur.provider))) event = { ...event, reply: true };
     if (event.type === "task.session.ended" && !TERMINAL_STATES.has(cur.state)) {
       const liveness = deps.isSurfaceAlive ? await deps.isSurfaceAlive(cur) : "unknown";
       if (liveness !== "gone") return cur; // alive/unknown: no-op, keep current state
@@ -393,9 +416,29 @@ export function createDaemon(deps: DaemonDeps) {
     const next = reduce(cur, event, now());
     if (next !== cur) {
       store.put(next); // skip redundant write on terminal no-ops
-      if (event.type === "task.turn.completed" && next.state === "awaiting-input") replyPending.delete(next.id);
       if (next.state !== "working" && next.state !== "stalled") { stallEpisode.delete(next.id); stallEscalated.delete(next.id); }
-      firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id), cur);
+      if (textLessRace && next.state === "awaiting-input") {
+        // Defer the push: the Stop hook's text-carrying event (reply / question / plain)
+        // decides if it arrives in time; otherwise fall back below.
+        const turnEvent = event;
+        const timer = setTimeout(() => {
+          pendingIdle.delete(turnEvent.id);
+          const fresh = store.get(project, turnEvent.id);
+          // No text arrived: generic CREW IDLE only if the captain is awaiting a reply.
+          if (!fresh || fresh.state !== "awaiting-input" || !replyPending.delete(turnEvent.id)) return;
+          firePush(deps, project, "working", fresh, { ...turnEvent, reply: true } as ControlEvent, lastCaptainTurnAt.get(fresh.id));
+        }, deps.idleTextGraceMs ?? DEFAULT_IDLE_TEXT_GRACE_MS);
+        timer.unref?.();
+        cancelPendingIdle(event.id);
+        pendingIdle.set(event.id, { timer, event });
+        return next;
+      }
+      // The text-carrying event for a deferred turn-end decides, from the state the
+      // crew was in BEFORE the text-less one moved it.
+      const wasDeferred = hasText && cur.state === "awaiting-input" && cancelPendingIdle(event.id);
+      if (!wasDeferred && next.state !== "awaiting-input") cancelPendingIdle(event.id);
+      if (event.type === "task.turn.completed" && event.reply) replyPending.delete(next.id);
+      firePush(deps, project, wasDeferred ? "working" : cur.state, next, event, lastCaptainTurnAt.get(next.id), cur);
     }
     return next;
   }
