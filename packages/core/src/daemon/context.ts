@@ -64,6 +64,10 @@ export interface SquadrantdOpts {
    *  builds the real one only when config.telegram is present (and not under vitest,
    *  since pushLifecycle is composed onto notify and would hit the network). */
   telegramBridge?: TelegramBridge;
+  /** #1017: override the per-project captain-pane crew tier (tests). Default: project override → alert_only. */
+  captainCrewTier?: (project: string) => import("@squadrant/shared").CrewTier;
+  /** #1017: quiet window before a crew's informational events leave as one digest (default 60s). */
+  captainDigestWindowMs?: number;
   /** Inject a fake router service for tests. */
   routerService?: RouterService;
   /** B4: registered LifecycleSource instances (cmux-store/native-hook/codex-appserver),

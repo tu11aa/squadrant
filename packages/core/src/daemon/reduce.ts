@@ -4,6 +4,7 @@ import type { ControlEvent, TaskRecord, TaskState } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
 import { reduce, isStickyAttention } from "../state-machine.js";
 import { evaluateStall, recoverStall } from "../watchdog.js";
+import { isAddressedTurnEnd } from "./captain-noise.js";
 export interface DaemonDeps {
   store: Store;
   now: () => number;
@@ -62,6 +63,8 @@ export interface DaemonDeps {
    * Distinct from the per-task heartbeat budget (stall detection).
    */
   taskTimeoutMs?: number;
+  /** #1017: no-tool-result window after which a stalled crew gets its single hard escalation. Defaults to DEFAULT_STALL_ESCALATION_MS (30 min). */
+  stallEscalationMs?: number;
   /**
    * #466 self-heal: re-deliver a crew's first turn when the daemon detects it
    * never landed (firstTurnConfirmedAt still absent past firstTurnUndeliveredBudgetMs).
@@ -106,6 +109,11 @@ export const DEFAULT_FIRST_TURN_RESEND_COOLDOWN_MS = 60_000;
 // reminder. Bounded per blocked episode (the episode ends when the crew leaves
 // 'blocked'), so an unanswered crew is nudged once — never spammed.
 export const DEFAULT_BLOCKED_RENUDGE_MS = 30 * 60 * 1000;
+
+// #1017: a crew still stalled (no tool result) this long gets ONE hard
+// escalation that always reaches the captain, even though the first stall is
+// informational. Configurable via DaemonDeps.stallEscalationMs.
+export const DEFAULT_STALL_ESCALATION_MS = 30 * 60 * 1000;
 
 // #225 hard crew task-timeout: default wall-clock ceiling (8h). A crew can
 // heartbeat continuously yet be stuck on one task — the stall watchdog won't
@@ -190,6 +198,10 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       // heartbeat stall — name the tool and how long it has been outstanding,
       // and frame it as "possibly hung" (recoverable, auto-clears on the tool's
       // PostToolUse), NOT a death notice.
+      if (event?.type === "task.stalled" && event.escalated) {
+        const mins = event.elapsedMs != null ? Math.max(1, Math.round(event.elapsedMs / 60000)) : null;
+        return `CREW STALLED ${tag}: ESCALATION — no tool result for ~${mins ?? "?"}min${event.tool ? ` (still running ${event.tool})` : ""}; likely hung. Reported once.`;
+      }
       if (event?.type === "task.stalled" && event.tool) {
         const mins = event.elapsedMs != null ? Math.max(1, Math.round(event.elapsedMs / 60000)) : null;
         return `CREW STALLED ${tag}: still running ${event.tool}${mins != null ? ` ~${mins}min` : ""} — possibly hung (no result yet).`;
@@ -213,6 +225,10 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       // long-lived crew pausing between sequential subtasks. The former
       // "review and reply or close" phrasing read like a possible fault and
       // forced a spot-check every time; state calmly instead.
+      // #1017: a turn-end addressed to the captain carries the crew's own words.
+      if (event && isAddressedTurnEnd(event) && event.type === "task.turn.completed") {
+        return `CREW IDLE ${tag}: turn ended with a message for you (word for word):\n${event.lastMessage!.trim()}`;
+      }
       return `CREW IDLE ${tag}: turn ended, awaiting your reply.`;
     default:
       return null;
@@ -267,8 +283,10 @@ function firePush(
   // #210 idle debounce: a turn-end (awaiting-input) within IDLE_DEBOUNCE_MS of
   // the captain's last turn is part of an active back-and-forth — suppress the
   // CREW IDLE. All other attention states are never debounced.
+  // #1017: an addressed turn-end is the crew's reply, not churn — never debounced.
   if (
     next.state === "awaiting-input" &&
+    !isAddressedTurnEnd(event) &&
     lastCaptainTurnAt != null &&
     deps.now() - lastCaptainTurnAt <= IDLE_DEBOUNCE_MS
   ) {
@@ -343,6 +361,11 @@ export function createDaemon(deps: DaemonDeps) {
   // A different question (a new episode) may nudge again; leaving 'blocked'
   // clears the marker entirely. A long block nudges once, never spams.
   const blockedRenudgedFor = new Map<string, string>();
+  // #1017: one CREW STALLED per stall episode (per task, keyed by the hung tool),
+  // plus one hard escalation. An episode ends when the crew leaves working/stalled
+  // (turn boundary, blocked, terminal) — see applyEvent.
+  const stallEpisode = new Map<string, string>();
+  const stallEscalated = new Set<string>();
   // #466: per-task debounce for first-turn resend attempts — avoids hammering
   // a still-not-ready pane with pastes every sweep tick.
   const resendAttemptedAt = new Map<string, number>();
@@ -366,6 +389,7 @@ export function createDaemon(deps: DaemonDeps) {
     const next = reduce(cur, event, now());
     if (next !== cur) {
       store.put(next); // skip redundant write on terminal no-ops
+      if (next.state !== "working" && next.state !== "stalled") { stallEpisode.delete(next.id); stallEscalated.delete(next.id); }
       firePush(deps, project, cur.state, next, event, lastCaptainTurnAt.get(next.id), cur);
     }
     return next;
@@ -387,7 +411,8 @@ export function createDaemon(deps: DaemonDeps) {
     const tag = crewTag(fresh);
     const fireNotify = (message: string) => {
       if (!deps.notify) return;
-      const synthEvent: ControlEvent = { type: "task.quiet", id: fresh.id, quietMs: undeliveredMs };
+      // task.warn (not task.quiet): UNDELIVERED is actionable, never informational (#1017).
+      const synthEvent: ControlEvent = { type: "task.warn", id: fresh.id, message };
       try {
         const p = deps.notify({ project: fresh.project, message, record: store.get(fresh.project, fresh.id) ?? fresh, event: synthEvent });
         if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
@@ -696,8 +721,31 @@ export function createDaemon(deps: DaemonDeps) {
             : idle.pendingMonitor
             ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: "Monitor", elapsedMs: t - idle.pendingMonitor.since }
             : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
-          firePush(deps, r.project, r.state, idle, synthEvent, lastCaptainTurnAt.get(r.id));
+          const episodeKey = synthEvent.type === "task.stalled" ? synthEvent.tool ?? "heartbeat" : "heartbeat";
+          if (stallEpisode.get(r.id) !== episodeKey) {
+            stallEpisode.set(r.id, episodeKey);
+            firePush(deps, r.project, r.state, idle, synthEvent, lastCaptainTurnAt.get(r.id));
+          }
           continue;
+        }
+        // #1017 hard escalation: a crew still stalled with no tool result past the
+        // hard budget surfaces exactly once (per episode) so a truly hung crew is
+        // never invisible even though the first stall is informational.
+        if (r.state === "stalled" && deps.notify && !stallEscalated.has(r.id) && t - r.lastHeartbeat > r.heartbeatBudgetMs) {
+          const since = r.pendingTool?.since ?? r.pendingMonitor?.since ?? r.lastHeartbeat;
+          const elapsed = t - since;
+          if (elapsed >= (deps.stallEscalationMs ?? DEFAULT_STALL_ESCALATION_MS)) {
+            stallEscalated.add(r.id);
+            const tool = r.pendingTool?.name ?? (r.pendingMonitor ? "Monitor" : undefined);
+            const synthEvent: ControlEvent = { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool, elapsedMs: elapsed, escalated: true };
+            const message = formatMessage(r, synthEvent);
+            if (message) {
+              try {
+                const p = deps.notify({ project: r.project, message, record: r, event: synthEvent });
+                if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => {});
+              } catch { /* swallowed — a flaky notifier must never trip the sweep */ }
+            }
+          }
         }
         // #466 self-heal: an interactive `working` crew that has NEVER had
         // firstTurnConfirmedAt set may be sitting at an empty prompt (the crew

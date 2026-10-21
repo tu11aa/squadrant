@@ -138,7 +138,7 @@ describe("mapClaudeHookToEvent Stop transcript path (#174)", () => {
   it("Stop + transcript whose last assistant message is a statement → task.turn.completed", () => {
     const path = writeTranscript([user("go"), assistant("Done. Pushed the branch.")]);
     const ev = mapClaudeHookToEvent("Stop", { transcript_path: path }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("Stop with no transcript_path → task.turn.completed (unchanged fallback)", () => {
@@ -222,7 +222,7 @@ describe("mapClaudeHookToEvent Stop derived-path fallback (#174 delivery)", () =
     const cwd = "/Users/q3labsadmin/me/claude-cockpit";
     writeDerivedTranscript(cwd, "sess-s", [user("go"), assistant("Done. Pushed the branch.")]);
     const ev = mapClaudeHookToEvent("Stop", { session_id: "sess-s", cwd }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("transcript_path present but unreadable → falls through to derived path (question) → task.blocked", () => {
@@ -359,7 +359,7 @@ describe("mapClaudeHookToEvent Stop last_assistant_message (#174 primary source)
 
   it("statement in last_assistant_message → task.turn.completed", () => {
     const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done. Pushed the branch." }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("last_assistant_message wins over a transcript_path that ends in a statement", () => {
@@ -666,12 +666,12 @@ describe("mapClaudeHookToEvent Stop background_tasks/session_crons veto (#762)",
 
   it("Stop with empty background_tasks/session_crons → unchanged task.turn.completed", () => {
     const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done.", background_tasks: [], session_crons: [] }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("Stop with no background_tasks/session_crons fields at all → unchanged task.turn.completed", () => {
     const ev = mapClaudeHookToEvent("Stop", { last_assistant_message: "Done." }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "hook-stop" });
   });
 
   it("a trailing question STILL wins over an active background-task veto (explicit human ask beats liveness)", () => {
@@ -685,7 +685,7 @@ describe("mapClaudeHookToEvent Stop background_tasks/session_crons veto (#762)",
 
   it("background-task veto composes with the #761 turnId resolution — turnId is only relevant on the non-vetoed path", () => {
     const ev = mapClaudeHookToEvent("Stop", { prompt_id: "p1", last_assistant_message: "Done.", background_tasks: [] }, TID);
-    expect(ev).toEqual({ type: "task.turn.completed", id: TID, turnId: "p1" });
+    expect(ev).toMatchObject({ type: "task.turn.completed", id: TID, turnId: "p1" });
   });
 });
 

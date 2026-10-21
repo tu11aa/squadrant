@@ -166,7 +166,7 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(1);
     expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
     expect(calls[0].message).toMatch(/re-send/i);
-    expect(calls[0].event.type).toBe("task.quiet"); // reuses task.quiet as notify vehicle
+    expect(calls[0].event.type).toBe("task.warn"); // actionable warn vehicle (#1017: never informational task.quiet)
   });
 
   // #466: same crew but WITH firstTurnConfirmedAt set → normal "deep thinking" path.
@@ -211,7 +211,7 @@ describe("daemon handler", () => {
     expect(calls.length).toBe(1);
     expect(calls[0].message).toMatch(/CREW UNDELIVERED/);
     expect(calls[0].message).toMatch(/re-send/i);
-    expect(calls[0].event.type).toBe("task.quiet");
+    expect(calls[0].event.type).toBe("task.warn");
   });
 
   // A `submitted` crew within the undelivered budget must NOT fire (no false alarm).
