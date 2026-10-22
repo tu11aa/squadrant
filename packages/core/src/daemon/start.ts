@@ -8,7 +8,7 @@ import { readdir } from "node:fs/promises";
 import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
-import { createCaptainCompact } from "./captain-compact.js";
+import { createCaptainCompact, COMPACT_RESUME_TEXT } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage } from "../mailbox.js";
@@ -371,6 +371,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       injectedSurfaces: ctx.opts.captainSurfaces,
       undeliveredCount: async (project) => (await readUndelivered(stateRoot, project)).length,
       deliveryBusy: (project) => ctx.deliveryBusy?.(project) ?? false,
+      resume: async (project) => { await appendCaptainMessage({ stateRoot, project, text: COMPACT_RESUME_TEXT, source: "daemon" }); },
     });
     ctx.requestCaptainCompact = compact.request;
     ctx.captainCompactHolds = compact.holdsDelivery;
