@@ -9,7 +9,7 @@ import { createDaemon, DEFAULT_STALL_ESCALATION_MS } from "../daemon/reduce.js";
 import { createDelivery } from "../daemon/delivery-loop.js";
 import { coalesceBacklog } from "../daemon/backlog-coalesce.js";
 import { createStore } from "../store.js";
-import { mailboxStats, readFromCursor, type MailboxEntry } from "../mailbox.js";
+import { mailboxStats, readFromCursor, readMailboxEntry, fullEntryText, rotateIfNeeded, type MailboxEntry } from "../mailbox.js";
 
 const MIN = 60_000;
 
@@ -391,7 +391,7 @@ describe("claude turn-end source race (#1017)", () => {
       return out;
     };
     const captainSpoke = async (id: string) => { await ev({ type: "task.started", id }); t += 60_000; };
-    return { store, ev, delivered, captainSpoke };
+    return { stateRoot, store, ev, delivered, captainSpoke };
   }
   const textless = (id: string, src: string): ControlEvent => ({ type: "task.turn.completed", id, turnId: src });
   const hook = (id: string, text: string): ControlEvent => ({ type: "task.turn.completed", id, turnId: "hook-stop", lastMessage: text });
@@ -432,6 +432,71 @@ describe("claude turn-end source race (#1017)", () => {
     const got = await delivered();
     expect(got).toHaveLength(1);
     expect(got[0].message).toContain("Fix here?");
+  });
+
+  describe("full crew text stays in the mailbox (#1030)", () => {
+    const POINTER = (seq: number) => `… full: squadrant crew msg demo ${seq}`;
+
+    it("an 8000-char reply is stored in full, rendered ≤1500 + pointer, and recorded as lastReplySeq", async () => {
+      const { store, ev, delivered, captainSpoke } = setup();
+      store.put(rec("f1"));
+      await captainSpoke("f1");
+      const big = "r".repeat(8000);
+      await ev(hook("f1", big));
+      const got = await delivered();
+      expect(got).toHaveLength(1);
+      expect(got[0].payload?.lastMessage).toBe(big);
+      expect(got[0].message!.endsWith(POINTER(got[0].seq))).toBe(true);
+      expect(got[0].message!.length).toBeLessThanOrEqual(1500 + POINTER(got[0].seq).length + 200); // prefix line + pointer
+      expect(got[0].message!.match(/r/g)!.length).toBeLessThanOrEqual(1500);
+      expect(store.get("demo", "f1")!.lastReplySeq).toBe(got[0].seq);
+    });
+
+    it("an auto-detected BLOCKED question is stored in full, rendered bounded with the pointer", async () => {
+      const { store, ev, delivered } = setup();
+      store.put(rec("f2"));
+      const big = "q".repeat(8000) + "\nShould I?";
+      await ev({ type: "task.blocked", id: "f2", reason: "crew asked a question (auto-detected)", question: big });
+      const got = await delivered();
+      expect(got).toHaveLength(1);
+      expect(got[0].payload?.question).toBe(big);
+      expect(got[0].message!.endsWith(POINTER(got[0].seq))).toBe(true);
+      expect(got[0].message!.match(/q/g)!.length).toBeLessThanOrEqual(1500);
+      expect(store.get("demo", "f2")!.lastReplySeq).toBe(got[0].seq);
+    });
+
+    it("crew msg reads the full text, including from a rotated segment", async () => {
+      const w = setup();
+      w.store.put(rec("f3"));
+      await w.captainSpoke("f3");
+      const big = "z".repeat(8000);
+      await w.ev(hook("f3", big));
+      const [e] = await w.delivered();
+      await rotateIfNeeded({ stateRoot: w.stateRoot, project: "demo", maxBytes: 1, maxAgeMs: 1, keepCount: 3 });
+      const found = await readMailboxEntry(w.stateRoot, "demo", e.seq);
+      expect(found).not.toBeNull();
+      expect(fullEntryText(found!)).toBe(big);
+      expect(await readMailboxEntry(w.stateRoot, "demo", e.seq + 50)).toBeNull();
+    });
+
+    it("a long CREW DONE message is stored in full and rendered bounded with the pointer", async () => {
+      const { store, ev, delivered } = setup();
+      store.put(rec("f5"));
+      const big = "line one\n" + "d".repeat(8000);
+      await ev({ type: "task.done", id: "f5", resultRef: "", message: big });
+      const [e] = await delivered();
+      expect(fullEntryText(e)).toBe(big);
+      expect(e.message).toContain("line one\n");
+      expect(e.message!.endsWith(POINTER(e.seq))).toBe(true);
+    });
+
+    it("a short reply carries no pointer", async () => {
+      const { store, ev, delivered, captainSpoke } = setup();
+      store.put(rec("f4"));
+      await captainSpoke("f4");
+      await ev(hook("f4", "Done: A."));
+      expect((await delivered())[0].message).not.toContain("crew msg");
+    });
   });
 
   it("question: hook first, then text-less → still once", async () => {

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
+import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, stateRoot, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
 import type { PanePlacement, BackendMode, PaneRef } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
@@ -16,6 +16,8 @@ import {
   meterTask,
   runCrewAnswer as coreRunCrewAnswer,
   buildRouterCredentialsRequest,
+  readMailboxEntry,
+  fullEntryText,
   type CrewSpawnInput,
   type ResolvedAgent,
   type CrewAnswerResult,
@@ -422,6 +424,24 @@ crewCommand
       const screen = await runCrewRead(project, name);
       const out = opts.full ? screen : tailLines(screen, Number(opts.lines ?? 40));
       console.log(out);
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
+      process.exit(1);
+    }
+  });
+
+crewCommand
+  .command("msg")
+  .description("Print one mailbox entry in full (the crew's whole reply or question; relayed messages end with this command)")
+  .argument("<project>", "Project name")
+  .argument("<seq>", "Mailbox seq")
+  .action(async (project: string, seq: string) => {
+    try {
+      const n = Number(seq);
+      if (!Number.isInteger(n) || n < 1) throw new Error(`invalid seq '${seq}'`);
+      const entry = await readMailboxEntry(stateRoot(), project, n);
+      if (!entry) throw new Error(`no mailbox entry ${n} for project '${project}' (rotated out or wrong project)`);
+      console.log(fullEntryText(entry));
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);

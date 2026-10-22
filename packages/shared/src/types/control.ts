@@ -58,6 +58,9 @@ export interface TaskRecord {
    *  state === "review". Surfaced in the CREW REVIEW notification. */
   reviewNote?: string;
   error?: string;          // populated when state === "failed"
+  /** #1030: mailbox seq of the last word-for-word crew reply or BLOCKED question.
+   *  A pointer for `squadrant crew msg`; the text itself lives only in the mailbox. */
+  lastReplySeq?: number;
   exitCode?: number;
   resultRef?: string;      // filesystem path to captured output/artifact
   parseWarning?: boolean;  // headless exit 0 but unparseable result
