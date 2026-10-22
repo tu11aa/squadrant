@@ -10,7 +10,7 @@ const IDLE = "╭──╮\n│ > │\n╰──╯\n  ⏵⏵ accept edits on";
 
 function harness(opts: {
   screens: string[]; send?: () => Promise<void>; timeoutMs?: number;
-  undelivered?: () => number; busy?: (project: string) => boolean; holdMs?: number; onSend?: () => void;
+  undelivered?: () => number; busy?: (project: string) => boolean; holdMs?: number; onSend?: () => void; resume?: (p: string) => Promise<void>;
 }) {
   let t = 1000;
   const logs: string[] = [];
@@ -26,7 +26,7 @@ function harness(opts: {
     cmux, log: (l) => logs.push(l), now: () => t, timeoutMs: opts.timeoutMs ?? 600_000,
     injectedSurfaces: { demo: SURFACE }, captainTitle: () => "demo-captain",
     undeliveredCount: opts.undelivered ? async () => opts.undelivered!() : undefined,
-    deliveryBusy: opts.busy, holdMs: opts.holdMs,
+    deliveryBusy: opts.busy, holdMs: opts.holdMs, resume: opts.resume,
   });
   return { c, send, logs, advance: (ms: number) => { t += ms; } };
 }
@@ -98,6 +98,44 @@ describe("captain compact", () => {
     expect(h.c.holdsDelivery("other")).toBe(false);
     h.c.compactDone("demo");
     expect(h.c.holdsDelivery("demo")).toBe(false);
+  });
+
+  it("#1038: sends exactly one resume message right after /compact is typed, not before", async () => {
+    const resume = vi.fn(async () => {});
+    const h = harness({ screens: [IDLE], undelivered: () => 0, resume });
+    h.c.request("demo");
+    await h.c.tick();
+    expect(resume).not.toHaveBeenCalled();
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledWith("demo");
+    h.c.compactDone("demo");
+    await h.c.tick();
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1038: no resume message when the send guard defers (nothing typed)", async () => {
+    const resume = vi.fn(async () => {});
+    const h = harness({ screens: [IDLE], resume, send: async () => { throw new DeferDelivery(null, "modal"); } });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it("#1038: a failing resume send is logged, never thrown", async () => {
+    const h = harness({ screens: [IDLE], resume: async () => { throw new Error("sock gone"); } });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick();
+    await Promise.resolve();
+    expect(h.logs.some((l) => /resume message failed: sock gone/.test(l))).toBe(true);
+  });
+
+  it("#1038: a manual /compact (nothing queued) gets no resume message", async () => {
+    const resume = vi.fn(async () => {});
+    const h = harness({ screens: [IDLE], resume });
+    h.c.compactDone("demo");
+    expect(resume).not.toHaveBeenCalled();
   });
 
   it("the hold is bounded: it lapses if SessionStart(compact) never arrives", async () => {
