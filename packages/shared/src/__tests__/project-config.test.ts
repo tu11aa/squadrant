@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { boundMessage } from "../lib/bound-message.js";
+import { boundForCaptain } from "../lib/bound-message.js";
 import { resolveCaptainCrewTier } from "../project-config.js";
 import { loadProjectOverride, saveProjectOverride, projectConfigPath, resolveNotify, DEFAULT_NOTIFY, crewRank, isQuieter } from "../project-config.js";
 
@@ -79,11 +79,10 @@ describe("captain-pane crew tier (#1017)", () => {
   });
 });
 
-describe("boundMessage (#1017)", () => {
-  it("leaves short text alone and truncates long text with a marker", () => {
-    expect(boundMessage("  hi  ")).toBe("hi");
-    const out = boundMessage("a".repeat(2000), 1500);
-    expect(out.startsWith("a".repeat(1500))).toBe(true);
-    expect(out).toMatch(/\[truncated, 500 more chars\]$/);
+describe("boundForCaptain (#1030)", () => {
+  it("leaves short text alone and cuts long text with a crew msg pointer", () => {
+    expect(boundForCaptain("  hi  ", "p", 3)).toBe("hi");
+    const out = boundForCaptain("a".repeat(2000), "proj", 7, 1500);
+    expect(out).toBe(`${"a".repeat(1500)}… full: squadrant crew msg proj 7`);
   });
 });

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { InteractiveHookAdapter } from "./types.js";
-import { boundMessage, type ControlEvent } from "@squadrant/shared";
+import type { ControlEvent } from "@squadrant/shared";
 
 // PostToolUse fires after EVERY tool call mid-turn — it is the only liveness
 // signal that refreshes the heartbeat while a crew is still working.
@@ -585,9 +585,9 @@ export function mapClaudeHookToEvent(
       const text = resolveLastAssistantText(payload);
       const question = text ? detectTrailingQuestion(text) : null;
       if (question) {
-        // #1017: carry the crew's whole message (bounded), not just the last line,
+        // #1017: carry the crew's whole message (full; bounded only at render, #1030), not just the last line,
         // so the captain needs no `crew read` to understand the question.
-        return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question: boundMessage(text!) };
+        return { type: "task.blocked", id: taskId, reason: "crew asked a question (auto-detected)", question: text!.trim() };
       }
       if (hasActiveBackgroundWork(payload)) {
         // #762: the turn ended but background_tasks/session_crons are still
@@ -596,9 +596,9 @@ export function mapClaudeHookToEvent(
         return { type: "task.progress", id: taskId, note: "stop-background-work" };
       }
       logStopPermissionMode(payload, taskId);
-      // #1017: ship the final message (bounded) so core can classify it — a report
+      // #1017: ship the final message (full) so core can classify it — a report
       // addressed to the captain is delivered word for word, a plain end stays silent.
-      return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload), ...(text ? { lastMessage: boundMessage(text) } : {}) };
+      return { type: "task.turn.completed", id: taskId, turnId: resolveTurnId(payload), ...(text ? { lastMessage: text.trim() } : {}) };
     }
     case "StopFailure":
       // #763: the turn died on an API error (529/overload/etc) — today

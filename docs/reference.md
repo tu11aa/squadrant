@@ -70,6 +70,7 @@ guided first run — come back here when you need the details.
 | `squadrant crew send <project> <name> <message>` | Send a follow-up turn to an existing crew |
 | `squadrant crew answer <project> <name> <option> [--expect <text>] [--text <answer>]` | Deliberately answer a crew's open AskUserQuestion/permission prompt by index or text — never an implicit default (#592) |
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
+| `squadrant crew msg <project> <seq>` | Print one mailbox entry in full — the crew's whole reply or question, also from rotated segments (#1030) |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
 | `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
@@ -466,7 +467,7 @@ Every crew lifecycle event used to become a full captain turn; most (plain idle,
 
 Informational events always stay in the task record, so `squadrant crew tasks` shows them. Telegram has its own independent tier and is unchanged. Delivery into the pane still goes through the normal mailbox/delivery loop, which defers while the captain is mid-turn.
 
-**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`, bounded to 1500 chars with a `[truncated, N more chars]` marker) rides on `task.turn.completed` as `lastMessage`. Delivery is language-neutral and deterministic (no LLM, no keywords):
+**Idle carries content.** When a turn ends, the agent's final message (Claude: the `Stop` payload's `last_assistant_message`) rides on `task.turn.completed` as `lastMessage`, **in full** — the mailbox event keeps the whole text. Only the captain-facing `message` is bounded (#1030): 1500 chars, then `… full: squadrant crew msg <project> <seq>`; run that command to read the rest (it also finds entries in rotated segments). The task record keeps just a pointer, `lastReplySeq`, never the text. Delivery is language-neutral and deterministic (no LLM, no keywords):
 
 - the **first turn-end after a captain message** to that crew (`crew send`/dispatch) is the *reply*: the daemon stamps `reply` on it and always delivers it, text word for word (`CREW IDLE … (word for word)`), bypassing the #210 debounce — this matters because crews often never run `crew signal done` (#278);
 - a turn-end whose last non-code-fence line ends with `?` is *addressed* and delivered the same way (Claude maps it to `task.blocked` with the whole message as the question, instead of only the last line);

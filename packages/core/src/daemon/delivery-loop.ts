@@ -4,7 +4,7 @@ import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFro
 import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES, loadProjectOverride, resolveCaptainCrewTier, type CrewTier } from "@squadrant/shared";
-import { captainPaneAllows, isInformational, InformationalDigest } from "./captain-noise.js";
+import { captainPaneAllows, isAddressedTurnEnd, isInformational, InformationalDigest } from "./captain-noise.js";
 import { crewTag } from "./reduce.js";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { coalesceBacklog } from "./backlog-coalesce.js";
@@ -334,7 +334,7 @@ export function createDelivery(
   };
   const appendEntry = async (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }): Promise<void> => {
     try {
-      await appendToMailbox({
+      const seq = await appendToMailbox({
         stateRoot,
         project: args.project,
         taskRecord: args.record,
@@ -343,6 +343,11 @@ export function createDelivery(
         // rather than re-derived from the raw event (which drifted).
         message: args.message,
       });
+      // #1030: pointer to the crew's own words (reply or BLOCKED question), never the text.
+      if (isAddressedTurnEnd(args.event) || args.event.type === "task.blocked") {
+        const cur = store.get(args.project, args.record.id);
+        if (cur) store.put({ ...cur, lastReplySeq: seq });
+      }
     } catch (e) {
       log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
     }
