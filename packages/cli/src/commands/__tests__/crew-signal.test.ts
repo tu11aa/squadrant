@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildSignalRequest, runCrewSignal } from "../crew-control.js";
+import { buildSignalRequest, runCrewSignal, signalConfirmation } from "../crew-control.js";
 
 describe("buildSignalRequest", () => {
   const SAVED = { ...process.env };
@@ -152,6 +152,14 @@ describe("runCrewSignal('review') (#599)", () => {
     const call = vi.fn().mockResolvedValueOnce({ state: "cancelled" });
     await expect(runCrewSignal("done", {}, { call })).rejects.toThrow(
       /crew send.*reopened to working/s,
+    );
+  });
+});
+
+describe("signalConfirmation (#1039)", () => {
+  it.each(["done", "blocked", "failed", "review"])("names the state, project and short task id for %s", (state) => {
+    expect(signalConfirmation(state, "squadrant", "f87b3ddd-53ec-425f-a2fa-f649fa5b9459")).toBe(
+      `✔ signalled ${state} for squadrant (task f87b3ddd)`,
     );
   });
 });
