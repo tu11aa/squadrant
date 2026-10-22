@@ -3,8 +3,8 @@ import chalk from "chalk";
 import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
 import type { PanePlacement, BackendMode, PaneRef } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
-import { createServer, connect as netConnect } from "node:net";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
+import { connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
 import {
   runCrewSpawn as coreRunCrewSpawn,
@@ -24,6 +24,7 @@ import {
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
+import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
@@ -149,11 +150,7 @@ export async function runCrewSend(project: string, name: string, message: string
   // off path does no work at all.
   let tasks: TaskRecord[] = [];
 
-  const receipts = new ClaudeReceiptListener({
-    socketPath: "/tmp/cc-socks/squadrantd.sock",
-    createServer: (h) => createServer(h),
-    log: (m) => console.error(chalk.dim(m)),
-  });
+  const receipts = createCliReceiptListener();
   await receipts.start();
 
   const controlChannels = [
