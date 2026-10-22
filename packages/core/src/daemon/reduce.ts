@@ -188,7 +188,7 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       const doneMsg = event?.type === "task.done" ? event.message : undefined;
       const body =
         doneMsg != null && doneMsg.trim().length > 0
-          ? doneMsg.split(/\r?\n/)[0].trim().slice(0, 200)
+          ? doneMsg.trim() // #1030: whole message; the single cap + pointer is applied at mailbox append
           : ((rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "");
       return `CREW DONE ${tag}: ${body}`;
     }
@@ -402,7 +402,8 @@ export function createDaemon(deps: DaemonDeps) {
     }
     const cur = store.get(project, event.id);
     if (!cur) throw new Error(`unknown task ${event.id}`);
-    if (event.type === "task.started") { lastCaptainTurnAt.set(event.id, now()); replyPending.add(event.id); }
+    // #1032: a reopen is the captain speaking to a terminal crew — its next turn-end is a reply too.
+    if (event.type === "task.started" || event.type === "task.reopened") { lastCaptainTurnAt.set(event.id, now()); replyPending.add(event.id); }
     const isTurnEnd = event.type === "task.turn.completed";
     const hasText = event.type === "task.turn.completed" && !!event.lastMessage?.trim();
     const textLessRace = isTurnEnd && !hasText && TEXT_SOURCE_PROVIDERS.has(cur.provider) && cur.state !== "awaiting-input";

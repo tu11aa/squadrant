@@ -186,8 +186,8 @@ export interface DaemonContext {
   captainCompactHolds?: (project: string) => boolean;
   /** #1015: the SessionStart(source=compact) hook arrived — end the delivery hold. */
   captainCompactDone?: (project: string) => void;
-  /** #1015: true while the delivery loop is mid-pass (set by createDelivery). */
-  deliveryBusy?: () => boolean;
+  /** #1015/#1034: true while the delivery loop is mid-pass for THIS project (set by createDelivery). */
+  deliveryBusy?: (project: string) => boolean;
   /** Fan-out to attach clients (set by createAttach). */
   broadcast: (taskId: string, f: AttachFrame) => void;
   /** Schedule gate promotion (set by createAttach). */

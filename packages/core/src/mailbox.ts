@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { TaskRecord, ControlEvent } from "@squadrant/shared";
+import { boundForCaptain, type TaskRecord, type ControlEvent } from "@squadrant/shared";
 
 export interface MailboxEntry {
   seq: number;
@@ -137,7 +137,8 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
     kind: opts.event.type,
     provider: opts.taskRecord.provider,
     payload: extractPayload(opts.event),
-    message: opts.message ?? null,
+    // #1030: the payload keeps the crew's full text; only the captain-facing render is bounded.
+    message: opts.message == null ? null : boundForCaptain(opts.message, opts.project, seq),
   }));
 }
 
@@ -282,6 +283,22 @@ export async function* readFromCursor(opts: ReadFromCursorOpts): AsyncIterable<M
       if (entry.seq >= opts.fromSeq) yield entry;
     }
   }
+}
+
+/** #1030: one entry by seq, searching the current log and rotated segments. */
+export async function readMailboxEntry(stateRoot: string, project: string, seq: number): Promise<MailboxEntry | null> {
+  for await (const e of readFromCursor({ stateRoot, project, fromSeq: seq })) {
+    if (e.seq === seq) return e;
+    if (e.seq > seq) break;
+  }
+  return null;
+}
+
+/** #1030: the entry's full text — the crew's own words when it has them, else the rendered message. */
+export function fullEntryText(e: MailboxEntry): string {
+  const p = e.payload ?? {};
+  const own = e.kind === "task.turn.completed" ? p.lastMessage : e.kind === "task.blocked" ? p.question : e.kind === "task.done" ? p.message : undefined;
+  return (typeof own === "string" && own.trim() ? own : e.message ?? "").trim();
 }
 
 /** #1015: entries the captain subscriber has not yet acked — the durable backlog. */

@@ -121,6 +121,7 @@ squadrant crew tasks <project> --state-only <id>  # fast state check (prints one
 squadrant crew read <project> <name>          # read tail of a crew's screen (~40 lines)
 squadrant crew read <project> <name> --full   # entire scrollback (may be large)
 squadrant crew read <project> <name> --lines 100  # custom tail length
+squadrant crew msg <project> <seq>            # one mailbox entry in full (the pointer on a cut crew reply)
 squadrant crew close <project> <name>         # shutdown the crew (closes its tab)
 ```
 
@@ -258,7 +259,7 @@ If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attemp
 
 ### Handling CREW IDLE / BLOCKED
 
-Since #1017 a plain end-of-turn, the first stall, and CREW QUIET no longer reach your pane (they stay in `crew tasks`); a CREW IDLE you do see carries the crew's own message word for word — read it before spot-checking. One `CREW STALLED … ESCALATION` (30 min, no tool result) is the "really hung" signal.
+Since #1017 a plain end-of-turn, the first stall, and CREW QUIET no longer reach your pane (they stay in `crew tasks`); a CREW IDLE you do see carries the crew's own message word for word — read it before spot-checking. A long reply (or BLOCKED question) is cut at 1500 chars and ends with `… full: squadrant crew msg <project> <seq>`; run that to read the whole text instead of asking the crew to rewrite it to a file. One `CREW STALLED … ESCALATION` (30 min, no tool result) is the "really hung" signal.
 
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
 - **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).

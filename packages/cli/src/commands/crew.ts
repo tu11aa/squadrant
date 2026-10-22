@@ -1,10 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
+import { loadConfig, loadProjectOverride, resolveContextBudget, resolveTextInput, stateRoot, resolveControlChannelMode, parseThinkingLevel, THINKING_LEVELS, isBackendMode } from "@squadrant/shared";
 import type { PanePlacement, BackendMode, PaneRef } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, paneHasOpenModal, readModalOptions, getFreePort } from "@squadrant/workspaces";
-import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, ClaudeReceiptListener, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
-import { createServer, connect as netConnect } from "node:net";
+import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
+import { connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
 import {
   runCrewSpawn as coreRunCrewSpawn,
@@ -16,6 +16,8 @@ import {
   meterTask,
   runCrewAnswer as coreRunCrewAnswer,
   buildRouterCredentialsRequest,
+  readMailboxEntry,
+  fullEntryText,
   type CrewSpawnInput,
   type ResolvedAgent,
   type CrewAnswerResult,
@@ -24,6 +26,7 @@ import {
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
 import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
+import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
@@ -149,11 +152,7 @@ export async function runCrewSend(project: string, name: string, message: string
   // off path does no work at all.
   let tasks: TaskRecord[] = [];
 
-  const receipts = new ClaudeReceiptListener({
-    socketPath: "/tmp/cc-socks/squadrantd.sock",
-    createServer: (h) => createServer(h),
-    log: (m) => console.error(chalk.dim(m)),
-  });
+  const receipts = createCliReceiptListener();
   await receipts.start();
 
   const controlChannels = [
@@ -425,6 +424,24 @@ crewCommand
       const screen = await runCrewRead(project, name);
       const out = opts.full ? screen : tailLines(screen, Number(opts.lines ?? 40));
       console.log(out);
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
+      process.exit(1);
+    }
+  });
+
+crewCommand
+  .command("msg")
+  .description("Print one mailbox entry in full (the crew's whole reply or question; relayed messages end with this command)")
+  .argument("<project>", "Project name")
+  .argument("<seq>", "Mailbox seq")
+  .action(async (project: string, seq: string) => {
+    try {
+      const n = Number(seq);
+      if (!Number.isInteger(n) || n < 1) throw new Error(`invalid seq '${seq}'`);
+      const entry = await readMailboxEntry(stateRoot(), project, n);
+      if (!entry) throw new Error(`no mailbox entry ${n} for project '${project}' (rotated out or wrong project)`);
+      console.log(fullEntryText(entry));
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);

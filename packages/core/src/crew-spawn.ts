@@ -932,9 +932,11 @@ export async function runCrewSend(
       if (TERMINAL_STATES.has(task.state)) {
         await deps.emitEvent(project, { type: "task.reopened", id: task.id });
         reopened = true;
-      } else if (task.state === "blocked" || task.state === "awaiting-input" || task.state === "review") {
+      } else {
         // #599: feedback on a 'review' task is the reject path — clear it back
         // to working the same way an answer clears 'blocked'.
+        // #1032: every other live state (working/stalled/awaiting-input) gets it too,
+        // so the daemon marks the crew's next turn-end as the reply to this send.
         await deps.emitEvent(project, { type: "task.started", id: task.id });
       }
     }

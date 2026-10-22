@@ -310,6 +310,11 @@ export async function runCrewSignal(
   await deps.call(req);
 }
 
+/** #1039: one-line success confirmation for `crew signal`, so a crew can tell the signal landed. */
+export function signalConfirmation(signal: string, project: string, taskId: string): string {
+  return `✔ signalled ${signal} for ${project} (task ${taskId.slice(0, 8)})`;
+}
+
 /**
  * Pure. Resolve a crew name to its most-recent task record (#574 tie-break —
  * same rule as diff.ts's resolveDiffTarget / crew-spawn.ts's pickMostRecentTask).
@@ -619,6 +624,9 @@ export function addControlPlaneCrewCommands(crew: Command): void {
           writeResult: defaultWriteResult,
         }, { call: squadrantdCall });
         logSignalCitations(state, opts);
+        process.stdout.write(
+          `${signalConfirmation(state, opts.project ?? process.env.SQUADRANT_CREW_PROJECT ?? "", opts.taskId ?? process.env.SQUADRANT_CREW_TASK_ID ?? "")}\n`,
+        );
         process.exit(0);
       } catch (e) {
         process.stderr.write(`${(e as Error).message}\n`);

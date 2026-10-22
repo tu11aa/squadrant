@@ -931,7 +931,7 @@ describe("squadrant crew send/read/close/list", () => {
     );
   });
 
-  it("send does NOT emit task.reopened when the crew's task is working (non-terminal)", async () => {
+  it("send emits task.started, not task.reopened, when the crew's task is working (non-terminal, #1032)", async () => {
     listSurfaces.mockResolvedValue([
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
     ]);
@@ -945,10 +945,10 @@ describe("squadrant crew send/read/close/list", () => {
 
     await runCrewSend("brove", "crew-1", "follow up");
 
-    // Only one call to squadrantdCall — the list to check state; no event emitted.
-    const callKinds = (squadrantdCall.mock.calls as Array<[{ kind: string }]>)
-      .map(([req]) => req.kind);
-    expect(callKinds).toEqual(["list"]);
+    // The list to check state, then task.started (marks the next turn-end as the reply); never a reopen.
+    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([req]) => req);
+    expect(calls.map((r) => r.kind)).toEqual(["list", "event"]);
+    expect(calls[1].event?.type).toBe("task.started");
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
       "follow up",

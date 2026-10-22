@@ -4,7 +4,7 @@ import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFro
 import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES, loadProjectOverride, resolveCaptainCrewTier, type CrewTier } from "@squadrant/shared";
-import { captainPaneAllows, isInformational, InformationalDigest } from "./captain-noise.js";
+import { captainPaneAllows, isAddressedTurnEnd, isInformational, InformationalDigest } from "./captain-noise.js";
 import { crewTag } from "./reduce.js";
 import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { coalesceBacklog } from "./backlog-coalesce.js";
@@ -334,7 +334,7 @@ export function createDelivery(
   };
   const appendEntry = async (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }): Promise<void> => {
     try {
-      await appendToMailbox({
+      const seq = await appendToMailbox({
         stateRoot,
         project: args.project,
         taskRecord: args.record,
@@ -343,6 +343,11 @@ export function createDelivery(
         // rather than re-derived from the raw event (which drifted).
         message: args.message,
       });
+      // #1030: pointer to the crew's own words (reply or BLOCKED question), never the text.
+      if (isAddressedTurnEnd(args.event) || args.event.type === "task.blocked") {
+        const cur = store.get(args.project, args.record.id);
+        if (cur) store.put({ ...cur, lastReplySeq: seq });
+      }
     } catch (e) {
       log(`mailbox append failed project=${args.project}: ${(e as Error).message}`);
     }
@@ -399,7 +404,10 @@ export function createDelivery(
   // Re-entrancy guard: each tick does multiple slow cmux subprocess calls and
   // can exceed the 1s interval.
   let delivering = false;
-  ctx.deliveryBusy = () => delivering;
+  // #1034: per-project — only the project whose pass is running is busy, so one
+  // captain's delivery never blocks another captain's compact.
+  const deliveringProjects = new Set<string>();
+  ctx.deliveryBusy = (project) => deliveringProjects.has(project);
 
   const deliveryCore = async () => {
     // Registry is the liveness authority (Task 4) — reconcile it from the
@@ -429,6 +437,7 @@ export function createDelivery(
     ])];
 
     for (const project of allProjects) {
+      deliveringProjects.add(project);
       // #590: a stuck/throwing project must never delay or take down delivery
       // for every OTHER project in this same tick — each project's pass is
       // isolated, so one jam only ever costs that one project's slot.
@@ -689,6 +698,8 @@ export function createDelivery(
         // that iterates after this one, every tick, for as long as the fault
         // persisted).
         log(`delivery project=${project}: unhandled error — ${(e as Error).message}`);
+      } finally {
+        deliveringProjects.delete(project);
       }
     }
   };

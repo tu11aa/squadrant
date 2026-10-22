@@ -36,10 +36,17 @@ export interface CaptainCompactDeps {
   /** #1015: undelivered mailbox entries for the project. A compact waits for 0 so no
    *  message is ever in flight across the compact boundary. Absent ⇒ not consulted. */
   undeliveredCount?: (project: string) => Promise<number>;
-  /** #1015: true while the delivery loop is mid-pass (it may be about to type). */
-  deliveryBusy?: () => boolean;
+  /** #1015/#1034: true while the delivery loop is mid-pass for this project (it may be about to type). */
+  deliveryBusy?: (project: string) => boolean;
   holdMs?: number;
+  /** #1038: right after `/compact` is typed, queue the "continue" message to the captain's peer
+   *  channel (Claude Code holds it until the compact ends) — `/compact` is a local command, so
+   *  nothing else starts a turn afterwards. Absent ⇒ no resume message. */
+  resume?: (project: string) => Promise<void>;
 }
+
+/** #1038: the captain message that starts the post-compact turn. */
+export const COMPACT_RESUME_TEXT = "Compact finished — continue from the handoff nextSteps.";
 
 export function createCaptainCompact(deps: CaptainCompactDeps) {
   const { cmux, log } = deps;
@@ -110,9 +117,9 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
       return;
     }
     holds.set(project, { until: now() + holdMs });
-    if (deps.deliveryBusy?.()) {
+    if (deps.deliveryBusy?.(project)) {
+      // #1034: keep idlePolls — the captain is idle; retry on the next tick.
       holds.delete(project);
-      p.idlePolls = 0;
       p.lastReason = "delivery-in-flight";
       return;
     }
@@ -129,6 +136,8 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
     holds.set(project, { until: now() + holdMs });
     pending.delete(project);
     log(`captain-compact ${project}: /compact sent`);
+    // Only compacts squadrant queued reach here; a hand-typed /compact never does.
+    deps.resume?.(project).catch((e: unknown) => log(`captain-compact ${project}: resume message failed: ${(e as Error).message}`));
   }
 
   async function tick(): Promise<void> {

@@ -117,6 +117,26 @@ export async function sharedReceiptListener(): Promise<ClaudeReceiptListener> {
 }
 
 /**
+ * An unstarted receipt listener private to one short-lived CLI command (`crew send`).
+ *
+ * The path is PID-scoped like the daemon's, and `unlinkStale` is set: a fixed
+ * path with no unlink meant one interrupted send left the file behind and every
+ * later send died on EADDRINUSE; two concurrent sends collided the same way (#1033).
+ * Receipts are routed by the `from` address the listener advertises, so a
+ * per-process name needs no receiver-side change. stop() removes the file.
+ */
+export function createCliReceiptListener(opts: { pid?: number; dir?: string } = {}): ClaudeReceiptListener {
+  const dir = opts.dir ?? CC_SOCKS_DIR;
+  if (!opts.dir) ensureSocksDir();
+  return new ClaudeReceiptListener({
+    socketPath: `${dir}/squadrantd-cli-${opts.pid ?? process.pid}.sock`,
+    createServer: (h) => createServer(h),
+    unlinkStale: (p) => { try { fs.unlinkSync(p); } catch { /* absent is the normal case */ } },
+    log: (m) => console.error(chalk.dim(m)),
+  });
+}
+
+/**
  * Resolve a captain's own session id from the registry entry keyed by the
  * socket path squadrant chose at launch (#709) — the same entry
  * readClaudeStatusBySocketPath already reads for statusFor. Wiring this into
