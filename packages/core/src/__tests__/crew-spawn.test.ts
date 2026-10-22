@@ -1769,6 +1769,21 @@ describe("runCrewSend", () => {
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
   });
 
+  // #1032: a send to any live crew marks the task as awaiting a reply.
+  for (const state of ["working", "stalled", "awaiting-input"] as const) {
+    it(`emits task.started for a ${state} task (#1032)`, async () => {
+      const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
+      const runtime = makeRuntime("workspace:1", [existing]);
+      const emitEvent = vi.fn().mockResolvedValue(undefined);
+      const task = { id: "t1", name: "crew-1", state } as Partial<TaskRecord>;
+      await runCrewSend(PROJECT, "crew-1", "msg", runtime, "workspace:1", {
+        listTasks: vi.fn().mockResolvedValue([task]),
+        emitEvent,
+      });
+      expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
+    });
+  }
+
   // #595: the caller (CLI output) must be able to truthfully report whether a
   // reopen happened — a silent void return gave no way to distinguish "task
   // was already working" from "task was terminal and got reopened".
