@@ -404,7 +404,10 @@ export function createDelivery(
   // Re-entrancy guard: each tick does multiple slow cmux subprocess calls and
   // can exceed the 1s interval.
   let delivering = false;
-  ctx.deliveryBusy = () => delivering;
+  // #1034: per-project — only the project whose pass is running is busy, so one
+  // captain's delivery never blocks another captain's compact.
+  const deliveringProjects = new Set<string>();
+  ctx.deliveryBusy = (project) => deliveringProjects.has(project);
 
   const deliveryCore = async () => {
     // Registry is the liveness authority (Task 4) — reconcile it from the
@@ -434,6 +437,7 @@ export function createDelivery(
     ])];
 
     for (const project of allProjects) {
+      deliveringProjects.add(project);
       // #590: a stuck/throwing project must never delay or take down delivery
       // for every OTHER project in this same tick — each project's pass is
       // isolated, so one jam only ever costs that one project's slot.
@@ -694,6 +698,8 @@ export function createDelivery(
         // that iterates after this one, every tick, for as long as the fault
         // persisted).
         log(`delivery project=${project}: unhandled error — ${(e as Error).message}`);
+      } finally {
+        deliveringProjects.delete(project);
       }
     }
   };

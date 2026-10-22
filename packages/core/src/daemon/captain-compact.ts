@@ -36,8 +36,8 @@ export interface CaptainCompactDeps {
   /** #1015: undelivered mailbox entries for the project. A compact waits for 0 so no
    *  message is ever in flight across the compact boundary. Absent ⇒ not consulted. */
   undeliveredCount?: (project: string) => Promise<number>;
-  /** #1015: true while the delivery loop is mid-pass (it may be about to type). */
-  deliveryBusy?: () => boolean;
+  /** #1015/#1034: true while the delivery loop is mid-pass for this project (it may be about to type). */
+  deliveryBusy?: (project: string) => boolean;
   holdMs?: number;
 }
 
@@ -110,9 +110,9 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
       return;
     }
     holds.set(project, { until: now() + holdMs });
-    if (deps.deliveryBusy?.()) {
+    if (deps.deliveryBusy?.(project)) {
+      // #1034: keep idlePolls — the captain is idle; retry on the next tick.
       holds.delete(project);
-      p.idlePolls = 0;
       p.lastReason = "delivery-in-flight";
       return;
     }
