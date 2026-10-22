@@ -458,6 +458,17 @@ describe("claude turn-end source race (#1017)", () => {
       expect(await readMailboxEntry(w.stateRoot, "demo", e.seq + 50)).toBeNull();
     });
 
+    it("a long CREW DONE message is stored in full and rendered bounded with the pointer", async () => {
+      const { store, ev, delivered } = setup();
+      store.put(rec("f5"));
+      const big = "line one\n" + "d".repeat(8000);
+      await ev({ type: "task.done", id: "f5", resultRef: "", message: big });
+      const [e] = await delivered();
+      expect(fullEntryText(e)).toBe(big);
+      expect(e.message).toContain("line one\n");
+      expect(e.message!.endsWith(POINTER(e.seq))).toBe(true);
+    });
+
     it("a short reply carries no pointer", async () => {
       const { store, ev, delivered, captainSpoke } = setup();
       store.put(rec("f4"));

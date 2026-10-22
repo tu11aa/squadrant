@@ -297,7 +297,7 @@ export async function readMailboxEntry(stateRoot: string, project: string, seq: 
 /** #1030: the entry's full text — the crew's own words when it has them, else the rendered message. */
 export function fullEntryText(e: MailboxEntry): string {
   const p = e.payload ?? {};
-  const own = e.kind === "task.turn.completed" ? p.lastMessage : e.kind === "task.blocked" ? p.question : undefined;
+  const own = e.kind === "task.turn.completed" ? p.lastMessage : e.kind === "task.blocked" ? p.question : e.kind === "task.done" ? p.message : undefined;
   return (typeof own === "string" && own.trim() ? own : e.message ?? "").trim();
 }
 

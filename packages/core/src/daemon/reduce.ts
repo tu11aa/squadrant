@@ -188,7 +188,7 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       const doneMsg = event?.type === "task.done" ? event.message : undefined;
       const body =
         doneMsg != null && doneMsg.trim().length > 0
-          ? doneMsg.split(/\r?\n/)[0].trim().slice(0, 200)
+          ? doneMsg.trim() // #1030: whole message; the single cap + pointer is applied at mailbox append
           : ((rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "");
       return `CREW DONE ${tag}: ${body}`;
     }
