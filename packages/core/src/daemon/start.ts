@@ -370,7 +370,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       log,
       injectedSurfaces: ctx.opts.captainSurfaces,
       undeliveredCount: async (project) => (await readUndelivered(stateRoot, project)).length,
-      deliveryBusy: () => ctx.deliveryBusy?.() ?? false,
+      deliveryBusy: (project) => ctx.deliveryBusy?.(project) ?? false,
     });
     ctx.requestCaptainCompact = compact.request;
     ctx.captainCompactHolds = compact.holdsDelivery;

@@ -10,7 +10,7 @@ const IDLE = "╭──╮\n│ > │\n╰──╯\n  ⏵⏵ accept edits on";
 
 function harness(opts: {
   screens: string[]; send?: () => Promise<void>; timeoutMs?: number;
-  undelivered?: () => number; busy?: () => boolean; holdMs?: number; onSend?: () => void;
+  undelivered?: () => number; busy?: (project: string) => boolean; holdMs?: number; onSend?: () => void;
 }) {
   let t = 1000;
   const logs: string[] = [];
@@ -135,6 +135,24 @@ describe("captain compact", () => {
     expect(h.c.holdsDelivery("demo")).toBe(false);
     busy = false;
     await h.c.tick(); await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1034: a busy delivery for another project does not block this compact", async () => {
+    const h = harness({ screens: [IDLE], undelivered: () => 0, busy: (p) => p === "other" });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1034: a short in-flight delivery for the same project delays by one tick only", async () => {
+    let busy = true;
+    const h = harness({ screens: [IDLE], undelivered: () => 0, busy: (p) => p === "demo" && busy });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick(); // idle polls met, busy blocks the commit
+    expect(h.send).not.toHaveBeenCalled();
+    busy = false;
+    await h.c.tick(); // idlePolls were not reset — sends on the very next tick
     expect(h.send).toHaveBeenCalledTimes(1);
   });
 
