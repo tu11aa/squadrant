@@ -39,13 +39,14 @@ export interface CaptainCompactDeps {
   /** #1015/#1034: true while the delivery loop is mid-pass for this project (it may be about to type). */
   deliveryBusy?: (project: string) => boolean;
   holdMs?: number;
-  /** #1038: deliver the "continue" message once a squadrant-queued compact finishes — `/compact`
-   *  is a local command, so nothing else starts a turn. Absent ⇒ no resume message. */
+  /** #1038: right after `/compact` is typed, queue the "continue" message to the captain's peer
+   *  channel (Claude Code holds it until the compact ends) — `/compact` is a local command, so
+   *  nothing else starts a turn afterwards. Absent ⇒ no resume message. */
   resume?: (project: string) => Promise<void>;
 }
 
 /** #1038: the captain message that starts the post-compact turn. */
-export const COMPACT_RESUME_TEXT = "Compact finished — continue from the handoff's nextSteps.";
+export const COMPACT_RESUME_TEXT = "Compact finished — continue from the handoff nextSteps.";
 
 export function createCaptainCompact(deps: CaptainCompactDeps) {
   const { cmux, log } = deps;
@@ -56,10 +57,6 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
   /** #1015: projects whose delivery is frozen — from the moment the idle check passes until
    *  the post-compact SessionStart hook (or `until`) ends the window. */
   const holds = new Map<string, { until: number }>();
-  /** #1038: projects whose compact squadrant typed and whose SessionStart(compact) hasn't arrived —
-   *  only these get a resume message, never a compact the operator typed by hand. Outlives the
-   *  delivery hold, bounded by `timeoutMs`. */
-  const resumeOwed = new Map<string, number>();
 
   const titleFor = (project: string): string => {
     if (deps.captainTitle) return deps.captainTitle(project);
@@ -94,10 +91,6 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
   /** #1015: SessionStart(source=compact) arrived for this captain — the window is over. */
   function compactDone(project: string): void {
     if (holds.delete(project)) log(`captain-compact ${project}: compact finished — delivery resumed`);
-    const owedUntil = resumeOwed.get(project);
-    resumeOwed.delete(project);
-    if (owedUntil === undefined || now() > owedUntil || !deps.resume) return;
-    deps.resume(project).catch((e: unknown) => log(`captain-compact ${project}: resume message failed: ${(e as Error).message}`));
   }
 
   async function tryOne(project: string, p: Pending): Promise<void> {
@@ -141,9 +134,10 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
     }
     // Restart the window from the actual send; the hold persists until compactDone.
     holds.set(project, { until: now() + holdMs });
-    resumeOwed.set(project, now() + timeoutMs);
     pending.delete(project);
     log(`captain-compact ${project}: /compact sent`);
+    // Only compacts squadrant queued reach here; a hand-typed /compact never does.
+    deps.resume?.(project).catch((e: unknown) => log(`captain-compact ${project}: resume message failed: ${(e as Error).message}`));
   }
 
   async function tick(): Promise<void> {

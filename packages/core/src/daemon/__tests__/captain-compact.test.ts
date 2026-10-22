@@ -100,26 +100,35 @@ describe("captain compact", () => {
     expect(h.c.holdsDelivery("demo")).toBe(false);
   });
 
-  it("#1038: compact-done after a squadrant-queued compact sends exactly one resume message", async () => {
+  it("#1038: sends exactly one resume message right after /compact is typed, not before", async () => {
     const resume = vi.fn(async () => {});
     const h = harness({ screens: [IDLE], undelivered: () => 0, resume });
     h.c.request("demo");
-    await h.c.tick(); await h.c.tick();
-    h.c.compactDone("demo");
-    h.c.compactDone("demo");
+    await h.c.tick();
+    expect(resume).not.toHaveBeenCalled();
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
     expect(resume).toHaveBeenCalledTimes(1);
     expect(resume).toHaveBeenCalledWith("demo");
+    h.c.compactDone("demo");
+    await h.c.tick();
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 
-  it("#1038: still resumes when the delivery hold lapsed before compact-done", async () => {
+  it("#1038: no resume message when the send guard defers (nothing typed)", async () => {
     const resume = vi.fn(async () => {});
-    const h = harness({ screens: [IDLE], undelivered: () => 0, holdMs: 5000, resume });
+    const h = harness({ screens: [IDLE], resume, send: async () => { throw new DeferDelivery(null, "modal"); } });
     h.c.request("demo");
     await h.c.tick(); await h.c.tick();
-    h.advance(6000);
-    expect(h.c.holdsDelivery("demo")).toBe(false);
-    h.c.compactDone("demo");
-    expect(resume).toHaveBeenCalledTimes(1);
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it("#1038: a failing resume send is logged, never thrown", async () => {
+    const h = harness({ screens: [IDLE], resume: async () => { throw new Error("sock gone"); } });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick();
+    await Promise.resolve();
+    expect(h.logs.some((l) => /resume message failed: sock gone/.test(l))).toBe(true);
   });
 
   it("#1038: a manual /compact (nothing queued) gets no resume message", async () => {

@@ -8,6 +8,7 @@ import { readdir } from "node:fs/promises";
 import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
+import { deliverToCaptain } from "../captain-channel.js";
 import { createCaptainCompact, COMPACT_RESUME_TEXT } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
@@ -371,7 +372,14 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       injectedSurfaces: ctx.opts.captainSurfaces,
       undeliveredCount: async (project) => (await readUndelivered(stateRoot, project)).length,
       deliveryBusy: (project) => ctx.deliveryBusy?.(project) ?? false,
-      resume: async (project) => { await appendCaptainMessage({ stateRoot, project, text: COMPACT_RESUME_TEXT, source: "daemon" }); },
+      // #1038: straight over the peer channel (not the mailbox — the compact hold gates that, and a
+      // pane fallback would type over the compact). Claude Code queues it until the compact ends.
+      resume: async (project) => {
+        const agent = ctx.captainAgentFor?.(project);
+        const channel = ctx.captainAgentFor ? (agent ? ctx.captainChannels?.[agent] : undefined) : ctx.captainChannel;
+        const r = await deliverToCaptain(project, COMPACT_RESUME_TEXT, { channel, mode: ctx.captainChannelMode?.() ?? "off", log });
+        if (!r.handled) log(`captain-compact ${project}: resume message not sent — no captain channel`);
+      },
     });
     ctx.requestCaptainCompact = compact.request;
     ctx.captainCompactHolds = compact.holdsDelivery;
