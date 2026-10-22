@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-22
+
+Fixes for crew replies and rollover found in the first day of 0.31.0. Crew replies are no longer cut or dropped, a rollover compact no longer stalls behind another project's delivery, and the captain continues on its own after the compact. PRs #1031, #1035, #1036, #1037, #1040, #1041.
+
+**Upgrade:** after installing, run `squadrant heal daemon`.
+
+### Added
+
+- **`squadrant crew msg <project> <seq>`** prints the full text of one mailbox entry. Long crew messages reach the captain bounded to 1500 characters with a pointer to this command (#1030).
+
+### Fixed
+
+- **Crew replies and CREW DONE messages cut short.** The mailbox stores the full text; only the copy delivered to the captain is bounded. CREW DONE shows the whole message instead of the first line or 200 characters (#1030).
+- **Crew replies dropped after `crew send`.** Every `crew send` to a live crew now marks a reply as expected, so the crew's next turn-end reaches the captain word for word, including after a crew is reopened from done (#1032).
+- **`crew send` failing with `EADDRINUSE`** on a stale receipt socket. Each CLI process listens on its own per-pid socket and removes stale ones (#1033).
+- **Rollover compact timing out** while another project's delivery was in flight. Delivery is tracked per project, so one busy project no longer blocks another project's compact (#1034).
+- **Captain idle after a rollover compact.** Right after the daemon types `/compact`, it queues "Compact finished — continue from the handoff nextSteps." over the peer channel; the captain gets it as a new turn once the compact ends and continues from the handoff (#1038).
+- **`squadrant crew signal` printed nothing on success.** It now prints `✔ signalled <state> for <project> (task <id>)` (#1039).
+
 ## [0.31.0] - 2026-10-21
 
 Captain context you can keep under control. The captain gets a context meter with rollover suggestions at safe boundaries (never an automatic compact), a one-command rollover, a crew ledger that survives a compact, and discussion threads: a fork of the captain per topic, so long discussions stop filling the captain's context. Crew IDLE/STALLED noise is cut. PRs #1011, #1013, #1019, #1020, #1021, #1022, #1024, #1025.
