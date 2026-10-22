@@ -197,6 +197,27 @@ describe("content-carrying idle (#1017)", () => {
     expect(calls[0].message).toContain("Done: changed A and B, tests pass.");
   });
 
+  // #1032: crew send emits task.started for every live state and task.reopened for a
+  // terminal one; in each case the next text turn-end is the reply, delivered verbatim.
+  for (const [name, state, marker] of [
+    ["working", "working", "task.started"],
+    ["stalled", "stalled", "task.started"],
+    ["awaiting-input", "awaiting-input", "task.started"],
+    ["done (reopen)", "done", "task.reopened"],
+  ] as const) {
+    it(`reply after a send to a ${name} crew is delivered word for word`, async () => {
+      const { store, calls, ev, adv } = setup();
+      store.put(rec("r1", { state }));
+      await ev({ type: marker, id: "r1" });
+      adv(60_000);
+      const text = "Plain statement, no question mark.";
+      await ev(end("r1", 1, text));
+      const reply = calls.find((c) => (c.event as any).reply === true);
+      expect(reply?.message).toContain(text);
+      expect(captainPaneAllows("alert_only", reply!.event)).toBe(true);
+    });
+  }
+
   it("a later self-resume turn-end with no captain message in between is silent-class (plain)", async () => {
     const { store, calls, ev, adv } = setup();
     store.put(rec("i3"));
