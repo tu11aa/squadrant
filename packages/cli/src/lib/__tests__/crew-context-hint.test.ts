@@ -12,7 +12,7 @@ const budget = DEFAULT_CONTEXT_BUDGET;
 
 describe("crewSendHint", () => {
   it("hints at/above the crew soft floor", () => {
-    expect(crewSendHint("noise", meter(210_000), budget)).toBe("crew noise at 210k; consider a fresh crew with a brief instead of reusing it");
+    expect(crewSendHint("noise", meter(210_000), budget)).toBe("crew noise at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is");
     expect(crewSendHint("noise", meter(150_000), budget)).not.toBeNull();
   });
   it("is silent below the floor, when unknown, or when disabled", () => {

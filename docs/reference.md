@@ -46,6 +46,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant crew compact <project> <crew> [--keep <text>]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -877,7 +878,7 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 - **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
 - Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
 
-**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider a fresh crew with a brief instead of reusing it` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
 
 **Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
 
@@ -886,6 +887,17 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 ```
 
 Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+
+### Crew compact (#1051)
+
+A captain that wants to reuse a crew whose context has grown can compact it first. `crew send "/compact"` does not work (it arrives as a peer message, so the slash command never runs); `squadrant crew compact <project> <crew> [--keep "<text>"]` is the supported path. Never automatic: it runs only when a captain or the operator asks.
+
+- **Typed by the daemon, like the captain path.** The CLI sends `crew-compact`; the daemon validates, queues and returns. It polls (1 s) until the crew is idle — task state is not `submitted`/`working`/`blocked`/`stalled`, no tool or monitor is open, and for claude the pane shows no working spinner — for two polls, then types `/compact <keep>` through the normal send guard (a draft or an open prompt defers it). Times out after 10 min without typing.
+- **Agent-aware.** claude and opencode get a typed `/compact`. codex crews render an app-server thread (typed text becomes a turn, not a slash command) and gemini crews are one-shot headless, so both are refused with a message pointing at a fresh crew.
+- **Refusals at request time.** Unknown crew, ended crew (session gone), no live pane, unsupported agent, and a crew under operator takeover. A queued compact is dropped if the operator takes the crew over before it runs.
+- **Send ordering.** From the moment a compact is queued, `squadrant crew send` (and `crew answer`, which sends through it) asks the daemon `crew-compact-state` and waits (up to 14 min, then errors without sending) so the message arrives after the compact, never inside its summary. The hold ends on the crew's `SessionStart(source=compact)` hook (`crew-compact-done`) or lapses after 3 min; opencode has no such hook, so its hold always lapses.
+- **No resume message.** Unlike the captain, a compacted crew is idle by design; the next `crew send` starts its turn.
+- **Code:** `packages/core/src/daemon/crew-compact.ts` (daemon), `packages/cli/src/lib/crew-compact.ts` (CLI request + wait).
 
 ## MCP server (`squadrant mcp`, #1029)
 

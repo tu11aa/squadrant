@@ -465,6 +465,7 @@ A line like `Context 182k ≥ 150k at a boundary (crew done). Good moment: write
 - If a decision is half-made or the operator is mid-thread, finish it first or record it as "unanswered, owner = captain" in the handoff. You can ignore the line; it will not repeat until context grows another 50k.
 - A line starting `⚠ Context … ≥ hard limit` is the loud one (repeats every +100k). Roll over at the next safe point.
 - `squadrant crew list` / `crew tasks` show each crew's `ctx`. When `crew send` prints `crew X at 210k; consider a fresh crew…`, prefer a fresh crew with a brief for a new track instead of reusing it.
+- **Reusing a crew for a follow-up turn:** compact it first with `squadrant crew compact {project} <crew> [--keep "<what to keep>"]`. The daemon types `/compact` once the crew is idle; a `crew send` issued meanwhile waits and lands after the compact. Only on a captain or operator decision, never automatically. Refused for a crew under operator takeover and for codex/gemini crews (use a fresh crew there). `crew send` takes no `/compact` text: it arrives as a message and never runs the slash command.
 
 ## Project Rules (Knowledge Base)
 
