@@ -40,6 +40,8 @@ export * from "./side-session.js";
 export * from "./threads.js";
 export * from "./crew-spawn.js";
 export * from "./crew-answer.js";
+export * from "./crew-signal.js";
+export * from "./crew-signal-tools.js";
 export * from "./lifecycle-source.js";
 export * from "./events/fact.js";
 export * from "./events/log.js";

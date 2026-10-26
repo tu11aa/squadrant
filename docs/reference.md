@@ -34,6 +34,7 @@ guided first run — come back here when you need the details.
 - [Captain rollover](#captain-rollover-1010)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
+- [MCP server (`squadrant mcp`)](#mcp-server-squadrant-mcp-1029)
 - [Config](#config)
 
 ## Commands
@@ -876,6 +877,32 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 ```
 
 Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+
+## MCP server (`squadrant mcp`, #1029)
+
+`squadrant mcp` is a stdio [MCP](https://modelcontextprotocol.io) server. First slice (agent → squadrant only): the crew signal tools, so a crew signals through a typed tool call instead of a Bash command (no Bash approval, no shell quoting, a structured result).
+
+| Tool | Same as | Args (all optional strings) |
+|---|---|---|
+| `crew_signal_done` | `squadrant crew signal done` | `message` |
+| `crew_signal_blocked` | `squadrant crew signal blocked` | `question` |
+| `crew_signal_failed` | `squadrant crew signal failed` | `error` |
+| `crew_signal_review` | `squadrant crew signal review` | `message` |
+
+Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TASK_ID` / `SQUADRANT_CREW_PROJECT` from the environment. The MCP child inherits those from the agent session that spawned it, so the model passes neither.
+
+- **One implementation.** The CLI verb and the tools both call `performCrewSignal` (`packages/core/src/crew-signal.ts`): the already-terminal check (#557), the `_results/<id>.txt` write, the #901 citation scan and the #1039 confirmation line. The tool schemas and handler live in `packages/core/src/crew-signal-tools.ts`; `packages/cli/src/commands/mcp.ts` only wires them to the SDK.
+- **Errors are tool errors** (`isError: true`) with a clear message: no crew env, task already terminal, daemon unreachable.
+- **Lazy SDK.** `@modelcontextprotocol/sdk` is imported inside `runMcpServer`, so no other command pays for it (tested).
+- **Claude Code defers MCP tools:** the first call goes through ToolSearch (`select:mcp__squadrant__crew_signal_done`).
+- **Install is manual in this slice** (config projection, #34, is a later slice; nothing writes to your agent config):
+
+  ```
+  claude mcp add --scope user squadrant -- squadrant mcp
+  ```
+
+  Sessions opened before the install need a restart to see the tools. The CLI `squadrant crew signal` stays as the fallback and is not removed.
+- Not in this slice: daemon → agent delivery over MCP. The spike ([report](specs/2026-10-26-mcp-spike-report.md)) found that a self-post from the session's own MCP child keeps Claude's "Another Claude session" framing on 2.1.310.
 
 ## Captain discussion threads (#1016)
 

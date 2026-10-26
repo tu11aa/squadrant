@@ -64,26 +64,26 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:590
   - packages/agents/src/interactive/claude.ts:618
   - packages/agents/src/interactive/claude.ts:633
-  - packages/cli/src/commands/crew-control.ts:213
   - packages/cli/src/squadrantd.ts:522
   - packages/cli/src/squadrantd.ts:567
   - packages/cli/src/squadrantd.ts:598
   - packages/core/src/auto-gate.ts:100
+  - packages/core/src/crew-signal.ts:63
   - packages/core/src/daemon/interactive-probe.ts:202
   - packages/core/src/daemon/reduce.ts:727
 - `task.review`
-  - packages/cli/src/commands/crew-control.ts:217
+  - packages/core/src/crew-signal.ts:67
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
-  - packages/cli/src/commands/crew-control.ts:207
-  - packages/cli/src/commands/crew-control.ts:410
+  - packages/cli/src/commands/crew-control.ts:254
+  - packages/core/src/crew-signal.ts:57
   - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
   - packages/agents/src/headless-launcher.ts:79
   - packages/agents/src/headless-launcher.ts:89
-  - packages/cli/src/commands/crew-control.ts:219
+  - packages/core/src/crew-signal.ts:69
   - packages/core/src/crew-spawn.ts:400
   - packages/core/src/daemon/interactive-probe.ts:197
   - packages/core/src/daemon/reduce.ts:864
@@ -150,9 +150,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:588
   - packages/core/src/events/to-control-event.ts:44
 - `crew.takeover.started`
-  - packages/cli/src/commands/crew-control.ts:131
+  - packages/cli/src/commands/crew-control.ts:126
 - `crew.takeover.ended`
-  - packages/cli/src/commands/crew-control.ts:137
+  - packages/cli/src/commands/crew-control.ts:132
 
 ## Known zero-producer variants (allowlisted)
 
