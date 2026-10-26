@@ -131,14 +131,62 @@ async function captainWorkspaceOrNull(project: string) {
   }
 }
 
+/** `thread open`: fork the captain into a new tab for one topic. */
+export async function runThreadOpen(project: string, topic: string, crews: string[] = []): Promise<{ thread: ThreadRecord; note?: string }> {
+  return openThread({ project, topic: topic.trim(), crews }, await threadDeps(project));
+}
+
+/** `thread resume`: reopen a parked thread. */
+export async function runThreadResume(project: string, id: string): Promise<{ thread: ThreadRecord; note?: string }> {
+  return resumeThread(project, id, await threadDeps(project));
+}
+
+/**
+ * `thread park`. Without a decision record: ask the thread to write its record. With one (raw JSON): deliver it to the
+ * captain and close the tab. Returns the confirmation line.
+ */
+export async function runThreadPark(project: string, id: string, decisionRaw?: string): Promise<string> {
+  const root = stateRoot();
+  if (decisionRaw === undefined) {
+    const ws = await resolveCaptainWorkspace(project);
+    await requestPark(project, id, { stateRoot: root, runtime: ws.runtime, workspaceId: ws.workspaceId });
+    return `✔ Asked thread '${id}' to write its decision record and park.`;
+  }
+  const now = new Date();
+  const decision = parseDecisionRecord(decisionRaw, now.toISOString());
+  const ws = await captainWorkspaceOrNull(project);
+  const { thread, seq } = await parkThread(project, id, decision, {
+    stateRoot: root,
+    // No live captain workspace ⇒ nothing to close; the record and message still land.
+    runtime: ws?.runtime ?? ({ closePane: async () => {} } as unknown as ThreadDeps["runtime"]),
+    workspaceId: ws?.workspaceId ?? "",
+    workspaceDir: workspacePath(project),
+    now: () => now,
+  });
+  return `✔ Thread '${thread.id}' parked; decision queued to the captain (seq=${seq}) and added to the handoff.`;
+}
+
+/** `thread list`: one entry per thread (closed ones only with `all`). */
+export function threadListLines(project: string, all = false): string[] {
+  return listThreads(stateRoot(), project).filter((t) => all || t.state !== "closed").map(formatThreadLine);
+}
+
 function fail(err: unknown): never {
   console.error(chalk.red((err as Error).message));
   process.exit(1);
 }
 
+export function formatOpened(project: string, thread: ThreadRecord, note?: string): { head: string; note?: string } {
+  return {
+    head: `✔ Thread '${thread.id}' open in tab "${threadTitleFor(project, thread.id)}" (${thread.mode}, ${thread.agent})`,
+    ...(note ? { note: `  note: ${note}` } : {}),
+  };
+}
+
 function printOpened(project: string, thread: ThreadRecord, note?: string): void {
-  console.log(chalk.green(`✔ Thread '${thread.id}' open in tab "${threadTitleFor(project, thread.id)}" (${thread.mode}, ${thread.agent})`));
-  if (note) console.log(chalk.yellow(`  note: ${note}`));
+  const o = formatOpened(project, thread, note);
+  console.log(chalk.green(o.head));
+  if (o.note) console.log(chalk.yellow(o.note));
 }
 
 export function formatThreadLine(t: ThreadRecord): string {
@@ -160,7 +208,7 @@ threadCommand
   .action(async (project: string, topic: string | undefined, opts: { crew?: string[]; topicFile?: string }) => {
     try {
       const resolved = await resolveTextInput({ positional: topic, filePath: opts.topicFile, label: "topic" });
-      const { thread, note } = await openThread({ project, topic: resolved.trim(), crews: opts.crew ?? [] }, await threadDeps(project));
+      const { thread, note } = await runThreadOpen(project, resolved, opts.crew ?? []);
       printOpened(project, thread, note);
     } catch (err) {
       fail(err);
@@ -175,26 +223,10 @@ threadCommand
   .option("--decision-file <path>", "Decision record JSON ('-' for stdin)")
   .action(async (project: string, id: string, opts: { decisionFile?: string }) => {
     try {
-      const root = stateRoot();
-      if (!opts.decisionFile) {
-        const ws = await resolveCaptainWorkspace(project);
-        await requestPark(project, id, { stateRoot: root, runtime: ws.runtime, workspaceId: ws.workspaceId });
-        console.log(chalk.green(`✔ Asked thread '${id}' to write its decision record and park.`));
-        return;
-      }
-      const raw = await resolveTextInput({ positional: undefined, filePath: opts.decisionFile, label: "decision record" });
-      const now = new Date();
-      const decision = parseDecisionRecord(raw, now.toISOString());
-      const ws = await captainWorkspaceOrNull(project);
-      const { thread, seq } = await parkThread(project, id, decision, {
-        stateRoot: root,
-        // No live captain workspace ⇒ nothing to close; the record and message still land.
-        runtime: ws?.runtime ?? ({ closePane: async () => {} } as unknown as ThreadDeps["runtime"]),
-        workspaceId: ws?.workspaceId ?? "",
-        workspaceDir: workspacePath(project),
-        now: () => now,
-      });
-      console.log(chalk.green(`✔ Thread '${thread.id}' parked; decision queued to the captain (seq=${seq}) and added to the handoff.`));
+      const raw = opts.decisionFile
+        ? await resolveTextInput({ positional: undefined, filePath: opts.decisionFile, label: "decision record" })
+        : undefined;
+      console.log(chalk.green(await runThreadPark(project, id, raw)));
     } catch (err) {
       fail(err);
     }
@@ -207,7 +239,7 @@ threadCommand
   .argument("<id>", "Thread id")
   .action(async (project: string, id: string) => {
     try {
-      const { thread, note } = await resumeThread(project, id, await threadDeps(project));
+      const { thread, note } = await runThreadResume(project, id);
       printOpened(project, thread, note);
     } catch (err) {
       fail(err);
@@ -236,12 +268,12 @@ threadCommand
   .option("--all", "Include closed threads")
   .action((project: string, opts: { all?: boolean }) => {
     try {
-      const threads = listThreads(stateRoot(), project).filter((t) => opts.all || t.state !== "closed");
-      if (threads.length === 0) {
+      const lines = threadListLines(project, opts.all);
+      if (lines.length === 0) {
         console.log(chalk.yellow(`No threads for ${project}.`));
         return;
       }
-      for (const t of threads) console.log(formatThreadLine(t));
+      for (const l of lines) console.log(l);
     } catch (err) {
       fail(err);
     }

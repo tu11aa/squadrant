@@ -591,8 +591,12 @@ export function isReadOnlyCrewCommand(argv: readonly string[]): boolean {
  * #782: `gate` is a hook-driven command (Claude invokes it on every permission
  * prompt). It must be as cheap as possible and must never reconcile the daemon;
  * its ask path only best-effort-sends to an already-running daemon.
+ *
+ * #1029: `mcp` is started by every Claude session on the machine (user-scope registration), so with
+ * SQUADRANT_ROLE=captain a reconcile here would restart the daemon under live crews on a session start.
+ * Its tools reach the daemon through requireDaemon / squadrantdCall and report when it is down.
  */
-export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami", "gate"]);
+export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami", "gate", "mcp"]);
 
 /** Pure: is this invocation one of the read-only top-level commands above? */
 export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
