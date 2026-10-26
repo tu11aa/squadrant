@@ -161,6 +161,31 @@ export async function squadrantdCall(req: unknown): Promise<unknown> {
   }
 }
 
+/** The `crew tasks` listing (the non-purge path), shared with the MCP `crew_tasks` tool. */
+export async function renderCrewTasks(
+  project: string,
+  opts: { json?: boolean; id?: string; state?: string; stateOnly?: string },
+): Promise<string> {
+  const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
+  let records = raw;
+  if (opts.stateOnly) {
+    records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
+    return formatCompactTasks(records, { stateOnly: true });
+  }
+  records = filterTasks(records, { id: opts.id, state: opts.state });
+  const compact = opts.json !== true;
+  // U5: routed cost footer. Only queried when a router is configured (avoids
+  // an unknown-verb round trip for the common non-router case).
+  let usage: ProjectUsage | undefined;
+  if (compact && loadConfig().defaults.router) {
+    const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
+    usage = u ?? undefined;
+  }
+  // #1015: live context per non-terminal task ("unknown" where it can't be measured).
+  const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
+  return formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) });
+}
+
 /**
  * Pure. Resolve a crew name to its most-recent task record (#574 tie-break —
  * same rule as diff.ts's resolveDiffTarget / crew-spawn.ts's pickMostRecentTask).
@@ -352,25 +377,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         console.log(`purged ${r.provider}/${r.id} (was ${r.state})`);
         return;
       }
-      const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
-      let records = raw;
-      if (opts.stateOnly) {
-        records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
-        process.stdout.write(formatCompactTasks(records, { stateOnly: true }) + "\n");
-        return;
-      }
-      records = filterTasks(records, { id: opts.id, state: opts.state });
-      const compact = opts.json !== true;
-      // U5: routed cost footer. Only queried when a router is configured (avoids
-      // an unknown-verb round trip for the common non-router case).
-      let usage: ProjectUsage | undefined;
-      if (compact && loadConfig().defaults.router) {
-        const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
-        usage = u ?? undefined;
-      }
-      // #1015: live context per non-terminal task ("unknown" where it can't be measured).
-      const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
-      process.stdout.write(formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) }) + "\n");
+      process.stdout.write(await renderCrewTasks(project, opts) + "\n");
     });
 
   // #592: delivery goes through the SAME path 'crew send' uses (runCrewSend)
