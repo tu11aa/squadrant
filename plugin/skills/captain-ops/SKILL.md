@@ -357,6 +357,10 @@ After a crew task is approved and optionally merged:
 3. Record learnings if any (see "Recording Learnings" below).
 4. Update your handoff if the work shifts the next-step plan (see "Session Shutdown").
 
+## Live-checking a branch build
+
+Live-check branch builds on a dev daemon: `pnpm build` in the worktree, `eval "$(node dist/index.js dev up)"`, launch/spawn on the throwaway project, then `squadrant dev down`. Never `npm i -g <branch tgz>` + `squadrant heal daemon` (or any production restart) for a branch test: it restarts the daemon every project depends on. See `docs/reference.md` → Dev daemon.
+
 ## Status Board (show after substantive turns)
 
 After a **substantive turn** — shipped a release, opened or merged a PR, filed an issue, spawned or closed crews, or moved multiple threads at once — end your reply with a tight scannable board. Skip it after trivial answers; the board is signal, not noise.

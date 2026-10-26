@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createClaudeDriver } from "../claude.js";
 
 vi.mock("node:child_process", () => ({
@@ -180,6 +180,34 @@ describe("claude driver — #759 --messaging-socket-path ordering", () => {
     expect(mspIdx).toBe(tokens.length - 2);
     expect(cmd).toContain("--plugin-dir");
     expect(cmd.indexOf("--plugin-dir")).toBeLessThan(cmd.indexOf("--messaging-socket-path"));
+  });
+
+  describe("#1046 isolated SQUADRANT_CONFIG", () => {
+    const saved = process.env.SQUADRANT_CONFIG;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.SQUADRANT_CONFIG;
+      else process.env.SQUADRANT_CONFIG = saved;
+    });
+
+    it("swaps the user settings source for the isolated settings file, before --messaging-socket-path", () => {
+      process.env.SQUADRANT_CONFIG = "/tmp/sq-dev/config.json";
+      const cmd = driver.buildCommand({
+        prompt: "x", workdir: "/tmp/test", role: "crew", interactive: true,
+        messagingSocketPath: "/tmp/s.sock",
+      });
+      expect(cmd).toContain(" --setting-sources project,local --settings '/tmp/sq-dev/claude-settings.json'");
+      expect(cmd.indexOf("--settings")).toBeLessThan(cmd.indexOf("--messaging-socket-path"));
+    });
+
+    it("refuses a routed --settings file under an isolated config", () => {
+      process.env.SQUADRANT_CONFIG = "/tmp/sq-dev/config.json";
+      expect(() => driver.buildCommand({ prompt: "x", workdir: "/tmp/test", role: "crew", settingsPath: "/tmp/r.json" })).toThrow(/#1046/);
+    });
+
+    it("default config adds no flags", () => {
+      delete process.env.SQUADRANT_CONFIG;
+      expect(driver.buildCommand({ prompt: "x", workdir: "/tmp/test", role: "crew" })).not.toContain("--setting-sources");
+    });
   });
 });
 

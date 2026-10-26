@@ -22,11 +22,13 @@ it("index.ts wires ensureDaemon after ensureRuntimeSynced", () => {
 // ~/.config/squadrant/dist path crash-loops the agent with MODULE_NOT_FOUND
 // because runtime-sync never mirrors compiled output there.
 it("no call site recomputes the daemon entry path", () => {
-  // crew-control.ts's on-socket-failure fallback call is deliberately
-  // unchanged (#636): a socket-RPC retry is never operator-initiated, so no
-  // allowlist applies here — it stays gated to the captain marker alone.
+  // crew-control.ts's on-socket-failure fallback call (#636): a socket-RPC
+  // retry is never operator-initiated, so no allowlist applies here — it stays
+  // gated to the captain marker alone. nodeBin stays `undefined`; the second
+  // arg only names the caller for the restart attribution line.
   const crewControlSrc = read("commands/crew-control.ts");
-  expect(crewControlSrc).toMatch(/ensureDaemon\(\)/);
+  expect(crewControlSrc).toMatch(/ensureDaemon\(undefined,\s*\{\s*caller:/);
+  expect(crewControlSrc).not.toMatch(/operatorInitiated/);
   expect(crewControlSrc).not.toMatch(/"\.config",\s*"squadrant",\s*"dist"/);
 
   // index.ts (#636): nodeBin is still passed as `undefined` (resolved

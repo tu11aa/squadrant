@@ -29,7 +29,7 @@ import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerS
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import {
   loadConfig, resolveCaptainChannelMode, TERMINAL_STATES, DAEMON_SOCK_PATH, CONFIG_DIR, DEFAULT_CONFIG_PATH,
-  stateRoot as defaultStateRoot, legacyStateDir, seedStateFromLegacy,
+  stateRoot as defaultStateRoot, legacyStateDir, seedStateFromLegacy, isolatedConfigDir,
 } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
@@ -147,7 +147,9 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   //                             the control plane for every project. No opt-out.
   //   checkout, not opted in -> refuse, and say how to opt in.
   //   checkout + opt-in      -> allow, loudly. The operator asked for it.
-  const isDefaultSocket = !opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH;
+  // #1046: an isolated SQUADRANT_CONFIG (dev daemon) derives its own socket and
+  // state, so it is never the production daemon even on DAEMON_SOCK_PATH.
+  const isDefaultSocket = (!opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH) && !isolatedConfigDir();
   if (isDefaultSocket && isMonorepoCheckout(SELF_PATH)) {
     if (isLinkedWorktree(SELF_PATH)) {
       process.stderr.write(
@@ -538,8 +540,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     // #791: same self-heal guarantee for opencode's global skills dir — refresh
     // the projected squadrant skills on boot so a version update is reflected
     // before any opencode captain/crew session starts and scans for skills.
-    try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
-    catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
+    // #1046: global, so production-only — an isolated daemon leaves it alone.
+    if (!isolatedConfigDir()) {
+      try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
+      catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
+    }
     const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
     const hookDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
@@ -634,18 +639,17 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   if (opts.forceStartEventsSource) startEventsLifecycleSource();
 
   // Daemon-restart broadcast: notify every running captain that the daemon
-  // bounced, but only when the running build actually changed (version bump
-  // or local rebuild) — a same-build launchd crash-restart stays silent.
+  // bounced, but only when the running version or install path changed — a
+  // same-install restart (reinstall + heal, config restart, crash) stays silent.
   // Skipped under vitest (touches the real config + cmux driver, mirrors the
   // other real-I/O boot actions guarded the same way above).
   if (!process.env.VITEST) {
     try {
-      const buildMtimeMs = statSync(SELF_PATH).mtimeMs;
       const restartConfig = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       void maybeBroadcastDaemonRestart({
         version: PKG_VERSION,
-        buildMtimeMs,
+        installPath: SELF_PATH,
         stateRoot,
         config: restartConfig,
         driver: registry.global(restartConfig),
