@@ -201,12 +201,12 @@ describe("claude driver — #759 --messaging-socket-path ordering", () => {
 
     it("refuses a routed --settings file under an isolated config", () => {
       process.env.SQUADRANT_CONFIG = "/tmp/sq-dev/config.json";
-      expect(() => driver.buildCommand({ prompt: "x", workdir: "/tmp/test", settingsPath: "/tmp/r.json" })).toThrow(/#1046/);
+      expect(() => driver.buildCommand({ prompt: "x", workdir: "/tmp/test", role: "crew", settingsPath: "/tmp/r.json" })).toThrow(/#1046/);
     });
 
     it("default config adds no flags", () => {
       delete process.env.SQUADRANT_CONFIG;
-      expect(driver.buildCommand({ prompt: "x", workdir: "/tmp/test" })).not.toContain("--setting-sources");
+      expect(driver.buildCommand({ prompt: "x", workdir: "/tmp/test", role: "crew" })).not.toContain("--setting-sources");
     });
   });
 });

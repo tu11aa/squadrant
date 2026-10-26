@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, stateRoot as defaultStateRoot } from "@squadrant/shared";
+import { loadConfig, stateRoot as defaultStateRoot, isolatedConfigDir } from "@squadrant/shared";
 import type { RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
@@ -357,6 +357,14 @@ function kickstartDaemonForHealCaptain(): void {
 export const healCommand = new Command("heal")
   .description("Targeted, idempotent remediation for squadrant components (daemon, health)")
   .addHelpText("after", "\nDeferred: 'squadrant heal crew <id>' (re-attach) — see issue #100.")
+  // #1046: `daemon` and `captain` drive launchd, i.e. the production daemon. Under an
+  // isolated SQUADRANT_CONFIG (a dev daemon) that is never what the operator meant.
+  .hook("preAction", (_heal, action) => {
+    if (isolatedConfigDir() && (action.name() === "daemon" || action.name() === "captain")) {
+      process.stderr.write(`heal ${action.name()}: refusing under an isolated SQUADRANT_CONFIG — it would restart the production launchd daemon. Use 'squadrant dev down' + 'squadrant dev up' for the dev daemon.\n`);
+      process.exit(1);
+    }
+  })
   .addCommand(
     new Command("status")
       .description("Dry-run: print unhealthy components and the exact heal command for each")

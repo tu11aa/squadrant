@@ -51,6 +51,7 @@ import { migrateCommand } from "./commands/migrate.js";
 import { rulesCommand } from "./commands/rules.js";
 import { profileCommand } from "./commands/profile.js";
 import { mcpCommand } from "./commands/mcp.js";
+import { devCommand } from "./commands/dev.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -61,8 +62,9 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-
 
 // #1046: under an isolated SQUADRANT_CONFIG (a dev daemon) the CLI must not
 // write the operator's global state — the runtime copy, the opencode skills
-// projection, the config stamp. (ensureDaemon itself skips the launchd daemon.)
-const isolated = isolatedConfigDir() !== null;
+// projection, the config stamp — or reconcile the launchd daemon. `dev` runs
+// its own isolated daemon, so it is treated the same way.
+const isolated = isolatedConfigDir() !== null || process.argv[2] === "dev";
 
 // Self-heal the runtime copy of source-managed dirs before any command runs,
 // so source changes (skills, role templates, scripts) can never silently
@@ -140,6 +142,7 @@ if (process.argv[2] !== "config" && !isolated) {
 // #669: `sessions` / `whoami` are also pure file reads — same treatment, so
 // they work with the daemon down and never boot it as a side effect.
 if (
+  !isolated &&
   !process.env.SQUADRANT_DAEMON_SKIP &&
   !isReadOnlyCrewCommand(process.argv) &&
   !isReadOnlyTopLevelCommand(process.argv)
@@ -199,6 +202,7 @@ program.addCommand(rulesCommand);
 program.addCommand(profileCommand);
 program.addCommand(mcpCommand);
 program.addCommand(whoamiCommand);
+program.addCommand(devCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);
