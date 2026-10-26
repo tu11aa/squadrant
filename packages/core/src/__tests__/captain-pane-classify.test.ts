@@ -216,3 +216,14 @@ describe("real-path staleness: a rendered-but-dead pane becomes no-session (#839
     expect(screenHash(STATIC)).not.toBe(screenHash(`${STATIC}\n`));
   });
 });
+
+describe("hasModalOptionList on a named session (labelled top rule)", () => {
+  const rule = "─".repeat(40);
+  const modal = (top: string) => `transcript\n${top}\n Which one?\n 1. Yes\n 2. No\n${rule}\n`;
+  it("detects the modal when the top rule carries the session name", () => {
+    expect(hasModalOptionList(modal(`${rule} squadrant-crew-x ─`))).toBe(true);
+  });
+  it("is false for an empty labelled box", () => {
+    expect(hasModalOptionList(`${rule} squadrant-crew-x ─\n❯ \n${rule}\n`)).toBe(false);
+  });
+});

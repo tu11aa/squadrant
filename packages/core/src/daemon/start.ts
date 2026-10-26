@@ -393,6 +393,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       tasks: (project) => store.list(project),
     });
     ctx.requestCrewCompact = crewCompact.request;
+    ctx.cancelCrewCompact = crewCompact.cancel;
     ctx.crewCompactHolds = crewCompact.holdsCrew;
     ctx.crewCompactDone = crewCompact.compactDone;
     if (opts.sweepMs && opts.sweepMs > 0) {

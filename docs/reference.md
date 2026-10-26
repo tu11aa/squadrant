@@ -47,8 +47,8 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
-| `squadrant crew compact <project> <crew> [--keep <text>]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -937,6 +937,7 @@ A captain that wants to reuse a crew whose context has grown can compact it firs
 - **Refusals at request time.** Unknown crew, ended crew (session gone), no live pane, unsupported agent, and a crew under operator takeover. A queued compact is dropped if the operator takes the crew over before it runs.
 - **Send ordering.** From the moment a compact is queued, `squadrant crew send` (and `crew answer`, which sends through it) asks the daemon `crew-compact-state` and waits (up to 14 min, then errors without sending) so the message arrives after the compact, never inside its summary. The hold ends on the crew's `SessionStart(source=compact)` hook (`crew-compact-done`) or lapses after 3 min; opencode has no such hook, so its hold always lapses.
 - **No resume message.** Unlike the captain, a compacted crew is idle by design; the next `crew send` starts its turn.
+- **Cancel.** `squadrant crew compact <project> <crew> --cancel` drops a queued compact and releases the `crew send` hold (daemon `crew-compact-cancel`); it does nothing if none is queued.
 - **Code:** `packages/core/src/daemon/crew-compact.ts` (daemon), `packages/cli/src/lib/crew-compact.ts` (CLI request + wait).
 
 ## MCP server (`squadrant mcp`, #1029)
