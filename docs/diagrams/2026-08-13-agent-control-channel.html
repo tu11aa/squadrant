@@ -258,12 +258,12 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
   <p class="sub" style="font-size:13.5px">Note: Crew wrapper/receipt text visible in prompt under <code>on</code> mode is a sender-identity artifact (<span class="tag">#711</span>), not an inherent property of the channel.</p>
 
   <h2>Message shape: sender frame (#1029)</h2>
-  <p class="lead">Claude Code shows every socket message as an anonymous peer, so the delivery layer names the sender <strong>inside the text</strong> — same frame on every transport, applied once, never stored.</p>
-  <pre style="background:var(--card,#f6f6f6);padding:12px;border-radius:8px;overflow:auto;font-size:13px">&lt;squadrant-message from="crew:mcpspike" project="squadrant" kind="task.done" agent="claude" task="66884473" id="12"&gt;
-CREW DONE [claude/mcpspike · 66884473]: …
-&lt;/squadrant-message&gt;</pre>
+  <p class="lead">Claude Code shows every socket message as an anonymous peer, so the delivery layer names the sender <strong>inside the text</strong> — same one-line header on every transport, applied once, never stored.</p>
+  <pre style="background:var(--card,#f6f6f6);padding:12px;border-radius:8px;overflow:auto;font-size:13px">📨 crew:mcpspike → done · taskId: 66884473 · seq: 12
+merged into #245 (718 tests) …</pre>
+  <p class="sub" style="font-size:13.5px">One header line, then the body. The project is named only when the sender's differs from the receiver's; a body line starting with 📨 is escaped, so it cannot fake a second header.</p>
   <table>
-    <tr><th>Sender</th><th><code>from</code></th></tr>
+    <tr><th>Sender</th><th>Sender (after <code>📨</code>)</th></tr>
     <tr><td>crew event → captain</td><td><code>crew:&lt;name&gt;</code></td></tr>
     <tr><td>captain <code>crew send</code> / <code>side send</code></td><td><code>captain:&lt;project&gt;</code></td></tr>
     <tr><td>Telegram inbound</td><td><code>telegram</code></td></tr>

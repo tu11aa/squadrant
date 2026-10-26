@@ -893,7 +893,7 @@ describe("squadrant crew send/read/close/list", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow up\n<\/squadrant-message>$/),
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -927,7 +927,7 @@ describe("squadrant crew send/read/close/list", () => {
     }));
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow up\n<\/squadrant-message>$/),
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -951,7 +951,7 @@ describe("squadrant crew send/read/close/list", () => {
     expect(calls[1].event?.type).toBe("task.started");
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow up\n<\/squadrant-message>$/),
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -967,7 +967,7 @@ describe("squadrant crew send/read/close/list", () => {
     // sendToPane still fires even with daemon errors.
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow up\n<\/squadrant-message>$/),
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 

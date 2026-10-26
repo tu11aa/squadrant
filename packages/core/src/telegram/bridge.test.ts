@@ -187,7 +187,7 @@ describe("handleUpdate routing", () => {
     bridge.stop();
   });
 
-  it("#1029: inbound reaches the captain framed as from=telegram; outbound lifecycle text is never framed", async () => {
+  it("#1029: inbound reaches the captain framed as from telegram; outbound lifecycle text is never framed", async () => {
     setTopic(stateRoot, "brove", 7);
     const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
     const deliverInbound = vi.fn(async () => ({ handled: true, outcome: { status: "accepted" as const, via: "claude-peer" as const, confirmed: true } }));
@@ -196,9 +196,9 @@ describe("handleUpdate routing", () => {
     await drained;
     expect(deliverInbound).toHaveBeenCalledWith(
       "brove",
-      '<squadrant-message from="telegram" project="brove" kind="captain.message">\n📩 [from Telegram] ship it\n</squadrant-message>',
+      "📨 telegram\n📩 [from Telegram] ship it",
     );
-    expect(formatLifecycle("brove", { type: "task.done", id: "t1", message: "done" } as never)).not.toContain("squadrant-message");
+    expect(formatLifecycle("brove", { type: "task.done", id: "t1", message: "done" } as never)).not.toContain("📨");
     bridge.stop();
   });
 

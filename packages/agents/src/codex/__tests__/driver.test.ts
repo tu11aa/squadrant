@@ -172,6 +172,8 @@ describe("CodexInteractiveDriver.dispatch", () => {
     expect(dev).toContain("task-42");
     expect(dev).toContain("demo");
     expect(dev).toContain("squadrant crew signal done --task-id task-42 --project demo");
+    expect(dev).toContain("`crew_signal_done` MCP tool");
+    expect(dev).toContain("task_id task-42, project demo");
   });
 
   it("routes serverRequest with no threadId to the sole active task", async () => {

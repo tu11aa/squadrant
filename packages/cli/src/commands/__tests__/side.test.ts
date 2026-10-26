@@ -590,7 +590,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       expect.objectContaining({ surfaceId: "s1" }),
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow-up message\n<\/squadrant-message>$/),
+      "📨 captain:brove → side.send\nfollow-up message",
     );
     expect(squadrantdCall).not.toHaveBeenCalled();
   });

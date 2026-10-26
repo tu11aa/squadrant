@@ -64,10 +64,11 @@ export function isTurnAccepted(
 export function buildCompletionProtocol(taskId: string, project: string): string {
   return [
     "---",
-    "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:",
+    "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the `crew_signal_done` MCP tool from the `squadrant` server if it is available (pass `message`, `task_id` and `project`), otherwise run exactly:",
     `  squadrant crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
-    "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:",
+    `Use task_id ${taskId} and project ${project} for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the \`crew_signal_blocked\` tool (pass \`question\`) or run:`,
     `  squadrant crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
+    "Likewise `crew_signal_failed` (`error`) / `crew_signal_review` (`message`), or `squadrant crew signal failed|review` with the same flags.",
     "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew.",
   ].join("\n");
 }

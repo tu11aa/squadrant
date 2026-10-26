@@ -105,7 +105,7 @@ describe("runPing", () => {
   it("#1029: --from names the sender in the channel text, and the mailbox fallback stores bare text + from", async () => {
     status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
     await runPing("projA", "found it", "side:side-1");
-    expect(deliverToCaptain.mock.calls[0][1]).toContain('from="side:side-1"');
+    expect(deliverToCaptain.mock.calls[0][1]).toBe("📨 side:side-1\nfound it");
     expect(appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: "found it", source: "cli", from: "side:side-1" }),
     );
@@ -141,7 +141,7 @@ describe("runPing", () => {
 
     expect(deliverToCaptain).toHaveBeenCalledWith(
       "projA",
-      '<squadrant-message from="cli" project="projA" kind="captain.message">\nhello from ping fallback\n</squadrant-message>',
+      "📨 cli\nhello from ping fallback",
       expect.objectContaining({ mode: "off", channel: undefined })
     );
 
@@ -168,7 +168,7 @@ describe("runPing", () => {
 
     expect(deliverToCaptain).toHaveBeenCalledWith(
       "projA",
-      '<squadrant-message from="cli" project="projA" kind="captain.message">\nhello opencode captain\n</squadrant-message>',
+      "📨 cli\nhello opencode captain",
       expect.objectContaining({ mode: "on", channel: opencodeChannel })
     );
     // handled ⇒ the mailbox fallback must not double-enqueue.

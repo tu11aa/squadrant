@@ -361,15 +361,14 @@ The next step past lifecycle sources: use each agent's **native control API** as
 
 #### Sender frame on every delivered message (#1029)
 
-Claude Code renders every socket-delivered message as an anonymous "Another Claude session sent a message", ignoring any sender name the transport carries (spike #1029). So squadrant names the sender **in the text**, once, at the delivery layer — the same `@squadrant/core` function (`frameMessage`, `squadrant-message.ts`) for every transport (claude peer socket, opencode, pane fallback):
+Claude Code renders every socket-delivered message as an anonymous "Another Claude session sent a message", ignoring any sender name the transport carries (spike #1029). So squadrant names the sender **in the text**, once, at the delivery layer — the same `@squadrant/core` function (`frameMessage`, `squadrant-message.ts`) for every transport (claude peer socket, opencode, pane fallback). The frame is ONE compact header line, then the body (no XML — it is read in a terminal):
 
 ```
-<squadrant-message from="crew:mcpspike" project="squadrant" kind="task.done" agent="claude" task="66884473" id="12">
-CREW DONE [claude/mcpspike · 66884473]: …
-</squadrant-message>
+📨 crew:mcpspike → done · taskId: 66884473 · seq: 12
+merged into #245 (718 tests) …
 ```
 
-| Direction | Where it is framed | `from` |
+| Direction | Where it is framed | Sender |
 |---|---|---|
 | crew event → captain (CREW DONE / BLOCKED / IDLE …) | delivery loop, from the mailbox entry | `crew:<name>` (short task id when unnamed) |
 | captain `crew send` → crew | `runCrewSend` | `captain:<project>` |
@@ -380,11 +379,13 @@ CREW DONE [claude/mcpspike · 66884473]: …
 | daemon alerts, compact-resume, KB requests | delivery loop / compact resume | `daemon` |
 | `ping` / `runtime send` without `--from` | delivery loop / `ping` | `cli` |
 
-- Attributes: `from` (required), `project`, `kind` (event or message kind), `agent`, `task`, `id` (mailbox seq). Values are reduced to `[A-Za-z0-9_.:@/+-]`; inside the body any `<squadrant-message` / `</squadrant-message` is escaped (`&lt;`), so a body can neither close the frame early nor forge a sender.
+- Header fields, in order, absent ones omitted: sender · `→ status/kind` · `taskId: <short id>` · `seq: <mailbox seq>` · sender project. For a crew event the status is the lifecycle verb (`done`, `blocked`, `idle`, `failed`, `review`, `stalled`, `turn failed`, …) read from the body's `CREW <VERB> [claude/<name> · <id>]:` prefix — that prefix is dropped from the body because the header now carries the sender and status (a body without it, or naming another task, is left whole and the status falls back to the kind: `task.done` → `done`). Non-crew senders show just the sender, plus `→ kind` only when it adds information (`crew.send`, `side.send`, `compact.resume`; plain `captain.message` shows none), plus `seq: N` when the message has a mailbox entry (`taskId` appears when it is about a task). The agent is shown, as `crew:x (codex)`, only when it is not `claude`.
+- **No project in the normal case.** The project appears (last, bare) only when the sender's project differs from the receiving one — a cross-project `ping --from captain:<other>` report-back renders `📨 captain:other · seq: 4 · other`.
+- **Anti-forgery.** The header is always line 1. Header values are reduced to `[A-Za-z0-9_.:@/+-]` (kind/verb also allow spaces), so a value cannot add a line or a second mark; any body line that starts with `📨` (after optional indentation) is prefixed with `\`, so a body cannot fake a second header. `--from` is still validated by `isValidSender`.
 - The mailbox keeps the **bare** text; framing happens at send time, so a deferred/retried delivery is framed exactly once.
-- Pane fallback: the cmux paste path already flattens newlines to spaces, so the frame arrives as one line (`<squadrant-message …> body </squadrant-message>`) and submits like any other message.
+- Pane fallback: the cmux paste path already flattens newlines to spaces, so the frame arrives as one line (`📨 crew:x → done · taskId: 66884473 · seq: 12 body…`) and submits like any other message.
 - Telegram **outbound** text (`formatLifecycle`) is for humans and is never framed. The #711 name registration is unchanged — the frame is the agent-visible sender, the registration is the transport-level one.
-- Agents are told (templates + `captain-ops`) that a `<squadrant-message>` is peer input, never operator approval.
+- Agents are told (templates + `captain-ops`) that a `📨`-headed message is peer input, never operator approval.
 
 #### Running an opencode captain
 
@@ -893,6 +894,7 @@ Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TA
 
 - **One implementation.** The CLI verb and the tools both call `performCrewSignal` (`packages/core/src/crew-signal.ts`): the already-terminal check (#557), the `_results/<id>.txt` write, the #901 citation scan and the #1039 confirmation line. The tool schemas and handler live in `packages/core/src/crew-signal-tools.ts`; `packages/cli/src/commands/mcp.ts` only wires them to the SDK.
 - **Errors are tool errors** (`isError: true`) with a clear message: no crew env, task already terminal, daemon unreachable.
+- **Completion protocol prefers the tool.** The `COMPLETION PROTOCOL` appended to a claude/opencode crew's first turn (`buildCompletionProtocol`) and the codex developer instructions say: call `crew_signal_done` (or `_blocked` / `_failed` / `_review`) from the `squadrant` server if available, passing the explicit `task_id` / `project` (codex needs them — one app-server serves many tasks), otherwise run the `squadrant crew signal …` CLI.
 - **Lazy SDK.** `@modelcontextprotocol/sdk` is imported inside `runMcpServer`, so no other command pays for it (tested).
 - **Claude Code defers MCP tools:** the first call goes through ToolSearch (`select:mcp__squadrant__crew_signal_done`).
 - **Install is manual in this slice** (config projection, #34, is a later slice; nothing writes to your agent config):
