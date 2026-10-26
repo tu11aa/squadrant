@@ -31,6 +31,7 @@ guided first run — come back here when you need the details.
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
+- [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
 - [Captain rollover](#captain-rollover-1010)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
@@ -47,6 +48,7 @@ guided first run — come back here when you need the details.
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
 | `squadrant crew compact <project> <crew> [--keep <text>]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
+| `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -834,6 +836,30 @@ Because the layout is flat, a project dir shares a namespace with those entries.
   - launchd is still writing the legacy log path.
 
 **Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
+
+## Dev daemon (`squadrant dev`, #1046)
+
+Live-check a branch build on a dev daemon. Never `npm i -g <branch tgz> && squadrant heal daemon` for a branch test: that restarts the production daemon every captain and crew depends on (9 of 12 restarts on 2026-10-26).
+
+```bash
+pnpm build                                            # in the worktree
+eval "$(node dist/index.js dev up --project devtest)" # starts the daemon, prints the env
+squadrant launch devtest                              # dev captain (answer claude's folder-trust prompt once)
+squadrant crew spawn devtest "…"                      # dev crews
+squadrant dev down                                    # kill it, delete everything
+```
+
+`dev up` makes one root (`$TMPDIR/squadrant-dev`, or `--root`) holding a fresh default `config.json` with one throwaway project (an empty git repo, `devtest` by default), the state dir, the socket, `daemon.log`, `claude-settings.json` and `bin/squadrant` (a shim for that build). It starts `<from>/dist/squadrantd.js` as a plain detached process, not under launchd, and prints three `export` lines (`SQUADRANT_CONFIG`, `SQUADRANT_WORKSPACE_DIR`, `PATH`). `dev down` closes the dev projects' captain workspaces, stops the daemon, and deletes the root; it refuses a dir without its `.squadrant-dev` marker. Nothing is copied from your real config (no Telegram, no router, no projects). A thin command rather than a script, because it reuses the same path and socket helpers the daemon uses.
+
+**Isolation rule.** Any `SQUADRANT_CONFIG` that is not `~/.config/squadrant/config.json` is an isolated config (`isolatedConfigDir()` in `@squadrant/shared`). Under it:
+
+- The daemon writes its hooks to `<config dir>/claude-settings.json`, seeded once from `~/.claude/settings.json` (read-only) so plugins, permissions and env carry over. It never writes `~/.claude/settings.json` (#1046). It is not the production daemon, so the worktree guard lets it run a worktree `dist/`, and it skips the legacy-state seed and the opencode skills sync.
+- The CLI skips the runtime sync into `~/.config/squadrant`, the opencode skills projection, the config version stamp and `ensureDaemon` (launchd). `projects add`/`config` never kickstart launchd, and `heal daemon`/`heal captain` refuse.
+- Claude captains and crews launch with `SQUADRANT_CONFIG` (and `PATH` with `bin/` when the shim exists) in their env, plus `--setting-sources project,local --settings <config dir>/claude-settings.json --mcp-config <squadrant server>`. Dropping the `user` source is what hides the production hooks. It also drops user-scope MCP servers, which is why the squadrant server is passed back explicitly. Routed backends (`direct`/`proxy`) are refused under an isolated config: both need the one `--settings` slot.
+
+**Why `--settings`, not `CLAUDE_CONFIG_DIR` or a temp `HOME`.** Both of those give claude a fresh config dir, and claude reports `Not logged in · Please run /login` (checked with claude 2.1.310). `--setting-sources` + `--settings` keeps the login and `~/.claude.json`.
+
+**Limits.** Dev sessions still read the production templates and plugin dir (`~/.config/squadrant/templates`, `plugin`, `plugin-crew`), so a branch change to a role template or skill is not exercised. Claude itself still updates `~/.claude.json` (session counters, folder trust) as it does for any session.
 
 ## Captain rollover (#1010)
 
