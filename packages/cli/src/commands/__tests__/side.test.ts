@@ -94,6 +94,11 @@ vi.mock("@squadrant/agents", () => ({
 
 // per-crew-settings mock — needed by the crew regression test below.
 const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
+// Claude crew spawn: the launch-arg init prompt's boot watch registers at once here.
+vi.mock("../../lib/first-turn-peer.js", () => ({
+  sendClaudeFirstTurnViaPeer: vi.fn(),
+  watchClaudeCrewBoot: vi.fn().mockResolvedValue({ booted: true }),
+}));
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings: vi.fn(),
   writePerCrewSettingsLocal,
