@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { daemonLogPath, logsRoot } from "@squadrant/shared";
+import { logRestartTrigger } from "./restart-trigger.js";
 
 export const LABEL = "com.squadrant.daemon";
 
@@ -334,6 +335,25 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
 }
 
 /**
+ * Pure: why the plist drifted, for the restart attribution line. `version` =
+ * same install path with a different `<name>@<version>` segment, `path` = a
+ * different daemon entry or node binary, `plist` = env-only (PATH) change.
+ */
+export function describeDrift(drift: Pick<DaemonDrift, "current" | "desired" | "changed" | "programChanged">): string {
+  if (!drift.changed) return "none";
+  if (drift.current === null) return "plist missing";
+  if (!drift.programChanged) return "plist (PATH/env only)";
+  const was = parseProgramArgs(drift.current);
+  const now = parseProgramArgs(drift.desired);
+  if (!was || !now) return "path (program args unparseable)";
+  if (was.daemonEntry !== now.daemonEntry) {
+    const kind = isVersionUpgrade(was.daemonEntry, now.daemonEntry) ? "version" : "path";
+    return `${kind} (entry ${was.daemonEntry} -> ${now.daemonEntry})`;
+  }
+  return `path (node ${was.nodeBin} -> ${now.nodeBin})`;
+}
+
+/**
  * Write the plist (if changed), bootout on program-arg drift, and bootstrap.
  * Shared by applyDaemonDrift (implicit, cautious path) and reregisterDaemon
  * (explicit heal path) — both need the plist/service reconciled, they only
@@ -588,7 +608,10 @@ export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
  *   - tryAcquireDaemonLock: serialises concurrent SEPARATE squadrant processes
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
-export function ensureDaemon(nodeBin: string = process.execPath, opts: { operatorInitiated?: boolean } = {}): void {
+export function ensureDaemon(
+  nodeBin: string = process.execPath,
+  opts: { operatorInitiated?: boolean; caller?: string } = {},
+): void {
   if (restartInFlight) return;
   restartInFlight = true;
 
@@ -624,6 +647,14 @@ export function ensureDaemon(nodeBin: string = process.execPath, opts: { operato
       const decision = decideForeignInstall(drift.foreignInstall);
       process.stderr.write(decision.message);
       if (!decision.proceed) return;
+    }
+    // A no-drift call only bootstraps/kickstarts without -k: a no-op for a running
+    // daemon, so it is not attributed (it would log on every captain CLI call).
+    if (drift.changed) {
+      logRestartTrigger(
+        drift.programChanged ? "bootout+bootstrap" : "plist-write (no restart)",
+        `ensureDaemon ${opts.caller ?? "cli"}; drift=${describeDrift(drift)}`,
+      );
     }
     applyDaemonDrift(drift);
   } catch (e) {
@@ -700,6 +731,10 @@ export function reregisterDaemon(
     // service still logging to the pre-move path needs the bootout too.
     const loadedLog = loadedDaemonLogPath(drift.target);
     const logMoved = loadedLog !== null && loadedLog !== daemonLogPath();
+    logRestartTrigger(
+      "reregister+kickstart-k",
+      `heal daemon; drift=${describeDrift(drift)}${logMoved ? `; log moved ${loadedLog} -> ${daemonLogPath()}` : ""}`,
+    );
     reconcilePlistAndService({ ...drift, programChanged: drift.programChanged || logMoved });
     const result = forceKickstartAndVerify(drift.target, { ...kickstartOpts, pidBefore: pidBeforeReconcile });
     if (!result.restarted) {
