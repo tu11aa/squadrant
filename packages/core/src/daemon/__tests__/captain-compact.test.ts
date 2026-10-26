@@ -45,6 +45,24 @@ describe("captain compact", () => {
     expect(h.c.pendingCount()).toBe(0);
   });
 
+  it("types /compact exactly once when the 1s interval fires again while the send is still in flight", async () => {
+    // 2026-10-26 08:57:25: `/compact sent` logged twice 314 ms apart — the next interval
+    // tick re-ran the same pending entry while the first cmux.send was still awaited.
+    const releases: Array<() => void> = [];
+    const h = harness({ screens: [IDLE], send: () => new Promise<void>((r) => { releases.push(r); }) });
+    h.c.request("demo");
+    await h.c.tick(); // idle poll 1
+    const first = h.c.tick(); // idle poll 2 → send starts, still awaiting
+    await new Promise((r) => setTimeout(r, 0));
+    const second = h.c.tick(); // next interval fires mid-send
+    await new Promise((r) => setTimeout(r, 0));
+    releases.forEach((r) => r());
+    await Promise.all([first, second]);
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.logs.filter((l) => l.endsWith("/compact sent"))).toHaveLength(1);
+  });
+
   it("uses a custom focus", async () => {
     const h = harness({ screens: [IDLE] });
     h.c.request("demo", "  keep PR 7  ");

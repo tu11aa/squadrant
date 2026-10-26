@@ -8,6 +8,7 @@ import type { ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import type { DaemonContext } from "./context.js";
 import { resolveRouterCredentials } from "../router/credentials.js";
+import { reloadDaemonConfig } from "./config-reload.js";
 
 export interface ServerHandlers {
   /** Build per-component health list (optionally filtered to one project). */
@@ -71,6 +72,10 @@ export function createServer(
       if (msg.kind === "crew-compact-done") {
         ctx.crewCompactDone?.(msg.taskId as string);
         return { ok: true };
+      }
+      // Live config reload: `projects add` etc. apply without bouncing the daemon.
+      if (msg.kind === "config-reload") {
+        return reloadDaemonConfig(ctx);
       }
       if (msg.kind === "event") {
         return ctx.d.handle(msg);

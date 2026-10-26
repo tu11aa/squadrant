@@ -147,7 +147,7 @@ if (
   !isReadOnlyCrewCommand(process.argv) &&
   !isReadOnlyTopLevelCommand(process.argv)
 ) {
-  ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]) });
+  ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]), caller: "cli startup" });
 }
 
 const program = new Command();
