@@ -266,7 +266,7 @@ If you ever need a bounded check (not a loop), use a fixed counter (≤ 3 attemp
 Since #1017 a plain end-of-turn, the first stall, and CREW QUIET no longer reach your pane (they stay in `crew tasks`); a CREW IDLE you do see carries the crew's own message word for word — read it before spot-checking. A long reply (or BLOCKED question) is cut at 1500 chars and ends with `… full: squadrant crew msg <project> <seq>`; run that to read the whole text instead of asking the crew to rewrite it to a file. One `CREW STALLED … ESCALATION` (30 min, no tool result) is the "really hung" signal.
 
 CREW IDLE is **ambiguous** — the watchdog did not detect a heartbeat, which can happen when:
-- **(a)** The crew finished but never ran `squadrant crew signal done` (issue #278 — common for claude/opencode before the completion-protocol fix).
+- **(a)** The crew finished but never signalled done — via `squadrant crew signal done` or, where `squadrant mcp` is registered, the `crew_signal_done` MCP tool, which is the preferred path (#1029; the CLI stays as the fallback) (issue #278 — common for claude/opencode before the completion-protocol fix).
 - **(b)** The crew is genuinely waiting for the captain (asked a question or needs a decision).
 - **(c)** The crew is still mid-task and the idle pulse was transient.
 
