@@ -129,7 +129,8 @@ export function createDirectSurfaceLivenessProbe(
 // one-way (core may not import workspaces), and this is a SCREEN-SHAPE question,
 // not a runtime one. Both sides answer it the same way so a captain the pane
 // layer would refuse to keystroke into is the same captain this calls LOCKED.
-const HR_RE = /^\s*─{10,}\s*$/;
+// A named Claude session draws its name as a trailing label on the top rule.
+const HR_RE = /^\s*─{10,}(?:\s+\S.*?\s+─+)?\s*$/;
 
 /** True when the HR-bounded region is an open AskUserQuestion/permission
  *  SELECTION MODAL (each selectable option renders as a `N. Label` line). */
