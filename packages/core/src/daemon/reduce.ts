@@ -248,15 +248,16 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
  *  one-liner delivered verbatim to the origin project's captain. */
 function formatDelegationReport(rec: TaskRecord, originProject: string, targetProject: string): string | null {
   const shortTask = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
+  const task = `taskId: ${shortId(rec.id)}`;
   switch (rec.state) {
     case "done":
-      return `✅ Cross-project task → ${targetProject}: done — ${shortTask}`;
+      return `✅ Cross-project task → ${targetProject} (${task}): done — ${shortTask}`;
     case "blocked":
-      return `⛔ Cross-project task → ${targetProject}: blocked — ${(rec.question ?? "(no question)").trim()}`;
+      return `⛔ Cross-project task → ${targetProject} (${task}): blocked — ${(rec.question ?? "(no question)").trim()}`;
     case "failed":
-      return `⛔ Cross-project task → ${targetProject}: failed — ${(rec.error ?? "(no error)").trim()}`;
+      return `⛔ Cross-project task → ${targetProject} (${task}): failed — ${(rec.error ?? "(no error)").trim()}`;
     case "stalled":
-      return `⚠️ Cross-project task → ${targetProject}: stalled (no heartbeat in ${rec.heartbeatBudgetMs}ms)`;
+      return `⚠️ Cross-project task → ${targetProject} (${task}): stalled (no heartbeat in ${rec.heartbeatBudgetMs}ms)`;
     default:
       return null;
   }

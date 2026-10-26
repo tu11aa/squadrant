@@ -422,7 +422,7 @@ describe("inbound poll", () => {
     bridge.start();
     await appended.promise;
 
-    expect(appendCalls).toEqual([{ stateRoot: root, project: "demo", text: "📩 [from Telegram] hello", source: "telegram" }]);
+    expect(appendCalls).toEqual([{ stateRoot: root, project: "demo", text: "📩 [from Telegram] hello", source: "telegram", from: "telegram" }]);
     await waitFor(() => loadState(root).offset === 11);
   });
 

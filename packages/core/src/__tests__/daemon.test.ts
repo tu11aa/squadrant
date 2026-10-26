@@ -1460,6 +1460,7 @@ describe("daemon report-back on settle with originProject (#246)", () => {
     const originCalls = calls.filter((c) => c.project === "projA");
     expect(originCalls.length).toBe(1);
     expect(originCalls[0].message).toMatch(/projB.*done|delegat/i);
+    expect(originCalls[0].message).toContain("taskId: t-done");
   });
 
   it("fires notify to origin project when task transitions to blocked", async () => {

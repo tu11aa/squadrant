@@ -83,7 +83,7 @@ import {
   type TurnAcceptanceConfig,
 } from "./crew-protocol.js";
 import { reapCrewChildren } from "./crew-lifecycle.js";
-import { frameMessage } from "./squadrant-message.js";
+import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
@@ -385,7 +385,7 @@ async function runCodexInteractiveSpawn(o: {
   // streamed deltas once it attaches.
   const firstTurnText = o.firstTurn ?? o.task;
   if (firstTurnText && firstTurnText !== "(interactive)") {
-    void o.sendCodexFirstTurn(rec.id, firstTurnText).catch((e: unknown) => {
+    void o.sendCodexFirstTurn(rec.id, frameFirstTurn(firstTurnText, { project: o.project, taskId: rec.id })).catch((e: unknown) => {
       process.stderr.write(`(first-turn delivery failed: ${(e as Error).message})\n`);
     });
   }
@@ -676,12 +676,12 @@ export async function runCrewSpawn(
     const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
     // #917: peer channel first — the brief goes in whole (no spill, no
     // single-line flattening). Only a `fallback` result reaches the pane path.
-    const peerBrief = `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`;
+    const peerBrief = frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id });
     const peerResult = deps.sendFirstTurnPeer
       ? await deps.sendFirstTurnPeer({ pane, taskId: rec.id, project: input.project, messagingSocketPath, message: peerBrief }).catch((): PeerFirstTurnResult => ({ kind: "fallback" }))
       : ({ kind: "fallback" } as PeerFirstTurnResult);
     const sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }> = peerResult.kind === "fallback"
-      ? deps.sendFirstTurn(pane, `${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen)
+      ? deps.sendFirstTurn(pane, frameFirstTurn(`${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id }), preLaunchScreen)
       : Promise.resolve({ delivered: peerResult.kind === "delivered" });
     let agentNotStarted = false;
     const scrapeDelivered = sendPromise.then((r) => { agentNotStarted = !!r.agentNotStarted; return r.delivered; }).catch(() => false);
@@ -776,7 +776,7 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    const opencodeResult = await deps.sendFirstTurn(pane, `${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, preLaunchScreen, {
+    const opencodeResult = await deps.sendFirstTurn(pane, frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "opencode")}`, { project: input.project, taskId: rec.id }), preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until the idle
       // splash leaves the screen, re-sending every ~3s to cover slow boots
       // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.
@@ -813,7 +813,7 @@ export async function runCrewSpawn(
   await deps.runtime.sendToPane(pane, niceCrewCommand(cliCommand));
   if (interactive) {
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    const genericResult = await deps.sendFirstTurn(pane, firstTurnTask, preLaunchScreen);
+    const genericResult = await deps.sendFirstTurn(pane, frameFirstTurn(firstTurnTask, { project: input.project }), preLaunchScreen);
     // Generic branch has no daemon task record — only warn on non-delivery.
     if (!genericResult.delivered) {
       process.stderr.write(`⚠️  First turn not delivered for crew '${name}' — use 'squadrant crew send ${input.project} ${name}' to re-send the task.\n`);
@@ -949,7 +949,7 @@ export async function runCrewSend(
   // Sender frame (#1029): the crew's harness shows socket input as an anonymous peer, so the
   // body names the captain. Framed after the #745 duplicate-task check, which compares raw text.
   const framed = frameMessage(
-    { from: `captain:${project}`, project, kind: "crew.send", agent: task?.provider, task: task?.id.slice(0, 8) },
+    { from: `captain:${project}`, project, kind: "crew.send", task: task?.id.slice(0, 8) },
     message,
   );
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =

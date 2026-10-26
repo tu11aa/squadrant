@@ -39,6 +39,7 @@ function makeDeps(over: Partial<ThreadDeps> = {}) {
   const rt = fakeRuntime();
   const launches: ThreadLaunch[] = [];
   const firstTurns: string[] = [];
+  const rawTurns: string[] = [];
   let clock = Date.parse("2026-10-21T10:00:00Z");
   let sid = 0;
   const deps: ThreadDeps = {
@@ -52,7 +53,8 @@ function makeDeps(over: Partial<ThreadDeps> = {}) {
     agentCommand: (l) => { launches.push(l); return "claude"; },
     // Long first turns are spilled to a temp file (#730); record what the agent would read.
     sendFirstTurn: async (_p, text) => {
-      const spill = text.match(/^Full task is at (\S+) /)?.[1];
+      const spill = text.match(/(?:^|\n)Full task is at (\S+) /)?.[1];
+      rawTurns.push(text);
       firstTurns.push(spill ? fs.readFileSync(spill, "utf-8") : text);
       return { delivered: true };
     },
@@ -61,7 +63,7 @@ function makeDeps(over: Partial<ThreadDeps> = {}) {
     now: () => new Date(clock),
     ...over,
   };
-  return { deps, rt, launches, firstTurns, advance: (ms: number) => { clock += ms; } };
+  return { deps, rt, launches, firstTurns, rawTurns, advance: (ms: number) => { clock += ms; } };
 }
 
 const decision = (at: string, extra: Partial<DecisionRecord> = {}): DecisionRecord => ({
@@ -167,13 +169,14 @@ describe("appendHandoffDecision", () => {
 
 describe("open/park/resume/close state machine", () => {
   it("open forks the captain session into a titled tab with the thread prompt", async () => {
-    const { deps, launches, firstTurns, rt } = makeDeps();
+    const { deps, launches, firstTurns, rawTurns, rt } = makeDeps();
     const { thread, note } = await openThread({ project: "app", topic: "Auth cache", crews: ["crew-a"] }, deps);
     expect(note).toBeUndefined();
     expect(launches).toEqual([{ kind: "fork", fromSessionId: "cap-1", sessionId: "thr-1" }]);
     expect(thread).toMatchObject({ id: "auth-cache", state: "open", mode: "fork", sessionId: "thr-1", surfaceId: "surface:1", crews: ["crew-a"] });
     expect(rt.sent[0].text).toContain("SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=auth-cache");
     expect(rt.sent[0].text).toMatch(/^cd '\/repo\/app' && /);
+    expect(rawTurns[0].split("\n")[0]).toBe("📨 captain:app → thread.open");
     expect(firstTurns[0]).toContain("You are a discussion thread for: Auth cache");
     expect(firstTurns[0]).toContain("Do not spawn crews");
     expect(firstTurns[0]).toContain("squadrant thread park app auth-cache --decision-file -");
@@ -195,6 +198,7 @@ describe("open/park/resume/close state machine", () => {
     await requestPark("app", "auth-cache", deps);
     expect(rt.sent.at(-1)!.pane.surfaceId).toBe("surface:1");
     expect(rt.sent.at(-1)!.text).toContain("squadrant thread park app auth-cache --decision-file -");
+    expect(rt.sent.at(-1)!.text.split("\n")[0]).toBe("📨 captain:app → thread.park");
     expect(readThread(root, "app", "auth-cache")?.state).toBe("open");
   });
 
@@ -287,13 +291,14 @@ describe("non-fork fallback (codex/opencode)", () => {
   });
 
   it("a seeded thread re-seeds on resume with its prior decisions", async () => {
-    const { deps, launches, firstTurns } = makeDeps({ agent: "codex", captainSessionId: null });
+    const { deps, launches, firstTurns, rawTurns } = makeDeps({ agent: "codex", captainSessionId: null });
     await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
     await parkThread("app", "auth-cache", decision("2026-10-21T10:00:00.000Z"), { ...deps, workspaceDir: ws });
     const { note } = await resumeThread("app", "auth-cache", deps);
     expect(launches.at(-1)).toEqual({ kind: "seed" });
     expect(note).toMatch(/cannot fork/);
     expect(firstTurns.at(-1)).toContain("Earlier decisions on this topic");
+    expect(rawTurns.at(-1)!.split("\n")[0]).toBe("📨 captain:app → thread.open");
   });
 
   it("a claude captain with no known session also seeds, with its own note", async () => {

@@ -441,6 +441,8 @@ crewCommand
       if (!Number.isInteger(n) || n < 1) throw new Error(`invalid seq '${seq}'`);
       const entry = await readMailboxEntry(stateRoot(), project, n);
       if (!entry) throw new Error(`no mailbox entry ${n} for project '${project}' (rotated out or wrong project)`);
+      // The agent stays out of the delivery header (#1029); it is recorded on the entry, so show it here.
+      if (entry.provider) console.error(chalk.dim(`# ${entry.kind} · agent: ${entry.provider}${entry.name ? ` · crew: ${entry.name}` : ""}`));
       console.log(fullEntryText(entry));
     } catch (err) {
       console.error(chalk.red((err as Error).message));

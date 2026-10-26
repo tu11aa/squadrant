@@ -258,20 +258,21 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
   <p class="sub" style="font-size:13.5px">Note: Crew wrapper/receipt text visible in prompt under <code>on</code> mode is a sender-identity artifact (<span class="tag">#711</span>), not an inherent property of the channel.</p>
 
   <h2>Message shape: sender frame (#1029)</h2>
-  <p class="lead">Claude Code shows every socket message as an anonymous peer, so the delivery layer names the sender <strong>inside the text</strong> — same frame on every transport, applied once, never stored.</p>
-  <pre style="background:var(--card,#f6f6f6);padding:12px;border-radius:8px;overflow:auto;font-size:13px">&lt;squadrant-message from="crew:mcpspike" project="squadrant" kind="task.done" agent="claude" task="66884473" id="12"&gt;
-CREW DONE [claude/mcpspike · 66884473]: …
-&lt;/squadrant-message&gt;</pre>
+  <p class="lead">Claude Code shows every socket message as an anonymous peer, so the delivery layer names the sender <strong>inside the text</strong> — same one-line header on every transport, applied once, never stored.</p>
+  <pre style="background:var(--card,#f6f6f6);padding:12px;border-radius:8px;overflow:auto;font-size:13px">📨 crew:mcpspike → done · taskId: 66884473 · seq: 12
+merged into #245 (718 tests) …</pre>
+  <p class="sub" style="font-size:13.5px">One header line, then the body. A cross-project sender adds <code>reply: squadrant ping &lt;project&gt;</code>; a stale replay adds <code>stale: 3d</code>; a body line starting with 📨 is quoted (<code>│ </code>), text intact, so it cannot fake a second header. The agent is never in the header (it stays in the mailbox log).</p>
   <table>
-    <tr><th>Sender</th><th><code>from</code></th></tr>
-    <tr><td>crew event → captain</td><td><code>crew:&lt;name&gt;</code></td></tr>
+    <tr><th>Sender</th><th>Sender (after <code>📨</code>)</th></tr>
+    <tr><td>crew event → captain</td><td><code>crew:&lt;name&gt;</code> (<code>crew:&lt;project&gt;/&lt;name&gt;</code> for a delegation report-back)</td></tr>
     <tr><td>captain <code>crew send</code> / <code>side send</code></td><td><code>captain:&lt;project&gt;</code></td></tr>
-    <tr><td>Telegram inbound</td><td><code>telegram</code></td></tr>
+    <tr><td>Telegram inbound</td><td><code>telegram:@username</code></td></tr>
+    <tr><td><code>ping</code> / <code>runtime send</code> inside a project</td><td><code>captain:&lt;project&gt;</code> (plain terminal: <code>cli</code>)</td></tr>
     <tr><td>thread park decision</td><td><code>thread:&lt;id&gt;</code></td></tr>
     <tr><td>side handoff (<code>runtime send --from</code>)</td><td><code>side:&lt;name&gt;</code></td></tr>
     <tr><td>daemon alerts / compact resume</td><td><code>daemon</code></td></tr>
   </table>
-  <p class="sub" style="font-size:13.5px">Tag text inside a body is escaped, so a body cannot close the frame or forge a sender. Telegram outbound is never framed. Pane fallback flattens to one line.</p>
+  <p class="sub" style="font-size:13.5px">Over the Claude peer socket the text is also wrapped in <code>&lt;cross-session-message from-name="crew-mcpspike"&gt;</code> so the TUI shows <code>› Message from @crew-mcpspike: 📨 …</code> (TUI-only, cosmetic, no <code>from=</code>/<code>from-mode</code>). Telegram outbound is never framed. Pane fallback flattens to one line.</p>
 
   <h2>Rollout &amp; channel status (v0.19.0)</h2>
   <div class="flow">

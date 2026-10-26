@@ -19,7 +19,7 @@ import {
 import { shellQuote } from "./crew-protocol.js";
 import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
-import { frameMessage } from "./squadrant-message.js";
+import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -176,7 +176,7 @@ export async function runSideSpawn(
   );
   // #864: same spill as the crew path (#730) — a long multi-line topic pasted
   // into the pane gets truncated mid-render; send a pointer to a temp file instead.
-  await deps.sendFirstTurn(pane, spillOversizedFirstTurn(firstTurn, `side-${input.project}-${name}`), preLaunchScreen);
+  await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `side-${input.project}-${name}`), { project: input.project, kind: "side.open" }), preLaunchScreen);
 
   return { ...pane, title };
 }

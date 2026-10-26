@@ -78,23 +78,27 @@ describe("coalesceBacklog (#890)", () => {
     expect(out.map((d) => d.entry.message)).toEqual(["task.done #1", "task.review #2"]);
   });
 
-  it("prefixes task events older than the stale threshold, like daemon captain.message", () => {
+  it("marks task events older than the stale threshold with payload.stale, like daemon captain.message", () => {
     const out = coalesceBacklog([task(1, "task.done", "t1", 8 * 60 * MIN), task(2, "task.review", "t2", 5 * MIN)], {
       now: NOW, taskState: states({ t1: "done", t2: "review" }),
     });
-    expect(out[0].entry.message).toBe("[stale — generated 8h ago] task.done #1");
+    expect(out[0].entry.message).toBe("task.done #1");
+    expect(out[0].entry.payload?.stale).toBe("8h 0m");
     expect(out[1].entry.message).toBe("task.review #2");
+    expect(out[1].entry.payload?.stale).toBeUndefined();
   });
 
-  it("stale prefix comes before the terminal annotation", () => {
+  it("stale rides on the payload next to the terminal annotation", () => {
     const out = coalesceBacklog([task(1, "task.review", "t1", 2 * 60 * MIN)], { now: NOW, taskState: states({ t1: "cancelled" }) });
-    expect(out[0].entry.message).toBe("[stale — generated 2h ago] [task now cancelled] task.review #1");
+    expect(out[0].entry.message).toBe("[task now cancelled] task.review #1");
+    expect(out[0].entry.payload?.stale).toBe("2h 0m");
   });
 
-  it("keeps the existing stale prefix for daemon captain.message, and leaves human/cli messages alone", () => {
+  it("marks stale daemon captain.message, and leaves human/cli messages alone", () => {
     const cli: MailboxEntry = { seq: 2, ts: new Date(NOW - 3 * 60 * MIN).toISOString(), kind: "captain.message", payload: { source: "cli" }, message: "hi" };
     const out = coalesceBacklog([daemonMsg(1, "⚠️ Daemon restarted", 2 * 60 * MIN), cli], { now: NOW, taskState: states({}) });
-    expect(out.map((d) => d.entry.message)).toEqual(["[stale — generated 2h ago] ⚠️ Daemon restarted", "hi"]);
+    expect(out.map((d) => d.entry.message)).toEqual(["⚠️ Daemon restarted", "hi"]);
+    expect(out.map((d) => d.entry.payload?.stale)).toEqual(["2h 0m", undefined]);
   });
 
   it("drops every DELIVERY STUCK / NOT DELIVERABLE self-alert — reaching it means its blocker already cleared", () => {

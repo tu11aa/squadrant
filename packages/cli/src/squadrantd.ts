@@ -17,7 +17,7 @@ import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
 import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
-import { buildCompletionProtocol } from "@squadrant/core";
+import { buildCompletionProtocol, frameFirstTurn } from "@squadrant/core";
 import { createEventsSource } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
@@ -421,7 +421,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     if (rec.provider !== "claude" || !rec.name) return { delivered: false };
     const proj = loadConfig().projects[rec.project];
     const captainName = proj?.captainName ?? `${rec.project}-captain`;
-    const message = `${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project)}`;
+    const message = frameFirstTurn(`${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project, "claude")}`, { project: rec.project, originProject: rec.originProject, taskId: rec.id });
     return resendCrewFirstTurn(resendRuntime, captainName, rec.project, rec.name, message);
   });
 
@@ -431,7 +431,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const ingest = (e: import("@squadrant/shared").ControlEvent) =>
       void ctx.d.handle({ kind: "event", project: rec.project, event: e });
     const handle = runHeadless({
-      provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
+      provider: rec.provider, task: frameFirstTurn(rec.task, { project: rec.project, originProject: rec.originProject, taskId: rec.id }), id: rec.id, sessionId: rec.sessionId,
       cwd: rec.cwd, spawn, emit: ingest, writeResult,
     });
     inFlightHeadlessIds.add(rec.id);

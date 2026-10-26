@@ -349,7 +349,7 @@ knowledgeCommand
   .action(async (kb: string, o: { full?: boolean; now?: boolean; dryRun?: boolean; finish?: boolean }) => {
     const cfg = requireKb(kb, DEFAULT_CONFIG_PATH);
     const stateRoot = defaultStateRoot();
-    const enqueue = (project: string, text: string) => appendCaptainMessage({ stateRoot, project, text, source: "cli" });
+    const enqueue = (project: string, text: string) => appendCaptainMessage({ stateRoot, project, text, source: "cli", from: "knowledge" });
     const deps = { cfg, stateRoot, enqueue };
     if (o.finish) {
       if (o.dryRun) { console.log("dry run: would write REPORT.md, advance the schedule and message the captain"); return; }

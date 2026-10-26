@@ -75,7 +75,7 @@ describe("squadrantd daemon-direct (#332)", () => {
     if (handle.tickDelivery) await handle.tickDelivery();
 
     expect(cmux.sent.length).toBe(1);
-    expect(cmux.sent[0].text).toMatch(/CREW DONE/);
+    expect(cmux.sent[0].text).toMatch(/→ done[\s\S]*build the widget/);
   });
 
   // BUG 3 (#332 storm): the daemon-direct delivery loop lacked the relay's

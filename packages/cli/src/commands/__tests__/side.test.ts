@@ -222,6 +222,7 @@ describe("squadrant side spawn", () => {
     const delivered = sendToPane.mock.calls.map((c) => c[1] as string).find((m) => m.includes("cat it and follow it exactly"));
     expect(delivered).toBeDefined();
     expect(delivered!.length).toBeLessThan(200);
+    expect(delivered!.split("\n")[0]).toBe("📨 captain:brove → side.open");
     const spillFile = delivered!.match(/Full task is at (\S+\.md)/)![1];
     const onDisk = fsActual.readFileSync(spillFile, "utf8");
     fsActual.rmSync(spillFile, { force: true });
@@ -590,7 +591,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       expect.objectContaining({ surfaceId: "s1" }),
-      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow-up message\n<\/squadrant-message>$/),
+      "📨 captain:brove → side.send\nfollow-up message",
     );
     expect(squadrantdCall).not.toHaveBeenCalled();
   });

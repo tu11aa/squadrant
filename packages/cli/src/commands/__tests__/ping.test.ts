@@ -73,6 +73,9 @@ const makeConfig = () => ({
 describe("runPing", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // The label comes from the session's own role env (#1029): start each test as a plain terminal.
+    vi.unstubAllEnvs();
+    for (const k of ["SQUADRANT_CREW_TASK_ID", "SQUADRANT_CREW_PROJECT", "SQUADRANT_ROLE", "SQUADRANT_THREAD_ID", "SQUADRANT_SIDE_SESSION"]) vi.stubEnv(k, "");
     loadConfig.mockReturnValue(makeConfig());
     requireDaemon.mockResolvedValue(undefined);
     resolveCaptainChannelMode.mockReturnValue("off");
@@ -105,10 +108,29 @@ describe("runPing", () => {
   it("#1029: --from names the sender in the channel text, and the mailbox fallback stores bare text + from", async () => {
     status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
     await runPing("projA", "found it", "side:side-1");
-    expect(deliverToCaptain.mock.calls[0][1]).toContain('from="side:side-1"');
+    expect(deliverToCaptain.mock.calls[0][1]).toBe("📨 side:side-1\nfound it");
     expect(appendCaptainMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: "found it", source: "cli", from: "side:side-1" }),
     );
+  });
+
+  it("#1029: a plain terminal inside a project directory is still cli (cwd under a project does not make it the captain)", async () => {
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    const cfg = makeConfig();
+    (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
+    loadConfig.mockReturnValue(cfg);
+    await runPing("projA", "from a shell");
+    expect(deliverToCaptain.mock.calls[0][1]).toBe("📨 cli\nfrom a shell");
+  });
+
+  it("#1029 r2: the captain session of another project is captain:<that project> with a reply hint", async () => {
+    vi.stubEnv("SQUADRANT_ROLE", "captain");
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    const cfg = makeConfig();
+    (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
+    loadConfig.mockReturnValue(cfg);
+    await runPing("projA", "from the sibling");
+    expect(deliverToCaptain.mock.calls[0][1]).toBe('📨 captain:projB · reply: squadrant ping projB "<msg>"\nfrom the sibling');
   });
 
   it("#1029: rejects a --from that could break the frame", async () => {
@@ -141,7 +163,7 @@ describe("runPing", () => {
 
     expect(deliverToCaptain).toHaveBeenCalledWith(
       "projA",
-      '<squadrant-message from="cli" project="projA" kind="captain.message">\nhello from ping fallback\n</squadrant-message>',
+      "📨 cli\nhello from ping fallback",
       expect.objectContaining({ mode: "off", channel: undefined })
     );
 
@@ -168,7 +190,7 @@ describe("runPing", () => {
 
     expect(deliverToCaptain).toHaveBeenCalledWith(
       "projA",
-      '<squadrant-message from="cli" project="projA" kind="captain.message">\nhello opencode captain\n</squadrant-message>',
+      "📨 cli\nhello opencode captain",
       expect.objectContaining({ mode: "on", channel: opencodeChannel })
     );
     // handled ⇒ the mailbox fallback must not double-enqueue.

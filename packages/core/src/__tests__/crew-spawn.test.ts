@@ -1024,7 +1024,7 @@ describe("runCrewSpawn", () => {
         expect.anything(),
         expect.stringContaining("squadrant crew attach task-001"),
       );
-      expect(deps.sendCodexFirstTurn).toHaveBeenCalledWith("task-001", "do work");
+      expect(deps.sendCodexFirstTurn).toHaveBeenCalledWith("task-001", `📨 captain:${PROJECT} → task · taskId: task-001\ndo work`);
     });
 
     it("sends short Read first-turn to codex when taskFile is set for isolated worktree", async () => {
