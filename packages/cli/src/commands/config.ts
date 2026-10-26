@@ -3,10 +3,10 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import chalk from "chalk";
-import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey, writeConfigFileSync } from "@squadrant/shared";
+import { DEFAULT_CONFIG_PATH, getDefaultConfig, loadConfig, saveConfig, type SquadrantConfig, isDaemonCachedKey, isDaemonLiveReloadableKey, writeConfigFileSync } from "@squadrant/shared";
 import { detectDrift, applySafeFixes, type DriftItem } from "@squadrant/shared";
 import { withStamp } from "@squadrant/shared";
-import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
+import { reloadOrRestartDaemon, type RestartOutcome } from "@squadrant/core";
 
 export interface ConfigCheckOptions {
   configPath: string;
@@ -94,18 +94,22 @@ function printRestartOutcome(outcome: RestartOutcome): void {
   }
 }
 
-export function runConfigSetAction(opts: {
+export async function runConfigSetAction(opts: {
   key: string;
   value: string;
   noRestart?: boolean;
-  doRestart?: (o: { reason: string; noRestart?: boolean }) => RestartOutcome;
+  doRestart?: (o: { reason: string; noRestart?: boolean; liveReloadable: boolean }) => RestartOutcome | Promise<RestartOutcome>;
   configPath?: string;
-}): void {
+}): Promise<void> {
   runConfigSet(opts.key, opts.value, opts.configPath);
   console.log(chalk.green(`✔ set ${opts.key} = ${opts.value}`));
   if (isDaemonCachedKey(opts.key)) {
-    const doRestart = opts.doRestart ?? restartDaemonIfRunning;
-    const outcome = doRestart({ reason: `config ${opts.key}`, noRestart: opts.noRestart });
+    const doRestart = opts.doRestart ?? reloadOrRestartDaemon;
+    const outcome = await doRestart({
+      reason: `config ${opts.key}`,
+      noRestart: opts.noRestart,
+      liveReloadable: isDaemonLiveReloadableKey(opts.key),
+    });
     printRestartOutcome(outcome);
   }
 }
@@ -190,9 +194,9 @@ configCommand
   .argument("<key>", "dotted config key")
   .argument("<value>", "value (JSON-parsed when possible, else a bare string)")
   .option("--no-restart", "skip daemon restart even if the key is daemon-cached")
-  .action((key: string, value: string, opts: { restart?: boolean }) => {
+  .action(async (key: string, value: string, opts: { restart?: boolean }) => {
     try {
-      runConfigSetAction({ key, value, noRestart: opts.restart === false });
+      await runConfigSetAction({ key, value, noRestart: opts.restart === false });
     } catch (e) {
       console.error(chalk.red((e as Error).message));
       process.exit(1);

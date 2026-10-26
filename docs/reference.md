@@ -229,7 +229,7 @@ The seam is *"any endpoint that speaks Anthropic Messages"* — squadrant never 
 
 **Precedence** (highest first): explicit `--backend` flag → matching rule's `backend` → `defaults.roles.<role>.backend` → `native`. A rule's `agent`/`model`/`backend` is a unit: passing `--agent` or `--model` suppresses the rule entirely (the existing [#275](https://github.com/tu11aa/squadrant/issues/275) contract); `--backend` overrides only the backend.
 
-**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES`).
+**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES` but not live-reloadable).
 
 #### How to set up a router (OpenRouter)
 
@@ -1119,7 +1119,22 @@ Every CLI path that restarts, re-registers or kickstarts the launchd daemon appe
 [squadrant-cli] <ts> restart-trigger action=<kickstart-k|reregister+kickstart-k|bootout+bootstrap|plist-write (no restart)> reason="<why; drift=version|path|plist …>" pid= ppid= argv="<subcommand>" role=<SQUADRANT_ROLE|-> crewTask=<id|-> install=<argv[1]>
 ```
 
-Sources: `squadrant heal daemon`, `heal captain`, `projects add` / `config set <daemon-cached key>` / `telegram setup` (all `kickstart -k`), and `ensureDaemon` when it finds plist drift. A no-drift `ensureDaemon` only does a plain `kickstart`, which cannot restart a running daemon, and is not logged. The full trigger list is in [the restart audit](specs/2026-10-26-daemon-restart-audit.md).
+Sources: `squadrant heal daemon`, `heal captain`, `config set <boot-cached key>` / `telegram setup` (all `kickstart -k`; `projects add` and `config set projects.*` no longer restart — see [Live config reload](#live-config-reload)), and `ensureDaemon` when it finds plist drift. A no-drift `ensureDaemon` only does a plain `kickstart`, which cannot restart a running daemon, and is not logged. The full trigger list is in [the restart audit](specs/2026-10-26-daemon-restart-audit.md).
+
+### Live config reload
+
+`squadrant projects add` and `squadrant config set projects.…` do not restart the daemon. The CLI sends a `config-reload` request over the daemon socket; the daemon re-reads `config.json` (`daemon/config-reload.ts`), logs `config reload: N project(s)`, and tops up the router's per-project tokens (add-only; a removed project's token lingers until the next boot). Everything else that reads the project registry already calls `loadConfig()` on demand, so health, snapshot, delivery and spawn see the new project immediately. If the socket is unreachable or the reload errors, the CLI falls back to the old `kickstart -k` (logged by the restart attribution above); with no daemon running the next boot reads the new config. `projects remove` never restarted and still needs nothing.
+
+| Config the daemon derives | Applied by `config-reload`? |
+|---|---|
+| `projects.*` — registry (health/snapshot/advisor/telegram prune/captain names) | Yes — read live via `loadConfig()` |
+| `projects.*` — router per-project tokens | Yes — added on reload |
+| `telegram.*` (bridge, topics, polling) | No — built once at boot, restart |
+| `defaults.router` (shim upstream, port, models) | No — restart |
+| `defaults.taskTimeoutMs` (captured into the reducer deps) | No — restart |
+| `defaults.cmuxEventsBridge` (bridge start/stop) | No — restart |
+| `defaults.claudeEnv`, `defaults.gate.mode` (hook install at boot) | No — apply on next boot (not in the auto-restart key set) |
+| `defaults.roles` / `crewRouting` / `controlChannel` and other keys read per call | Already live, no action needed |
 
 The "⚠️ Daemon restarted → vX" captain notice fires only when the daemon's **version or install path** changed since the last boot (a same-version reinstall + `heal daemon`, a config restart, or a crash stays silent), and never within 5 minutes of the previous notice.
 
