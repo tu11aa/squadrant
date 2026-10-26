@@ -33,6 +33,7 @@ import {
 } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
+import { resolveHookTask } from "./lib/cmux-hook-attribution.js";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
 import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
@@ -300,12 +301,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       if (!found) return;
       void ctx.d.handle({ kind: "event", project: found.project, event: ev });
     },
-    resolve: (hook) => {
-      if (!hook.cwd) return undefined;
-      return store.listAll().find(
-        (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hook.cwd,
-      );
-    },
+    resolve: (hook) => resolveHookTask(store.listAll(), hook),
     cursorFile: join(stateRoot, "cmux-events.seq"),
     log,
   });

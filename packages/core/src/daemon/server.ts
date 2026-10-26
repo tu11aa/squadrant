@@ -65,6 +65,9 @@ export function createServer(
         return ctx.requestCrewCompact(msg.project as string, msg.crew as string, msg.keep as string | undefined);
       }
       // #1051: `crew send` asks whether a compact is queued/running for the crew before delivering.
+      if (msg.kind === "crew-compact-cancel") {
+        return ctx.cancelCrewCompact?.(msg.project as string, msg.crew as string) ?? { cancelled: false };
+      }
       if (msg.kind === "crew-compact-state") {
         return { holding: ctx.crewCompactHolds?.(msg.project as string, msg.crew as string) ?? false };
       }

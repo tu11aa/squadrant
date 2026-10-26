@@ -8,6 +8,12 @@ export async function requestCrewCompact(project: string, crew: string, keep: st
   return { agent: r?.agent ?? "agent" };
 }
 
+/** Drop a queued compact (and the hold it puts on `crew send`); `cancelled: false` when none was queued. */
+export async function cancelCrewCompact(project: string, crew: string, call: DaemonCall): Promise<{ cancelled: boolean }> {
+  const r = (await call({ kind: "crew-compact-cancel", project, crew })) as { cancelled?: boolean } | undefined;
+  return { cancelled: r?.cancelled === true };
+}
+
 /** Poll the daemon until no compact is queued/running for the crew. Throws if it outlasts `timeoutMs`. */
 export async function waitForCrewCompact(
   project: string,

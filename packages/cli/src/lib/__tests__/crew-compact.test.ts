@@ -1,6 +1,6 @@
 // #1051: `crew send` waits out a queued/running compact so its message lands after it.
 import { describe, it, expect, vi } from "vitest";
-import { requestCrewCompact, waitForCrewCompact } from "../crew-compact.js";
+import { requestCrewCompact, cancelCrewCompact, waitForCrewCompact } from "../crew-compact.js";
 
 describe("crew compact CLI helpers", () => {
   it("waitForCrewCompact polls until the hold clears", async () => {
@@ -25,6 +25,13 @@ describe("crew compact CLI helpers", () => {
     await expect(
       waitForCrewCompact("demo", "c", { call: async () => ({ holding: true }), sleep: async () => {}, timeoutMs: -1 }),
     ).rejects.toThrow(/still compacting/);
+  });
+
+  it("cancelCrewCompact asks the daemon and reports whether anything was queued", async () => {
+    const call = vi.fn().mockResolvedValueOnce({ cancelled: true }).mockResolvedValueOnce(undefined);
+    expect(await cancelCrewCompact("demo", "c", call)).toEqual({ cancelled: true });
+    expect(await cancelCrewCompact("demo", "c", call)).toEqual({ cancelled: false });
+    expect(call).toHaveBeenCalledWith({ kind: "crew-compact-cancel", project: "demo", crew: "c" });
   });
 
   it("requestCrewCompact sends keep only when given and surfaces daemon refusals", async () => {
