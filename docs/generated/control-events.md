@@ -75,7 +75,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-signal.ts:67
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
-  - packages/cli/src/commands/crew-control.ts:254
+  - packages/cli/src/commands/crew-control.ts:258
   - packages/core/src/crew-signal.ts:57
   - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
