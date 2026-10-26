@@ -42,7 +42,7 @@ When you have produced a result that deserves the primary captain's attention:
 
    b. Send the structured handoff to the primary captain via relay:
    ```bash
-   squadrant runtime send <project> "$(cat <<'HANDOFF'
+   squadrant runtime send --from side:<side-name> <project> "$(cat <<'HANDOFF'
 🗒 Side handoff [research] — <topic>
 Summary: <one-line summary>
 Artifacts: <list: gh issue #NNN | spec: path/to/file.md | …>
@@ -53,7 +53,7 @@ HANDOFF
 
 3. **On no:** keep working; you can trigger the handoff whenever you're ready.
 
-The `<project>` and `<workspace>` values are in the "Side-session context" block of your first turn.
+The `<project>`, `<workspace>` and `<side-name>` values are in the "Side-session context" block of your first turn.
 
 ## Karpathy Discipline
 

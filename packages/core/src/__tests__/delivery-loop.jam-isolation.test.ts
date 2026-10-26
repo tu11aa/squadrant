@@ -1,4 +1,5 @@
 // #590: the 2026-07-20 outage correlated a deferCount=300 stuck delivery with
+import { unframe } from "./unframe.js";
 // a SIGTERM 180ms later. These tests lock in the properties that make one
 // jammed project's delivery unable to hurt anything else:
 //   (a) a stuck project never delays another project's delivery in the same tick
@@ -79,7 +80,7 @@ describe("delivery-loop per-project jam isolation (#590a)", () => {
       readScreen: async () => "",
       send: async (surface: any, text: string) => {
         if (surface.title === "stuck-captain") throw new DeferDelivery("draft");
-        sent.push(text);
+        sent.push(unframe(text));
       },
     };
     const deliv = createDelivery({
@@ -110,7 +111,7 @@ describe("delivery-loop per-project exception isolation (#590b)", () => {
         return title;
       },
       readScreen: async () => "",
-      send: async (_surface: any, text: string) => { sent.push(text); },
+      send: async (_surface: any, text: string) => { sent.push(unframe(text)); },
     };
     const deliv = createDelivery({
       stateRoot, store, livenessRegistry: registry, log: (m: string) => logs.push(m), isPidAlive: () => true, opts: {},
@@ -135,7 +136,7 @@ describe("delivery-loop per-project exception isolation (#590b)", () => {
       listSurfaces: async (wsId: string) => [{ id: "s1", title: wsId, command: "bash" }],
       findWorkspaceId: async (title: string) => { if (fail) throw new Error("transient"); return title; },
       readScreen: async () => "",
-      send: async (_surface: any, text: string) => { sent.push(text); },
+      send: async (_surface: any, text: string) => { sent.push(unframe(text)); },
     };
     const deliv = createDelivery({
       stateRoot, store, livenessRegistry: registry, log: () => {}, isPidAlive: () => true, opts: {},
@@ -262,7 +263,7 @@ describe("delivery-loop stuck-project backoff (#590c)", () => {
         readScreen: async () => "",
         send: async (_s: any, text: string) => {
           if (blocked) throw new DeferDelivery(`typing-${n++}`);
-          sent.push(text);
+          sent.push(unframe(text));
         },
       };
       const deliv = createDelivery({

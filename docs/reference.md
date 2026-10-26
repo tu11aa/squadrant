@@ -31,9 +31,11 @@ guided first run — come back here when you need the details.
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
+- [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
 - [Captain rollover](#captain-rollover-1010)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
+- [MCP server (`squadrant mcp`)](#mcp-server-squadrant-mcp-1029)
 - [Config](#config)
 
 ## Commands
@@ -45,6 +47,8 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
+| `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -70,7 +74,7 @@ guided first run — come back here when you need the details.
 | `squadrant crew send <project> <name> <message>` | Send a follow-up turn to an existing crew |
 | `squadrant crew answer <project> <name> <option> [--expect <text>] [--text <answer>]` | Deliberately answer a crew's open AskUserQuestion/permission prompt by index or text — never an implicit default (#592) |
 | `squadrant crew read <project> <name>` | Read a crew session's current screen |
-| `squadrant crew msg <project> <seq>` | Print one mailbox entry in full — the crew's whole reply or question, also from rotated segments (#1030) |
+| `squadrant crew msg <project> <seq>` | Print one mailbox entry in full — the crew's whole reply or question, also from rotated segments (#1030); for a `task.dispatched` entry, the full brief the task was given (seq shown as `brief <seq>` in `crew tasks`) |
 | `squadrant crew close <project> <name>` | Shutdown a crew session (closes its tab) |
 | `squadrant crew list <project>` | List live crews for a project |
 | `squadrant sessions [--json] [--agent <name>] [--project <name>] [--live-only]` | List live agent sessions squadrant can introspect (read-only; [#669](https://github.com/tu11aa/squadrant/issues/669)) |
@@ -225,7 +229,7 @@ The seam is *"any endpoint that speaks Anthropic Messages"* — squadrant never 
 
 **Precedence** (highest first): explicit `--backend` flag → matching rule's `backend` → `defaults.roles.<role>.backend` → `native`. A rule's `agent`/`model`/`backend` is a unit: passing `--agent` or `--model` suppresses the rule entirely (the existing [#275](https://github.com/tu11aa/squadrant/issues/275) contract); `--backend` overrides only the backend.
 
-**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES`).
+**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES` but not live-reloadable).
 
 #### How to set up a router (OpenRouter)
 
@@ -358,6 +362,42 @@ The next step past lifecycle sources: use each agent's **native control API** as
 - Implementation: `@squadrant/core/src/captain-channel.ts`, `control-channel.ts`, `lifecycle-source.ts`.
 - Design doc: [`specs/2026-08-13-agent-control-channel-design.md`](specs/2026-08-13-agent-control-channel-design.md). Diagram: [`diagrams/2026-08-13-agent-control-channel.html`](diagrams/2026-08-13-agent-control-channel.html).
 
+#### Sender frame on every delivered message (#1029)
+
+Claude Code renders every socket-delivered message as an anonymous "Another Claude session sent a message", ignoring any sender name the transport carries (spike #1029). So squadrant names the sender **in the text**, once, at the delivery layer — the same `@squadrant/core` function (`frameMessage`, `squadrant-message.ts`) for every transport (claude peer socket, opencode, pane fallback). The frame is ONE compact header line, then the body (no XML — it is read in a terminal):
+
+```
+📨 crew:mcpspike → done · taskId: 66884473 · seq: 12
+merged into #245 (718 tests) …
+```
+
+| Direction | Where it is framed | Sender |
+|---|---|---|
+| crew event → captain (CREW DONE / BLOCKED / IDLE …) | delivery loop, from the mailbox entry | `crew:<name>` (short task id when unnamed) |
+| delegation report-back (`dispatch`) → origin captain | delivery loop; `payload.fromProject` set by `appendToMailbox` | `crew:<target project>/<name>` |
+| captain `crew send` → crew | `runCrewSend` | `captain:<project>` |
+| captain `side send` → side session; thread park request → thread | `runSideSend`, `requestPark` | `captain:<project>` |
+| Telegram inbound → captain | bridge (channel path) / delivery loop (mailbox fallback) | `telegram:@username` (else first name, else user id) |
+| thread park decision → captain | delivery loop (`payload.from`) | `thread:<id>` |
+| side handoff → captain | `squadrant runtime send --from side:<name>` (also `ping --from`) | `side:<name>` |
+| `ping` / `runtime send` from a captain session | delivery loop / `ping` (`cli/lib/sender-label.ts`, shared) | `captain:<project>` (`SQUADRANT_ROLE=captain`, project from cwd), unless `--from` |
+| `ping` / `runtime send` from a crew / thread tab / side tab | same | `crew:<project>/<name>` / `thread:<id>` / `side` |
+| `ping` / `runtime send` from a plain terminal — even inside a project directory | same | `cli` (a cwd under a project does not make a shell the captain) |
+| KB reconcile requests | `squadrant knowledge reconcile` | `knowledge` |
+| daemon alerts, compact-resume | delivery loop / compact resume | `daemon` |
+
+- Header fields, in order, absent ones omitted: sender · `→ status/kind` · `taskId: <short id>` · `seq: <mailbox seq>` · `stale: <age>` · `reply: squadrant ping <project> "<msg>"`. For a crew event the status is the lifecycle verb (`done`, `blocked`, `idle`, `failed`, `review`, `stalled`, `turn failed`, `undelivered`, `held-long`, …; a leading `⚠️` / `🔁` of the body line stays in the status, e.g. `→ ⚠️ undelivered`, `→ 🔁 first-turn auto-resent`) read from the body's `[⚠️ ]CREW <VERB> [claude/<name> · <id>]:` prefix — that prefix is dropped from the body because the header carries the sender, status and task id (a body without it, or naming another task, is left whole and the status falls back to the kind: `task.done` → `done`). Non-crew senders show just the sender, plus `→ kind` only when it adds information (`crew.send`, `side.send`, `thread.park`, `compact.resume`; plain `captain.message` shows none), plus `seq: N` when the message has a mailbox entry. **The agent is never in the header**; it stays in the mailbox log (`provider` on every lifecycle entry).
+- **Cross-project.** When the sender's project differs from the receiving one the header ends with a reply hint naming that project. The sender project comes from `captain:<project>` / `crew:<project>/<name>`. A dispatched crew's *first turn* names the origin captain as sender but carries **no** reply hint (a crew reports through its own captain and the completion protocol).
+- **Stale.** A queued message delivered more than an hour after it was generated carries `stale: <age>` (two units: `1h 59m`, `1d 23h`) in the header (`payload.stale`, set by the backlog pass) instead of a `[stale — …]` body prefix.
+- **Anti-forgery.** The header is always line 1. Header values are reduced to `[A-Za-z0-9_.:@/+-]` (status also allows spaces), so a value cannot add a line or a second mark. A body line that starts with `📨` (after optional indentation) is **quoted** — `│ ` is put in front, the text is untouched — so a body cannot fake a second header while every line stays readable. An envelope tag in a body (`<cross-session-message`, `</cross-session-message>`, any case/spacing) gets `‹` instead of `<`, so a body cannot close or forge the Claude envelope. `--from` is still validated by `isValidSender`.
+- **Claude `@name` envelope.** For deliveries over the **Claude peer socket** (captain and crew receivers) `ClaudePeerChannel.send` wraps a `📨`-headed text with `wrapClaudeEnvelope`: `<cross-session-message from-name="crew-mcpspike">\n📨 …\n</cross-session-message>`, so the TUI collapses it to `› Message from @crew-mcpspike: 📨 …`. Format pinned by the atname spike ([spec](specs/2026-10-26-atname-spike-report.md), Claude Code 2.1.310): no `from=` (the daemon socket is never advertised), never `from-mode`, `"<>` stripped, name = fixed prefix (`crew-…`, `captain-…`, `side-…`, `thread-…`, `telegram-…`, `squadrant` for the daemon, `cli`) cut to 20 characters (the TUI truncates there). Envelope names that would imitate the user, the harness or the model (`user`, `system`, `you`, `claude`, `operator`, `assistant`, `human`, …) are forced to `peer-<name>`, and `isValidSender` refuses those words as `--from`. **First turns are never enveloped** (header only): auto mode treats everything inside a cross-session envelope as "never user intent", and a crew must not distrust its own task brief. The envelope is **TUI-only** — the model text and the peer guardrail are unchanged — and cosmetic: if a Claude version stops matching it the tags show as literal text and delivery still works. Not applied to the pane fallback (that is typed user input), opencode, or codex. No version gate yet (see the audit follow-ups); re-check on each Claude Code bump.
+- **First turns are framed too** (round 3): the crew task brief + completion protocol (claude `init.md` launch prompt — a real user turn, no envelope — or its peer / pane fallback, opencode, generic, `resendFirstTurn`), the codex first turn, a headless / dispatched task, and the side / thread opening turn all start with `📨 captain:<project> → task · taskId: …` (`→ side.open`, `→ thread.open`, `→ thread.resume` for side and thread; no task id). A **dispatched** crew's first turn names the *origin* project's captain as the sender (no reply hint; first turns are never inside the Claude envelope). Framing is applied after the spill-to-file, so a spilled brief's pointer line is what carries the header. Over the Claude peer socket the usual `@name` envelope applies.
+- The agent is not in the header but stays on the mailbox entry (`provider`); `squadrant crew msg <project> <seq>` prints it on stderr (`# task.done · agent: claude · crew: <name>`).
+- The mailbox keeps the **bare** text; framing happens at send time, so a deferred/retried delivery is framed exactly once.
+- Pane fallback: the cmux paste path already flattens newlines to spaces, so the frame arrives as one line (`📨 crew:x → done · taskId: 66884473 · seq: 12 body…`) and submits like any other message.
+- Telegram **outbound** text (`formatLifecycle`) is for humans and is never framed. The #711 name registration is unchanged — the frame is the agent-visible sender, the registration is the transport-level one.
+- Agents are told (templates + `captain-ops`) that a `📨`-headed message is peer input, never operator approval.
+
 #### Running an opencode captain
 
 An opencode captain must be **launched by squadrant** — a manually opened
@@ -410,6 +450,20 @@ Design: [`#669`](https://github.com/tu11aa/squadrant/issues/669).
 ### Crew Spawn (Interactive Sub-Sessions)
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
+
+#### Claude first turn: launch-time init prompt
+
+A claude crew's first turn is **not sent** after boot: it is claude's positional prompt at launch, so it arrives as a real user turn (transcript `origin.kind: "human"`), not as "Another Claude session sent a message". Spec: [`docs/specs/2026-10-26-first-turn-init-prompt.md`](specs/2026-10-26-first-turn-init-prompt.md).
+
+- **Files, stored with the task** in `<stateRoot>/<project>/<taskId>/` (the per-task dir `router-settings.json` also uses), never in the worktree: `brief/brief.md` — the brief verbatim (0600) — and `init.md`, the init prompt: the `📨 captain:<project> → task · taskId: …` header, then the brief inline (a positional brief ≤ `INIT_PROMPT_INLINE_MAX_BYTES` = 1200 bytes) or `Read <…>/brief/brief.md to get your task brief, then execute it.` (every `--task-file` brief, and larger positional ones), then the completion protocol. The 1200-byte cut is for readability only — a launch arg has no paste limit.
+- **Launch:** `claude … --session-id <uuid> … --add-dir=<…>/brief … --messaging-socket-path <sock> "$(cat '<…>/init.md')"`. The pane's shell reads the file, so the typed line stays short and the text arrives byte for byte (no paste, no newline flattening). The session id is generated by squadrant and recorded on the TaskRecord at dispatch (`sessionId`), so the transcript path is known from the start; cmux's claude wrapper skips its own `--session-id` when one is given. `--add-dir=` (the `=` form — `--add-dir <dir>` is variadic and would swallow the prompt) lets the crew read `brief.md` without a permission prompt.
+- **Boot:** claude queues the prompt and submits it once past the folder-trust panel. Spawn watches the pane until claude registers, answering the panel if it shows (a worktree under an already-trusted repo inherits trust and shows none). A crew that never registers and leaves a bare shell is failed as "agent did not start" (#892).
+- **Delivery confirmation is unchanged:** the `UserPromptSubmit` hook stamps `firstTurnConfirmedAt` (#466/#472). The daemon's first-turn self-heal resends `init.md` (over the peer channel, then the pane).
+- **Fallback:** if the init files can't be written, spawn uses the previous path (peer socket #917, then pane paste with the 1200-byte spill).
+- **What was asked is kept:** every dispatch (all agents) appends a `task.dispatched` mailbox entry carrying the full brief (`message: null`, so it is never delivered back to the captain); its seq is stamped on the TaskRecord as `briefSeq`, shown as `brief <seq>` in `squadrant crew tasks`, and readable with `squadrant crew msg <project> <seq>`. After mailbox rotation `brief.md` is still on disk.
+- **`TaskRecord.task` is a one-line title** (first non-empty line of the brief, ≤ 120 chars, `taskTitle` in `packages/core/src/task-brief.ts`), set by the daemon's `dispatch` handler once the `task.dispatched` entry is written. Launchers (headless, interactive) and the cross-project delegation notice still receive the whole brief. Every reader that needs the full text goes through `readTaskBrief`: `brief.md` first, then the `task.dispatched` entry named by `briefSeq`, then `rec.task`. Those readers are the `crew send` first-turn dedupe, the #466 self-heal resend (`firstTurnResendMessage`, used only when `init.md` is absent), the `crew approve` PR body (when there is no review note) and the handoff ledger (`readTaskBriefSync`: `brief.md`, else the record). Old records that hold the full text keep working: `task` is returned as-is. A record whose `brief.md` is gone (non-claude agent) and whose mailbox segment rotated away yields only the title (`source: "record"`). If the mailbox write fails the record keeps the full text instead of shrinking.
+- **Side sessions (claude)** use the same launch-time init prompt: the whole framed first turn (`📨 captain:<project> → side.open`, no spill) is written to `<stateRoot>/<project>/side/<name>/init.md` and passed as the launch positional; `watchClaudeSideBoot` answers the folder-trust panel until claude's input box is drawn. A side session has no task record and no CREW lifecycle, and no messaging socket, so the boot watcher is the only delivery signal. If `init.md` cannot be written, or the watcher times out, the previous pane first turn (with the #864 spill) is sent instead; other agents are unchanged. `side close` removes the per-side dir.
+- `--task-file` is no longer copied into a claude crew's worktree (it used to land as an untracked file and block `crew close`). Other agents keep today's first-turn path, including the #458 copy.
 
 Pass `--direction right|left|up|down` to use a split pane instead of a tab. State lives in the surface buffer + git; tabs die with the captain workspace on `squadrant shutdown`. codex now launches interactively (parity with claude/opencode); gemini currently still launches in print-mode, full interactive support is a follow-up. See [`docs/specs/archive/2026-05-05-squadrant-thin-redirect-design.md`](specs/archive/2026-05-05-squadrant-thin-redirect-design.md).
 
@@ -797,6 +851,30 @@ Because the layout is flat, a project dir shares a namespace with those entries.
 
 **Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
 
+## Dev daemon (`squadrant dev`, #1046)
+
+Live-check a branch build on a dev daemon. Never `npm i -g <branch tgz> && squadrant heal daemon` for a branch test: that restarts the production daemon every captain and crew depends on (9 of 12 restarts on 2026-10-26).
+
+```bash
+pnpm build                                            # in the worktree
+eval "$(node dist/index.js dev up --project devtest)" # starts the daemon, prints the env
+squadrant launch devtest                              # dev captain (answer claude's folder-trust prompt once)
+squadrant crew spawn devtest "…"                      # dev crews
+squadrant dev down                                    # kill it, delete everything
+```
+
+`dev up` makes one root (`$TMPDIR/squadrant-dev`, or `--root`) holding a fresh default `config.json` with one throwaway project (an empty git repo, `devtest` by default), the state dir, the socket, `daemon.log`, `claude-settings.json` and `bin/squadrant` (a shim for that build). It starts `<from>/dist/squadrantd.js` as a plain detached process, not under launchd, and prints three `export` lines (`SQUADRANT_CONFIG`, `SQUADRANT_WORKSPACE_DIR`, `PATH`). `dev down` closes the dev projects' captain workspaces, stops the daemon, and deletes the root; it refuses a dir without its `.squadrant-dev` marker. Nothing is copied from your real config (no Telegram, no router, no projects). A thin command rather than a script, because it reuses the same path and socket helpers the daemon uses.
+
+**Isolation rule.** Any `SQUADRANT_CONFIG` that is not `~/.config/squadrant/config.json` is an isolated config (`isolatedConfigDir()` in `@squadrant/shared`). Under it:
+
+- The daemon writes its hooks to `<config dir>/claude-settings.json`, seeded once from `~/.claude/settings.json` (read-only) so plugins, permissions and env carry over. It never writes `~/.claude/settings.json` (#1046). It is not the production daemon, so the worktree guard lets it run a worktree `dist/`, and it skips the legacy-state seed and the opencode skills sync.
+- The CLI skips the runtime sync into `~/.config/squadrant`, the opencode skills projection, the config version stamp and `ensureDaemon` (launchd). `projects add`/`config` never kickstart launchd, and `heal daemon`/`heal captain` refuse.
+- Claude captains and crews launch with `SQUADRANT_CONFIG` (and `PATH` with `bin/` when the shim exists) in their env, plus `--setting-sources project,local --settings <config dir>/claude-settings.json --mcp-config <squadrant server>`. Dropping the `user` source is what hides the production hooks. It also drops user-scope MCP servers, which is why the squadrant server is passed back explicitly. Routed backends (`direct`/`proxy`) are refused under an isolated config: both need the one `--settings` slot.
+
+**Why `--settings`, not `CLAUDE_CONFIG_DIR` or a temp `HOME`.** Both of those give claude a fresh config dir, and claude reports `Not logged in · Please run /login` (checked with claude 2.1.310). `--setting-sources` + `--settings` keeps the login and `~/.claude.json`.
+
+**Limits.** Dev sessions still read the production templates and plugin dir (`~/.config/squadrant/templates`, `plugin`, `plugin-crew`), so a branch change to a role template or skill is not exercised. Claude itself still updates `~/.claude.json` (session counters, folder trust) as it does for any session.
+
 ## Captain rollover (#1010)
 
 `/squadrant:rollover` (alias `/squadrant:roll`) is a captain skill for Claude captains whose context is filling. In order, the captain writes a handoff (`write-handoff.sh`), writes the daily log, runs `squadrant captain compact <project>` as its last action and ends the turn. The operator types it once.
@@ -840,7 +918,7 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 - **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
 - Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
 
-**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider a fresh crew with a brief instead of reusing it` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
 
 **Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
 
@@ -849,6 +927,73 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 ```
 
 Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+
+### Crew compact (#1051)
+
+A captain that wants to reuse a crew whose context has grown can compact it first. `crew send "/compact"` does not work (it arrives as a peer message, so the slash command never runs); `squadrant crew compact <project> <crew> [--keep "<text>"]` is the supported path. Never automatic: it runs only when a captain or the operator asks.
+
+- **Typed by the daemon, like the captain path.** The CLI sends `crew-compact`; the daemon validates, queues and returns. It polls (1 s) until the crew is idle — task state is not `submitted`/`working`/`blocked`/`stalled`, no tool or monitor is open, and for claude the pane shows no working spinner — for two polls, then types `/compact <keep>` through the normal send guard (a draft or an open prompt defers it). Times out after 10 min without typing.
+- **Agent-aware.** claude and opencode get a typed `/compact`. codex crews render an app-server thread (typed text becomes a turn, not a slash command) and gemini crews are one-shot headless, so both are refused with a message pointing at a fresh crew.
+- **Refusals at request time.** Unknown crew, ended crew (session gone), no live pane, unsupported agent, and a crew under operator takeover. A queued compact is dropped if the operator takes the crew over before it runs.
+- **Send ordering.** From the moment a compact is queued, `squadrant crew send` (and `crew answer`, which sends through it) asks the daemon `crew-compact-state` and waits (up to 14 min, then errors without sending) so the message arrives after the compact, never inside its summary. The hold ends on the crew's `SessionStart(source=compact)` hook (`crew-compact-done`) or lapses after 3 min; opencode has no such hook, so its hold always lapses.
+- **No resume message.** Unlike the captain, a compacted crew is idle by design; the next `crew send` starts its turn.
+- **Cancel.** `squadrant crew compact <project> <crew> --cancel` drops a queued compact and releases the `crew send` hold (daemon `crew-compact-cancel`); it does nothing if none is queued.
+- **Code:** `packages/core/src/daemon/crew-compact.ts` (daemon), `packages/cli/src/lib/crew-compact.ts` (CLI request + wait).
+
+## MCP server (`squadrant mcp`, #1029)
+
+`squadrant mcp` is a stdio [MCP](https://modelcontextprotocol.io) server (agent → squadrant only). Slice A: the crew signal tools, so a crew signals through a typed tool call instead of a Bash command (no Bash approval, no shell quoting, a structured result). Slice B: the captain-side tools (below), so a captain drives squadrant without shelling out. Which tools a session sees depends on its role.
+
+| Tool | Same as | Args (all optional strings) |
+|---|---|---|
+| `crew_signal_done` | `squadrant crew signal done` | `message` |
+| `crew_signal_blocked` | `squadrant crew signal blocked` | `question` |
+| `crew_signal_failed` | `squadrant crew signal failed` | `error` |
+| `crew_signal_review` | `squadrant crew signal review` | `message` |
+
+Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TASK_ID` / `SQUADRANT_CREW_PROJECT` from the environment. The MCP child inherits those from the agent session that spawned it, so the model passes neither.
+
+- **One implementation.** The CLI verb and the tools both call `performCrewSignal` (`packages/core/src/crew-signal.ts`): the already-terminal check (#557), the `_results/<id>.txt` write, the #901 citation scan and the #1039 confirmation line. The tool schemas and handler live in `packages/core/src/crew-signal-tools.ts`; `packages/cli/src/commands/mcp.ts` only wires them to the SDK.
+- **Errors are tool errors** (`isError: true`) with a clear message: no crew env, task already terminal, daemon unreachable.
+- **Completion protocol prefers the tool.** The `COMPLETION PROTOCOL` appended to a claude/opencode crew's first turn (`buildCompletionProtocol`) and the codex developer instructions say: call `crew_signal_done` (or `_blocked` / `_failed` / `_review`) from the `squadrant` server if available, passing the explicit `task_id` / `project` (codex needs them — one app-server serves many tasks), otherwise run the `squadrant crew signal …` CLI.
+- **Skipping the ToolSearch step.** Under a crew (`SQUADRANT_CREW_TASK_ID` set) `tools/list` marks every `crew_signal_*` tool with `_meta: { "anthropic/alwaysLoad": true }` (`crewSignalToolList`, tested); a non-crew, non-captain session keeps them deferred (a captain session lists the captain tools instead, see below), though a server-level `alwaysLoad` in the registration overrides that either way; Claude Code >= 2.1.285 then loads the tools upfront instead of deferring them, other MCP clients ignore `_meta` ([Claude Code MCP docs](https://code.claude.com/docs/en/mcp), "Mark a tool to load upfront or stay deferred"). That per-tool flag does **not** make session startup wait for the server, so the very first turn of a freshly spawned crew can still race the MCP connect (the protocol's "No such tool → ToolSearch once → CLI" fallback covers it). **Recommended registration:** also set the server-level `alwaysLoad` on the `squadrant` server entry — startup then waits (up to ~5 s) for the server to connect. squadrant documents this but does not write it for you (nothing edits your agent config); set it in the entry `claude mcp add` created in `~/.claude.json` (`"alwaysLoad": true`), and check the exact key against the docs page for your Claude Code version.
+- **Lazy SDK.** `@modelcontextprotocol/sdk` is imported inside `runMcpServer`, so no other command pays for it (tested).
+- **Claude Code defers MCP tools and prefixes them:** the tool is `mcp__squadrant__crew_signal_done` (a bare `crew_signal_done` is "No such tool"), but they load upfront (per-tool `alwaysLoad`, below). The claude completion protocol (`buildCompletionProtocol(…, "claude")`), `templates/crew.claude.md` and `captain-ops` name the exact tools and give one fallback order: call the tool directly; only on "No such tool" load it once with ToolSearch `select:mcp__squadrant__crew_signal_done` and retry; if it still does not exist, use the CLI; opencode, codex and generic text use the plain tool name "from the `squadrant` MCP server" (no `mcp__` prefix).
+- **Install is manual in this slice** (config projection, #34, is a later slice; nothing writes to your agent config):
+
+  ```
+  claude mcp add --scope user squadrant -- squadrant mcp
+  ```
+
+  Sessions opened before the install need a restart to see the tools. The CLI `squadrant crew signal` stays as the fallback and is not removed.
+- Not in this slice: daemon → agent delivery over MCP. The spike ([report](specs/2026-10-26-mcp-spike-report.md)) found that a self-post from the session's own MCP child keeps Claude's "Another Claude session" framing on 2.1.310.
+
+### Role scoping and captain tools
+
+The server is registered once at user scope, so every Claude session on the machine starts it; `tools/list` is therefore scoped by the session's env (`mcpRole`, `packages/cli/src/lib/captain-mcp-tools.ts`):
+
+| Session | Env | Tools listed |
+|---|---|---|
+| Crew | `SQUADRANT_CREW_TASK_ID` set (wins over the role) | `crew_signal_*` only, each `alwaysLoad` |
+| Captain | `SQUADRANT_ROLE=captain`, no crew id | the captain batch below only, each `alwaysLoad`; no `crew_signal_*` |
+| Anything else (thread, side, operator shell, unknown role) | neither | `crew_signal_*` deferred, as before; **no captain tools** |
+
+`tools/call` enforces the same scope, so a hidden tool cannot be called by guessing its name.
+
+| Group | Tools | Same as |
+|---|---|---|
+| Crew | `crew_spawn` (`task`, `name`, `agent`, `model`, `thinking`, `backend`, `shared`, `approval`) · `crew_send` · `crew_list` · `crew_tasks` (`id`, `state`, `json`) · `crew_read` (`lines`, `full`) · `crew_msg` (`seq`) · `crew_compact` (`name`, `keep`) · `crew_close` | `crew spawn/send/list/tasks/read/msg/compact/close` |
+| Thread / side | `thread_open` (`topic`, `crews`) · `thread_park` (`id`, optional `decision` JSON) · `thread_resume` · `thread_list` (`all`) · `side_spawn` (`topic`, `role`, `name`, `agent`) · `side_send` | `thread open/park/resume/list`, `side spawn/send` |
+| Cross-project | `ping` (`project`, `message`) · `dispatch` (`project`, `task`, `provider`, `mode`) | `ping`, `dispatch` |
+| Captain | `captain_compact` (`focus`) · `status` | `captain compact`, `status` |
+| Knowledge | `rules_search` (`query`, `limit`; brief, read-only) | `rules search --brief` |
+| Inbox | `check_inbox`: the captain's undelivered mailbox entries, a pull for agents without push (read one in full with `crew_msg`) | none (reads `readUndelivered`) |
+
+- `project` is optional everywhere except `ping` / `dispatch`, where it is the target: it defaults to the session's own project (`resolveCurrentProject`, from the cwd); if that fails the tool errors and asks for it.
+- **Never exposed over MCP** (operator in the loop, CLI only): `crew approve` / merge, `crew answer`, `crew close --force`, `crew takeover/handback`, task purge, config and profile edits. A test pins the absence.
+- **One implementation.** Each tool calls the function its CLI command already runs (`runCrewSpawn`, `runCrewSend`, `crewListLines`, `renderCrewTasks`, `runThreadOpen`, `runPing`, `runDispatch`, …); where that logic sat inside a commander `.action` it was extracted so the CLI and the tool share it, with no CLI behaviour change. Results are the CLI's own short text with ANSI stripped; failures are `isError: true`. While the server runs, `console.log` is routed to stderr so shared code can't corrupt the stdio protocol.
+- **No daemon reconcile at startup.** `mcp` is in `READ_ONLY_TOP_LEVEL_COMMANDS`, so the CLI's startup `ensureDaemon` is skipped for it: every session start would otherwise run it, and under `SQUADRANT_ROLE=captain` it may re-register and restart the launchd daemon beneath live crews. Tools reach the daemon on demand and report when it is down.
+- Claude captains call them as `mcp__squadrant__<tool>` directly (ToolSearch only on "No such tool", then the CLI); the captain template and `captain-ops` say so. Other agents' text never uses `mcp__` names.
 
 ## Captain discussion threads (#1016)
 
@@ -980,6 +1125,37 @@ Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GA
 **opencode ([#828](https://github.com/tu11aa/squadrant/issues/828) P6-C phase 2).** opencode has no `PermissionRequest` hook, so `engine: "auto-gate"` works differently there: instead of a per-prompt hook call, an opencode crew/captain launch is wrapped end-to-end. With `mode: "on"` + `engine: "auto-gate"` + the engine credential present (`hasAutoGateCredential` — env `TYPESAFE_API_KEY` or `~/.auto-gate-key`), squadrant launches the pane with `squadrant gate opencode-run --port <n> [--session <id>]` instead of a bare `opencode …`. That hidden command calls the package's `buildRunPlan({ args, allocate })` with `allocate` resolving to the **same port** squadrant already allocated for its own SSE bridge (turn-end detection, CREW DONE, approval answering) — never a second port — then runs opencode and the package's `opencode watch` watcher as one supervised unit (`supervise`). **Ownership:** once a crew is gate-wrapped, the auto-gate watcher is the sole answerer of opencode `permission.asked` events; squadrant's own CP3 `--approval`/`gateBash` crew-approval flag (which also answers permission prompts, via the SSE bridge) is suppressed for that crew to avoid two answerers racing the same prompt. **The wrapped crew/captain's per-task `opencode.json` sets `bash` and `edit` to `"ask"`** (everything else, incl. `external_directory`, unchanged; unwrapped configs are byte-identical to before) — opencode only emits `permission.asked` for `ask` rules, so an allow-all config would leave the watcher nothing to decide. squadrant's SSE bridge only records/surfaces the prompt (`task.approval.requested` → blocked → captain/Telegram) and never answers on its own, so if auto-gate answers `ask` (uncertain) the prompt stays open and reaches the operator. For a gate-wrapped crew (detected from its per-task config having both `bash` and `edit` at `ask`) the bridge holds each `permission.asked` for a ~5s grace window and drops it if `permission.replied` arrives first — so prompts auto-gate answers never ping the captain/Telegram; only still-open ones surface (and a later reply returns the task blocked → working). CP3 `--approval` crews surface immediately, unchanged; auto-gate is the only automatic answerer. **Gate log ([#866](https://github.com/tu11aa/squadrant/issues/866)):** the watcher's output and squadrant's own supervise log never touch the pane TTY (they garbled the TUI and broke `squadrant crew answer`); both append to `<stateRoot>/<project>/auto-gate-opencode.log` (`_shared` when no project env is set), or are discarded if that file can't be opened. **Safety fallback:** if the credential is absent, or building/running the plan throws for any other reason, squadrant logs one warning and launches opencode directly, byte-identical to the gate-off command — a gate defect must never stop a crew from starting. `mode: "on"` + `engine: "router"` is a no-op for opencode (that engine only owns Claude's `PermissionRequest` hook); opencode is unaffected either way. See [Router Backend](#router-backend-harnessprovider-decoupling).
 
 **Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
+
+### Daemon restarts: attribution and the restart notice
+
+Every CLI path that restarts, re-registers or kickstarts the launchd daemon appends one line to the daemon log (`logsRoot()/squadrantd.log`) **before** it acts, so the daemon's own `exit … reason=SIGTERM` / `boot` lines can be matched to their cause:
+
+```
+[squadrant-cli] <ts> restart-trigger action=<kickstart-k|reregister+kickstart-k|bootout+bootstrap|plist-write (no restart)> reason="<why; drift=version|path|plist …>" pid= ppid= argv="<subcommand>" role=<SQUADRANT_ROLE|-> crewTask=<id|-> install=<argv[1]>
+```
+
+Sources: `squadrant heal daemon`, `heal captain`, `config set <boot-cached key>` / `telegram setup` (all `kickstart -k`; `projects add` and `config set projects.*` no longer restart — see [Live config reload](#live-config-reload)), and `ensureDaemon` when it finds plist drift. A no-drift `ensureDaemon` only does a plain `kickstart`, which cannot restart a running daemon, and is not logged. The full trigger list is in [the restart audit](specs/2026-10-26-daemon-restart-audit.md).
+
+### Live config reload
+
+`squadrant projects add` and `squadrant config set projects.…` do not restart the daemon. The CLI sends a `config-reload` request over the daemon socket; the daemon re-reads `config.json` (`daemon/config-reload.ts`), logs `config reload: N project(s)`, and tops up the router's per-project tokens (add-only; a removed project's token lingers until the next boot). Everything else that reads the project registry already calls `loadConfig()` on demand, so health, snapshot, delivery and spawn see the new project immediately. If the socket is unreachable or the reload errors, the CLI falls back to the old `kickstart -k` (logged by the restart attribution above); with no daemon running the next boot reads the new config. `projects remove` never restarted and still needs nothing.
+
+| Config the daemon derives | Applied by `config-reload`? |
+|---|---|
+| `projects.*` — registry (health/snapshot/advisor/telegram prune/captain names) | Yes — read live via `loadConfig()` |
+| `projects.*` — router per-project tokens | Yes — added on reload |
+| `telegram.*` (bridge, topics, polling) | No — built once at boot, restart |
+| `defaults.router` (shim upstream, port, models) | No — restart |
+| `defaults.taskTimeoutMs` (captured into the reducer deps) | No — restart |
+| `defaults.cmuxEventsBridge` (bridge start/stop) | No — restart |
+| `defaults.claudeEnv`, `defaults.gate.mode` (hook install at boot) | No — apply on next boot (not in the auto-restart key set) |
+| `defaults.roles` / `crewRouting` / `controlChannel` and other keys read per call | Already live, no action needed |
+
+The "⚠️ Daemon restarted → vX" captain notice fires only when the daemon's **version or install path** changed since the last boot (a same-version reinstall + `heal daemon`, a config restart, or a crash stays silent), and never within 5 minutes of the previous notice.
+
+`squadrantdCall` (the CLI → daemon socket call) retries and self-heals only when the socket cannot be reached (the connection failed before the request was written). A timeout or a daemon-reported error is returned as-is: the daemon already has the request, and re-sending it would deliver it twice. A connection lost **after** the request was written (`ECONNRESET`, or the daemon closing without a reply) fails at once with `connection lost after the request was sent — it may or may not have been delivered; check … before retrying`. Check the result (e.g. `squadrant crew list`) before you retry by hand.
+
+`ensureDaemon` never takes over the launchd entry implicitly in two cases. **(1)** The plist names a different `squadrantd.js` that is missing: it re-checks for about 3 s (the `npm i -g` gap), then leaves it alone with a note to run `squadrant heal daemon`. **(2)** The running build is inside a linked git worktree (a crew's `.worktrees/…` build): it never registers itself. In both cases `squadrant heal daemon` is the explicit way to register this install.
 
 ## Rules audit log (#935)
 

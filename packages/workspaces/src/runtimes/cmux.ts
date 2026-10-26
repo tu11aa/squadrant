@@ -198,6 +198,11 @@ export function sanitizeForCmuxSend(text: string): string {
     .trim();
 }
 
+// A Claude Code input-box rule: a run of ─, optionally ending in the session-name label Claude
+// Code draws on the top rule of a named session ("───── squadrant-crew-x ─"). Without the label
+// branch a named crew's box is never found and every send defers as no-box (#1051 follow-up).
+const HR_RE = /^\s*─{10,}(?:\s+\S.*?\s+─+)?\s*$/;
+
 /**
  * Extract the in-progress draft from a cmux read-screen capture (#258 / #268).
  * Scans from the bottom of the screen so history lines that contain `> ` are
@@ -221,7 +226,6 @@ export function parseDraftFromScreen(screen: string): string | null {
   // boundaries of the live input box. Everything above the top HR is transcript
   // content and is never scanned, preventing sent user messages with a ❯/> prefix
   // from being mistaken for the live draft (#258).
-  const HR_RE = /^\s*─{10,}\s*$/;
   let bottomHR = -1;
   let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -289,7 +293,6 @@ export function parseDraftFromScreen(screen: string): string | null {
 export function hasCCInputBox(screen: string): boolean {
   if (!screen) return false;
   const lines = screen.split(/\r?\n/);
-  const HR_RE = /^\s*─{10,}\s*$/;
   let bottomHR = -1;
   let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -317,7 +320,6 @@ export function hasCCInputBox(screen: string): boolean {
 export function hasModalOptionList(screen: string): boolean {
   if (!screen) return false;
   const lines = screen.split(/\r?\n/);
-  const HR_RE = /^\s*─{10,}\s*$/;
   let bottomHR = -1;
   let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -347,7 +349,6 @@ export function hasModalOptionList(screen: string): boolean {
 export function parseModalOptions(screen: string): ModalOption[] | null {
   if (!hasModalOptionList(screen)) return null;
   const lines = screen.split(/\r?\n/);
-  const HR_RE = /^\s*─{10,}\s*$/;
   let bottomHR = -1;
   let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -442,7 +443,6 @@ export function readInputBoxRaw(
 ): string | null {
   if (!screen) return null;
   const lines = screen.split(/\r?\n/);
-  const HR_RE = /^\s*─{10,}\s*$/;
   let bottomHR = -1;
   let topHR = -1;
   for (let i = lines.length - 1; i >= 0; i--) {

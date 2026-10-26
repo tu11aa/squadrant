@@ -2492,3 +2492,18 @@ describe("inputState / sendToSurface native input state (#916)", () => {
     expect(argvs().some((a) => a[0] === "rpc")).toBe(false);
   });
 });
+
+// A named Claude session draws its name on the top input-box rule; the crew-compact send guard
+// read that as "no box" and deferred forever. Captured live from an idle opus crew (#1051 follow-up).
+describe("named-session input box (top rule carries the session name)", () => {
+  const screen = readFileSync(join(__dirname, "fixtures", "claude-named-crew-idle.txt"), "utf8");
+  it("fixture has the labelled top rule", () => {
+    expect(screen).toMatch(/─{10,} squadrant-crew-squadrant-initprompt ─/);
+  });
+  it("parseDraftFromScreen confirms the box empty instead of no-box", () => {
+    expect(parseDraftFromScreen(screen)).toBe("");
+  });
+  it("still reports a typed draft in the named box", () => {
+    expect(parseDraftFromScreen(screen.replace(/❯[^\S\n]*\n/, "❯ half-typed\n"))).toBe("half-typed");
+  });
+});

@@ -8,13 +8,13 @@
 //     queued behind them);
 //   - entries for a task that has since gone terminal are annotated (or, for
 //     pure transients, dropped);
-//   - entries older than STALE_ALERT_THRESHOLD_MS get the "[stale — …]" prefix;
+//   - entries older than STALE_ALERT_THRESHOLD_MS carry `payload.stale` (header field `stale: <age>`);
 //   - daemon DELIVERY STUCK self-alerts are dropped: the loop only reaches one
 //     after the entry it was about has been acked, so it is no longer true.
 // Must-deliver kinds (#474/#531) are never dropped — at most annotated.
 import { TERMINAL_STATES, type TaskState } from "@squadrant/shared";
 import type { MailboxEntry } from "../mailbox.js";
-import { stalePrefix } from "./down-alert.js";
+import { staleAge } from "./down-alert.js";
 import { classifyTurnEnd } from "./captain-noise.js";
 
 export type BacklogDecision =
@@ -59,6 +59,11 @@ export function coalesceBacklog(
   return decisions;
 }
 
+/** The age rides on the entry payload; the delivery frame renders it as a header field. */
+function withStale(entry: MailboxEntry, stale: string): MailboxEntry {
+  return { ...entry, payload: { ...entry.payload, stale } };
+}
+
 function decide(
   entry: MailboxEntry,
   later: Set<string> | undefined,
@@ -68,8 +73,8 @@ function decide(
     if (entry.payload?.source !== "daemon" || !entry.message) return { action: "deliver", entry };
     if (STUCK_ALERT_RE.test(entry.message)) return { action: "skip", entry, reason: "moot-stuck-alert" };
     // #744: a daemon message that sat in the mailbox reads as stale, not current.
-    const prefix = stalePrefix(Date.parse(entry.ts), opts.now);
-    return { action: "deliver", entry: prefix ? { ...entry, message: `${prefix}${entry.message}` } : entry };
+    const stale = staleAge(Date.parse(entry.ts), opts.now);
+    return { action: "deliver", entry: stale ? withStale(entry, stale) : entry };
   }
 
   if (later) {
@@ -84,8 +89,9 @@ function decide(
   if (nowTerminal && isTransient(entry)) return { action: "skip", entry, reason: "task-terminal" };
 
   if (!entry.message) return { action: "deliver", entry };
-  const stale = stalePrefix(Date.parse(entry.ts), opts.now) ?? "";
+  const stale = staleAge(Date.parse(entry.ts), opts.now);
   const annotation = nowTerminal ? `[task now ${state}] ` : "";
   if (!stale && !annotation) return { action: "deliver", entry };
-  return { action: "deliver", entry: { ...entry, message: `${stale}${annotation}${entry.message}` } };
+  const annotated = annotation ? { ...entry, message: `${annotation}${entry.message}` } : entry;
+  return { action: "deliver", entry: stale ? withStale(annotated, stale) : annotated };
 }

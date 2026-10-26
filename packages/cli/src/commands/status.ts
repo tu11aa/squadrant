@@ -40,6 +40,15 @@ export function formatProjectRow(
   return `  ${name.padEnd(18)} ${captainDisplay}`;
 }
 
+/** One status row per registered project, from the daemon's health reply (`null` = daemon unreachable). */
+export function projectStatusRows(config: ReturnType<typeof loadConfig>, health: ComponentHealth[] | null): string[] {
+  const captainStateByProject = new Map<string, ComponentHealth["state"]>();
+  for (const c of health ?? []) {
+    if (c.kind === "captain") captainStateByProject.set(c.project, c.state);
+  }
+  return Object.entries(config.projects).map(([name, project]) => formatProjectRow(name, project.captainName, captainStateByProject.get(name)));
+}
+
 export const statusCommand = new Command("status")
   .description("Show captain liveness for all projects (task/crew counts have no data source — #630)")
   .option("--detailed", "also show live per-component service health from the daemon (#77)")
@@ -58,20 +67,12 @@ export const statusCommand = new Command("status")
     // that were demonstrably alive. `null` means the daemon is unreachable —
     // liveness is genuinely unknown, not offline (#538's core ask).
     const health = await queryHealth();
-    const captainStateByProject = new Map<string, ComponentHealth["state"]>();
-    if (health) {
-      for (const c of health) {
-        if (c.kind === "captain") captainStateByProject.set(c.project, c.state);
-      }
-    }
 
     console.log(chalk.bold("\nProject Status\n"));
     console.log(chalk.dim(`  ${"PROJECT".padEnd(18)} CAPTAIN`));
     console.log(chalk.dim("  " + "─".repeat(35)));
 
-    for (const [name, project] of projects) {
-      console.log(formatProjectRow(name, project.captainName, captainStateByProject.get(name)));
-    }
+    for (const row of projectStatusRows(config, health)) console.log(row);
 
     console.log(chalk.dim("\n  Task/crew counts: no data source yet — see squadrant/squadrant#630\n"));
 

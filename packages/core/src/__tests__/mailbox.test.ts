@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToMailbox } from "../mailbox.js";
+import { appendToMailbox, appendDispatchEntry, readMailboxEntry, fullEntryText } from "../mailbox.js";
 import { readCursor, writeCursor } from "../mailbox.js";
 import { readFromCursor } from "../mailbox.js";
 import { rotateIfNeeded, mailboxStats } from "../mailbox.js";
@@ -55,6 +55,17 @@ describe("appendToMailbox", () => {
     expect(entry.provider).toBe("claude");
     expect(entry.payload.resultRef).toBe("/tmp/result.txt");
     expect(typeof entry.ts).toBe("string");
+  });
+
+  it("records the agent (provider) on every lifecycle entry, and fromProject only for another project's task (#1029 r2)", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "origin", taskRecord: { ...sampleRecord, provider: "codex" }, event: doneEvent });
+    const read = (p: string) => JSON.parse(readFileSync(join(stateRoot, "inbox", `${p}.log`), "utf-8").trim());
+    expect(read("demo").provider).toBe("claude");
+    expect(read("demo").payload.fromProject).toBeUndefined();
+    expect(read("origin").provider).toBe("codex");
+    expect(read("origin").payload.fromProject).toBe("demo");
   });
 
   it("persists the daemon-rendered message verbatim on the entry (unified-formatter)", async () => {
@@ -347,5 +358,17 @@ describe("mailboxStats", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("appendDispatchEntry", () => {
+  it("records the full brief as a task.dispatched entry that is never delivered to the captain", async () => {
+    const stateRoot = freshState();
+    const brief = "line one\nline two (with === and: colons)";
+    const seq = await appendDispatchEntry({ stateRoot, project: "demo", taskRecord: { ...sampleRecord, name: "c1", task: brief, sessionId: "s-1" } });
+    const e = await readMailboxEntry(stateRoot, "demo", seq);
+    expect(e).toMatchObject({ kind: "task.dispatched", taskId: sampleRecord.id, name: "c1", provider: "claude", message: null });
+    expect(e?.payload).toEqual({ brief, sessionId: "s-1" });
+    expect(fullEntryText(e!)).toBe(brief);
   });
 });

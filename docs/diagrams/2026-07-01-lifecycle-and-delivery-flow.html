@@ -377,7 +377,7 @@
         <text class="elabel" x="1015" y="580">probe===true</text>
       </svg>
     </div>
-    <div class="note"><b>Not part of this gate:</b> <code>hasCCInputBox()</code> (also defined in <code>cmux.ts</code>) is used by a <i>different</i> pipeline — <code>sendFirstTurnWhenReady()</code> in <code>packages/workspaces/src/crew-pane.ts</code>, which gates the <b>captain → newly-spawned-crew</b> first message, not crew → captain delivery. Both share the HR-boundary screen-parsing approach but serve opposite directions of the mailbox flow (see the #466 slow-boot investigation for the first-turn gate's own history).</div>
+    <div class="note"><b>Not part of this gate:</b> <code>hasCCInputBox()</code> (also defined in <code>cmux.ts</code>) is used by a <i>different</i> pipeline — <code>sendFirstTurnWhenReady()</code> in <code>packages/workspaces/src/crew-pane.ts</code>, which gates the <b>captain → newly-spawned-crew</b> first message, not crew → captain delivery. (Since 2026-10-26 a claude crew's first message is a launch-time init prompt instead, so this gate runs for claude only as the fallback; see <code>docs/specs/2026-10-26-first-turn-init-prompt.md</code>.) Both share the HR-boundary screen-parsing approach but serve opposite directions of the mailbox flow (see the #466 slow-boot investigation for the first-turn gate's own history).</div>
   </section>
 
   <!-- SLIDE 5: Reference -->

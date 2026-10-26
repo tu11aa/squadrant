@@ -1,4 +1,5 @@
 // #890: end-to-end through the real delivery loop — a recovered captain gets
+import { unframe } from "./unframe.js";
 // the coalesced current truth, not a chronological flood of stale events.
 import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -37,16 +38,17 @@ function setup(entries: MailboxEntry[], taskState: "done" | "review" = "done") {
     pidAlive: true, source: "runtime",
   });
   const sent: string[] = [];
+  const raw: string[] = [];
   const cmux = {
     listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
     findWorkspaceId: async () => "w1",
     readScreen: async () => `${captainName}> `,
-    send: async (_s: unknown, text: string) => { sent.push(text); },
+    send: async (_s: unknown, text: string) => { raw.push(text); sent.push(unframe(text)); },
   };
   const deliv = createDelivery({
     stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},
   } as any, cmux as any);
-  return { stateRoot, sent, deliv };
+  return { stateRoot, sent, raw, deliv };
 }
 
 function ev(seq: number, kind: MailboxEntry["kind"], ageMs = 0): MailboxEntry {
@@ -66,10 +68,11 @@ describe("delivery loop backlog coalescing (#890)", () => {
     expect((await readCursor({ stateRoot, project, subscriber: "captain" }))?.lastAckedSeq).toBe(8);
   });
 
-  it("prefixes an old replayed task event with the stale marker", async () => {
-    const { sent, deliv } = setup([ev(1, "task.done", 8 * 60 * 60_000)]);
+  it("marks an old replayed task event with a `stale:` header field, body untouched", async () => {
+    const { sent, raw, deliv } = setup([ev(1, "task.done", 8 * 60 * 60_000)]);
     await deliv.deliveryTick!();
-    expect(sent).toEqual(["[stale — generated 8h ago] task.done #1"]);
+    expect(sent).toEqual(["task.done #1"]);
+    expect(raw[0].split("\n")[0]).toMatch(/ · seq: 1 · stale: 8h 0m$/);
   });
 
   it("drops a DELIVERY STUCK self-alert once delivery has succeeded, and still acks it", async () => {

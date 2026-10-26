@@ -84,6 +84,13 @@ describe("buildCompletionProtocol (#278)", () => {
     expect(result).toContain("crew signal done");
   });
 
+  it("prefers the MCP tool and keeps the CLI as fallback", () => {
+    const result = buildCompletionProtocol("task-abc123", "my-project");
+    expect(result).toContain("`crew_signal_done` MCP tool");
+    expect(result).toContain("crew_signal_blocked");
+    expect(result.indexOf("MCP tool")).toBeLessThan(result.indexOf("squadrant crew signal done"));
+  });
+
   it("includes the blocked signal form with the same ids", () => {
     const result = buildCompletionProtocol("task-abc123", "my-project");
     expect(result).toContain("crew signal blocked");
@@ -107,12 +114,29 @@ describe("buildCompletionProtocol (#278)", () => {
   it("snapshot: exact output text is stable", () => {
     expect(buildCompletionProtocol("TASK-ID", "PROJECT")).toBe(
       "---\n" +
-      "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to run exactly:\n" +
+      "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the `crew_signal_done` MCP tool from the `squadrant` server if it is available (pass `message`, `task_id` and `project`), otherwise run exactly:\n" +
       "  squadrant crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
-      "Run it as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead run:\n" +
+      "Use task_id TASK-ID and project PROJECT for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the `crew_signal_blocked` tool (pass `question`) or run:\n" +
       "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\"\n" +
+      "Likewise `crew_signal_failed` (`error`) / `crew_signal_review` (`message`), or `squadrant crew signal failed|review` with the same flags.\n" +
       "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew."
     );
+  });
+
+  it("claude naming: exact mcp__squadrant__ names, call directly, ToolSearch only on No such tool, then CLI (snapshot)", () => {
+    expect(buildCompletionProtocol("TASK-ID", "PROJECT", "claude")).toBe(
+      "---\n" +
+      "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the `mcp__squadrant__crew_signal_done` tool directly (pass `message`, `task_id` and `project`). Only if it fails with \"No such tool\", load it once with ToolSearch `select:mcp__squadrant__crew_signal_done` and retry; if it still does not exist, run exactly:\n" +
+      "  squadrant crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
+      "Use task_id TASK-ID and project PROJECT for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the `mcp__squadrant__crew_signal_blocked` tool (pass `question`; same fallback order) or run:\n" +
+      "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\"\n" +
+      "Likewise `mcp__squadrant__crew_signal_failed` (`error`) / `mcp__squadrant__crew_signal_review` (`message`), or `squadrant crew signal failed|review` with the same flags.\n" +
+      "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew."
+    );
+  });
+
+  it("non-claude agents never get the Claude mcp__ prefix", () => {
+    for (const a of [undefined, "opencode", "codex"]) expect(buildCompletionProtocol("T", "P", a)).not.toContain("mcp__");
   });
 
   it("includes the crew route-up line for squadrant defects", () => {

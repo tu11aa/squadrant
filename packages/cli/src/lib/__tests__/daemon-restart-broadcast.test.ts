@@ -10,6 +10,7 @@ import {
   writePersistedRestartSignature,
   notifyCaptainsOfDaemonRestart,
   maybeBroadcastDaemonRestart,
+  NOTICE_COOLDOWN_MS,
 } from "../daemon-restart-broadcast.js";
 
 let dir: string;
@@ -63,16 +64,16 @@ function makeAppendSpy(): {
 }
 
 describe("computeRestartSignature", () => {
-  it("combines version and build mtime into a stable string", () => {
-    expect(computeRestartSignature("0.14.3", 1000)).toBe(computeRestartSignature("0.14.3", 1000));
+  it("combines version and install path into a stable string", () => {
+    expect(computeRestartSignature("0.14.3", "/a/squadrantd.js")).toBe(computeRestartSignature("0.14.3", "/a/squadrantd.js"));
   });
 
   it("differs when version differs", () => {
-    expect(computeRestartSignature("0.14.3", 1000)).not.toBe(computeRestartSignature("0.14.4", 1000));
+    expect(computeRestartSignature("0.14.3", "/a/squadrantd.js")).not.toBe(computeRestartSignature("0.14.4", "/a/squadrantd.js"));
   });
 
-  it("differs when build mtime differs", () => {
-    expect(computeRestartSignature("0.14.3", 1000)).not.toBe(computeRestartSignature("0.14.3", 2000));
+  it("differs when the install path differs", () => {
+    expect(computeRestartSignature("0.14.3", "/a/squadrantd.js")).not.toBe(computeRestartSignature("0.14.3", "/b/squadrantd.js"));
   });
 });
 
@@ -123,7 +124,7 @@ describe("notifyCaptainsOfDaemonRestart", () => {
     expect(spy.texts[0]).toContain("0.14.3");
   });
 
-  it("notes a dev build when isDevRebuild is true", async () => {
+  it("notes a new install path when pathChanged is true", async () => {
     const projA = fs.mkdtempSync(path.join(dir, "projA-"));
     const config = configWithProjects({ a: project(projA, "captain-a") });
     const sent: Array<{ captain: string; message: string }> = [];
@@ -132,7 +133,7 @@ describe("notifyCaptainsOfDaemonRestart", () => {
     await notifyCaptainsOfDaemonRestart("0.14.3", config, makeDriver(sent), true, spy.fn);
 
     expect(sent).toHaveLength(0);
-    expect(spy.texts[0]).toContain("dev build");
+    expect(spy.texts[0]).toContain("new install path");
   });
 
   it("skips an unreachable captain without throwing and still notifies the rest", async () => {
@@ -175,7 +176,7 @@ describe("maybeBroadcastDaemonRestart", () => {
 
     await maybeBroadcastDaemonRestart({
       version: "0.14.3",
-      buildMtimeMs: 1000,
+      installPath: "/a/squadrantd.js",
       stateRoot,
       config,
       driver,
@@ -184,20 +185,20 @@ describe("maybeBroadcastDaemonRestart", () => {
 
     expect(sent).toHaveLength(0);
     expect(spy.projects).toEqual(["a"]);
-    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", 1000));
+    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", "/a/squadrantd.js"));
   });
 
   it("broadcasts when the signature changed since last boot", async () => {
     const projA = fs.mkdtempSync(path.join(dir, "projA-"));
     const config = configWithProjects({ a: project(projA, "captain-a") });
-    writePersistedRestartSignature(stateRoot, computeRestartSignature("0.14.2", 500));
+    writePersistedRestartSignature(stateRoot, computeRestartSignature("0.14.2", "/a/squadrantd.js"));
     const sent: Array<{ captain: string; message: string }> = [];
     const spy = makeAppendSpy();
     const driver = makeDriver(sent);
 
     await maybeBroadcastDaemonRestart({
       version: "0.14.3",
-      buildMtimeMs: 1000,
+      installPath: "/a/squadrantd.js",
       stateRoot,
       config,
       driver,
@@ -206,20 +207,20 @@ describe("maybeBroadcastDaemonRestart", () => {
 
     expect(sent).toHaveLength(0);
     expect(spy.projects).toEqual(["a"]);
-    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", 1000));
+    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", "/a/squadrantd.js"));
   });
 
   it("stays silent when the signature is unchanged (same-version crash-restart)", async () => {
     const projA = fs.mkdtempSync(path.join(dir, "projA-"));
     const config = configWithProjects({ a: project(projA, "captain-a") });
-    writePersistedRestartSignature(stateRoot, computeRestartSignature("0.14.3", 1000));
+    writePersistedRestartSignature(stateRoot, computeRestartSignature("0.14.3", "/a/squadrantd.js"));
     const sent: Array<{ captain: string; message: string }> = [];
     const spy = makeAppendSpy();
     const driver = makeDriver(sent);
 
     await maybeBroadcastDaemonRestart({
       version: "0.14.3",
-      buildMtimeMs: 1000,
+      installPath: "/a/squadrantd.js",
       stateRoot,
       config,
       driver,
@@ -228,6 +229,41 @@ describe("maybeBroadcastDaemonRestart", () => {
 
     expect(sent).toHaveLength(0);
     expect(spy.projects).toHaveLength(0);
+  });
+
+  // 2026-10-26: eight "Daemon restarted → v0.31.1 (dev build)" notices in one morning,
+  // one per same-version `npm i -g` + `heal daemon` — none was a version or path change.
+  it("stays silent on a same-version, same-path reinstall (rebuild + heal daemon)", async () => {
+    const projA = fs.mkdtempSync(path.join(dir, "projA-"));
+    const config = configWithProjects({ a: project(projA, "captain-a") });
+    const spy = makeAppendSpy();
+    const opts = { version: "0.14.3", installPath: "/a/squadrantd.js", stateRoot, config, driver: makeDriver([]), appendCaptainMessage: spy.fn };
+    await maybeBroadcastDaemonRestart({ ...opts, now: () => 0 });
+    await maybeBroadcastDaemonRestart({ ...opts, now: () => 60 * 60_000 }); // rebuilt, reinstalled, healed
+    expect(spy.projects).toEqual(["a"]); // first boot only
+  });
+
+  it("migrates a legacy mtime signature of the same version silently", async () => {
+    const projA = fs.mkdtempSync(path.join(dir, "projA-"));
+    const config = configWithProjects({ a: project(projA, "captain-a") });
+    writePersistedRestartSignature(stateRoot, "0.14.3::1793005507254.4949");
+    const spy = makeAppendSpy();
+    await maybeBroadcastDaemonRestart({ version: "0.14.3", installPath: "/a/squadrantd.js", stateRoot, config, driver: makeDriver([]), appendCaptainMessage: spy.fn });
+    expect(spy.projects).toHaveLength(0);
+    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", "/a/squadrantd.js"));
+  });
+
+  it("never notifies twice in a row within the cooldown (A→B→A flip), but records the signature", async () => {
+    const projA = fs.mkdtempSync(path.join(dir, "projA-"));
+    const config = configWithProjects({ a: project(projA, "captain-a") });
+    const spy = makeAppendSpy();
+    const base = { version: "0.14.3", stateRoot, config, driver: makeDriver([]), appendCaptainMessage: spy.fn };
+    await maybeBroadcastDaemonRestart({ ...base, installPath: "/a/squadrantd.js", now: () => 0 });
+    await maybeBroadcastDaemonRestart({ ...base, installPath: "/b/squadrantd.js", now: () => 10_000 });
+    expect(spy.projects).toEqual(["a"]);
+    expect(readPersistedRestartSignature(stateRoot)).toBe(computeRestartSignature("0.14.3", "/b/squadrantd.js"));
+    await maybeBroadcastDaemonRestart({ ...base, version: "0.14.4", installPath: "/b/squadrantd.js", now: () => NOTICE_COOLDOWN_MS + 1 });
+    expect(spy.projects).toEqual(["a", "a"]); // a real change after the cooldown notifies again
   });
 
   it("never throws even when the driver fails entirely", async () => {
@@ -246,7 +282,7 @@ describe("maybeBroadcastDaemonRestart", () => {
     await expect(
       maybeBroadcastDaemonRestart({
         version: "0.14.3",
-        buildMtimeMs: 1000,
+        installPath: "/a/squadrantd.js",
         stateRoot,
         config,
         driver: throwingDriver,

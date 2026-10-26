@@ -94,6 +94,13 @@ vi.mock("@squadrant/agents", () => ({
 
 // per-crew-settings mock — needed by the crew regression test below.
 const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
+const watchClaudeSideBoot = vi.hoisted(() => vi.fn());
+// Claude crew spawn: the launch-arg init prompt's boot watch registers at once here.
+vi.mock("../../lib/first-turn-peer.js", () => ({
+  sendClaudeFirstTurnViaPeer: vi.fn(),
+  watchClaudeCrewBoot: vi.fn().mockResolvedValue({ booted: true }),
+  watchClaudeSideBoot,
+}));
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings: vi.fn(),
   writePerCrewSettingsLocal,
@@ -120,6 +127,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import fsActual from "node:fs";
+import os from "node:os";
 import {
   runSideSpawn,
   runSideSend,
@@ -151,6 +159,8 @@ const baseConfig = {
   metrics: { enabled: false, path: "" },
 };
 
+let stateDir = "";
+
 describe("squadrant side spawn", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -161,6 +171,12 @@ describe("squadrant side spawn", () => {
     listSurfaces.mockReset();
     status.mockReset();
     buildCommand.mockReset();
+    // Default: the claude boot watch never sees the agent up, so the pane first-turn
+    // path (the fallback) runs; the init-prompt tests below flip it to booted.
+    watchClaudeSideBoot.mockReset();
+    watchClaudeSideBoot.mockResolvedValue({ booted: false });
+    stateDir = fsActual.mkdtempSync(path.join(os.tmpdir(), "side-state-"));
+    process.env.SQUADRANT_STATE_DIR = stateDir;
     loadConfig.mockReset();
     squadrantdCall.mockReset();
     buildDispatchRequest.mockReset();
@@ -184,6 +200,8 @@ describe("squadrant side spawn", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    delete process.env.SQUADRANT_STATE_DIR;
+    fsActual.rmSync(stateDir, { recursive: true, force: true });
   });
 
   it("CRITICAL: does NOT call squadrantdCall or buildDispatchRequest (off daemon lifecycle)", async () => {
@@ -222,12 +240,99 @@ describe("squadrant side spawn", () => {
     const delivered = sendToPane.mock.calls.map((c) => c[1] as string).find((m) => m.includes("cat it and follow it exactly"));
     expect(delivered).toBeDefined();
     expect(delivered!.length).toBeLessThan(200);
+    expect(delivered!.split("\n")[0]).toBe("📨 captain:brove → side.open");
     const spillFile = delivered!.match(/Full task is at (\S+\.md)/)![1];
     const onDisk = fsActual.readFileSync(spillFile, "utf8");
     fsActual.rmSync(spillFile, { force: true });
     expect(onDisk).toContain("Write the report to /tmp/OUT-864.md");
     expect(onDisk).toContain("Side-session context (for handoff use):");
     expect(onDisk).toContain(topic);
+  });
+
+  describe("launch-time init prompt (claude)", () => {
+    const setup = () => {
+      loadConfig.mockReturnValue(baseConfig);
+      status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
+      listSurfaces.mockResolvedValue([]);
+      newPane.mockResolvedValue({ workspaceId: "workspace:5", surfaceId: "surface:9" });
+      buildCommand.mockReturnValue("claude");
+    };
+
+    it("writes the whole framed first turn to a per-side init.md and builds the launch with it", async () => {
+      setup();
+      watchClaudeSideBoot.mockResolvedValue({ booted: true });
+      const topic = "Paragraph\n\n".repeat(200) + "tail-marker";
+      const promise = runSideSpawn({ project: "brove", topic, role: "research", name: "init1" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+
+      const initPath = path.join(stateDir, "brove", "side", "init1", "init.md");
+      const body = fsActual.readFileSync(initPath, "utf8");
+      expect(body.split("\n")[0]).toBe("📨 captain:brove → side.open");
+      expect(body).toContain("tail-marker"); // whole topic, no spill pointer
+      expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ initPromptFile: initPath }));
+      // happy path: the launch line is the only thing typed — no first-turn send
+      expect(sendToPane).toHaveBeenCalledTimes(1);
+      expect(watchClaudeSideBoot).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps side semantics: no daemon task record, no crew lifecycle", async () => {
+      setup();
+      watchClaudeSideBoot.mockResolvedValue({ booted: true });
+      const promise = runSideSpawn({ project: "brove", topic: "t", role: "research", name: "init2" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+      expect(squadrantdCall).not.toHaveBeenCalled();
+      expect(buildDispatchRequest).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the pane first turn when the agent never boots", async () => {
+      setup();
+      watchClaudeSideBoot.mockResolvedValue({ booted: false });
+      const promise = runSideSpawn({ project: "brove", topic: "research oauth options", role: "research", name: "init3" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+      expect(sendToPane.mock.calls[1]?.[1]).toContain("research oauth options");
+    });
+
+    it("falls back to the pane first turn when init.md cannot be written", async () => {
+      setup();
+      watchClaudeSideBoot.mockResolvedValue({ booted: true });
+      // a regular file where the state dir should be makes mkdir fail
+      const blocker = path.join(stateDir, "blocked");
+      fsActual.writeFileSync(blocker, "x");
+      process.env.SQUADRANT_STATE_DIR = blocker;
+      const promise = runSideSpawn({ project: "brove", topic: "research oauth options", role: "research", name: "init4" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+      expect(buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ initPromptFile: expect.anything() }));
+      expect(watchClaudeSideBoot).not.toHaveBeenCalled();
+      expect(sendToPane.mock.calls[1]?.[1]).toContain("research oauth options");
+    });
+
+    it("non-claude agents keep the pane path and are not watched", async () => {
+      setup();
+      const promise = runSideSpawn({ project: "brove", topic: "research oauth options", role: "research", name: "init5", agent: "opencode" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+      expect(watchClaudeSideBoot).not.toHaveBeenCalled();
+      expect(buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ initPromptFile: expect.anything() }));
+      expect(sendToPane.mock.calls[1]?.[1]).toContain("research oauth options");
+    });
+
+    it("close removes the per-side init.md dir", async () => {
+      setup();
+      watchClaudeSideBoot.mockResolvedValue({ booted: true });
+      const promise = runSideSpawn({ project: "brove", topic: "t", role: "research", name: "init6" });
+      await vi.advanceTimersByTimeAsync(3000);
+      await promise;
+      const dir = path.join(stateDir, "brove", "side", "init6");
+      const present = () => { try { fsActual.readdirSync(dir); return true; } catch { return false; } }; // existsSync is mocked here
+      expect(present()).toBe(true);
+      listSurfaces.mockResolvedValue([{ workspaceId: "workspace:5", surfaceId: "surface:9", title: "🗒 brove:init6" }]);
+      await runSideClose("brove", "init6");
+      expect(present()).toBe(false);
+    });
   });
 
   it("spawns with 🗒 title prefix and side-1 auto-name", async () => {
@@ -472,6 +577,11 @@ describe("squadrant side spawn", () => {
 });
 
 describe("buildSideFirstTurn", () => {
+  it("#1029: names the side so its handoff can use --from side:<name>", () => {
+    const result = buildSideFirstTurn("t", "proj", "research", "/vault", undefined, "side-2");
+    expect(result).toContain("Side name: side-2");
+  });
+
   it("includes topic, project, role, and the workspace path", () => {
     const result = buildSideFirstTurn(
       "research oauth options",
@@ -585,7 +695,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       expect.objectContaining({ surfaceId: "s1" }),
-      "follow-up message",
+      "📨 captain:brove → side.send\nfollow-up message",
     );
     expect(squadrantdCall).not.toHaveBeenCalled();
   });

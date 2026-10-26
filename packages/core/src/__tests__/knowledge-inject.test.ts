@@ -133,13 +133,26 @@ describe("computeRulesInjection — false positives (flooros captain feedback)",
     for (const t of [
       NOTICE,
       "CREW DONE [kb-hook]: create a branch and commit",
-      "[stale — generated 5m ago] CREW BLOCKED [x]: which branch?",
       "🗒 Side handoff from cmux065: branch naming notes",
       "Another Claude session sent a message:\n<cross-session-message from=\"uds:/x\">create a branch</cross-session-message>",
       "<cross-session-message from=\"uds:/x\">create a branch</cross-session-message>",
     ]) expect(isSystemPrompt(t), t).toBe(true);
     expect(isSystemPrompt("create a branch for the CREW feature")).toBe(false);
     expect(isSystemPrompt("Full task is at /tmp/t.md — cat it and follow it exactly.")).toBe(false);
+  });
+  it("classifies by the 📨 header INSIDE the peer wrapper + envelope (#1029)", () => {
+    const wrap = (inner: string) => `Another Claude session sent a message:\n<cross-session-message from-name="x">\n${inner}\n</cross-session-message>\n\nThis came from another Claude session`;
+    for (const inner of ["📨 crew:x → done · taskId: a · seq: 1\nmerged", "📨 daemon · seq: 2\nhi", "📨 side:r · seq: 3\nhandoff"]) expect(isSystemPrompt(wrap(inner)), inner).toBe(true);
+    for (const inner of ["📨 captain:app → crew.send\nfix it", "📨 telegram:@tu · seq: 4\nhi", "📨 thread:ab · seq: 5\nd", "📨 captain:app → task · taskId: a\nbrief"]) expect(isSystemPrompt(wrap(inner)), inner).toBe(false);
+    // a peer message with no 📨 header stays a system prompt
+    expect(isSystemPrompt(wrap("create a branch"))).toBe(true);
+  });
+  it("a framed spilled-brief pointer is found inside the peer wrapper + envelope too", () => {
+    const brief = path.join(root, "task3.md");
+    fs.writeFileSync(brief, "## Objective\nCreate a new branch and commit the fix.\n");
+    const inner = `📨 captain:app → crew.send\nFull task is at ${brief} — cat it and follow it exactly.`;
+    const text = prompt(`Another Claude session sent a message:\n<cross-session-message from-name="captain-app">\n${inner}\n</cross-session-message>`, "fp9");
+    expect(text).toContain("git.branch-naming");
   });
   it("re-verify / reverify do not hit the verify keyword", () => {
     expect(prompt("please re-verify the light theme", "fp1")).toBeNull();
@@ -151,6 +164,16 @@ describe("computeRulesInjection — false positives (flooros captain feedback)",
   it("a single curated-keyword hit alone is not enough to inject", () => {
     expect(prompt("verify", "fp5")).toBeNull();
     expect(prompt("verify the ui in dark mode", "fp6")).toContain("frontend.verify-live-dom");
+  });
+  it("a framed first-turn brief pointer (#1029 header, one line over the pane) is searched through its task file", () => {
+    const brief = path.join(root, "task2.md");
+    fs.writeFileSync(brief, "## Objective\nCreate a new branch and commit the fix.\n");
+    const text = prompt(`📨 captain:app → task · taskId: ef2630e1 Full task is at ${brief} — cat it and follow it exactly.`, "fp8");
+    expect(text).toContain("git.branch-naming");
+  });
+  it("squadrant notices behind a 📨 header are system prompts; captain / thread / telegram / first-turn messages are not", () => {
+    for (const h of ["📨 crew:x → done · taskId: a · seq: 1\nmerged", "📨 daemon · seq: 2\nhi", "📨 side:r · seq: 3\nhandoff"]) expect(isSystemPrompt(h)).toBe(true);
+    for (const h of ["📨 captain:app → crew.send\nfix it", "📨 telegram:@tu · seq: 4\nhi", "📨 thread:ab · seq: 5\nd", "📨 captain:app → task · taskId: a\nbrief"]) expect(isSystemPrompt(h)).toBe(false);
   });
   it("a crew first-turn brief pointer is searched through its task file", () => {
     const brief = path.join(root, "task.md");

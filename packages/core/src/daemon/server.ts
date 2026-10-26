@@ -8,6 +8,7 @@ import type { ComponentHealth } from "../liveness.js";
 import type { DaemonSnapshotInputs } from "../snapshot.js";
 import type { DaemonContext } from "./context.js";
 import { resolveRouterCredentials } from "../router/credentials.js";
+import { reloadDaemonConfig } from "./config-reload.js";
 
 export interface ServerHandlers {
   /** Build per-component health list (optionally filtered to one project). */
@@ -58,6 +59,26 @@ export function createServer(
       if (msg.kind === "captain-compact-done") {
         ctx.captainCompactDone?.(msg.project as string);
         return { ok: true };
+      }
+      // #1051: queue a crew /compact; the daemon types it once the crew is idle.
+      if (msg.kind === "crew-compact") {
+        if (!ctx.requestCrewCompact) throw new Error("crew compact needs the cmux runtime — the daemon has no pane driver");
+        return ctx.requestCrewCompact(msg.project as string, msg.crew as string, msg.keep as string | undefined);
+      }
+      // #1051: `crew send` asks whether a compact is queued/running for the crew before delivering.
+      if (msg.kind === "crew-compact-cancel") {
+        return ctx.cancelCrewCompact?.(msg.project as string, msg.crew as string) ?? { cancelled: false };
+      }
+      if (msg.kind === "crew-compact-state") {
+        return { holding: ctx.crewCompactHolds?.(msg.project as string, msg.crew as string) ?? false };
+      }
+      if (msg.kind === "crew-compact-done") {
+        ctx.crewCompactDone?.(msg.taskId as string);
+        return { ok: true };
+      }
+      // Live config reload: `projects add` etc. apply without bouncing the daemon.
+      if (msg.kind === "config-reload") {
+        return reloadDaemonConfig(ctx);
       }
       if (msg.kind === "event") {
         return ctx.d.handle(msg);

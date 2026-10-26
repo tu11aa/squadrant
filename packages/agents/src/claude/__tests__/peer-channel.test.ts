@@ -22,6 +22,17 @@ describe("ClaudePeerChannel.send", () => {
     expect(await ch.send("t1", "hi")).toEqual({ status: "unsupported" });
   });
 
+  it("wraps a 📨-framed message in the cross-session envelope (name only, no from=/from-mode); other text goes as-is (#1029 atname)", async () => {
+    const wire = vi.fn().mockResolvedValue({ ok: true });
+    const ch = mk({ wire });
+    const framed = "📨 crew:sync-242b → done · taskId: ef2630e1 · seq: 218\nmerged";
+    await ch.send("t1", framed);
+    expect(wire.mock.calls[0][1].message.content).toBe(`<cross-session-message from-name="crew-sync-242b">\n${framed}\n</cross-session-message>`);
+    expect(wire.mock.calls[0][1].message.content).not.toMatch(/from=|from-mode/);
+    await ch.send("t1", "plain first-turn brief");
+    expect(wire.mock.calls[1][1].message.content).toBe("plain first-turn brief");
+  });
+
   it("returns gone when nothing is listening", async () => {
     const ch = mk({ wire: vi.fn().mockResolvedValue({ ok: false, reason: "gone", error: "ENOENT" }) });
     expect(await ch.send("t1", "hi")).toEqual({ status: "gone" });

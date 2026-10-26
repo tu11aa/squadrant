@@ -13,6 +13,7 @@ import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import type { InboundLifecycle } from "./inbound-lifecycle.js";
 import type { DeliveryOutcome } from "../control-channel.js";
+import { frameMessage } from "../squadrant-message.js";
 
 /** Stage-2 ACK text (#838 Option B). Deliberately ONE short line: stage 1 is the
  *  attached reaction, so the operator sees both ends of the hop without this
@@ -49,6 +50,16 @@ import type { ProjectUsage } from "../router/usage-ledger.js";
 import { buildSpawnPrompt, effortPanel, notifyPanel, parseCallback, parseSpawnPrompt, projectPicker, spawnPicker, type PickAction } from "./panels.js";
 import { findProjectByThread, loadState, pruneTopics, saveState, setLastUserId, setNotify } from "./state.js";
 import { tierIncludes } from "./tiers.js";
+
+/** Telegram `message.from`, narrowed to what names the sender. */
+interface TelegramUser { id: number; username?: string; first_name?: string }
+
+/** Sender label for the frame: `telegram:@username`, else the first name, else the user id. */
+export function telegramSender(u: TelegramUser | undefined): string {
+  if (!u) return "telegram";
+  const name = u.username ? `@${u.username}` : (u.first_name ?? "").replace(/[^A-Za-z0-9_.-]/g, "");
+  return `telegram:${name || u.id}`;
+}
 
 /** A Telegram callback_query (button tap). Narrowed to the fields the bridge uses. */
 interface CallbackQuery {
@@ -91,7 +102,7 @@ export interface TelegramBridgeOptions {
   /** Root for per-project override files. Defaults to ~/.config/squadrant. */
   configRoot?: string;
   client: TelegramClient;
-  appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" | "daemon" | "cli" }) => Promise<void | number>;
+  appendCaptainMessage: (a: { stateRoot: string; project: string; text: string; source: "telegram" | "daemon" | "cli"; from?: string }) => Promise<void | number>;
   log: (msg: string) => void;
   // ── Control surfaces (#402/#403/#321) — all optional. When undefined the bridge
   // keeps exact v1 behavior (queue-only project topics, General topic dropped).
@@ -540,6 +551,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     fromId: number | undefined,
     messageId?: number,
     media?: { kind: string; hasCaption: boolean },
+    sender = "telegram",
   ): Promise<void> {
     const resolved = findProjectByThread(stateRoot, threadId);
     if (!resolved) {
@@ -648,7 +660,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     let handled = false;
     let outcome: DeliveryOutcome | undefined;
     if (opts.deliverInbound) {
-      const res = await opts.deliverInbound(resolved.project, formatInbound(text));
+      const res = await opts.deliverInbound(resolved.project, frameMessage({ from: sender, project: resolved.project, kind: "captain.message" }, formatInbound(text)));
       handled = res.handled;
       outcome = res.outcome;
     }
@@ -669,7 +681,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       // drains it into the captain. A pre-fallback `gone` outcome must never be
       // rendered as terminal "not reachable", or the operator is told a message
       // that is queued (and will deliver) failed (#834).
-      await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram" });
+      await appendCaptainMessage({ stateRoot, project: resolved.project, text: formatInbound(text), source: "telegram", from: sender });
       outcome = undefined;
     }
 
@@ -703,7 +715,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
 
   // Inbound: classify by thread id. General topic → command channel; project
   // topic → captain.message (+ auto-launch). Throws only on append failure.
-  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; caption?: string; photo?: unknown[]; voice?: unknown; video_note?: unknown; video?: unknown; audio?: unknown; document?: unknown; animation?: unknown; sticker?: unknown; from?: { id: number }; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
+  async function handleUpdate(u: { message?: { chat: { id: number }; message_thread_id?: number; message_id?: number; text?: string; caption?: string; photo?: unknown[]; voice?: unknown; video_note?: unknown; video?: unknown; audio?: unknown; document?: unknown; animation?: unknown; sticker?: unknown; from?: TelegramUser; reply_to_message?: { text?: string } }; callback_query?: CallbackQuery }): Promise<void> {
     if (u.callback_query) {
       await handleCallback(u.callback_query);
       return;
@@ -758,6 +770,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
       m.from?.id,
       m.message_id,
       kind === undefined ? undefined : { kind, hasCaption: text !== undefined },
+      telegramSender(m.from),
     );
   }
 

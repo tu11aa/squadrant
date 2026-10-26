@@ -9,10 +9,12 @@ import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
 import { deliverToCaptain } from "../captain-channel.js";
+import { frameMessage } from "../squadrant-message.js";
 import { createCaptainCompact, COMPACT_RESUME_TEXT } from "./captain-compact.js";
+import { createCrewCompact } from "./crew-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
-import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage } from "../mailbox.js";
+import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage, appendDispatchEntry } from "../mailbox.js";
 import { createContextAdvisor, boundaryOf } from "../context-suggest.js";
 import { readClaudeContext, contextTokens } from "../context-meter.js";
 import { writeExitMarker, consumeExitMarker, writeRunningMarker, readRunningMarker, removeRunningMarker } from "./exit-marker.js";
@@ -83,6 +85,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs, takeoverNudgeHours: ctx.takeoverNudgeHours,
     isSurfaceAlive: surfaceProbe,
     resendFirstTurn: ctx.resendFirstTurn,
+    recordDispatch: (rec) => appendDispatchEntry({ stateRoot: ctx.stateRoot, project: rec.project, taskRecord: rec }),
     launchHeadless: opts.launchHeadless!,
     isHeadlessInFlight: (id) => inFlightHeadlessIds.has(id),
     launchInteractive: async (rec) => {
@@ -377,15 +380,24 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       resume: async (project) => {
         const agent = ctx.captainAgentFor?.(project);
         const channel = ctx.captainAgentFor ? (agent ? ctx.captainChannels?.[agent] : undefined) : ctx.captainChannel;
-        const r = await deliverToCaptain(project, COMPACT_RESUME_TEXT, { channel, mode: ctx.captainChannelMode?.() ?? "off", log });
+        const r = await deliverToCaptain(project, frameMessage({ from: "daemon", project, kind: "compact.resume" }, COMPACT_RESUME_TEXT), { channel, mode: ctx.captainChannelMode?.() ?? "off", log });
         if (!r.handled) log(`captain-compact ${project}: resume message not sent — no captain channel`);
       },
     });
     ctx.requestCaptainCompact = compact.request;
     ctx.captainCompactHolds = compact.holdsDelivery;
     ctx.captainCompactDone = compact.compactDone;
+    const crewCompact = createCrewCompact({
+      cmux: daemonCmux,
+      log,
+      tasks: (project) => store.list(project),
+    });
+    ctx.requestCrewCompact = crewCompact.request;
+    ctx.cancelCrewCompact = crewCompact.cancel;
+    ctx.crewCompactHolds = crewCompact.holdsCrew;
+    ctx.crewCompactDone = crewCompact.compactDone;
     if (opts.sweepMs && opts.sweepMs > 0) {
-      compactTimer = setInterval(() => { void compact.tick(); }, 1000);
+      compactTimer = setInterval(() => { void compact.tick(); void crewCompact.tick(); }, 1000);
       compactTimer.unref?.();
     }
   }

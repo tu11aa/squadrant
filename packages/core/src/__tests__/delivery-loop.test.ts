@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { unframe } from "./unframe.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,7 +59,7 @@ describe("delivery-loop", () => {
       findWorkspaceId: async () => "w1",
       readScreen: async () => "demo-captain> ",
       send: async (surface: any, text: string) => {
-        logs.push(`sent: ${text}`);
+        logs.push(`sent: ${unframe(text)}`);
       }
     };
     
@@ -108,7 +109,7 @@ describe("delivery-loop", () => {
       findWorkspaceId: async () => "w1",
       readScreen: async () => `${commandName}> `,
       send: async (surface: any, text: string) => {
-        logs.push(`sent: ${text}`);
+        logs.push(`sent: ${unframe(text)}`);
       }
     };
     
@@ -176,7 +177,7 @@ describe("delivery-loop", () => {
       listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
       findWorkspaceId: async () => "w1",
       readScreen: async () => `${captainName}> `,
-      send: async (_surface: any, text: string) => { sent.push(text); },
+      send: async (_surface: any, text: string) => { sent.push(unframe(text)); },
     };
     const session2 = createDelivery({
       stateRoot, store, livenessRegistry: newRegistry(), log: () => {}, isPidAlive: () => true, opts: {},
@@ -233,7 +234,7 @@ describe("delivery-loop", () => {
       listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
       findWorkspaceId: async () => "w1",
       readScreen: async () => `${captainName}> `,
-      send: async (_surface: any, text: string) => { sent.push(text); },
+      send: async (_surface: any, text: string) => { sent.push(unframe(text)); },
     };
     const postRestart = createDelivery({
       stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},

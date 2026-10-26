@@ -13,7 +13,7 @@ export interface MailboxEntry {
   name?: string;
   /** "captain.message" is an external (non-ControlEvent) message injected for the
    *  captain — e.g. an inbound Telegram reply. */
-  kind: ControlEvent["type"] | "captain.message";
+  kind: ControlEvent["type"] | "captain.message" | "task.dispatched";
   /** Absent on external entries — no originating agent provider. */
   provider?: TaskRecord["provider"];
   /** Absent/free-form on external entries. */
@@ -136,9 +136,29 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
     ...(opts.taskRecord.name !== undefined ? { name: opts.taskRecord.name } : {}),
     kind: opts.event.type,
     provider: opts.taskRecord.provider,
-    payload: extractPayload(opts.event),
+    // fromProject: a cross-project delegation report-back is delivered to the ORIGIN project's mailbox.
+    payload: { ...extractPayload(opts.event), ...(opts.taskRecord.project !== opts.project ? { fromProject: opts.taskRecord.project } : {}) },
     // #1030: the payload keeps the crew's full text; only the captain-facing render is bounded.
     message: opts.message == null ? null : boundForCaptain(opts.message, opts.project, seq),
+  }));
+}
+
+/**
+ * Record what a task was asked: one `task.dispatched` entry per dispatch with the
+ * full brief in its payload. `message: null` — the captain wrote it, so it is
+ * never delivered back to the captain pane; read it with `squadrant crew msg`.
+ */
+export async function appendDispatchEntry(opts: { stateRoot: string; project: string; taskRecord: TaskRecord }): Promise<number> {
+  const r = opts.taskRecord;
+  return appendEntry(opts.stateRoot, opts.project, (seq) => ({
+    seq,
+    ts: new Date().toISOString(),
+    taskId: r.id,
+    ...(r.name !== undefined ? { name: r.name } : {}),
+    kind: "task.dispatched",
+    provider: r.provider,
+    payload: { brief: r.task, ...(r.sessionId ? { sessionId: r.sessionId } : {}), ...(r.originProject ? { fromProject: r.originProject } : {}) },
+    message: null,
   }));
 }
 
@@ -153,12 +173,14 @@ export async function appendCaptainMessage(opts: {
   project: string;
   text: string;
   source: "telegram" | "daemon" | "cli";
+  /** Sender shown in the delivery frame (thread:<id>, side:<name>, …); defaults to `source`. */
+  from?: string;
 }): Promise<number> {
   return appendEntry(opts.stateRoot, opts.project, (seq) => ({
     seq,
     ts: new Date().toISOString(),
     kind: "captain.message",
-    payload: { source: opts.source },
+    payload: { source: opts.source, ...(opts.from ? { from: opts.from } : {}) },
     message: opts.text,
   }));
 }
@@ -297,7 +319,7 @@ export async function readMailboxEntry(stateRoot: string, project: string, seq: 
 /** #1030: the entry's full text — the crew's own words when it has them, else the rendered message. */
 export function fullEntryText(e: MailboxEntry): string {
   const p = e.payload ?? {};
-  const own = e.kind === "task.turn.completed" ? p.lastMessage : e.kind === "task.blocked" ? p.question : e.kind === "task.done" ? p.message : undefined;
+  const own = e.kind === "task.turn.completed" ? p.lastMessage : e.kind === "task.blocked" ? p.question : e.kind === "task.done" ? p.message : e.kind === "task.dispatched" ? p.brief : undefined;
   return (typeof own === "string" && own.trim() ? own : e.message ?? "").trim();
 }
 

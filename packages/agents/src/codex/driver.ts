@@ -281,8 +281,8 @@ export function buildCodexDeveloperInstructions(
 ): string {
   const directive =
     `You are squadrant crew task ${rec.id} in project ${rec.project}. ` +
-    `When you finish, run EXACTLY: squadrant crew signal done --task-id ${rec.id} --project ${rec.project} --message "<one-line summary>". ` +
-    `If you are blocked or fail, run squadrant crew signal blocked|failed with the same --task-id ${rec.id} --project ${rec.project} flags.`;
+    `When you finish, call the \`crew_signal_done\` MCP tool from the \`squadrant\` server if it is available, passing task_id ${rec.id}, project ${rec.project} and message "<one-line summary>"; otherwise run EXACTLY: squadrant crew signal done --task-id ${rec.id} --project ${rec.project} --message "<one-line summary>". ` +
+    `If you are blocked or fail, do the same with \`crew_signal_blocked\` (question) / \`crew_signal_failed\` (error), or run squadrant crew signal blocked|failed with the same --task-id ${rec.id} --project ${rec.project} flags.`;
   return rec.roleInstructions ? `${rec.roleInstructions}\n\n${directive}` : directive;
 }
 

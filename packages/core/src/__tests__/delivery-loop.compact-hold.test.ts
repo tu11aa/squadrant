@@ -1,4 +1,5 @@
 // #1015: while a captain compact is armed/running, the delivery loop types nothing, the
+import { unframe } from "./unframe.js";
 // cursor never advances for a held entry, and the backlog delivers in order afterwards.
 import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -36,7 +37,7 @@ describe("delivery-loop compact hold (#1015)", () => {
       listSurfaces: async (ws: string) => [{ id: "s1", title: ws, command: "bash" }],
       findWorkspaceId: async (t: string) => t,
       readScreen: async () => "",
-      send: async (_s: any, text: string) => { sent.push(text); },
+      send: async (_s: any, text: string) => { sent.push(unframe(text)); },
     };
     let held = true;
     const ctx: any = { stateRoot, store, livenessRegistry: registry, log: () => {}, isPidAlive: () => true, opts: {}, captainCompactHolds: () => held };

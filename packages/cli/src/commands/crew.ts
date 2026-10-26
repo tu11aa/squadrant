@@ -25,10 +25,11 @@ import {
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
-import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
+import { sendClaudeFirstTurnViaPeer, watchClaudeCrewBoot } from "../lib/first-turn-peer.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
+import { requestCrewCompact, cancelCrewCompact, waitForCrewCompact } from "../lib/crew-compact.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 import { commandExists } from "./doctor.js";
@@ -104,6 +105,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
               (await squadrantdCall(buildStatusRequest(o.project, o.taskId)).catch(() => undefined)) as TaskRecord | undefined),
         }
       : {}),
+    watchClaudeBoot: (o) => watchClaudeCrewBoot(runtime, o),
     getFreePort,
     sendCodexFirstTurn,
     // #466: wire delivery confirmation so the daemon stamps firstTurnConfirmedAt.
@@ -145,6 +147,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
 }
 
 export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean }> {
+  // #1051: a compact queued/running on this crew goes first; the message lands after it.
+  await waitForCrewCompact(project, name, { call: squadrantdCall, log: (m) => console.error(chalk.dim(m)) });
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const cfg = loadConfig();
   // #667 slice 2: the channel needs the crew's opencode port, which the daemon
@@ -245,6 +249,107 @@ export async function runCrewAnswer(
   );
 }
 
+/** CLI-flag shape of `crew spawn`, shared with the MCP `crew_spawn` tool. */
+export interface CrewSpawnOpts {
+  name?: string; direction?: PanePlacement; agent?: string; approval?: boolean; shared?: boolean;
+  taskFile?: string; model?: string; thinking?: string; backend?: string;
+}
+
+/** Validate the spawn flags and resolve the task text into a `CrewSpawnInput` (what `crew spawn` and `crew_spawn` both run). */
+export async function buildCrewSpawnInput(
+  project: string,
+  task: string | undefined,
+  opts: CrewSpawnOpts,
+  agentExplicit: boolean,
+): Promise<CrewSpawnInput> {
+  // Fail fast on a typo rather than letting the claude CLI warn and
+  // silently fall back to its default effort.
+  const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
+  const rawBackend = opts.backend;
+  if (rawBackend !== undefined && !isBackendMode(rawBackend)) {
+    throw new Error(`Invalid --backend '${rawBackend}'. Valid values: native, direct, proxy`);
+  }
+  const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
+  return {
+    project,
+    task: resolvedTask,
+    name: opts.name,
+    direction: opts.direction ?? "tab",
+    agent: opts.agent ?? "claude",
+    agentExplicit,
+    // --approval is provider-agnostic: codex consumes approvalPolicy,
+    // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
+    ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
+    ...(opts.shared ? { shared: true } : {}),
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(thinking ? { thinking } : {}),
+    backend: rawBackend as BackendMode | undefined,
+    // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
+    // into the isolated worktree root for relative-path access.
+    ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
+  };
+}
+
+/** The `crew list` output, one string per line; empty when the project has no live crew. */
+export async function crewListLines(project: string): Promise<string[]> {
+  const crews = await runCrewList(project);
+  if (crews.length === 0) return [];
+  const tasks = await squadrantdCall({ kind: "list", project }).catch(() => []) as TaskRecord[];
+  const active: any[] = [];
+  const held: any[] = [];
+  for (const c of crews) {
+    const task = tasks.find(t => t.name === c.name); // pickMostRecent?
+    const t = task ? resolveApproveTarget(tasks, c.name) : undefined;
+    if (t?.operatorHold) {
+      held.push({ c, t });
+    } else {
+      active.push({ c, t });
+    }
+  }
+  const out: string[] = [];
+  if (active.length > 0) {
+    out.push(`active (${active.length}):`);
+    for (const { c, t } of active) {
+      // #1015: live context ("unknown" where the agent has no meter).
+      const ctx = t ? `  ctx ${formatContext(meterTask(t))}` : "";
+      out.push(`  ${c.name.padEnd(10)} ${t ? t.state : "unknown"}${ctx}  (${c.surfaceId})`);
+    }
+  }
+  if (held.length > 0) {
+    out.push(`HELD BY OPERATOR (${held.length}) — not counted toward maxCrew:`);
+    for (const { c, t } of held) {
+      const m = Math.round((Date.now() - t.operatorHold.since) / 60000);
+      const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
+      const note = t.operatorHold.note ? ` · "${t.operatorHold.note}"` : "";
+      out.push(`  ${c.name.padEnd(10)} ${t.state} · ctx ${formatContext(meterTask(t))} · held ${hm}${note}  (${c.surfaceId})`);
+    }
+  }
+  return out;
+}
+
+/** #1015: the context hint shown before a `crew send` — advice only, never blocks or alters the send; undefined when there is none. */
+export async function crewSendHint(project: string, name: string): Promise<string | undefined> {
+  try {
+    const budget = resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project));
+    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
+    return hintForCrewSend(name, resolveApproveTarget(tasks, name), budget) ?? undefined;
+  } catch {
+    return undefined; // best-effort
+  }
+}
+
+/** `crew msg`: one mailbox entry in full. `agentNote` is the provenance line the CLI prints to stderr (the agent stays out of the delivery header, #1029). */
+export async function readCrewMsg(project: string, seq: string | number): Promise<{ agentNote?: string; text: string }> {
+  const n = Number(seq);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`invalid seq '${seq}'`);
+  const entry = await readMailboxEntry(stateRoot(), project, n);
+  if (!entry) throw new Error(`no mailbox entry ${n} for project '${project}' (rotated out or wrong project)`);
+  return {
+    ...(entry.provider ? { agentNote: `# ${entry.kind} · agent: ${entry.provider}${entry.name ? ` · crew: ${entry.name}` : ""}` } : {}),
+    text: fullEntryText(entry),
+  };
+}
+
 // ─── CLI command definitions ──────────────────────────────────────────────────
 
 export const crewCommand = new Command("crew").description(
@@ -271,37 +376,12 @@ crewCommand
     async (
       project: string,
       task: string | undefined,
-      opts: { name?: string; direction: PanePlacement; agent: string; approval: boolean; shared: boolean; taskFile?: string; model?: string; thinking?: string; backend?: string },
+      opts: CrewSpawnOpts,
       cmd: Command,
     ) => {
       try {
-        // Fail fast on a typo rather than letting the claude CLI warn and
-        // silently fall back to its default effort.
-        const thinking = opts.thinking ? parseThinkingLevel(opts.thinking) : undefined;
-        const rawBackend = opts.backend;
-        if (rawBackend !== undefined && !isBackendMode(rawBackend)) {
-          throw new Error(`Invalid --backend '${rawBackend}'. Valid values: native, direct, proxy`);
-        }
-        const resolvedTask = await resolveTextInput({ positional: task, filePath: opts.taskFile, label: "task" });
         const agentExplicit = cmd.getOptionValueSource("agent") === "cli";
-        const pane = await runCrewSpawn({
-          project,
-          task: resolvedTask,
-          name: opts.name,
-          direction: opts.direction,
-          agent: opts.agent,
-          agentExplicit,
-          // --approval is provider-agnostic: codex consumes approvalPolicy,
-          // opencode consumes the `approval` flag (→ bash:"ask" per-crew config).
-          ...(opts.approval ? { approvalPolicy: "untrusted", approval: true } : {}),
-          ...(opts.shared ? { shared: true } : {}),
-          ...(opts.model ? { model: opts.model } : {}),
-          ...(thinking ? { thinking } : {}),
-          backend: rawBackend as BackendMode | undefined,
-          // #458: pass the raw file path (not stdin) so runCrewSpawn can copy it
-          // into the isolated worktree root for relative-path access.
-          ...(opts.taskFile && opts.taskFile !== "-" ? { taskFile: opts.taskFile } : {}),
-        });
+        const pane = await runCrewSpawn(await buildCrewSpawnInput(project, task, opts, agentExplicit));
         console.log(chalk.green(`✔ Crew '${pane.title}' spawned (${pane.surfaceId})`));
       } catch (err) {
         console.error(chalk.red((err as Error).message));
@@ -316,43 +396,12 @@ crewCommand
   .argument("<project>", "Project name")
   .action(async (project: string) => {
     try {
-      const crews = await runCrewList(project);
-      if (crews.length === 0) {
+      const lines = await crewListLines(project);
+      if (lines.length === 0) {
         console.log(chalk.yellow(`No live crew sessions for ${project}.`));
         return;
       }
-      
-      const tasks = await squadrantdCall({ kind: "list", project }).catch(() => []) as TaskRecord[];
-      const active: any[] = [];
-      const held: any[] = [];
-
-      for (const c of crews) {
-        const task = tasks.find(t => t.name === c.name); // pickMostRecent?
-        const t = task ? resolveApproveTarget(tasks, c.name) : undefined;
-        if (t?.operatorHold) {
-          held.push({ c, t });
-        } else {
-          active.push({ c, t });
-        }
-      }
-
-      if (active.length > 0) {
-        console.log(`active (${active.length}):`);
-        for (const { c, t } of active) {
-          // #1015: live context ("unknown" where the agent has no meter).
-          const ctx = t ? `  ctx ${formatContext(meterTask(t))}` : "";
-          console.log(`  ${c.name.padEnd(10)} ${t ? t.state : "unknown"}${ctx}  (${c.surfaceId})`);
-        }
-      }
-      if (held.length > 0) {
-        console.log(`HELD BY OPERATOR (${held.length}) — not counted toward maxCrew:`);
-        for (const { c, t } of held) {
-          const m = Math.round((Date.now() - t.operatorHold.since) / 60000);
-          const hm = m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
-          const note = t.operatorHold.note ? ` · "${t.operatorHold.note}"` : "";
-          console.log(`  ${c.name.padEnd(10)} ${t.state} · ctx ${formatContext(meterTask(t))} · held ${hm}${note}  (${c.surfaceId})`);
-        }
-      }
+      for (const l of lines) console.log(l);
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);
@@ -370,13 +419,8 @@ crewCommand
   .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
-      // #1015: hint only — never blocks or alters the send.
-      try {
-        const budget = resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project));
-        const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
-        const hint = hintForCrewSend(name, resolveApproveTarget(tasks, name), budget);
-        if (hint) console.log(chalk.yellow(`⚠ ${hint}`));
-      } catch { /* hint is best-effort */ }
+      const hint = await crewSendHint(project, name);
+      if (hint) console.log(chalk.yellow(`⚠ ${hint}`));
       const { reopened } = await runCrewSend(project, name, resolvedMessage, opts);
       // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
       // gave the captain no way to tell a stale terminal record was revived.
@@ -384,6 +428,31 @@ crewCommand
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
+  });
+
+export const crewCompactQueuedLine = (project: string, name: string, agent: string): string =>
+  `✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`;
+
+crewCommand
+  .command("compact")
+  .description("Queue a /compact for a crew (claude/opencode); typed by the daemon once the crew is idle. Sends to that crew wait until it finishes (returns immediately)")
+  .argument("<project>", "Project name")
+  .argument("<name>", "Crew name (e.g. crew-1)")
+  .option("--keep <text>", "what the summary should keep, passed to /compact")
+  .option("--cancel", "drop a queued compact and release the hold it puts on `crew send` (no-op if none is queued)")
+  .action(async (project: string, name: string, opts: { keep?: string; cancel?: boolean }) => {
+    try {
+      if (opts.cancel) {
+        const { cancelled } = await cancelCrewCompact(project, name, squadrantdCall);
+        console.log(cancelled ? chalk.green(`✔ Compact cancelled for ${project}:${name} — sends to it are no longer held.`) : chalk.dim(`No compact queued for ${project}:${name}.`));
+        return;
+      }
+      const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
+      console.log(chalk.green(crewCompactQueuedLine(project, name, agent)));
+    } catch (e) {
+      console.error(chalk.red(`✖ ${(e as Error).message}`));
       process.exit(1);
     }
   });
@@ -437,11 +506,9 @@ crewCommand
   .argument("<seq>", "Mailbox seq")
   .action(async (project: string, seq: string) => {
     try {
-      const n = Number(seq);
-      if (!Number.isInteger(n) || n < 1) throw new Error(`invalid seq '${seq}'`);
-      const entry = await readMailboxEntry(stateRoot(), project, n);
-      if (!entry) throw new Error(`no mailbox entry ${n} for project '${project}' (rotated out or wrong project)`);
-      console.log(fullEntryText(entry));
+      const { agentNote, text } = await readCrewMsg(project, seq);
+      if (agentNote) console.error(chalk.dim(agentNote));
+      console.log(text);
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);

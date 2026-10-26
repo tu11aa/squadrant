@@ -17,7 +17,7 @@ import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
 import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
-import { buildCompletionProtocol } from "@squadrant/core";
+import { frameFirstTurn, firstTurnResendMessage } from "@squadrant/core";
 import { createEventsSource } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
@@ -29,10 +29,11 @@ import { runHeadless, CodexInteractiveDriver, OpencodeSseBridge, CodexAppServerS
 import { CmuxEventsBridge, DaemonCmux, CmuxStoreSource, NativeHookSource, resendCrewFirstTurn, RuntimeRegistry } from "@squadrant/workspaces";
 import {
   loadConfig, resolveCaptainChannelMode, TERMINAL_STATES, DAEMON_SOCK_PATH, CONFIG_DIR, DEFAULT_CONFIG_PATH,
-  stateRoot as defaultStateRoot, legacyStateDir, seedStateFromLegacy,
+  stateRoot as defaultStateRoot, legacyStateDir, seedStateFromLegacy, isolatedConfigDir,
 } from "@squadrant/shared";
 import { createCmuxDriver } from "@squadrant/workspaces";
 import { createCmuxNotifier, NotifierRegistry } from "@squadrant/workspaces";
+import { resolveHookTask } from "./lib/cmux-hook-attribution.js";
 import { maybeBroadcastDaemonRestart } from "./lib/daemon-restart-broadcast.js";
 import { buildCaptainChannelsWithRetry } from "./lib/captain-channel-factory.js";
 
@@ -147,7 +148,9 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   //                             the control plane for every project. No opt-out.
   //   checkout, not opted in -> refuse, and say how to opt in.
   //   checkout + opt-in      -> allow, loudly. The operator asked for it.
-  const isDefaultSocket = !opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH;
+  // #1046: an isolated SQUADRANT_CONFIG (dev daemon) derives its own socket and
+  // state, so it is never the production daemon even on DAEMON_SOCK_PATH.
+  const isDefaultSocket = (!opts.sockPath || opts.sockPath === DAEMON_SOCK_PATH) && !isolatedConfigDir();
   if (isDefaultSocket && isMonorepoCheckout(SELF_PATH)) {
     if (isLinkedWorktree(SELF_PATH)) {
       process.stderr.write(
@@ -300,12 +303,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
       if (!found) return;
       void ctx.d.handle({ kind: "event", project: found.project, event: ev });
     },
-    resolve: (hook) => {
-      if (!hook.cwd) return undefined;
-      return store.listAll().find(
-        (r) => r.mode === "interactive" && !TERMINAL_STATES.has(r.state) && r.cwd === hook.cwd,
-      );
-    },
+    resolve: (hook) => resolveHookTask(store.listAll(), hook),
     cursorFile: join(stateRoot, "cmux-events.seq"),
     log,
   });
@@ -421,7 +419,10 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     if (rec.provider !== "claude" || !rec.name) return { delivered: false };
     const proj = loadConfig().projects[rec.project];
     const captainName = proj?.captainName ?? `${rec.project}-captain`;
-    const message = `${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project)}`;
+    // A crew launched with an init prompt gets the same init.md again; older
+    // crews (or a spawn that fell back to a first-turn send) get the brief.
+    // rec.task is a title: without init.md the brief comes from brief.md / the dispatch entry (old records hold it whole).
+    const message = await firstTurnResendMessage(ctx.stateRoot, rec);
     return resendCrewFirstTurn(resendRuntime, captainName, rec.project, rec.name, message);
   });
 
@@ -431,7 +432,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const ingest = (e: import("@squadrant/shared").ControlEvent) =>
       void ctx.d.handle({ kind: "event", project: rec.project, event: e });
     const handle = runHeadless({
-      provider: rec.provider, task: rec.task, id: rec.id, sessionId: rec.sessionId,
+      provider: rec.provider, task: frameFirstTurn(rec.task, { project: rec.project, originProject: rec.originProject, taskId: rec.id }), id: rec.id, sessionId: rec.sessionId,
       cwd: rec.cwd, spawn, emit: ingest, writeResult,
     });
     inFlightHeadlessIds.add(rec.id);
@@ -535,8 +536,11 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     // #791: same self-heal guarantee for opencode's global skills dir — refresh
     // the projected squadrant skills on boot so a version update is reflected
     // before any opencode captain/crew session starts and scans for skills.
-    try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
-    catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
+    // #1046: global, so production-only — an isolated daemon leaves it alone.
+    if (!isolatedConfigDir()) {
+      try { syncShippedOpencodeSkills({ pkgRoot: join(dirname(SELF_PATH), "..") }); }
+      catch (e) { log(`opencode skills sync failed: ${(e as Error).message}`); }
+    }
     const hookPrevSnaps = new Map<string, LifecycleSnapshot>();
     const hookDeps: LifecycleSourceDeps = {
       resolve: (hint) => {
@@ -631,18 +635,17 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   if (opts.forceStartEventsSource) startEventsLifecycleSource();
 
   // Daemon-restart broadcast: notify every running captain that the daemon
-  // bounced, but only when the running build actually changed (version bump
-  // or local rebuild) — a same-build launchd crash-restart stays silent.
+  // bounced, but only when the running version or install path changed — a
+  // same-install restart (reinstall + heal, config restart, crash) stays silent.
   // Skipped under vitest (touches the real config + cmux driver, mirrors the
   // other real-I/O boot actions guarded the same way above).
   if (!process.env.VITEST) {
     try {
-      const buildMtimeMs = statSync(SELF_PATH).mtimeMs;
       const restartConfig = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       void maybeBroadcastDaemonRestart({
         version: PKG_VERSION,
-        buildMtimeMs,
+        installPath: SELF_PATH,
         stateRoot,
         config: restartConfig,
         driver: registry.global(restartConfig),

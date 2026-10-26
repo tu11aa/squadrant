@@ -93,27 +93,37 @@ describe("runConfigGet / runConfigSet (dotted path)", () => {
 // ── daemon auto-restart on config set ────────────────────────────────────────
 
 describe("runConfigSetAction — daemon restart gating", () => {
-  it("does NOT call restart for a non-daemon-cached key (defaults.effort)", () => {
+  it("does NOT call restart for a non-daemon-cached key (defaults.effort)", async () => {
     writeUser(() => {});
     const spy = vi.fn().mockReturnValue("skipped-opt-out");
-    runConfigSetAction({ key: "defaults.effort", value: "low", doRestart: spy, configPath: cfgPath });
+    await runConfigSetAction({ key: "defaults.effort", value: "low", doRestart: spy, configPath: cfgPath });
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("DOES call restart for a daemon-cached key (telegram.notify.crew)", () => {
+  it("DOES call restart for a daemon-cached key (telegram.notify.crew)", async () => {
     writeUser((c) => { (c as any).telegram = { botToken: "t", supergroupId: -1, notify: { crew: "all" } }; });
     const spy = vi.fn().mockReturnValue("restarted");
-    runConfigSetAction({ key: "telegram.notify.crew", value: "none", doRestart: spy, configPath: cfgPath });
+    await runConfigSetAction({ key: "telegram.notify.crew", value: "none", doRestart: spy, configPath: cfgPath });
     expect(spy).toHaveBeenCalledOnce();
     expect(spy.mock.calls[0][0]).toMatchObject({ reason: expect.stringContaining("telegram.notify.crew") });
   });
 
-  it("noRestart suppresses the restart call via noRestart flag passed through", () => {
+  it("noRestart suppresses the restart call via noRestart flag passed through", async () => {
     writeUser((c) => { (c as any).telegram = { botToken: "t", supergroupId: -1, notify: { crew: "all" } }; });
     const spy = vi.fn().mockReturnValue("skipped-opt-out");
-    runConfigSetAction({ key: "telegram.notify.crew", value: "none", noRestart: true, doRestart: spy, configPath: cfgPath });
+    await runConfigSetAction({ key: "telegram.notify.crew", value: "none", noRestart: true, doRestart: spy, configPath: cfgPath });
     expect(spy).toHaveBeenCalledOnce();
     expect(spy.mock.calls[0][0]).toMatchObject({ noRestart: true });
+  });
+
+  it("marks projects.* keys live-reloadable and telegram.* keys not", async () => {
+    writeUser(() => {});
+    const spy = vi.fn().mockReturnValue("reloaded");
+    await runConfigSetAction({ key: "projects.demo.captainName", value: "x", doRestart: spy, configPath: cfgPath });
+    expect(spy.mock.calls[0][0]).toMatchObject({ liveReloadable: true });
+    spy.mockClear();
+    await runConfigSetAction({ key: "telegram.notify.crew", value: "none", doRestart: spy, configPath: cfgPath });
+    expect(spy.mock.calls[0][0]).toMatchObject({ liveReloadable: false });
   });
 });
 

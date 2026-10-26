@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig } from "@squadrant/shared";
+import { currentSenderLabel } from "../lib/sender-label.js";
 import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
 import type { RuntimeDriver } from "@squadrant/workspaces";
 import type { SquadrantConfig } from "@squadrant/shared";
@@ -86,7 +87,7 @@ const SEND_CONFIRM_POLL_MS = 500;
 export async function runRuntimeSend(
   arg1: string,
   arg2: string | undefined,
-  opts: { command?: boolean },
+  opts: { command?: boolean; from?: string },
   confirmOpts?: { timeoutMs?: number; pollMs?: number },
 ) {
   const config = loadConfig();
@@ -100,8 +101,11 @@ export async function runRuntimeSend(
   if (!message) throw new Error("Message is required");
 
   const { requireDaemon } = await import("../lib/require-daemon.js");
-  const { appendCaptainMessage, waitForCaptainDelivery } = await import("@squadrant/core");
+  const { appendCaptainMessage, waitForCaptainDelivery, isValidSender } = await import("@squadrant/core");
+  if (opts.from && !isValidSender(opts.from)) throw new Error(`Invalid --from '${opts.from}' — use a label like side:research-1`);
   await requireDaemon();
+  // Sender label from the session's own markers (crew / thread / side / captain), else `cli` (#1029).
+  const from = opts.from ?? currentSenderLabel(config);
 
   const resolved = resolveTarget(registry, config, target, !!opts.command);
   await needRef(resolved);
@@ -120,6 +124,7 @@ export async function runRuntimeSend(
     project: finalProject,
     text: message,
     source: "cli",
+    ...(from ? { from } : {}),
   });
 
   const timeoutMs = confirmOpts?.timeoutMs ?? SEND_CONFIRM_TIMEOUT_MS;
@@ -144,7 +149,8 @@ runtimeCommand
   .argument("<arg1>", "Project name, or the message when --command is used")
   .argument("[arg2]", "Message (when target is a project). Omit when using --command.")
   .option("--command", "Target the command workspace")
-  .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean }) => {
+  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: from the session's role — crew:<project>/<name>, captain:<project>, … — else cli)")
+  .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean; from?: string }) => {
     try {
       await runRuntimeSend(arg1, arg2, opts);
       console.log(chalk.green("✔ Delivered (confirmed)"));

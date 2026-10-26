@@ -1,0 +1,8 @@
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── squadrant-crew-squadrant-initprompt ─
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  🤖 Opus 5.5 ⚡medium 💭 │ 🏷  squadrant-crew-squadrant-initprompt b4b04721
+  📂 ~/me/squadrant/.worktrees/squadrant-initprompt │ 🌿 crew/initprompt ✔ │ 🌲 squadrant-initprompt
+  🧠 ██░░░░░░░░ 17% 165k/1000k │ 🔥 warm 97% │ 💰 $3.17 │ ⏱  29m │ ✏️  +203 -0
+  ⏵⏵ auto mode on (shift+tab to cycle)

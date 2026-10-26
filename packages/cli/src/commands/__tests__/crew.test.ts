@@ -136,6 +136,12 @@ const writePerCrewSettingsLocal = vi.hoisted(() => vi.fn());
 const writePerCrewOpencodeConfig = vi.hoisted(() => vi.fn());
 const writeRouterSettings = vi.hoisted(() => vi.fn());
 const readGlobalOpencodeModel = vi.hoisted(() => vi.fn());
+// Launch-time init prompt: claude registers immediately (no trust panel) in these tests.
+const watchClaudeCrewBoot = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/first-turn-peer.js", () => ({
+  sendClaudeFirstTurnViaPeer: vi.fn(),
+  watchClaudeCrewBoot,
+}));
 vi.mock("../../lib/per-crew-settings.js", () => ({
   writePerCrewSettings,
   writePerCrewSettingsLocal,
@@ -160,6 +166,12 @@ vi.mock("@squadrant/core", async (importOriginal) => ({
 }));
 
 import { runCrewSpawn, runCrewSend, runCrewRead, runCrewClose, runCrewList, runCrewAnswer } from "../crew.js";
+
+/** The claude init prompt the last spawn wrote (node:fs.readFileSync is mocked in this file). */
+async function readInitFile(): Promise<string> {
+  const file = buildCommand.mock.calls.at(-1)?.[0]?.initPromptFile as string;
+  return (await vi.importActual<typeof import("node:fs")>("node:fs")).readFileSync(file, "utf8");
+}
 import { reapCrewChildren } from "@squadrant/core";
 
 const baseConfig = {
@@ -217,6 +229,8 @@ describe("squadrant crew spawn", () => {
     resolveCrewRoute.mockReset();
     // Default: no routing match (fall through to existing defaults).
     resolveCrewRoute.mockReturnValue(null);
+    watchClaudeCrewBoot.mockReset();
+    watchClaudeCrewBoot.mockResolvedValue({ booted: true });
     sendFirstTurnWhenReadyMock.mockReset();
     sendFirstTurnWhenReadyMock.mockImplementation(async (_: unknown, pane: unknown, task: string) => {
       await sendToPane(pane, task);
@@ -272,11 +286,16 @@ describe("squadrant crew spawn", () => {
     expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_TASK_ID=task-cl1");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("SQUADRANT_CREW_PROJECT=brove");
     expect(sendToPane.mock.calls[0]?.[1]).toContain("claude --append-system-prompt-file /tmp/crew.md");
-    // Second sendToPane delivers the task + completion-protocol suffix as the first prompt.
-    expect(sendToPane.mock.calls[1]?.[0]).toEqual({ workspaceId: "workspace:5", surfaceId: "surface:9" });
-    expect(sendToPane.mock.calls[1]?.[1]).toContain("do the thing");
-    expect(sendToPane.mock.calls[1]?.[1]).toContain("--task-id task-cl1");
-    expect(sendToPane.mock.calls[1]?.[1]).toContain("--project brove");
+    // The first prompt is a launch arg (init.md), not a second pane send; the
+    // session id is pre-generated and shared by dispatch and launch.
+    expect(sendToPane).toHaveBeenCalledTimes(1);
+    const sessionId = buildDispatchRequest.mock.calls[0][0].sessionId;
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId, initPromptFile: expect.stringMatching(/brove\/task-cl1\/init\.md$/) }));
+    const init = await readInitFile();
+    expect(init).toContain("do the thing");
+    expect(init).toContain("--task-id task-cl1");
+    expect(init).toContain("--project brove");
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
@@ -532,7 +551,7 @@ describe("squadrant crew spawn", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "squadrant crew attach task-abc",
     );
-    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "do the thing");
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "📨 captain:brove → task · taskId: task-abc\ndo the thing");
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
@@ -718,7 +737,7 @@ describe("squadrant crew spawn", () => {
     buildCommand.mockReturnValue("claude ...");
     buildDispatchRequest.mockImplementation((o) => ({ kind: "dispatch", record: { ...o, id: "task-nd1" } }));
     squadrantdCall.mockResolvedValue({ id: "task-nd1", project: "brove", provider: "claude", mode: "interactive" });
-    sendFirstTurnWhenReadyMock.mockResolvedValueOnce({ delivered: false });
+    watchClaudeCrewBoot.mockResolvedValueOnce({ booted: false });
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
@@ -893,7 +912,7 @@ describe("squadrant crew send/read/close/list", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      "follow up",
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -927,7 +946,7 @@ describe("squadrant crew send/read/close/list", () => {
     }));
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      "follow up",
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -946,12 +965,13 @@ describe("squadrant crew send/read/close/list", () => {
     await runCrewSend("brove", "crew-1", "follow up");
 
     // The list to check state, then task.started (marks the next turn-end as the reply); never a reopen.
-    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([req]) => req);
+    // (#1051: the compact-hold probe comes first and is not part of the state transition.)
+    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([req]) => req).filter((r) => r.kind !== "crew-compact-state");
     expect(calls.map((r) => r.kind)).toEqual(["list", "event"]);
     expect(calls[1].event?.type).toBe("task.started");
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      "follow up",
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -967,7 +987,7 @@ describe("squadrant crew send/read/close/list", () => {
     // sendToPane still fires even with daemon errors.
     expect(sendToPane).toHaveBeenCalledWith(
       { workspaceId: "workspace:5", surfaceId: "surface:10", title: "🔧 brove:crew-1" },
-      "follow up",
+      expect.stringMatching(/^📨 captain:brove → crew\.send[^\n]*\nfollow up$/),
     );
   });
 
@@ -1261,6 +1281,8 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     existsSyncMock.mockReturnValue(false);
     resolveCrewRoute.mockReset();
     resolveCrewRoute.mockReturnValue(null);
+    watchClaudeCrewBoot.mockReset();
+    watchClaudeCrewBoot.mockResolvedValue({ booted: true });
     sendFirstTurnWhenReadyMock.mockReset();
     sendFirstTurnWhenReadyMock.mockImplementation(async (_: unknown, pane: unknown, task: string) => {
       await sendToPane(pane, task);
@@ -1292,9 +1314,12 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     await vi.advanceTimersByTimeAsync(3000);
     await promise;
 
-    const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
+    const firstTurn = await readInitFile();
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
+    expect(firstTurn).toContain("mcp__squadrant__crew_signal_done");
+    expect(firstTurn).toContain("ToolSearch");
     expect(firstTurn).toContain("--task-id task-proto-cl");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");
@@ -1317,13 +1342,15 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
+    expect(firstTurn).not.toContain("mcp__");
     expect(firstTurn).toContain("--task-id task-proto-oc");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");
     expect(firstTurn).toContain("crew signal blocked");
   });
 
-  it("codex first turn is sent via sendCodexFirstTurn unchanged — no completion-protocol suffix", async () => {
+  it("codex first turn is sent via sendCodexFirstTurn framed — no completion-protocol suffix", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -1333,8 +1360,8 @@ describe("completion-protocol suffix in first turns (#278)", () => {
 
     await runCrewSpawn({ project: "brove", task: "fix the bug", agent: "codex" });
 
-    // sendCodexFirstTurn receives the bare task text — no protocol suffix
-    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-proto-cx", "fix the bug");
+    // sendCodexFirstTurn receives the framed task text — header, but no protocol suffix (codex gets it as developer instructions)
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-proto-cx", "📨 captain:brove → task · taskId: task-pro\nfix the bug");
     // sendToPane only fires once (the crew attach command) — no second first-turn send
     expect(sendToPane).toHaveBeenCalledTimes(1);
     expect(sendToPane.mock.calls[0]?.[1]).toContain("crew attach");

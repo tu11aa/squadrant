@@ -5,7 +5,7 @@
 //   (a) formatDownAlertText — bakes the actual outage window (local time +
 //       tz offset) into the text so it's self-describing regardless of when
 //       it's read.
-//   (b) stalePrefix — a generic-enough (but not general-purpose) check any
+//   (b) staleAge — a generic-enough (but not general-purpose) check any
 //       delivery caller can run against a mailbox entry's own `ts` (already
 //       the entry's generatedAt — no new field needed) vs. the actual
 //       delivery time, to flag a message that's gone stale in the mailbox.
@@ -41,22 +41,13 @@ export function formatDownAlertText(opts: { startTs: string; endTs: string; minu
  *  flag it as stale rather than let it read as current. */
 export const STALE_ALERT_THRESHOLD_MS = 60 * 60 * 1000;
 
-function formatRelative(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remMinutes = minutes % 60;
-  if (hours < 24) return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  const remHours = hours % 24;
-  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
-}
-
-/** Returns the "[stale — generated <relative> ago] " prefix when `deliveredAtMs`
- *  is more than STALE_ALERT_THRESHOLD_MS after `generatedAtMs`, else null.
- *  Pure — callers decide which entries/kinds this applies to. */
-export function stalePrefix(generatedAtMs: number, deliveredAtMs: number): string | null {
+/** Returns the age in two units (`1h 59m`, `1d 23h`) when `deliveredAtMs` is more than
+ *  STALE_ALERT_THRESHOLD_MS after `generatedAtMs`, else null. Rendered as the header
+ *  field `stale: <age>`. Pure — callers decide which entries/kinds this applies to. */
+export function staleAge(generatedAtMs: number, deliveredAtMs: number): string | null {
   const ageMs = deliveredAtMs - generatedAtMs;
   if (ageMs <= STALE_ALERT_THRESHOLD_MS) return null;
-  return `[stale — generated ${formatRelative(ageMs)} ago] `;
+  const minutes = Math.round(ageMs / 60_000);
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
