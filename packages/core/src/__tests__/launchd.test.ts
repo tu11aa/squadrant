@@ -310,6 +310,10 @@ describe("isReadOnlyTopLevelCommand (#669)", () => {
     }
   });
 
+  it("never reconciles the daemon for `squadrant mcp` (started by every session, #1029)", () => {
+    expect(isReadOnlyTopLevelCommand(["node", "squadrant", "mcp"])).toBe(true);
+  });
+
   it("does not treat mutating top-level commands as read-only", () => {
     expect(isReadOnlyTopLevelCommand(["node", "squadrant", "launch"])).toBe(false);
     expect(isReadOnlyTopLevelCommand(["node", "squadrant", "crew", "spawn"])).toBe(false);

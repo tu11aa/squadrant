@@ -45,7 +45,7 @@ A message whose first line is a `📨 <sender> → <status> · taskId: … · se
 
 ## MCP Tools
 
-**MCP tools (Claude captains, #1029).** Where `squadrant mcp` is registered, the commands below also exist as tools, called directly as `mcp__squadrant__<tool>` (they load upfront; same results as the CLI, no Bash approval): `crew_spawn`, `crew_send`, `crew_list`, `crew_tasks`, `crew_read`, `crew_msg`, `crew_close`, `thread_open`, `thread_park`, `thread_resume`, `thread_list`, `side_spawn`, `side_send`, `ping`, `dispatch`, `captain_compact`, `status`, `rules_search`, `check_inbox`. `project` defaults to your own. Only on "No such tool", load it once with ToolSearch `select:mcp__squadrant__<tool>` and retry; if it still does not exist, use the CLI. Never over MCP, always the CLI with the operator in the loop: `crew approve`, `crew answer`, `crew close --force`, config and profile edits.
+**MCP tools (Claude captains, #1029).** Where `squadrant mcp` is registered, the commands below also exist as tools, called directly as `mcp__squadrant__<tool>` (they load upfront; same results as the CLI, no Bash approval): `crew_spawn`, `crew_send`, `crew_list`, `crew_tasks`, `crew_read`, `crew_msg`, `crew_compact`, `crew_close`, `thread_open`, `thread_park`, `thread_resume`, `thread_list`, `side_spawn`, `side_send`, `ping`, `dispatch`, `captain_compact`, `status`, `rules_search`, `check_inbox`. `project` defaults to your own. Only on "No such tool", load it once with ToolSearch `select:mcp__squadrant__<tool>` and retry; if it still does not exist, use the CLI. Never over MCP, always the CLI with the operator in the loop: `crew approve`, `crew answer`, `crew close --force`, config and profile edits.
 
 ## Crew Setup
 

@@ -6,9 +6,10 @@ import { stripVTControlCharacters } from "node:util";
 import { loadConfig, stateRoot } from "@squadrant/shared";
 import { resolveCurrentProject, readUndelivered, crewSignalToolList, callCrewSignalTool, type CrewSignalToolResult } from "@squadrant/core";
 import {
-  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, runCrewRead, readCrewMsg, runCrewClose,
+  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, runCrewRead, readCrewMsg, runCrewClose, crewCompactQueuedLine,
 } from "../commands/crew.js";
-import { renderCrewTasks } from "../commands/crew-control.js";
+import { renderCrewTasks, squadrantdCall } from "../commands/crew-control.js";
+import { requestCrewCompact } from "./crew-compact.js";
 import { runThreadOpen, runThreadPark, runThreadResume, threadListLines, formatOpened } from "../commands/thread.js";
 import { runSideSpawn, runSideSend } from "../commands/side.js";
 import { runPing, formatPingResult } from "../commands/ping.js";
@@ -29,7 +30,7 @@ export function mcpRole(env: NodeJS.ProcessEnv = process.env): McpRole {
 
 /** The real functions behind the tools; tests pass fakes. */
 export const realDeps = {
-  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, renderCrewTasks, runCrewRead, readCrewMsg, runCrewClose,
+  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, renderCrewTasks, runCrewRead, readCrewMsg, runCrewClose, requestCrewCompact,
   runThreadOpen, runThreadPark, runThreadResume, threadListLines,
   runSideSpawn, runSideSend, runPing, runDispatch, runCaptainCompact,
   runRulesSearch, readUndelivered,
@@ -129,6 +130,16 @@ export function createCaptainTools(): CaptainTool[] {
       async run(a, p, d) {
         const { agentNote, text } = await d.readCrewMsg(p, num(a, "seq") ?? NaN);
         return agentNote ? `${agentNote}\n${text}` : text;
+      },
+    },
+    {
+      name: "crew_compact", project: "default", required: ["name"],
+      description: "Queue a /compact for a crew (claude/opencode); the daemon types it once the crew is idle, and sends to it wait. Same as `squadrant crew compact`.",
+      fields: { project: PROJECT, name: NAME("Crew"), keep: { type: "string", description: "What the summary should keep, passed to /compact." } },
+      async run(a, p, d) {
+        const name = need(a, "name");
+        const { agent } = await d.requestCrewCompact(p, name, str(a, "keep"), squadrantdCall);
+        return crewCompactQueuedLine(p, name, agent);
       },
     },
     {

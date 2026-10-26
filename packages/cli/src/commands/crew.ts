@@ -431,6 +431,9 @@ crewCommand
     }
   });
 
+export const crewCompactQueuedLine = (project: string, name: string, agent: string): string =>
+  `✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`;
+
 crewCommand
   .command("compact")
   .description("Queue a /compact for a crew (claude/opencode); typed by the daemon once the crew is idle. Sends to that crew wait until it finishes (returns immediately)")
@@ -440,7 +443,7 @@ crewCommand
   .action(async (project: string, name: string, opts: { keep?: string }) => {
     try {
       const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
-      console.log(chalk.green(`✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`));
+      console.log(chalk.green(crewCompactQueuedLine(project, name, agent)));
     } catch (e) {
       console.error(chalk.red(`✖ ${(e as Error).message}`));
       process.exit(1);

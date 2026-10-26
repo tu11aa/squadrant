@@ -941,7 +941,7 @@ The server is registered once at user scope, so every Claude session on the mach
 
 | Group | Tools | Same as |
 |---|---|---|
-| Crew | `crew_spawn` (`task`, `name`, `agent`, `model`, `thinking`, `backend`, `shared`, `approval`) · `crew_send` · `crew_list` · `crew_tasks` (`id`, `state`, `json`) · `crew_read` (`lines`, `full`) · `crew_msg` (`seq`) · `crew_close` | `crew spawn/send/list/tasks/read/msg/close` |
+| Crew | `crew_spawn` (`task`, `name`, `agent`, `model`, `thinking`, `backend`, `shared`, `approval`) · `crew_send` · `crew_list` · `crew_tasks` (`id`, `state`, `json`) · `crew_read` (`lines`, `full`) · `crew_msg` (`seq`) · `crew_compact` (`name`, `keep`) · `crew_close` | `crew spawn/send/list/tasks/read/msg/compact/close` |
 | Thread / side | `thread_open` (`topic`, `crews`) · `thread_park` (`id`, optional `decision` JSON) · `thread_resume` · `thread_list` (`all`) · `side_spawn` (`topic`, `role`, `name`, `agent`) · `side_send` | `thread open/park/resume/list`, `side spawn/send` |
 | Cross-project | `ping` (`project`, `message`) · `dispatch` (`project`, `task`, `provider`, `mode`) | `ping`, `dispatch` |
 | Captain | `captain_compact` (`focus`) · `status` | `captain compact`, `status` |
@@ -951,7 +951,7 @@ The server is registered once at user scope, so every Claude session on the mach
 - `project` is optional everywhere except `ping` / `dispatch`, where it is the target: it defaults to the session's own project (`resolveCurrentProject`, from the cwd); if that fails the tool errors and asks for it.
 - **Never exposed over MCP** (operator in the loop, CLI only): `crew approve` / merge, `crew answer`, `crew close --force`, `crew takeover/handback`, task purge, config and profile edits. A test pins the absence.
 - **One implementation.** Each tool calls the function its CLI command already runs (`runCrewSpawn`, `runCrewSend`, `crewListLines`, `renderCrewTasks`, `runThreadOpen`, `runPing`, `runDispatch`, …); where that logic sat inside a commander `.action` it was extracted so the CLI and the tool share it, with no CLI behaviour change. Results are the CLI's own short text with ANSI stripped; failures are `isError: true`. While the server runs, `console.log` is routed to stderr so shared code can't corrupt the stdio protocol.
-- **Not yet:** `crew_compact` (the `squadrant crew compact` command, #1051, is unmerged; add the tool once its shared function is on `develop`).
+- **No daemon reconcile at startup.** `mcp` is in `READ_ONLY_TOP_LEVEL_COMMANDS`, so the CLI's startup `ensureDaemon` is skipped for it: every session start would otherwise run it, and under `SQUADRANT_ROLE=captain` it may re-register and restart the launchd daemon beneath live crews. Tools reach the daemon on demand and report when it is down.
 - Claude captains call them as `mcp__squadrant__<tool>` directly (ToolSearch only on "No such tool", then the CLI); the captain template and `captain-ops` say so. Other agents' text never uses `mcp__` names.
 
 ## Captain discussion threads (#1016)

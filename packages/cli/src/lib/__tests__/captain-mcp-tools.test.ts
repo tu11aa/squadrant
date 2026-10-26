@@ -6,7 +6,7 @@ const CREW = { SQUADRANT_CREW_TASK_ID: "t1", SQUADRANT_CREW_PROJECT: "p" } as No
 const signalDeps = { call: vi.fn() };
 
 const EXPECTED = [
-  "crew_spawn", "crew_send", "crew_list", "crew_tasks", "crew_read", "crew_msg", "crew_close",
+  "crew_spawn", "crew_send", "crew_list", "crew_tasks", "crew_read", "crew_msg", "crew_compact", "crew_close",
   "thread_open", "thread_park", "thread_resume", "thread_list", "side_spawn", "side_send",
   "ping", "dispatch", "captain_compact", "status", "rules_search", "check_inbox",
 ];
@@ -115,6 +115,13 @@ describe("tools call the shared function", () => {
     const d = fakes({ readCrewMsg: vi.fn().mockResolvedValue({ agentNote: "# note", text: "body" }) });
     expect((await call("crew_msg", { project: "p", seq: 7 }, d)).text).toBe("# note\nbody");
     expect(d.readCrewMsg).toHaveBeenCalledWith("p", 7);
+  });
+
+  it("crew_compact queues the compact", async () => {
+    const d = fakes({ requestCrewCompact: vi.fn().mockResolvedValue({ agent: "claude" }) });
+    const r = await call("crew_compact", { project: "p", name: "crew-1", keep: "the plan" }, d);
+    expect(d.requestCrewCompact.mock.calls[0].slice(0, 3)).toEqual(["p", "crew-1", "the plan"]);
+    expect(r.text).toContain("Compact queued for p:crew-1 (claude)");
   });
 
   it("crew_close closes without force", async () => {
