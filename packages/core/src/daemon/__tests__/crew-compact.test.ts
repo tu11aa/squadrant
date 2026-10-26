@@ -49,6 +49,22 @@ describe("crew compact", () => {
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(false); // sends resume, after the compact
   });
 
+  it("types /compact exactly once when the next interval tick fires while the send is still in flight", async () => {
+    const releases: Array<() => void> = [];
+    const h = harness({ send: () => new Promise<void>((r) => { releases.push(r); }) });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); // idle poll 1
+    const first = h.c.tick(); // idle poll 2 → send starts, still awaiting
+    await new Promise((r) => setTimeout(r, 0));
+    const second = h.c.tick(); // next interval fires mid-send
+    await new Promise((r) => setTimeout(r, 0));
+    releases.forEach((r) => r());
+    await Promise.all([first, second]);
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.logs.filter((l) => l.endsWith("/compact sent"))).toHaveLength(1);
+  });
+
   it("does not type while the task is working, even with an idle-looking pane", async () => {
     const h = harness({ task: { state: "working" } });
     await h.c.request("demo", "crew-1");

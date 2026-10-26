@@ -1111,6 +1111,22 @@ Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GA
 
 **Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
 
+### Daemon restarts: attribution and the restart notice
+
+Every CLI path that restarts, re-registers or kickstarts the launchd daemon appends one line to the daemon log (`logsRoot()/squadrantd.log`) **before** it acts, so the daemon's own `exit … reason=SIGTERM` / `boot` lines can be matched to their cause:
+
+```
+[squadrant-cli] <ts> restart-trigger action=<kickstart-k|reregister+kickstart-k|bootout+bootstrap|plist-write (no restart)> reason="<why; drift=version|path|plist …>" pid= ppid= argv="<subcommand>" role=<SQUADRANT_ROLE|-> crewTask=<id|-> install=<argv[1]>
+```
+
+Sources: `squadrant heal daemon`, `heal captain`, `projects add` / `config set <daemon-cached key>` / `telegram setup` (all `kickstart -k`), and `ensureDaemon` when it finds plist drift. A no-drift `ensureDaemon` only does a plain `kickstart`, which cannot restart a running daemon, and is not logged. The full trigger list is in [the restart audit](specs/2026-10-26-daemon-restart-audit.md).
+
+The "⚠️ Daemon restarted → vX" captain notice fires only when the daemon's **version or install path** changed since the last boot (a same-version reinstall + `heal daemon`, a config restart, or a crash stays silent), and never within 5 minutes of the previous notice.
+
+`squadrantdCall` (the CLI → daemon socket call) retries and self-heals only when the socket cannot be reached (the connection failed before the request was written). A timeout or a daemon-reported error is returned as-is: the daemon already has the request, and re-sending it would deliver it twice. A connection lost **after** the request was written (`ECONNRESET`, or the daemon closing without a reply) fails at once with `connection lost after the request was sent — it may or may not have been delivered; check … before retrying`. Check the result (e.g. `squadrant crew list`) before you retry by hand.
+
+`ensureDaemon` never takes over the launchd entry implicitly in two cases. **(1)** The plist names a different `squadrantd.js` that is missing: it re-checks for about 3 s (the `npm i -g` gap), then leaves it alone with a note to run `squadrant heal daemon`. **(2)** The running build is inside a linked git worktree (a crew's `.worktrees/…` build): it never registers itself. In both cases `squadrant heal daemon` is the explicit way to register this install.
+
 ## Rules audit log (#935)
 
 Every rules push and pull is logged, so you can tell whether a rule is ever surfaced and used. One JSON line per event is appended to `~/.local/state/squadrant/audit/YYYY-MM.<hostname>.jsonl` (override the directory with `SQUADRANT_AUDIT_DIR`). Fields: `ts, kb, level, project, domain:"rules", itemId, event, trigger, score, chars, agent, session`, plus `task` on delivery events (`item.surfaced`/`item.shown`/`item.searched`) when `SQUADRANT_CREW_TASK_ID` is set. That's stamped in `appendAudit`, so every agent's delivery path (Claude hooks, `rules match --agent codex|opencode`, `rules search`/`show`) records it the same way (#945).
