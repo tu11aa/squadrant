@@ -60,12 +60,21 @@ function bootCaptain(project: string, timeoutMs: number): Promise<void> {
   });
 }
 
+/** The `dispatch` confirmation: a headline, then detail lines. */
+export function formatDispatchResult(toProject: string, result: TaskRecord): string[] {
+  return [
+    `✔ Dispatched to '${toProject}' (task ${result.id.slice(0, 8)})`,
+    `  originProject: ${result.originProject ?? "none"}`,
+    "  You will be notified when the task settles (done/blocked/failed).",
+  ];
+}
+
 export async function dispatchAction(toProject: string, task: string, opts: DispatchCliOpts): Promise<void> {
   try {
     const result = await runDispatch(toProject, task, opts);
-    console.log(chalk.green(`✔ Dispatched to '${toProject}' (task ${result.id.slice(0, 8)})`));
-    console.log(chalk.dim(`  originProject: ${result.originProject ?? "none"}`));
-    console.log(chalk.dim("  You will be notified when the task settles (done/blocked/failed)."));
+    const [head, ...rest] = formatDispatchResult(toProject, result);
+    console.log(chalk.green(head));
+    for (const l of rest) console.log(chalk.dim(l));
   } catch (e) {
     console.error(chalk.red(`✘ ${(e as Error).message}`));
     process.exit(1);

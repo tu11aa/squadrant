@@ -11,6 +11,7 @@ import { createDelivery } from "./delivery-loop.js";
 import { deliverToCaptain } from "../captain-channel.js";
 import { frameMessage } from "../squadrant-message.js";
 import { createCaptainCompact, COMPACT_RESUME_TEXT } from "./captain-compact.js";
+import { createCrewCompact } from "./crew-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
 import { rotateIfNeeded, mailboxStats, readCursor, readUndelivered, appendCaptainMessage } from "../mailbox.js";
@@ -385,8 +386,16 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     ctx.requestCaptainCompact = compact.request;
     ctx.captainCompactHolds = compact.holdsDelivery;
     ctx.captainCompactDone = compact.compactDone;
+    const crewCompact = createCrewCompact({
+      cmux: daemonCmux,
+      log,
+      tasks: (project) => store.list(project),
+    });
+    ctx.requestCrewCompact = crewCompact.request;
+    ctx.crewCompactHolds = crewCompact.holdsCrew;
+    ctx.crewCompactDone = crewCompact.compactDone;
     if (opts.sweepMs && opts.sweepMs > 0) {
-      compactTimer = setInterval(() => { void compact.tick(); }, 1000);
+      compactTimer = setInterval(() => { void compact.tick(); void crewCompact.tick(); }, 1000);
       compactTimer.unref?.();
     }
   }

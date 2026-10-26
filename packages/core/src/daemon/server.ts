@@ -59,6 +59,19 @@ export function createServer(
         ctx.captainCompactDone?.(msg.project as string);
         return { ok: true };
       }
+      // #1051: queue a crew /compact; the daemon types it once the crew is idle.
+      if (msg.kind === "crew-compact") {
+        if (!ctx.requestCrewCompact) throw new Error("crew compact needs the cmux runtime — the daemon has no pane driver");
+        return ctx.requestCrewCompact(msg.project as string, msg.crew as string, msg.keep as string | undefined);
+      }
+      // #1051: `crew send` asks whether a compact is queued/running for the crew before delivering.
+      if (msg.kind === "crew-compact-state") {
+        return { holding: ctx.crewCompactHolds?.(msg.project as string, msg.crew as string) ?? false };
+      }
+      if (msg.kind === "crew-compact-done") {
+        ctx.crewCompactDone?.(msg.taskId as string);
+        return { ok: true };
+      }
       if (msg.kind === "event") {
         return ctx.d.handle(msg);
       }

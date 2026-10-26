@@ -48,6 +48,7 @@ guided first run — come back here when you need the details.
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
+| `squadrant crew compact <project> <crew> [--keep <text>]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
 | `squadrant doctor [-v]` | Health check — verify dependencies. Also warns about dangling path references (`-v` lists all of them, not just 5 per site); see [Reference sweep](#reference-sweep-998). |
@@ -903,7 +904,7 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 - **Hard warning:** captain context ≥ `captainHard` sends one louder line (`⚠ Context 360k ≥ hard limit 350k … Warning only: nothing is compacted automatically.`), no boundary needed, repeated only after each further +100k.
 - Evaluated by a 15 s daemon tick; the transcript read is mtime-cached, so an unchanged captain costs the registry read plus a `stat`.
 
-**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider a fresh crew with a brief instead of reusing it` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
+**Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
 
 **Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
 
@@ -913,9 +914,20 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 
 Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
 
+### Crew compact (#1051)
+
+A captain that wants to reuse a crew whose context has grown can compact it first. `crew send "/compact"` does not work (it arrives as a peer message, so the slash command never runs); `squadrant crew compact <project> <crew> [--keep "<text>"]` is the supported path. Never automatic: it runs only when a captain or the operator asks.
+
+- **Typed by the daemon, like the captain path.** The CLI sends `crew-compact`; the daemon validates, queues and returns. It polls (1 s) until the crew is idle — task state is not `submitted`/`working`/`blocked`/`stalled`, no tool or monitor is open, and for claude the pane shows no working spinner — for two polls, then types `/compact <keep>` through the normal send guard (a draft or an open prompt defers it). Times out after 10 min without typing.
+- **Agent-aware.** claude and opencode get a typed `/compact`. codex crews render an app-server thread (typed text becomes a turn, not a slash command) and gemini crews are one-shot headless, so both are refused with a message pointing at a fresh crew.
+- **Refusals at request time.** Unknown crew, ended crew (session gone), no live pane, unsupported agent, and a crew under operator takeover. A queued compact is dropped if the operator takes the crew over before it runs.
+- **Send ordering.** From the moment a compact is queued, `squadrant crew send` (and `crew answer`, which sends through it) asks the daemon `crew-compact-state` and waits (up to 14 min, then errors without sending) so the message arrives after the compact, never inside its summary. The hold ends on the crew's `SessionStart(source=compact)` hook (`crew-compact-done`) or lapses after 3 min; opencode has no such hook, so its hold always lapses.
+- **No resume message.** Unlike the captain, a compacted crew is idle by design; the next `crew send` starts its turn.
+- **Code:** `packages/core/src/daemon/crew-compact.ts` (daemon), `packages/cli/src/lib/crew-compact.ts` (CLI request + wait).
+
 ## MCP server (`squadrant mcp`, #1029)
 
-`squadrant mcp` is a stdio [MCP](https://modelcontextprotocol.io) server. First slice (agent → squadrant only): the crew signal tools, so a crew signals through a typed tool call instead of a Bash command (no Bash approval, no shell quoting, a structured result).
+`squadrant mcp` is a stdio [MCP](https://modelcontextprotocol.io) server (agent → squadrant only). Slice A: the crew signal tools, so a crew signals through a typed tool call instead of a Bash command (no Bash approval, no shell quoting, a structured result). Slice B: the captain-side tools (below), so a captain drives squadrant without shelling out. Which tools a session sees depends on its role.
 
 | Tool | Same as | Args (all optional strings) |
 |---|---|---|
@@ -929,7 +941,7 @@ Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TA
 - **One implementation.** The CLI verb and the tools both call `performCrewSignal` (`packages/core/src/crew-signal.ts`): the already-terminal check (#557), the `_results/<id>.txt` write, the #901 citation scan and the #1039 confirmation line. The tool schemas and handler live in `packages/core/src/crew-signal-tools.ts`; `packages/cli/src/commands/mcp.ts` only wires them to the SDK.
 - **Errors are tool errors** (`isError: true`) with a clear message: no crew env, task already terminal, daemon unreachable.
 - **Completion protocol prefers the tool.** The `COMPLETION PROTOCOL` appended to a claude/opencode crew's first turn (`buildCompletionProtocol`) and the codex developer instructions say: call `crew_signal_done` (or `_blocked` / `_failed` / `_review`) from the `squadrant` server if available, passing the explicit `task_id` / `project` (codex needs them — one app-server serves many tasks), otherwise run the `squadrant crew signal …` CLI.
-- **Skipping the ToolSearch step.** Under a crew (`SQUADRANT_CREW_TASK_ID` set) `tools/list` marks every `crew_signal_*` tool with `_meta: { "anthropic/alwaysLoad": true }` (`crewSignalToolList`, tested); a non-crew session (captain, operator) keeps them deferred, though a server-level `alwaysLoad` in the registration overrides that either way; Claude Code >= 2.1.285 then loads the tools upfront instead of deferring them, other MCP clients ignore `_meta` ([Claude Code MCP docs](https://code.claude.com/docs/en/mcp), "Mark a tool to load upfront or stay deferred"). That per-tool flag does **not** make session startup wait for the server, so the very first turn of a freshly spawned crew can still race the MCP connect (the protocol's "No such tool → ToolSearch once → CLI" fallback covers it). **Recommended registration:** also set the server-level `alwaysLoad` on the `squadrant` server entry — startup then waits (up to ~5 s) for the server to connect. squadrant documents this but does not write it for you (nothing edits your agent config); set it in the entry `claude mcp add` created in `~/.claude.json` (`"alwaysLoad": true`), and check the exact key against the docs page for your Claude Code version.
+- **Skipping the ToolSearch step.** Under a crew (`SQUADRANT_CREW_TASK_ID` set) `tools/list` marks every `crew_signal_*` tool with `_meta: { "anthropic/alwaysLoad": true }` (`crewSignalToolList`, tested); a non-crew, non-captain session keeps them deferred (a captain session lists the captain tools instead, see below), though a server-level `alwaysLoad` in the registration overrides that either way; Claude Code >= 2.1.285 then loads the tools upfront instead of deferring them, other MCP clients ignore `_meta` ([Claude Code MCP docs](https://code.claude.com/docs/en/mcp), "Mark a tool to load upfront or stay deferred"). That per-tool flag does **not** make session startup wait for the server, so the very first turn of a freshly spawned crew can still race the MCP connect (the protocol's "No such tool → ToolSearch once → CLI" fallback covers it). **Recommended registration:** also set the server-level `alwaysLoad` on the `squadrant` server entry — startup then waits (up to ~5 s) for the server to connect. squadrant documents this but does not write it for you (nothing edits your agent config); set it in the entry `claude mcp add` created in `~/.claude.json` (`"alwaysLoad": true`), and check the exact key against the docs page for your Claude Code version.
 - **Lazy SDK.** `@modelcontextprotocol/sdk` is imported inside `runMcpServer`, so no other command pays for it (tested).
 - **Claude Code defers MCP tools and prefixes them:** the tool is `mcp__squadrant__crew_signal_done` (a bare `crew_signal_done` is "No such tool"), but they load upfront (per-tool `alwaysLoad`, below). The claude completion protocol (`buildCompletionProtocol(…, "claude")`), `templates/crew.claude.md` and `captain-ops` name the exact tools and give one fallback order: call the tool directly; only on "No such tool" load it once with ToolSearch `select:mcp__squadrant__crew_signal_done` and retry; if it still does not exist, use the CLI; opencode, codex and generic text use the plain tool name "from the `squadrant` MCP server" (no `mcp__` prefix).
 - **Install is manual in this slice** (config projection, #34, is a later slice; nothing writes to your agent config):
@@ -940,6 +952,33 @@ Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TA
 
   Sessions opened before the install need a restart to see the tools. The CLI `squadrant crew signal` stays as the fallback and is not removed.
 - Not in this slice: daemon → agent delivery over MCP. The spike ([report](specs/2026-10-26-mcp-spike-report.md)) found that a self-post from the session's own MCP child keeps Claude's "Another Claude session" framing on 2.1.310.
+
+### Role scoping and captain tools
+
+The server is registered once at user scope, so every Claude session on the machine starts it; `tools/list` is therefore scoped by the session's env (`mcpRole`, `packages/cli/src/lib/captain-mcp-tools.ts`):
+
+| Session | Env | Tools listed |
+|---|---|---|
+| Crew | `SQUADRANT_CREW_TASK_ID` set (wins over the role) | `crew_signal_*` only, each `alwaysLoad` |
+| Captain | `SQUADRANT_ROLE=captain`, no crew id | the captain batch below only, each `alwaysLoad`; no `crew_signal_*` |
+| Anything else (thread, side, operator shell, unknown role) | neither | `crew_signal_*` deferred, as before; **no captain tools** |
+
+`tools/call` enforces the same scope, so a hidden tool cannot be called by guessing its name.
+
+| Group | Tools | Same as |
+|---|---|---|
+| Crew | `crew_spawn` (`task`, `name`, `agent`, `model`, `thinking`, `backend`, `shared`, `approval`) · `crew_send` · `crew_list` · `crew_tasks` (`id`, `state`, `json`) · `crew_read` (`lines`, `full`) · `crew_msg` (`seq`) · `crew_compact` (`name`, `keep`) · `crew_close` | `crew spawn/send/list/tasks/read/msg/compact/close` |
+| Thread / side | `thread_open` (`topic`, `crews`) · `thread_park` (`id`, optional `decision` JSON) · `thread_resume` · `thread_list` (`all`) · `side_spawn` (`topic`, `role`, `name`, `agent`) · `side_send` | `thread open/park/resume/list`, `side spawn/send` |
+| Cross-project | `ping` (`project`, `message`) · `dispatch` (`project`, `task`, `provider`, `mode`) | `ping`, `dispatch` |
+| Captain | `captain_compact` (`focus`) · `status` | `captain compact`, `status` |
+| Knowledge | `rules_search` (`query`, `limit`; brief, read-only) | `rules search --brief` |
+| Inbox | `check_inbox`: the captain's undelivered mailbox entries, a pull for agents without push (read one in full with `crew_msg`) | none (reads `readUndelivered`) |
+
+- `project` is optional everywhere except `ping` / `dispatch`, where it is the target: it defaults to the session's own project (`resolveCurrentProject`, from the cwd); if that fails the tool errors and asks for it.
+- **Never exposed over MCP** (operator in the loop, CLI only): `crew approve` / merge, `crew answer`, `crew close --force`, `crew takeover/handback`, task purge, config and profile edits. A test pins the absence.
+- **One implementation.** Each tool calls the function its CLI command already runs (`runCrewSpawn`, `runCrewSend`, `crewListLines`, `renderCrewTasks`, `runThreadOpen`, `runPing`, `runDispatch`, …); where that logic sat inside a commander `.action` it was extracted so the CLI and the tool share it, with no CLI behaviour change. Results are the CLI's own short text with ANSI stripped; failures are `isError: true`. While the server runs, `console.log` is routed to stderr so shared code can't corrupt the stdio protocol.
+- **No daemon reconcile at startup.** `mcp` is in `READ_ONLY_TOP_LEVEL_COMMANDS`, so the CLI's startup `ensureDaemon` is skipped for it: every session start would otherwise run it, and under `SQUADRANT_ROLE=captain` it may re-register and restart the launchd daemon beneath live crews. Tools reach the daemon on demand and report when it is down.
+- Claude captains call them as `mcp__squadrant__<tool>` directly (ToolSearch only on "No such tool", then the CLI); the captain template and `captain-ops` say so. Other agents' text never uses `mcp__` names.
 
 ## Captain discussion threads (#1016)
 

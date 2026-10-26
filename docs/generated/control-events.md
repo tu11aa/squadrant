@@ -45,8 +45,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:943
   - packages/core/src/daemon/reduce.ts:507
   - packages/core/src/daemon/reduce.ts:562
-  - packages/core/src/daemon/start.ts:95
-  - packages/core/src/daemon/start.ts:99
+  - packages/core/src/daemon/start.ts:96
+  - packages/core/src/daemon/start.ts:100
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
@@ -75,7 +75,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-signal.ts:67
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
-  - packages/cli/src/commands/crew-control.ts:254
+  - packages/cli/src/commands/crew-control.ts:279
   - packages/core/src/crew-signal.ts:57
   - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
