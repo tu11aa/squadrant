@@ -29,7 +29,7 @@ import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
-import { requestCrewCompact, waitForCrewCompact } from "../lib/crew-compact.js";
+import { requestCrewCompact, cancelCrewCompact, waitForCrewCompact } from "../lib/crew-compact.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 import { commandExists } from "./doctor.js";
@@ -440,8 +440,14 @@ crewCommand
   .argument("<project>", "Project name")
   .argument("<name>", "Crew name (e.g. crew-1)")
   .option("--keep <text>", "what the summary should keep, passed to /compact")
-  .action(async (project: string, name: string, opts: { keep?: string }) => {
+  .option("--cancel", "drop a queued compact and release the hold it puts on `crew send` (no-op if none is queued)")
+  .action(async (project: string, name: string, opts: { keep?: string; cancel?: boolean }) => {
     try {
+      if (opts.cancel) {
+        const { cancelled } = await cancelCrewCompact(project, name, squadrantdCall);
+        console.log(cancelled ? chalk.green(`✔ Compact cancelled for ${project}:${name} — sends to it are no longer held.`) : chalk.dim(`No compact queued for ${project}:${name}.`));
+        return;
+      }
       const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
       console.log(chalk.green(crewCompactQueuedLine(project, name, agent)));
     } catch (e) {
