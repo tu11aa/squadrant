@@ -7,7 +7,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveCaptainChannelMode, stateRoot as defaultStateRoot } from "@squadrant/shared";
-import { appendCaptainMessage, deliverToCaptain, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
+import { appendCaptainMessage, deliverToCaptain, frameMessage, isValidSender, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
 import { requireDaemon } from "../lib/require-daemon.js";
 import { buildCaptainChannels } from "../lib/captain-channel-factory.js";
@@ -31,7 +31,8 @@ export function formatPingResult(project: string, outcome?: DeliveryOutcome): st
   }
 }
 
-export async function runPing(project: string, message: string): Promise<DeliveryOutcome | undefined> {
+export async function runPing(project: string, message: string, from = "cli"): Promise<DeliveryOutcome | undefined> {
+  if (!isValidSender(from)) throw new Error(`Invalid --from '${from}' — use a label like side:research-1`);
   const config = loadConfig();
   const registry = buildRegistry();
   const resolved = resolveTarget(registry, config, project, false);
@@ -47,7 +48,7 @@ export async function runPing(project: string, message: string): Promise<Deliver
     ? { channels: {} as Record<string, ControlChannel>, agentFor: () => undefined }
     : await buildCaptainChannels({ stateRoot, configAgent: config.defaults.roles?.captain?.agent });
   const channel = channels[agentFor(project) ?? ""];
-  const { handled, outcome } = await deliverToCaptain(project, message, {
+  const { handled, outcome } = await deliverToCaptain(project, frameMessage({ from, project, kind: "captain.message" }, message), {
     channel,
     mode,
     log: (m) => console.error(chalk.dim(m)),
@@ -59,6 +60,7 @@ export async function runPing(project: string, message: string): Promise<Deliver
       project,
       text: message,
       source: "cli",
+      from,
     });
   }
   return outcome;
@@ -68,9 +70,10 @@ export const pingCommand = new Command("ping")
   .description("Fire-and-forget: deliver a message into a registered project's captain pane (no tracked task, no report-back)")
   .argument("<project>", "Target project name (must be registered)")
   .argument("<message>", "Message to deliver")
-  .action(async (project: string, message: string) => {
+  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: cli)")
+  .action(async (project: string, message: string, opts: { from?: string }) => {
     try {
-      const outcome = await runPing(project, message);
+      const outcome = await runPing(project, message, opts.from);
       console.log(formatPingResult(project, outcome));
     } catch (err) {
       console.error(chalk.red((err as Error).message));

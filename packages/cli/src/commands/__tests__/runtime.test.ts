@@ -90,6 +90,18 @@ describe("runtime send", () => {
     );
   });
 
+  it("#1029: --from carries the sender (e.g. side:<name>) into the mailbox entry", async () => {
+    await runRuntimeSend("projA", "Side handoff", { from: "side:side-1" });
+    expect(appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Side handoff", source: "cli", from: "side:side-1" }),
+    );
+  });
+
+  it("#1029: rejects a --from that could break the frame", async () => {
+    await expect(runRuntimeSend("projA", "x", { from: 'a" b' })).rejects.toThrow(/Invalid --from/);
+    expect(appendCaptainMessage).not.toHaveBeenCalled();
+  });
+
   it("enqueues under cfg.commandName when using --command", async () => {
     await runRuntimeSend("hello from command", undefined, { command: true });
 

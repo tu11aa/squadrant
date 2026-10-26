@@ -1,6 +1,7 @@
 // @squadrant/core — driver-agnostic daemon / control-plane core.
 export * from "./daemon/reduce.js";
 export * from "./mailbox.js";
+export * from "./squadrant-message.js";
 export * from "./protocol.js";
 export * from "./state-machine.js";
 export * from "./liveness.js";

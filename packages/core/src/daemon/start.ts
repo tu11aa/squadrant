@@ -9,6 +9,7 @@ import { createDaemon } from "./reduce.js";
 import { createProbes, buildSurfaceProbe } from "./probes.js";
 import { createDelivery } from "./delivery-loop.js";
 import { deliverToCaptain } from "../captain-channel.js";
+import { frameMessage } from "../squadrant-message.js";
 import { createCaptainCompact, COMPACT_RESUME_TEXT } from "./captain-compact.js";
 import { createGateResolver } from "./gates.js";
 import { createServer } from "./server.js";
@@ -377,7 +378,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       resume: async (project) => {
         const agent = ctx.captainAgentFor?.(project);
         const channel = ctx.captainAgentFor ? (agent ? ctx.captainChannels?.[agent] : undefined) : ctx.captainChannel;
-        const r = await deliverToCaptain(project, COMPACT_RESUME_TEXT, { channel, mode: ctx.captainChannelMode?.() ?? "off", log });
+        const r = await deliverToCaptain(project, frameMessage({ from: "daemon", project, kind: "compact.resume" }, COMPACT_RESUME_TEXT), { channel, mode: ctx.captainChannelMode?.() ?? "off", log });
         if (!r.handled) log(`captain-compact ${project}: resume message not sent — no captain channel`);
       },
     });

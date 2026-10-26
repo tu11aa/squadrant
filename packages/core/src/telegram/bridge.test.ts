@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { formatLifecycle } from "./format.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -183,6 +184,21 @@ describe("handleUpdate routing", () => {
     expect(bodies).toContain("✅ captain received");
     // The channel delivered, so the mailbox fallback must NOT run a second time.
     expect(d.appendCaptainMessage).not.toHaveBeenCalled();
+    bridge.stop();
+  });
+
+  it("#1029: inbound reaches the captain framed as from=telegram; outbound lifecycle text is never framed", async () => {
+    setTopic(stateRoot, "brove", 7);
+    const cfg = { ...baseCfg, remoteControl: true, users: [ALLOWED_USER] };
+    const deliverInbound = vi.fn(async () => ({ handled: true, outcome: { status: "accepted" as const, via: "claude-peer" as const, confirmed: true } }));
+    const d = deps({ deliverInbound });
+    const { bridge, drained } = drive({ cfg, ...d }, [topicMsg("ship it", 7)]);
+    await drained;
+    expect(deliverInbound).toHaveBeenCalledWith(
+      "brove",
+      '<squadrant-message from="telegram" project="brove" kind="captain.message">\n📩 [from Telegram] ship it\n</squadrant-message>',
+    );
+    expect(formatLifecycle("brove", { type: "task.done", id: "t1", message: "done" } as never)).not.toContain("squadrant-message");
     bridge.stop();
   });
 

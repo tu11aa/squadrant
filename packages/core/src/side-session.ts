@@ -19,6 +19,7 @@ import {
 import { shellQuote } from "./crew-protocol.js";
 import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
+import { frameMessage } from "./squadrant-message.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -58,6 +59,7 @@ export function buildSideFirstTurn(
   role: string,
   workspace: string,
   scratchWorktree?: string,
+  name?: string,
 ): string {
   const lines = [
     topic,
@@ -68,6 +70,7 @@ export function buildSideFirstTurn(
     `Role: ${role}`,
     `Workspace: ${workspace}`,
   ];
+  if (name) lines.push(`Side name: ${name}`);
   if (scratchWorktree) {
     lines.push(`Scratch worktree: ${scratchWorktree}`);
   }
@@ -169,6 +172,7 @@ export async function runSideSpawn(
     input.role,
     workspacePath(input.project),
     input.role === "debug" ? spawnCwd : undefined,
+    name,
   );
   // #864: same spill as the crew path (#730) — a long multi-line topic pasted
   // into the pane gets truncated mid-render; send a pointer to a temp file instead.
@@ -194,7 +198,7 @@ export async function runSideSend(
       `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
-  await runtime.sendToPane(pane, message);
+  await runtime.sendToPane(pane, frameMessage({ from: `captain:${project}`, project, kind: "side.send" }, message));
 }
 
 export async function runSideList(
