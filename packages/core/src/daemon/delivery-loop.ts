@@ -1,7 +1,7 @@
 // src/control/daemon/delivery.ts
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor, type MailboxEntry } from "../mailbox.js";
-import { CaptainDelivery, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
+import { CaptainDelivery, deliverable, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES, loadProjectOverride, resolveCaptainCrewTier, type CrewTier } from "@squadrant/shared";
 import { captainPaneAllows, isAddressedTurnEnd, isInformational, InformationalDigest } from "./captain-noise.js";
@@ -10,6 +10,7 @@ import { STALE_THRESHOLD_MS } from "./interactive-probe.js";
 import { coalesceBacklog } from "./backlog-coalesce.js";
 import { deriveCaptainState } from "../liveness.js";
 import { deliverToCaptain } from "../captain-channel.js";
+import { frameEntry } from "../squadrant-message.js";
 import { readCaptainAddress, writeCaptainAddress, type CaptainAddress } from "../captain-record.js";
 import { listSessions, newestSessionInDirectory, discoverLiveOpencodeServer } from "../opencode-session.js";
 import type { TaskRecord, ControlEvent, RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
@@ -521,7 +522,11 @@ export function createDelivery(
             await writeCursor({ stateRoot, project, subscriber: CURSOR_SUBSCRIBER, lastAckedSeq: entry.seq });
             continue;
           }
-          const result = await d.deliver(decision.entry, async (text, sendOpts) => {
+          // Sender frame (#1029): applied here, once, for every transport (peer socket,
+          // opencode, pane fallback). The mailbox keeps the bare text, so a retry re-frames.
+          const body = deliverable(decision.entry);
+          const framedEntry = body === null ? decision.entry : { ...decision.entry, message: frameEntry(project, decision.entry, body) };
+          const result = await d.deliver(framedEntry, async (text, sendOpts) => {
             const agent = ctx.captainAgentFor?.(project);
             // #786: with no agent resolver, fall back to the legacy single channel —
             // byte-for-byte the pre-#786 behaviour (existing tests rely on it).

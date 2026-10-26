@@ -435,7 +435,7 @@ export async function parkThread(
   rec.parkedAt = rec.lastActiveAt = now.toISOString();
   delete rec.surfaceId;
   writeThread(deps.stateRoot, rec);
-  const seq = await appendCaptainMessage({ stateRoot: deps.stateRoot, project, text: formatDecisionMessage(rec, decision), source: "cli" });
+  const seq = await appendCaptainMessage({ stateRoot: deps.stateRoot, project, text: formatDecisionMessage(rec, decision), source: "cli", from: `thread:${rec.id}` });
   if (surfaceId) await deps.runtime.closePane({ workspaceId: deps.workspaceId, surfaceId }).catch(() => {});
   return { thread: rec, seq };
 }

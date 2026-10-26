@@ -153,12 +153,14 @@ export async function appendCaptainMessage(opts: {
   project: string;
   text: string;
   source: "telegram" | "daemon" | "cli";
+  /** Sender shown in the delivery frame (thread:<id>, side:<name>, …); defaults to `source`. */
+  from?: string;
 }): Promise<number> {
   return appendEntry(opts.stateRoot, opts.project, (seq) => ({
     seq,
     ts: new Date().toISOString(),
     kind: "captain.message",
-    payload: { source: opts.source },
+    payload: { source: opts.source, ...(opts.from ? { from: opts.from } : {}) },
     message: opts.text,
   }));
 }

@@ -1,4 +1,5 @@
 // #890: end-to-end through the real delivery loop — a recovered captain gets
+import { unframe } from "./unframe.js";
 // the coalesced current truth, not a chronological flood of stale events.
 import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -41,7 +42,7 @@ function setup(entries: MailboxEntry[], taskState: "done" | "review" = "done") {
     listSurfaces: async () => [{ id: "s1", title: captainName, command: "bash" }],
     findWorkspaceId: async () => "w1",
     readScreen: async () => `${captainName}> `,
-    send: async (_s: unknown, text: string) => { sent.push(text); },
+    send: async (_s: unknown, text: string) => { sent.push(unframe(text)); },
   };
   const deliv = createDelivery({
     stateRoot, store, livenessRegistry, log: () => {}, isPidAlive: () => true, opts: {},

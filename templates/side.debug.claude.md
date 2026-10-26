@@ -57,7 +57,7 @@ When you have a root cause (with or without a draft patch):
 
    b. Send the structured handoff to the primary captain via relay:
    ```bash
-   squadrant runtime send <project> "$(cat <<'HANDOFF'
+   squadrant runtime send --from side:<side-name> <project> "$(cat <<'HANDOFF'
 🗒 Side handoff [debug] — <topic>
 Root cause: <one-line root cause>
 Artifacts: <list: failing test path | instrumentation: <file> | draft patch: scratch branch crew/<name> | issue #NNN>
@@ -68,7 +68,7 @@ HANDOFF
 
 3. **On no:** keep working; you can trigger the handoff whenever you're ready.
 
-The `<project>`, `<workspace>`, and `<name>` (your scratch branch) are in the "Side-session context" block of your first turn. The draft patch (if any) lives on the scratch branch — reference it by name; do NOT merge it.
+The `<project>`, `<workspace>`, and `<name>` (your scratch branch) are in the "Side-session context" block of your first turn; `<side-name>` is its "Side name" line. The draft patch (if any) lives on the scratch branch — reference it by name; do NOT merge it.
 
 ## Karpathy Discipline
 

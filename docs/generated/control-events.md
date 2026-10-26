@@ -12,7 +12,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 | ⚠ `heartbeat` | 0 (known zombie) | ✓ | ✓ | — |
 | `task.blocked` | 10 | ✓ | ✓ | ✓ |
 | `task.review` | 1 | ✓ | ✓ | ✓ |
-| `task.done` | 3 | ✓ | ✓ | ✓ |
+| `task.done` | 4 | ✓ | ✓ | ✓ |
 | `task.failed` | 8 | ✓ | ✓ | ✓ |
 | `task.session` | 1 | ✓ | ✓ | — |
 | `task.turn.started` | 1 | ✓ | ✓ | — |
@@ -42,11 +42,11 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/headless-launcher.ts:42
   - packages/agents/src/opencode/sse-bridge.ts:146
   - packages/agents/src/opencode/sse-bridge.ts:298
-  - packages/core/src/crew-spawn.ts:940
+  - packages/core/src/crew-spawn.ts:941
   - packages/core/src/daemon/reduce.ts:506
   - packages/core/src/daemon/reduce.ts:561
-  - packages/core/src/daemon/start.ts:94
-  - packages/core/src/daemon/start.ts:98
+  - packages/core/src/daemon/start.ts:95
+  - packages/core/src/daemon/start.ts:99
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
@@ -77,13 +77,14 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/headless-launcher.ts:92
   - packages/cli/src/commands/crew-control.ts:207
   - packages/cli/src/commands/crew-control.ts:410
+  - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
   - packages/agents/src/headless-launcher.ts:79
   - packages/agents/src/headless-launcher.ts:89
   - packages/cli/src/commands/crew-control.ts:219
-  - packages/core/src/crew-spawn.ts:399
+  - packages/core/src/crew-spawn.ts:400
   - packages/core/src/daemon/interactive-probe.ts:197
   - packages/core/src/daemon/reduce.ts:864
 - `task.session`
@@ -117,14 +118,14 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.reattached`
   - packages/agents/src/codex/driver.ts:222
 - `task.reopened`
-  - packages/core/src/crew-spawn.ts:933
+  - packages/core/src/crew-spawn.ts:934
 - `task.stalled`
   - packages/core/src/daemon/reduce.ts:769
   - packages/core/src/daemon/reduce.ts:771
   - packages/core/src/daemon/reduce.ts:772
   - packages/core/src/daemon/reduce.ts:789
 - `task.quiet`
-  - packages/core/src/daemon/delivery-loop.ts:295
+  - packages/core/src/daemon/delivery-loop.ts:296
   - packages/core/src/daemon/reduce.ts:827
 - `task.warn`
   - packages/core/src/daemon/interactive-probe.ts:183
@@ -134,12 +135,12 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.cancelled`
   - packages/cli/src/commands/shutdown.ts:83
   - packages/cli/src/commands/shutdown.ts:121
-  - packages/core/src/crew-spawn.ts:1149
+  - packages/core/src/crew-spawn.ts:1156
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:653
   - packages/cli/src/commands/hooks.ts:53
-  - packages/core/src/crew-spawn.ts:706
-  - packages/core/src/crew-spawn.ts:795
+  - packages/core/src/crew-spawn.ts:707
+  - packages/core/src/crew-spawn.ts:796
   - packages/core/src/daemon/reduce.ts:486
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`

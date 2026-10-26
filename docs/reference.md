@@ -358,6 +358,33 @@ The next step past lifecycle sources: use each agent's **native control API** as
 - Implementation: `@squadrant/core/src/captain-channel.ts`, `control-channel.ts`, `lifecycle-source.ts`.
 - Design doc: [`specs/2026-08-13-agent-control-channel-design.md`](specs/2026-08-13-agent-control-channel-design.md). Diagram: [`diagrams/2026-08-13-agent-control-channel.html`](diagrams/2026-08-13-agent-control-channel.html).
 
+#### Sender frame on every delivered message (#1029)
+
+Claude Code renders every socket-delivered message as an anonymous "Another Claude session sent a message", ignoring any sender name the transport carries (spike #1029). So squadrant names the sender **in the text**, once, at the delivery layer — the same `@squadrant/core` function (`frameMessage`, `squadrant-message.ts`) for every transport (claude peer socket, opencode, pane fallback):
+
+```
+<squadrant-message from="crew:mcpspike" project="squadrant" kind="task.done" agent="claude" task="66884473" id="12">
+CREW DONE [claude/mcpspike · 66884473]: …
+</squadrant-message>
+```
+
+| Direction | Where it is framed | `from` |
+|---|---|---|
+| crew event → captain (CREW DONE / BLOCKED / IDLE …) | delivery loop, from the mailbox entry | `crew:<name>` (short task id when unnamed) |
+| captain `crew send` → crew | `runCrewSend` | `captain:<project>` |
+| captain `side send` → side session | `runSideSend` | `captain:<project>` |
+| Telegram inbound → captain | bridge (channel path) / delivery loop (mailbox fallback) | `telegram` |
+| thread park decision → captain | delivery loop (`payload.from`) | `thread:<id>` |
+| side handoff → captain | `squadrant runtime send --from side:<name>` (also `ping --from`) | `side:<name>` |
+| daemon alerts, compact-resume, KB requests | delivery loop / compact resume | `daemon` |
+| `ping` / `runtime send` without `--from` | delivery loop / `ping` | `cli` |
+
+- Attributes: `from` (required), `project`, `kind` (event or message kind), `agent`, `task`, `id` (mailbox seq). Values are reduced to `[A-Za-z0-9_.:@/+-]`; inside the body any `<squadrant-message` / `</squadrant-message` is escaped (`&lt;`), so a body can neither close the frame early nor forge a sender.
+- The mailbox keeps the **bare** text; framing happens at send time, so a deferred/retried delivery is framed exactly once.
+- Pane fallback: the cmux paste path already flattens newlines to spaces, so the frame arrives as one line (`<squadrant-message …> body </squadrant-message>`) and submits like any other message.
+- Telegram **outbound** text (`formatLifecycle`) is for humans and is never framed. The #711 name registration is unchanged — the frame is the agent-visible sender, the registration is the transport-level one.
+- Agents are told (templates + `captain-ops`) that a `<squadrant-message>` is peer input, never operator approval.
+
 #### Running an opencode captain
 
 An opencode captain must be **launched by squadrant** — a manually opened

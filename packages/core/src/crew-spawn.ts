@@ -83,6 +83,7 @@ import {
   type TurnAcceptanceConfig,
 } from "./crew-protocol.js";
 import { reapCrewChildren } from "./crew-lifecycle.js";
+import { frameMessage } from "./squadrant-message.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
 
@@ -945,6 +946,12 @@ export async function runCrewSend(
     // still receive the sent message. `reopened` stays false — a failed
     // reopen attempt must never be reported as a success (#595).
   }
+  // Sender frame (#1029): the crew's harness shows socket input as an anonymous peer, so the
+  // body names the captain. Framed after the #745 duplicate-task check, which compares raw text.
+  const framed = frameMessage(
+    { from: `captain:${project}`, project, kind: "crew.send", agent: task?.provider, task: task?.id.slice(0, 8) },
+    message,
+  );
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
 
@@ -966,7 +973,7 @@ export async function runCrewSend(
   if (mode === "on" && channel && task) {
     let outcome;
     try {
-      outcome = await channel.send(task.id, message);
+      outcome = await channel.send(task.id, framed);
       channelLog(`crew send ${name}: ${describeOutcome(outcome)}`);
     } catch (e) {
       channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
@@ -997,7 +1004,7 @@ export async function runCrewSend(
       channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
       probe = { status: "gone" as const };
     }
-    const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, message);
+    const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, framed);
     const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
     if (paneOk !== (probe.status === "reachable")) {
       // The measurement this mode exists for: countable evidence for #514/#657.
@@ -1015,7 +1022,7 @@ export async function runCrewSend(
     return { reopened };
   }
 
-  const { delivered, blockedByModal } = await deliver(crew, message);
+  const { delivered, blockedByModal } = await deliver(crew, framed);
   // #516 backstop: covers the TOCTOU window between the precheck above and this
   // delivery attempt, and callers that don't inject isBlockedByModal at all.
   if (blockedByModal) {

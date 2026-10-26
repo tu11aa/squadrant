@@ -13,6 +13,7 @@ import { parseCommand, stripBotMention } from "./commands.js";
 import type { EnsureResult } from "./ensure-captain.js";
 import type { InboundLifecycle } from "./inbound-lifecycle.js";
 import type { DeliveryOutcome } from "../control-channel.js";
+import { frameMessage } from "../squadrant-message.js";
 
 /** Stage-2 ACK text (#838 Option B). Deliberately ONE short line: stage 1 is the
  *  attached reaction, so the operator sees both ends of the hop without this
@@ -648,7 +649,7 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     let handled = false;
     let outcome: DeliveryOutcome | undefined;
     if (opts.deliverInbound) {
-      const res = await opts.deliverInbound(resolved.project, formatInbound(text));
+      const res = await opts.deliverInbound(resolved.project, frameMessage({ from: "telegram", project: resolved.project, kind: "captain.message" }, formatInbound(text)));
       handled = res.handled;
       outcome = res.outcome;
     }

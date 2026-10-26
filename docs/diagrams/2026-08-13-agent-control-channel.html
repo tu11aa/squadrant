@@ -257,6 +257,22 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
   </div>
   <p class="sub" style="font-size:13.5px">Note: Crew wrapper/receipt text visible in prompt under <code>on</code> mode is a sender-identity artifact (<span class="tag">#711</span>), not an inherent property of the channel.</p>
 
+  <h2>Message shape: sender frame (#1029)</h2>
+  <p class="lead">Claude Code shows every socket message as an anonymous peer, so the delivery layer names the sender <strong>inside the text</strong> — same frame on every transport, applied once, never stored.</p>
+  <pre style="background:var(--card,#f6f6f6);padding:12px;border-radius:8px;overflow:auto;font-size:13px">&lt;squadrant-message from="crew:mcpspike" project="squadrant" kind="task.done" agent="claude" task="66884473" id="12"&gt;
+CREW DONE [claude/mcpspike · 66884473]: …
+&lt;/squadrant-message&gt;</pre>
+  <table>
+    <tr><th>Sender</th><th><code>from</code></th></tr>
+    <tr><td>crew event → captain</td><td><code>crew:&lt;name&gt;</code></td></tr>
+    <tr><td>captain <code>crew send</code> / <code>side send</code></td><td><code>captain:&lt;project&gt;</code></td></tr>
+    <tr><td>Telegram inbound</td><td><code>telegram</code></td></tr>
+    <tr><td>thread park decision</td><td><code>thread:&lt;id&gt;</code></td></tr>
+    <tr><td>side handoff (<code>runtime send --from</code>)</td><td><code>side:&lt;name&gt;</code></td></tr>
+    <tr><td>daemon alerts / compact resume</td><td><code>daemon</code></td></tr>
+  </table>
+  <p class="sub" style="font-size:13.5px">Tag text inside a body is escaped, so a body cannot close the frame or forge a sender. Telegram outbound is never framed. Pane fallback flattens to one line.</p>
+
   <h2>Rollout &amp; channel status (v0.19.0)</h2>
   <div class="flow">
     <div class="node"><div class="t">off</div>
@@ -288,7 +304,7 @@ POST /session/<span class="c6">ses_doesnotexist</span>/prompt_async             
     <tr><td>#713</td><td>Daemon can hold a stale surface ref after a captain pid change</td><td><span class="tag">#713 open</span></td></tr>
     <tr><td>#714</td><td>A failed <code>cmux read-screen</code> is swallowed and misreported as <code>reason=no-box</code> (which does NOT mean the screen is covered)</td><td><span class="tag">#714 open</span></td></tr>
     <tr><td>#715</td><td><code>squadrant heal status</code> reports all-healthy while delivery is dead</td><td><span class="tag">#715 open</span></td></tr>
-    <tr><td>#711</td><td>Crew wrapper/receipt text visible in <code>on</code> mode is a sender-identity artifact</td><td><span class="tag">#711 open</span></td></tr>
+    <tr><td>#711</td><td>Crew wrapper/receipt text visible in <code>on</code> mode is a sender-identity artifact</td><td><span class="tag">#711 open</span> — sender now named in-text by the #1029 frame</td></tr>
   </table>
 
   <h2>Out of scope — and why</h2>

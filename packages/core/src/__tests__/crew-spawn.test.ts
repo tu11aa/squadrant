@@ -1,3 +1,4 @@
+import { framedBody } from "./unframe.js";
 // Unit tests for crew-spawn.ts orchestration logic.
 // Uses mock deps and module mocks — no daemon, no workspaces, no agents, no git.
 
@@ -1708,7 +1709,7 @@ describe("runCrewSend", () => {
         listTasks: vi.fn().mockResolvedValue([task]),
         emitEvent: vi.fn(),
       });
-      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "also update the changelog");
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("also update the changelog"));
     });
 
     it("still delivers the identical task text when firstTurnConfirmedAt is NOT yet set (genuine non-delivery)", async () => {
@@ -1719,7 +1720,7 @@ describe("runCrewSend", () => {
         listTasks: vi.fn().mockResolvedValue([task]),
         emitEvent: vi.fn(),
       });
-      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "fix the bug");
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("fix the bug"));
     });
 
     // Task explicitly requires task.blocked behavior to be untouched — even in
@@ -1742,7 +1743,7 @@ describe("runCrewSend", () => {
         emitEvent,
       });
       expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
-      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "fix the bug");
+      expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("fix the bug"));
     });
   });
 
@@ -1753,7 +1754,7 @@ describe("runCrewSend", () => {
       listTasks: vi.fn().mockResolvedValue([]),
       emitEvent: vi.fn(),
     });
-    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "hello");
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("hello"));
   });
 
   it("emits task.reopened for terminal task before sending", async () => {
@@ -1766,7 +1767,7 @@ describe("runCrewSend", () => {
       emitEvent,
     });
     expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.reopened", id: "t1" });
-    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("msg"));
   });
 
   // #1032: a send to any live crew marks the task as awaiting a reply.
@@ -1823,7 +1824,7 @@ describe("runCrewSend", () => {
       emitEvent: vi.fn().mockRejectedValue(new Error("daemon down")),
     });
     expect(result).toEqual({ reopened: false });
-    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("msg"));
   });
 
   it("emits task.started for blocked task before sending", async () => {
@@ -1851,7 +1852,7 @@ describe("runCrewSend", () => {
       emitEvent,
     });
     expect(emitEvent).toHaveBeenCalledWith(PROJECT, { type: "task.started", id: "t1" });
-    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "please also add a test");
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("please also add a test"));
   });
 
   it("swallows daemon errors and still delivers the message", async () => {
@@ -1861,7 +1862,7 @@ describe("runCrewSend", () => {
       listTasks: vi.fn().mockRejectedValue(new Error("daemon down")),
       emitEvent: vi.fn(),
     });
-    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), "msg");
+    expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("msg"));
   });
 
   // #574: runCrewSend picked tasks.find() = FIRST same-name match, while
@@ -1898,7 +1899,7 @@ describe("runCrewSend", () => {
       emitEvent: vi.fn(),
       sendToPane: injectedSend,
     });
-    expect(injectedSend).toHaveBeenCalledWith(expect.anything(), "big message");
+    expect(injectedSend).toHaveBeenCalledWith(expect.anything(), framedBody("big message"));
     expect(runtime.sendToPane).not.toHaveBeenCalled();
   });
 

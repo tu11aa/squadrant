@@ -472,6 +472,11 @@ describe("squadrant side spawn", () => {
 });
 
 describe("buildSideFirstTurn", () => {
+  it("#1029: names the side so its handoff can use --from side:<name>", () => {
+    const result = buildSideFirstTurn("t", "proj", "research", "/vault", undefined, "side-2");
+    expect(result).toContain("Side name: side-2");
+  });
+
   it("includes topic, project, role, and the workspace path", () => {
     const result = buildSideFirstTurn(
       "research oauth options",
@@ -585,7 +590,7 @@ describe("runSideList / runSideClose / runSideSend", () => {
 
     expect(sendToPane).toHaveBeenCalledWith(
       expect.objectContaining({ surfaceId: "s1" }),
-      "follow-up message",
+      expect.stringMatching(/^<squadrant-message from="captain:brove"[^>]*>\nfollow-up message\n<\/squadrant-message>$/),
     );
     expect(squadrantdCall).not.toHaveBeenCalled();
   });
