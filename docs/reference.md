@@ -1070,7 +1070,9 @@ Sources: `squadrant heal daemon`, `heal captain`, `projects add` / `config set <
 
 The "⚠️ Daemon restarted → vX" captain notice fires only when the daemon's **version or install path** changed since the last boot (a same-version reinstall + `heal daemon`, a config restart, or a crash stays silent), and never within 5 minutes of the previous notice.
 
-`squadrantdCall` (the CLI → daemon socket call) retries and self-heals only when the socket cannot be reached. A timeout or a daemon-reported error is returned as-is: the daemon already has the request, and re-sending it would deliver it twice.
+`squadrantdCall` (the CLI → daemon socket call) retries and self-heals only when the socket cannot be reached (the connection failed before the request was written). A timeout or a daemon-reported error is returned as-is: the daemon already has the request, and re-sending it would deliver it twice. A connection lost **after** the request was written (`ECONNRESET`, or the daemon closing without a reply) fails at once with `connection lost after the request was sent — it may or may not have been delivered; check … before retrying`. Check the result (e.g. `squadrant crew list`) before you retry by hand.
+
+`ensureDaemon` never takes over the launchd entry implicitly in two cases. **(1)** The plist names a different `squadrantd.js` that is missing: it re-checks for about 3 s (the `npm i -g` gap), then leaves it alone with a note to run `squadrant heal daemon`. **(2)** The running build is inside a linked git worktree (a crew's `.worktrees/…` build): it never registers itself. In both cases `squadrant heal daemon` is the explicit way to register this install.
 
 ## Rules audit log (#935)
 

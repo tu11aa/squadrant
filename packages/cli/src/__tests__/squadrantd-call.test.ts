@@ -39,3 +39,14 @@ describe("squadrantdCall", () => {
     expect(sendRequest).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("squadrantdCall after the request was written", () => {
+  it("a 'may or may not have been delivered' error is thrown as-is: never re-sent", async () => {
+    vi.mocked(sendRequest).mockRejectedValue(new Error(
+      "control plane: connection lost after the request was sent — it may or may not have been delivered; check (e.g. `squadrant crew list`) before retrying (ECONNRESET)",
+    ));
+    await expect(squadrantdCall({ kind: "event" })).rejects.toThrow(/may or may not have been delivered/);
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(ensureDaemon).not.toHaveBeenCalled();
+  });
+});

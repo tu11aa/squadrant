@@ -71,15 +71,10 @@ const thisEntry = () => daemonEntryPath();
 const desiredPlist = () => renderPlist(NODE, thisEntry(), buildDaemonPath(process.env.PATH ?? ""));
 
 describe("ensureDaemon attribution", () => {
-  it("logs who/why before a program-arg bootout, naming the caller and the entry drift", () => {
-    plistOnDisk = renderPlist(NODE, "/gone/squadrant/dist/squadrantd.js", buildDaemonPath(process.env.PATH ?? ""));
-    vi.mocked(existsSync).mockImplementation((p: unknown) => {
-      const s = String(p);
-      if (s.includes("daemon.lock") || s.startsWith("/gone/")) return false;
-      return true;
-    });
+  it("logs who/why before a program-arg bootout, naming the caller and the drift", () => {
+    plistOnDisk = renderPlist("/old/bin/node", thisEntry(), buildDaemonPath(process.env.PATH ?? ""));
     ensureDaemon(NODE, { caller: "cli startup" });
-    expect(order[0]).toMatch(/^trigger bootout\+bootstrap \| ensureDaemon cli startup; drift=path \(entry \/gone\/.* -> /);
+    expect(order[0]).toBe(`trigger bootout+bootstrap | ensureDaemon cli startup; drift=path (node /old/bin/node -> ${NODE})`);
     expect(order.slice(1).some((l) => l.startsWith("launchctl bootout"))).toBe(true);
   });
 
@@ -98,12 +93,7 @@ describe("ensureDaemon attribution", () => {
   });
 
   it("restart storm: a second captain process with the same drift finds the plist already reconciled — one bootout total", () => {
-    plistOnDisk = renderPlist(NODE, "/gone/squadrant/dist/squadrantd.js", buildDaemonPath(process.env.PATH ?? ""));
-    vi.mocked(existsSync).mockImplementation((p: unknown) => {
-      const s = String(p);
-      if (s.includes("daemon.lock") || s.startsWith("/gone/")) return false;
-      return true;
-    });
+    plistOnDisk = renderPlist("/old/bin/node", thisEntry(), buildDaemonPath(process.env.PATH ?? ""));
     ensureDaemon(NODE, { caller: "cli startup" });
     _resetRestartInFlightForTest(); // a separate process
     ensureDaemon(NODE, { caller: "cli startup" });

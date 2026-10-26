@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createConnection, createServer } from "node:net";
 import {
   startServer, sendRequest, encodeMsg, encodeFrame, defaultListenError,
-  PROTOCOL_VERSION,
+  PROTOCOL_VERSION, isSocketUnreachableError,
   type NetConn,
 } from "../protocol.js";
 
@@ -28,6 +28,28 @@ describe("unix socket", () => {
     const sock = join(dir, "absent.sock");
     cleanup = () => rmSync(dir, { recursive: true, force: true });
     await expect(sendRequest(sock, { ping: "x" })).rejects.toThrow(/control plane unavailable/i);
+  });
+
+  // 2026-10-26 audit: once the request is written, a dropped connection means the daemon may
+  // already have acted on it. That must be its own error (never "cannot reach socket", which
+  // squadrantdCall retries), and it must surface now, not after the 5 s timeout.
+  it("a connection dropped after the request was written rejects at once as 'may or may not have been delivered'", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cp-sock-"));
+    const sock = join(dir, "drop.sock");
+    const raw = createServer((conn) => { conn.on("data", () => conn.destroy()); conn.on("error", () => {}); });
+    cleanup = () => { raw.close(); rmSync(dir, { recursive: true, force: true }); };
+    await new Promise<void>((r) => raw.listen(sock, r));
+    const err = await sendRequest(sock, { kind: "event" }, 3000).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/may or may not have been delivered/);
+    expect(isSocketUnreachableError(err)).toBe(false);
+  });
+
+  it("no daemon listening is the unreachable (safe-to-retry) error", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cp-sock-"));
+    cleanup = () => rmSync(dir, { recursive: true, force: true });
+    const err = await sendRequest(join(dir, "absent.sock"), { ping: "x" }).catch((e: Error) => e);
+    expect(isSocketUnreachableError(err)).toBe(true);
   });
 
   it("client receives rejection when handler throws", async () => {

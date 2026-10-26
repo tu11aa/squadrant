@@ -148,6 +148,24 @@ and logging it would add a line for every captain CLI call. Covered by
    Today this would have sent 1 notice (07:02:02, the real 0.31.0 → 0.31.1 upgrade) instead of 8.
 3. **`squadrantdCall`.** Fall back (`ensureDaemon` + re-send) only on `cannot reach squadrantd
    socket`. Throw timeouts and daemon errors as-is: the daemon already has the request.
+4. **Scenario D: no implicit takeover of the launchd entry.** If the plist names a different
+   `squadrantd.js` whose file is missing, `ensureDaemon` re-checks for about 3 s (20 × 150 ms) to
+   ride out the `npm i -g` gap. If the file comes back, it is judged as the install it is (same
+   path → nothing to do; a different install → the #670 refusal). If it stays missing,
+   `ensureDaemon` refuses and points at `squadrant heal daemon`. It no longer "reclaims a stale
+   entry". Separately, a build inside a linked git worktree (`<root>/.git` is a file) never
+   registers itself on a missing plist or on program drift. Only `heal daemon` (`reregisterDaemon`),
+   run explicitly, can register either. Writing this test also exposed a race: `computeDaemonDrift`
+   checked the registered file twice, so a file reappearing between the two checks read as neither
+   foreign nor missing and was taken over. It is now checked once.
+   Tests: `packages/core/src/__tests__/launchd-foreign-install.test.ts`.
+5. **Connect-phase vs post-write socket errors.** `sendRequest` raises `cannot reach squadrantd
+   socket` only when the connection failed before the request was written (safe to retry, and the
+   only error `squadrantdCall` retries). An error after the write (`ECONNRESET`, `EPIPE`), or the
+   daemon closing the connection without a reply, raises `connection lost after the request was
+   sent — it may or may not have been delivered; check … before retrying`. That error is never
+   re-sent. It now surfaces immediately; before, a closed connection waited out the 5 s timeout.
+   Tests: `protocol-send-errors.test.ts`, `protocol-socket.test.ts`, `squadrantd-call.test.ts`.
 
 ## 6. Follow-ups (not fixed here)
 
@@ -157,9 +175,6 @@ and logging it would add a line for every captain CLI call. Covered by
 - **Captain workflow.** `npm i -g <branch tgz> && squadrant heal daemon` was 9 of today's 12
   restarts. Expected for testing a branch build, but worth a lighter path (e.g. reuse the isolated
   daemon harness from #1046) so live-daemon bounces are rare.
-- **Scenario D** (a captain-role process takes the plist over while the registered entry is
-  briefly missing): PR #1053 closes it for `mcp`. Any other captain-role CLI call during the
-  `npm i -g` window still can.
-- **`squadrantdCall` retry on `ECONNRESET` mid-request.** `cannot reach squadrantd socket` is also
-  raised for an error after connect, when the request may already have landed. Splitting
-  connect-phase from post-write errors would make the retry strictly safe.
+- **Uninstalled old install.** Since fix 4, a plist that points at a removed install is never
+  reclaimed implicitly. launchd keeps failing to start it until someone runs `squadrant heal daemon`.
+  That trade is deliberate (an explicit heal over a silent takeover), but `heal status` could flag it.

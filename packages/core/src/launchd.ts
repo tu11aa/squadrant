@@ -1,6 +1,6 @@
 // src/control/launchd.ts
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync, closeSync, unlinkSync, constants } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync, closeSync, unlinkSync, statSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,7 +101,8 @@ export function isVersionUpgrade(registeredEntry: string, thisEntry: string): bo
  * flip-flop that caused the production crash-loop. A registered entry only
  * counts as "foreign" (unsafe to overwrite) when it differs from this
  * install's own entry AND the file it points at still exists; a registered
- * entry that's gone is stale and safe to reclaim (existing behavior).
+ * entry that's gone is not foreign — but ensureDaemon still never reclaims it
+ * implicitly (it may be mid `npm i -g`); only `heal daemon` does.
  */
 export function detectForeignInstall(
   parsed: { daemonEntry: string } | null,
@@ -231,6 +232,25 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
   return plistChanged ? ["kickstart", "-k", target] : ["kickstart", target];
 }
 
+/**
+ * True when the daemon entry belongs to a LINKED git worktree (`git worktree add` writes `.git`
+ * as a file at the worktree root; entry is <root>/dist/squadrantd.js). Same structural signal
+ * squadrantd.ts uses to refuse starting from one.
+ */
+export function isLinkedWorktreeEntry(entry: string): boolean {
+  try { return statSync(join(dirname(entry), "..", ".git")).isFile(); }
+  catch { return false; }
+}
+
+// `npm i -g` deletes the old package dir before writing the new one; a registered entry that is
+// missing for a moment is usually that gap, so ensureDaemon re-checks before deciding.
+let entryWait = { polls: 20, delayMs: 150 };
+
+/** @internal — tests only */
+export function _setEntryWaitForTest(polls: number, delayMs: number): void {
+  entryWait = { polls, delayMs };
+}
+
 // In-process dedup: JS is single-threaded and ensureDaemon is synchronous, so
 // true re-entrancy is impossible; this flag prevents sequential re-calls within
 // the same process (e.g. index.ts + crew-control.ts) from re-running the
@@ -295,11 +315,14 @@ export function releaseDaemonLock(): void {
 interface DaemonDrift {
   plistPath: string;
   target: string;
+  thisEntry: string;
   desired: string;
   current: string | null;
   changed: boolean;
   programChanged: boolean;
   foreignInstall: ForeignInstall | null;
+  /** The plist names a different squadrantd.js whose file is gone (e.g. mid `npm i -g`). */
+  missingRegisteredEntry: string | null;
 }
 
 /**
@@ -325,13 +348,14 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
     && !current.includes(programArgsBlock(nodeBin, entry));
 
   const parsedCurrent = current !== null ? parseProgramArgs(current) : null;
-  const foreignInstall = detectForeignInstall(
-    parsedCurrent,
-    entry,
-    parsedCurrent !== null && existsSync(parsedCurrent.daemonEntry),
-  );
+  // One existence check feeds both verdicts, so they can't disagree mid-install.
+  const registeredEntryExists = parsedCurrent !== null && existsSync(parsedCurrent.daemonEntry);
+  const foreignInstall = detectForeignInstall(parsedCurrent, entry, registeredEntryExists);
 
-  return { plistPath: p, target, desired, current, changed, programChanged, foreignInstall };
+  const missingRegisteredEntry = parsedCurrent !== null && parsedCurrent.daemonEntry !== entry
+    && !registeredEntryExists ? parsedCurrent.daemonEntry : null;
+
+  return { plistPath: p, target, thisEntry: entry, desired, current, changed, programChanged, foreignInstall, missingRegisteredEntry };
 }
 
 /**
@@ -642,7 +666,27 @@ export function ensureDaemon(
   }
 
   try {
-    const drift = computeDaemonDrift(nodeBin);
+    let drift = computeDaemonDrift(nodeBin);
+    for (let i = 0; drift.missingRegisteredEntry && i < entryWait.polls; i++) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, entryWait.delayMs);
+      drift = computeDaemonDrift(nodeBin);
+    }
+    if (drift.missingRegisteredEntry) {
+      // Never reclaim it implicitly: in the `npm i -g` gap that would hand the global
+      // launchd entry to whatever install this call happened to run from.
+      process.stderr.write(
+        `[squadrant] not touching the daemon: its registered entry ${drift.missingRegisteredEntry} is missing ` +
+        `(an install in progress?). If it stays missing, run \`squadrant heal daemon\` to register this install.\n`,
+      );
+      return;
+    }
+    if ((drift.current === null || drift.programChanged) && isLinkedWorktreeEntry(drift.thisEntry)) {
+      process.stderr.write(
+        `[squadrant] not registering a git worktree build as the daemon: ${drift.thisEntry}. ` +
+        "Only `squadrant heal daemon` may do that, explicitly.\n",
+      );
+      return;
+    }
     if (drift.foreignInstall) {
       const decision = decideForeignInstall(drift.foreignInstall);
       process.stderr.write(decision.message);
