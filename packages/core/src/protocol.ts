@@ -193,18 +193,37 @@ export function isDaemonSocketLive(sockPath: string, timeoutMs = 500): Promise<b
   });
 }
 
+const SOCKET_UNREACHABLE = "control plane unavailable: cannot reach squadrantd socket";
+
+/** The connection failed after the request was written: the daemon may already have acted on it. */
+const MAYBE_DELIVERED =
+  "control plane: connection lost after the request was sent — it may or may not have been delivered; " +
+  "check (e.g. `squadrant crew list`) before retrying";
+
+/** True only for sendRequest's connect failure — the request never reached the daemon. */
+export function isSocketUnreachableError(e: unknown): boolean {
+  return e instanceof Error && e.message === SOCKET_UNREACHABLE;
+}
+
 export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const conn = createConnection(sockPath);
     const dec = createDecoder();
+    let written = false;
+    let settled = false;
     const timer = setTimeout(() => {
+      settled = true;
       conn.destroy();
       reject(new Error("control plane unavailable: request timed out"));
     }, timeoutMs);
     conn.setEncoding("utf-8");
-    conn.on("connect", () => conn.write(encodeMsg({ ...(msg as Record<string, unknown>), _v: PROTOCOL_VERSION })));
+    conn.on("connect", () => {
+      written = true;
+      conn.write(encodeMsg({ ...(msg as Record<string, unknown>), _v: PROTOCOL_VERSION }));
+    });
     conn.on("data", (chunk: string) => {
       for (const m of dec.push(chunk) as any[]) {
+        settled = true;
         clearTimeout(timer);
         conn.destroy();
         if (m._v !== undefined && m._v !== PROTOCOL_VERSION) {
@@ -217,9 +236,17 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
         return;
       }
     });
-    conn.on("error", () => {
+    conn.on("error", (e: Error & { code?: string }) => {
       clearTimeout(timer);
-      reject(new Error("control plane unavailable: cannot reach squadrantd socket"));
+      settled = true;
+      reject(new Error(written ? `${MAYBE_DELIVERED} (${e.code ?? e.message})` : SOCKET_UNREACHABLE));
+    });
+    // The daemon closed the connection without a reply: same as an error after the write.
+    conn.on("close", () => {
+      if (settled || !written) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`${MAYBE_DELIVERED} (closed without a reply)`));
     });
   });
 }

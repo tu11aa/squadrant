@@ -35,6 +35,7 @@ export * from "./captain-router.js";
 export * from "./permission-gate.js";
 export * from "./auto-gate.js";
 export * from "./restart-daemon.js";
+export * from "./restart-trigger.js";
 export * from "./group-dispatch.js";
 export * from "./launch-workspace.js";
 export * from "./side-session.js";

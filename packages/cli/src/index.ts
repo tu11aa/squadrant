@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
+import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync, isolatedConfigDir } from "@squadrant/shared";
 import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand, isReadOnlyTopLevelCommand } from "@squadrant/core";
 import { syncShippedOpencodeSkills } from "@squadrant/agents";
 import { doctorCommand } from "./commands/doctor.js";
@@ -51,6 +51,7 @@ import { migrateCommand } from "./commands/migrate.js";
 import { rulesCommand } from "./commands/rules.js";
 import { profileCommand } from "./commands/profile.js";
 import { mcpCommand } from "./commands/mcp.js";
+import { devCommand } from "./commands/dev.js";
 import { detectDrift } from "@squadrant/shared";
 import { needsCheck, withStamp } from "@squadrant/shared";
 import { getDefaultConfig } from "@squadrant/shared";
@@ -59,13 +60,21 @@ import { notifyIfUpdateAvailable } from "@squadrant/shared";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
+// #1046: under an isolated SQUADRANT_CONFIG (a dev daemon) the CLI must not
+// write the operator's global state — the runtime copy, the opencode skills
+// projection, the config stamp — or reconcile the launchd daemon. `dev` runs
+// its own isolated daemon, so it is treated the same way.
+const isolated = isolatedConfigDir() !== null || process.argv[2] === "dev";
+
 // Self-heal the runtime copy of source-managed dirs before any command runs,
 // so source changes (skills, role templates, scripts) can never silently
 // drift from ~/.config/squadrant. Never throws.
-ensureRuntimeSynced({
-  sourceRoot: join(__dirname, ".."),
-  runtimeRoot: join(homedir(), ".config", "squadrant"),
-});
+if (!isolated) {
+  ensureRuntimeSynced({
+    sourceRoot: join(__dirname, ".."),
+    runtimeRoot: join(homedir(), ".config", "squadrant"),
+  });
+}
 
 // #791: project squadrant's skills into opencode's global skills dir so opencode
 // captains/crews/side sessions can load them by name (parity with claude's
@@ -73,7 +82,7 @@ ensureRuntimeSynced({
 // or update can't leave the projection stale. Never throws. Skipped under vitest
 // so a test that spawns the built CLI never writes into the developer's real
 // ~/.config/opencode.
-if (!process.env.VITEST) {
+if (!process.env.VITEST && !isolated) {
   try {
     syncShippedOpencodeSkills({ pkgRoot: join(__dirname, "..") });
   } catch (err) {
@@ -86,7 +95,7 @@ if (!process.env.VITEST) {
 // Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
 // Detect + print only — never mutates config and never throws.
-if (process.argv[2] !== "config") {
+if (process.argv[2] !== "config" && !isolated) {
   try {
     const cfgPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(cfgPath)) {
@@ -133,11 +142,12 @@ if (process.argv[2] !== "config") {
 // #669: `sessions` / `whoami` are also pure file reads — same treatment, so
 // they work with the daemon down and never boot it as a side effect.
 if (
+  !isolated &&
   !process.env.SQUADRANT_DAEMON_SKIP &&
   !isReadOnlyCrewCommand(process.argv) &&
   !isReadOnlyTopLevelCommand(process.argv)
 ) {
-  ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]) });
+  ensureDaemon(undefined, { operatorInitiated: isOperatorInitiatedCommand(process.argv[2]), caller: "cli startup" });
 }
 
 const program = new Command();
@@ -192,6 +202,7 @@ program.addCommand(rulesCommand);
 program.addCommand(profileCommand);
 program.addCommand(mcpCommand);
 program.addCommand(whoamiCommand);
+program.addCommand(devCommand);
 
 program.parseAsync().catch((e) => {
   process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);

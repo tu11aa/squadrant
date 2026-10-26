@@ -31,6 +31,7 @@ guided first run — come back here when you need the details.
   - [Knowledge System (opt-in writes)](#knowledge-system-opt-in-writes)
   - [Session Continuity](#session-continuity)
   - [Runtime state (`~/.local/state/squadrant`, #983)](#runtime-state-localstatesquadrant-983)
+- [Dev daemon (`squadrant dev`)](#dev-daemon-squadrant-dev-1046)
 - [Captain rollover](#captain-rollover-1010)
 - [Context meter & rollover suggestions](#context-meter--rollover-suggestions-1015)
 - [Human review guide](#human-review-guide-1012)
@@ -46,6 +47,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
+| `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant crew compact <project> <crew> [--keep <text>]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |
@@ -227,7 +229,7 @@ The seam is *"any endpoint that speaks Anthropic Messages"* — squadrant never 
 
 **Precedence** (highest first): explicit `--backend` flag → matching rule's `backend` → `defaults.roles.<role>.backend` → `native`. A rule's `agent`/`model`/`backend` is a unit: passing `--agent` or `--model` suppresses the rule entirely (the existing [#275](https://github.com/tu11aa/squadrant/issues/275) contract); `--backend` overrides only the backend.
 
-**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES`).
+**`router` is boot-time config.** A direct edit of `config.json` needs a daemon bounce. Changing a key via `squadrant config set defaults.router…` restarts the daemon for you (`defaults.router` is in `DAEMON_CACHED_PREFIXES` but not live-reloadable).
 
 #### How to set up a router (OpenRouter)
 
@@ -847,6 +849,30 @@ Because the layout is flat, a project dir shares a namespace with those entries.
 
 **Rolling back to 0.28.x:** the old version reads `~/.config/squadrant/state` again. It sees the state as it was at upgrade time, not anything written since. Tasks, mailbox entries and results created after the upgrade exist only under the new root. Upgrading again does not re-copy, because the `.seeded-from-legacy` marker is still there. Anything written under `~/.config/squadrant/state` during the rollback stays in that dir until `squadrant migrate kb` handles it.
 
+## Dev daemon (`squadrant dev`, #1046)
+
+Live-check a branch build on a dev daemon. Never `npm i -g <branch tgz> && squadrant heal daemon` for a branch test: that restarts the production daemon every captain and crew depends on (9 of 12 restarts on 2026-10-26).
+
+```bash
+pnpm build                                            # in the worktree
+eval "$(node dist/index.js dev up --project devtest)" # starts the daemon, prints the env
+squadrant launch devtest                              # dev captain (answer claude's folder-trust prompt once)
+squadrant crew spawn devtest "…"                      # dev crews
+squadrant dev down                                    # kill it, delete everything
+```
+
+`dev up` makes one root (`$TMPDIR/squadrant-dev`, or `--root`) holding a fresh default `config.json` with one throwaway project (an empty git repo, `devtest` by default), the state dir, the socket, `daemon.log`, `claude-settings.json` and `bin/squadrant` (a shim for that build). It starts `<from>/dist/squadrantd.js` as a plain detached process, not under launchd, and prints three `export` lines (`SQUADRANT_CONFIG`, `SQUADRANT_WORKSPACE_DIR`, `PATH`). `dev down` closes the dev projects' captain workspaces, stops the daemon, and deletes the root; it refuses a dir without its `.squadrant-dev` marker. Nothing is copied from your real config (no Telegram, no router, no projects). A thin command rather than a script, because it reuses the same path and socket helpers the daemon uses.
+
+**Isolation rule.** Any `SQUADRANT_CONFIG` that is not `~/.config/squadrant/config.json` is an isolated config (`isolatedConfigDir()` in `@squadrant/shared`). Under it:
+
+- The daemon writes its hooks to `<config dir>/claude-settings.json`, seeded once from `~/.claude/settings.json` (read-only) so plugins, permissions and env carry over. It never writes `~/.claude/settings.json` (#1046). It is not the production daemon, so the worktree guard lets it run a worktree `dist/`, and it skips the legacy-state seed and the opencode skills sync.
+- The CLI skips the runtime sync into `~/.config/squadrant`, the opencode skills projection, the config version stamp and `ensureDaemon` (launchd). `projects add`/`config` never kickstart launchd, and `heal daemon`/`heal captain` refuse.
+- Claude captains and crews launch with `SQUADRANT_CONFIG` (and `PATH` with `bin/` when the shim exists) in their env, plus `--setting-sources project,local --settings <config dir>/claude-settings.json --mcp-config <squadrant server>`. Dropping the `user` source is what hides the production hooks. It also drops user-scope MCP servers, which is why the squadrant server is passed back explicitly. Routed backends (`direct`/`proxy`) are refused under an isolated config: both need the one `--settings` slot.
+
+**Why `--settings`, not `CLAUDE_CONFIG_DIR` or a temp `HOME`.** Both of those give claude a fresh config dir, and claude reports `Not logged in · Please run /login` (checked with claude 2.1.310). `--setting-sources` + `--settings` keeps the login and `~/.claude.json`.
+
+**Limits.** Dev sessions still read the production templates and plugin dir (`~/.config/squadrant/templates`, `plugin`, `plugin-crew`), so a branch change to a role template or skill is not exercised. Claude itself still updates `~/.claude.json` (session counters, folder trust) as it does for any session.
+
 ## Captain rollover (#1010)
 
 `/squadrant:rollover` (alias `/squadrant:roll`) is a captain skill for Claude captains whose context is filling. In order, the captain writes a handoff (`write-handoff.sh`), writes the daily log, runs `squadrant captain compact <project>` as its last action and ends the turn. The operator types it once.
@@ -1096,6 +1122,37 @@ Env vars override every field at runtime: `SQUADRANT_GATE` (mode), `SQUADRANT_GA
 **opencode ([#828](https://github.com/tu11aa/squadrant/issues/828) P6-C phase 2).** opencode has no `PermissionRequest` hook, so `engine: "auto-gate"` works differently there: instead of a per-prompt hook call, an opencode crew/captain launch is wrapped end-to-end. With `mode: "on"` + `engine: "auto-gate"` + the engine credential present (`hasAutoGateCredential` — env `TYPESAFE_API_KEY` or `~/.auto-gate-key`), squadrant launches the pane with `squadrant gate opencode-run --port <n> [--session <id>]` instead of a bare `opencode …`. That hidden command calls the package's `buildRunPlan({ args, allocate })` with `allocate` resolving to the **same port** squadrant already allocated for its own SSE bridge (turn-end detection, CREW DONE, approval answering) — never a second port — then runs opencode and the package's `opencode watch` watcher as one supervised unit (`supervise`). **Ownership:** once a crew is gate-wrapped, the auto-gate watcher is the sole answerer of opencode `permission.asked` events; squadrant's own CP3 `--approval`/`gateBash` crew-approval flag (which also answers permission prompts, via the SSE bridge) is suppressed for that crew to avoid two answerers racing the same prompt. **The wrapped crew/captain's per-task `opencode.json` sets `bash` and `edit` to `"ask"`** (everything else, incl. `external_directory`, unchanged; unwrapped configs are byte-identical to before) — opencode only emits `permission.asked` for `ask` rules, so an allow-all config would leave the watcher nothing to decide. squadrant's SSE bridge only records/surfaces the prompt (`task.approval.requested` → blocked → captain/Telegram) and never answers on its own, so if auto-gate answers `ask` (uncertain) the prompt stays open and reaches the operator. For a gate-wrapped crew (detected from its per-task config having both `bash` and `edit` at `ask`) the bridge holds each `permission.asked` for a ~5s grace window and drops it if `permission.replied` arrives first — so prompts auto-gate answers never ping the captain/Telegram; only still-open ones surface (and a later reply returns the task blocked → working). CP3 `--approval` crews surface immediately, unchanged; auto-gate is the only automatic answerer. **Gate log ([#866](https://github.com/tu11aa/squadrant/issues/866)):** the watcher's output and squadrant's own supervise log never touch the pane TTY (they garbled the TUI and broke `squadrant crew answer`); both append to `<stateRoot>/<project>/auto-gate-opencode.log` (`_shared` when no project env is set), or are discarded if that file can't be opened. **Safety fallback:** if the credential is absent, or building/running the plan throws for any other reason, squadrant logs one warning and launches opencode directly, byte-identical to the gate-off command — a gate defect must never stop a crew from starting. `mode: "on"` + `engine: "router"` is a no-op for opencode (that engine only owns Claude's `PermissionRequest` hook); opencode is unaffected either way. See [Router Backend](#router-backend-harnessprovider-decoupling).
 
 **Switching the mode without a shell ([#854](https://github.com/tu11aa/squadrant/issues/854)).** `squadrant gate mode [on|off|auto]` reads or writes `defaults.gate.mode` directly — no arg prints the effective mode and its source (`env`/`config`/`default`); an argument validates, writes, and reports `old → new`. No daemon bounce is needed: unlike `defaults.router` (see [Managed `~/.claude/settings.json`](#managed-claudesettingsjson-615)'s daemon-cached-key note), `defaults.gate.mode` is not in `DAEMON_CACHED_PREFIXES`, so every hook invocation reads the file live. `squadrant gate status` additionally shows the resolved `engine`, the resolved classifier `model`, and whether that engine's credential resolves (`present`/`absent` — the value itself is never printed). The same toggle is available as a portable slash command — mirrors the [effort dial](#effort-dial-tokenomics)'s two-skill pattern (`plugin/skills/set-gate` owns the logic, `plugin/skills/gate` is the thin `/gate` alias) — in **both** Claude Code (the Skill tool) and opencode (the shipped skill is projected verbatim into `~/.config/opencode/skills/`, same mechanism as every other squadrant skill). `defaults.gate.mode` is also in the Telegram `WRITABLE_CONFIG_KEYS` allowlist (see [Telegram (Two-Way, opt-in)](#telegram-two-way-opt-in)), with `on`/`off`/`auto` value validation on `/config set` so a malformed value never reaches the CLI.
+
+### Daemon restarts: attribution and the restart notice
+
+Every CLI path that restarts, re-registers or kickstarts the launchd daemon appends one line to the daemon log (`logsRoot()/squadrantd.log`) **before** it acts, so the daemon's own `exit … reason=SIGTERM` / `boot` lines can be matched to their cause:
+
+```
+[squadrant-cli] <ts> restart-trigger action=<kickstart-k|reregister+kickstart-k|bootout+bootstrap|plist-write (no restart)> reason="<why; drift=version|path|plist …>" pid= ppid= argv="<subcommand>" role=<SQUADRANT_ROLE|-> crewTask=<id|-> install=<argv[1]>
+```
+
+Sources: `squadrant heal daemon`, `heal captain`, `config set <boot-cached key>` / `telegram setup` (all `kickstart -k`; `projects add` and `config set projects.*` no longer restart — see [Live config reload](#live-config-reload)), and `ensureDaemon` when it finds plist drift. A no-drift `ensureDaemon` only does a plain `kickstart`, which cannot restart a running daemon, and is not logged. The full trigger list is in [the restart audit](specs/2026-10-26-daemon-restart-audit.md).
+
+### Live config reload
+
+`squadrant projects add` and `squadrant config set projects.…` do not restart the daemon. The CLI sends a `config-reload` request over the daemon socket; the daemon re-reads `config.json` (`daemon/config-reload.ts`), logs `config reload: N project(s)`, and tops up the router's per-project tokens (add-only; a removed project's token lingers until the next boot). Everything else that reads the project registry already calls `loadConfig()` on demand, so health, snapshot, delivery and spawn see the new project immediately. If the socket is unreachable or the reload errors, the CLI falls back to the old `kickstart -k` (logged by the restart attribution above); with no daemon running the next boot reads the new config. `projects remove` never restarted and still needs nothing.
+
+| Config the daemon derives | Applied by `config-reload`? |
+|---|---|
+| `projects.*` — registry (health/snapshot/advisor/telegram prune/captain names) | Yes — read live via `loadConfig()` |
+| `projects.*` — router per-project tokens | Yes — added on reload |
+| `telegram.*` (bridge, topics, polling) | No — built once at boot, restart |
+| `defaults.router` (shim upstream, port, models) | No — restart |
+| `defaults.taskTimeoutMs` (captured into the reducer deps) | No — restart |
+| `defaults.cmuxEventsBridge` (bridge start/stop) | No — restart |
+| `defaults.claudeEnv`, `defaults.gate.mode` (hook install at boot) | No — apply on next boot (not in the auto-restart key set) |
+| `defaults.roles` / `crewRouting` / `controlChannel` and other keys read per call | Already live, no action needed |
+
+The "⚠️ Daemon restarted → vX" captain notice fires only when the daemon's **version or install path** changed since the last boot (a same-version reinstall + `heal daemon`, a config restart, or a crash stays silent), and never within 5 minutes of the previous notice.
+
+`squadrantdCall` (the CLI → daemon socket call) retries and self-heals only when the socket cannot be reached (the connection failed before the request was written). A timeout or a daemon-reported error is returned as-is: the daemon already has the request, and re-sending it would deliver it twice. A connection lost **after** the request was written (`ECONNRESET`, or the daemon closing without a reply) fails at once with `connection lost after the request was sent — it may or may not have been delivered; check … before retrying`. Check the result (e.g. `squadrant crew list`) before you retry by hand.
+
+`ensureDaemon` never takes over the launchd entry implicitly in two cases. **(1)** The plist names a different `squadrantd.js` that is missing: it re-checks for about 3 s (the `npm i -g` gap), then leaves it alone with a note to run `squadrant heal daemon`. **(2)** The running build is inside a linked git worktree (a crew's `.worktrees/…` build): it never registers itself. In both cases `squadrant heal daemon` is the explicit way to register this install.
 
 ## Rules audit log (#935)
 

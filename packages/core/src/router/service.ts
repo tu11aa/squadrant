@@ -24,6 +24,8 @@ export interface RouterService {
   credentialsFor(project: string, backend: "direct" | "proxy"): RouterCredentials;
   /** U5: accumulated routed usage/cost for a project, or undefined if none yet. */
   usage(project: string): ProjectUsage | undefined;
+  /** Mint tokens for projects registered after boot (config reload). Add-only; returns the newly added. */
+  syncProjects(projects: string[]): string[];
 }
 
 /** Map the config block to the shim's input shape, deriving kind-based defaults. */
@@ -56,11 +58,14 @@ export function createRouterService(
 
   const tokenByProject = new Map<string, string>();
   const projectTokens = new Map<string, string>();
-  for (const p of projects) {
+  const addProject = (p: string): boolean => {
+    if (tokenByProject.has(p)) return false;
     const t = mintToken();
     tokenByProject.set(p, t);
     projectTokens.set(t, p);
-  }
+    return true;
+  };
+  for (const p of projects) addProject(p);
 
   // #772: advertise the model ids Claude Code may probe via GET /v1/models —
   // configured role models plus every alias table's upstream id.
@@ -113,5 +118,6 @@ export function createRouterService(
       return { backend, baseUrl: shim.url(), token };
     },
     usage: (project) => ledger.project(project),
+    syncProjects: (list) => list.filter(addProject),
   };
 }
