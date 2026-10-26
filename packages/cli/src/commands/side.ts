@@ -15,6 +15,7 @@ import {
 } from "@squadrant/agents";
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/workspaces";
 import { resolveTextInput } from "@squadrant/shared";
+import { watchClaudeSideBoot } from "../lib/first-turn-peer.js";
 import {
   buildSideFirstTurn,
   runSideSpawn as coreRunSideSpawn,
@@ -60,13 +61,14 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
     `side.${input.role}.${agent.templateSuffix}.md`,
   );
 
-  const agentCmdFactory = (spawnCwd: string) =>
+  const agentCmdFactory = (spawnCwd: string, init?: { initPromptFile: string }) =>
     agent.buildCommand({
       prompt: input.topic,
       workdir: spawnCwd,
       role: "side",
       promptFile: fs.existsSync(promptFile) ? promptFile : undefined,
       interactive: true,
+      ...(init ? { initPromptFile: init.initPromptFile } : {}),
       permissionMode: config.defaults.permissions?.crew ?? "auto",
       ...(sideModel ? { model: sideModel } : {}),
       ...(sideThinking ? { thinking: sideThinking } : {}),
@@ -75,7 +77,10 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
   const sendFirstTurn = (pane: PaneRef, firstTurn: string, preLaunchScreen: string) =>
     sendFirstTurnWhenReady(runtime, pane, firstTurn, preLaunchScreen);
 
-  return coreRunSideSpawn(input, config, { runtime, agentCmdFactory, sendFirstTurn });
+  // Claude takes the first turn as a launch-time init prompt; other agents keep the pane path.
+  const watchBoot = agentName === "claude" ? (pane: PaneRef) => watchClaudeSideBoot(runtime, pane) : undefined;
+
+  return coreRunSideSpawn(input, config, { runtime, agentCmdFactory, sendFirstTurn, ...(watchBoot ? { watchBoot } : {}) });
 }
 
 export async function runSideSend(

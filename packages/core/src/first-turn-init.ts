@@ -68,6 +68,20 @@ export function writeInitPrompt(o: {
   return { briefPath: bPath, briefDir: dir, initPath, initText };
 }
 
+/** Per-side-session dir (`<stateRoot>/<project>/side/<name>`) holding its init.md. The name is user-supplied, so it is made path-safe. */
+export function sideStateDir(stateRoot: string, project: string, name: string): string {
+  return path.join(stateRoot, project, "side", name.replace(/[^\w.-]/g, "_"));
+}
+
+/** Writes a side session's init.md (0600): the whole framed first turn, which the launch arg carries without a paste limit. */
+export function writeSideInitPrompt(o: { stateRoot: string; project: string; name: string; text: string }): { initPath: string } {
+  const dir = sideStateDir(o.stateRoot, o.project, o.name);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const initPath = path.join(dir, "init.md");
+  fs.writeFileSync(initPath, o.text, { encoding: "utf8", mode: 0o600 });
+  return { initPath };
+}
+
 /** init.md for a task, or undefined when it was never written (pre-init crews, fallback spawns). */
 export function readInitPrompt(stateRoot: string, project: string, taskId: string): string | undefined {
   try {

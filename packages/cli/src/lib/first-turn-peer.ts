@@ -4,9 +4,9 @@
 import { randomUUID } from "node:crypto";
 import { connect as netConnect } from "node:net";
 import { ClaudePeerChannel, readClaudeStatusBySocketPath, writeLine } from "@squadrant/agents";
-import { deliverFirstTurnViaPeer, waitPastTrustPanel, type PeerFirstTurnResult } from "@squadrant/core";
+import { deliverFirstTurnViaPeer, screenShowsTrustPanel, waitPastTrustPanel, type PeerFirstTurnResult } from "@squadrant/core";
 import type { PaneRef, RuntimeDriver, TaskRecord } from "@squadrant/shared";
-import { screenLooksLikeBareShell } from "@squadrant/workspaces";
+import { hasCCInputBox, screenLooksLikeBareShell } from "@squadrant/workspaces";
 import { sharedReceiptListener } from "./captain-channel-factory.js";
 
 export async function sendClaudeFirstTurnViaPeer(
@@ -56,4 +56,29 @@ export async function watchClaudeCrewBoot(
   }, () => statusOf() !== undefined);
   if (booted) return { booted };
   return { booted, agentNotStarted: screenLooksLikeBareShell(await readScreen().catch(() => ""), false) };
+}
+
+/** Side-session variant of {@link watchClaudeCrewBoot}: a side session has no
+ *  messaging socket, so there is no registry entry to wait for. Answers the
+ *  folder-trust panel and reports `booted` once claude's input box is drawn
+ *  (the typed launch line alone never draws one); the queued init prompt is
+ *  submitted by claude from there. */
+export async function watchClaudeSideBoot(
+  runtime: Pick<RuntimeDriver, "readPaneScreen" | "sendKeyToPane">,
+  pane: PaneRef,
+): Promise<{ booted: boolean }> {
+  let uiUp = false;
+  const readScreen = async () => {
+    const screen = (await runtime.readPaneScreen(pane)) ?? "";
+    uiUp = hasCCInputBox(screen) && !screenShowsTrustPanel(screen);
+    return screen;
+  };
+  const booted = await waitPastTrustPanel({
+    statusOf: () => undefined,
+    readScreen,
+    pressKey: (key) => runtime.sendKeyToPane(pane, key),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => Date.now(),
+  }, () => uiUp);
+  return { booted };
 }

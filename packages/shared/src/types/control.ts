@@ -49,7 +49,7 @@ export interface TaskRecord {
   provider: Provider;
   mode: Mode;
   state: TaskState;
-  task: string;            // the dispatched instruction
+  task: string;            // one-line title of the dispatched instruction (full brief: brief.md / `task.dispatched` entry via briefSeq); pre-shrink records hold the whole text
   sessionId?: string;      // provider session id for resume (blocked→reply)
   cwd?: string;            // working dir for the spawned headless child (project/worktree); unset → daemon cwd
   pid?: number;            // headless child pid (daemon-owned)

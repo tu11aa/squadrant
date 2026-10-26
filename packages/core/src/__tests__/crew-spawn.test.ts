@@ -2,7 +2,7 @@ import { framedBody } from "./unframe.js";
 // Unit tests for crew-spawn.ts orchestration logic.
 // Uses mock deps and module mocks — no daemon, no workspaces, no agents, no git.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── module mocks (hoisted before imports) ───────────────────────────────────
 
@@ -1778,6 +1778,47 @@ describe("runCrewSend", () => {
         }),
       ).rejects.toThrow(/already confirmed receipt/i);
       expect(runtime.sendToPane).not.toHaveBeenCalled();
+    });
+
+    // Q3: TaskRecord.task is a title; the brief the crew was given lives in
+    // brief.md / the dispatch entry, and the guard compares against that.
+    describe("with a title-only record (brief shrunk)", () => {
+      const BRIEF = "## Objective\nfix the bug in module x\n";
+      // node:fs is mocked in this file: serve brief.md, nothing else.
+      beforeEach(() => {
+        vi.mocked(nodefs.readFileSync).mockImplementation(((p: unknown) => (String(p).endsWith("brief.md") ? BRIEF : "")) as never);
+      });
+      afterEach(() => {
+        vi.mocked(nodefs.readFileSync).mockReset().mockReturnValue("");
+      });
+      const titleRec = (extra: Partial<TaskRecord> = {}) =>
+        ({ id: "t1", project: PROJECT, name: "crew-1", state: "working", task: "## Objective", firstTurnConfirmedAt: Date.now(), ...extra }) as TaskRecord;
+      const send = (message: string, task: TaskRecord) => {
+        const runtime = makeRuntime("workspace:1", [{ ...makePaneRef("5"), title: "🔧 myproj:crew-1" }]);
+        const p = runCrewSend(PROJECT, "crew-1", message, runtime, "workspace:1", {
+          listTasks: vi.fn().mockResolvedValue([task]),
+          emitEvent: vi.fn(),
+        });
+        return { p, runtime };
+      };
+
+      it("refuses the exact brief (read from brief.md)", async () => {
+        const { p, runtime } = send(BRIEF, titleRec());
+        await expect(p).rejects.toThrow(/already confirmed receipt/i);
+        expect(runtime.sendToPane).not.toHaveBeenCalled();
+      });
+
+      it("a message equal to just the title is a genuine follow-up, not the brief", async () => {
+        const { p, runtime } = send("## Objective", titleRec());
+        await p;
+        expect(runtime.sendToPane).toHaveBeenCalled();
+      });
+
+      it("an old record holding the full text still dedupes (no brief.md)", async () => {
+        vi.mocked(nodefs.readFileSync).mockReturnValue("");
+        const { p } = send(BRIEF, titleRec({ task: BRIEF }));
+        await expect(p).rejects.toThrow(/already confirmed receipt/i);
+      });
     });
 
     it("still delivers a genuine follow-up (different text) even after firstTurnConfirmedAt is set", async () => {

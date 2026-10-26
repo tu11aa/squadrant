@@ -15,11 +15,13 @@ import {
   worktreePath,
   resolveWorktreeBase,
   workspacePath,
+  stateRoot,
 } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
 import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
+import { sideStateDir, writeSideInitPrompt } from "./first-turn-init.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -97,9 +99,17 @@ export interface SideSpawnDeps {
    * CLI-edge factory: called with the resolved spawn CWD (proj.path for research,
    * scratch worktree path for debug) so @squadrant/agents can set workdir correctly.
    */
-  agentCmdFactory: (spawnCwd: string) => string;
+  agentCmdFactory: (spawnCwd: string, init?: { initPromptFile: string }) => string;
   /** CLI-edge: deliver the first turn when the agent pane is ready. */
   sendFirstTurn: (pane: PaneRef, firstTurn: string, preLaunchScreen: string) => Promise<{ delivered: boolean }>;
+  /**
+   * CLI-edge, set only for agents that take a launch-time init prompt (claude).
+   * When present, the first turn is written to init.md and passed as the launch
+   * positional; this watcher answers the folder-trust panel until the agent is
+   * up. `booted: false` (or an init.md that cannot be written) falls back to
+   * `sendFirstTurn` — the pane path.
+   */
+  watchBoot?: (pane: PaneRef) => Promise<{ booted: boolean }>;
 }
 
 export async function runSideSpawn(
@@ -155,7 +165,26 @@ export async function runSideSpawn(
       })
     : proj.path;
 
-  const agentCmd = deps.agentCmdFactory(spawnCwd);
+  const firstTurn = buildSideFirstTurn(
+    input.topic,
+    input.project,
+    input.role,
+    workspacePath(input.project),
+    input.role === "debug" ? spawnCwd : undefined,
+    name,
+  );
+  const framedFirstTurn = frameFirstTurn(firstTurn, { project: input.project, kind: "side.open" });
+  // Launch-time init prompt (claude): a real user turn, no paste. The whole topic
+  // goes in the file; a launch arg has no size limit, so no spill either.
+  let initPath: string | undefined;
+  if (deps.watchBoot) {
+    try {
+      initPath = writeSideInitPrompt({ stateRoot: stateRoot(), project: input.project, name, text: framedFirstTurn }).initPath;
+    } catch (e) {
+      process.stderr.write(`(side init prompt not written, falling back to a first-turn send: ${(e as Error).message})\n`);
+    }
+  }
+  const agentCmd = deps.agentCmdFactory(spawnCwd, initPath ? { initPromptFile: initPath } : undefined);
 
   const direction: PanePlacement = input.direction ?? "tab";
   const title = sideTitleFor(input.project, name);
@@ -166,17 +195,16 @@ export async function runSideSpawn(
   await runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${SIDE_SESSION_ENV}=1 ${agentCmd}`);
   const preLaunchScreen = (await runtime.readPaneScreen(pane)) ?? "";
 
-  const firstTurn = buildSideFirstTurn(
-    input.topic,
-    input.project,
-    input.role,
-    workspacePath(input.project),
-    input.role === "debug" ? spawnCwd : undefined,
-    name,
-  );
-  // #864: same spill as the crew path (#730) — a long multi-line topic pasted
-  // into the pane gets truncated mid-render; send a pointer to a temp file instead.
-  await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `side-${input.project}-${name}`), { project: input.project, kind: "side.open" }), preLaunchScreen);
+  // No task record and no crew lifecycle here, so nothing confirms delivery; the
+  // boot watcher is the only signal that the queued init prompt is being submitted.
+  const booted = initPath && deps.watchBoot
+    ? await deps.watchBoot(pane).then((b) => b.booted, () => false)
+    : false;
+  if (!booted) {
+    // #864: same spill as the crew path (#730) — a long multi-line topic pasted
+    // into the pane gets truncated mid-render; send a pointer to a temp file instead.
+    await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `side-${input.project}-${name}`), { project: input.project, kind: "side.open" }), preLaunchScreen);
+  }
 
   return { ...pane, title };
 }
@@ -237,6 +265,8 @@ export async function runSideClose(
   } catch (e) {
     process.stderr.write(`(pane close failed: ${(e as Error).message})\n`);
   }
+  // The per-side init.md holds the topic; drop it with the session (best-effort).
+  fs.rmSync(sideStateDir(stateRoot(), project, name), { recursive: true, force: true });
   // Prune the scratch worktree if this was a debug session. Detection is
   // filesystem-based: debug spawns create a worktree at the deterministic path;
   // research spawns do not. If the path exists, remove it (best-effort).

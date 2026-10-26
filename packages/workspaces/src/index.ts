@@ -10,3 +10,4 @@ export type { CmuxStoreSourceOpts } from "./cmux-daemon/cmux-store-source.js";
 export { NativeHookSource, installClaudeHooks, mapSubToLifecycle } from "./native-hooks/native-hook-source.js";
 export type { NativeHookSourceOpts, ClaudeHooksInstallOpts } from "./native-hooks/native-hook-source.js";
 export { getFreePort, listProjectCrews, findCrew, resolveCaptainWorkspace, sendFirstTurnWhenReady, confirmedSendToPane, resendCrewFirstTurn, paneHasOpenModal, readModalOptions, screenLooksLikeBareShell } from "./crew-pane.js";
+export { hasCCInputBox } from "./runtimes/cmux.js";

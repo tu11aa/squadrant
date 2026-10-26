@@ -616,6 +616,68 @@ describe("daemon handler", () => {
     expect(launched).toEqual([42]);
   });
 
+  const dispatchRec = (id: string, task: string): any => ({
+    id, project: "p", provider: "claude", mode: "interactive",
+    state: "submitted", task, createdAt: 1, lastHeartbeat: 1,
+    lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+    attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] });
+  const LONG = "## Objective\nLine two\n" + "x".repeat(400);
+
+  it("a recorded brief shrinks TaskRecord.task to a one-line title; the launcher and the mailbox still get the whole brief", async () => {
+    const store = createStore(dir);
+    const recorded: string[] = [];
+    const launched: string[] = [];
+    const d = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async (r) => { recorded.push(r.task); return 7; },
+      launchInteractive: async (r) => { launched.push(r.task); },
+    });
+    const r: any = await d.handle({ kind: "dispatch", record: dispatchRec("s1", LONG) });
+    expect(r.task).toBe("## Objective");
+    expect(store.get("p", "s1")?.task).toBe("## Objective");
+    expect(recorded).toEqual([LONG]);
+    expect(launched).toEqual([LONG]);
+  });
+
+  it("a headless launcher gets the whole brief too", async () => {
+    const store = createStore(dir);
+    const launched: string[] = [];
+    const d = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async () => 1,
+      launchHeadless: async (r) => { launched.push(r.task); },
+    });
+    await d.handle({ kind: "dispatch", record: { ...dispatchRec("s2", LONG), mode: "headless" } });
+    expect(launched).toEqual([LONG]);
+    expect(store.get("p", "s2")?.task).toBe("## Objective");
+  });
+
+  it("without a recorded brief (recordDispatch failed or absent) the record keeps the full text rather than lose it", async () => {
+    const store = createStore(dir);
+    const failing = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async () => { throw new Error("disk full"); },
+      launchInteractive: async () => {},
+    });
+    await failing.handle({ kind: "dispatch", record: dispatchRec("s3", LONG) });
+    expect(store.get("p", "s3")?.task).toBe(LONG);
+    const bare = createDaemon({ store, now: () => 1, launchInteractive: async () => {} });
+    await bare.handle({ kind: "dispatch", record: dispatchRec("s4", LONG) });
+    expect(store.get("p", "s4")?.task).toBe(LONG);
+  });
+
+  it("a cross-project delegation notice carries the whole brief, not the stored title", async () => {
+    const store = createStore(dir);
+    const messages: string[] = [];
+    const d = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async () => 3,
+      notify: ((o: { message: string }) => { messages.push(o.message); }) as any,
+    });
+    await d.handle({ kind: "dispatch", record: { ...dispatchRec("s5", LONG), originProject: "other" } });
+    expect(messages[0]).toContain(LONG);
+  });
+
   it("a failing recordDispatch never blocks the dispatch", async () => {
     const store = createStore(dir);
     const d = createDaemon({
