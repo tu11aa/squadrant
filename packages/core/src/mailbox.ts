@@ -136,7 +136,8 @@ export async function appendToMailbox(opts: AppendOpts): Promise<number> {
     ...(opts.taskRecord.name !== undefined ? { name: opts.taskRecord.name } : {}),
     kind: opts.event.type,
     provider: opts.taskRecord.provider,
-    payload: extractPayload(opts.event),
+    // fromProject: a cross-project delegation report-back is delivered to the ORIGIN project's mailbox.
+    payload: { ...extractPayload(opts.event), ...(opts.taskRecord.project !== opts.project ? { fromProject: opts.taskRecord.project } : {}) },
     // #1030: the payload keeps the crew's full text; only the captain-facing render is bounded.
     message: opts.message == null ? null : boundForCaptain(opts.message, opts.project, seq),
   }));

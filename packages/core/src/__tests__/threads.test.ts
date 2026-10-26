@@ -195,6 +195,7 @@ describe("open/park/resume/close state machine", () => {
     await requestPark("app", "auth-cache", deps);
     expect(rt.sent.at(-1)!.pane.surfaceId).toBe("surface:1");
     expect(rt.sent.at(-1)!.text).toContain("squadrant thread park app auth-cache --decision-file -");
+    expect(rt.sent.at(-1)!.text.split("\n")[0]).toBe("📨 captain:app → thread.park");
     expect(readThread(root, "app", "auth-cache")?.state).toBe("open");
   });
 

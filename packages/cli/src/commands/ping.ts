@@ -7,7 +7,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, resolveCaptainChannelMode, stateRoot as defaultStateRoot } from "@squadrant/shared";
-import { appendCaptainMessage, deliverToCaptain, frameMessage, isValidSender, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
+import { appendCaptainMessage, deliverToCaptain, frameMessage, isValidSender, resolveCurrentProject, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
 import { requireDaemon } from "../lib/require-daemon.js";
 import { buildCaptainChannels } from "../lib/captain-channel-factory.js";
@@ -31,9 +31,16 @@ export function formatPingResult(project: string, outcome?: DeliveryOutcome): st
   }
 }
 
-export async function runPing(project: string, message: string, from = "cli"): Promise<DeliveryOutcome | undefined> {
-  if (!isValidSender(from)) throw new Error(`Invalid --from '${from}' — use a label like side:research-1`);
+/** Inside a registered project's directory the sender is that project's captain (`captain:<project>`); a plain terminal is `cli`. */
+export function defaultSender(config: ReturnType<typeof loadConfig>): string {
+  const current = resolveCurrentProject(config);
+  return current ? `captain:${current}` : "cli";
+}
+
+export async function runPing(project: string, message: string, fromOpt?: string): Promise<DeliveryOutcome | undefined> {
+  if (fromOpt !== undefined && !isValidSender(fromOpt)) throw new Error(`Invalid --from '${fromOpt}' — use a label like side:research-1`);
   const config = loadConfig();
+  const from = fromOpt ?? defaultSender(config);
   const registry = buildRegistry();
   const resolved = resolveTarget(registry, config, project, false);
   
@@ -70,7 +77,7 @@ export const pingCommand = new Command("ping")
   .description("Fire-and-forget: deliver a message into a registered project's captain pane (no tracked task, no report-back)")
   .argument("<project>", "Target project name (must be registered)")
   .argument("<message>", "Message to deliver")
-  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: cli)")
+  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: captain:<current project>, else cli)")
   .action(async (project: string, message: string, opts: { from?: string }) => {
     try {
       const outcome = await runPing(project, message, opts.from);

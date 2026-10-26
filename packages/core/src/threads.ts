@@ -14,6 +14,7 @@ import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { appendCaptainMessage } from "./mailbox.js";
+import { frameMessage } from "./squadrant-message.js";
 
 export type ThreadState = "open" | "parked" | "closed";
 
@@ -408,7 +409,10 @@ export async function requestPark(project: string, id: string, deps: Pick<Thread
   if (!rec.surfaceId) throw new Error(`Thread '${id}' has no live tab to ask.`);
   await deps.runtime.sendToPane(
     { workspaceId: deps.workspaceId, surfaceId: rec.surfaceId },
-    `Park this thread now: write the decision record and run 'squadrant thread park ${project} ${id} --decision-file -' as your instructions say. If nothing is settled yet, record the open question as the decision ("not decided: …").`,
+    frameMessage(
+      { from: `captain:${project}`, project, kind: "thread.park" },
+      `Park this thread now: write the decision record and run 'squadrant thread park ${project} ${id} --decision-file -' as your instructions say. If nothing is settled yet, record the open question as the decision ("not decided: …").`,
+    ),
   );
   return rec;
 }

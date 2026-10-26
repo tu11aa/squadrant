@@ -232,7 +232,7 @@ describe("per-agent channel selection (#667 slice 3)", () => {
 });
 
 describe("runCrewSend — sender frame (#1029)", () => {
-  const expected = "📨 captain:proj (opencode) → crew.send · taskId: t1\nhi";
+  const expected = "📨 captain:proj → crew.send · taskId: t1\nhi";
 
   it("channel transport: the crew sees from=captain:<project>", async () => {
     const send = vi.fn(async () => ({ status: "accepted", via: "opencode-http" }) as DeliveryOutcome);

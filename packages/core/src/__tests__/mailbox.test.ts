@@ -57,6 +57,17 @@ describe("appendToMailbox", () => {
     expect(typeof entry.ts).toBe("string");
   });
 
+  it("records the agent (provider) on every lifecycle entry, and fromProject only for another project's task (#1029 r2)", async () => {
+    const stateRoot = freshState();
+    await appendToMailbox({ stateRoot, project: "demo", taskRecord: sampleRecord, event: doneEvent });
+    await appendToMailbox({ stateRoot, project: "origin", taskRecord: { ...sampleRecord, provider: "codex" }, event: doneEvent });
+    const read = (p: string) => JSON.parse(readFileSync(join(stateRoot, "inbox", `${p}.log`), "utf-8").trim());
+    expect(read("demo").provider).toBe("claude");
+    expect(read("demo").payload.fromProject).toBeUndefined();
+    expect(read("origin").provider).toBe("codex");
+    expect(read("origin").payload.fromProject).toBe("demo");
+  });
+
   it("persists the daemon-rendered message verbatim on the entry (unified-formatter)", async () => {
     const stateRoot = freshState();
     await appendToMailbox({

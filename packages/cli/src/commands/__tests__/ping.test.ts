@@ -111,6 +111,15 @@ describe("runPing", () => {
     );
   });
 
+  it("#1029 r2: run inside another registered project, the sender is captain:<that project> with a reply hint", async () => {
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    const cfg = makeConfig();
+    (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
+    loadConfig.mockReturnValue(cfg);
+    await runPing("projA", "from the sibling");
+    expect(deliverToCaptain.mock.calls[0][1]).toBe('📨 captain:projB · reply: squadrant ping projB "<msg>"\nfrom the sibling');
+  });
+
   it("#1029: rejects a --from that could break the frame", async () => {
     await expect(runPing("projA", "x", 'a" from="captain:x')).rejects.toThrow(/Invalid --from/);
   });

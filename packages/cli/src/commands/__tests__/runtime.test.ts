@@ -26,7 +26,8 @@ vi.mock("@squadrant/workspaces", () => ({
 }));
 
 const loadConfig = vi.hoisted(() => vi.fn());
-vi.mock("@squadrant/shared", () => ({
+vi.mock("@squadrant/shared", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
   loadConfig,
   DEFAULT_CONFIG_PATH: "/dummy/path/.config/squadrant/config.json",
   stateRoot: () => "/dummy/path/state",
@@ -88,6 +89,14 @@ describe("runtime send", () => {
         source: "cli",
       })
     );
+  });
+
+  it("#1029 r2: inside a registered project the mailbox sender defaults to captain:<project>; a plain terminal stays cli", async () => {
+    const cfg = makeConfig();
+    (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
+    loadConfig.mockReturnValue(cfg);
+    await runRuntimeSend("projA", "from the sibling", {});
+    expect(appendCaptainMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "from the sibling", from: "captain:projB" }));
   });
 
   it("#1029: --from carries the sender (e.g. side:<name>) into the mailbox entry", async () => {

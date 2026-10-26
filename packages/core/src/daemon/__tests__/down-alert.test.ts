@@ -3,7 +3,7 @@
 // happens long after generation, so a days-late mailbox entry doesn't read
 // as a current outage.
 import { describe, it, expect } from "vitest";
-import { formatDownAlertText, stalePrefix, STALE_ALERT_THRESHOLD_MS } from "../down-alert.js";
+import { formatDownAlertText, staleAge, STALE_ALERT_THRESHOLD_MS } from "../down-alert.js";
 
 describe("formatDownAlertText (#744a)", () => {
   it("bakes the outage window, minute count, and tz offset into the text", () => {
@@ -26,23 +26,23 @@ describe("formatDownAlertText (#744a)", () => {
   });
 });
 
-describe("stalePrefix (#744b)", () => {
+describe("staleAge (#744b)", () => {
   it("returns null when delivered within the threshold of generation", () => {
     const generatedAtMs = 1_000_000;
-    expect(stalePrefix(generatedAtMs, generatedAtMs + STALE_ALERT_THRESHOLD_MS)).toBeNull();
-    expect(stalePrefix(generatedAtMs, generatedAtMs + 5 * 60_000)).toBeNull();
+    expect(staleAge(generatedAtMs, generatedAtMs + STALE_ALERT_THRESHOLD_MS)).toBeNull();
+    expect(staleAge(generatedAtMs, generatedAtMs + 5 * 60_000)).toBeNull();
   });
 
-  it("returns a relative-age prefix once delivery is more than 1h after generation", () => {
+  it("returns a compact age once delivery is more than 1h after generation", () => {
     const generatedAtMs = 1_000_000;
-    const prefix = stalePrefix(generatedAtMs, generatedAtMs + STALE_ALERT_THRESHOLD_MS + 60_000);
-    expect(prefix).toBe("[stale — generated 1h 1m ago] ");
+    const prefix = staleAge(generatedAtMs, generatedAtMs + STALE_ALERT_THRESHOLD_MS + 60_000);
+    expect(prefix).toBe("1h");
   });
 
-  it("formats a multi-day age in days+hours", () => {
+  it("formats a multi-day age in days", () => {
     const generatedAtMs = 0;
     const twoDaysSevenHoursMs = (2 * 24 + 7) * 60 * 60 * 1000;
-    const prefix = stalePrefix(generatedAtMs, twoDaysSevenHoursMs);
-    expect(prefix).toBe("[stale — generated 2d 7h ago] ");
+    const prefix = staleAge(generatedAtMs, twoDaysSevenHoursMs);
+    expect(prefix).toBe("2d");
   });
 });

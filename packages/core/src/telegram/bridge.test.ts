@@ -196,7 +196,7 @@ describe("handleUpdate routing", () => {
     await drained;
     expect(deliverInbound).toHaveBeenCalledWith(
       "brove",
-      "📨 telegram\n📩 [from Telegram] ship it",
+      "📨 telegram:42\n📩 [from Telegram] ship it",
     );
     expect(formatLifecycle("brove", { type: "task.done", id: "t1", message: "done" } as never)).not.toContain("📨");
     bridge.stop();
@@ -692,5 +692,16 @@ describe("formatInboundReceipt (#667 slice 4)", () => {
 
   it("stays silent on queued — a mid-turn captain will see it next turn (#769)", () => {
     expect(formatInboundReceipt("demo", { status: "queued", via: "claude-peer" })).toBeUndefined();
+  });
+});
+
+import { telegramSender } from "./bridge.js";
+describe("telegramSender (#1029 round 2)", () => {
+  it("prefers @username, then the sanitized first name, then the user id", () => {
+    expect(telegramSender({ id: 42, username: "tu", first_name: "Tu" })).toBe("telegram:@tu");
+    expect(telegramSender({ id: 42, first_name: "Tú Lê" })).toBe("telegram:TL");
+    expect(telegramSender({ id: 42, first_name: "日本" })).toBe("telegram:42");
+    expect(telegramSender({ id: 42 })).toBe("telegram:42");
+    expect(telegramSender(undefined)).toBe("telegram");
   });
 });

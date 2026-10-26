@@ -100,9 +100,12 @@ export async function runRuntimeSend(
   if (!message) throw new Error("Message is required");
 
   const { requireDaemon } = await import("../lib/require-daemon.js");
-  const { appendCaptainMessage, waitForCaptainDelivery, isValidSender } = await import("@squadrant/core");
+  const { appendCaptainMessage, waitForCaptainDelivery, isValidSender, resolveCurrentProject } = await import("@squadrant/core");
   if (opts.from && !isValidSender(opts.from)) throw new Error(`Invalid --from '${opts.from}' — use a label like side:research-1`);
   await requireDaemon();
+  // Run from inside a registered project: the sender is that project's captain; a plain terminal stays `cli`.
+  const currentProject = opts.from ? null : resolveCurrentProject(config);
+  const from = opts.from ?? (currentProject ? `captain:${currentProject}` : undefined);
 
   const resolved = resolveTarget(registry, config, target, !!opts.command);
   await needRef(resolved);
@@ -121,7 +124,7 @@ export async function runRuntimeSend(
     project: finalProject,
     text: message,
     source: "cli",
-    ...(opts.from ? { from: opts.from } : {}),
+    ...(from ? { from } : {}),
   });
 
   const timeoutMs = confirmOpts?.timeoutMs ?? SEND_CONFIRM_TIMEOUT_MS;
@@ -146,7 +149,7 @@ runtimeCommand
   .argument("<arg1>", "Project name, or the message when --command is used")
   .argument("[arg2]", "Message (when target is a project). Omit when using --command.")
   .option("--command", "Target the command workspace")
-  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: cli)")
+  .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: captain:<current project>, else cli)")
   .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean; from?: string }) => {
     try {
       await runRuntimeSend(arg1, arg2, opts);

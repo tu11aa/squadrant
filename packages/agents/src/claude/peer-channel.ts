@@ -17,7 +17,7 @@
 // dedup would silently swallow it and manufacture a false negative). A transport
 // failure surfaces as `gone` so the caller falls back to the pane exactly once.
 
-import type { ControlChannel, DeliveryOutcome, ProbeResult, ChannelName } from "@squadrant/core";
+import { wrapClaudeEnvelope, type ControlChannel, type DeliveryOutcome, type ProbeResult, type ChannelName } from "@squadrant/core";
 import { buildUserEnvelope, type WireResult } from "./peer-wire.js";
 import type { PeerReceipt } from "./receipt-listener.js";
 
@@ -60,7 +60,8 @@ export class ClaudePeerChannel implements ControlChannel {
     
     const msgId = this.deps.newMsgId();
     const envelope = buildUserEnvelope({
-      content: message,
+      // Claude-only cosmetic: the TUI shows `› Message from @<name>` for a framed message (#1029 atname).
+      content: wrapClaudeEnvelope(message),
       msgId,
       from: this.deps.receipts.address,
       ...(this.deps.sessionIdFor(taskId) ? { sessionId: this.deps.sessionIdFor(taskId) } : {}),

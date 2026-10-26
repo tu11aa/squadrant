@@ -949,7 +949,7 @@ export async function runCrewSend(
   // Sender frame (#1029): the crew's harness shows socket input as an anonymous peer, so the
   // body names the captain. Framed after the #745 duplicate-task check, which compares raw text.
   const framed = frameMessage(
-    { from: `captain:${project}`, project, kind: "crew.send", agent: task?.provider, task: task?.id.slice(0, 8) },
+    { from: `captain:${project}`, project, kind: "crew.send", task: task?.id.slice(0, 8) },
     message,
   );
   const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
