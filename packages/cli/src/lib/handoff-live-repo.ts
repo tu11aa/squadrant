@@ -19,9 +19,9 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TERMINAL_STATES, crewBranch } from "@squadrant/shared";
+import { TERMINAL_STATES, crewBranch, stateRoot } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
-import { meterTask } from "@squadrant/core";
+import { meterTask, readTaskBriefSync } from "@squadrant/core";
 import type { LiveOpenPR, LiveCrewSummary, LiveRepoState, HandoffConflict } from "./handoff-facts.js";
 import { gatherBranchState } from "./handoff-branch-state.js";
 
@@ -111,7 +111,8 @@ export function gatherLiveCrews(tasks: TaskRecord[], runner: CommandRunner, proj
     .map((t) => ({
       name: t.name ?? t.id,
       state: t.state,
-      task: t.task,
+      // The ledger summary reads the brief for its `#N title`; the record only holds a title.
+      task: readTaskBriefSync(stateRoot(), t),
       question: t.question,
       operatorHold: t.operatorHold,
       reviewNote: t.reviewNote,

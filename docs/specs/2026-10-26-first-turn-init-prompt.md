@@ -1,6 +1,6 @@
 # First turn as an init prompt (research + design)
 
-Date: 2026-10-26 · Status: **implemented for claude crews** (branch `crew/initprompt`); decisions in §7 resolved by the operator 2026-10-26 · Claude Code 2.1.310 · cmux wrapper as shipped in `/Applications/cmux.app`
+Date: 2026-10-26 · Status: **implemented for claude crews** (branch `crew/initprompt`), with Q3 (title-only `TaskRecord.task`) and Q4 (side sessions) done in the stacked follow-up (branch `crew/initprompt2`); decisions in §7 resolved by the operator 2026-10-26 · Claude Code 2.1.310 · cmux wrapper as shipped in `/Applications/cmux.app`
 
 ## Problem
 
@@ -94,7 +94,7 @@ Run in a scratch directory under the session scratchpad, driven through a PTY, w
 
 ## 4. Design (as implemented)
 
-Decided scope: **claude only** (Q5). opencode / codex / gemini keep today's first-turn path; §4.4 stays as notes for later. Side sessions follow in a separate PR stacked on this one (Q4).
+Decided scope: **claude only** (Q5). opencode / codex / gemini keep today's first-turn path; §4.4 stays as notes for later. Side sessions (Q4) and the title-only record (Q3) are in the stacked follow-up, §4.5.
 
 ### 4.1 Claude (first)
 
@@ -142,7 +142,7 @@ Keep to the repo rule *TaskRecord = state only, mailbox = all message text, no n
 |---|---|
 | Mailbox | The daemon's `dispatch` handler calls `recordDispatch` → `appendDispatchEntry` (`packages/core/src/mailbox.ts`) for **every** dispatch (all agents; it does not change their first-turn path): `kind: "task.dispatched"`, `payload: { brief: <full text>, sessionId? }`, `message: null` (never delivered to the captain pane; the captain wrote it). It is a mailbox-only kind, not a `ControlEvent`, so it cannot be injected through the socket's `event` verb and the reducer is untouched. The seq is stamped on the TaskRecord as `briefSeq` before the launcher runs; a failed append never blocks the dispatch. |
 | `<taskdir>/brief/brief.md` | What the crew reads. Needed because the crew needs a path to `Read`, and the mailbox **rotates** (5 MB / 7 days, keep 3), so a long-running crew could otherwise lose its only copy. Not deleted by `crew tasks --purge` (purge removes the record only), in line with "full brief context must never be lost". |
-| `TaskRecord.task` | Unchanged: still the full text (Q3, later PR). |
+| `TaskRecord.task` | A one-line title once the brief is recorded (Q3, §4.5). |
 | Worktree copy (#458) | **Removed for claude.** `--task-file` lands only in `brief.md`; the worktree stays clean, so `crew close` is no longer blocked. Other agents keep the copy (Q5). |
 | `$TMPDIR` spill | Kept for the claude fallback, opencode/generic panes and side sessions. |
 
@@ -150,6 +150,23 @@ Display:
 
 - `squadrant crew tasks <project>`: a `brief <seq>` column when the record has `briefSeq` (`--json` shows `briefSeq`).
 - `squadrant crew msg <project> <seq>`: prints the dispatch entry's `payload.brief` in full (`fullEntryText`).
+
+### 4.5 Follow-up: title-only record (Q3) and side sessions (Q4)
+
+**Q3.** The daemon's `dispatch` handler shrinks `TaskRecord.task` to `taskTitle(brief)` (first non-empty line, ≤ 120 chars) after `recordDispatch` returns a `briefSeq`. Only a *recorded* brief is shrunk: no `recordDispatch` or a failed append leaves the full text on the record, so the brief can never be lost. Launchers and the cross-project notice get the un-shrunk record. `readTaskBrief(stateRoot, rec)` is the one way to get the full text: `brief.md` → the `task.dispatched` entry named by `briefSeq` (checked against the task id) → `rec.task`. The last step is exact for old records that hold the full text; for a new record whose `brief.md` is gone (non-claude agent) and whose mailbox segment rotated away it is only the title, reported as `source: "record"`.
+
+Readers moved off `rec.task`:
+
+| Reader | Now |
+|---|---|
+| `crew send` first-turn dedupe (`runCrewSend`, `crew-spawn.ts`) | compares the message to `readTaskBrief` |
+| #466 self-heal resend fallback (`resendFirstTurn` in `squadrantd.ts`, no `init.md`) | `firstTurnResendMessage` → `readTaskBrief` |
+| `crew approve` PR body when no review note (`crew-control.ts`) | `readTaskBrief` |
+| handoff / compact ledger summary (`gatherLiveCrews`) | `readTaskBriefSync` (`brief.md`, else the record) so `taskSummary` still finds `#N title` |
+| headless launcher (`squadrantd.ts`), codex/opencode/claude interactive launcher, cross-project notice | receive the un-shrunk record from `dispatch` |
+| `CREW DONE` fallback body, delegation report, `crew tasks` line, `crew-chat`, web status | unchanged: they only want the first line |
+
+**Q4.** `runSideSpawn` takes an optional `watchBoot` dep, set by the CLI only for claude. With it, the framed first turn (whole, no spill) is written to `<stateRoot>/<project>/side/<name>/init.md` (0600), the driver adds the `"$(cat '<init.md>')"` positional (last arg; no session id, no socket, no `--add-dir`: the topic is inline), and `watchClaudeSideBoot` answers the trust panel until claude's input box is drawn. No task record and no CREW lifecycle: the watcher is the only delivery signal (nothing to `UserPromptSubmit`-confirm). Fallback to the old pane first turn (with the #864 spill) when `init.md` cannot be written or the watcher times out. `side close` removes the per-side dir.
 
 ### 4.4 opencode / codex / gemini
 
@@ -218,6 +235,6 @@ Found while smoking: `--messaging-socket-path` must be absolute and live in a 07
 |---|---|---|
 | Q1 | Keep the `📨 captain:<project> → task · taskId` header at the top of `init.md`? | **Keep it.** |
 | Q2 | Inline threshold? | **1200 B inline for positional briefs, a file pointer for `--task-file`.** The value is a readability cut, not a delivery limit, so it fits every agent; it lives behind one name (`INIT_PROMPT_INLINE_MAX_BYTES`) with a comment saying so. |
-| Q3 | Shrink `TaskRecord.task` now? | **Later, not in this PR.** The full brief context must never be lost: `brief.md` and the `task.dispatched` entry keep it. |
-| Q4 | Side sessions? | **Separate PR, stacked on this one, later.** |
+| Q3 | Shrink `TaskRecord.task` now? | **Later, not in this PR** → done in the stacked follow-up (§4.5). The full brief context must never be lost: `brief.md` and the `task.dispatched` entry keep it. |
+| Q4 | Side sessions? | **Separate PR, stacked on this one, later** → done in the stacked follow-up (§4.5), together with Q3. |
 | Q5 | Other agents? | **Claude only.** opencode / codex / gemini stay on today's path. |

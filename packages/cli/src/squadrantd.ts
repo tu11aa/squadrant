@@ -17,7 +17,7 @@ import type { TelegramBridge } from "@squadrant/core";
 import type { LifecycleSnapshot, LifecycleSourceDeps } from "@squadrant/core";
 import type { TelegramConfig } from "@squadrant/shared";
 import { createRunCommand, createIsCaptainAlive, createLaunch } from "@squadrant/core";
-import { buildCompletionProtocol, frameFirstTurn, readInitPrompt } from "@squadrant/core";
+import { frameFirstTurn, firstTurnResendMessage } from "@squadrant/core";
 import { createEventsSource } from "@squadrant/core";
 export type { SquadrantdOpts } from "@squadrant/core";
 export { defaultIsPidAlive } from "@squadrant/core";
@@ -421,8 +421,8 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     const captainName = proj?.captainName ?? `${rec.project}-captain`;
     // A crew launched with an init prompt gets the same init.md again; older
     // crews (or a spawn that fell back to a first-turn send) get the brief.
-    const message = readInitPrompt(ctx.stateRoot, rec.project, rec.id)
-      ?? frameFirstTurn(`${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project, "claude")}`, { project: rec.project, originProject: rec.originProject, taskId: rec.id });
+    // rec.task is a title: without init.md the brief comes from brief.md / the dispatch entry (old records hold it whole).
+    const message = await firstTurnResendMessage(ctx.stateRoot, rec);
     return resendCrewFirstTurn(resendRuntime, captainName, rec.project, rec.name, message);
   });
 

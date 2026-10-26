@@ -72,6 +72,7 @@ export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
 export { FIRST_TURN_INLINE_MAX_BYTES } from "./first-turn-spill.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { writeInitPrompt } from "./first-turn-init.js";
+import { readTaskBrief } from "./task-brief.js";
 import type { PeerFirstTurnResult } from "./peer-first-turn.js";
 
 import {
@@ -963,7 +964,8 @@ export async function runCrewSend(
   // follow-up) is unaffected. Excludes blocked/awaiting-input/review so this
   // never touches the task.blocked reopen path below.
   const isAttentionState = task?.state === "blocked" || task?.state === "awaiting-input" || task?.state === "review";
-  if (task && !isAttentionState && task.firstTurnConfirmedAt && task.task === message) {
+  // The record holds a title; the brief it was sent from is brief.md / the dispatch entry.
+  if (task && !isAttentionState && task.firstTurnConfirmedAt && (await readTaskBrief(stateRoot(), task)).text === message) {
     throw new Error(
       `Crew '${name}' already confirmed receipt of this task — its first turn was delivered and is not being re-sent to avoid running it twice. ` +
         `If you have new instructions, send different text.`,

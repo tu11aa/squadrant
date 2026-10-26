@@ -234,6 +234,17 @@ describe("claude driver — launch-time init prompt", () => {
     expect(cmd.endsWith(` --messaging-socket-path /tmp/cc-socks/squadrant-x.sock "$(cat '/state/p/t1/init.md')"`)).toBe(true);
   });
 
+  it("side session: the init file is the last arg, with no socket or session id (launch positional)", () => {
+    const cmd = driver.buildCommand({
+      prompt: "topic", workdir: "/w", role: "side", interactive: true,
+      initPromptFile: "/state/p/side/s1/init.md",
+    });
+    expect(cmd.endsWith(` "$(cat '/state/p/side/s1/init.md')"`)).toBe(true);
+    expect(cmd).not.toContain("--messaging-socket-path");
+    expect(cmd).not.toContain("--session-id");
+    expect(cmd).not.toContain(" -p ");
+  });
+
   it("single-quotes init paths with spaces and quotes", () => {
     const cmd = driver.buildCommand({ ...base, initPromptFile: "/a b/it's/init.md" });
     expect(cmd).toContain(`"$(cat '/a b/it'\\''s/init.md')"`);

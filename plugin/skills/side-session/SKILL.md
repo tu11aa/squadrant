@@ -108,6 +108,8 @@ When the session completes, its handoff is delivered daemon-direct via cmux (#33
 
 ## Key invariants
 
+For claude, the topic reaches the session as its launch-time init prompt (a real user turn, file `<stateRoot>/<project>/side/<name>/init.md`), not as a pasted message; other agents keep the pane first turn.
+
 `squadrant side spawn` does **NOT** create a daemon task record. There is no `CREW IDLE/DONE` event for side-sessions. The only signal path is the explicit `squadrant runtime send` the side-session sends on user confirmation.
 
 `squadrant side close` on a debug session automatically prunes its scratch worktree (the branch is preserved so the draft patch survives).
