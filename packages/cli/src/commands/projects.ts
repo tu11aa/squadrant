@@ -10,14 +10,15 @@ import {
   reservedStateNameError,
   ProjectConfig,
 } from "@squadrant/shared";
-import { restartDaemonIfRunning, type RestartOutcome } from "@squadrant/core";
+import { reloadOrRestartDaemon, type RestartOutcome } from "@squadrant/core";
 
-export function restartAfterProjectsAdd(opts: {
+export async function restartAfterProjectsAdd(opts: {
   noRestart?: boolean;
-  doRestart?: (o: { reason: string; noRestart?: boolean }) => RestartOutcome;
-}): void {
-  const doRestart = opts.doRestart ?? restartDaemonIfRunning;
-  const outcome = doRestart({ reason: "project registration", noRestart: opts.noRestart });
+  doRestart?: (o: { reason: string; noRestart?: boolean; liveReloadable: boolean }) => RestartOutcome | Promise<RestartOutcome>;
+}): Promise<void> {
+  // Project registry is read live by the daemon — reload it, don't bounce every project's control plane.
+  const doRestart = opts.doRestart ?? reloadOrRestartDaemon;
+  const outcome = await doRestart({ reason: "project registration", noRestart: opts.noRestart, liveReloadable: true });
   if (outcome === "skipped-not-running") {
     console.log(chalk.dim("  (daemon not running — change applies on next start)"));
   } else if (outcome === "skipped-opt-out") {
@@ -63,7 +64,7 @@ const addCmd = new Command("add")
   .option("--group <name>", "Project group name (siblings share context)")
   .option("--group-role <role>", "Role within the group (auto-set to 'primary' if first in group)")
   .option("--no-restart", "skip daemon restart after registration")
-  .action((name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string; restart?: boolean }) => {
+  .action(async (name: string, projectPath: string, opts: { captain?: string; spoke?: string; group?: string; groupRole?: string; restart?: boolean }) => {
     const config = loadConfig();
 
     const reserved = reservedStateNameError(name);
@@ -151,7 +152,7 @@ const addCmd = new Command("add")
     config.projects[name] = project;
     saveConfig(config);
     console.log(chalk.green(`\n  ✔ Project '${name}' registered`));
-    restartAfterProjectsAdd({ noRestart: opts.restart === false });
+    await restartAfterProjectsAdd({ noRestart: opts.restart === false });
 
     // #983: exchange lives in workspace/<p>/; no Obsidian spoke scaffold (or #538's dead status.md).
     console.log(chalk.green(`  ✔ Workspace at ${ensureWorkspace(name)}`));
