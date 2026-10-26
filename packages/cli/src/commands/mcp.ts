@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { CREW_SIGNAL_TOOLS, callCrewSignalTool } from "@squadrant/core";
 import { squadrantdCall } from "./crew-control.js";
 
@@ -9,7 +12,9 @@ export async function runMcpServer(): Promise<void> {
     import("@modelcontextprotocol/sdk/server/stdio.js"),
     import("@modelcontextprotocol/sdk/types.js"),
   ]);
-  const server = new Server({ name: "squadrant", version: "0.1.0" }, { capabilities: { tools: {} } });
+  // Same lookup as index.ts --version: this is bundled into dist/index.js, so ../package.json is the root package.
+  const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf-8"));
+  const server = new Server({ name: "squadrant", version: pkg.version }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: CREW_SIGNAL_TOOLS.map((t) => ({
       name: t.name,
