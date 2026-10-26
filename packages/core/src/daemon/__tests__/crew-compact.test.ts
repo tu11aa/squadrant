@@ -59,6 +59,21 @@ describe("crew compact", () => {
     expect(h.send).toHaveBeenCalledWith(SURFACE, "/compact", { agent: "claude" });
   });
 
+  it("compacts an already-idle crew whose task is done and carries a stale pendingTool", async () => {
+    const h = harness({ task: { state: "done", pendingTool: { name: "mcp__squadrant__crew_signal_done", since: 1 } } });
+    await h.c.request("demo", "crew-1", "smoke");
+    await h.c.tick(); await h.c.tick();
+    expect(h.send).toHaveBeenCalledWith(SURFACE, "/compact smoke", { agent: "claude" });
+  });
+
+  it("still waits on a live task's open tool, and says why", async () => {
+    const h = harness({ task: { state: "awaiting-input", pendingTool: { name: "Bash", since: 1 } } });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick();
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.logs.some((l) => l.includes("still waiting (tool-open)"))).toBe(true);
+  });
+
   it("waits through an open tool call and a send-guard deferral, then types", async () => {
     let calls = 0;
     const h = harness({ send: async () => { if (++calls === 1) throw new DeferDelivery(null, "draft"); } });

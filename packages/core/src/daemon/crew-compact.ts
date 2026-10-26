@@ -5,6 +5,7 @@
 // Crew-bound delivery (`crew send`, a CLI-side path) asks `holdsCrew` and waits while a compact is
 // queued or running, so a message sent meanwhile lands after the compact, never inside its summary.
 import { loadConfig } from "@squadrant/shared";
+import { TERMINAL_STATES } from "@squadrant/shared";
 import type { PaneRef, TaskRecord } from "@squadrant/shared";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
 import { DeferDelivery } from "../delivery/defer-delivery.js";
@@ -18,7 +19,7 @@ const COMPACTABLE = new Set(["claude", "opencode"]);
 /** Task states in which the crew is mid-turn or waiting on something — never type over them. */
 const BUSY_STATES = new Set(["submitted", "working", "blocked", "stalled"]);
 
-interface Pending { taskId: string; agent: string; keep: string | undefined; deadline: number; idlePolls: number; lastReason?: string }
+interface Pending { taskId: string; agent: string; keep: string | undefined; deadline: number; idlePolls: number; lastReason?: string; lastNoteAt?: number }
 
 export interface CrewCompactDeps {
   cmux: DaemonSurfaceDriver;
@@ -101,6 +102,13 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     if (h && holds.delete(taskId)) log(`crew-compact ${h.project}:${h.name}: compact finished — delivery resumed`);
   }
 
+  /** Say why a queued compact is still waiting, at most once a minute, so a stuck one is diagnosable. */
+  function noteWaiting(p: Pending & { project: string; name: string }): void {
+    if (p.lastNoteAt !== undefined && now() - p.lastNoteAt < 60_000) return;
+    p.lastNoteAt = now();
+    log(`crew-compact ${p.project}:${p.name}: still waiting (${p.lastReason})`);
+  }
+
   async function tryOne(taskId: string, p: Pending & { project: string; name: string }): Promise<void> {
     const label = `${p.project}:${p.name}`;
     if (now() > p.deadline) {
@@ -119,18 +127,23 @@ export function createCrewCompact(deps: CrewCompactDeps) {
       log(`crew-compact ${label}: operator took over — compact dropped`);
       return;
     }
-    if (BUSY_STATES.has(task.state) || task.pendingTool || task.pendingMonitor) {
+    // A terminal task can carry a stale pendingTool (the signal tool that ended it never got its
+    // PostToolUse), so an open tool only counts while the task is live; the pane decides after that.
+    const live = !TERMINAL_STATES.has(task.state);
+    if (BUSY_STATES.has(task.state) || (live && (task.pendingTool || task.pendingMonitor))) {
       p.idlePolls = 0;
-      p.lastReason = `state-${task.state}`;
+      p.lastReason = BUSY_STATES.has(task.state) ? `state-${task.state}` : "tool-open";
+      noteWaiting(p);
       return;
     }
     const surface = await resolveSurface(p.project, p.name);
-    if (!surface) { p.lastReason = "no-surface"; return; }
+    if (!surface) { p.lastReason = "no-surface"; noteWaiting(p); return; }
     const screen = await cmux.readPaneScreen(surface);
     // The Claude spinner regex is only meaningful on a Claude pane; other agents rely on task state.
     if (screen == null || (p.agent === "claude" && CC_WORKING_RE.test(screen))) {
       p.idlePolls = 0;
       p.lastReason = screen == null ? "unreadable" : "turn-in-flight";
+      noteWaiting(p);
       return;
     }
     if (++p.idlePolls < IDLE_POLLS) return;
