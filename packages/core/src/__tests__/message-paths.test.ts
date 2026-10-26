@@ -32,7 +32,8 @@ describe("crew lifecycle events (daemon → captain; frameEntry, delivery loop)"
     ["timeout", "task.failed", `CREW TIMEOUT ${tag}: wall-clock exceeded 6h`, `${D} → timeout · ${T}`],
     ["held-long", "task.progress", `CREW HELD-LONG ${tag} — held 3h. Ask the operator`, `${D} → held-long · ${T}`],
     ["digest", "task.progress", `CREW DIGEST ${tag}: 3 updates`, `${D} → digest · ${T}`],
-    ["undelivered", "task.progress", `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed`, `${D} → undelivered · ${T}`],
+    ["first-turn auto-resent", "task.progress", `🔁 CREW FIRST-TURN AUTO-RESENT ${tag}: re-sent automatically.`, `${D} → 🔁 first-turn auto-resent · ${T}`],
+    ["undelivered", "task.progress", `⚠️ CREW UNDELIVERED ${tag}: first turn may not have landed`, `${D} → ⚠️ undelivered · ${T}`],
   ])("%s", (_n, kind, message, header) => {
     const out = frameEntry("p", crew(kind, message), message);
     expect(head(out)).toBe(header);
@@ -45,7 +46,7 @@ describe("crew lifecycle events (daemon → captain; frameEntry, delivery loop)"
     expect(out).toBe(`${D} → warn · ${T}\n${m}`);
   });
   it("stale replay carries stale: in the header", () => {
-    expect(head(frameEntry("p", crew("task.done", `CREW DONE ${tag}: x`, { stale: "3d" }), `CREW DONE ${tag}: x`))).toBe(`${D} → done · ${T} · stale: 3d`);
+    expect(head(frameEntry("p", crew("task.done", `CREW DONE ${tag}: x`, { stale: "3d 2h" }), `CREW DONE ${tag}: x`))).toBe(`${D} → done · ${T} · stale: 3d 2h`);
   });
 });
 
@@ -80,7 +81,7 @@ describe("external messages into a captain (captain.message entries)", () => {
     ["thread decision", { source: "cli", from: "thread:ab12" }, "📨 thread:ab12 · seq: 9", "thread-ab12"],
     ["knowledge reconcile", { source: "cli", from: "knowledge" }, "📨 knowledge · seq: 9", "knowledge"],
     ["daemon notice (restart / down-alert / stuck / context)", { source: "daemon" }, "📨 daemon · seq: 9", "squadrant"],
-    ["stale daemon notice", { source: "daemon", stale: "2d" }, "📨 daemon · seq: 9 · stale: 2d", "squadrant"],
+    ["stale daemon notice", { source: "daemon", stale: "2d 1h" }, "📨 daemon · seq: 9 · stale: 2d 1h", "squadrant"],
     ["runtime send / ping, plain terminal", { source: "cli" }, "📨 cli · seq: 9", "cli"],
     ["ping from a sibling captain", { source: "cli", from: "captain:flooros" }, '📨 captain:flooros · seq: 9 · reply: squadrant ping flooros "<msg>"', "captain-flooros"],
   ])("%s", (_n, payload, header, name) => {
@@ -108,15 +109,16 @@ describe("anti-forgery across paths", () => {
 });
 
 describe("first turns (captain → new crew / side / thread; frameFirstTurn)", () => {
-  it.each<[string, Parameters<typeof frameFirstTurn>[1], string, string]>([
-    ["crew task brief + completion protocol", { project: "app", taskId: TASK }, "📨 captain:app → task · taskId: ef2630e1", "captain-app"],
-    ["dispatched crew (cross-project)", { project: "flooros", originProject: "saitex", taskId: TASK }, '📨 captain:saitex → task · taskId: ef2630e1 · reply: squadrant ping saitex "<msg>"', "captain-saitex"],
-    ["side spawn", { project: "app", kind: "side.open" }, "📨 captain:app → side.open", "captain-app"],
-    ["thread open / fork / seed", { project: "app", kind: "thread.open" }, "📨 captain:app → thread.open", "captain-app"],
-    ["thread resume", { project: "app", kind: "thread.resume" }, "📨 captain:app → thread.resume", "captain-app"],
-  ])("%s", (_n, o, header, name) => {
+  it.each<[string, Parameters<typeof frameFirstTurn>[1], string]>([
+    ["crew task brief + completion protocol", { project: "app", taskId: TASK }, "📨 captain:app → task · taskId: ef2630e1"],
+    ["dispatched crew (cross-project): origin captain as sender, no reply hint", { project: "flooros", originProject: "saitex", taskId: TASK }, "📨 captain:saitex → task · taskId: ef2630e1"],
+    ["side spawn", { project: "app", kind: "side.open" }, "📨 captain:app → side.open"],
+    ["thread open / fork / seed", { project: "app", kind: "thread.open" }, "📨 captain:app → thread.open"],
+    ["thread resume", { project: "app", kind: "thread.resume" }, "📨 captain:app → thread.resume"],
+  ])("%s", (_n, o, header) => {
     const out = frameFirstTurn("brief", o);
     expect(out).toBe(`${header}\nbrief`);
-    expect(envelopeName(out)).toBe(name);
+    // never inside the cross-session envelope: auto mode would treat the agent's own task as "never user intent"
+    expect(wrapClaudeEnvelope(out)).toBe(out);
   });
 });

@@ -33,16 +33,16 @@ describe("staleAge (#744b)", () => {
     expect(staleAge(generatedAtMs, generatedAtMs + 5 * 60_000)).toBeNull();
   });
 
-  it("returns a compact age once delivery is more than 1h after generation", () => {
+  it("returns a two-unit age once delivery is more than 1h after generation", () => {
     const generatedAtMs = 1_000_000;
     const prefix = staleAge(generatedAtMs, generatedAtMs + STALE_ALERT_THRESHOLD_MS + 60_000);
-    expect(prefix).toBe("1h");
+    expect(prefix).toBe("1h 1m");
   });
 
-  it("formats a multi-day age in days", () => {
+  it("formats a multi-day age in days+hours", () => {
     const generatedAtMs = 0;
     const twoDaysSevenHoursMs = (2 * 24 + 7) * 60 * 60 * 1000;
     const prefix = staleAge(generatedAtMs, twoDaysSevenHoursMs);
-    expect(prefix).toBe("2d");
+    expect(prefix).toBe("2d 7h");
   });
 });

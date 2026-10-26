@@ -70,6 +70,9 @@ const makeConfig = () => ({
 describe("runtime send", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // The label comes from the session's own role env (#1029): start each test as a plain terminal.
+    vi.unstubAllEnvs();
+    for (const k of ["SQUADRANT_CREW_TASK_ID", "SQUADRANT_CREW_PROJECT", "SQUADRANT_ROLE", "SQUADRANT_THREAD_ID", "SQUADRANT_SIDE_SESSION"]) vi.stubEnv(k, "");
     loadConfig.mockReturnValue(makeConfig());
     requireDaemon.mockResolvedValue(undefined);
     status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
@@ -91,10 +94,13 @@ describe("runtime send", () => {
     );
   });
 
-  it("#1029 r2: inside a registered project the mailbox sender defaults to captain:<project>; a plain terminal stays cli", async () => {
+  it("#1029 r2: the captain session's mailbox sender defaults to captain:<project>; a plain terminal inside the project stays cli", async () => {
     const cfg = makeConfig();
     (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
     loadConfig.mockReturnValue(cfg);
+    await runRuntimeSend("projA", "from a shell", {});
+    expect(appendCaptainMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: "from a shell", from: "cli" }));
+    vi.stubEnv("SQUADRANT_ROLE", "captain");
     await runRuntimeSend("projA", "from the sibling", {});
     expect(appendCaptainMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "from the sibling", from: "captain:projB" }));
   });

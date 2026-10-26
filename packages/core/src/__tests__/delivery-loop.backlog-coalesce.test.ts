@@ -72,7 +72,7 @@ describe("delivery loop backlog coalescing (#890)", () => {
     const { sent, raw, deliv } = setup([ev(1, "task.done", 8 * 60 * 60_000)]);
     await deliv.deliveryTick!();
     expect(sent).toEqual(["task.done #1"]);
-    expect(raw[0].split("\n")[0]).toMatch(/ · seq: 1 · stale: 8h$/);
+    expect(raw[0].split("\n")[0]).toMatch(/ · seq: 1 · stale: 8h 0m$/);
   });
 
   it("drops a DELIVERY STUCK self-alert once delivery has succeeded, and still acks it", async () => {

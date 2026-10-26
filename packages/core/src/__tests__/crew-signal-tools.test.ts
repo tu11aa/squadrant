@@ -79,13 +79,16 @@ describe("crew signal MCP tools (#1029)", () => {
 });
 
 describe("crewSignalToolList (MCP tools/list payload)", () => {
-  it("lists all four crew_signal_* tools, each marked alwaysLoad so Claude skips the ToolSearch step", () => {
-    const list = crewSignalToolList();
+  it("under a crew, lists all four crew_signal_* tools marked alwaysLoad so Claude skips the ToolSearch step", () => {
+    const list = crewSignalToolList({ SQUADRANT_CREW_TASK_ID: "t1" });
     expect(list.map((x) => x.name)).toEqual(["crew_signal_done", "crew_signal_blocked", "crew_signal_failed", "crew_signal_review"]);
     for (const tool of list) {
       expect(tool._meta).toEqual({ "anthropic/alwaysLoad": true });
       expect(tool.inputSchema.type).toBe("object");
       expect(Object.keys(tool.inputSchema.properties)).toEqual(expect.arrayContaining(["task_id", "project"]));
     }
+  });
+  it("outside a crew (captain / operator session) the tools stay deferred: no _meta", () => {
+    for (const tool of crewSignalToolList({})) expect(tool).not.toHaveProperty("_meta");
   });
 });

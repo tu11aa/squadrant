@@ -83,7 +83,7 @@ describe("coalesceBacklog (#890)", () => {
       now: NOW, taskState: states({ t1: "done", t2: "review" }),
     });
     expect(out[0].entry.message).toBe("task.done #1");
-    expect(out[0].entry.payload?.stale).toBe("8h");
+    expect(out[0].entry.payload?.stale).toBe("8h 0m");
     expect(out[1].entry.message).toBe("task.review #2");
     expect(out[1].entry.payload?.stale).toBeUndefined();
   });
@@ -91,14 +91,14 @@ describe("coalesceBacklog (#890)", () => {
   it("stale rides on the payload next to the terminal annotation", () => {
     const out = coalesceBacklog([task(1, "task.review", "t1", 2 * 60 * MIN)], { now: NOW, taskState: states({ t1: "cancelled" }) });
     expect(out[0].entry.message).toBe("[task now cancelled] task.review #1");
-    expect(out[0].entry.payload?.stale).toBe("2h");
+    expect(out[0].entry.payload?.stale).toBe("2h 0m");
   });
 
   it("marks stale daemon captain.message, and leaves human/cli messages alone", () => {
     const cli: MailboxEntry = { seq: 2, ts: new Date(NOW - 3 * 60 * MIN).toISOString(), kind: "captain.message", payload: { source: "cli" }, message: "hi" };
     const out = coalesceBacklog([daemonMsg(1, "⚠️ Daemon restarted", 2 * 60 * MIN), cli], { now: NOW, taskState: states({}) });
     expect(out.map((d) => d.entry.message)).toEqual(["⚠️ Daemon restarted", "hi"]);
-    expect(out.map((d) => d.entry.payload?.stale)).toEqual(["2h", undefined]);
+    expect(out.map((d) => d.entry.payload?.stale)).toEqual(["2h 0m", undefined]);
   });
 
   it("drops every DELIVERY STUCK / NOT DELIVERABLE self-alert — reaching it means its blocker already cleared", () => {

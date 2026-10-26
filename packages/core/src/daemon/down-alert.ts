@@ -5,7 +5,7 @@
 //   (a) formatDownAlertText — bakes the actual outage window (local time +
 //       tz offset) into the text so it's self-describing regardless of when
 //       it's read.
-//   (b) stalePrefix — a generic-enough (but not general-purpose) check any
+//   (b) staleAge — a generic-enough (but not general-purpose) check any
 //       delivery caller can run against a mailbox entry's own `ts` (already
 //       the entry's generatedAt — no new field needed) vs. the actual
 //       delivery time, to flag a message that's gone stale in the mailbox.
@@ -41,14 +41,13 @@ export function formatDownAlertText(opts: { startTs: string; endTs: string; minu
  *  flag it as stale rather than let it read as current. */
 export const STALE_ALERT_THRESHOLD_MS = 60 * 60 * 1000;
 
-/** Returns the compact age (`3d`, `2h`, `45min`) when `deliveredAtMs` is more than
+/** Returns the age in two units (`1h 59m`, `1d 23h`) when `deliveredAtMs` is more than
  *  STALE_ALERT_THRESHOLD_MS after `generatedAtMs`, else null. Rendered as the header
  *  field `stale: <age>`. Pure — callers decide which entries/kinds this applies to. */
 export function staleAge(generatedAtMs: number, deliveredAtMs: number): string | null {
   const ageMs = deliveredAtMs - generatedAtMs;
   if (ageMs <= STALE_ALERT_THRESHOLD_MS) return null;
   const minutes = Math.round(ageMs / 60_000);
-  if (minutes < 60) return `${minutes}min`;
   const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }

@@ -129,12 +129,24 @@ export function selectPromptHits(
  * over the claude peer channel are not human prompts; never inject rules for them.
  */
 export function isSystemPrompt(prompt: string): boolean {
+  // Over the claude peer socket the text arrives as "Another Claude session sent a message:" + an optional
+  // <cross-session-message> envelope around the #1029 header. Classify by the header inside, not by the wrapper:
+  // crew lifecycle, daemon and side handoffs are notices; a captain's send, a thread, a telegram message and
+  // a first-turn brief are prompts a human or captain wrote and still get rules.
+  const inner = unwrapPeer(prompt);
+  if (inner.startsWith("📨")) return /^📨 (crew:|daemon\b|side:)/u.test(inner);
   const t = prompt.trimStart();
-  return /^(⚠|🗒|\[stale\b|CREW [A-Z]|Another Claude session sent a message)/u.test(t)
-    // #1029 sender header: crew lifecycle, daemon and side handoffs are notices; a captain's send, a thread,
-    // a telegram message or a first-turn brief are prompts a human or captain wrote and still get rules.
-    || /^📨 (crew:|daemon\b|side:)/u.test(t)
-    || t.includes("<cross-session-message");
+  return /^(⚠|🗒|CREW [A-Z]|Another Claude session sent a message)/u.test(t) || t.includes("<cross-session-message");
+}
+
+/** Strip the claude peer preamble and the cross-session envelope open tag; returns the framed text. */
+function unwrapPeer(prompt: string): string {
+  return prompt
+    .trimStart()
+    .replace(/^Another Claude session sent a message[^\n]*\n/u, "")
+    .trimStart()
+    .replace(/^<cross-session-message\b[^>]*>\n?/u, "")
+    .trimStart();
 }
 
 const BRIEF_POINTER_RE = /^Full task is at (\S+\.md) — cat it/;
@@ -143,7 +155,7 @@ const FRAMED_BRIEF_POINTER_RE = /^📨 .*?\bFull task is at (\S+\.md) — cat it
 
 /** A crew first-turn brief spilled to a file (first-turn-spill.ts) is searched through the file's text. */
 function promptText(prompt: string): string {
-  const t = prompt.trimStart();
+  const t = unwrapPeer(prompt);
   const m = BRIEF_POINTER_RE.exec(t) ?? FRAMED_BRIEF_POINTER_RE.exec(t);
   if (!m) return prompt;
   try { return fs.readFileSync(m[1], "utf8").slice(0, MAX_PROMPT_CHARS * 2); } catch { return prompt; }

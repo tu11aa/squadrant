@@ -73,6 +73,9 @@ const makeConfig = () => ({
 describe("runPing", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // The label comes from the session's own role env (#1029): start each test as a plain terminal.
+    vi.unstubAllEnvs();
+    for (const k of ["SQUADRANT_CREW_TASK_ID", "SQUADRANT_CREW_PROJECT", "SQUADRANT_ROLE", "SQUADRANT_THREAD_ID", "SQUADRANT_SIDE_SESSION"]) vi.stubEnv(k, "");
     loadConfig.mockReturnValue(makeConfig());
     requireDaemon.mockResolvedValue(undefined);
     resolveCaptainChannelMode.mockReturnValue("off");
@@ -111,7 +114,17 @@ describe("runPing", () => {
     );
   });
 
-  it("#1029 r2: run inside another registered project, the sender is captain:<that project> with a reply hint", async () => {
+  it("#1029: a plain terminal inside a project directory is still cli (cwd under a project does not make it the captain)", async () => {
+    status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
+    const cfg = makeConfig();
+    (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
+    loadConfig.mockReturnValue(cfg);
+    await runPing("projA", "from a shell");
+    expect(deliverToCaptain.mock.calls[0][1]).toBe("📨 cli\nfrom a shell");
+  });
+
+  it("#1029 r2: the captain session of another project is captain:<that project> with a reply hint", async () => {
+    vi.stubEnv("SQUADRANT_ROLE", "captain");
     status.mockResolvedValue({ id: "ws-1", name: "⚓ A-captain", status: "running" });
     const cfg = makeConfig();
     (cfg.projects as Record<string, unknown>).projB = { path: process.cwd(), captainName: "⚓ B-captain", spokeVault: "/spokes/b", host: "local" };
