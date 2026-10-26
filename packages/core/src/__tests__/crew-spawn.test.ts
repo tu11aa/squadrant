@@ -2,7 +2,7 @@ import { framedBody } from "./unframe.js";
 // Unit tests for crew-spawn.ts orchestration logic.
 // Uses mock deps and module mocks — no daemon, no workspaces, no agents, no git.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── module mocks (hoisted before imports) ───────────────────────────────────
 
@@ -47,6 +47,20 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+// Launch-time init prompt: existing claude tests exercise the peer → pane
+// fallback (init.md could not be written); the init-prompt tests switch it on.
+const initPromptFails = vi.hoisted(() => ({ on: true }));
+vi.mock("../first-turn-init.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../first-turn-init.js")>();
+  return {
+    ...actual,
+    writeInitPrompt: vi.fn((o: Parameters<typeof actual.writeInitPrompt>[0]) => {
+      if (initPromptFails.on) throw new Error("state dir not writable");
+      return actual.writeInitPrompt(o);
+    }),
+  };
+});
+
 // Prevent reapCrewChildren from running real `ps auxE` during close tests.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -57,6 +71,8 @@ vi.mock("node:child_process", async (importOriginal) => {
 // ─── imports (after mock declarations) ───────────────────────────────────────
 
 import * as nodefs from "node:fs";
+import path from "node:path";
+import { INIT_PROMPT_INLINE_MAX_BYTES } from "../first-turn-init.js";
 import {
   runCrewSpawn,
   runCrewSend,
@@ -175,6 +191,7 @@ beforeEach(() => {
   resolveWorktreeBaseMock.mockReturnValue("main");
   loadConfigMock.mockReturnValue(makeConfig());
   vi.mocked(nodefs.copyFileSync).mockReset();
+  initPromptFails.on = true;
 });
 
 // ─── runCrewSpawn ────────────────────────────────────────────────────────────
@@ -707,34 +724,16 @@ describe("runCrewSpawn", () => {
 
     // #458: --task-file with isolated worktree
     describe("--task-file with isolated worktree (#458)", () => {
-      it("copies task file into worktree root and sends short Read first-turn", async () => {
-        const config = makeConfig();
-        const runtime = makeRuntime();
-        const agent = makeAgent("claude");
-        const deps = makeSpawnDeps(runtime, agent);
+      it("claude never copies the task file into the worktree (the brief is stored with the task)", async () => {
+        const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
 
         await runCrewSpawn(
           { project: PROJECT, task: "full brief contents", taskFile: "/tmp/task-brief.md" },
-          config,
+          makeConfig(),
           deps,
         );
 
-        const worktreePath = `${PROJ_PATH}/.worktrees/${PROJECT}-crew-1`;
-        expect(vi.mocked(nodefs.copyFileSync)).toHaveBeenCalledWith(
-          "/tmp/task-brief.md",
-          `${worktreePath}/task-brief.md`,
-        );
-        expect(deps.sendFirstTurn).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.stringContaining("Read ./task-brief.md"),
-          expect.any(String),
-        );
-        // First turn must NOT inline the full file content
-        expect(deps.sendFirstTurn).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.not.stringContaining("full brief contents"),
-          expect.any(String),
-        );
+        expect(vi.mocked(nodefs.copyFileSync)).not.toHaveBeenCalled();
       });
 
       it("does NOT copy task file for --shared spawn (preserves current behavior)", async () => {
@@ -793,6 +792,92 @@ describe("runCrewSpawn", () => {
           expect.any(String),
         );
       });
+    });
+  });
+
+  // Spec 2026-10-26-first-turn-init-prompt: the first turn is claude's launch-time
+  // positional prompt (a real user turn), read by the shell from init.md.
+  describe("claude launch-time init prompt", () => {
+    const written = (suffix: string) =>
+      vi.mocked(nodefs.writeFileSync).mock.calls.find(([f]) => String(f).endsWith(suffix));
+
+    beforeEach(() => { initPromptFails.on = false; });
+
+    it("writes brief.md + init.md in the per-task state dir and launches with --session-id + the init file; no first-turn send", async () => {
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      const deps = makeSpawnDeps(runtime, agent);
+      deps.sendFirstTurnPeer = vi.fn();
+
+      await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+
+      const taskDir = path.join(process.env.SQUADRANT_STATE_DIR!, PROJECT, "task-001");
+      expect(written(`${PROJECT}/task-001/brief/brief.md`)?.[0]).toBe(path.join(taskDir, "brief", "brief.md"));
+      expect(written(`${PROJECT}/task-001/brief/brief.md`)?.[1]).toBe("fix the bug");
+      const sessionId = vi.mocked(deps.dispatchCrew).mock.calls[0][0].sessionId;
+      expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(agent.buildCommand).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId,
+        initPromptFile: path.join(taskDir, "init.md"),
+        addDirs: [path.join(taskDir, "brief")],
+      }));
+      expect(deps.sendFirstTurn).not.toHaveBeenCalled();
+      expect(deps.sendFirstTurnPeer).not.toHaveBeenCalled();
+    });
+
+    it("a short positional brief goes inline, under the 📨 header and with the completion protocol", async () => {
+      const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
+
+      await runCrewSpawn({ project: PROJECT, task: "line one\nline two" }, makeConfig(), deps);
+
+      const init = String(written("/init.md")?.[1]);
+      expect(init.startsWith("📨 captain:myproj → task · taskId: task-001\n")).toBe(true);
+      expect(init).toContain("line one\nline two");
+      expect(init).toContain("crew_signal_done");
+      expect(init).not.toContain("to get your task brief");
+    });
+
+    it("a --task-file brief (any size) is a Read pointer to brief.md, stored verbatim", async () => {
+      const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
+
+      await runCrewSpawn({ project: PROJECT, task: "short file brief", taskFile: "/tmp/b.md" }, makeConfig(), deps);
+
+      const briefFile = String(written("/brief.md")?.[0]);
+      expect(written("/brief.md")?.[1]).toBe("short file brief");
+      const init = String(written("/init.md")?.[1]);
+      expect(init).toContain(`Read ${briefFile} to get your task brief, then execute it.`);
+      expect(init).not.toContain("short file brief");
+    });
+
+    it("an oversized positional brief becomes a Read pointer", async () => {
+      const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
+      const big = "x".repeat(INIT_PROMPT_INLINE_MAX_BYTES + 1);
+
+      await runCrewSpawn({ project: PROJECT, task: big }, makeConfig(), deps);
+
+      expect(String(written("/init.md")?.[1])).toContain("to get your task brief, then execute it.");
+      expect(written("/brief.md")?.[1]).toBe(big);
+    });
+
+    it("waits on the boot watcher; a bare shell terminalizes the task (#892)", async () => {
+      const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
+      deps.watchClaudeBoot = vi.fn().mockResolvedValue({ booted: false, agentNotStarted: true });
+      deps.emitEvent = vi.fn().mockResolvedValue(undefined);
+
+      await expect(runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps)).rejects.toThrow(/did not start/);
+      expect(deps.watchClaudeBoot).toHaveBeenCalledWith(expect.objectContaining({ messagingSocketPath: expect.stringMatching(/\.sock$/) }));
+      expect(deps.emitEvent).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ type: "task.failed" }));
+    });
+
+    it("warns when claude never registers (no hook confirmation either)", async () => {
+      const deps = makeSpawnDeps(makeRuntime(), makeAgent("claude"));
+      deps.watchClaudeBoot = vi.fn().mockResolvedValue({ booted: false });
+      const spy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, makeConfig(), deps);
+        expect(spy.mock.calls.some(([m]) => String(m).includes("First turn not delivered"))).toBe(true);
+      } finally { spy.mockRestore(); }
+      expect(deps.sendFirstTurn).not.toHaveBeenCalled();
     });
   });
 
@@ -1693,6 +1778,47 @@ describe("runCrewSend", () => {
         }),
       ).rejects.toThrow(/already confirmed receipt/i);
       expect(runtime.sendToPane).not.toHaveBeenCalled();
+    });
+
+    // Q3: TaskRecord.task is a title; the brief the crew was given lives in
+    // brief.md / the dispatch entry, and the guard compares against that.
+    describe("with a title-only record (brief shrunk)", () => {
+      const BRIEF = "## Objective\nfix the bug in module x\n";
+      // node:fs is mocked in this file: serve brief.md, nothing else.
+      beforeEach(() => {
+        vi.mocked(nodefs.readFileSync).mockImplementation(((p: unknown) => (String(p).endsWith("brief.md") ? BRIEF : "")) as never);
+      });
+      afterEach(() => {
+        vi.mocked(nodefs.readFileSync).mockReset().mockReturnValue("");
+      });
+      const titleRec = (extra: Partial<TaskRecord> = {}) =>
+        ({ id: "t1", project: PROJECT, name: "crew-1", state: "working", task: "## Objective", firstTurnConfirmedAt: Date.now(), ...extra }) as TaskRecord;
+      const send = (message: string, task: TaskRecord) => {
+        const runtime = makeRuntime("workspace:1", [{ ...makePaneRef("5"), title: "🔧 myproj:crew-1" }]);
+        const p = runCrewSend(PROJECT, "crew-1", message, runtime, "workspace:1", {
+          listTasks: vi.fn().mockResolvedValue([task]),
+          emitEvent: vi.fn(),
+        });
+        return { p, runtime };
+      };
+
+      it("refuses the exact brief (read from brief.md)", async () => {
+        const { p, runtime } = send(BRIEF, titleRec());
+        await expect(p).rejects.toThrow(/already confirmed receipt/i);
+        expect(runtime.sendToPane).not.toHaveBeenCalled();
+      });
+
+      it("a message equal to just the title is a genuine follow-up, not the brief", async () => {
+        const { p, runtime } = send("## Objective", titleRec());
+        await p;
+        expect(runtime.sendToPane).toHaveBeenCalled();
+      });
+
+      it("an old record holding the full text still dedupes (no brief.md)", async () => {
+        vi.mocked(nodefs.readFileSync).mockReturnValue("");
+        const { p } = send(BRIEF, titleRec({ task: BRIEF }));
+        await expect(p).rejects.toThrow(/already confirmed receipt/i);
+      });
     });
 
     it("still delivers a genuine follow-up (different text) even after firstTurnConfirmedAt is set", async () => {

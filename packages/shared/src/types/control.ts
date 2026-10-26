@@ -49,7 +49,7 @@ export interface TaskRecord {
   provider: Provider;
   mode: Mode;
   state: TaskState;
-  task: string;            // the dispatched instruction
+  task: string;            // one-line title of the dispatched instruction (full brief: brief.md / `task.dispatched` entry via briefSeq); pre-shrink records hold the whole text
   sessionId?: string;      // provider session id for resume (blocked→reply)
   cwd?: string;            // working dir for the spawned headless child (project/worktree); unset → daemon cwd
   pid?: number;            // headless child pid (daemon-owned)
@@ -61,6 +61,9 @@ export interface TaskRecord {
   /** #1030: mailbox seq of the last word-for-word crew reply or BLOCKED question.
    *  A pointer for `squadrant crew msg`; the text itself lives only in the mailbox. */
   lastReplySeq?: number;
+  /** Mailbox seq of this task's `task.dispatched` entry, which holds the full brief
+   *  (`squadrant crew msg`). A pointer only, like lastReplySeq. */
+  briefSeq?: number;
   exitCode?: number;
   resultRef?: string;      // filesystem path to captured output/artifact
   parseWarning?: boolean;  // headless exit 0 but unparseable result

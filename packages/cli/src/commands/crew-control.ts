@@ -7,9 +7,9 @@ import { sendRequest, isSocketUnreachableError } from "@squadrant/core";
 import { ensureDaemon, buildStatusRequest, runCrewSignal, logSignalCitations, signalConfirmation, buildSignalRequest, performCrewSignal, type CrewSignalState } from "@squadrant/core";
 export { buildStatusRequest, buildSignalRequest, runCrewSignal, logSignalCitations, signalConfirmation };
 import type { ProjectUsage } from "@squadrant/core";
-import { formatContext, meterTask } from "@squadrant/core";
+import { formatContext, meterTask, readTaskBrief } from "@squadrant/core";
 import type { ControlEvent, Mode, Provider, TaskRecord } from "@squadrant/shared";
-import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
+import { DAEMON_SOCK_PATH, TERMINAL_STATES, loadConfig, stateRoot, crewBranch, resolveWorktreeBase, resolveTextInput } from "@squadrant/shared";
 import { mapClaudeHookToEvent } from "@squadrant/agents";
 import { filterTasks, formatCompactTasks } from "./crew-output.js";
 import { crewAttachCommand } from "./crew-attach.js";
@@ -58,6 +58,7 @@ export async function sendCodexFirstTurn(taskId: string, text: string): Promise<
 export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
   approvalPolicy?: string; roleInstructions?: string; name?: string; serverPort?: number; messagingSocketPath?: string;
+  sessionId?: string;
 }): { kind: "dispatch"; record: TaskRecord } {
   const now = Date.now();
   const attemptId = randomUUID();
@@ -73,6 +74,7 @@ export function buildDispatchRequest(o: {
       ...(o.name ? { name: o.name } : {}),
       ...(o.serverPort ? { serverPort: o.serverPort } : {}),
       ...(o.messagingSocketPath ? { messagingSocketPath: o.messagingSocketPath } : {}),
+      ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     },
   };
 }
@@ -264,7 +266,8 @@ export async function runCrewApprove(
   const cwd = task.cwd ?? proj.path;
   const base = resolveWorktreeBase(proj.path);
   const branch = crewBranch(crew);
-  const body = (task.reviewNote ?? task.task ?? "").trim();
+  // The PR body falls back to the whole brief; the record only holds its title.
+  const body = (task.reviewNote ?? (await readTaskBrief(stateRoot(), task)).text ?? "").trim();
 
   const getCommitSubject = deps.getCommitSubject ?? defaultGetCommitSubject;
   const commitSubject = getCommitSubject(cwd).trim();

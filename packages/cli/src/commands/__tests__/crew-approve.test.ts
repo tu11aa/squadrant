@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TaskRecord } from "@squadrant/shared";
+import { writeInitPrompt } from "@squadrant/core";
 import { resolveApproveTarget } from "../crew-control.js";
 
 // ─── resolveApproveTarget (pure) ───────────────────────────────────────────
@@ -124,6 +128,25 @@ describe("runCrewApprove (#599)", () => {
     const createPr = vi.fn().mockReturnValue("https://x/1");
     await runAction("brove", "fix-579", { call, createPr });
     expect(createPr).toHaveBeenCalledWith("/repo", expect.objectContaining({ body: "add the flag" }));
+  });
+
+  it("the PR body falls back to the whole brief (brief.md), not the record's title", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "approve-brief-"));
+    const prev = process.env.SQUADRANT_STATE_DIR;
+    process.env.SQUADRANT_STATE_DIR = stateDir;
+    try {
+      writeInitPrompt({ stateRoot: stateDir, project: "brove", taskId: "t1", brief: "## Objective\nadd the flag\nand the tests\n", fromFile: true, completionProtocol: "P" });
+      const call = vi.fn()
+        .mockResolvedValueOnce([
+          { id: "t1", project: "brove", name: "fix-579", state: "review", cwd: "/repo", task: "## Objective", createdAt: 1 },
+        ])
+        .mockResolvedValueOnce(undefined);
+      const createPr = vi.fn().mockReturnValue("https://x/1");
+      await runAction("brove", "fix-579", { call, createPr });
+      expect(createPr).toHaveBeenCalledWith("/repo", expect.objectContaining({ body: "## Objective\nadd the flag\nand the tests" }));
+    } finally {
+      if (prev === undefined) delete process.env.SQUADRANT_STATE_DIR; else process.env.SQUADRANT_STATE_DIR = prev;
+    }
   });
 
   it("falls back to the project root as cwd for a --shared crew with no recorded cwd", async () => {

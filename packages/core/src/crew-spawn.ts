@@ -71,6 +71,8 @@ export function ensureSocksDir(dir: string = CC_SOCKS_DIR): void {
 
 export { FIRST_TURN_INLINE_MAX_BYTES } from "./first-turn-spill.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
+import { writeInitPrompt } from "./first-turn-init.js";
+import { readTaskBrief } from "./task-brief.js";
 import type { PeerFirstTurnResult } from "./peer-first-turn.js";
 
 import {
@@ -117,6 +119,11 @@ export interface ResolvedAgent {
      *  `~/.claude/settings.json` (used to carry the router env for a routed
      *  spawn so `defaults.claudeEnv` cannot shadow it). */
     settingsPath?: string;
+    /** claude: pre-generated `--session-id`. */
+    sessionId?: string;
+    /** claude: launch-time init prompt file (positional arg) and dirs it may read (`--add-dir`). */
+    initPromptFile?: string;
+    addDirs?: string[];
   }): string;
 }
 
@@ -176,6 +183,8 @@ export interface CrewSpawnDeps {
     budgetMs?: number;
     serverPort?: number;
     messagingSocketPath?: string;
+    /** claude: pre-generated session id, passed as `--session-id` at launch. */
+    sessionId?: string;
     approvalPolicy?: string;
     roleInstructions?: string;
   }): Promise<TaskRecord>;
@@ -199,6 +208,10 @@ export interface CrewSpawnDeps {
    *  below is used unchanged. `fallback` ⇒ nothing was sent, use the pane path;
    *  `unconfirmed` ⇒ bytes were accepted, never paste a duplicate. */
   sendFirstTurnPeer?(o: { pane: PaneRef; taskId: string; project: string; messagingSocketPath: string; message: string }): Promise<PeerFirstTurnResult>;
+  /** CLI-edge — a claude crew launched with its init prompt as a launch arg:
+   *  answer the folder-trust panel until claude registers (it then submits the
+   *  queued prompt itself). False when claude never registered in time. */
+  watchClaudeBoot?(o: { pane: PaneRef; messagingSocketPath: string }): Promise<{ booted: boolean; agentNotStarted?: boolean }>;
   /** #892: CLI-edge — is this agent's binary on PATH (same resolution as `doctor`)?
    *  Absent ⇒ assume installed (no preflight). */
   isAgentInstalled?(name: string): boolean;
@@ -478,8 +491,10 @@ export async function runCrewSpawn(
   // the local path to avoid large-paste issues on big task files.
   // Guards: skip for --shared (file is in the main checkout, already reachable),
   // skip for stdin ('-') since there is no file to copy.
+  // Claude crews skip the copy: their brief is stored with the task (brief.md
+  // in the per-task state dir), never as an untracked file in the worktree.
   let firstTurnTask = input.task;
-  if (input.taskFile && input.taskFile !== "-" && !input.shared) {
+  if (input.taskFile && input.taskFile !== "-" && !input.shared && requestedAgent !== "claude") {
     const absTaskFile = path.resolve(input.taskFile);
     const basename = path.basename(absTaskFile);
     fs.copyFileSync(absTaskFile, path.join(spawnCwd, basename));
@@ -594,6 +609,9 @@ export async function runCrewSpawn(
     // Same directory as the crews' own sockets — receipts are only delivered
     // within one socket namespace, so our listener must live there too.
     const messagingSocketPath = path.join(CC_SOCKS_DIR, `squadrant-${randomUUID()}.sock`);
+    // Pre-generated so the TaskRecord knows the session (and its transcript)
+    // from dispatch; passed as --session-id at launch.
+    const sessionId = randomUUID();
 
     const rec = await deps.dispatchCrew({
       provider: "claude",
@@ -603,7 +621,25 @@ export async function runCrewSpawn(
       task: input.task,
       name,
       messagingSocketPath,
+      sessionId,
     });
+    // The first turn is a launch-time init prompt (a real user turn, not a
+    // peer message): brief.md + init.md in the per-task state dir, init.md
+    // expanded into claude's positional arg by the pane's shell. If the files
+    // can't be written, the peer → pane first-turn send below is the fallback.
+    let initPrompt: ReturnType<typeof writeInitPrompt> | undefined;
+    try {
+      initPrompt = writeInitPrompt({
+        stateRoot: stateRoot(),
+        project: input.project,
+        taskId: rec.id,
+        brief: input.task,
+        fromFile: !!input.taskFile,
+        completionProtocol: buildCompletionProtocol(rec.id, input.project, "claude"),
+      });
+    } catch (e) {
+      process.stderr.write(`(init prompt not written, falling back to a first-turn send: ${(e as Error).message})\n`);
+    }
     // #772: carry the router env in a per-spawn `--settings` file that outranks
     // the user's ~/.claude/settings.json env. Written after dispatch so it is
     // keyed by the real task id. Empty for `native` ⇒ no flag, byte-for-byte
@@ -651,6 +687,8 @@ export async function runCrewSpawn(
       // crew apart from an unrelated session instead of an auto-derived cwd
       // basename (only the claude driver reads this — other agents ignore it).
       sessionName: crewSessionName(input.project, name),
+      sessionId,
+      ...(initPrompt ? { initPromptFile: initPrompt.initPath, addDirs: [initPrompt.briefDir] } : {}),
       ...(crewModel ? { model: crewModel } : {}),
       ...(crewThinking ? { thinking: crewThinking } : {}),
       ...(routerSettingsPath ? { settingsPath: routerSettingsPath } : {}),
@@ -673,18 +711,31 @@ export async function runCrewSpawn(
       Object.keys(routerEnv).length > 0 ? ` ${renderEnvAssignments(routerEnv)}` : "";
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix}${routerPrefix} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    // #730: spill an oversized first-turn to a temp file rather than risking a
-    // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
-    const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
-    // #917: peer channel first — the brief goes in whole (no spill, no
-    // single-line flattening). Only a `fallback` result reaches the pane path.
-    const peerBrief = frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id });
-    const peerResult = deps.sendFirstTurnPeer
-      ? await deps.sendFirstTurnPeer({ pane, taskId: rec.id, project: input.project, messagingSocketPath, message: peerBrief }).catch((): PeerFirstTurnResult => ({ kind: "fallback" }))
-      : ({ kind: "fallback" } as PeerFirstTurnResult);
-    const sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }> = peerResult.kind === "fallback"
-      ? deps.sendFirstTurn(pane, frameFirstTurn(`${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id }), preLaunchScreen)
-      : Promise.resolve({ delivered: peerResult.kind === "delivered" });
+    let sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }>;
+    if (initPrompt) {
+      // Nothing to send: claude submits the queued init prompt itself as soon as
+      // it registers (past the folder-trust panel), so "booted" stands in for the
+      // spawn-side delivery hint. The UserPromptSubmit hook still stamps the real
+      // firstTurnConfirmedAt, and the daemon's #466 self-heal resends init.md if
+      // that never lands.
+      sendPromise = (deps.watchClaudeBoot
+        ? deps.watchClaudeBoot({ pane, messagingSocketPath }).catch(() => ({ booted: false }))
+        : Promise.resolve({ booted: true })
+      ).then((b: { booted: boolean; agentNotStarted?: boolean }) => ({ delivered: b.booted, agentNotStarted: b.agentNotStarted }));
+    } else {
+      // #730: spill an oversized first-turn to a temp file rather than risking a
+      // truncated paste — see FIRST_TURN_INLINE_MAX_BYTES above.
+      const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
+      // #917: peer channel first — the brief goes in whole (no spill, no
+      // single-line flattening). Only a `fallback` result reaches the pane path.
+      const peerBrief = frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id });
+      const peerResult = deps.sendFirstTurnPeer
+        ? await deps.sendFirstTurnPeer({ pane, taskId: rec.id, project: input.project, messagingSocketPath, message: peerBrief }).catch((): PeerFirstTurnResult => ({ kind: "fallback" }))
+        : ({ kind: "fallback" } as PeerFirstTurnResult);
+      sendPromise = peerResult.kind === "fallback"
+        ? deps.sendFirstTurn(pane, frameFirstTurn(`${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id }), preLaunchScreen)
+        : Promise.resolve({ delivered: peerResult.kind === "delivered" });
+    }
     let agentNotStarted = false;
     const scrapeDelivered = sendPromise.then((r) => { agentNotStarted = !!r.agentNotStarted; return r.delivered; }).catch(() => false);
     // #466/#745: surface non-delivery explicitly instead of silently returning
@@ -913,7 +964,8 @@ export async function runCrewSend(
   // follow-up) is unaffected. Excludes blocked/awaiting-input/review so this
   // never touches the task.blocked reopen path below.
   const isAttentionState = task?.state === "blocked" || task?.state === "awaiting-input" || task?.state === "review";
-  if (task && !isAttentionState && task.firstTurnConfirmedAt && task.task === message) {
+  // The record holds a title; the brief it was sent from is brief.md / the dispatch entry.
+  if (task && !isAttentionState && task.firstTurnConfirmedAt && (await readTaskBrief(stateRoot(), task)).text === message) {
     throw new Error(
       `Crew '${name}' already confirmed receipt of this task — its first turn was delivered and is not being re-sent to avoid running it twice. ` +
         `If you have new instructions, send different text.`,

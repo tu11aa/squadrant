@@ -5,6 +5,7 @@ import { TERMINAL_STATES } from "@squadrant/shared";
 import { reduce, isStickyAttention } from "../state-machine.js";
 import { evaluateStall, recoverStall } from "../watchdog.js";
 import { isAddressedTurnEnd } from "./captain-noise.js";
+import { taskTitle } from "../task-brief.js";
 export interface DaemonDeps {
   store: Store;
   now: () => number;
@@ -77,6 +78,10 @@ export interface DaemonDeps {
    * tests, non-cmux deployments).
    */
   resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /** Record a dispatched task's brief (mailbox `task.dispatched` entry); returns
+   *  its seq, stamped on the record as briefSeq. Best-effort: a failure never
+   *  blocks the dispatch. */
+  recordDispatch?: (rec: TaskRecord) => Promise<number>;
   /**
    * #649: Notify the captain when a crew has been held by the operator longer than this.
    */
@@ -189,7 +194,7 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
       const body =
         doneMsg != null && doneMsg.trim().length > 0
           ? doneMsg.trim() // #1030: whole message; the single cap + pointer is applied at mailbox append
-          : ((rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "");
+          : taskTitle(rec.task);
       return `CREW DONE ${tag}: ${body}`;
     }
     case "blocked":
@@ -247,7 +252,7 @@ function formatMessage(rec: TaskRecord, event?: ControlEvent): string | null {
  *  with originProject settles to a terminal state. Returns a captain-facing
  *  one-liner delivered verbatim to the origin project's captain. */
 function formatDelegationReport(rec: TaskRecord, originProject: string, targetProject: string): string | null {
-  const shortTask = (rec.task ?? "").split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "";
+  const shortTask = taskTitle(rec.task);
   const task = `taskId: ${shortId(rec.id)}`;
   switch (rec.state) {
     case "done":
@@ -495,46 +500,53 @@ export function createDaemon(deps: DaemonDeps) {
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "dispatch": {
-          store.put(req.record);
+          // What the task was asked lives in the mailbox; the record keeps a title
+          // and a pointer. Launchers and the cross-project notice get `full`, which
+          // still carries the whole brief. Only a recorded brief is shrunk: if the
+          // mailbox write failed, the record keeps the text rather than lose it.
+          const briefSeq = deps.recordDispatch ? await deps.recordDispatch(req.record).catch(() => undefined) : undefined;
+          const full: TaskRecord = briefSeq !== undefined ? { ...req.record, briefSeq } : req.record;
+          const record: TaskRecord = briefSeq !== undefined ? { ...full, task: taskTitle(full.task) } : full;
+          store.put(record);
           // #246: cross-project delegation — notify B's mailbox so B's relay
           // wakes B's captain with the request. Skip auto-launch; B's captain
           // decides how to execute (typically spawns a crew).
-          if (req.record.originProject) {
-            const origin = req.record.originProject;
-            const msg = `📨 Cross-project task from ${origin}: ${req.record.task}`;
+          if (record.originProject) {
+            const origin = record.originProject;
+            const msg = `📨 Cross-project task from ${origin}: ${full.task}`;
             if (deps.notify) {
               try {
-                const r = deps.notify({ project: req.record.project, message: msg, record: req.record, event: { type: "task.started", id: req.record.id } });
+                const r = deps.notify({ project: record.project, message: msg, record: full, event: { type: "task.started", id: record.id } });
                 if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
               } catch { /* swallowed — flaky notifier must not break dispatch */ }
             }
-            return req.record;
+            return record;
           }
-          if (req.record.mode === "headless" && deps.launchHeadless) {
-            deps.launchHeadless(req.record).catch((e: unknown) => {
+          if (record.mode === "headless" && deps.launchHeadless) {
+            deps.launchHeadless(full).catch((e: unknown) => {
               const error = e instanceof Error ? e.message : String(e);
-              store.put({ ...req.record, state: "failed", lastEvent: "launch-error", error });
+              store.put({ ...record, state: "failed", lastEvent: "launch-error", error });
             });
-            return req.record;
+            return record;
           }
-          if (req.record.mode === "interactive" && deps.launchInteractive) {
-            deps.launchInteractive(req.record).catch((e: unknown) => {
+          if (record.mode === "interactive" && deps.launchInteractive) {
+            deps.launchInteractive(full).catch((e: unknown) => {
               const error = e instanceof Error ? e.message : String(e);
-              store.put({ ...req.record, state: "failed", lastEvent: "launch-error", error });
+              store.put({ ...record, state: "failed", lastEvent: "launch-error", error });
             });
-            return req.record;
+            return record;
           }
           // No launcher for this mode → fail LOUD, never silently park in
           // `submitted` (red-team #4). Interactive launcher is the deferred
           // interactive-wiring spec; until then, say so explicitly.
           const failed: TaskRecord = {
-            ...req.record,
+            ...record,
             state: "failed",
             lastEvent: "no-launcher",
             error:
-              req.record.mode === "interactive"
+              record.mode === "interactive"
                 ? "interactive mode is not yet implemented (deferred interactive-wiring spec); use --mode headless"
-                : `no launcher available for mode '${req.record.mode}'`,
+                : `no launcher available for mode '${record.mode}'`,
           };
           store.put(failed);
           return failed;

@@ -110,7 +110,8 @@ What it does:
 1. Opens a new **tab** in the captain workspace (use `--direction right|left|up|down` to split into a pane instead).
 2. Names the tab `🔧 <project>:<name>` — `--name` is optional; auto-picks the next free `crew-N`.
 3. Boots an interactive Claude session (no `-p`) with `crew.<agent>.md` loaded as system prompt.
-4. Sends your task as the first turn. The crew works on it and then **stays idle** waiting for follow-ups.
+4. Gives it your task as the first turn. The crew works on it and then **stays idle** waiting for follow-ups.
+   - **Claude:** the task is the launch-time init prompt (a real user turn, not a peer message). The brief is stored with the task, never in the worktree: `squadrant crew tasks` shows `brief <seq>`, and `squadrant crew msg <project> <seq>` prints it in full. A short task goes inline; a `--task-file` brief (or anything over 1200 bytes) becomes a `Read <path>` pointer to the stored `brief.md`. Write long briefs to a file and pass `--task-file`.
 
 ### Send a FOLLOW-UP to an existing crew
 

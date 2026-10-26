@@ -47,14 +47,20 @@ export function trustPanelAcceptKeys(screen: string): string[] {
   return /❯\s*(\d\.\s*)?No\b/.test(screen) ? ["Down", "Enter"] : ["Enter"];
 }
 
-export async function deliverFirstTurnViaPeer(message: string, deps: PeerFirstTurnDeps): Promise<PeerFirstTurnResult> {
+export type TrustWatchDeps = Pick<PeerFirstTurnDeps, "statusOf" | "readScreen" | "pressKey" | "sleep" | "now" | "readyTimeoutMs" | "pollMs">;
+
+/** Polls until `ready()`, answering the folder-trust panel whenever claude has
+ *  no registry entry yet. False on timeout. Shared by the peer send (ready =
+ *  registry `idle`) and the launch-arg init prompt (ready = registry entry
+ *  exists — claude submits the queued prompt itself once past the panel). */
+export async function waitPastTrustPanel(deps: TrustWatchDeps, ready: () => boolean): Promise<boolean> {
   const pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
   const deadline = deps.now() + (deps.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
   let lastTrustAnswer = -Infinity;
 
   for (;;) {
-    if (deps.statusOf()?.status === "idle") break;
-    if (deps.now() >= deadline) return { kind: "fallback" };
+    if (ready()) return true;
+    if (deps.now() >= deadline) return false;
     if (!deps.statusOf() && deps.now() - lastTrustAnswer >= TRUST_ANSWER_COOLDOWN_MS) {
       const screen = await deps.readScreen().catch(() => "");
       if (screenShowsTrustPanel(screen)) {
@@ -64,6 +70,11 @@ export async function deliverFirstTurnViaPeer(message: string, deps: PeerFirstTu
     }
     await deps.sleep(pollMs);
   }
+}
+
+export async function deliverFirstTurnViaPeer(message: string, deps: PeerFirstTurnDeps): Promise<PeerFirstTurnResult> {
+  const pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
+  if (!(await waitPastTrustPanel(deps, () => deps.statusOf()?.status === "idle"))) return { kind: "fallback" };
 
   const outcome = await deps.send(message);
   if (fallsBackToPane(outcome)) return { kind: "fallback" };

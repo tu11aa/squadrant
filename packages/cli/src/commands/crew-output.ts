@@ -50,7 +50,9 @@ export function formatTaskLine(record: TaskRecord, ctx?: string): string {
     .split("\n")[0]
     .slice(0, 60);
   const ctxCol = ctx !== undefined ? `ctx ${ctx}  ` : "";
-  return `${sid}  ${record.provider}  ${record.state}  ${record.lastEvent}  ${ctxCol}${title}`;
+  // Full brief: `squadrant crew msg <project> <seq>`.
+  const briefCol = record.briefSeq !== undefined ? `brief ${record.briefSeq}  ` : "";
+  return `${sid}  ${record.provider}  ${record.state}  ${record.lastEvent}  ${ctxCol}${briefCol}${title}`;
 }
 
 export function filterTasks(
