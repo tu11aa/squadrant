@@ -123,6 +123,22 @@ describe("buildCompletionProtocol (#278)", () => {
     );
   });
 
+  it("claude naming: exact mcp__squadrant__ tool names, deferred-tool ToolSearch hint, CLI fallback (snapshot)", () => {
+    expect(buildCompletionProtocol("TASK-ID", "PROJECT", "claude")).toBe(
+      "---\n" +
+      "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the `mcp__squadrant__crew_signal_done` tool (pass `message`, `task_id` and `project`). It is a deferred tool: if it is not loaded yet, load it first with ToolSearch `select:mcp__squadrant__crew_signal_done`. If it does not exist, run exactly:\n" +
+      "  squadrant crew signal done --task-id TASK-ID --project PROJECT --message \"<one-line summary>\"\n" +
+      "Use task_id TASK-ID and project PROJECT for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the `mcp__squadrant__crew_signal_blocked` tool (pass `question`; load it with ToolSearch first if needed) or run:\n" +
+      "  squadrant crew signal blocked --task-id TASK-ID --project PROJECT --question \"<your question>\"\n" +
+      "Likewise `mcp__squadrant__crew_signal_failed` (`error`) / `mcp__squadrant__crew_signal_review` (`message`), or `squadrant crew signal failed|review` with the same flags.\n" +
+      "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew."
+    );
+  });
+
+  it("non-claude agents never get the Claude mcp__ prefix", () => {
+    for (const a of [undefined, "opencode", "codex"]) expect(buildCompletionProtocol("T", "P", a)).not.toContain("mcp__");
+  });
+
   it("includes the crew route-up line for squadrant defects", () => {
     const result = buildCompletionProtocol("task-abc123", "my-project");
     expect(result).toContain("a defect in squadrant itself");

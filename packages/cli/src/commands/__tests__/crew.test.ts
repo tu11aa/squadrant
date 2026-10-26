@@ -1296,6 +1296,8 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
     expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
+    expect(firstTurn).toContain("mcp__squadrant__crew_signal_done");
+    expect(firstTurn).toContain("ToolSearch");
     expect(firstTurn).toContain("--task-id task-proto-cl");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");
@@ -1319,6 +1321,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
     expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
+    expect(firstTurn).not.toContain("mcp__");
     expect(firstTurn).toContain("--task-id task-proto-oc");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");

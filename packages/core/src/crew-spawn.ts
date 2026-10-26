@@ -676,12 +676,12 @@ export async function runCrewSpawn(
     const claudeFirstTurn = spillOversizedFirstTurn(firstTurnTask, rec.id);
     // #917: peer channel first — the brief goes in whole (no spill, no
     // single-line flattening). Only a `fallback` result reaches the pane path.
-    const peerBrief = frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, { project: input.project, taskId: rec.id });
+    const peerBrief = frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id });
     const peerResult = deps.sendFirstTurnPeer
       ? await deps.sendFirstTurnPeer({ pane, taskId: rec.id, project: input.project, messagingSocketPath, message: peerBrief }).catch((): PeerFirstTurnResult => ({ kind: "fallback" }))
       : ({ kind: "fallback" } as PeerFirstTurnResult);
     const sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }> = peerResult.kind === "fallback"
-      ? deps.sendFirstTurn(pane, frameFirstTurn(`${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project)}`, { project: input.project, taskId: rec.id }), preLaunchScreen)
+      ? deps.sendFirstTurn(pane, frameFirstTurn(`${claudeFirstTurn}\n\n${buildCompletionProtocol(rec.id, input.project, "claude")}`, { project: input.project, taskId: rec.id }), preLaunchScreen)
       : Promise.resolve({ delivered: peerResult.kind === "delivered" });
     let agentNotStarted = false;
     const scrapeDelivered = sendPromise.then((r) => { agentNotStarted = !!r.agentNotStarted; return r.delivered; }).catch(() => false);
@@ -776,7 +776,7 @@ export async function runCrewSpawn(
     const envPrefix = `SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
     await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`);
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
-    const opencodeResult = await deps.sendFirstTurn(pane, frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project)}`, { project: input.project, taskId: rec.id }), preLaunchScreen, {
+    const opencodeResult = await deps.sendFirstTurn(pane, frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "opencode")}`, { project: input.project, taskId: rec.id }), preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until the idle
       // splash leaves the screen, re-sending every ~3s to cover slow boots
       // without duplicating the task. See crew-pane.ts SPLASH_MAX_CHECKS/EVERY_N.

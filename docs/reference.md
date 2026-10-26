@@ -902,7 +902,7 @@ Every tool also takes `task_id` / `project`, which default to `SQUADRANT_CREW_TA
 - **Errors are tool errors** (`isError: true`) with a clear message: no crew env, task already terminal, daemon unreachable.
 - **Completion protocol prefers the tool.** The `COMPLETION PROTOCOL` appended to a claude/opencode crew's first turn (`buildCompletionProtocol`) and the codex developer instructions say: call `crew_signal_done` (or `_blocked` / `_failed` / `_review`) from the `squadrant` server if available, passing the explicit `task_id` / `project` (codex needs them — one app-server serves many tasks), otherwise run the `squadrant crew signal …` CLI.
 - **Lazy SDK.** `@modelcontextprotocol/sdk` is imported inside `runMcpServer`, so no other command pays for it (tested).
-- **Claude Code defers MCP tools:** the first call goes through ToolSearch (`select:mcp__squadrant__crew_signal_done`).
+- **Claude Code defers MCP tools and prefixes them:** the tool is `mcp__squadrant__crew_signal_done` (a bare `crew_signal_done` is "No such tool"), and the first call goes through ToolSearch (`select:mcp__squadrant__crew_signal_done`). The claude completion protocol (`buildCompletionProtocol(…, "claude")`) and `templates/crew.claude.md` name the exact tools, give the ToolSearch hint and keep the CLI as the fallback; opencode, codex and generic text use the plain tool name "from the `squadrant` MCP server" (no `mcp__` prefix).
 - **Install is manual in this slice** (config projection, #34, is a later slice; nothing writes to your agent config):
 
   ```

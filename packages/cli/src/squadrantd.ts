@@ -421,7 +421,7 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
     if (rec.provider !== "claude" || !rec.name) return { delivered: false };
     const proj = loadConfig().projects[rec.project];
     const captainName = proj?.captainName ?? `${rec.project}-captain`;
-    const message = frameFirstTurn(`${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project)}`, { project: rec.project, originProject: rec.originProject, taskId: rec.id });
+    const message = frameFirstTurn(`${rec.task}\n\n${buildCompletionProtocol(rec.id, rec.project, "claude")}`, { project: rec.project, originProject: rec.originProject, taskId: rec.id });
     return resendCrewFirstTurn(resendRuntime, captainName, rec.project, rec.name, message);
   });
 
