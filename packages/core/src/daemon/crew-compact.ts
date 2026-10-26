@@ -96,6 +96,15 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return false;
   }
 
+  /** Drop a queued compact and release its send hold; false (and no log) when nothing was queued. */
+  function cancel(project: string, name: string): { cancelled: boolean } {
+    let cancelled = false;
+    for (const [id, p] of [...pending]) if (p.project === project && p.name === name) { pending.delete(id); cancelled = true; }
+    for (const [id, h] of [...holds]) if (h.project === project && h.name === name) { holds.delete(id); cancelled = true; }
+    if (cancelled) log(`crew-compact ${project}:${name}: cancelled — delivery resumed`);
+    return { cancelled };
+  }
+
   /** SessionStart(source=compact) arrived for this crew's session — the window is over. */
   function compactDone(taskId: string): void {
     const h = holds.get(taskId);
@@ -153,6 +162,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
       if (!(e instanceof DeferDelivery)) throw e;
       p.idlePolls = 0;
       p.lastReason = e.reason;
+      noteWaiting(p);
       return;
     }
     // The hold persists until SessionStart(compact) (claude) or until it lapses (opencode has no such hook).
@@ -174,5 +184,5 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     } finally { ticking = false; }
   }
 
-  return { request, tick, holdsCrew, compactDone, pendingCount: () => pending.size };
+  return { request, cancel, tick, holdsCrew, compactDone, pendingCount: () => pending.size };
 }

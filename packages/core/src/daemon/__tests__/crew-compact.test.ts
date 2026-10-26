@@ -105,6 +105,40 @@ describe("crew compact", () => {
     expect(h.c.pendingCount()).toBe(0);
   });
 
+  it("says why it is waiting when the send guard keeps deferring (no-box), once a minute", async () => {
+    const h = harness({ send: async () => { throw new DeferDelivery(null, "no-box"); } });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick(); // idle ×2 → send → deferred
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(1);
+    await h.c.tick(); await h.c.tick(); // same minute → no second line
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(1);
+    h.advance(61_000);
+    await h.c.tick(); await h.c.tick();
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(2);
+  });
+
+  it("cancel drops a queued compact and its send hold, and is a no-op when nothing is queued", async () => {
+    const h = harness({ task: { state: "working" } });
+    expect(h.c.cancel("demo", "crew-1")).toEqual({ cancelled: false });
+    await h.c.request("demo", "crew-1");
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(true);
+    expect(h.c.cancel("demo", "crew-1")).toEqual({ cancelled: true });
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
+    expect(h.c.pendingCount()).toBe(0);
+    expect(h.logs.filter((l) => l.includes("cancelled"))).toHaveLength(1);
+    await h.c.tick();
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it("cancel also releases the hold of a compact already typed", async () => {
+    const h = harness();
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick();
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(true);
+    expect(h.c.cancel("demo", "crew-1")).toEqual({ cancelled: true });
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
+  });
+
   it("opencode crews are typed with the opencode grammar and judged by task state, not the Claude spinner", async () => {
     const h = harness({ task: { provider: "opencode" }, screens: [BUSY] });
     await h.c.request("demo", "crew-1");

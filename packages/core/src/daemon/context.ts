@@ -192,6 +192,8 @@ export interface DaemonContext {
   crewCompactHolds?: (project: string, crew: string) => boolean;
   /** #1051: SessionStart(source=compact) reached this crew's session — end the hold. */
   crewCompactDone?: (taskId: string) => void;
+  /** #1051: drop a queued crew compact and its send hold. */
+  cancelCrewCompact?: (project: string, crew: string) => { cancelled: boolean };
   /** #1015/#1034: true while the delivery loop is mid-pass for THIS project (set by createDelivery). */
   deliveryBusy?: (project: string) => boolean;
   /** Fan-out to attach clients (set by createAttach). */
