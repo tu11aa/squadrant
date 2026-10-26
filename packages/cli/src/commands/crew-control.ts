@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { sendRequest } from "@squadrant/core";
+import { sendRequest, isSocketUnreachableError } from "@squadrant/core";
 import { ensureDaemon, buildStatusRequest, runCrewSignal, logSignalCitations, signalConfirmation, buildSignalRequest, performCrewSignal, type CrewSignalState } from "@squadrant/core";
 export { buildStatusRequest, buildSignalRequest, runCrewSignal, logSignalCitations, signalConfirmation };
 import type { ProjectUsage } from "@squadrant/core";
@@ -142,7 +142,11 @@ export async function runCrewTakeover(
 export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
-  } catch {
+  } catch (e) {
+    // Only an unreachable socket means the request never landed: then re-sending is safe and
+    // starting a down daemon helps. A timeout (busy daemon) or a daemon-reported error means it
+    // got the request — re-sending would deliver it twice and a daemon reconcile can't help.
+    if (!isSocketUnreachableError(e)) throw e;
     ensureDaemon(undefined, { caller: "squadrantdCall fallback" }); // resolves its own entrypoint — never pass a path here
     // kickstart→socket is racy; bounded backoff. If all attempts fail,
     // throw the last error (fail loud, no scrape fallback).

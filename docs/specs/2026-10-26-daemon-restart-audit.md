@@ -138,9 +138,7 @@ and logging it would add a line for every captain CLI call. Covered by
 `packages/core/src/__tests__/restart-attribution.test.ts` and
 `packages/cli/src/__tests__/restart-attribution-cli.test.ts`.
 
-## 5. Proposed fixes (parked, waiting for the captain's go)
-
-Implemented and tested on local branch `crew/daemonfix-fixes-parked`. They are not on this branch.
+## 5. Fixes (applied on this branch after the captain's go)
 
 1. **Duplicate `/compact`.** Add a re-entry guard on `tick()` in `captain-compact.ts` and
    `crew-compact.ts`. A test proves one `/compact` per request when a tick fires mid-send.

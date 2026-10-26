@@ -193,6 +193,13 @@ export function isDaemonSocketLive(sockPath: string, timeoutMs = 500): Promise<b
   });
 }
 
+const SOCKET_UNREACHABLE = "control plane unavailable: cannot reach squadrantd socket";
+
+/** True only for sendRequest's connect failure — the request never reached the daemon. */
+export function isSocketUnreachableError(e: unknown): boolean {
+  return e instanceof Error && e.message === SOCKET_UNREACHABLE;
+}
+
 export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const conn = createConnection(sockPath);
@@ -219,7 +226,7 @@ export function sendRequest(sockPath: string, msg: unknown, timeoutMs = 5000): P
     });
     conn.on("error", () => {
       clearTimeout(timer);
-      reject(new Error("control plane unavailable: cannot reach squadrantd socket"));
+      reject(new Error(SOCKET_UNREACHABLE));
     });
   });
 }

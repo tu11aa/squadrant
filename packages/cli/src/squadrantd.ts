@@ -631,18 +631,17 @@ export function startSquadrantd(opts: import("@squadrant/core").SquadrantdOpts =
   if (opts.forceStartEventsSource) startEventsLifecycleSource();
 
   // Daemon-restart broadcast: notify every running captain that the daemon
-  // bounced, but only when the running build actually changed (version bump
-  // or local rebuild) — a same-build launchd crash-restart stays silent.
+  // bounced, but only when the running version or install path changed — a
+  // same-install restart (reinstall + heal, config restart, crash) stays silent.
   // Skipped under vitest (touches the real config + cmux driver, mirrors the
   // other real-I/O boot actions guarded the same way above).
   if (!process.env.VITEST) {
     try {
-      const buildMtimeMs = statSync(SELF_PATH).mtimeMs;
       const restartConfig = loadConfig();
       const registry = new RuntimeRegistry({ cmux: createCmuxDriver() });
       void maybeBroadcastDaemonRestart({
         version: PKG_VERSION,
-        buildMtimeMs,
+        installPath: SELF_PATH,
         stateRoot,
         config: restartConfig,
         driver: registry.global(restartConfig),
