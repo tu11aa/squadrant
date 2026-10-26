@@ -197,6 +197,21 @@ Live, in a throwaway project registered only for the test (e.g. `squadrant init`
 - **L5** `crew send` follow-up still works (peer path), and kill-before-submit triggers the self-heal resend once.
 - **L6** (out of scope after Q5) Codex crew keeps its first turn; it does get a `task.dispatched` entry.
 
+### Live smoke (2026-10-26, implementation build, throwaway scratch repo only)
+
+No daemon or cmux workspace: an isolated dev daemon still rewrites the global `~/.claude/settings.json` hooks (#1046, open), so the smoke ran the new code at the launch level. Built `writeInitPrompt` + `appendDispatchEntry` (scratch state dir) and the built claude driver's `buildCommand` for a 41-line / 5 KB `--task-file`-style brief with the #730 characters (`(`, `===`, `:`, `$HOME`, backticks, quotes). The command was run by `zsh` in a fresh worktree of a never-trusted scratch repo through the cmux claude shim, with `--setting-sources project,local --strict-mcp-config` added so no global hook or MCP server reached the live daemon.
+
+| Check | Result |
+|---|---|
+| Trust panel (untrusted repo) | Shown, answered at 1.4 s; the queued init prompt then ran. |
+| First turn | Transcript `origin: {kind: "human"}`; the text equals `init.md` byte for byte; `UserPromptSubmit` fired with the pre-generated `session_id`. |
+| `--add-dir=` | The crew `Read` `brief/brief.md` outside its worktree with no `PermissionRequest`; the tool result held the whole file (last line included). Turn finished 5.7 s after launch. |
+| Worktree | `git status --porcelain` empty: no brief copy. |
+| `crew msg smoke 1` (built CLI, scratch state) | Prints `# task.dispatched · agent: claude · crew: smoke-crew` and the brief exactly. |
+| `crew tasks` line | `8bafe841  claude  working  task.started  brief 1  SMOKE TEST BRIEF`. |
+
+Found while smoking: `--messaging-socket-path` must be absolute and live in a 0700 non-symlink dir (real crews use `/tmp/cc-socks/…`, already correct); `--add-dir <dir>` (space form) swallows the positional prompt, hence the `=` form. The trust entries added by the panel were removed from `~/.claude.json` afterwards.
+
 ## 7. Decisions (operator, 2026-10-26)
 
 | # | Question | Decision |
