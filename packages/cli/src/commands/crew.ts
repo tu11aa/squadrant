@@ -25,7 +25,7 @@ import {
 } from "@squadrant/core";
 import type { TaskRecord } from "@squadrant/shared";
 import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirstTurn, resolveApproveTarget } from "./crew-control.js";
-import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
+import { sendClaudeFirstTurnViaPeer, watchClaudeCrewBoot } from "../lib/first-turn-peer.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
@@ -105,6 +105,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
               (await squadrantdCall(buildStatusRequest(o.project, o.taskId)).catch(() => undefined)) as TaskRecord | undefined),
         }
       : {}),
+    watchClaudeBoot: (o) => watchClaudeCrewBoot(runtime, o),
     getFreePort,
     sendCodexFirstTurn,
     // #466: wire delivery confirmation so the daemon stamps firstTurnConfirmedAt.

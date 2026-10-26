@@ -32,6 +32,12 @@ describe("parseStoreRecords", () => {
     const recs = parseStoreRecords(file, projects);
     expect(recs.some((r) => r.pid === null)).toBe(true);
   });
+  it("a crew launched with a trailing init prompt still classifies as crew", () => {
+    const crew = JSON.stringify({ sessions: { d: { sessionId: "d", pid: 1, cwd: "/Users/me/squadrant",
+      launchCommand: { arguments: ["claude", "--session-id", "u1", "--append-system-prompt-file", "/x/templates/crew.claude.md",
+        "--messaging-socket-path", "/tmp/s.sock", "📨 captain:squadrant → task\nRead /s/brief.md to get your task brief, then execute it."] } } } });
+    expect(parseStoreRecords(crew, projects)[0]?.role).toBe("crew");
+  });
   it("throws on invalid JSON (distinguishes 'unreadable' from 'valid + empty')", () => {
     expect(() => parseStoreRecords("{not json", projects)).toThrow();
   });

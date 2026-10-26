@@ -77,6 +77,10 @@ export interface DaemonDeps {
    * tests, non-cmux deployments).
    */
   resendFirstTurn?: (rec: TaskRecord) => Promise<{ delivered: boolean }>;
+  /** Record a dispatched task's brief (mailbox `task.dispatched` entry); returns
+   *  its seq, stamped on the record as briefSeq. Best-effort: a failure never
+   *  blocks the dispatch. */
+  recordDispatch?: (rec: TaskRecord) => Promise<number>;
   /**
    * #649: Notify the captain when a crew has been held by the operator longer than this.
    */
@@ -495,46 +499,49 @@ export function createDaemon(deps: DaemonDeps) {
     async handle(req: Req): Promise<TaskRecord | TaskRecord[]> {
       switch (req.kind) {
         case "dispatch": {
-          store.put(req.record);
+          // What the task was asked lives in the mailbox; the record keeps a pointer.
+          const briefSeq = deps.recordDispatch ? await deps.recordDispatch(req.record).catch(() => undefined) : undefined;
+          const record: TaskRecord = briefSeq !== undefined ? { ...req.record, briefSeq } : req.record;
+          store.put(record);
           // #246: cross-project delegation — notify B's mailbox so B's relay
           // wakes B's captain with the request. Skip auto-launch; B's captain
           // decides how to execute (typically spawns a crew).
-          if (req.record.originProject) {
-            const origin = req.record.originProject;
-            const msg = `📨 Cross-project task from ${origin}: ${req.record.task}`;
+          if (record.originProject) {
+            const origin = record.originProject;
+            const msg = `📨 Cross-project task from ${origin}: ${record.task}`;
             if (deps.notify) {
               try {
-                const r = deps.notify({ project: req.record.project, message: msg, record: req.record, event: { type: "task.started", id: req.record.id } });
+                const r = deps.notify({ project: record.project, message: msg, record, event: { type: "task.started", id: record.id } });
                 if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => {});
               } catch { /* swallowed — flaky notifier must not break dispatch */ }
             }
-            return req.record;
+            return record;
           }
-          if (req.record.mode === "headless" && deps.launchHeadless) {
-            deps.launchHeadless(req.record).catch((e: unknown) => {
+          if (record.mode === "headless" && deps.launchHeadless) {
+            deps.launchHeadless(record).catch((e: unknown) => {
               const error = e instanceof Error ? e.message : String(e);
-              store.put({ ...req.record, state: "failed", lastEvent: "launch-error", error });
+              store.put({ ...record, state: "failed", lastEvent: "launch-error", error });
             });
-            return req.record;
+            return record;
           }
-          if (req.record.mode === "interactive" && deps.launchInteractive) {
-            deps.launchInteractive(req.record).catch((e: unknown) => {
+          if (record.mode === "interactive" && deps.launchInteractive) {
+            deps.launchInteractive(record).catch((e: unknown) => {
               const error = e instanceof Error ? e.message : String(e);
-              store.put({ ...req.record, state: "failed", lastEvent: "launch-error", error });
+              store.put({ ...record, state: "failed", lastEvent: "launch-error", error });
             });
-            return req.record;
+            return record;
           }
           // No launcher for this mode → fail LOUD, never silently park in
           // `submitted` (red-team #4). Interactive launcher is the deferred
           // interactive-wiring spec; until then, say so explicitly.
           const failed: TaskRecord = {
-            ...req.record,
+            ...record,
             state: "failed",
             lastEvent: "no-launcher",
             error:
-              req.record.mode === "interactive"
+              record.mode === "interactive"
                 ? "interactive mode is not yet implemented (deferred interactive-wiring spec); use --mode headless"
-                : `no launcher available for mode '${req.record.mode}'`,
+                : `no launcher available for mode '${record.mode}'`,
           };
           store.put(failed);
           return failed;

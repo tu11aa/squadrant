@@ -74,6 +74,11 @@ describe("formatTaskLine", () => {
     attempts: [{ attemptId: "att1", startedAt: 1000, lastHeartbeatAt: 1500 }],
   } satisfies TaskRecord;
 
+  it("shows the brief's mailbox seq when the task has one", () => {
+    expect(formatTaskLine({ ...base, briefSeq: 17 })).toContain("brief 17  Implement the feature");
+    expect(formatTaskLine(base)).not.toContain("brief ");
+  });
+
   it("includes short id, provider, state, lastEvent and truncated title", () => {
     const line = formatTaskLine(base);
     expect(line).toContain("abc12345");

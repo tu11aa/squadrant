@@ -4,8 +4,9 @@
 import { randomUUID } from "node:crypto";
 import { connect as netConnect } from "node:net";
 import { ClaudePeerChannel, readClaudeStatusBySocketPath, writeLine } from "@squadrant/agents";
-import { deliverFirstTurnViaPeer, type PeerFirstTurnResult } from "@squadrant/core";
+import { deliverFirstTurnViaPeer, waitPastTrustPanel, type PeerFirstTurnResult } from "@squadrant/core";
 import type { PaneRef, RuntimeDriver, TaskRecord } from "@squadrant/shared";
+import { screenLooksLikeBareShell } from "@squadrant/workspaces";
 import { sharedReceiptListener } from "./captain-channel-factory.js";
 
 export async function sendClaudeFirstTurnViaPeer(
@@ -35,4 +36,24 @@ export async function sendClaudeFirstTurnViaPeer(
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     now: () => Date.now(),
   });
+}
+
+/** Launch-arg init prompt: answer the folder-trust panel until claude registers
+ *  its session (it submits the queued init prompt itself from there). When it
+ *  never registers and the pane shows a bare shell, the launch failed (#892). */
+export async function watchClaudeCrewBoot(
+  runtime: Pick<RuntimeDriver, "readPaneScreen" | "sendKeyToPane">,
+  o: { pane: PaneRef; messagingSocketPath: string },
+): Promise<{ booted: boolean; agentNotStarted?: boolean }> {
+  const statusOf = () => readClaudeStatusBySocketPath(o.messagingSocketPath);
+  const readScreen = async () => (await runtime.readPaneScreen(o.pane)) ?? "";
+  const booted = await waitPastTrustPanel({
+    statusOf,
+    readScreen,
+    pressKey: (key) => runtime.sendKeyToPane(o.pane, key),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => Date.now(),
+  }, () => statusOf() !== undefined);
+  if (booted) return { booted };
+  return { booted, agentNotStarted: screenLooksLikeBareShell(await readScreen().catch(() => ""), false) };
 }

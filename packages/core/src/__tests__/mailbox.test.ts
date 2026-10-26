@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToMailbox } from "../mailbox.js";
+import { appendToMailbox, appendDispatchEntry, readMailboxEntry, fullEntryText } from "../mailbox.js";
 import { readCursor, writeCursor } from "../mailbox.js";
 import { readFromCursor } from "../mailbox.js";
 import { rotateIfNeeded, mailboxStats } from "../mailbox.js";
@@ -358,5 +358,17 @@ describe("mailboxStats", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("appendDispatchEntry", () => {
+  it("records the full brief as a task.dispatched entry that is never delivered to the captain", async () => {
+    const stateRoot = freshState();
+    const brief = "line one\nline two (with === and: colons)";
+    const seq = await appendDispatchEntry({ stateRoot, project: "demo", taskRecord: { ...sampleRecord, name: "c1", task: brief, sessionId: "s-1" } });
+    const e = await readMailboxEntry(stateRoot, "demo", seq);
+    expect(e).toMatchObject({ kind: "task.dispatched", taskId: sampleRecord.id, name: "c1", provider: "claude", message: null });
+    expect(e?.payload).toEqual({ brief, sessionId: "s-1" });
+    expect(fullEntryText(e!)).toBe(brief);
   });
 });

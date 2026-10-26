@@ -35,6 +35,12 @@ export function createClaudeDriver(): AgentDriver {
         cmd += ` -n ${opts.sessionName}`;
       }
 
+      // A pre-generated id: squadrant knows the transcript path from dispatch,
+      // and cmux's wrapper skips injecting its own when one is explicit.
+      if (opts.sessionId) {
+        cmd += ` --session-id ${opts.sessionId}`;
+      }
+
       if (opts.model) {
         cmd += ` --model ${opts.model}`;
       }
@@ -65,6 +71,12 @@ export function createClaudeDriver(): AgentDriver {
       const pluginDir = `${process.env.HOME}/.config/squadrant/${pluginSubdir}`;
       cmd += ` --plugin-dir ${pluginDir}`;
 
+      // `--add-dir <dir>` is variadic and would swallow a following positional
+      // prompt as another directory; the `=` form takes exactly one value.
+      for (const dir of opts.addDirs ?? []) {
+        cmd += ` --add-dir=${posixQuote(dir)}`;
+      }
+
       // #697/#759: must come AFTER --plugin-dir (and be the last flag for
       // interactive sessions) — cmux <=0.64.18 truncated launchCommand.arguments
       // at --messaging-socket-path when storing it, so anything after it
@@ -74,6 +86,13 @@ export function createClaudeDriver(): AgentDriver {
       // Match the captain/command path (launch-cmd.ts).
       if (opts.messagingSocketPath) {
         cmd += ` --messaging-socket-path ${opts.messagingSocketPath}`;
+      }
+
+      // The init prompt is the last arg: the pane's shell reads the file, so the
+      // typed command stays short and the text arrives byte-for-byte (no paste,
+      // no newline flattening) as a real user turn.
+      if (opts.interactive && opts.initPromptFile) {
+        cmd += ` "$(cat ${posixQuote(opts.initPromptFile)})"`;
       }
 
       if (!opts.interactive) {
@@ -108,4 +127,8 @@ export function createClaudeDriver(): AgentDriver {
       return listClaudeSessions();
     },
   };
+}
+
+function posixQuote(p: string): string {
+  return "'" + p.replace(/'/g, "'\\''") + "'";
 }
