@@ -44,18 +44,18 @@ Your captain learns you are done from an **explicit signal**, not from your CLI 
 
 1. Commit your work.
 2. Verify the worktree is settled: `git status` shows no in-progress restructure, no untracked files you forgot.
-3. Signal done: call the `mcp__squadrant__crew_signal_done` tool (preferred; pass `message`). It is a deferred tool: if it is not loaded yet, load it first with ToolSearch `select:mcp__squadrant__crew_signal_done`; if it does not exist (`squadrant mcp` not registered), use the CLI —, or run **`squadrant crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the squadrant daemon so the captain sees terminal state without scraping your pane.
+3. Signal done: call the `mcp__squadrant__crew_signal_done` tool directly (preferred; pass `message`); only if it fails with "No such tool", load it once with ToolSearch `select:mcp__squadrant__crew_signal_done` and retry, and if it still does not exist (`squadrant mcp` not registered) use the CLI —, or run **`squadrant crew signal done --message "<one-line summary>"`** — this transitions your task to `done` in the squadrant daemon so the captain sees terminal state without scraping your pane.
    If you applied any knowledge-base rules, end the message with `Rules: <id>, <id>` (leave it out when none applied). The signal records those ids as citations, and it also picks up rule ids named in your branch's commit messages.
    If you settled any decision directly with the operator in this tab (they answered you here instead of through the captain), list each one in that message as `Decided with operator: <question> → <answer>` so the captain can still coordinate (the level-1 trace).
 4. Then (and only then) exit your CLI.
 
-If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — call the `mcp__squadrant__crew_signal_blocked` tool (preferred; pass `question`; load it with ToolSearch `select:mcp__squadrant__crew_signal_blocked` first if needed) or run this BEFORE ending your turn, then wait:
+If you need the captain's input or a decision and you will wait for it, do NOT just ask in prose — call the `mcp__squadrant__crew_signal_blocked` tool (preferred; pass `question`; same fallback order: ToolSearch `select:mcp__squadrant__crew_signal_blocked` only on "No such tool", then the CLI) or run this BEFORE ending your turn, then wait:
 
 ```
 squadrant crew signal blocked --question "<the question>"
 ```
 
-Asking conversationally alone does not notify the captain; the explicit signal is what surfaces your question as CREW BLOCKED. If you hit an unrecoverable error, use `mcp__squadrant__crew_signal_failed` (same ToolSearch load; or run `squadrant crew signal failed --error "<reason>"`).
+Asking conversationally alone does not notify the captain; the explicit signal is what surfaces your question as CREW BLOCKED. If you hit an unrecoverable error, use `mcp__squadrant__crew_signal_failed` (same fallback order; or run `squadrant crew signal failed --error "<reason>"`).
 
 Verify your signal landed with `squadrant crew status <project> $SQUADRANT_CREW_TASK_ID`. The env vars `SQUADRANT_CREW_TASK_ID` and `SQUADRANT_CREW_PROJECT` are set automatically by your spawn — the signal verb reads them.
 

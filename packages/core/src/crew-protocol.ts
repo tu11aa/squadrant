@@ -62,17 +62,17 @@ export function isTurnAccepted(
  *  breaks crew DONE. Any modification must be validated against the crew-lifecycle
  *  checklist CP-DONE checkpoint. A snapshot test guards against drift. */
 export function buildCompletionProtocol(taskId: string, project: string, agent?: string): string {
-  // Claude exposes MCP tools as `mcp__<server>__<tool>` and DEFERS them (ToolSearch first); a bare
-  // `crew_signal_done` is "No such tool". Other agents keep the plain tool name.
+  // Claude exposes MCP tools as `mcp__<server>__<tool>` (a bare `crew_signal_done` is "No such tool"); they load
+  // upfront (alwaysLoad), ToolSearch is only the fallback. Other agents keep the plain tool name.
   const claude = agent === "claude";
   const tool = (n: string) => (claude ? `mcp__squadrant__${n}` : n);
   return [
     "---",
     claude
-      ? `COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the \`${tool("crew_signal_done")}\` tool (pass \`message\`, \`task_id\` and \`project\`). It is a deferred tool: if it is not loaded yet, load it first with ToolSearch \`select:${tool("crew_signal_done")}\`. If it does not exist, run exactly:`
+      ? `COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the \`${tool("crew_signal_done")}\` tool directly (pass \`message\`, \`task_id\` and \`project\`). Only if it fails with "No such tool", load it once with ToolSearch \`select:${tool("crew_signal_done")}\` and retry; if it still does not exist, run exactly:`
       : "COMPLETION PROTOCOL (required): When this task is fully complete, your FINAL action MUST be to signal done: call the `crew_signal_done` MCP tool from the `squadrant` server if it is available (pass `message`, `task_id` and `project`), otherwise run exactly:",
     `  squadrant crew signal done --task-id ${taskId} --project ${project} --message "<one-line summary>"`,
-    `Use task_id ${taskId} and project ${project} for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the \`${tool("crew_signal_blocked")}\` tool (pass \`question\`${claude ? "; load it with ToolSearch first if needed" : ""}) or run:`,
+    `Use task_id ${taskId} and project ${project} for the tool. Signal as a discrete final step AFTER you report your results. If you are blocked or need a decision, instead call the \`${tool("crew_signal_blocked")}\` tool (pass \`question\`${claude ? "; same fallback order" : ""}) or run:`,
     `  squadrant crew signal blocked --task-id ${taskId} --project ${project} --question "<your question>"`,
     `Likewise \`${tool("crew_signal_failed")}\` (\`error\`) / \`${tool("crew_signal_review")}\` (\`message\`), or \`squadrant crew signal failed|review\` with the same flags.`,
     "If this task failed because of a defect in squadrant itself (not an API/infra blip, a config/user error, or an expected failure), say so in your signal done/blocked message so the captain can check tu11aa/squadrant and file it. Don't file issues from the crew.",
