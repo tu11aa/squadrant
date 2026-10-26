@@ -14,7 +14,7 @@ vi.mock("@squadrant/shared", async () => {
     saveConfig: (c: unknown) => { state.saved = c; },
   };
 });
-vi.mock("@squadrant/core", () => ({ restartDaemonIfRunning: () => "skipped-opt-out" }));
+vi.mock("@squadrant/core", () => ({ reloadOrRestartDaemon: async () => "skipped-opt-out" }));
 
 describe("projects add (#983)", () => {
   let tmp: string;

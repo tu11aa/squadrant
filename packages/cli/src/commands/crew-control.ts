@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { sendRequest } from "@squadrant/core";
+import { sendRequest, isSocketUnreachableError } from "@squadrant/core";
 import { ensureDaemon, buildStatusRequest, runCrewSignal, logSignalCitations, signalConfirmation, buildSignalRequest, performCrewSignal, type CrewSignalState } from "@squadrant/core";
 export { buildStatusRequest, buildSignalRequest, runCrewSignal, logSignalCitations, signalConfirmation };
 import type { ProjectUsage } from "@squadrant/core";
@@ -142,8 +142,12 @@ export async function runCrewTakeover(
 export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
-  } catch {
-    ensureDaemon(); // resolves its own entrypoint — never pass a path here
+  } catch (e) {
+    // Only an unreachable socket means the request never landed: then re-sending is safe and
+    // starting a down daemon helps. A timeout (busy daemon) or a daemon-reported error means it
+    // got the request — re-sending would deliver it twice and a daemon reconcile can't help.
+    if (!isSocketUnreachableError(e)) throw e;
+    ensureDaemon(undefined, { caller: "squadrantdCall fallback" }); // resolves its own entrypoint — never pass a path here
     // kickstart→socket is racy; bounded backoff. If all attempts fail,
     // throw the last error (fail loud, no scrape fallback).
     let lastErr: unknown;
@@ -157,6 +161,31 @@ export async function squadrantdCall(req: unknown): Promise<unknown> {
     }
     throw lastErr;
   }
+}
+
+/** The `crew tasks` listing (the non-purge path), shared with the MCP `crew_tasks` tool. */
+export async function renderCrewTasks(
+  project: string,
+  opts: { json?: boolean; id?: string; state?: string; stateOnly?: string },
+): Promise<string> {
+  const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
+  let records = raw;
+  if (opts.stateOnly) {
+    records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
+    return formatCompactTasks(records, { stateOnly: true });
+  }
+  records = filterTasks(records, { id: opts.id, state: opts.state });
+  const compact = opts.json !== true;
+  // U5: routed cost footer. Only queried when a router is configured (avoids
+  // an unknown-verb round trip for the common non-router case).
+  let usage: ProjectUsage | undefined;
+  if (compact && loadConfig().defaults.router) {
+    const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
+    usage = u ?? undefined;
+  }
+  // #1015: live context per non-terminal task ("unknown" where it can't be measured).
+  const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
+  return formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) });
 }
 
 /**
@@ -350,25 +379,7 @@ export function addControlPlaneCrewCommands(crew: Command): void {
         console.log(`purged ${r.provider}/${r.id} (was ${r.state})`);
         return;
       }
-      const raw = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
-      let records = raw;
-      if (opts.stateOnly) {
-        records = filterTasks(records, { id: opts.stateOnly, stateOnly: true });
-        process.stdout.write(formatCompactTasks(records, { stateOnly: true }) + "\n");
-        return;
-      }
-      records = filterTasks(records, { id: opts.id, state: opts.state });
-      const compact = opts.json !== true;
-      // U5: routed cost footer. Only queried when a router is configured (avoids
-      // an unknown-verb round trip for the common non-router case).
-      let usage: ProjectUsage | undefined;
-      if (compact && loadConfig().defaults.router) {
-        const u = (await squadrantdCall({ kind: "router-usage", project }).catch(() => null)) as ProjectUsage | null;
-        usage = u ?? undefined;
-      }
-      // #1015: live context per non-terminal task ("unknown" where it can't be measured).
-      const ctxLabel = (r: TaskRecord) => (TERMINAL_STATES.has(r.state as any) && !r.reviewStage ? undefined : formatContext(meterTask(r)));
-      process.stdout.write(formatCompactTasks(records, { compact, ctxLabel, ...(usage ? { usage } : {}) }) + "\n");
+      process.stdout.write(await renderCrewTasks(project, opts) + "\n");
     });
 
   // #592: delivery goes through the SAME path 'crew send' uses (runCrewSend)

@@ -171,11 +171,17 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     log(`crew-compact ${label}: /compact sent`);
   }
 
+  // Same overlap guard as captain-compact: an interval tick mid-send must not type /compact again.
+  let ticking = false;
   async function tick(): Promise<void> {
-    for (const [taskId, p] of [...pending]) {
-      try { await tryOne(taskId, p); }
-      catch (e) { log(`crew-compact ${p.project}:${p.name}: ${(e as Error).message}`); }
-    }
+    if (ticking) return;
+    ticking = true;
+    try {
+      for (const [taskId, p] of [...pending]) {
+        try { await tryOne(taskId, p); }
+        catch (e) { log(`crew-compact ${p.project}:${p.name}: ${(e as Error).message}`); }
+      }
+    } finally { ticking = false; }
   }
 
   return { request, cancel, tick, holdsCrew, compactDone, pendingCount: () => pending.size };

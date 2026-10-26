@@ -1,10 +1,11 @@
 // src/control/launchd.ts
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync, closeSync, unlinkSync, constants } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync, closeSync, unlinkSync, statSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { daemonLogPath, logsRoot } from "@squadrant/shared";
+import { daemonLogPath, logsRoot, isolatedConfigDir } from "@squadrant/shared";
+import { logRestartTrigger } from "./restart-trigger.js";
 
 export const LABEL = "com.squadrant.daemon";
 
@@ -100,7 +101,8 @@ export function isVersionUpgrade(registeredEntry: string, thisEntry: string): bo
  * flip-flop that caused the production crash-loop. A registered entry only
  * counts as "foreign" (unsafe to overwrite) when it differs from this
  * install's own entry AND the file it points at still exists; a registered
- * entry that's gone is stale and safe to reclaim (existing behavior).
+ * entry that's gone is not foreign — but ensureDaemon still never reclaims it
+ * implicitly (it may be mid `npm i -g`); only `heal daemon` does.
  */
 export function detectForeignInstall(
   parsed: { daemonEntry: string } | null,
@@ -230,6 +232,25 @@ export function kickstartArgv(target: string, plistChanged: boolean): string[] {
   return plistChanged ? ["kickstart", "-k", target] : ["kickstart", target];
 }
 
+/**
+ * True when the daemon entry belongs to a LINKED git worktree (`git worktree add` writes `.git`
+ * as a file at the worktree root; entry is <root>/dist/squadrantd.js). Same structural signal
+ * squadrantd.ts uses to refuse starting from one.
+ */
+export function isLinkedWorktreeEntry(entry: string): boolean {
+  try { return statSync(join(dirname(entry), "..", ".git")).isFile(); }
+  catch { return false; }
+}
+
+// `npm i -g` deletes the old package dir before writing the new one; a registered entry that is
+// missing for a moment is usually that gap, so ensureDaemon re-checks before deciding.
+let entryWait = { polls: 20, delayMs: 150 };
+
+/** @internal — tests only */
+export function _setEntryWaitForTest(polls: number, delayMs: number): void {
+  entryWait = { polls, delayMs };
+}
+
 // In-process dedup: JS is single-threaded and ensureDaemon is synchronous, so
 // true re-entrancy is impossible; this flag prevents sequential re-calls within
 // the same process (e.g. index.ts + crew-control.ts) from re-running the
@@ -294,11 +315,14 @@ export function releaseDaemonLock(): void {
 interface DaemonDrift {
   plistPath: string;
   target: string;
+  thisEntry: string;
   desired: string;
   current: string | null;
   changed: boolean;
   programChanged: boolean;
   foreignInstall: ForeignInstall | null;
+  /** The plist names a different squadrantd.js whose file is gone (e.g. mid `npm i -g`). */
+  missingRegisteredEntry: string | null;
 }
 
 /**
@@ -324,13 +348,33 @@ function computeDaemonDrift(nodeBin: string): DaemonDrift {
     && !current.includes(programArgsBlock(nodeBin, entry));
 
   const parsedCurrent = current !== null ? parseProgramArgs(current) : null;
-  const foreignInstall = detectForeignInstall(
-    parsedCurrent,
-    entry,
-    parsedCurrent !== null && existsSync(parsedCurrent.daemonEntry),
-  );
+  // One existence check feeds both verdicts, so they can't disagree mid-install.
+  const registeredEntryExists = parsedCurrent !== null && existsSync(parsedCurrent.daemonEntry);
+  const foreignInstall = detectForeignInstall(parsedCurrent, entry, registeredEntryExists);
 
-  return { plistPath: p, target, desired, current, changed, programChanged, foreignInstall };
+  const missingRegisteredEntry = parsedCurrent !== null && parsedCurrent.daemonEntry !== entry
+    && !registeredEntryExists ? parsedCurrent.daemonEntry : null;
+
+  return { plistPath: p, target, thisEntry: entry, desired, current, changed, programChanged, foreignInstall, missingRegisteredEntry };
+}
+
+/**
+ * Pure: why the plist drifted, for the restart attribution line. `version` =
+ * same install path with a different `<name>@<version>` segment, `path` = a
+ * different daemon entry or node binary, `plist` = env-only (PATH) change.
+ */
+export function describeDrift(drift: Pick<DaemonDrift, "current" | "desired" | "changed" | "programChanged">): string {
+  if (!drift.changed) return "none";
+  if (drift.current === null) return "plist missing";
+  if (!drift.programChanged) return "plist (PATH/env only)";
+  const was = parseProgramArgs(drift.current);
+  const now = parseProgramArgs(drift.desired);
+  if (!was || !now) return "path (program args unparseable)";
+  if (was.daemonEntry !== now.daemonEntry) {
+    const kind = isVersionUpgrade(was.daemonEntry, now.daemonEntry) ? "version" : "path";
+    return `${kind} (entry ${was.daemonEntry} -> ${now.daemonEntry})`;
+  }
+  return `path (node ${was.nodeBin} -> ${now.nodeBin})`;
 }
 
 /**
@@ -547,8 +591,12 @@ export function isReadOnlyCrewCommand(argv: readonly string[]): boolean {
  * #782: `gate` is a hook-driven command (Claude invokes it on every permission
  * prompt). It must be as cheap as possible and must never reconcile the daemon;
  * its ask path only best-effort-sends to an already-running daemon.
+ *
+ * #1029: `mcp` is started by every Claude session on the machine (user-scope registration), so with
+ * SQUADRANT_ROLE=captain a reconcile here would restart the daemon under live crews on a session start.
+ * Its tools reach the daemon through requireDaemon / squadrantdCall and report when it is down.
  */
-export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami", "gate"]);
+export const READ_ONLY_TOP_LEVEL_COMMANDS = new Set(["sessions", "whoami", "gate", "mcp"]);
 
 /** Pure: is this invocation one of the read-only top-level commands above? */
 export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
@@ -588,9 +636,14 @@ export function isReadOnlyTopLevelCommand(argv: readonly string[]): boolean {
  *   - tryAcquireDaemonLock: serialises concurrent SEPARATE squadrant processes
  *     via a filesystem lock so only one runs bootout/bootstrap at a time.
  */
-export function ensureDaemon(nodeBin: string = process.execPath, opts: { operatorInitiated?: boolean } = {}): void {
+export function ensureDaemon(
+  nodeBin: string = process.execPath,
+  opts: { operatorInitiated?: boolean; caller?: string } = {},
+): void {
   if (restartInFlight) return;
   restartInFlight = true;
+  // #1046: an isolated SQUADRANT_CONFIG talks to its own (dev) daemon, never launchd's.
+  if (isolatedConfigDir()) return;
 
   const authorized = process.env.SQUADRANT_ROLE === "captain" || opts.operatorInitiated === true;
 
@@ -619,11 +672,39 @@ export function ensureDaemon(nodeBin: string = process.execPath, opts: { operato
   }
 
   try {
-    const drift = computeDaemonDrift(nodeBin);
+    let drift = computeDaemonDrift(nodeBin);
+    for (let i = 0; drift.missingRegisteredEntry && i < entryWait.polls; i++) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, entryWait.delayMs);
+      drift = computeDaemonDrift(nodeBin);
+    }
+    if (drift.missingRegisteredEntry) {
+      // Never reclaim it implicitly: in the `npm i -g` gap that would hand the global
+      // launchd entry to whatever install this call happened to run from.
+      process.stderr.write(
+        `[squadrant] not touching the daemon: its registered entry ${drift.missingRegisteredEntry} is missing ` +
+        `(an install in progress?). If it stays missing, run \`squadrant heal daemon\` to register this install.\n`,
+      );
+      return;
+    }
+    if ((drift.current === null || drift.programChanged) && isLinkedWorktreeEntry(drift.thisEntry)) {
+      process.stderr.write(
+        `[squadrant] not registering a git worktree build as the daemon: ${drift.thisEntry}. ` +
+        "Only `squadrant heal daemon` may do that, explicitly.\n",
+      );
+      return;
+    }
     if (drift.foreignInstall) {
       const decision = decideForeignInstall(drift.foreignInstall);
       process.stderr.write(decision.message);
       if (!decision.proceed) return;
+    }
+    // A no-drift call only bootstraps/kickstarts without -k: a no-op for a running
+    // daemon, so it is not attributed (it would log on every captain CLI call).
+    if (drift.changed) {
+      logRestartTrigger(
+        drift.programChanged ? "bootout+bootstrap" : "plist-write (no restart)",
+        `ensureDaemon ${opts.caller ?? "cli"}; drift=${describeDrift(drift)}`,
+      );
     }
     applyDaemonDrift(drift);
   } catch (e) {
@@ -700,6 +781,10 @@ export function reregisterDaemon(
     // service still logging to the pre-move path needs the bootout too.
     const loadedLog = loadedDaemonLogPath(drift.target);
     const logMoved = loadedLog !== null && loadedLog !== daemonLogPath();
+    logRestartTrigger(
+      "reregister+kickstart-k",
+      `heal daemon; drift=${describeDrift(drift)}${logMoved ? `; log moved ${loadedLog} -> ${daemonLogPath()}` : ""}`,
+    );
     reconcilePlistAndService({ ...drift, programChanged: drift.programChanged || logMoved });
     const result = forceKickstartAndVerify(drift.target, { ...kickstartOpts, pidBefore: pidBeforeReconcile });
     if (!result.restarted) {
