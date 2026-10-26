@@ -140,11 +140,18 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
     deps.resume?.(project).catch((e: unknown) => log(`captain-compact ${project}: resume message failed: ${(e as Error).message}`));
   }
 
+  // The daemon fires tick() every 1s without awaiting it, and cmux.send can take longer than
+  // that: an overlapping tick would re-run the same pending entry and type /compact twice.
+  let ticking = false;
   async function tick(): Promise<void> {
-    for (const [project, p] of [...pending]) {
-      try { await tryOne(project, p); }
-      catch (e) { log(`captain-compact ${project}: ${(e as Error).message}`); }
-    }
+    if (ticking) return;
+    ticking = true;
+    try {
+      for (const [project, p] of [...pending]) {
+        try { await tryOne(project, p); }
+        catch (e) { log(`captain-compact ${project}: ${(e as Error).message}`); }
+      }
+    } finally { ticking = false; }
   }
 
   return { request, tick, holdsDelivery, compactDone, pendingCount: () => pending.size };
