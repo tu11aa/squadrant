@@ -7,9 +7,9 @@
 // isolatedConfigDir in @squadrant/shared). `down` kills it and deletes the root.
 import { Command } from "commander";
 import { spawn, execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefaultConfig, isolatedConfigDir } from "@squadrant/shared";
 import { isDaemonSocketLive } from "@squadrant/core";
@@ -119,6 +119,22 @@ async function up(opts: { from?: string; project: string; root?: string; build?:
   return 0;
 }
 
+/** Drops the `projects` entries of `~/.claude.json` that live under `roots` (the trust prompt `up` made Claude record for the dev project). Every other key is left alone; the file is rewritten atomically, and only when something changed. */
+export function pruneClaudeProjects(roots: string[], claudeJson: string = join(homedir(), ".claude.json")): number {
+  let data: { projects?: Record<string, unknown> };
+  try { data = JSON.parse(readFileSync(claudeJson, "utf8")); } catch { return 0; }
+  const projects = data?.projects;
+  if (!projects || typeof projects !== "object") return 0;
+  const under = (k: string) => roots.some((r) => k === r || k.startsWith(r + sep));
+  const drop = Object.keys(projects).filter(under);
+  if (drop.length === 0) return 0;
+  for (const k of drop) delete projects[k];
+  const tmp = `${claudeJson}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: statSync(claudeJson).mode & 0o777 });
+  renameSync(tmp, claudeJson);
+  return drop.length;
+}
+
 async function down(opts: { root?: string }): Promise<number> {
   const root = resolve(opts.root ?? defaultRoot());
   if (!existsSync(join(root, MARKER))) {
@@ -140,7 +156,13 @@ async function down(opts: { root?: string }): Promise<number> {
     for (let i = 0; i < 40 && isAlive(pid); i++) await sleep(250);
     if (isAlive(pid)) process.kill(pid, "SIGKILL");
   }
+  // Claude keys trust by the resolved path (/private/tmp on macOS), so match both spellings.
+  const roots = [root, realpathSync(root)];
   rmSync(root, { recursive: true, force: true });
+  try {
+    const n = pruneClaudeProjects([...new Set(roots)]);
+    if (n > 0) err(`dev down: removed ${n} trust entr${n === 1 ? "y" : "ies"} from ~/.claude.json`);
+  } catch (e) { err(`dev down: could not prune ~/.claude.json: ${(e as Error).message}`); }
   err(`dev daemon down${pid ? ` (pid ${pid})` : ""}; removed ${root}`);
   return 0;
 }
