@@ -97,7 +97,7 @@ Tested and **rejected for today**. Evidence:
   | A. `projects add demo` (no role), socket file present | `kickstart -k gui/501/com.squadrant.daemon` (+ attribution line `action=kickstart-k reason="project registration"`) |
   | B. 3 concurrent `squadrant mcp` children, `SQUADRANT_ROLE=captain`, plist already matching | 3 × (`bootstrap` + plain `kickstart`). No `-k`, no `bootout` |
   | C. `node <worktree>/dist/index.js mcp` as captain, plist registered to the global install (which exists) | none. The #670 banner "refusing to restart the daemon…" is printed and the plist is unchanged |
-  | D. as C, but the registered entry no longer exists | `bootout` + `bootstrap` + `kickstart`. The worktree build **takes over the plist** |
+  | D. as C, but the registered entry no longer exists | `bootout` + `bootstrap` + `kickstart`. The worktree build **takes over the plist** (before fix 4 in §5; now refused) |
   | E. as D, but a crew (no `SQUADRANT_ROLE`) | none. Only the stderr note |
 
 **PR #1053 (exempt `mcp` from startup `ensureDaemon`)** does not explain or remove any of today's
