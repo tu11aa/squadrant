@@ -292,6 +292,11 @@ export function hooksCommand(): Command {
             rulesOut = appendAdditionalContext(rulesOut, await compactLedgerContext(project));
             await sendToSock({ kind: "captain-compact-done", project }).catch(() => {});
           }
+          // #1051: a crew's session just finished a compact — lift the hold `crew send` waits on.
+          const crewTaskId = process.env.SQUADRANT_CREW_TASK_ID;
+          if (crewTaskId && (payload as { source?: unknown } | null)?.source === "compact") {
+            await sendToSock({ kind: "crew-compact-done", taskId: crewTaskId }).catch(() => {});
+          }
         } catch { /* best-effort */ }
       }
       if (rulesOut) await new Promise<void>((resolve) => process.stdout.write(rulesOut, () => resolve()));

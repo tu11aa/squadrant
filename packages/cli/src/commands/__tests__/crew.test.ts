@@ -946,7 +946,8 @@ describe("squadrant crew send/read/close/list", () => {
     await runCrewSend("brove", "crew-1", "follow up");
 
     // The list to check state, then task.started (marks the next turn-end as the reply); never a reopen.
-    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([req]) => req);
+    // (#1051: the compact-hold probe comes first and is not part of the state transition.)
+    const calls = (squadrantdCall.mock.calls as Array<[{ kind: string; event?: { type: string } }]>).map(([req]) => req).filter((r) => r.kind !== "crew-compact-state");
     expect(calls.map((r) => r.kind)).toEqual(["list", "event"]);
     expect(calls[1].event?.type).toBe("task.started");
     expect(sendToPane).toHaveBeenCalledWith(

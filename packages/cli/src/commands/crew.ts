@@ -29,6 +29,7 @@ import { sendClaudeFirstTurnViaPeer } from "../lib/first-turn-peer.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
 import { hintForCrewSend } from "../lib/crew-context-hint.js";
+import { requestCrewCompact, waitForCrewCompact } from "../lib/crew-compact.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
 import { commandExists } from "./doctor.js";
@@ -145,6 +146,8 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
 }
 
 export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean }> {
+  // #1051: a compact queued/running on this crew goes first; the message lands after it.
+  await waitForCrewCompact(project, name, { call: squadrantdCall, log: (m) => console.error(chalk.dim(m)) });
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
   const cfg = loadConfig();
   // #667 slice 2: the channel needs the crew's opencode port, which the daemon
@@ -384,6 +387,22 @@ crewCommand
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
+      process.exit(1);
+    }
+  });
+
+crewCommand
+  .command("compact")
+  .description("Queue a /compact for a crew (claude/opencode); typed by the daemon once the crew is idle. Sends to that crew wait until it finishes (returns immediately)")
+  .argument("<project>", "Project name")
+  .argument("<name>", "Crew name (e.g. crew-1)")
+  .option("--keep <text>", "what the summary should keep, passed to /compact")
+  .action(async (project: string, name: string, opts: { keep?: string }) => {
+    try {
+      const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
+      console.log(chalk.green(`✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`));
+    } catch (e) {
+      console.error(chalk.red(`✖ ${(e as Error).message}`));
       process.exit(1);
     }
   });

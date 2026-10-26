@@ -186,6 +186,12 @@ export interface DaemonContext {
   captainCompactHolds?: (project: string) => boolean;
   /** #1015: the SessionStart(source=compact) hook arrived — end the delivery hold. */
   captainCompactDone?: (project: string) => void;
+  /** #1051: queue a /compact for a crew (set by start.ts; absent without a cmux surface driver). Rejects with a clear message when the crew cannot be compacted. */
+  requestCrewCompact?: (project: string, crew: string, keep?: string) => Promise<{ queued: true; agent: string }>;
+  /** #1051: true while a crew compact is queued or running — `crew send` waits for it to clear. */
+  crewCompactHolds?: (project: string, crew: string) => boolean;
+  /** #1051: SessionStart(source=compact) reached this crew's session — end the hold. */
+  crewCompactDone?: (taskId: string) => void;
   /** #1015/#1034: true while the delivery loop is mid-pass for THIS project (set by createDelivery). */
   deliveryBusy?: (project: string) => boolean;
   /** Fan-out to attach clients (set by createAttach). */
