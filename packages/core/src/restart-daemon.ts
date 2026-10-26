@@ -7,7 +7,7 @@ import { logRestartTrigger } from "./restart-trigger.js";
 
 export type RestartOutcome = "restarted" | "skipped-not-running" | "skipped-opt-out";
 
-import { DAEMON_SOCK_PATH } from "@squadrant/shared";
+import { DAEMON_SOCK_PATH, isolatedConfigDir } from "@squadrant/shared";
 
 function defaultIsRunning(): boolean {
   return existsSync(DAEMON_SOCK_PATH);
@@ -36,6 +36,8 @@ export function restartDaemonIfRunning(opts: {
 }): RestartOutcome {
   const env = opts.env ?? process.env;
   if (env["VITEST"] || opts.noRestart) return "skipped-opt-out";
+  // #1046: an isolated SQUADRANT_CONFIG never kickstarts the launchd (production) daemon.
+  if (isolatedConfigDir()) return "skipped-opt-out";
 
   const isRunning = opts.isRunning ?? defaultIsRunning;
   if (!isRunning()) return "skipped-not-running";

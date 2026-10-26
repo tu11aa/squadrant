@@ -3,6 +3,7 @@
 // injected as closures; core only imports from @squadrant/shared.
 
 import type { RuntimeDriver } from "@squadrant/shared";
+import { isolatedSessionEnvPrefix } from "@squadrant/shared";
 import { shouldStartFresh, recordSession } from "./session-freshness.js";
 
 // ─── deliverStartupPrompt ────────────────────────────────────────────────────
@@ -256,7 +257,8 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
   // by the agent CLI and every `squadrant` subcommand later run from inside
   // this pane. ensureDaemon() requires this marker before it will mutate the
   // shared daemon's registration; every other role is deliberately unmarked.
-  const agentCmd = opts.role === "captain" ? `SQUADRANT_ROLE=captain ${builtCmd}` : builtCmd;
+  // #1046: an isolated config (dev daemon) also carries SQUADRANT_CONFIG.
+  const agentCmd = isolatedSessionEnvPrefix() + (opts.role === "captain" ? `SQUADRANT_ROLE=captain ${builtCmd}` : builtCmd);
   recordSession(opts.workspaceName, opts.role, {
     sessionsPath: opts.sessionsPath,
     legacySessionsPath: opts.legacySessionsPath,
