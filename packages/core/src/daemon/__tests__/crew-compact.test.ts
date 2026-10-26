@@ -89,6 +89,18 @@ describe("crew compact", () => {
     expect(h.c.pendingCount()).toBe(0);
   });
 
+  it("says why it is waiting when the send guard keeps deferring (no-box), once a minute", async () => {
+    const h = harness({ send: async () => { throw new DeferDelivery(null, "no-box"); } });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick(); // idle ×2 → send → deferred
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(1);
+    await h.c.tick(); await h.c.tick(); // same minute → no second line
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(1);
+    h.advance(61_000);
+    await h.c.tick(); await h.c.tick();
+    expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(2);
+  });
+
   it("opencode crews are typed with the opencode grammar and judged by task state, not the Claude spinner", async () => {
     const h = harness({ task: { provider: "opencode" }, screens: [BUSY] });
     await h.c.request("demo", "crew-1");

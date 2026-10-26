@@ -153,6 +153,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
       if (!(e instanceof DeferDelivery)) throw e;
       p.idlePolls = 0;
       p.lastReason = e.reason;
+      noteWaiting(p);
       return;
     }
     // The hold persists until SessionStart(compact) (claude) or until it lapses (opencode has no such hook).
