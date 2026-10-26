@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CREW_SIGNAL_TOOLS, callCrewSignalTool } from "@squadrant/core";
+import { crewSignalToolList, callCrewSignalTool } from "@squadrant/core";
 import { squadrantdCall } from "./crew-control.js";
 
 /** Stdio MCP server exposing the crew signal tools (#1029). The SDK is imported lazily so no other command pays for it. */
@@ -15,16 +15,7 @@ export async function runMcpServer(): Promise<void> {
   // Same lookup as index.ts --version: this is bundled into dist/index.js, so ../package.json is the root package.
   const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf-8"));
   const server = new Server({ name: "squadrant", version: pkg.version }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: CREW_SIGNAL_TOOLS.map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: {
-        type: "object" as const,
-        properties: Object.fromEntries(Object.entries(t.fields).map(([k, description]) => [k, { type: "string", description }])),
-      },
-    })),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: crewSignalToolList() }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const r = await callCrewSignalTool(req.params.name, req.params.arguments ?? {}, { call: squadrantdCall });
     return { content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true } : {}) };

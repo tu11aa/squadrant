@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CREW_SIGNAL_TOOLS, callCrewSignalTool } from "../crew-signal-tools.js";
+import { CREW_SIGNAL_TOOLS, callCrewSignalTool, crewSignalToolList } from "../crew-signal-tools.js";
 
 let root: string;
 const saved = { ...process.env };
@@ -75,5 +75,17 @@ describe("crew signal MCP tools (#1029)", () => {
 
   it("unknown tool is a tool error", async () => {
     expect((await callCrewSignalTool("nope", {}, { call: daemon(null) })).isError).toBe(true);
+  });
+});
+
+describe("crewSignalToolList (MCP tools/list payload)", () => {
+  it("lists all four crew_signal_* tools, each marked alwaysLoad so Claude skips the ToolSearch step", () => {
+    const list = crewSignalToolList();
+    expect(list.map((x) => x.name)).toEqual(["crew_signal_done", "crew_signal_blocked", "crew_signal_failed", "crew_signal_review"]);
+    for (const tool of list) {
+      expect(tool._meta).toEqual({ "anthropic/alwaysLoad": true });
+      expect(tool.inputSchema.type).toBe("object");
+      expect(Object.keys(tool.inputSchema.properties)).toEqual(expect.arrayContaining(["task_id", "project"]));
+    }
   });
 });

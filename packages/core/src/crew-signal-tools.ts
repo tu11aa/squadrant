@@ -70,3 +70,19 @@ export async function callCrewSignalTool(
     return { text: (e as Error).message, isError: true };
   }
 }
+
+/**
+ * The MCP `tools/list` payload. Each tool carries `_meta: { "anthropic/alwaysLoad": true }` so Claude Code
+ * (>= 2.1.285) loads it upfront instead of deferring it behind ToolSearch; other MCP clients ignore `_meta`.
+ */
+export function crewSignalToolList() {
+  return CREW_SIGNAL_TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: {
+      type: "object" as const,
+      properties: Object.fromEntries(Object.entries(t.fields).map(([k, description]) => [k, { type: "string", description }])),
+    },
+    _meta: { "anthropic/alwaysLoad": true },
+  }));
+}
