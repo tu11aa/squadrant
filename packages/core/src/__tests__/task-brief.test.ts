@@ -20,6 +20,14 @@ describe("taskTitle", () => {
   it("is the first non-empty line, trimmed", () => {
     expect(taskTitle("\n\n  Fix the bug  \nmore")).toBe("Fix the bug");
   });
+  it("skips headings and rules in a structured (Template-M) brief", () => {
+    const m = "## Objective\nBuild the first-turn title fix\n\n---\n## Steps\n- one\n";
+    expect(taskTitle(m)).toBe("Build the first-turn title fix");
+    expect(taskTitle("---\n\n- Do it now\n")).toBe("Do it now");
+  });
+  it("falls back to the heading text when nothing else is left", () => {
+    expect(taskTitle("## Objective\n---\n")).toBe("Objective");
+  });
   it("caps at TASK_TITLE_MAX_CHARS", () => {
     expect(taskTitle("x".repeat(500))).toHaveLength(TASK_TITLE_MAX_CHARS);
   });

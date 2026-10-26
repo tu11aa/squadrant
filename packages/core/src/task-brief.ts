@@ -11,10 +11,16 @@ import { readMailboxEntry } from "./mailbox.js";
 
 export const TASK_TITLE_MAX_CHARS = 120;
 
-/** First non-empty line of a brief, trimmed and capped. Idempotent, so it is also safe on an old full-text record. */
+const HEADING = /^\s*#{1,6}(\s|$)/;
+const HRULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+const stripMarkers = (l: string) => l.replace(/^[#\-*\s]+/, "").trim();
+
+/** One-line title of a brief: the first line that is not blank, a markdown heading or a horizontal rule, stripped of leading `#`/`-`/`*`; falls back to the first heading's text. Idempotent, so it is also safe on an old full-text record. */
 export function taskTitle(text: string | undefined): string {
-  const line = (text ?? "").split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
-  return line.trim().slice(0, TASK_TITLE_MAX_CHARS);
+  const lines = (text ?? "").split(/\r?\n/);
+  const body = lines.find((l) => l.trim() !== "" && !HEADING.test(l) && !HRULE.test(l) && stripMarkers(l) !== "");
+  const picked = body ?? lines.find((l) => HEADING.test(l) && stripMarkers(l) !== "") ?? "";
+  return stripMarkers(picked).slice(0, TASK_TITLE_MAX_CHARS);
 }
 
 export type TaskBriefSource = "brief-file" | "mailbox" | "record";
