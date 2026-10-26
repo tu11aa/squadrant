@@ -13,10 +13,54 @@ import { dirname, join, resolve } from "node:path";
 const defaultConfigDir = () => join(homedir(), ".config", "squadrant");
 
 /** SQUADRANT_CONFIG when it points somewhere other than the default config. */
-function isolatedConfigDir(): string | null {
+export function isolatedConfigDir(): string | null {
   const cfg = process.env.SQUADRANT_CONFIG;
   if (!cfg || resolve(cfg) === join(defaultConfigDir(), "config.json")) return null;
   return dirname(resolve(cfg));
+}
+
+/**
+ * #1046: an isolated daemon's own claude settings file, used in place of the
+ * user's global ~/.claude/settings.json (which only the production daemon
+ * manages). null for the default config.
+ */
+export function isolatedClaudeSettingsPath(): string | null {
+  const dir = isolatedConfigDir();
+  return dir ? join(dir, "claude-settings.json") : null;
+}
+
+const shq = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * #1046: env assignment (`SQUADRANT_CONFIG='<abs>' `) a session spawned under
+ * an isolated config needs so its hooks, MCP server and signal verbs reach the
+ * isolated daemon. When `<dir>/bin/squadrant` exists (`squadrant dev up` writes
+ * it) PATH is prefixed too, so the session's `squadrant` is that build.
+ * "" for the default config.
+ */
+export function isolatedSessionEnvPrefix(): string {
+  const dir = isolatedConfigDir();
+  if (!dir) return "";
+  const bin = join(dir, "bin");
+  const path = existsSync(join(bin, "squadrant")) ? `PATH=${shq(bin)}:"$PATH" ` : "";
+  return `${path}SQUADRANT_CONFIG=${shq(resolve(process.env.SQUADRANT_CONFIG!))} `;
+}
+
+/** The user-scope `squadrant mcp` registration, re-added for isolated sessions. */
+const SQUADRANT_MCP_CONFIG = JSON.stringify({ mcpServers: { squadrant: { type: "stdio", command: "squadrant", args: ["mcp"], alwaysLoad: true } } });
+
+/**
+ * #1046: claude flags for a session spawned under an isolated config — drop
+ * the user settings source (production hooks) and load the isolated file
+ * instead. Project/local sources stay. Dropping the user source also drops
+ * user-scope MCP servers, so the squadrant server is passed back explicitly
+ * (`squadrant` resolves to the dev build via isolatedSessionEnvPrefix's PATH).
+ * "" for the default config.
+ */
+export function isolatedClaudeFlags(): string {
+  const settingsPath = isolatedClaudeSettingsPath();
+  if (!settingsPath) return "";
+  return ` --setting-sources project,local --settings ${shq(settingsPath)} --mcp-config ${shq(SQUADRANT_MCP_CONFIG)}`;
 }
 
 /**

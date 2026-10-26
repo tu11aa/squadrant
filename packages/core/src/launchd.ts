@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, openSync, writeSync
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { daemonLogPath, logsRoot } from "@squadrant/shared";
+import { daemonLogPath, logsRoot, isolatedConfigDir } from "@squadrant/shared";
 import { logRestartTrigger } from "./restart-trigger.js";
 
 export const LABEL = "com.squadrant.daemon";
@@ -642,6 +642,8 @@ export function ensureDaemon(
 ): void {
   if (restartInFlight) return;
   restartInFlight = true;
+  // #1046: an isolated SQUADRANT_CONFIG talks to its own (dev) daemon, never launchd's.
+  if (isolatedConfigDir()) return;
 
   const authorized = process.env.SQUADRANT_ROLE === "captain" || opts.operatorInitiated === true;
 

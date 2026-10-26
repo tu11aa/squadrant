@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ThinkingLevel } from "@squadrant/shared";
+import { isolatedClaudeFlags } from "@squadrant/shared";
 import type { Role } from "./types.js";
 import type { CapabilityRegistry } from "./registry.js";
 
@@ -103,6 +104,13 @@ export function buildAgentCmd(
     // #772: command-line --settings outranks every file-based settings source,
     // so this is what keeps a routed captain pointed at the shim when
     // defaults.claudeEnv sets ANTHROPIC_*. Absent for native ⇒ no flag.
+    // #1046: see drivers/claude.ts — isolated config ⇒ that daemon's settings file.
+    const isolatedFlags = isolatedClaudeFlags();
+    if (isolatedFlags && settingsPath) {
+      throw new Error("routed backends are not supported under an isolated SQUADRANT_CONFIG (#1046)");
+    }
+    cmd += isolatedFlags;
+
     if (settingsPath) {
       cmd += ` --settings ${settingsPath}`;
     }
