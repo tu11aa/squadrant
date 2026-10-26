@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync } from "@squadrant/shared";
+import { ensureRuntimeSynced, readConfigFileSync, writeConfigFileSync, isolatedConfigDir } from "@squadrant/shared";
 import { ensureDaemon, isOperatorInitiatedCommand, isReadOnlyCrewCommand, isReadOnlyTopLevelCommand } from "@squadrant/core";
 import { syncShippedOpencodeSkills } from "@squadrant/agents";
 import { doctorCommand } from "./commands/doctor.js";
@@ -59,13 +59,20 @@ import { notifyIfUpdateAvailable } from "@squadrant/shared";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 
+// #1046: under an isolated SQUADRANT_CONFIG (a dev daemon) the CLI must not
+// write the operator's global state — the runtime copy, the opencode skills
+// projection, the config stamp. (ensureDaemon itself skips the launchd daemon.)
+const isolated = isolatedConfigDir() !== null;
+
 // Self-heal the runtime copy of source-managed dirs before any command runs,
 // so source changes (skills, role templates, scripts) can never silently
 // drift from ~/.config/squadrant. Never throws.
-ensureRuntimeSynced({
-  sourceRoot: join(__dirname, ".."),
-  runtimeRoot: join(homedir(), ".config", "squadrant"),
-});
+if (!isolated) {
+  ensureRuntimeSynced({
+    sourceRoot: join(__dirname, ".."),
+    runtimeRoot: join(homedir(), ".config", "squadrant"),
+  });
+}
 
 // #791: project squadrant's skills into opencode's global skills dir so opencode
 // captains/crews/side sessions can load them by name (parity with claude's
@@ -73,7 +80,7 @@ ensureRuntimeSynced({
 // or update can't leave the projection stale. Never throws. Skipped under vitest
 // so a test that spawns the built CLI never writes into the developer's real
 // ~/.config/opencode.
-if (!process.env.VITEST) {
+if (!process.env.VITEST && !isolated) {
   try {
     syncShippedOpencodeSkills({ pkgRoot: join(__dirname, "..") });
   } catch (err) {
@@ -86,7 +93,7 @@ if (!process.env.VITEST) {
 // Non-blocking config-drift banner. Suppressed during "squadrant config" —
 // the config command already surfaces drift, making the banner redundant.
 // Detect + print only — never mutates config and never throws.
-if (process.argv[2] !== "config") {
+if (process.argv[2] !== "config" && !isolated) {
   try {
     const cfgPath = join(homedir(), ".config", "squadrant", "config.json");
     if (existsSync(cfgPath)) {

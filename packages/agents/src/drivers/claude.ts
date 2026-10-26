@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import type { AgentDriver, AgentProbeResult, AgentSession, SpawnOptions, AgentResult } from "./types.js";
 import { listClaudeSessions } from "../sessions/claude-sessions.js";
+import { isolatedClaudeFlags } from "@squadrant/shared";
 
 export function createClaudeDriver(): AgentDriver {
   return {
@@ -52,6 +53,15 @@ export function createClaudeDriver(): AgentDriver {
       if (opts.promptFile) {
         cmd += ` --append-system-prompt-file ${opts.promptFile}`;
       }
+
+      // #1046: under an isolated config the session loads that daemon's settings
+      // file in place of ~/.claude/settings.json. A routed spawn needs --settings
+      // for the router env, so the two are refused together rather than merged.
+      const isolatedFlags = isolatedClaudeFlags();
+      if (isolatedFlags && opts.settingsPath) {
+        throw new Error("routed backends are not supported under an isolated SQUADRANT_CONFIG (#1046)");
+      }
+      cmd += isolatedFlags;
 
       if (opts.settingsPath) {
         cmd += ` --settings ${opts.settingsPath}`;

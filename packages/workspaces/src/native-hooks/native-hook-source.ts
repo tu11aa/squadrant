@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { LifecycleSource, LifecycleSourceDeps, LifecycleSnapshot, LifecycleState } from "@squadrant/core";
+import { isolatedClaudeSettingsPath } from "@squadrant/shared";
 
 // ── Hook event matrix ─────────────────────────────────────────────────────────
 
@@ -209,7 +210,11 @@ export interface ClaudeHooksInstallOpts {
  * Returns the path to the settings file (which may or may not have been written).
  */
 export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
-  const settingsPath = opts.settingsPath ?? join(homedir(), ".claude", "settings.json");
+  const globalPath = join(homedir(), ".claude", "settings.json");
+  // #1046: an isolated SQUADRANT_CONFIG gets its own settings file; the global
+  // one belongs to the production daemon and is only ever read here (as the seed).
+  const isolatedPath = opts.settingsPath === undefined ? isolatedClaudeSettingsPath() : null;
+  const settingsPath = opts.settingsPath ?? isolatedPath ?? globalPath;
   const cliCmd = opts.cliCmd ?? DEFAULT_CLI_CMD;
   const hookCmd = opts.hookCmd ?? `${cliCmd} hooks`;
   const gateCmd = `${cliCmd} gate`;
@@ -219,8 +224,12 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
 
   // Parse existing settings (start fresh if absent or malformed).
   let settings: Record<string, unknown> = {};
-  const raw = readFile(settingsPath);
+  let raw = readFile(settingsPath);
   const hadExistingSettings = raw !== undefined;
+  // #1046: seed a fresh isolated file from the user's settings so its sessions
+  // keep plugins/permissions/env; always written, even if no hook changes.
+  const seeding = isolatedPath !== null && raw === undefined;
+  if (seeding) raw = readFile(globalPath);
   if (raw) {
     try {
       settings = JSON.parse(raw) as Record<string, unknown>;
@@ -235,7 +244,7 @@ export function installClaudeHooks(opts: ClaudeHooksInstallOpts = {}): string {
   }
   const hooks = settings.hooks as Record<string, unknown>;
 
-  let changed = false;
+  let changed = seeding;
   const repaired: string[] = [];
   const migrated: string[] = [];
   const repointed: string[] = [];
