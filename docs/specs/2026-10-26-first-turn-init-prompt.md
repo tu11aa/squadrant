@@ -1,6 +1,6 @@
 # First turn as an init prompt (research + design)
 
-Date: 2026-10-26 · Status: proposal, no code changed · Claude Code 2.1.310 · cmux wrapper as shipped in `/Applications/cmux.app`
+Date: 2026-10-26 · Status: **implemented for claude crews** (branch `crew/initprompt`); decisions in §7 resolved by the operator 2026-10-26 · Claude Code 2.1.310 · cmux wrapper as shipped in `/Applications/cmux.app`
 
 ## Problem
 
@@ -23,7 +23,7 @@ and records it in the transcript as `origin: {kind: "peer", from: "uds:…squadr
 
 1. **Claude:** pass the init prompt as the positional prompt argument at launch, expanded by the pane's shell from a file: `claude --session-id <uuid> … "$(cat <taskdir>/init.md)"`. The typed command line stays short, the prompt arrives byte for byte, and it lands as `origin.kind: "human"`. The peer and pane first-turn paths stay only as the resend/recovery path.
 2. **Session id:** squadrant generates the UUID, passes `--session-id`, and records it on the TaskRecord at dispatch. The cmux wrapper then skips its own injected `--session-id` (verified in the wrapper source).
-3. **Brief storage:** write the brief once to the existing per-task state directory `<stateRoot>/<project>/<taskId>/brief.md` (the directory `router-settings.json` already uses). Stop copying `--task-file` into the worktree. Record the dispatch as a mailbox entry carrying the full brief, so `crew msg` can show it. `crew tasks` shows a `brief:` path and seq.
+3. **Brief storage:** write the brief once to the existing per-task state directory `<stateRoot>/<project>/<taskId>/brief/brief.md` (the directory `router-settings.json` already uses). Stop copying `--task-file` into the worktree. Record the dispatch as a mailbox entry carrying the full brief, so `crew msg` can show it. `crew tasks` shows a `brief:` path and seq.
 
 ## 1. History: why the first turn is typed or peer-sent instead of a launch argument
 
@@ -92,34 +92,38 @@ Run in a scratch directory under the session scratchpad, driven through a PTY, w
 | `"$(cat init.md)"` with `"quotes"`, `'single'`, parens, `===`, `$HOME`, backticks, a literal `\n`, and 4 lines | Arrived byte for byte (`$HOME` and backticks not expanded, since command-substitution output is not re-evaluated); the model answered `OK-4`. |
 | Subdirectory of the trusted scratch dir | **No trust panel.** Trust is inherited from the parent, so worktrees under a trusted repo boot straight into the prompt. |
 
-## 4. Recommended design
+## 4. Design (as implemented)
+
+Decided scope: **claude only** (Q5). opencode / codex / gemini keep today's first-turn path; §4.4 stays as notes for later. Side sessions follow in a separate PR stacked on this one (Q4).
 
 ### 4.1 Claude (first)
 
-**Files** in `<stateRoot>/<project>/<taskId>/`, the directory already used per task by `writeRouterSettings` (`packages/cli/src/lib/per-crew-settings.ts:177-187`), so no new storage root:
+**Files** (`packages/core/src/first-turn-init.ts`) in `<stateRoot>/<project>/<taskId>/`, the directory already used per task by `writeRouterSettings` (`packages/cli/src/lib/per-crew-settings.ts`), so no new storage root:
 
-- `brief.md`: the brief exactly as given (`--task-file` contents or the positional task). Written once and never edited.
+- `brief/brief.md`: the brief exactly as given (`--task-file` contents or the positional task), mode 0600. Written once and never edited. It sits in its own `brief/` subdir because claude gets that dir via `--add-dir`, and the task dir also holds `router-settings.json`.
 - `init.md`: the init prompt the agent receives:
 
   ```
-  📨 captain:<project> → task · taskId: <short>          ← keep or drop: open question Q1
-  Read <stateRoot>/<project>/<taskId>/brief.md to get your task brief, then execute it.
+  📨 captain:<project> → task · taskId: <short>
+  Read <stateRoot>/<project>/<taskId>/brief/brief.md to get your task brief, then execute it.
 
   <completion protocol from buildCompletionProtocol(id, project, "claude")>
   ```
 
-  **Inline rule:** when the brief is at most `INIT_INLINE_MAX_BYTES` (proposal: 1200, the same threshold as today's spill) **and** came as a positional arg, not `--task-file`, put the brief text in place of the `Read …` line. Size no longer matters for correctness, since `$(cat)` has no paste limit. The rule only keeps short briefs readable in the transcript and long ones out of it, per the operator's direction.
+  **Inline rule:** a positional brief at most `INIT_PROMPT_INLINE_MAX_BYTES` (1200) goes in place of the `Read …` line; every `--task-file` brief (stdin `-` included) and larger positional ones get the pointer. The constant is one name with a comment saying it is a readability cut only: a launch arg has no paste limit, so the value is not tied to any agent's delivery path (the pane spill keeps its own `FIRST_TURN_INLINE_MAX_BYTES`, which *is* a paste limit).
 
-**Launch:**
+**Launch** (`packages/agents/src/drivers/claude.ts`):
 
 ```
-cd <cwd> && SQUADRANT_CREW_TASK_ID=… claude -n … --session-id <uuid> … --messaging-socket-path <sock> "$(cat '<taskdir>/init.md')"
+cd <cwd> && SQUADRANT_CREW_TASK_ID=… nice -n 10 claude -n … --session-id <uuid> … --plugin-dir … --add-dir='<taskdir>/brief' --messaging-socket-path <sock> "$(cat '<taskdir>/init.md')"
 ```
 
-- `buildCommand` gets `sessionId` and `initPromptFile` on `SpawnOptions`. Interactive claude appends `--session-id <uuid>` and, **last**, the quoted `"$(cat <shellQuote(path)>)"`. It must come after `--messaging-socket-path` because of the cmux ≤0.64.18 truncation comment at `drivers/claude.ts:66-73`. Verify that the stored `launchCommand.arguments` still classify the role with a trailing positional (test plan T5).
-- **Remove** steps 5's `sendFirstTurnPeer` / `sendFirstTurn` from the claude happy path. Keep a **trust watcher** during boot: poll the screen until a registry entry for the crew's pid/socket appears; if `screenShowsTrustPanel`, press `trustPanelAcceptKeys` (reuse from `peer-first-turn.ts`). Bounded by the existing 90 s ready timeout.
-- **Confirmation unchanged:** `UserPromptSubmit` → `task.first-turn.confirmed` → `firstTurnConfirmedAt`, with `FIRST_TURN_HOOK_CONFIRM_MAX_MS` as the spawn-side wait.
-- **Recovery:** the daemon self-heal and `crew send` resend send the **init text** (`init.md`, small) over the existing peer→pane path. A resend is the one case where peer framing is acceptable: it is a recovery, and it only happens when the launch arg did not land.
+- `SpawnOptions` gains `initPromptFile` and `addDirs`; `sessionId` (already there for opencode) now also drives claude's `--session-id`. The init arg is **last**, after `--messaging-socket-path` (the cmux ≤0.64.18 truncation note at that flag). Role classification reads `--append-system-prompt-file`, which comes earlier, so a trailing positional does not affect it (tested).
+- **`--add-dir=` form.** Verified live: `claude -p --add-dir /tmp "prompt"` fails with "Input must be provided" because `--add-dir <dir>` is variadic and swallows the prompt; `--add-dir=/tmp "prompt"` works. The flag lets the crew `Read` `brief.md` outside its worktree without a permission prompt.
+- **No first-turn send on the happy path.** Spawn calls `watchClaudeBoot` (CLI edge, `packages/cli/src/lib/first-turn-peer.ts`): `waitPastTrustPanel` (factored out of `deliverFirstTurnViaPeer`) polls until claude has a registry entry for the crew's socket, answering the folder-trust panel meanwhile. Registered ⇒ the queued prompt is being submitted, which serves as the spawn-side delivery hint. Not registered after 90 s ⇒ the "First turn not delivered" warning; a bare shell ⇒ `task.failed` "agent did not start" (#892).
+- **Confirmation unchanged:** `UserPromptSubmit` → `task.first-turn.confirmed` → `firstTurnConfirmedAt`.
+- **Recovery:** the daemon's #466 self-heal (`resendFirstTurn` in `packages/cli/src/squadrantd.ts`) sends `init.md` when it exists, else the old framed brief, over the existing peer→pane path.
+- **Fallback:** if `brief.md`/`init.md` cannot be written, spawn logs it and uses the previous peer (#917) → pane path unchanged.
 
 ### 4.2 Session id
 
@@ -128,7 +132,7 @@ Pre-generate it: `randomUUID()` before `dispatchCrew`, passed as `sessionId` in 
 - Transcript path is known at spawn: `~/.claude/projects/<cwd encoded>/<uuid>.jsonl` (same encoding as `hasClaudeSession`, `launch-cmd.ts:18-27`). `crew read`, `crew close` (`sessId`, `crew-spawn.ts:1116`), and resume can use it without waiting for a hook.
 - Passing it makes the cmux wrapper skip its own injected id. One id instead of two candidates.
 - `--session-id` errors if the id is already in use. A fresh v4 UUID per spawn makes that a non-issue. Never reuse the task id: a respawn of the same task would collide.
-- Hooks keep reporting `session_id`. The reducer should warn on a mismatch (it would mean the wrapper or another layer replaced it).
+- Hooks keep reporting `session_id`. A mismatch warning is not implemented (follow-up if it is ever seen).
 
 ### 4.3 Brief storage and display
 
@@ -136,17 +140,16 @@ Keep to the repo rule *TaskRecord = state only, mailbox = all message text, no n
 
 | Piece | Proposal |
 |---|---|
-| Mailbox | New entry at dispatch, `kind: "task.dispatched"` (a `ControlEvent` like the rest), `payload: { brief: <full text>, briefPath, initInline: bool, sessionId }`, `message: null` (not pushed to the captain pane; the captain wrote it). The full text lives here, matching `task.done`. The daemon records `briefSeq` on the TaskRecord as a pointer, like `lastReplySeq`. |
-| `<stateRoot>/<project>/<taskId>/brief.md` | What the crew reads. It exists because the crew needs a path to `Read`, and the mailbox **rotates** (5 MB / 7 days, keep 3: `daemon/start.ts:426-430`, `mailbox.ts:403-409`), so a long-running crew could lose its only copy. Deleted with the task directory on `crew tasks --purge`. |
-| `TaskRecord.task` | Today the full text. Proposal: keep it but **bound it** to the first line (≤120 chars, what `reduce.ts:192,250` already derive) once `briefSeq` exists. That needs the `crew send` dedupe (`crew-spawn.ts:914`) and the self-heal resend to read the brief from the file or mailbox instead. Open question Q3: this can be a separate step. |
-| Worktree copy (#458) | **Removed.** `--task-file` is read once into `brief.md`; the worktree stays clean, so `crew close` is no longer blocked. |
-| `$TMPDIR` spill | Kept only for pane fallback and side sessions. Point it at the task directory instead of `$TMPDIR` in a follow-up. |
+| Mailbox | The daemon's `dispatch` handler calls `recordDispatch` → `appendDispatchEntry` (`packages/core/src/mailbox.ts`) for **every** dispatch (all agents; it does not change their first-turn path): `kind: "task.dispatched"`, `payload: { brief: <full text>, sessionId? }`, `message: null` (never delivered to the captain pane; the captain wrote it). It is a mailbox-only kind, not a `ControlEvent`, so it cannot be injected through the socket's `event` verb and the reducer is untouched. The seq is stamped on the TaskRecord as `briefSeq` before the launcher runs; a failed append never blocks the dispatch. |
+| `<taskdir>/brief/brief.md` | What the crew reads. Needed because the crew needs a path to `Read`, and the mailbox **rotates** (5 MB / 7 days, keep 3), so a long-running crew could otherwise lose its only copy. Not deleted by `crew tasks --purge` (purge removes the record only), in line with "full brief context must never be lost". |
+| `TaskRecord.task` | Unchanged: still the full text (Q3, later PR). |
+| Worktree copy (#458) | **Removed for claude.** `--task-file` lands only in `brief.md`; the worktree stays clean, so `crew close` is no longer blocked. Other agents keep the copy (Q5). |
+| `$TMPDIR` spill | Kept for the claude fallback, opencode/generic panes and side sessions. |
 
 Display:
 
-- `squadrant crew tasks <project>`: add a `brief` column with `seq <n>` (or the path in `--json`).
-- `squadrant crew msg <project> <seq>`: already prints an entry in full, so the dispatch entry works with no change beyond rendering `payload.brief`.
-- Optional sugar: `squadrant crew brief <project> <name|id>` resolves `briefSeq` (falling back to `brief.md` after rotation) and prints it.
+- `squadrant crew tasks <project>`: a `brief <seq>` column when the record has `briefSeq` (`--json` shows `briefSeq`).
+- `squadrant crew msg <project> <seq>`: prints the dispatch entry's `payload.brief` in full (`fullEntryText`).
 
 ### 4.4 opencode / codex / gemini
 
@@ -165,13 +168,14 @@ Portability note (multi-agent direction): the brief file + init prompt is agent-
 |---|---|
 | **Trust level changes.** The brief now runs with **user** authority instead of peer authority. That is the goal, but it also means anything the captain relays into a brief (Telegram text, a crew's output, a web page) gets user authority in the crew. | Captains already treat inbound text as data (CLAUDE.md Telegram section). Keep the `📨 captain:<project>` header in `init.md` so the crew still sees who wrote it (Q1). Crew-template rules (rule 9) about peer input still apply to later turns. |
 | Pane shell is not POSIX-like (fish < 3.4, nushell). | `$(…)` works in bash, zsh, and fish ≥ 3.4. The cmux pane runs the user's login shell. Fallback: if `$SHELL` is not bash/zsh/fish, launch through `bash -c '…'` or skip to the existing peer path. |
-| Init text starting with `-` would be parsed as a flag. | `init.md` always starts with the header or `Read`. Add an assertion in the writer. |
+| Init text starting with `-` would be parsed as a flag. | `init.md` always starts with the `📨` header (`buildInitPrompt`), so this cannot happen. |
 | cmux ≤0.64.18 truncated stored `launchCommand.arguments` at `--messaging-socket-path`. A trailing positional is lost from the *stored* command, though not from the real exec. | Role classification uses earlier flags, so it is unaffected. Covered by T5. If the stored command is used for cmux session restore, a restored crew would boot without the init prompt, which is correct for a restore. |
 | Brief contains secrets and now persists in the state dir. | Same exposure as today (`TaskRecord.task` is already in the state dir). Write `brief.md` with mode 0600. |
 | `--session-id` collision. | Fresh UUID per spawn; never derived from the task id. |
 | Trust panel in an untrusted repo with no watcher. | Keep the trust watcher (§4.1). Without it the prompt waits forever behind the panel, same failure as #917's 29 s stall. |
 | The 90 s first-turn hook-confirm window may now trigger on slow boots. | Boot plus first prompt submit measured at ~1-4 s here; keep `FIRST_TURN_HOOK_CONFIRM_MAX_MS`. |
-| Mailbox rotation drops the dispatch entry for long-lived crews. | `brief.md` is the durable copy; `crew brief` falls back to it. |
+| Mailbox rotation drops the dispatch entry for long-lived crews. | `brief.md` is the durable copy. |
+| `--add-dir` grants write as well as read on the `brief/` dir. | That dir holds only `brief.md`; `router-settings.json` and `init.md` stay outside it. |
 
 ## 6. Test plan (throwaway project only)
 
@@ -191,12 +195,14 @@ Live, in a throwaway project registered only for the test (e.g. `squadrant init`
 - **L3** `crew close` succeeds without `--force` (no untracked brief in the worktree).
 - **L4** `crew tasks` / `crew msg` show the brief; after `--purge` the task directory is gone.
 - **L5** `crew send` follow-up still works (peer path), and kill-before-submit triggers the self-heal resend once.
-- **L6** Codex crew: first turn is the init text, and a `task.dispatched` entry exists.
+- **L6** (out of scope after Q5) Codex crew keeps its first turn; it does get a `task.dispatched` entry.
 
-## 7. Open questions for the operator
+## 7. Decisions (operator, 2026-10-26)
 
-- **Q1** Keep the `📨 captain:<project> → task · taskId` header line at the top of `init.md`? It keeps the sender visible and the taskId handy. Without it the turn looks exactly like an operator turn. Recommendation: **keep it.**
-- **Q2** Inline threshold: 1200 B for positional briefs, and always a file for `--task-file`? Or always a file? Recommendation: **1200 B inline, file otherwise.**
-- **Q3** Shrink `TaskRecord.task` to a one-line title in the same change, or as a follow-up? Recommendation: **follow-up.** The first PR adds `briefSeq` and the files; the second moves the dedupe and resend readers.
-- **Q4** Apply the same launch-arg change to side sessions (`side-session.ts`) in the same PR or a separate one? Recommendation: **separate.**
-- **Q5** opencode: worth installing it to verify `--prompt` submit behaviour before the PR, or ship claude + codex first? Recommendation: **claude + codex first.**
+| # | Question | Decision |
+|---|---|---|
+| Q1 | Keep the `📨 captain:<project> → task · taskId` header at the top of `init.md`? | **Keep it.** |
+| Q2 | Inline threshold? | **1200 B inline for positional briefs, a file pointer for `--task-file`.** The value is a readability cut, not a delivery limit, so it fits every agent; it lives behind one name (`INIT_PROMPT_INLINE_MAX_BYTES`) with a comment saying so. |
+| Q3 | Shrink `TaskRecord.task` now? | **Later, not in this PR.** The full brief context must never be lost: `brief.md` and the `task.dispatched` entry keep it. |
+| Q4 | Side sessions? | **Separate PR, stacked on this one, later.** |
+| Q5 | Other agents? | **Claude only.** opencode / codex / gemini stay on today's path. |
