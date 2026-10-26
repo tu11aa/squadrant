@@ -14,7 +14,7 @@ import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
 import { shellQuote } from "./crew-protocol.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { appendCaptainMessage } from "./mailbox.js";
-import { frameMessage } from "./squadrant-message.js";
+import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 
 export type ThreadState = "open" | "parked" | "closed";
 
@@ -362,7 +362,7 @@ async function spawnThreadTab(rec: ThreadRecord, launch: ThreadLaunch, firstTurn
   const preLaunchScreen = await deps.runtime.readPaneScreen(pane).catch(() => "");
   const env = `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=${rec.id}`;
   await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch, rec.id)}`);
-  await deps.sendFirstTurn(pane, spillOversizedFirstTurn(firstTurn, `thread-${rec.id}`), preLaunchScreen);
+  await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `thread-${rec.id}`), { project: rec.project, kind: launch.kind === "resume" ? "thread.resume" : "thread.open" }), preLaunchScreen);
   return pane;
 }
 

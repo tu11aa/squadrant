@@ -143,3 +143,20 @@ export function frameEntry(project: string, entry: MailboxEntry, body: string): 
     stale,
   }, body);
 }
+
+/**
+ * Frame a FIRST TURN (crew task brief + completion protocol, headless task, side / thread
+ * opening turn) so the agent sees who gave it: `📨 captain:<project> → task · taskId: …`.
+ * A dispatched crew (`originProject` set and different) names the origin project's captain
+ * as sender, which also adds the `reply: squadrant ping <origin> "<msg>"` hint.
+ * Frame AFTER any spill-to-file (the pointer line is what gets pasted).
+ */
+export function frameFirstTurn(
+  text: string,
+  o: { project: string; originProject?: string; taskId?: string; kind?: string },
+): string {
+  return frameMessage(
+    { from: `captain:${o.originProject ?? o.project}`, project: o.project, kind: o.kind ?? "task", task: o.taskId?.slice(0, 8) },
+    text,
+  );
+}

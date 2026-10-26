@@ -152,6 +152,16 @@ describe("computeRulesInjection — false positives (flooros captain feedback)",
     expect(prompt("verify", "fp5")).toBeNull();
     expect(prompt("verify the ui in dark mode", "fp6")).toContain("frontend.verify-live-dom");
   });
+  it("a framed first-turn brief pointer (#1029 header, one line over the pane) is searched through its task file", () => {
+    const brief = path.join(root, "task2.md");
+    fs.writeFileSync(brief, "## Objective\nCreate a new branch and commit the fix.\n");
+    const text = prompt(`📨 captain:app → task · taskId: ef2630e1 Full task is at ${brief} — cat it and follow it exactly.`, "fp8");
+    expect(text).toContain("git.branch-naming");
+  });
+  it("squadrant notices behind a 📨 header are system prompts; captain / thread / telegram / first-turn messages are not", () => {
+    for (const h of ["📨 crew:x → done · taskId: a · seq: 1\nmerged", "📨 daemon · seq: 2\nhi", "📨 side:r · seq: 3\nhandoff"]) expect(isSystemPrompt(h)).toBe(true);
+    for (const h of ["📨 captain:app → crew.send\nfix it", "📨 telegram:@tu · seq: 4\nhi", "📨 thread:ab · seq: 5\nd", "📨 captain:app → task · taskId: a\nbrief"]) expect(isSystemPrompt(h)).toBe(false);
+  });
   it("a crew first-turn brief pointer is searched through its task file", () => {
     const brief = path.join(root, "task.md");
     fs.writeFileSync(brief, "## Objective\nCreate a new branch and commit the fix.\n");

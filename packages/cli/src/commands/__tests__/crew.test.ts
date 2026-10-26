@@ -532,7 +532,7 @@ describe("squadrant crew spawn", () => {
       { workspaceId: "workspace:5", surfaceId: "surface:9" },
       "squadrant crew attach task-abc",
     );
-    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "do the thing");
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-abc", "📨 captain:brove → task · taskId: task-abc\ndo the thing");
     expect(result.title).toBe("🔧 brove:crew-1");
   });
 
@@ -1295,6 +1295,7 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
     expect(firstTurn).toContain("--task-id task-proto-cl");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");
@@ -1317,13 +1318,14 @@ describe("completion-protocol suffix in first turns (#278)", () => {
     const firstTurn = sendToPane.mock.calls[1]?.[1] as string;
     expect(firstTurn).toContain("fix the bug");
     expect(firstTurn).toContain("COMPLETION PROTOCOL");
+    expect(firstTurn.split("\n")[0]).toBe("📨 captain:brove → task · taskId: task-pro");
     expect(firstTurn).toContain("--task-id task-proto-oc");
     expect(firstTurn).toContain("--project brove");
     expect(firstTurn).toContain("crew signal done");
     expect(firstTurn).toContain("crew signal blocked");
   });
 
-  it("codex first turn is sent via sendCodexFirstTurn unchanged — no completion-protocol suffix", async () => {
+  it("codex first turn is sent via sendCodexFirstTurn framed — no completion-protocol suffix", async () => {
     loadConfig.mockReturnValue(baseConfig);
     status.mockResolvedValue({ id: "workspace:5", name: "brove-captain", status: "running" });
     listSurfaces.mockResolvedValue([]);
@@ -1333,8 +1335,8 @@ describe("completion-protocol suffix in first turns (#278)", () => {
 
     await runCrewSpawn({ project: "brove", task: "fix the bug", agent: "codex" });
 
-    // sendCodexFirstTurn receives the bare task text — no protocol suffix
-    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-proto-cx", "fix the bug");
+    // sendCodexFirstTurn receives the framed task text — header, but no protocol suffix (codex gets it as developer instructions)
+    expect(sendCodexFirstTurn).toHaveBeenCalledWith("task-proto-cx", "📨 captain:brove → task · taskId: task-pro\nfix the bug");
     // sendToPane only fires once (the crew attach command) — no second first-turn send
     expect(sendToPane).toHaveBeenCalledTimes(1);
     expect(sendToPane.mock.calls[0]?.[1]).toContain("crew attach");

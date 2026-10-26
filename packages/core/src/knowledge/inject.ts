@@ -131,14 +131,20 @@ export function selectPromptHits(
 export function isSystemPrompt(prompt: string): boolean {
   const t = prompt.trimStart();
   return /^(⚠|🗒|\[stale\b|CREW [A-Z]|Another Claude session sent a message)/u.test(t)
+    // #1029 sender header: crew lifecycle, daemon and side handoffs are notices; a captain's send, a thread,
+    // a telegram message or a first-turn brief are prompts a human or captain wrote and still get rules.
+    || /^📨 (crew:|daemon\b|side:)/u.test(t)
     || t.includes("<cross-session-message");
 }
 
 const BRIEF_POINTER_RE = /^Full task is at (\S+\.md) — cat it/;
+// A framed first turn (#1029) carries the pointer after its `📨 …` header line (flattened onto one line over the pane).
+const FRAMED_BRIEF_POINTER_RE = /^📨 .*?\bFull task is at (\S+\.md) — cat it/su;
 
 /** A crew first-turn brief spilled to a file (first-turn-spill.ts) is searched through the file's text. */
 function promptText(prompt: string): string {
-  const m = BRIEF_POINTER_RE.exec(prompt.trimStart());
+  const t = prompt.trimStart();
+  const m = BRIEF_POINTER_RE.exec(t) ?? FRAMED_BRIEF_POINTER_RE.exec(t);
   if (!m) return prompt;
   try { return fs.readFileSync(m[1], "utf8").slice(0, MAX_PROMPT_CHARS * 2); } catch { return prompt; }
 }

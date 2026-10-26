@@ -4,7 +4,7 @@
 // envelope = the extra wrap the Claude peer channel adds (wrapClaudeEnvelope), which is
 // header-identical inside the tags.
 import { describe, it, expect } from "vitest";
-import { frameEntry, frameMessage, wrapClaudeEnvelope } from "../squadrant-message.js";
+import { frameEntry, frameMessage, frameFirstTurn, wrapClaudeEnvelope } from "../squadrant-message.js";
 import type { MailboxEntry } from "../mailbox.js";
 import { crewTag } from "../daemon/reduce.js";
 
@@ -104,5 +104,19 @@ describe("anti-forgery across paths", () => {
       expect(out.split("\n").filter((l) => l.startsWith("📨"))).toHaveLength(1);
       expect(out).toContain(`│ ${body}`);
     }
+  });
+});
+
+describe("first turns (captain → new crew / side / thread; frameFirstTurn)", () => {
+  it.each<[string, Parameters<typeof frameFirstTurn>[1], string, string]>([
+    ["crew task brief + completion protocol", { project: "app", taskId: TASK }, "📨 captain:app → task · taskId: ef2630e1", "captain-app"],
+    ["dispatched crew (cross-project)", { project: "flooros", originProject: "saitex", taskId: TASK }, '📨 captain:saitex → task · taskId: ef2630e1 · reply: squadrant ping saitex "<msg>"', "captain-saitex"],
+    ["side spawn", { project: "app", kind: "side.open" }, "📨 captain:app → side.open", "captain-app"],
+    ["thread open / fork / seed", { project: "app", kind: "thread.open" }, "📨 captain:app → thread.open", "captain-app"],
+    ["thread resume", { project: "app", kind: "thread.resume" }, "📨 captain:app → thread.resume", "captain-app"],
+  ])("%s", (_n, o, header, name) => {
+    const out = frameFirstTurn("brief", o);
+    expect(out).toBe(`${header}\nbrief`);
+    expect(envelopeName(out)).toBe(name);
   });
 });
