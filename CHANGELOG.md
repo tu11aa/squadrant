@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-26
+
+An MCP control surface and clearer messages between sessions. Crews signal done, blocked, failed or review through `squadrant mcp` tools, and captains get their own role-scoped tools. Every delivered message starts with one `📨` sender header. Claude crews get their first turn as a real user prompt, with the brief stored on the task. Also new: `squadrant crew compact` and a dev daemon for live-testing branch builds. The fixes make daemon restarts rare and attributable, and stop duplicate `/compact`s and misattributed hooks. PRs #1047, #1048, #1049, #1052, #1053, #1054, #1055, #1056, #1057, #1059, #1061.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. For the MCP tools, register the server once at user scope:
+
+```json
+{ "mcpServers": { "squadrant": { "type": "stdio", "command": "squadrant", "args": ["mcp"], "alwaysLoad": true } } }
+```
+
+The server goes in `~/.claude.json`. Relaunch running captains to pick up the new templates.
+
+### Added
+
+- **`squadrant mcp`**, a stdio MCP server. Crew tools: `crew_signal_done|blocked|failed|review`, which share their logic with `squadrant crew signal`. Claude crews call them as `mcp__squadrant__crew_signal_*` directly; on "No such tool" they run ToolSearch once, then fall back to the CLI. The tools carry `anthropic/alwaysLoad` only inside a crew session (#1048, #1049).
+- **Captain MCP tools**, role-scoped. In a captain session (`SQUADRANT_ROLE=captain`) the server also lists crew spawn/send/list/tasks/read/msg/compact/close, thread open/park/resume/list, side spawn/send, ping, dispatch, captain compact, status, rules search and check inbox. Each one calls the same function as its CLI command. Crew sessions see only `crew_signal_*`; other sessions see no captain tools. Approve/merge, `crew answer`, `close --force` and config edits stay CLI-only (#1053).
+- **Sender header on every delivered message.** One line, `📨 <sender> → <kind> · taskId: … · seq: …`: the project appears only on cross-project messages, a stale message gets a `· stale:` field, and the agent is recorded in the mailbox log only. Body lines that start with `📨` are quoted as `│ 📨` so a body can't fake a header. Claude receivers also get Claude Code's `<cross-session-message from-name>` envelope, which the TUI shows as `@<name>`. Senders are labelled by role (`crew:<project>/<name>`, `captain:<project>`, `thread:<id>`, `side`, `telegram:@user`, `cli`). Every message path is audited in `docs/specs/2026-10-26-message-paths-audit.md` (#1047, #1049).
+- **First turn as a launch-time init prompt (Claude crews and side sessions).** The task is passed as the launch positional, with a pre-generated `--session-id` recorded on the task, so it arrives as a user turn instead of a peer message. A brief of at most 1200 bytes is inlined; a longer brief and every `--task-file` brief arrive as a pointer to the file. Briefs are stored with the task (`<stateRoot>/<project>/<taskId>/brief/brief.md` plus a `task.dispatched` mailbox entry). `crew tasks` shows `brief <seq>`, and `crew msg` prints the brief. `TaskRecord.task` is now a one-line title. `--task-file` is no longer copied into the worktree, so `crew close` is not blocked by a leftover brief (#1055, #1059).
+- **`squadrant crew compact <project> <crew> [--keep "<text>"] [--cancel]`.** The daemon types `/compact` into a claude/opencode crew once it is idle, and a `crew send` waits until the compact finishes. It runs only when asked, never on its own; codex crews are refused (#1052, #1056).
+- **`squadrant dev up [--from <worktree>]` / `dev down` / `dev env`.** Runs a throwaway dev daemon from a build, outside launchd, with its own config, state, socket and project, so branch builds are live-tested without restarting the production daemon (#1061).
+- **Restart attribution.** Every path that restarts, re-registers or kickstarts the daemon first logs the action, the reason, the pid, the command, the role and the install path (#1054).
+
+### Changed
+
+- **Live config reload.** `projects add` and `config set projects.*` reload config over the daemon socket instead of restarting it; telegram, router and timeout changes still restart (#1057).
+- **"Daemon restarted" notice** fires only when the version or install path changes, at most once per 5 minutes. It used to fire on every same-version reinstall (#1054).
+
+### Fixed
+
+- **Isolated daemons rewrote the global `~/.claude/settings.json` hooks.** A daemon under a non-default `SQUADRANT_CONFIG` now passes hooks per session and never touches the user's Claude config or launchd. `dev down` also removes the trust entries it created in `~/.claude.json` (#1046, #1061).
+- **`/compact` typed twice** by captain and crew compact when the 1s tick overlapped a send (#1054).
+- **Crew compact never fired on a named Claude session.** Claude Code draws the session name on the input box's top rule, so the box wasn't found (`no-box`). The same pattern made an open modal on a named session read as not locked (#1056).
+- **A captain's tool calls attributed to a crew.** Hooks were matched to tasks by cwd, so a session that `cd`'d into a crew worktree left that crew stuck in `working`. Hooks are now matched by session (#1056).
+- **Daemon takeover during `npm i -g`.** While the registered `squadrantd.js` is briefly missing, a captain command waits for it instead of re-registering itself, and a worktree build never takes over the global entry (#1054).
+- **Duplicate requests after a dropped connection.** The CLI retries only when it could not connect. When the connection drops after the request was sent, it reports that delivery is uncertain and doesn't re-send. It also no longer re-sends on a busy-daemon timeout (#1054).
+- **`squadrant mcp` ran the startup daemon check**, so every session start could restart the daemon on drift (#1053).
+
 ## [0.31.1] - 2026-10-22
 
 Fixes for crew replies and rollover found in the first day of 0.31.0. Crew replies are no longer cut or dropped, a rollover compact no longer stalls behind another project's delivery, and the captain continues on its own after the compact. PRs #1031, #1035, #1036, #1037, #1040, #1041.
