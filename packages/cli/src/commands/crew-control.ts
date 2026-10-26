@@ -143,7 +143,7 @@ export async function squadrantdCall(req: unknown): Promise<unknown> {
   try {
     return await sendRequest(SOCK, req);
   } catch {
-    ensureDaemon(); // resolves its own entrypoint — never pass a path here
+    ensureDaemon(undefined, { caller: "squadrantdCall fallback" }); // resolves its own entrypoint — never pass a path here
     // kickstart→socket is racy; bounded backoff. If all attempts fail,
     // throw the last error (fail loud, no scrape fallback).
     let lastErr: unknown;

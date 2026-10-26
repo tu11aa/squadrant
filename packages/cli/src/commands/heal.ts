@@ -23,7 +23,7 @@ import type { RuntimeLivenessRecord, LivenessEntry } from "@squadrant/shared";
 import { queryHealth, SOCK } from "./health-view.js";
 import { healCmdFor } from "@squadrant/core";
 import type { ComponentHealth, HealthState } from "@squadrant/core";
-import { reregisterDaemon, isDaemonSocketLive, defaultIsPidAlive, LivenessRegistry, LABEL } from "@squadrant/core";
+import { reregisterDaemon, isDaemonSocketLive, defaultIsPidAlive, LivenessRegistry, LABEL, logRestartTrigger } from "@squadrant/core";
 import type { DaemonKickstartResult } from "@squadrant/core";
 import { readCmuxLiveness } from "@squadrant/workspaces";
 
@@ -347,8 +347,9 @@ export async function runHealCaptain(projects: string[], deps: HealCaptainDeps):
 }
 
 /** Real kickstart: write-then-`-k`, never `bootout` (loses the ~2s KeepAlive respawn race — #699). */
-function kickstartDaemonForHealCaptain(): void {
+export function kickstartDaemonForHealCaptain(): void {
   const uid = process.getuid?.() ?? 0;
+  logRestartTrigger("kickstart-k", "heal captain (reload liveness registry)");
   execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/${LABEL}`], { stdio: "ignore" });
 }
 
