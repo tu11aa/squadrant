@@ -633,8 +633,8 @@ describe("daemon handler", () => {
       launchInteractive: async (r) => { launched.push(r.task); },
     });
     const r: any = await d.handle({ kind: "dispatch", record: dispatchRec("s1", LONG) });
-    expect(r.task).toBe("## Objective");
-    expect(store.get("p", "s1")?.task).toBe("## Objective");
+    expect(r.task).toBe("Line two");
+    expect(store.get("p", "s1")?.task).toBe("Line two");
     expect(recorded).toEqual([LONG]);
     expect(launched).toEqual([LONG]);
   });
@@ -649,7 +649,7 @@ describe("daemon handler", () => {
     });
     await d.handle({ kind: "dispatch", record: { ...dispatchRec("s2", LONG), mode: "headless" } });
     expect(launched).toEqual([LONG]);
-    expect(store.get("p", "s2")?.task).toBe("## Objective");
+    expect(store.get("p", "s2")?.task).toBe("Line two");
   });
 
   it("without a recorded brief (recordDispatch failed or absent) the record keeps the full text rather than lose it", async () => {
