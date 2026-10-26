@@ -598,6 +598,40 @@ describe("daemon handler", () => {
     expect(store.get("p", "i9")?.state).toBe("failed"); // persisted
   });
 
+  it("dispatch records the brief via recordDispatch and stamps briefSeq before launching", async () => {
+    const store = createStore(dir);
+    const launched: Array<number | undefined> = [];
+    const d = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async () => 42,
+      launchInteractive: async (r) => { launched.push(r.briefSeq); },
+    });
+    const r: any = await d.handle({ kind: "dispatch", record: {
+      id: "b1", project: "p", provider: "claude", mode: "interactive",
+      state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
+    expect(r.briefSeq).toBe(42);
+    expect(store.get("p", "b1")?.briefSeq).toBe(42);
+    expect(launched).toEqual([42]);
+  });
+
+  it("a failing recordDispatch never blocks the dispatch", async () => {
+    const store = createStore(dir);
+    const d = createDaemon({
+      store, now: () => 1,
+      recordDispatch: async () => { throw new Error("disk full"); },
+      launchInteractive: async () => {},
+    });
+    const r: any = await d.handle({ kind: "dispatch", record: {
+      id: "b2", project: "p", provider: "claude", mode: "interactive",
+      state: "submitted", task: "go", createdAt: 1, lastHeartbeat: 1,
+      lastEvent: "dispatch", heartbeatBudgetMs: 1000,
+      attempts: [{ attemptId: "a0", startedAt: 1, lastHeartbeatAt: 1 }] } });
+    expect(r.state).toBe("submitted");
+    expect(r.briefSeq).toBeUndefined();
+  });
+
   it("dispatch interactive uses launchInteractive when wired (forward hook)", async () => {
     const store = createStore(dir);
     const launched: string[] = [];

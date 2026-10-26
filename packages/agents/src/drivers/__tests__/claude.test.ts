@@ -210,3 +210,39 @@ describe("claude driver — #759 --messaging-socket-path ordering", () => {
     });
   });
 });
+
+describe("claude driver — launch-time init prompt", () => {
+  const driver = createClaudeDriver();
+  const base = {
+    prompt: "ignored for interactive",
+    workdir: "/tmp/test",
+    role: "crew",
+    interactive: true,
+    messagingSocketPath: "/tmp/cc-socks/squadrant-x.sock",
+  } as const;
+
+  it("passes --session-id, --add-dir=, and the init file as the last (shell-expanded) arg", () => {
+    const cmd = driver.buildCommand({
+      ...base,
+      sessionId: "0b1c2d3e-0000-4000-8000-000000000001",
+      initPromptFile: "/state/p/t1/init.md",
+      addDirs: ["/state/p/t1/brief"],
+    });
+    expect(cmd).toContain(" --session-id 0b1c2d3e-0000-4000-8000-000000000001");
+    // `=` form: `--add-dir <dir>` is variadic and would swallow the prompt.
+    expect(cmd).toContain(" --add-dir='/state/p/t1/brief'");
+    expect(cmd.endsWith(` --messaging-socket-path /tmp/cc-socks/squadrant-x.sock "$(cat '/state/p/t1/init.md')"`)).toBe(true);
+  });
+
+  it("single-quotes init paths with spaces and quotes", () => {
+    const cmd = driver.buildCommand({ ...base, initPromptFile: "/a b/it's/init.md" });
+    expect(cmd).toContain(`"$(cat '/a b/it'\\''s/init.md')"`);
+  });
+
+  it("is unchanged without an init file (no positional prompt, no session id)", () => {
+    const cmd = driver.buildCommand({ ...base });
+    expect(cmd).not.toContain("$(cat");
+    expect(cmd).not.toContain("--session-id");
+    expect(cmd.trim().endsWith("--messaging-socket-path /tmp/cc-socks/squadrant-x.sock")).toBe(true);
+  });
+});

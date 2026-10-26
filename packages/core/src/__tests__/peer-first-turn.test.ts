@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { deliverFirstTurnViaPeer, screenShowsTrustPanel, trustPanelAcceptKeys, type PeerFirstTurnDeps } from "../peer-first-turn.js";
+import { deliverFirstTurnViaPeer, screenShowsTrustPanel, trustPanelAcceptKeys, waitPastTrustPanel, type PeerFirstTurnDeps } from "../peer-first-turn.js";
 import type { DeliveryOutcome } from "../control-channel.js";
 
 function mk(over: Partial<PeerFirstTurnDeps> = {}) {
@@ -31,6 +31,25 @@ describe("screenShowsTrustPanel", () => {
   it("steps to Yes when the cursor defaults to 'No, exit' (bare Enter would quit claude)", () => {
     expect(trustPanelAcceptKeys(" ❯ No, exit\n   Yes, I trust this folder")).toEqual(["Down", "Enter"]);
     expect(trustPanelAcceptKeys("❯ 1. Yes, proceed\n  2. No, exit")).toEqual(["Enter"]);
+  });
+});
+
+describe("waitPastTrustPanel (launch-arg init prompt)", () => {
+  it("answers the trust panel, then returns true once claude has a registry entry (any status)", async () => {
+    let registered = false;
+    const d = mk({
+      statusOf: () => (registered ? { status: "busy" } : undefined),
+      readScreen: async () => "Quick safety check: Is this a project you trust?\n❯ No, exit\n  Yes, I trust this folder",
+      pressKey: vi.fn(async (k: string) => { if (k === "Enter") registered = true; }),
+    });
+    expect(await waitPastTrustPanel(d, () => d.statusOf() !== undefined)).toBe(true);
+    expect(d.pressKey).toHaveBeenCalledWith("Down");
+    expect(d.pressKey).toHaveBeenCalledWith("Enter");
+  });
+
+  it("returns false when claude never registers", async () => {
+    const d = mk({ statusOf: () => undefined });
+    expect(await waitPastTrustPanel(d, () => d.statusOf() !== undefined)).toBe(false);
   });
 });
 

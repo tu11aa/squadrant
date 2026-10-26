@@ -52,7 +52,14 @@ export interface SpawnOptions {
   // opencode: an explicit session to resume (`--session <id>`). Absent ⇒ a fresh
   // session. `-c` is deliberately NOT used — inside one repo it resumes the newest
   // session project-wide, so a crew worktree session can win (spec §2 test 9).
+  // claude: the pre-generated id for a fresh session (`--session-id <id>`).
   sessionId?: string;
+  // claude: file whose contents become the positional prompt at launch, expanded
+  // by the pane's shell (`"$(cat <file>)"`) so the first turn is a real user turn
+  // with no paste/quoting limits. Absent ⇒ no positional prompt (today's shape).
+  initPromptFile?: string;
+  // claude: extra dirs the session may read without a permission prompt (`--add-dir`).
+  addDirs?: string[];
   // #667 slice 3: claude's UDS session inbox path. Naming it at spawn is what
   // lets the daemon address the session without reverse-engineering the
   // pid-derived default. Absent ⇒ flag omitted ⇒ no behaviour change.

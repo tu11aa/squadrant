@@ -58,6 +58,7 @@ export async function sendCodexFirstTurn(taskId: string, text: string): Promise<
 export function buildDispatchRequest(o: {
   project: string; provider: Provider; mode: Mode; task: string; budgetMs?: number; cwd?: string;
   approvalPolicy?: string; roleInstructions?: string; name?: string; serverPort?: number; messagingSocketPath?: string;
+  sessionId?: string;
 }): { kind: "dispatch"; record: TaskRecord } {
   const now = Date.now();
   const attemptId = randomUUID();
@@ -73,6 +74,7 @@ export function buildDispatchRequest(o: {
       ...(o.name ? { name: o.name } : {}),
       ...(o.serverPort ? { serverPort: o.serverPort } : {}),
       ...(o.messagingSocketPath ? { messagingSocketPath: o.messagingSocketPath } : {}),
+      ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     },
   };
 }
