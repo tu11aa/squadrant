@@ -202,7 +202,7 @@ sideCommand
           label: "message",
         });
         await runSideSend(project, name, resolvedMessage);
-        console.log(chalk.green(`✔ Sent to ${project}:${name}`));
+        console.log(chalk.green(`✔ Sent to ${project}:${name} (pasted into its pane; receipt not confirmed)`));
       } catch (err) {
         console.error(chalk.red((err as Error).message));
         process.exit(1);

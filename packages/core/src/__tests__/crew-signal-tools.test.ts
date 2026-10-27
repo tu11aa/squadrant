@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readUndelivered } from "../mailbox.js";
 import { CREW_SIGNAL_TOOLS, callCrewSignalTool, crewSignalToolList } from "../crew-signal-tools.js";
 
 let root: string;
@@ -90,5 +91,50 @@ describe("crewSignalToolList (MCP tools/list payload)", () => {
   });
   it("outside a crew (captain / operator session) the tools stay deferred: no _meta", () => {
     for (const tool of crewSignalToolList({})) expect(tool).not.toHaveProperty("_meta");
+  });
+});
+
+describe("done while in review is not a success (#1069)", () => {
+  const entries = async () => (await readUndelivered(root, "proj")).filter((e) => e.kind === "captain.message");
+
+  it("is an error with guidance, emits no event, and tells the captain once across repeats", async () => {
+    const call = daemon("review");
+    for (let i = 0; i < 2; i++) {
+      const r = await callCrewSignalTool("crew_signal_done", { message: "x" }, { call });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("in review (held for captain approval) — done not applied");
+    }
+    expect(call.mock.calls.some((c) => (c[0] as any).kind === "event")).toBe(false);
+    const msgs = await entries();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("signalled done while in review");
+  });
+
+  it("a fresh review signal re-arms the captain notice", async () => {
+    await callCrewSignalTool("crew_signal_done", {}, { call: daemon("review") });
+    await callCrewSignalTool("crew_signal_review", { message: "again" }, { call: daemon("working") });
+    await callCrewSignalTool("crew_signal_done", {}, { call: daemon("review") });
+    expect(await entries()).toHaveLength(2);
+  });
+
+  it("done from working still succeeds with the ✔ line and no captain notice", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", {}, { call: daemon("working") });
+    expect(r).toEqual({ text: "✔ signalled done for proj (task 11111111)", isError: false });
+    expect(await entries()).toHaveLength(0);
+  });
+});
+
+describe("signal receipt (#1069)", () => {
+  const receipt = (state: string) => vi.fn(async (req: any) => (req.kind === "status" ? { id: "11111111-aaaa", state: "working" } : { id: "11111111-aaaa", state }));
+
+  it("done that the daemon answers with a non-done record is an error", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", {}, { call: receipt("stalled") });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not applied");
+  });
+
+  it("a repeat blocked stays a silent success (#174)", async () => {
+    const r = await callCrewSignalTool("crew_signal_blocked", { question: "q" }, { call: receipt("blocked") });
+    expect(r.isError).toBe(false);
   });
 });

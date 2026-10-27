@@ -1941,7 +1941,7 @@ describe("runCrewSend", () => {
   // about that failure rather than falsely reporting a reopen that didn't
   // actually happen (this is what made the #595 guard message untrue: crew
   // send LOOKED like it succeeded even when the reopen silently failed).
-  it("returns reopened:false when the daemon reopen call throws, without breaking pane delivery", async () => {
+  it("returns reopened:false plus a stateWarning when the daemon reopen call throws, without breaking pane delivery", async () => {
     const existing = { ...makePaneRef("5"), title: "🔧 myproj:crew-1" };
     const runtime = makeRuntime("workspace:1", [existing]);
     const task = { id: "t1", name: "crew-1", state: "done" } as Partial<TaskRecord>;
@@ -1949,7 +1949,8 @@ describe("runCrewSend", () => {
       listTasks: vi.fn().mockResolvedValue([task]),
       emitEvent: vi.fn().mockRejectedValue(new Error("daemon down")),
     });
-    expect(result).toEqual({ reopened: false });
+    expect(result.reopened).toBe(false);
+    expect(result.stateWarning).toContain("task state not updated (daemon down)");
     expect(runtime.sendToPane).toHaveBeenCalledWith(expect.anything(), framedBody("msg"));
   });
 

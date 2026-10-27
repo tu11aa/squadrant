@@ -921,7 +921,7 @@ export async function runCrewSend(
     onChannelLog?: (msg: string) => void;
   },
   opts?: { force?: boolean }
-): Promise<{ reopened: boolean }> {
+): Promise<{ reopened: boolean; stateWarning?: string }> {
   const crew = await findCrewPane(runtime, workspaceId, project, name);
   if (!crew) {
     throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
@@ -982,6 +982,7 @@ export async function runCrewSend(
   // "ask the captain to run crew send to reopen it" is only actually true if
   // that outcome is visible, not silently swallowed with everything else.
   let reopened = false;
+  let stateWarning: string | undefined;
   try {
     if (task) {
       if (TERMINAL_STATES.has(task.state)) {
@@ -995,10 +996,10 @@ export async function runCrewSend(
         await deps.emitEvent(project, { type: "task.started", id: task.id });
       }
     }
-  } catch {
-    // Swallow daemon errors so crews without a daemon or offline daemon
-    // still receive the sent message. `reopened` stays false — a failed
-    // reopen attempt must never be reported as a success (#595).
+  } catch (e) {
+    // The message is still delivered (crews without a daemon or offline daemon keep working), but a failed
+    // reopen/started must never be reported as a success (#595, #1069): the caller gets `stateWarning`.
+    stateWarning = `task state not updated (${(e as Error).message}) — the daemon never saw this send, so the crew's next signal may be ignored`;
   }
   // Sender frame (#1029): the crew's harness shows socket input as an anonymous peer, so the
   // body names the captain. Framed after the #745 duplicate-task check, which compares raw text.
@@ -1043,7 +1044,7 @@ export async function runCrewSend(
     }
     if (!fallsBackToPane(outcome)) {
       // accepted / queued: it reached the agent. Done — do NOT also use the pane.
-      return { reopened };
+      return { reopened, ...(stateWarning ? { stateWarning } : {}) };
     }
     // gone / unsupported: fall back to the pane ONCE, already logged above.
   }
@@ -1073,7 +1074,7 @@ export async function runCrewSend(
     if (!paneOk) {
       throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
     }
-    return { reopened };
+    return { reopened, ...(stateWarning ? { stateWarning } : {}) };
   }
 
   const { delivered, blockedByModal } = await deliver(crew, framed);
@@ -1088,7 +1089,7 @@ export async function runCrewSend(
     // submitted. Throw so the caller fails loudly instead.
     throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
   }
-  return { reopened };
+  return { reopened, ...(stateWarning ? { stateWarning } : {}) };
 }
 
 export async function runCrewRead(

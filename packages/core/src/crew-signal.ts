@@ -2,7 +2,8 @@
 // so there is one implementation (#1029). Only the daemon transport (`call`) is injected.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendCaptainMessage } from "./mailbox.js";
 import type { ControlEvent, TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES, stateRoot } from "@squadrant/shared";
 import { scanCitations, readBranchOnlyMessages, type CiteText } from "./knowledge/cite.js";
@@ -156,8 +157,42 @@ export async function runCrewSignal(
         `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
     );
   }
+  // #1069: `done` while in review is liveness-only (#605), so it would answer success and change nothing. Tell the
+  // crew, and tell the captain once per review episode (a fresh `review` signal re-arms the notice).
+  if (current?.state === "review" && signal === "done") {
+    await notifyCaptainDoneInReview(project, taskId, current.name);
+    throw new Error(
+      `Task ${taskId} is in review (held for captain approval) — done not applied. ` +
+        `Wait for the captain's feedback (a new turn) or approval; do not signal done again.`,
+    );
+  }
+  if (signal === "review") rmSync(reviewNoticeMarker(taskId), { force: true });
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
-  await deps.call(req);
+  // The daemon answers an event with the post-reduce record: a receipt. If it did not land in the state this
+  // signal asks for (a race past the pre-check above), the caller must not see success (#1069). A repeat
+  // `blocked` stays a silent no-op (#174), so only done/failed/review are checked.
+  const after = (await deps.call(req)) as TaskRecord | null | undefined;
+  const wanted = { done: "done", failed: "failed", review: "review" }[signal as string];
+  if (wanted && after && typeof after.state === "string" && after.state !== wanted) {
+    throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Ask the captain to 'squadrant crew send' if it needs to continue.`);
+  }
+}
+
+const reviewNoticeMarker = (taskId: string) => join(stateRoot(), "_review-done-notified", taskId);
+
+/** One captain message per review episode: the marker file records that it was sent. */
+async function notifyCaptainDoneInReview(project: string, taskId: string, name: string | undefined): Promise<void> {
+  const marker = reviewNoticeMarker(taskId);
+  if (existsSync(marker)) return;
+  mkdirSync(join(marker, ".."), { recursive: true });
+  writeFileSync(marker, "");
+  await appendCaptainMessage({
+    stateRoot: stateRoot(),
+    project,
+    text: `crew ${name ?? taskId.slice(0, 8)} signalled done while in review — approve (squadrant crew approve) or send feedback (squadrant crew send)`,
+    source: "cli",
+    from: `crew:${name ?? taskId.slice(0, 8)}`,
+  });
 }
 
 /** #1039: one-line success confirmation for `crew signal`, so a crew can tell the signal landed. */
