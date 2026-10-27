@@ -2,7 +2,8 @@
 // so there is one implementation (#1029). Only the daemon transport (`call`) is injected.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { appendCaptainMessage } from "./mailbox.js";
 import type { ControlEvent, TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES, stateRoot } from "@squadrant/shared";
@@ -157,13 +158,13 @@ export async function runCrewSignal(
         `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
     );
   }
-  // #1069: `done` while in review is liveness-only (#605), so it would answer success and change nothing. Tell the
-  // crew, and tell the captain once per review episode (a fresh `review` signal re-arms the notice).
+  // #1069: `done` while in review is liveness-only (#605), so it would answer success and change nothing. Only the
+  // state change is refused: the crew's message still goes to the captain, and the crew is told it did.
   if (current?.state === "review" && signal === "done") {
-    await notifyCaptainDoneInReview(project, taskId, current.name);
+    await forwardRefusedSignal(project, taskId, current.name, signal, o.message ?? o.error, "task is in review — approve with 'squadrant crew approve' or send feedback");
     throw new Error(
       `Task ${taskId} is in review (held for captain approval) — done not applied. ` +
-        `Wait for the captain's feedback (a new turn) or approval; do not signal done again.`,
+        `Your message was forwarded to the captain; wait for the captain's feedback or approval. Don't signal done again.`,
     );
   }
   if (signal === "review") rmSync(reviewNoticeMarker(taskId), { force: true });
@@ -174,24 +175,35 @@ export async function runCrewSignal(
   const after = (await deps.call(req)) as TaskRecord | null | undefined;
   const wanted = { done: "done", failed: "failed", review: "review" }[signal as string];
   if (wanted && after && typeof after.state === "string" && after.state !== wanted) {
-    throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Ask the captain to 'squadrant crew send' if it needs to continue.`);
+    await forwardRefusedSignal(project, taskId, after.name ?? current?.name, signal, o.message ?? o.error, `task is in state '${after.state}'`);
+    throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Your message was forwarded to the captain; if the task needs to continue, they will 'squadrant crew send'.`);
   }
 }
 
 const reviewNoticeMarker = (taskId: string) => join(stateRoot(), "_review-done-notified", taskId);
 
-/** One captain message per review episode: the marker file records that it was sent. */
-async function notifyCaptainDoneInReview(project: string, taskId: string, name: string | undefined): Promise<void> {
+/** Forward a refused signal's message to the captain. Only an exact repeat (same signal, same text) since the last
+ *  forward is dropped: the marker holds a hash of it, and a fresh `review` signal clears it. */
+async function forwardRefusedSignal(
+  project: string,
+  taskId: string,
+  name: string | undefined,
+  signal: string,
+  message: string | undefined,
+  why: string,
+): Promise<void> {
   const marker = reviewNoticeMarker(taskId);
-  if (existsSync(marker)) return;
+  const hash = createHash("sha256").update(`${signal}\0${message ?? ""}`).digest("hex");
+  if (existsSync(marker) && readFileSync(marker, "utf8") === hash) return;
   mkdirSync(join(marker, ".."), { recursive: true });
-  writeFileSync(marker, "");
+  writeFileSync(marker, hash);
+  const who = name ?? taskId.slice(0, 8);
   await appendCaptainMessage({
     stateRoot: stateRoot(),
     project,
-    text: `crew ${name ?? taskId.slice(0, 8)} signalled done while in review — approve (squadrant crew approve) or send feedback (squadrant crew send)`,
+    text: `crew ${who} → ${signal} (not applied: ${why})${message ? `: ${message}` : ""}`,
     source: "cli",
-    from: `crew:${name ?? taskId.slice(0, 8)}`,
+    from: `crew:${who}`,
   });
 }
 

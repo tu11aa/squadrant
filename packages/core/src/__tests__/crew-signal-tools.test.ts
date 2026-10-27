@@ -107,7 +107,30 @@ describe("done while in review is not a success (#1069)", () => {
     expect(call.mock.calls.some((c) => (c[0] as any).kind === "event")).toBe(false);
     const msgs = await entries();
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.message).toContain("signalled done while in review");
+    expect(msgs[0]!.message).toContain("→ done (not applied: task is in review");
+    expect(msgs[0]!.message).toContain(": x");
+  });
+
+  it("forwards the crew's message text, and tells the crew it was forwarded", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", { message: "shipped PR #9" }, { call: daemon("review") });
+    expect(r.text).toContain("Your message was forwarded to the captain");
+    const msgs = await entries();
+    expect(msgs[0]!.message).toContain("shipped PR #9");
+    expect((msgs[0]!.payload as any).from).toBe("crew:11111111");
+  });
+
+  it("a different second message is forwarded too", async () => {
+    const call = daemon("review");
+    await callCrewSignalTool("crew_signal_done", { message: "one" }, { call });
+    await callCrewSignalTool("crew_signal_done", { message: "two" }, { call });
+    expect((await entries()).map((e) => e.message)).toEqual([expect.stringContaining(": one"), expect.stringContaining(": two")]);
+  });
+
+  it("done with no message still sends the notice", async () => {
+    await callCrewSignalTool("crew_signal_done", {}, { call: daemon("review") });
+    const msgs = await entries();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("not applied");
   });
 
   it("a fresh review signal re-arms the captain notice", async () => {
@@ -131,6 +154,14 @@ describe("signal receipt (#1069)", () => {
     const r = await callCrewSignalTool("crew_signal_done", {}, { call: receipt("stalled") });
     expect(r.isError).toBe(true);
     expect(r.text).toContain("not applied");
+  });
+
+  it("a post-reduce mismatch forwards the message to the captain", async () => {
+    await callCrewSignalTool("crew_signal_done", { message: "finished it" }, { call: receipt("stalled") });
+    const msgs = (await readUndelivered(root, "proj")).filter((e) => e.kind === "captain.message");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("not applied: task is in state 'stalled'");
+    expect(msgs[0]!.message).toContain("finished it");
   });
 
   it("a repeat blocked stays a silent success (#174)", async () => {
