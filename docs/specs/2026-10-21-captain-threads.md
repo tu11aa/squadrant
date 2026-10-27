@@ -68,14 +68,14 @@ Level 1 leaves a trace: crews list `Decided with operator: <question> → <answe
 Captain transcripts from 2026-10-21 to 2026-10-27 show no captain in any project opened a real thread; only smoke tests exist. Findings:
 
 1. The only trigger was a crew question, and most crew questions ask permission for a step inside one crew ("OK to push?", "run /pr-full-review and post?"), so they are correctly level 1.
-2. Levels 1 and 3 overlapped: level 3 said "needs a new operator decision", but every level-1 answer is also an operator decision. On 2026-10-23 crew sync-818 asked about svc-crm prettier reformatting on develop; it affects develop, not one crew, yet was treated as level 1.
+2. Levels 1 and 3 overlapped: level 3 said "needs a new operator decision", but every level-1 answer is also an operator decision. One crew asked about reformatting a shared file on develop; it affects develop, not one crew, yet was treated as level 1.
 3. Real discussions (KB design, release choices) start with the operator in the captain pane, and no rule moved them into a thread, so the captain's context kept growing.
 4. Nothing nudged the captain; the rules were prose only.
 
 Rules added (templates + `captain-ops`):
 
 - **A. Second trigger.** A design or decision discussion that runs 3 or more turns on one topic, or an operator answer that turns into a discussion, makes the captain offer "Move this to thread `<topic>`?". It opens the thread only after a yes and holds no more discussion in its own pane. A fork carries the full captain context, so a late move loses nothing. Agents without fork seed the thread from the ledger and decision records.
-- **B. Sharper boundary.** Level 1 is a permission or approval for a step inside one crew's own task (push, post, run a command, pick an option on a prompt the crew rendered). Level 3 is any question that needs a choice of direction, touches develop/main/shared code or another crew, or changes a settled decision. sync-818 is the level-3 example.
+- **B. Sharper boundary.** Level 1 is a permission or approval for a step inside one crew's own task (push, post, run a command, pick an option on a prompt the crew rendered). Level 3 is any question that needs a choice of direction, touches develop/main/shared code or another crew, or changes a settled decision. A crew asking whether to reformat a file shared on develop is the level-3 example.
 - **C. Operator answers in the captain pane.** Valid; the operator never re-answers elsewhere. A clear answer is forwarded verbatim with `crew send`, prefixed "Operator answered (in captain pane): …" (`crew answer` with the named option for an open rendered prompt; a level-3 decision also appends one line to handoff `decisions`). It is a go-ahead for that one prompt only. An answer that turns into a discussion gets rule A. An ambiguous or partly matching answer gets one short question before forwarding; the captain never guesses.
 
 ## Multi-agent

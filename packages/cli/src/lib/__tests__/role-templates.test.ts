@@ -77,7 +77,7 @@ describe("generic role templates — audit", () => {
     expect(body).toMatch(/override/);
     expect(body).toMatch(/Second thread trigger/);
     expect(body).toMatch(/Move this to thread/);
-    expect(body).toMatch(/sync-818/);
+    expect(body).toMatch(/reformat a file that is shared on develop/);
     expect(body).toMatch(/Operator answered \(in captain pane\)/);
   });
 

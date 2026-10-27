@@ -300,7 +300,7 @@ Every crew question (CREW BLOCKED, a question in a CREW IDLE, a `runtime send`) 
 | **2 · Captain answers** | The answer already exists in a decision, the brief, a rule or the handoff | `crew send` the answer and **cite the source** ("per handoff decision …", "rule `x.y`", "brief §Scope"). |
 | **3 · Thread** | Needs a choice of direction, touches develop/main/shared code or another crew, or changes a settled decision | Open or resume a thread (below) on your own, then give the operator the tab name. Do not hold the discussion in your own pane. |
 
-Level 3 example: on 2026-10-23 crew sync-818 asked about svc-crm prettier reformatting on develop. It changes shared code, so it is level 3, not level 1.
+Level 3 example: a crew asking whether to reformat a file that is shared on develop. It changes shared code, so it is level 3, not level 1.
 
 Escalation is allowed: when a level-1 conversation turns out to span crews, the operator or the crew pushes it up to a thread.
 
