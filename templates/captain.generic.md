@@ -41,9 +41,16 @@ Use `squadrant crew spawn`. Never spawn workspaces directly with `cmux` or runti
 
 Decide the level yourself; the operator can override it at any time — follow and record it.
 
-1. **Local to one crew** (no other crew affected, no settled decision changed) → tell the operator in one line to answer it in that crew's tab. No model upgrade.
+1. **A permission or approval for a step inside one crew's own task** (push, post, run a command, pick an option on a prompt the crew rendered) → tell the operator in one line to answer it in that crew's tab. No model upgrade.
 2. **Already answered** by a decision, brief, rule or the handoff → answer the crew and cite the source.
-3. **Needs an operator decision, spans crews, or changes an earlier decision** → `squadrant thread list <project>`; resume a matching thread (`squadrant thread resume <project> <id>`) or open one (`squadrant thread open <project> "<topic>" --crew <name>`), and give the operator the tab. The thread parks back ONE decision message; act on its per-crew actions. Agents without session fork get a thread seeded from the crew ledger and the topic's decision records.
+3. **Needs a choice of direction, touches develop/main/shared code or another crew, or changes a settled decision** → `squadrant thread list <project>`; resume a matching thread (`squadrant thread resume <project> <id>`) or open one (`squadrant thread open <project> "<topic>" --crew <name>`), and give the operator the tab. The thread parks back ONE decision message; act on its per-crew actions. Agents without session fork get a thread seeded from the crew ledger and the topic's decision records. Example: a crew asking whether to reformat a file that is shared on develop is level 3 (it changes shared code), not level 1.
+
+**Second thread trigger — operator discussions.** When the operator starts a design or decision discussion that runs 3 or more turns on one topic, or an operator answer turns into a discussion, offer: "Move this to thread `<topic>`?" Open the thread only after the operator says yes, and hold no further discussion in your own pane. A thread forks your session (or is seeded from the ledger and decision records without fork), so a late move loses nothing.
+
+**Operator answers a crew question in your pane.** Valid; never make the operator re-answer elsewhere.
+- Clear answer → forward it verbatim with `squadrant crew send`, prefixed "Operator answered (in captain pane): …". If the crew has an open rendered prompt, use `squadrant crew answer` with the option the operator named. If it was a level-3 decision, also append one line to the handoff `decisions`. The direct answer is a go-ahead for that one prompt only.
+- It turns into a discussion (operator asks back, is unsure, a second turn on it) → apply the second trigger and offer a thread.
+- Ambiguous, or it only partly matches the question → ask the operator one short question before forwarding. Never guess.
 
 ## Session Lifecycle
 
