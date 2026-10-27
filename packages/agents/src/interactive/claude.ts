@@ -326,6 +326,33 @@ export function decideCaptainMemoryWrite(
   return { decision: "deny", reason: DENY_REASON };
 }
 
+// #1068: an Agent-tool subagent runs inside the crew's process, inheriting
+// SQUADRANT_CREW_TASK_ID and the MCP connection, so its crew_signal call would
+// change the whole crew's task state. Claude Code marks PreToolUse payloads
+// from inside a subagent with `agent_id` / `agent_type` (absent in the main
+// session; verified live on 2.1.311).
+const CREW_SIGNAL_TOOL_RE = /^mcp__squadrant__crew_signal_/;
+const CREW_SIGNAL_BASH_RE = /\bsquadrant\s+crew\s+signal\b/;
+
+/**
+ * Pure: deny `crew_signal_*` MCP calls and `squadrant crew signal` Bash
+ * commands made from inside a subagent. Fails open when the payload carries no
+ * subagent marker, so the main session is unaffected.
+ */
+export function decideSubagentCrewSignal(payload: unknown): MemoryWriteGuardResult {
+  const p = payload as { tool_name?: unknown; tool_input?: unknown; agent_id?: unknown } | null | undefined;
+  if (typeof p?.agent_id !== "string" || !p.agent_id) return { decision: "allow" };
+  const command = (p.tool_input as { command?: unknown } | null | undefined)?.command;
+  const isSignal =
+    (typeof p.tool_name === "string" && CREW_SIGNAL_TOOL_RE.test(p.tool_name)) ||
+    (p.tool_name === "Bash" && typeof command === "string" && CREW_SIGNAL_BASH_RE.test(command));
+  if (!isSignal) return { decision: "allow" };
+  return {
+    decision: "deny",
+    reason: "Subagents don't signal task state; return your result to the parent session, which signals (#1068).",
+  };
+}
+
 // #1007: Claude Code's `attribution` setting only stops the HARNESS adding a
 // co-author trailer; the model also hand-writes one into `git commit -m` text.
 // When the operator disabled attribution, deny such a command so the agent
