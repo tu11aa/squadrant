@@ -58,6 +58,18 @@ describe("threadAgentCommand (#1016)", () => {
     expect(cmd).not.toContain("--fork-session");
   });
 
+  it("passes the captain's thinking level as --effort to open (fork) and resume; unset ⇒ no flag", () => {
+    const { templates, config, promptDir } = setup();
+    const open = { kind: "fork", fromSessionId: "cap-1", sessionId: "thr-1" } as const;
+    const resume = { kind: "resume", sessionId: "thr-1" } as const;
+    expect(threadAgentCommand(open, "claude", config, "/repo", promptDir, reg, templates)).toContain("--effort high");
+    expect(threadAgentCommand(resume, "claude", config, "/repo", promptDir, reg, templates)).toContain("--effort high");
+
+    config.defaults.roles = { captain: { agent: "claude", model: "opus[1m]" } } as typeof config.defaults.roles;
+    expect(threadAgentCommand(open, "claude", config, "/repo", promptDir, reg, templates)).not.toContain("--effort");
+    expect(threadAgentCommand(resume, "claude", config, "/repo", promptDir, reg, templates)).not.toContain("--effort");
+  });
+
   it("non-claude agents get a plain interactive seed session", () => {
     const { templates, config, promptDir } = setup();
     const oc = threadAgentCommand({ kind: "seed" }, "opencode", config, "/repo", promptDir, reg, templates);

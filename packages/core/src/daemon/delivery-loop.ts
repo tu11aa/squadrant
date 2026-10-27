@@ -23,9 +23,11 @@ import type { LivenessRegistry } from "./liveness-registry.js";
 const CURSOR_SUBSCRIBER = "captain";
 
 // Must-deliver event kinds that bypass the stale-skip path (#474 D1).
-// Includes terminal transitions (done/failed/cancelled) AND task.blocked:
-// a dropped task.blocked leaves the captain waiting forever on a crew question.
-const TERMINAL_KINDS = new Set(["task.done", "task.failed", "task.cancelled", "task.blocked"]);
+// Includes terminal transitions (done/failed/cancelled), task.blocked, AND task.review:
+// a dropped task.blocked leaves the captain waiting forever on a crew question, and a
+// dropped task.review leaves the crew waiting forever on the captain's diff review (#1073).
+// Coalescing (#890) still skips a review superseded by a later review/terminal event.
+const TERMINAL_KINDS = new Set(["task.done", "task.failed", "task.cancelled", "task.blocked", "task.review"]);
 
 // #714: the DELIVERY STUCK alert must name the reason that actually fired —
 // a binary modal-vs-everything-else text sent the operator hunting for a draft

@@ -42,7 +42,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/headless-launcher.ts:42
   - packages/agents/src/opencode/sse-bridge.ts:146
   - packages/agents/src/opencode/sse-bridge.ts:298
-  - packages/core/src/crew-spawn.ts:995
+  - packages/core/src/crew-spawn.ts:996
   - packages/core/src/daemon/reduce.ts:519
   - packages/core/src/daemon/reduce.ts:574
   - packages/core/src/daemon/start.ts:97
@@ -50,9 +50,9 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
-  - packages/agents/src/interactive/claude.ts:596
   - packages/agents/src/interactive/claude.ts:623
-  - packages/agents/src/interactive/claude.ts:648
+  - packages/agents/src/interactive/claude.ts:650
+  - packages/agents/src/interactive/claude.ts:675
   - packages/cli/src/commands/hooks.ts:49
   - packages/cli/src/squadrantd.ts:520
   - packages/cli/src/squadrantd.ts:568
@@ -61,29 +61,29 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
 - `task.blocked`
-  - packages/agents/src/interactive/claude.ts:590
-  - packages/agents/src/interactive/claude.ts:618
-  - packages/agents/src/interactive/claude.ts:633
+  - packages/agents/src/interactive/claude.ts:617
+  - packages/agents/src/interactive/claude.ts:645
+  - packages/agents/src/interactive/claude.ts:660
   - packages/cli/src/squadrantd.ts:523
   - packages/cli/src/squadrantd.ts:571
   - packages/cli/src/squadrantd.ts:602
   - packages/core/src/auto-gate.ts:100
-  - packages/core/src/crew-signal.ts:63
+  - packages/core/src/crew-signal.ts:65
   - packages/core/src/daemon/interactive-probe.ts:202
   - packages/core/src/daemon/reduce.ts:740
 - `task.review`
-  - packages/core/src/crew-signal.ts:67
+  - packages/core/src/crew-signal.ts:69
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
   - packages/cli/src/commands/crew-control.ts:286
-  - packages/core/src/crew-signal.ts:57
+  - packages/core/src/crew-signal.ts:59
   - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
   - packages/agents/src/headless-launcher.ts:79
   - packages/agents/src/headless-launcher.ts:89
-  - packages/core/src/crew-signal.ts:69
+  - packages/core/src/crew-signal.ts:71
   - packages/core/src/crew-spawn.ts:414
   - packages/core/src/daemon/interactive-probe.ts:197
   - packages/core/src/daemon/reduce.ts:877
@@ -93,7 +93,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/codex/normalize.ts:34
 - `task.turn.completed`
   - packages/agents/src/codex/normalize.ts:42
-  - packages/agents/src/interactive/claude.ts:601
+  - packages/agents/src/interactive/claude.ts:628
   - packages/agents/src/opencode/sse-bridge.ts:242
   - packages/cli/src/squadrantd.ts:518
   - packages/cli/src/squadrantd.ts:566
@@ -102,14 +102,14 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`
-  - packages/agents/src/interactive/claude.ts:610
+  - packages/agents/src/interactive/claude.ts:637
 - `task.delta`
   - packages/agents/src/codex/normalize.ts:56
   - packages/agents/src/codex/normalize.ts:67
 - `task.input.requested`
   - packages/agents/src/codex/driver.ts:261
-  - packages/agents/src/interactive/claude.ts:582
-  - packages/agents/src/interactive/claude.ts:621
+  - packages/agents/src/interactive/claude.ts:609
+  - packages/agents/src/interactive/claude.ts:648
   - packages/core/src/events/to-control-event.ts:37
 - `task.approval.requested`
   - packages/agents/src/codex/driver.ts:253
@@ -118,14 +118,14 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.reattached`
   - packages/agents/src/codex/driver.ts:222
 - `task.reopened`
-  - packages/core/src/crew-spawn.ts:988
+  - packages/core/src/crew-spawn.ts:989
 - `task.stalled`
   - packages/core/src/daemon/reduce.ts:782
   - packages/core/src/daemon/reduce.ts:784
   - packages/core/src/daemon/reduce.ts:785
   - packages/core/src/daemon/reduce.ts:802
 - `task.quiet`
-  - packages/core/src/daemon/delivery-loop.ts:296
+  - packages/core/src/daemon/delivery-loop.ts:298
   - packages/core/src/daemon/reduce.ts:840
 - `task.warn`
   - packages/core/src/daemon/interactive-probe.ts:183
@@ -135,16 +135,16 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.cancelled`
   - packages/cli/src/commands/shutdown.ts:83
   - packages/cli/src/commands/shutdown.ts:121
-  - packages/core/src/crew-spawn.ts:1210
+  - packages/core/src/crew-spawn.ts:1211
 - `task.first-turn.confirmed`
-  - packages/agents/src/interactive/claude.ts:653
+  - packages/agents/src/interactive/claude.ts:680
   - packages/cli/src/commands/hooks.ts:53
   - packages/core/src/crew-spawn.ts:760
   - packages/core/src/crew-spawn.ts:849
   - packages/core/src/daemon/reduce.ts:492
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
-  - packages/agents/src/interactive/claude.ts:643
+  - packages/agents/src/interactive/claude.ts:670
   - packages/cli/src/squadrantd.ts:513
   - packages/cli/src/squadrantd.ts:561
   - packages/cli/src/squadrantd.ts:592

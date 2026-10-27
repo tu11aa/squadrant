@@ -2,7 +2,9 @@
 // so there is one implementation (#1029). Only the daemon transport (`call`) is injected.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendCaptainMessage } from "./mailbox.js";
 import type { ControlEvent, TaskRecord } from "@squadrant/shared";
 import { TERMINAL_STATES, stateRoot } from "@squadrant/shared";
 import { scanCitations, readBranchOnlyMessages, type CiteText } from "./knowledge/cite.js";
@@ -141,6 +143,16 @@ export async function runCrewSignal(
     throw new Error("not running under a crew (SQUADRANT_CREW_TASK_ID unset)");
   if (!project)
     throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
+  // Principle (#1069): state handling never blocks a message. Whatever refuses the signal, the crew's text still
+  // reaches the captain (mailbox = a file write, so even a dead daemon can't drop it).
+  const text = o.message ?? o.question ?? o.error;
+  const forward = async (name: string | undefined, why: string) => {
+    try {
+      await forwardRefusedSignal(project, taskId, name, signal, text, why);
+    } catch {
+      /* the original refusal is the error to surface */
+    }
+  };
   // The record can legitimately be missing (a dropped/pruned task id, #554 —
   // terminal records are pruned past a per-project cap, or a fresh daemon
   // hasn't registered it yet). That is NOT evidence the task is terminal, so
@@ -148,16 +160,74 @@ export async function runCrewSignal(
   // crash here drops CREW DONE exactly like #574 did, just via a new door.
   // Fall through to the normal emit, which surfaces its own clear error if the
   // id truly doesn't exist.
-  const current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  let current: TaskRecord | null | undefined;
+  try {
+    current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  } catch (e) {
+    await forward(undefined, `daemon unreachable: ${(e as Error).message}`);
+    throw new Error(`${(e as Error).message} — your message was queued in the captain's mailbox and is delivered when the daemon is back.`);
+  }
   if (current && TERMINAL_STATES.has(current.state)) {
+    await forward(current.name, `task is already ${current.state} — the captain can reopen it with 'squadrant crew send'`);
     throw new Error(
       `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
-        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it — ` +
-        `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
+        `Your message was forwarded to the captain, who can reopen the task with 'squadrant crew send' — its output confirms with \"↻ Task was terminal — reopened to working\" (#595). Stop here; don't signal again.`,
     );
   }
+  // #1069: `done` while in review is liveness-only (#605), so it would answer success and change nothing. Only the
+  // state change is refused: the crew's message still goes to the captain, and the crew is told it did.
+  if (current?.state === "review" && signal === "done") {
+    await forward(current.name, "task is in review — approve with 'squadrant crew approve' or send feedback");
+    throw new Error(
+      `Task ${taskId} is in review (held for captain approval) — done not applied. ` +
+        `Your message was forwarded to the captain; wait for the captain's feedback or approval. Don't signal done again.`,
+    );
+  }
+  if (signal === "review") rmSync(reviewNoticeMarker(taskId), { force: true });
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
-  await deps.call(req);
+  // The daemon answers an event with the post-reduce record: a receipt. If it did not land in the state this
+  // signal asks for (a race past the pre-check above), the caller must not see success (#1069). A repeat
+  // `blocked` stays a silent no-op (#174), so only done/failed/review are checked.
+  let after: TaskRecord | null | undefined;
+  try {
+    after = (await deps.call(req)) as TaskRecord | null | undefined;
+  } catch (e) {
+    const why = current ? `daemon error: ${(e as Error).message}` : `task record not found: ${(e as Error).message}`;
+    await forward(current?.name, why);
+    throw new Error(`${(e as Error).message} — signal not applied; your message was forwarded to the captain (mailbox).`);
+  }
+  const wanted = { done: "done", failed: "failed", review: "review" }[signal as string];
+  if (wanted && after && typeof after.state === "string" && after.state !== wanted) {
+    await forward(after.name ?? current?.name, `task is in state '${after.state}'`);
+    throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Your message was forwarded to the captain; if the task needs to continue, they will 'squadrant crew send'.`);
+  }
+}
+
+const reviewNoticeMarker = (taskId: string) => join(stateRoot(), "_review-done-notified", taskId);
+
+/** Forward a refused signal's message to the captain. Only an exact repeat (same signal, same text) since the last
+ *  forward is dropped: the marker holds a hash of it, and a fresh `review` signal clears it. */
+async function forwardRefusedSignal(
+  project: string,
+  taskId: string,
+  name: string | undefined,
+  signal: string,
+  message: string | undefined,
+  why: string,
+): Promise<void> {
+  const marker = reviewNoticeMarker(taskId);
+  const hash = createHash("sha256").update(`${signal}\0${message ?? ""}`).digest("hex");
+  if (existsSync(marker) && readFileSync(marker, "utf8") === hash) return;
+  mkdirSync(join(marker, ".."), { recursive: true });
+  writeFileSync(marker, hash);
+  const who = name ?? taskId.slice(0, 8);
+  await appendCaptainMessage({
+    stateRoot: stateRoot(),
+    project,
+    text: `crew ${who} → ${signal} (not applied: ${why})${message ? `: ${message}` : ""}`,
+    source: "cli",
+    from: `crew:${who}`,
+  });
 }
 
 /** #1039: one-line success confirmation for `crew signal`, so a crew can tell the signal landed. */

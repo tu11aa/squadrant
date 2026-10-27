@@ -200,7 +200,7 @@ describe("runPing", () => {
 
 describe("formatPingResult (#667 slice 4)", () => {
   it("keeps the legacy line when the channel was not used", () => {
-    expect(formatPingResult("demo", undefined)).toBe("✔ Pinged 'demo'");
+    expect(formatPingResult("demo", undefined)).toBe("✔ Queued for 'demo' (mailbox — not yet delivered)");
   });
 
   it("reports a confirmed accept as delivered, not merely pinged", () => {

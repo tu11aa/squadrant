@@ -91,6 +91,13 @@ describe("tools call the shared function", () => {
     expect(r.text).toBe("⚠ ctx high\n↻ Task was terminal — reopened to working\n✔ Sent to p:crew-1");
   });
 
+  it("crew_send is an error when the task state could not be updated (#1069)", async () => {
+    const d = fakes({ runCrewSend: vi.fn().mockResolvedValue({ reopened: false, stateWarning: "task state not updated (daemon down)" }) });
+    const r = await call("crew_send", { project: "p", name: "crew-1", message: "hi" }, d);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("task state not updated");
+  });
+
   it("crew_list renders lines or the empty message", async () => {
     const d = fakes({ crewListLines: vi.fn().mockResolvedValueOnce(["active (1):", "  crew-1 working"]).mockResolvedValueOnce([]) });
     expect((await call("crew_list", {}, d)).text).toBe("active (1):\n  crew-1 working");
@@ -156,13 +163,13 @@ describe("tools call the shared function", () => {
     const d = fakes({ runSideSpawn: vi.fn().mockResolvedValue({ title: "side-1", surfaceId: "s2" }) });
     expect((await call("side_spawn", { project: "p", topic: "t", role: "research" }, d)).text).toBe("✔ Side session 'side-1' spawned (s2)");
     expect(d.runSideSpawn).toHaveBeenCalledWith({ project: "p", topic: "t", role: "research", name: undefined, direction: "tab", agent: "claude" });
-    expect((await call("side_send", { project: "p", name: "side-1", message: "m" }, d)).text).toBe("✔ Sent to p:side-1");
+    expect((await call("side_send", { project: "p", name: "side-1", message: "m" }, d)).text).toBe("✔ Sent to p:side-1 (pasted into its pane; receipt not confirmed)");
     expect(d.runSideSend).toHaveBeenCalledWith("p", "side-1", "m");
   });
 
   it("ping targets the given project, never the default", async () => {
     const d = fakes({ runPing: vi.fn().mockResolvedValue(undefined) });
-    expect((await call("ping", { project: "other", message: "hi" }, d)).text).toBe("✔ Pinged 'other'");
+    expect((await call("ping", { project: "other", message: "hi" }, d)).text).toBe("✔ Queued for 'other' (mailbox — not yet delivered)");
     expect(d.runPing).toHaveBeenCalledWith("other", "hi");
     const r = await call("ping", { message: "hi" }, d);
     expect(r.isError).toBe(true);
