@@ -12,7 +12,7 @@ import { Command } from "commander";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { sendRequest, readUndelivered, resolveCurrentProject, computeRulesInjection, computeProfileInjection, withBudget, INJECT_BUDGET_MS } from "@squadrant/core";
-import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite, decideAttributionTrailer, readAttributionDisabled } from "@squadrant/agents";
+import { mapClaudeHookToEvent, deriveTranscriptPath, decideCaptainMemoryWrite, decideAttributionTrailer, decideSubagentCrewSignal, readAttributionDisabled } from "@squadrant/agents";
 import { loadConfig, DAEMON_SOCK_PATH, workspacePath, stateRoot, userKbDir } from "@squadrant/shared";
 import type { ControlEvent, SquadrantConfig, TaskRecord } from "@squadrant/shared";
 import type { CaptainSessionRecord } from "../lib/handoff-facts.js";
@@ -326,6 +326,16 @@ export function hooksCommand(): Command {
           },
         });
         process.exit(0);
+      }
+
+      // #1068: a subagent must not change the crew's task state; the main
+      // session (no agent_id on the payload) is unaffected.
+      if (sub === "pre-tool-use") {
+        const sig = decideSubagentCrewSignal(payload);
+        if (sig.decision === "deny") {
+          console.error(`[squadrant] denied subagent crew signal: ${sig.reason}`);
+          denyPreToolUse(sig.reason);
+        }
       }
 
       // #1007: attribution guard applies to captain and crew sessions alike,
