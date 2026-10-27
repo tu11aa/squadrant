@@ -125,7 +125,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/daemon/reduce.ts:785
   - packages/core/src/daemon/reduce.ts:802
 - `task.quiet`
-  - packages/core/src/daemon/delivery-loop.ts:296
+  - packages/core/src/daemon/delivery-loop.ts:298
   - packages/core/src/daemon/reduce.ts:840
 - `task.warn`
   - packages/core/src/daemon/interactive-probe.ts:183
