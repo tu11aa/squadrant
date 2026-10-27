@@ -1,5 +1,5 @@
 // src/control/__tests__/crew-control.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -62,6 +62,14 @@ describe("crew-control request builders", () => {
 // still reported success. runCrewSignal must check current state FIRST and
 // fail loudly instead of emitting an event that will be silently ignored.
 describe("runCrewSignal (#557)", () => {
+  // A refused signal forwards its message to the captain mailbox: keep it out of the real state dir.
+  let stateDir: string;
+  const savedState = process.env.SQUADRANT_STATE_DIR;
+  beforeEach(() => { stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "sq-cc-")); process.env.SQUADRANT_STATE_DIR = stateDir; });
+  afterEach(() => {
+    if (savedState === undefined) delete process.env.SQUADRANT_STATE_DIR; else process.env.SQUADRANT_STATE_DIR = savedState;
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
   it("fails loudly instead of silently succeeding when the target task is already terminal", async () => {
     const call = vi.fn().mockResolvedValue({ id: "t1", state: "done" } as Partial<TaskRecord>);
     await expect(
