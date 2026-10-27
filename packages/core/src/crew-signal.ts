@@ -143,6 +143,16 @@ export async function runCrewSignal(
     throw new Error("not running under a crew (SQUADRANT_CREW_TASK_ID unset)");
   if (!project)
     throw new Error("not running under a crew (SQUADRANT_CREW_PROJECT unset)");
+  // Principle (#1069): state handling never blocks a message. Whatever refuses the signal, the crew's text still
+  // reaches the captain (mailbox = a file write, so even a dead daemon can't drop it).
+  const text = o.message ?? o.question ?? o.error;
+  const forward = async (name: string | undefined, why: string) => {
+    try {
+      await forwardRefusedSignal(project, taskId, name, signal, text, why);
+    } catch {
+      /* the original refusal is the error to surface */
+    }
+  };
   // The record can legitimately be missing (a dropped/pruned task id, #554 —
   // terminal records are pruned past a per-project cap, or a fresh daemon
   // hasn't registered it yet). That is NOT evidence the task is terminal, so
@@ -150,18 +160,24 @@ export async function runCrewSignal(
   // crash here drops CREW DONE exactly like #574 did, just via a new door.
   // Fall through to the normal emit, which surfaces its own clear error if the
   // id truly doesn't exist.
-  const current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  let current: TaskRecord | null | undefined;
+  try {
+    current = (await deps.call(buildStatusRequest(project, taskId))) as TaskRecord | null | undefined;
+  } catch (e) {
+    await forward(undefined, `daemon unreachable: ${(e as Error).message}`);
+    throw new Error(`${(e as Error).message} — your message was queued in the captain's mailbox and is delivered when the daemon is back.`);
+  }
   if (current && TERMINAL_STATES.has(current.state)) {
+    await forward(current.name, `task is already ${current.state} — the captain can reopen it with 'squadrant crew send'`);
     throw new Error(
       `Task ${taskId} is already terminal (state=${current.state}) — signal '${signal}' would be silently ignored by the daemon. ` +
-        `Stop here: your task record was never reopened for this turn. Ask the captain to run 'squadrant crew send' to reopen it — ` +
-        `its output confirms with "↻ Task was terminal — reopened to working" (#595) — before signaling again.`,
+        `Your message was forwarded to the captain, who can reopen the task with 'squadrant crew send' — its output confirms with \"↻ Task was terminal — reopened to working\" (#595). Stop here; don't signal again.`,
     );
   }
   // #1069: `done` while in review is liveness-only (#605), so it would answer success and change nothing. Only the
   // state change is refused: the crew's message still goes to the captain, and the crew is told it did.
   if (current?.state === "review" && signal === "done") {
-    await forwardRefusedSignal(project, taskId, current.name, signal, o.message ?? o.error, "task is in review — approve with 'squadrant crew approve' or send feedback");
+    await forward(current.name, "task is in review — approve with 'squadrant crew approve' or send feedback");
     throw new Error(
       `Task ${taskId} is in review (held for captain approval) — done not applied. ` +
         `Your message was forwarded to the captain; wait for the captain's feedback or approval. Don't signal done again.`,
@@ -172,10 +188,17 @@ export async function runCrewSignal(
   // The daemon answers an event with the post-reduce record: a receipt. If it did not land in the state this
   // signal asks for (a race past the pre-check above), the caller must not see success (#1069). A repeat
   // `blocked` stays a silent no-op (#174), so only done/failed/review are checked.
-  const after = (await deps.call(req)) as TaskRecord | null | undefined;
+  let after: TaskRecord | null | undefined;
+  try {
+    after = (await deps.call(req)) as TaskRecord | null | undefined;
+  } catch (e) {
+    const why = current ? `daemon error: ${(e as Error).message}` : `task record not found: ${(e as Error).message}`;
+    await forward(current?.name, why);
+    throw new Error(`${(e as Error).message} — signal not applied; your message was forwarded to the captain (mailbox).`);
+  }
   const wanted = { done: "done", failed: "failed", review: "review" }[signal as string];
   if (wanted && after && typeof after.state === "string" && after.state !== wanted) {
-    await forwardRefusedSignal(project, taskId, after.name ?? current?.name, signal, o.message ?? o.error, `task is in state '${after.state}'`);
+    await forward(after.name ?? current?.name, `task is in state '${after.state}'`);
     throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Your message was forwarded to the captain; if the task needs to continue, they will 'squadrant crew send'.`);
   }
 }

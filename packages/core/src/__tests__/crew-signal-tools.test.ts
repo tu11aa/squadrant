@@ -71,7 +71,8 @@ describe("crew signal MCP tools (#1029)", () => {
 
   it("daemon failure is a tool error", async () => {
     const r = await callCrewSignalTool("crew_signal_done", {}, { call: vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }) });
-    expect(r).toEqual({ text: "connect ECONNREFUSED", isError: true });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("connect ECONNREFUSED");
   });
 
   it("unknown tool is a tool error", async () => {
@@ -144,6 +145,54 @@ describe("done while in review is not a success (#1069)", () => {
     const r = await callCrewSignalTool("crew_signal_done", {}, { call: daemon("working") });
     expect(r).toEqual({ text: "✔ signalled done for proj (task 11111111)", isError: false });
     expect(await entries()).toHaveLength(0);
+  });
+});
+
+describe("state never blocks a message (#1069)", () => {
+  const entries = async () => (await readUndelivered(root, "proj")).filter((e) => e.kind === "captain.message");
+
+  it("terminal pre-check forwards the message and says so", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", { message: "late result" }, { call: daemon("done") });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("already terminal (state=done)");
+    expect(r.text).toContain("forwarded to the captain");
+    const msgs = await entries();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("task is already done");
+    expect(msgs[0]!.message).toContain("late result");
+  });
+
+  it("terminal pre-check dedups an exact repeat but not a different message", async () => {
+    const call = daemon("failed");
+    await callCrewSignalTool("crew_signal_done", { message: "a" }, { call });
+    await callCrewSignalTool("crew_signal_done", { message: "a" }, { call });
+    await callCrewSignalTool("crew_signal_done", { message: "b" }, { call });
+    expect(await entries()).toHaveLength(2);
+  });
+
+  it("an emit error on a missing record still forwards the message", async () => {
+    const call = vi.fn(async (req: any) => {
+      if (req.kind === "status") return null;
+      throw new Error("unknown task 11111111-aaaa");
+    });
+    const r = await callCrewSignalTool("crew_signal_blocked", { question: "which db?" }, { call });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("forwarded to the captain");
+    const msgs = await entries();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("task record not found");
+    expect(msgs[0]!.message).toContain("which db?");
+  });
+
+  it("an unreachable daemon queues the message in the mailbox and says so", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", { message: "done anyway" }, { call: vi.fn(async () => { throw new Error("connect ECONNREFUSED"); }) });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("ECONNREFUSED");
+    expect(r.text).toContain("queued in the captain's mailbox");
+    const msgs = await entries();
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.message).toContain("daemon unreachable");
+    expect(msgs[0]!.message).toContain("done anyway");
   });
 });
 
