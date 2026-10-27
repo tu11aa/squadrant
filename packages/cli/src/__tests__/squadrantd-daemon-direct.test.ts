@@ -645,6 +645,40 @@ describe("squadrantd daemon-direct (#332)", () => {
     expect(cmux.sent[1].text).toMatch(/CREW BLOCKED stale-blocked/);
   });
 
+  // #1073 (a): a stale task.review must deliver too, but coalescing (#890) still
+  // drops a review superseded by a later review/done.
+  it("delivers a stale task.review but coalesces a superseded one (#1073)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "cp-dd-1073-"));
+    const sock = join(dir, "c.sock");
+    const stateRoot = join(dir, "state");
+    const inbox = join(stateRoot, "inbox");
+    mkdirSync(inbox, { recursive: true });
+
+    const staleTs = new Date(Date.now() - STALE_THRESHOLD_MS - 60_000).toISOString();
+    const mkEntry = (seq: number, taskId: string, kind: string, message: string) =>
+      JSON.stringify({ seq, ts: staleTs, taskId, name: "test-crew", kind, provider: "claude", payload: {}, message }) + "\n";
+    appendFileSync(join(inbox, "p.log"),
+      mkEntry(1, "t1", "task.review", "CREW REVIEW stale-superseded") +
+      mkEntry(2, "t1", "task.review", "CREW REVIEW stale-latest") +
+      mkEntry(3, "t2", "task.review", "CREW REVIEW stale-other-task"),
+      "utf-8");
+    await writeCursor({ stateRoot, project: "p", subscriber: "captain", lastAckedSeq: 0 });
+
+    const cmux = fakeCmux();
+    const handle = startSquadrantd({
+      stateRoot, sockPath: sock, sweepMs: 0,
+      daemonCmux: cmux,
+      captainSurfaces: { p: { workspaceId: "ws:1", surfaceId: "surface:1", title: "captain" } },
+    });
+    stop = handle.stop;
+
+    if (handle.tickDelivery) await handle.tickDelivery();
+
+    expect(cmux.sent.length).toBe(2);
+    expect(cmux.sent[0].text).toMatch(/stale-latest/);
+    expect(cmux.sent[1].text).toMatch(/stale-other-task/);
+  });
+
   it("daemon-direct probe emits task.blocked when interactive crew pane shows a permission prompt", async () => {
     dir = mkdtempSync(join(tmpdir(), "cp-dd-probe-"));
     const sock = join(dir, "c.sock");
