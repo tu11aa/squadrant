@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-27
+
+Honest signals and messages. A crew signal or message that is not applied or delivered now reports failure instead of a success line. Agent-tool subagents can no longer change their crew's task state, and a crew's review survives a daemon restart. Captains get clearer rules for when to open a discussion thread. PRs #1066, #1070, #1071, #1074.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. Relaunch running captains and crews to pick up the new templates.
+
+### Changed
+
+- **Signals and messages report failure when nothing happened.** `crew signal done` while the task is in review now errors (CLI exit 1, MCP `isError`) instead of answering `✔ signalled`, and the captain gets one message per review episode (`crew <name> signalled done while in review — approve or send feedback`). A done/failed/review signal that the daemon did not apply errors too. `crew send` exits 1 (MCP: error) when the message was delivered but the task state could not be updated, and `crew answer` exits 1 when the prompt is still open. `ping` without a receipt says `Queued … not yet delivered`, and `side send` / `thread park` say the text was pasted but not confirmed. Repeat `blocked` signals stay silent by design. Scripts that relied on exit 0 from these commands need a check (#1069, #1071).
+- **Captain thread triggers and triage levels.** Captains offer to move a discussion into a thread after 3+ turns on one topic. Level 1 is now only a permission inside one crew's own task, and level 3 covers direction choices, shared code, another crew or a settled decision. An operator answer typed in the captain pane is forwarded to the crew verbatim (#1016, #1066).
+
+### Fixed
+
+- **An Agent-tool subagent could change its crew's task state.** Subagents inherit the crew's task id and MCP connection, so a helper calling `crew_signal_review` moved the whole crew into review. The `PreToolUse` hook now denies `crew_signal_*` and `squadrant crew signal` calls whose payload carries a subagent `agent_id`. The main session is unaffected (#1068, #1070).
+- **A review was lost on daemon restart.** A `task.review` older than 5 minutes was skipped as stale, so the captain never saw it and the crew waited forever. It is now delivered like done/failed/blocked; a review superseded by a later one is still coalesced (#1073, #1074).
+
 ## [0.32.0] - 2026-10-26
 
 An MCP control surface and clearer messages between sessions. Crews signal done, blocked, failed or review through `squadrant mcp` tools, and captains get their own role-scoped tools. Every delivered message starts with one `📨` sender header. Claude crews get their first turn as a real user prompt, with the brief stored on the task. Also new: `squadrant crew compact` and a dev daemon for live-testing branch builds. The fixes make daemon restarts rare and attributable, and stop duplicate `/compact`s and misattributed hooks. PRs #1047, #1048, #1049, #1052, #1053, #1054, #1055, #1056, #1057, #1059, #1061.
