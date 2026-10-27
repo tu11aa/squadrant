@@ -84,17 +84,18 @@
     <div class="controls">
       <button data-q="local" class="sel" data-i18n="q-local">Local to one crew</button>
       <button data-q="known" data-i18n="q-known">Already decided somewhere</button>
-      <button data-q="cross" data-i18n="q-cross">Spans crews / new decision</button>
+      <button data-q="cross" data-i18n="q-cross">Direction / shared code / other crew</button>
     </div>
     <div class="tablewrap"><table>
       <thead><tr><th data-i18n="th-level">Level</th><th data-i18n="th-action">Captain action</th></tr></thead>
       <tbody>
-        <tr data-row="local"><td>1 · operator ↔ crew</td><td data-i18n="a1">One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists "Decided with operator: …" in its done message.</td></tr>
+        <tr data-row="local"><td>1 · operator ↔ crew</td><td data-i18n="a1">A permission or approval inside one crew's own task. One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists "Decided with operator: …" in its done message.</td></tr>
         <tr data-row="known"><td>2 · captain answers</td><td data-i18n="a2">Answer the crew and cite the source (decision, brief, rule, handoff).</td></tr>
         <tr data-row="cross"><td>3 · thread</td><td data-i18n="a3">thread list → resume the matching topic, or thread open; give the operator the tab.</td></tr>
       </tbody>
     </table></div>
     <p class="meta" data-i18n="override">The operator can override the level at any time.</p>
+    <p class="meta" data-i18n="trigger2">Second trigger: an operator discussion of 3+ turns on one topic (or an answer that turns into one) → the captain offers "Move this to thread?" and opens it only after a yes.</p>
   </div>
 </div>
 <script>
@@ -104,12 +105,13 @@ const T = {
     lead: "The captain coordinates. A thread (a fork of the captain for one topic) holds the discussion with the operator, then parks back one decision.",
     "h-flow": "Step through a thread's life", "h-resume": "Resume rule", "h-triage": "Triage a crew question",
     mins: "Minutes since the thread last parked",
-    "q-local": "Local to one crew", "q-known": "Already decided somewhere", "q-cross": "Spans crews / new decision",
+    "q-local": "Local to one crew", "q-known": "Already decided somewhere", "q-cross": "Direction / shared code / other crew",
     "th-level": "Level", "th-action": "Captain action",
-    a1: "One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists \"Decided with operator: …\" in its done message.",
+    a1: "A permission or approval inside one crew's own task. One line to the operator: answer it in that crew's tab. No model upgrade. The crew lists \"Decided with operator: …\" in its done message.",
     a2: "Answer the crew and cite the source (decision, brief, rule, handoff).",
     a3: "thread list → resume the matching topic, or thread open; give the operator the tab.",
     override: "The operator can override the level at any time.",
+    trigger2: "Second trigger: an operator discussion of 3+ turns on one topic (or an answer that turns into one) → the captain offers \"Move this to thread?\" and opens it only after a yes.",
     same: m => `≤ 60 min → RESUME the same session\nclaude --resume <thread session>\n+ delta: crew ledger now, decisions from other threads since it parked\n(cache still warm: ${60 - m} min left)`,
     fresh: m => `> 60 min → FORK FRESH from the current captain\nclaude --resume <captain> --fork-session --session-id <new>\n+ this topic's earlier decision records\n(cache cold for ${m - 60} min — same cost, never stale)`,
     steps: [
@@ -126,12 +128,13 @@ const T = {
     lead: "Captain điều phối. Thread (một nhánh fork của captain cho một chủ đề) giữ phần thảo luận với operator, rồi park lại đúng một quyết định.",
     "h-flow": "Từng bước vòng đời một thread", "h-resume": "Quy tắc resume", "h-triage": "Phân loại câu hỏi của crew",
     mins: "Số phút kể từ lần park gần nhất",
-    "q-local": "Chỉ trong một crew", "q-known": "Đã có quyết định", "q-cross": "Liên crew / quyết định mới",
+    "q-local": "Chỉ trong một crew", "q-known": "Đã có quyết định", "q-cross": "Hướng đi / code dùng chung / crew khác",
     "th-level": "Mức", "th-action": "Captain làm gì",
-    a1: "Một dòng cho operator: trả lời ngay trong tab của crew đó. Không đổi model. Crew ghi \"Decided with operator: …\" trong tin done.",
+    a1: "Xin phép hoặc duyệt một bước trong task riêng của crew. Một dòng cho operator: trả lời ngay trong tab của crew đó. Không đổi model. Crew ghi \"Decided with operator: …\" trong tin done.",
     a2: "Captain trả lời crew và dẫn nguồn (quyết định, brief, rule, handoff).",
     a3: "thread list → resume chủ đề khớp, hoặc thread open; đưa operator tên tab.",
     override: "Operator có thể đổi mức bất cứ lúc nào.",
+    trigger2: "Trigger thứ hai: operator thảo luận từ 3 lượt trở lên về một chủ đề (hoặc câu trả lời biến thành thảo luận) → captain hỏi \"Chuyển sang thread?\" và chỉ mở sau khi operator đồng ý.",
     same: m => `≤ 60 phút → RESUME đúng session cũ\nclaude --resume <thread session>\n+ delta: ledger crew hiện tại, quyết định của thread khác từ lúc park\n(cache còn ấm: còn ${60 - m} phút)`,
     fresh: m => `> 60 phút → FORK MỚI từ captain hiện tại\nclaude --resume <captain> --fork-session --session-id <new>\n+ các decision record trước của chủ đề này\n(cache đã nguội ${m - 60} phút — chi phí như nhau, không bị cũ)`,
     steps: [

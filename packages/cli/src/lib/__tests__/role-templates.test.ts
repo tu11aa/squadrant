@@ -75,6 +75,10 @@ describe("generic role templates — audit", () => {
     expect(body).toMatch(/squadrant thread open/);
     expect(body).toMatch(/squadrant thread resume/);
     expect(body).toMatch(/override/);
+    expect(body).toMatch(/Second thread trigger/);
+    expect(body).toMatch(/Move this to thread/);
+    expect(body).toMatch(/sync-818/);
+    expect(body).toMatch(/Operator answered \(in captain pane\)/);
   });
 
   it("captain.generic.md uses the squadrant crew spawn primitive", () => {
