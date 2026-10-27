@@ -68,22 +68,22 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:571
   - packages/cli/src/squadrantd.ts:602
   - packages/core/src/auto-gate.ts:100
-  - packages/core/src/crew-signal.ts:64
+  - packages/core/src/crew-signal.ts:65
   - packages/core/src/daemon/interactive-probe.ts:202
   - packages/core/src/daemon/reduce.ts:740
 - `task.review`
-  - packages/core/src/crew-signal.ts:68
+  - packages/core/src/crew-signal.ts:69
 - `task.done`
   - packages/agents/src/headless-launcher.ts:92
   - packages/cli/src/commands/crew-control.ts:286
-  - packages/core/src/crew-signal.ts:58
+  - packages/core/src/crew-signal.ts:59
   - packages/core/src/telegram/bridge.test.ts:201
 - `task.failed`
   - packages/agents/src/codex/driver.ts:122
   - packages/agents/src/codex/normalize.ts:78
   - packages/agents/src/headless-launcher.ts:79
   - packages/agents/src/headless-launcher.ts:89
-  - packages/core/src/crew-signal.ts:70
+  - packages/core/src/crew-signal.ts:71
   - packages/core/src/crew-spawn.ts:414
   - packages/core/src/daemon/interactive-probe.ts:197
   - packages/core/src/daemon/reduce.ts:877

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildSignalRequest, runCrewSignal, signalConfirmation } from "../crew-control.js";
 
 describe("buildSignalRequest", () => {
@@ -118,8 +121,9 @@ describe("runCrewSignal('review') (#599)", () => {
   beforeEach(() => {
     process.env.SQUADRANT_CREW_TASK_ID = "task-xyz";
     process.env.SQUADRANT_CREW_PROJECT = "alpha";
+    process.env.SQUADRANT_STATE_DIR = mkdtempSync(join(tmpdir(), "sq-cs-")); // refused signals forward to the captain mailbox
   });
-  afterEach(() => { process.env = { ...SAVED }; });
+  afterEach(() => { rmSync(process.env.SQUADRANT_STATE_DIR!, { recursive: true, force: true }); process.env = { ...SAVED }; });
 
   it("status check passes (like blocked) — 'review' is not a terminal state, so the signal always emits", async () => {
     const call = vi.fn()
