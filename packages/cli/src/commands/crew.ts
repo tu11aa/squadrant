@@ -146,7 +146,7 @@ export async function runCrewSpawn(input: CrewSpawnInput): Promise<{ title?: str
   });
 }
 
-export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean }> {
+export async function runCrewSend(project: string, name: string, message: string, opts?: { force?: boolean }): Promise<{ reopened: boolean; stateWarning?: string }> {
   // #1051: a compact queued/running on this crew goes first; the message lands after it.
   await waitForCrewCompact(project, name, { call: squadrantdCall, log: (m) => console.error(chalk.dim(m)) });
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
@@ -421,10 +421,14 @@ crewCommand
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
       const hint = await crewSendHint(project, name);
       if (hint) console.log(chalk.yellow(`⚠ ${hint}`));
-      const { reopened } = await runCrewSend(project, name, resolvedMessage, opts);
+      const { reopened, stateWarning } = await runCrewSend(project, name, resolvedMessage, opts);
       // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
       // gave the captain no way to tell a stale terminal record was revived.
       if (reopened) console.log(chalk.cyan(`↻ Task was terminal — reopened to working`));
+      if (stateWarning) {
+        console.error(chalk.yellow(`⚠ Sent to ${project}:${name}, but ${stateWarning}`));
+        process.exit(1);
+      }
       console.log(chalk.green(`✔ Sent to ${project}:${name}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
@@ -473,7 +477,8 @@ crewCommand
       if (closed) {
         console.log(chalk.green(`✔ Answered ${project}:${name} with ${selected.index}. "${selected.label}" — prompt closed`));
       } else {
-        console.log(chalk.yellow(`⚠ Sent ${selected.index}. "${selected.label}" to ${project}:${name}, but the prompt still appears open — read it again with 'squadrant crew read ${project} ${name}'`));
+        console.error(chalk.yellow(`⚠ Sent ${selected.index}. "${selected.label}" to ${project}:${name}, but the prompt still appears open — read it again with 'squadrant crew read ${project} ${name}'`));
+        process.exit(1);
       }
     } catch (err) {
       console.error(chalk.red((err as Error).message));

@@ -168,7 +168,14 @@ export async function runCrewSignal(
   }
   if (signal === "review") rmSync(reviewNoticeMarker(taskId), { force: true });
   const req = buildSignalRequest(signal, { ...o, writeResult: o.writeResult ?? defaultWriteResult });
-  await deps.call(req);
+  // The daemon answers an event with the post-reduce record: a receipt. If it did not land in the state this
+  // signal asks for (a race past the pre-check above), the caller must not see success (#1069). A repeat
+  // `blocked` stays a silent no-op (#174), so only done/failed/review are checked.
+  const after = (await deps.call(req)) as TaskRecord | null | undefined;
+  const wanted = { done: "done", failed: "failed", review: "review" }[signal as string];
+  if (wanted && after && typeof after.state === "string" && after.state !== wanted) {
+    throw new Error(`Signal '${signal}' not applied: task ${taskId} is in state '${after.state}'. Ask the captain to 'squadrant crew send' if it needs to continue.`);
+  }
 }
 
 const reviewNoticeMarker = (taskId: string) => join(stateRoot(), "_review-done-notified", taskId);

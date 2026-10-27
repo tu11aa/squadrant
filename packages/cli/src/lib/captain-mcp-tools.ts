@@ -95,7 +95,8 @@ export function createCaptainTools(): CaptainTool[] {
       async run(a, p, d) {
         const name = need(a, "name");
         const hint = await d.crewSendHint(p, name);
-        const { reopened } = await d.runCrewSend(p, name, need(a, "message"));
+        const { reopened, stateWarning } = await d.runCrewSend(p, name, need(a, "message"));
+        if (stateWarning) throw new Error(`Sent to ${p}:${name}, but ${stateWarning}`);
         return [hint ? `⚠ ${hint}` : "", reopened ? "↻ Task was terminal — reopened to working" : "", `✔ Sent to ${p}:${name}`].filter(Boolean).join("\n");
       },
     },
@@ -205,7 +206,7 @@ export function createCaptainTools(): CaptainTool[] {
       fields: { project: PROJECT, name: NAME("Side session"), message: { type: "string", description: "Message to send." } },
       async run(a, p, d) {
         await d.runSideSend(p, need(a, "name"), need(a, "message"));
-        return `✔ Sent to ${p}:${a.name}`;
+        return `✔ Sent to ${p}:${a.name} (pasted into its pane; receipt not confirmed)`;
       },
     },
     {

@@ -150,7 +150,7 @@ export async function runThreadPark(project: string, id: string, decisionRaw?: s
   if (decisionRaw === undefined) {
     const ws = await resolveCaptainWorkspace(project);
     await requestPark(project, id, { stateRoot: root, runtime: ws.runtime, workspaceId: ws.workspaceId });
-    return `✔ Asked thread '${id}' to write its decision record and park.`;
+    return `✔ Asked thread '${id}' to write its decision record and park (pasted into its pane; receipt not confirmed).`;
   }
   const now = new Date();
   const decision = parseDecisionRecord(decisionRaw, now.toISOString());

@@ -15,7 +15,7 @@ import { buildCaptainChannels } from "../lib/captain-channel-factory.js";
 
 /** Pure so it is testable without a socket. */
 export function formatPingResult(project: string, outcome?: DeliveryOutcome): string {
-  if (!outcome) return `✔ Pinged '${project}'`;
+  if (!outcome) return `✔ Queued for '${project}' (mailbox — not yet delivered)`;
   switch (outcome.status) {
     case "accepted":
       return outcome.confirmed === false
@@ -28,7 +28,7 @@ export function formatPingResult(project: string, outcome?: DeliveryOutcome): st
     case "gone":
       return `⚠ Captain for '${project}' is not reachable — fell back to its pane mailbox`;
     case "unsupported":
-      return `✔ Pinged '${project}'`;
+      return `✔ Queued for '${project}' (mailbox — not yet delivered)`;
   }
 }
 

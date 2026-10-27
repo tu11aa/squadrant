@@ -123,3 +123,18 @@ describe("done while in review is not a success (#1069)", () => {
     expect(await entries()).toHaveLength(0);
   });
 });
+
+describe("signal receipt (#1069)", () => {
+  const receipt = (state: string) => vi.fn(async (req: any) => (req.kind === "status" ? { id: "11111111-aaaa", state: "working" } : { id: "11111111-aaaa", state }));
+
+  it("done that the daemon answers with a non-done record is an error", async () => {
+    const r = await callCrewSignalTool("crew_signal_done", {}, { call: receipt("stalled") });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not applied");
+  });
+
+  it("a repeat blocked stays a silent success (#174)", async () => {
+    const r = await callCrewSignalTool("crew_signal_blocked", { question: "q" }, { call: receipt("blocked") });
+    expect(r.isError).toBe(false);
+  });
+});
