@@ -20,26 +20,26 @@ export const CREW_SIGNAL_TOOLS: CrewSignalTool[] = [
     name: "crew_signal_done",
     state: "done",
     description:
-      "Declare this crew task done, after your own settle-check (work committed, git status clean). Same as `squadrant crew signal done`. Errors if the task is already terminal.",
+      "Main session only — Agent-tool subagents must not call this; return your result to the parent. Declare this crew task done, after your own settle-check (work committed, git status clean). Same as `squadrant crew signal done`. Errors if the task is already terminal.",
     fields: { message: "One-line summary for the captain. Append `Rules: <id>, <id>` if you applied knowledge-base rules.", ...IDS },
   },
   {
     name: "crew_signal_blocked",
     state: "blocked",
-    description: "Tell the captain you are blocked and need a decision, then wait. Same as `squadrant crew signal blocked`.",
+    description: "Main session only — subagents return their result to the parent instead. Tell the captain you are blocked and need a decision, then wait. Same as `squadrant crew signal blocked`.",
     fields: { question: "The question for the captain.", ...IDS },
   },
   {
     name: "crew_signal_failed",
     state: "failed",
-    description: "Declare this crew task failed after an unrecoverable error. Same as `squadrant crew signal failed`.",
+    description: "Main session only — subagents return their result to the parent instead. Declare this crew task failed after an unrecoverable error. Same as `squadrant crew signal failed`.",
     fields: { error: "Why it failed.", ...IDS },
   },
   {
     name: "crew_signal_review",
     state: "review",
     description:
-      "Checkpoint for captain review: work is committed on the crew branch and awaits a diff review before push + PR. Not terminal. Same as `squadrant crew signal review`.",
+      "Main session only — subagents return their result to the parent instead. Checkpoint for captain review: work is committed on the crew branch and awaits a diff review before push + PR. Not terminal. Same as `squadrant crew signal review`.",
     fields: { message: "Review summary.", ...IDS },
   },
 ];
