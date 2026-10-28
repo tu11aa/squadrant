@@ -9,6 +9,13 @@ import {
 } from "../knowledge/index.js";
 import { serializeTrait } from "../knowledge/profile.js";
 
+describe("searchRules rationale", () => {
+  it("an item whose summary is not part of its body is searched over its whole body", () => {
+    const item = { id: "prof.one-branch", status: "active", summary: "Early UI screens go on one tmp branch", body: "Put mockups on a scratch branch first." };
+    expect(searchRules([item], "mockups").map((h) => h.rule.id)).toEqual(["prof.one-branch"]);
+  });
+});
+
 let root: string;
 const NOW = new Date("2026-10-28T01:02:03Z");
 

@@ -93,9 +93,11 @@ describe("knowledge search", () => {
     runKnowledgeSearch("tabs width", opts("projA", { domain: "rules" }), cfgPath);
     expect(events()[0]).toMatchObject({ itemId: "coding.tabs", kb: "acme", level: "project", domain: "rules", category: "coding" });
   });
-  it("no hits → one unattributed event and an explicit line", () => {
+  it("no hits → one unattributed event per searched domain and an explicit line", () => {
     expect(renderMergedSearch(runKnowledgeSearch("keycloak", opts("projA"), cfgPath), {})).toEqual(["(no matching items)"]);
-    expect(events()).toMatchObject([{ event: "item.searched", itemId: "", kb: "acme", query: "keycloak" }]);
+    expect(events().map((e: Record<string, unknown>) => [e.domain, e.kb, e.itemId, e.query])).toEqual([
+      ["profile", "_user", "", "keycloak"], ["rules", "acme", "", "keycloak"], ["decisions", "acme", "", "keycloak"], ["wiki", "acme", "", "keycloak"],
+    ]);
   });
 });
 

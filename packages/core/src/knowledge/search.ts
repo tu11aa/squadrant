@@ -11,8 +11,8 @@ export const LIVE_ITEM_STATUSES: readonly string[] = ["active", "stale", "accept
 
 const lower = (xs: string[] | undefined) => (xs ?? []).map((x) => x.toLowerCase());
 
-/** Rationale = body minus its first paragraph (the statement). */
-const rationaleOf = (rule: Matchable) => rule.body.slice(itemHeadline(rule).length).toLowerCase();
+/** Rationale = a rule's body minus its first paragraph (the statement); an item's summary is not part of its body, so all of it. */
+const rationaleOf = (rule: Matchable) => (rule.statement === undefined ? rule.body : rule.body.slice(rule.statement.length)).toLowerCase();
 
 /**
  * Rank rules (or any KB items) for a query. Hits in id / keywords / expanded / statement outweigh body (rationale) hits.

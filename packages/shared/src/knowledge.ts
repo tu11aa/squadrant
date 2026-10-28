@@ -124,6 +124,18 @@ export interface KnowledgeKbConfig {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStrArr = (v: unknown): boolean => Array.isArray(v) && v.every((x) => typeof x === "string");
 
+/** Problems with a `triggers` block (rules and every other domain share the shape). */
+function triggerProblems(t: unknown): string[] {
+  if (t === undefined) return [];
+  if (!isObj(t)) return ["triggers must be an object"];
+  const p: string[] = [];
+  for (const k of ["globs", "keywords", "expanded"] as const) {
+    if (t[k] !== undefined && !isStrArr(t[k])) p.push(`triggers.${k} must be a string array`);
+  }
+  if (t.when !== undefined && typeof t.when !== "string") p.push("triggers.when must be a string");
+  return p;
+}
+
 export function validateRuleFrontmatter(fm: unknown): string[] {
   if (!isObj(fm)) return ["frontmatter must be an object"];
   const p: string[] = [];
@@ -134,15 +146,7 @@ export function validateRuleFrontmatter(fm: unknown): string[] {
   if (fm.approvedBy !== undefined && !RULE_APPROVERS.includes(fm.approvedBy as RuleApprover)) {
     p.push(`approvedBy must be one of ${RULE_APPROVERS.join("|")}`);
   }
-  if (fm.triggers !== undefined) {
-    if (!isObj(fm.triggers)) p.push("triggers must be an object");
-    else {
-      for (const k of ["globs", "keywords", "expanded"] as const) {
-        if (fm.triggers[k] !== undefined && !isStrArr(fm.triggers[k])) p.push(`triggers.${k} must be a string array`);
-      }
-      if (fm.triggers.when !== undefined && typeof fm.triggers.when !== "string") p.push("triggers.when must be a string");
-    }
-  }
+  p.push(...triggerProblems(fm.triggers));
   for (const k of ["supersedes", "conflictsWith"] as const) {
     if (fm[k] !== undefined && !isStrArr(fm[k])) p.push(`${k} must be a string array`);
   }
@@ -297,6 +301,7 @@ export function validateItemCommon(fm: Record<string, unknown>): string[] {
   if (fm.level !== undefined && fm.level !== "shared" && fm.level !== "project") p.push("level must be shared|project");
   if (!Array.isArray(fm.sources) || !fm.sources.every((s) => typeof s === "string")) p.push("sources must be a string array");
   for (const k of ["created", "updated"] as const) if (typeof fm[k] !== "string" || !DATE_RE.test(fm[k] as string)) p.push(`${k} must be a YYYY-MM-DD date`);
+  p.push(...triggerProblems(fm.triggers));
   return p;
 }
 
@@ -328,7 +333,8 @@ export function resolveKnowledgeHome(cfg: SquadrantConfig, project: string): Kno
   if (pc.group) {
     const kb = cfg.groups?.[pc.group]?.kb;
     if (kb) return { kind: "kb", kb, dir: kbProjectDir(cfg, kb, project) };
-    return { kind: "pending-create", kb: pc.group, dir: kbProjectDir(cfg, pc.group, project) };
+    // A KB already registered under the group's name (e.g. after `knowledge init <group>`) is that home, as for `personal`.
+    return { kind: kbConfigs(cfg)[pc.group] ? "kb" : "pending-create", kb: pc.group, dir: kbProjectDir(cfg, pc.group, project) };
   }
   const kind = kbConfigs(cfg)[PERSONAL_KB] ? "kb" : "pending-create";
   return { kind, kb: PERSONAL_KB, dir: kbProjectDir(cfg, PERSONAL_KB, project) };

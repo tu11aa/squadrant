@@ -195,6 +195,12 @@ describe("validateKbItems (D3/D4 + common fields, incl. _proposed/)", () => {
     expect(p["kb/acme/shared/rules/dec/dec.cat.md"]).toEqual([expect.stringContaining("category 'dec' is reserved"), expect.stringContaining("reserved prefix 'dec.'")]);
     expect(p["kb/acme/projects/projA/rules/prof.x.md"]).toEqual([expect.stringContaining("reserved prefix 'prof.'")]);
   });
+  it("a decision with malformed triggers is rejected at load, so search never sees it", () => {
+    put("kb/acme/shared/decisions/dec.bad-triggers.md", decision("bad-triggers", "B", "triggers:\n  keywords: postgres\n"));
+    const res = loadLayerDomain(acmeShared(), "decisions");
+    expect(res.items.map((i) => i.id)).not.toContain("dec.bad-triggers");
+    expect(res.errors).toEqual([expect.objectContaining({ problems: ["triggers.keywords must be a string array"] })]);
+  });
   it("the loader rejects what validation flags, so a D3 decision never goes live", () => {
     put("kb/acme/shared/decisions/dec.wrong-folder.md", decision("wrong-folder", "W").replace("domain: decisions", "domain: wiki"));
     const res = loadLayerDomain(acmeShared(), "decisions");

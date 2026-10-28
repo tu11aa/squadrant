@@ -46,6 +46,12 @@ describe("resolveKnowledgeHome (D5)", () => {
     expect(h).toMatchObject({ kind: "pending-create", kb: "loose" });
     expect(h!.dir("rules")).toBe(path.join(kbRoot("loose"), "projects", "projD", "rules"));
   });
+  it("rule 3: a KB already registered under the group's name is the home", () => {
+    const c = cfg();
+    c.knowledgeBases = { loose: { path: "/kbs/loose" } };
+    expect(resolveKnowledgeHome(c, "projD")).toMatchObject({ kind: "kb", kb: "loose" });
+    expect(homeKb(c, "projD")).toBe("loose");
+  });
   it("rule 4: no group → personal, pending-create until knowledgeBases.personal is configured", () => {
     const c = cfg();
     expect(resolveKnowledgeHome(c, "projE")).toMatchObject({ kind: "pending-create", kb: "personal" });

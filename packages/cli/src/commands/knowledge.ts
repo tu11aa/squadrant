@@ -18,11 +18,11 @@ import {
   resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
   readAuditRecords, DELIVERY_EVENTS, OUTCOME_SOURCES, type OutcomeSource,
   allKbNames, auditHealth, auditNormalizer, defaultAuditDir, knownItems, loadKbItems, loadLayerDomain,
+  resolveReadSet, searchRules, itemAuditScope, LIVE_ITEM_STATUSES, type SearchHit,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
 import type { Rule, RuleModality } from "@squadrant/shared";
 import { resolveRulesProject, parseLimit } from "./rules.js";
-import { resolveReadSet, searchRules, itemAuditScope, LIVE_ITEM_STATUSES, type SearchHit } from "@squadrant/core";
 import { knowledgeDoctorCommand } from "./knowledge-doctor.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
@@ -598,6 +598,9 @@ export function renderMergedList(v: MergedView): string[] {
   return rows.sort((a, b) => a.id.localeCompare(b.id)).map((r) => r.l);
 }
 
+const searchedDomains = (v: MergedView, env?: NodeJS.ProcessEnv): KbDomain[] =>
+  v.kbDomain ? [v.kbDomain] : [...new Set(knowledgeReadSet(v.cfg, v.project, env).flatMap((l) => l.domains))];
+
 export function runKnowledgeSearch(query: string, o: MergedOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit<KbItem>[] {
   const v = loadMergedView(o, configPath);
   // The view is already status-filtered, so every status it kept is searchable.
@@ -605,7 +608,9 @@ export function runKnowledgeSearch(query: string, o: MergedOpts, configPath = DE
   const shown = hits.slice(0, parseLimit(o.limit));
   appendAudit(shown.length
     ? shown.map((h) => ({ ...itemAuditScope(h.rule), project: v.project, itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
-    : [{ kb: homeAuditKb(v.cfg, v.project), level: "project", project: v.project, domain: v.kbDomain ?? "", itemId: "", event: "item.searched", query }], { env: o.env, ...o.audit });
+    // No hits: one unattributed read per searched domain, so each domain's reads/month stay honest (profile reads belong to _user).
+    : searchedDomains(v, o.env).map((d) => ({ kb: d === "profile" ? USER_KB : homeAuditKb(v.cfg, v.project), level: d === "profile" ? "shared" : "project", project: v.project, domain: d, itemId: "", event: "item.searched" as const, query })),
+    { env: o.env, ...o.audit });
   return hits;
 }
 

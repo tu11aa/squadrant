@@ -75,7 +75,7 @@
     </div>
     <div class="card">
       <strong>Reserved id prefixes (D4)</strong>
-      <p class="dim"><code>dec.</code> decisions · <code>wiki.</code> wiki · <code>prof.</code> profile · rules keep <code>&lt;category&gt;.&lt;slug&gt;</code>. Ids are unique across domains, so the seen set, citations and scores key on the bare id. <code>knowledge doctor</code> checks both rules.</p>
+      <p class="dim"><code>dec.</code> decisions · <code>wiki.</code> wiki · <code>prof.</code> profile · rules keep <code>&lt;category&gt;.&lt;slug&gt;</code>. Ids are unique across domains, so the session seen set and citations key on the bare id. <code>knowledge doctor</code> checks both rules.</p>
     </div>
   </div>
 
@@ -141,7 +141,7 @@ const NORM = [
   { raw: '{"kb":"","level":"project","project":"projA","domain":"rules","itemId":"coding.x","event":"item.shown"}', out: '{"kb":"acme","level":"project","project":"projA",…}', why: 'kb "" on a project-level line → that project\'s home KB, so the event is scored with acme.' },
   { raw: '{"kb":"","level":"project","project":"lone","domain":"rules","event":"item.searched"}', out: 'kb "" kept → shown under "(no home)" in knowledge stats', why: "The project has no home yet: shown, never dropped, and counted by knowledge doctor (C4)." },
   { raw: '{"kb":"_user","level":"shared","domain":"profile","itemId":"prof.terse","event":"item.surfaced"}', out: "unchanged → scored under _user / profile", why: "Profile events were always logged but no report showed them. knowledge stats now covers _user." },
-  { raw: '{"kb":"t","level":"group","domain":"rules","itemId":"coding.commitlint","event":"item.applied"}', out: "ignored by scoring; counted: audit log: 1 lines ignored, kb unknown to config: \"t\" 1", why: "No config or project ever had kb \"t\": a test run that wrote the real log before the test env was hermetic." },
+  { raw: '{"kb":"t","level":"group","domain":"rules","itemId":"coding.commitlint","event":"item.applied"}', out: "ignored by scoring; counted: audit log: 1 lines ignored, kb unknown to config: \"t\" 1", why: "kb \"t\" is no KB, _user or project home in the config: a test run that wrote the real log before the test env was hermetic. Counted by knowledge doctor, never silently dropped." },
 ];
 let ni = 0;
 const normOut = document.getElementById("normOut"), barFill = document.getElementById("barFill");

@@ -699,7 +699,7 @@ Every KB holds four **domains**: `rules`, `decisions`, `wiki`, `profile` (profil
 | Command | Purpose |
 |---|---|
 | `knowledge list [--project p] [--domain d] [--category c] [--level shared\|project] [--all]` | every live item of the read set, one line each: `[origin] domain id: summary`; an overridden item shows as `[acme/shared → overridden by projA]`. Default statuses: active, stale, accepted; `--all` shows every status |
-| `knowledge search <terms…> [--project p] [--domain d] [--limit n] [--all]` | the rules scorer over every domain of the read set; logs `item.searched` per printed hit |
+| `knowledge search <terms…> [--project p] [--domain d] [--category c] [--limit n] [--all]` | the rules scorer over every domain of the read set; logs `item.searched` per printed hit (no hits: one empty event per searched domain) |
 | `knowledge show <ids…> [--project p] [--all]` | full item with origin, what it overrides and its sources; logs `item.shown` |
 | `knowledge doctor [kb]` | default every configured KB plus `_user`: checks every item file of every domain folder (incl. `_proposed/`) for D3, D4 and the common fields (`id`, `status`, `sources`, `created`, `updated` for decisions/wiki), rebuilds a missing index cache, hints at a leftover `index.json`, and reports audit-log health (lines of an unknown `kb`, lines with no home). Read-only apart from the cache; exits non-zero on item failures |
 
@@ -1190,7 +1190,7 @@ Every KB push and pull is logged, so you can tell whether an item is ever surfac
 - `item.searched` (`rules search`: one event per printed hit, attributed to that rule's KB and id, query truncated to 200 chars; a search with no hits logs one event with an empty `itemId`) and `item.shown` (`rules show`).
 - Write events (`item.proposed`/`applied`/`rejected`/…) from extraction and review also use `domain:"rules"` (the KB domain, not the rule's subject domain). They count toward domain writes only and never make an id a stats row.
 - Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command.
-- **Older lines are normalized on read, never rewritten** (#979): a rule category in `domain` reads as `domain: rules` plus that `category`; `level: "group"` reads as `shared`; `kb: ""` with a project reads as that project's home KB. Lines whose `kb` no config or project ever had (e.g. `"t"` from test runs before the test env was made hermetic) are ignored by scoring and counted by `knowledge doctor`. Tests run with `SQUADRANT_AUDIT_DIR` set to a temp dir; a guard in `test/setup-env.ts` fails any test file that leaves it unset or outside the temp dir.
+- **Older lines are normalized on read, never rewritten** (#979): a rule category in `domain` reads as `domain: rules` plus that `category`; `level: "group"` reads as `shared`; `kb: ""` with a project reads as that project's home KB. Lines whose `kb` is not a KB, `_user` or project home in the current config (e.g. `"t"` from test runs before the test env was made hermetic, or a KB since removed from config) are ignored by scoring and counted by `knowledge doctor`, never dropped silently. Tests run with `SQUADRANT_AUDIT_DIR` set to a temp dir; a guard in `test/setup-env.ts` fails any test file that leaves it unset or outside the temp dir.
 
 ### Citations, feedback and scores (#901)
 
