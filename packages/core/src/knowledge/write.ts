@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { kbConfigs, kbPath, subscribedKbs, USER_KB, type SquadrantConfig } from "@squadrant/shared";
+import { kbConfigs, kbPath, projectRulesHome, subscribedKbs, USER_KB, type SquadrantConfig } from "@squadrant/shared";
 import { ensureKbGitignore, ensureKbRuntimeIgnores, KB_RUNTIME_IGNORES } from "./migrate.js";
 
 /** KB git calls run on the daemon loop too: bounded, and never blocked by a signing prompt. */
@@ -57,18 +57,23 @@ export function kbSession(env: NodeJS.ProcessEnv = process.env): string {
 const isProposal = (p: string) => p.split(/[\\/]/).includes(PROPOSED);
 const label = (c: KbCommit) => (c.trailers.items.length === 1 ? c.trailers.items[0] : c.message);
 
-/** Repo-relative paths with a change git can see (ignored files never show up); no `rels` ⇒ the whole repo. */
-function changedPaths(root: string, rels: string[]): string[] {
+/**
+ * Repo-relative paths with a change git can see (ignored files never show up); no `rels` ⇒ the whole repo.
+ * `unstaged` are the ones whose working tree differs from the index (they need `git add`).
+ */
+function statusPaths(root: string, rels: string[]): { all: string[]; unstaged: string[] } {
   const out = gitRun(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...rels]).split("\0");
-  const paths: string[] = [];
+  const all: string[] = [], unstaged: string[] = [];
   for (let i = 0; i < out.length; i++) {
     const e = out[i];
     if (e.length < 4) continue;
-    paths.push(e.slice(3));
-    if (e[0] === "R" || e[0] === "C") i++; // the next field is the rename source
+    all.push(e.slice(3));
+    if (e[1] !== " ") unstaged.push(e.slice(3));
+    if (e[0] === "R" || e[0] === "C") all.push(out[++i]); // the next field is the source: its deletion belongs to the same change
   }
-  return [...new Set(paths)];
+  return { all: [...new Set(all)], unstaged: [...new Set(unstaged)] };
 }
+const changedPaths = (root: string, rels: string[]) => statusPaths(root, rels).all;
 
 function relPaths(root: string, paths: string[]): string[] | string {
   const base = path.resolve(root);
@@ -84,7 +89,7 @@ function relPaths(root: string, paths: string[]): string[] | string {
 function withLockRetry<T>(fn: () => T): T {
   for (let attempt = 0; ; attempt++) {
     try { return fn(); } catch (err) {
-      if (/index\.lock/.test(gitErrorLine(err)) && attempt < 2) { sleep(200); continue; }
+      if (/index\.lock|cannot lock ref/.test(gitErrorLine(err)) && attempt < 2) { sleep(200); continue; }
       throw err;
     }
   }
@@ -106,9 +111,9 @@ export function commitKbPaths(kbRoot: string, paths: string[], c: KbCommit): KbC
   if (!rels.length) return { ok: true, committed: false };
   try {
     return withLockRetry(() => {
-      const changed = changedPaths(kbRoot, rels);
+      const { all: changed, unstaged } = statusPaths(kbRoot, rels);
       if (!changed.length) return { ok: true, committed: false };
-      gitRun(kbRoot, ["add", "-A", "--", ...changed]);
+      if (unstaged.length) gitRun(kbRoot, ["add", "-A", "--", ...unstaged]);
       gitRun(kbRoot, ["commit", "-q", "--only", "-m", c.message, "-m", trailerText(c.trailers), "--", ...changed]);
       return { ok: true, committed: true };
     });
@@ -129,19 +134,21 @@ export function untrackKbPaths(kbRoot: string, untrack: string[], add: string[],
   const tmpIndex = path.join(os.tmpdir(), `squadrant-kb-index-${crypto.randomBytes(6).toString("hex")}`);
   const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
   try {
-    return withLockRetry(() => {
+    const committed = withLockRetry(() => {
       const head = gitRun(kbRoot, ["rev-parse", "HEAD"]).trim();
       gitRun(kbRoot, ["read-tree", head], env);
       if (untrack.length) gitRun(kbRoot, ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ...rels.slice(0, untrack.length)], env);
       if (add.length) gitRun(kbRoot, ["add", "-A", "--", ...rels.slice(untrack.length)], env);
       const tree = gitRun(kbRoot, ["write-tree"], env).trim();
-      if (tree === gitRun(kbRoot, ["rev-parse", `${head}^{tree}`]).trim()) return { ok: true, committed: false };
+      if (tree === gitRun(kbRoot, ["rev-parse", `${head}^{tree}`]).trim()) return false;
       const commit = gitRun(kbRoot, ["commit-tree", tree, "-p", head, "-m", c.message, "-m", trailerText(c.trailers)]).trim();
       gitRun(kbRoot, ["update-ref", "-m", c.message, "HEAD", commit, head]);
-      // Bring the real index in line with the new HEAD for exactly these paths.
-      gitRun(kbRoot, ["reset", "-q", "HEAD", "--", ...rels]);
-      return { ok: true, committed: true };
+      return true;
     });
+    // Bring the real index in line with HEAD for exactly these paths, also when nothing was committed
+    // (a never-committed file staged but not in HEAD, e.g. after `git add -f index.json`).
+    withLockRetry(() => gitRun(kbRoot, ["reset", "-q", "HEAD", "--", ...rels]));
+    return { ok: true, committed };
   } catch (err) {
     return { ok: false, committed: false, warning: `knowledge: untrack commit failed in ${kbRoot} (${gitErrorLine(err)}); nothing was changed in git` };
   } finally {
@@ -180,16 +187,18 @@ export function commitKbFiles(
   cfg: SquadrantConfig, files: Iterable<string>, c: { message: string; trailers: Omit<KbTrailers, "items" | "level"> }, extraRoots: string[] = [],
 ): string[] {
   const byRoot = new Map<string, string[]>();
+  const warnings: string[] = [];
+  const docsHomes = Object.entries(cfg.projects ?? {}).filter(([, pc]) => pc.knowledgeHome === "repo:docs").map(([p]) => path.resolve(projectRulesHome(cfg, p)!));
   for (const f of files) {
     const root = kbRootOf(cfg, f, extraRoots);
     if (root) byRoot.set(root, [...(byRoot.get(root) ?? []), f]);
+    else if (!docsHomes.some((d) => inside(path.resolve(f), d))) warnings.push(`knowledge: ${f} is in no known KB and no repo:docs home; not committed`);
   }
-  const warnings: string[] = [];
   for (const [root, list] of byRoot) {
-    const levels = new Set(list.map((f) => kbLevelOf(root, f)));
+    // One operation touches either shared items or one project's overlays, never both.
     const r = commitKbPaths(root, list, {
       message: c.message,
-      trailers: { ...c.trailers, items: list.map((f) => path.basename(f, ".md")), level: levels.size === 1 ? [...levels][0] : "mixed" },
+      trailers: { ...c.trailers, items: list.map((f) => path.basename(f, ".md")), level: kbLevelOf(root, list[0]) },
     });
     if (r.warning) warnings.push(r.warning);
   }
@@ -221,7 +230,7 @@ export function checkKbRepo(kb: string, root: string): KbRepoCheck {
   try { lines = fs.readFileSync(path.join(root, ".gitignore"), "utf8").split("\n").map((l) => l.trim()); } catch { /* none */ }
   res.missingIgnores = KB_RUNTIME_IGNORES.filter((l) => !lines.includes(l));
   res.trackedNeverCommitted = gitRun(root, ["ls-files", "-z"]).split("\0").filter((f) => f && neverCommitted(f)).sort();
-  res.uncommitted = changedPaths(root, []).filter((f) => f !== ".gitignore" && !neverCommitted(f)).sort();
+  res.uncommitted = changedPaths(root, []).filter((f) => !neverCommitted(f)).sort();
   return res;
 }
 

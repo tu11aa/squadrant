@@ -51,20 +51,20 @@ export const knowledgeDoctorCommand = new Command("doctor")
   .option("--fix", "ensure .gitignore and untrack never-committed files (commits that); asks before committing other uncommitted files")
   .action(async (kb: string | undefined, o: { fix?: boolean }) => {
     const interactive = !!o.fix && !!process.stdin.isTTY && !process.env.SQUADRANT_CREW_TASK_ID;
-    let answers: Map<string, boolean> | undefined;
+    let approved: Map<string, Set<string>> | undefined;
     if (interactive) {
-      // Ask before fixing (fixKbRepo's confirm is synchronous): one y/n per KB with outside edits.
-      answers = new Map();
+      // Ask before fixing (fixKbRepo's confirm is synchronous): one y/n per KB; only the files shown are committed.
+      approved = new Map();
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       try {
         for (const e of runKnowledgeDoctor(kb)) {
           if (!e.check.uncommitted.length) continue;
           console.log(`${e.check.kb}: changed outside a squadrant write:\n${e.check.uncommitted.map((f) => `  ${f}`).join("\n")}`);
-          answers.set(e.check.kb, (await rl.question("commit them, one commit each (Approved-by: operator)? [y/N] ")).trim().toLowerCase() === "y");
+          if ((await rl.question("commit them, one commit each (Approved-by: operator)? [y/N] ")).trim().toLowerCase() === "y") approved.set(e.check.kb, new Set(e.check.uncommitted));
         }
       } finally { rl.close(); }
     }
-    const { lines, ok } = renderKbDoctor(runKnowledgeDoctor(kb, { fix: o.fix, confirm: answers && ((k) => answers!.get(k) === true) }));
+    const { lines, ok } = renderKbDoctor(runKnowledgeDoctor(kb, { fix: o.fix, confirm: approved && ((k, files) => files.every((f) => approved!.get(k)?.has(f))) }));
     for (const l of lines) console.log(l);
     if (!ok) process.exitCode = 1;
   });

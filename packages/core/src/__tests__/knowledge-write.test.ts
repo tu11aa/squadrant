@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
-  appendVerdict, applyCandidates, applyDecisions, kbRulesDir, planIngest, type ReviewContext, checkKbRepo, checkOverrides, commitKbFiles, commitKbPaths, ensureGitRepo, ensureKbGitignore, fixKbRepo, kbRootOf, readVerdicts,
+  appendVerdict, applyCandidates, applyDecisions, kbRulesDir, planIngest, type Candidate, type ReviewContext, checkKbRepo, checkOverrides, commitKbFiles, commitKbPaths, ensureGitRepo, ensureKbGitignore, fixKbRepo, kbRootOf, readVerdicts,
   KB_RUNTIME_IGNORES,
 } from "../knowledge/index.js";
 
@@ -139,6 +139,12 @@ describe("commitKbFiles: owning KB and repo:docs (D6)", () => {
     expect(commits(docs)).toBe(before);
     expect(git(docs, "status", "--porcelain", "--untracked-files=all")).toContain("docs/rules/coding/coding.o.md");
   });
+  it("warns about a file in no known KB and no repo:docs home instead of skipping it silently", () => {
+    const cfg = cfgWith(newKb("t"), newKb("docs-repo"));
+    const stray = path.join(root, "stray/rules/x.md");
+    put(stray, "x");
+    expect(commitKbFiles(cfg, [stray], { message: "m", trailers: { domain: "rules", session: "-", approvedBy: "auto" } })[0]).toMatch(/no known KB/);
+  });
   it("checkOverrides stamps the baseline: committed in a KB overlay, a working-tree diff for repo:docs", () => {
     const kb = newKb("t");
     const docs = newKb("docs-repo");
@@ -219,6 +225,26 @@ describe("knowledge doctor (C3)", () => {
     expect(msg).toContain("Domain: rules\nItem: coding.a\nLevel: shared\nSession: -\nApproved-by: operator");
     expect(git(kb, "log", "-2", "--format=%B")).toContain("Domain: rules\nItem: coding.o\nLevel: project");
   });
+  it("--fix clears a never-committed file that is staged but not in HEAD; an uncommitted .gitignore is reported", () => {
+    const kb = newKb();
+    put(path.join(kb, "index.json"), "{}");
+    git(kb, "add", "-f", "index.json");
+    fs.appendFileSync(path.join(kb, ".gitignore"), "notes.tmp\n");
+    expect(checkKbRepo("kb", kb)).toMatchObject({ trackedNeverCommitted: ["index.json"], uncommitted: [".gitignore"] });
+    fixKbRepo("kb", kb);
+    expect(checkKbRepo("kb", kb)).toMatchObject({ trackedNeverCommitted: [], uncommitted: [] });
+    expect(git(kb, "status", "--porcelain")).toBe("");
+  });
+  it("a rename commits both sides", () => {
+    const kb = newKb();
+    put(path.join(kb, "shared/rules/coding/a.md"), "a");
+    commitKbPaths(kb, ["shared/rules/coding/a.md"], { message: "add", trailers });
+    git(kb, "mv", "shared/rules/coding/a.md", "shared/rules/coding/b.md");
+    expect(checkKbRepo("kb", kb).uncommitted).toEqual(["shared/rules/coding/a.md", "shared/rules/coding/b.md"]);
+    expect(commitKbPaths(kb, ["shared/rules/coding/a.md", "shared/rules/coding/b.md"], { message: "mv", trailers }).committed).toBe(true);
+    expect(git(kb, "show", "--name-status", "--format=", "HEAD").trim()).toMatch(/^R\d*\tshared\/rules\/coding\/a\.md\tshared\/rules\/coding\/b\.md$/);
+    expect(git(kb, "status", "--porcelain")).toBe("");
+  });
   it("a KB that is not a git repo is reported, not fixed", () => {
     const kb = path.join(root, "plain");
     fs.mkdirSync(kb);
@@ -257,7 +283,7 @@ describe("two machines, one KB remote (2b-1)", () => {
     const SOURCE = "# Policy\n\nInvoices must be issued within 5 days.\n\nRefunds must be approved by finance.\n";
     const A = { id: "biz.invoice.window", statement: "Issue invoices within 5 days.", quote: "Invoices must be issued within 5 days." };
     const B = { id: "biz.refund.approval", statement: "Finance approves refunds.", quote: "Refunds must be approved by finance." };
-    const cand = (o: Record<string, unknown>) => ({ source: "raw/p.md", domain: "business", modality: "must", ...o });
+    const cand = (o: Record<string, unknown>) => ({ source: "raw/p.md", domain: "business", modality: "must", ...o }) as unknown as Candidate;
     const state = path.join(root, "state"); // a synced state dir: per-machine file names keep the machines apart
     const SOURCES = [{ path: "raw/**", priority: "company" as const }];
 

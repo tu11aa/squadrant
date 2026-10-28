@@ -251,6 +251,7 @@ function commitKbRewrites(swept: SweptFile[], repos: string[], message: string):
     for (const [file, before] of files) {
       const rel = path.relative(repo, file);
       if (ignored.has(rel)) continue;
+      if (rel.split("/").includes("_proposed")) { left.push(rel); continue; } // proposals are never committed (D7)
       let head: string | null = null;
       try { head = gitRun(repo, ["show", `HEAD:${rel}`]); } catch { /* untracked */ }
       (head === before ? clean : left).push(rel);
