@@ -3,9 +3,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import yaml from "js-yaml";
 import { kbConfigs, kbPath, resolveHome, subscribedKbs, userKbDir, USER_KB, type SquadrantConfig } from "@squadrant/shared";
+import { commitKbPaths, gitRun } from "./write.js";
 
 export const PROFILE_CORE_CAP = 3000;
 export const PROFILE_SUMMARY_MAX = 140;
@@ -180,14 +180,6 @@ function assertUserKbPlacement(cfg: SquadrantConfig, root: string, home: string)
 
 const GITIGNORE_LINE = `${PROFILE_DIR}/${PROPOSED_PROFILE_DIR}/`;
 
-/** Profile git calls run on the daemon loop too: bounded, and never blocked by a signing prompt. */
-export const PROFILE_GIT_TIMEOUT_MS = 10_000;
-
-export function gitRun(root: string, args: string[]): string {
-  return execFileSync("git", ["-C", root, "-c", "commit.gpgsign=false", ...args],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: PROFILE_GIT_TIMEOUT_MS });
-}
-
 /** Create the `_user` KB on first use: its own local git repo, proposals ignored. Never adds a remote or registers config. */
 export function ensureUserKb(cfg: SquadrantConfig, env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string {
   const root = userKbDir(cfg, env);
@@ -200,45 +192,23 @@ export function ensureUserKb(cfg: SquadrantConfig, env: NodeJS.ProcessEnv = proc
   if (fresh) gitRun(root, ["init", "-q"]);
   if (!text.split("\n").includes(GITIGNORE_LINE)) {
     fs.writeFileSync(ignore, `${text}${text && !text.endsWith("\n") ? "\n" : ""}${GITIGNORE_LINE}\n`);
-    try {
-      gitRun(root, ["add", "--", ".gitignore"]);
-      gitRun(root, ["commit", "-q", "--only", "-m", fresh ? "profile: init _user KB" : "profile: ignore proposals", "--", ".gitignore"]);
-    } catch (err) {
-      console.error(`squadrant profile: initial commit failed (${firstLine(err)}); files are kept`);
-    }
+    const r = commitKbPaths(root, [".gitignore"], {
+      message: fresh ? "profile: init _user KB" : "profile: ignore proposals",
+      trailers: { domain: "profile", items: [], level: "shared", approvedBy: "auto" },
+    });
+    if (!r.ok) console.error(`squadrant profile: initial commit failed (${r.warning}); files are kept`);
   }
   return root;
 }
 
-function firstLine(err: unknown): string {
-  const e = err as { stderr?: string; message?: string };
-  return (e.stderr || e.message || String(err)).trim().split("\n")[0];
-}
-
-const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
 export interface ProfileCommit { verb: string; id: string; session?: string; approvedBy: "operator" | "agent" | "bridge" }
 
-/**
- * `git add` + `git commit --only` of exactly `paths`, so concurrent writers never sweep each other's files.
- * The trailers are the parent spec §5 ones (the S3 daemon writer keeps the format). Never throws.
- */
+/** A profile write's commit through the shared KB writer (`commitKbPaths`, phase 2 D1); the S1 format is unchanged. Never throws. */
 export function commitProfilePaths(root: string, paths: string[], c: ProfileCommit): { ok: boolean; warning?: string } {
-  // P15: proposals never reach history, whatever .gitignore says.
-  const proposal = paths.find((p) => p.split(/[\\/]/).includes(PROPOSED_PROFILE_DIR));
-  if (proposal) return { ok: false, warning: `profile: refusing to commit ${proposal}: proposals are never committed (P15)` };
-  // Never let git walk up into an enclosing repo.
-  if (!fs.existsSync(path.join(root, ".git"))) return { ok: false, warning: `profile: commit failed for ${c.id} (${root} is not a git repo); the file is kept: run squadrant profile list --check --fix` };
-  const trailers = [`Domain: profile`, `Item: ${c.id}`, `Level: shared`, `Session: ${c.session || "-"}`, `Approved-by: ${c.approvedBy}`].join("\n");
-  for (let attempt = 0; ; attempt++) {
-    try {
-      gitRun(root, ["add", "-A", "--", ...paths]);
-      gitRun(root, ["commit", "-q", "--only", "-m", `profile: ${c.verb} ${c.id}`, "-m", trailers, "--", ...paths]);
-      return { ok: true };
-    } catch (err) {
-      const msg = firstLine(err);
-      if (/index\.lock/.test(msg) && attempt < 2) { sleep(200); continue; }
-      return { ok: false, warning: `profile: commit failed for ${c.id} (${msg}); the file is kept: run squadrant profile list --check --fix` };
-    }
-  }
+  const r = commitKbPaths(root, paths, {
+    message: `profile: ${c.verb} ${c.id}`,
+    trailers: { domain: "profile", items: [c.id], level: "shared", session: c.session, approvedBy: c.approvedBy },
+    hint: "squadrant profile list --check --fix",
+  });
+  return r.ok ? { ok: true } : { ok: false, warning: r.warning!.replace(/^knowledge:/, "profile:") };
 }

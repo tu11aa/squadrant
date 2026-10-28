@@ -8,7 +8,7 @@ import path from "node:path";
 import {
   archiveRoot, kbConfigs, kbPath, resolveHome, userKbDir, workspaceRoot, DEFAULT_KB_ROOT, type SquadrantConfig,
 } from "@squadrant/shared";
-import { gitRun, nativeMemoryRoot, nativeNoteHash, readDropped, DROPPED_FILE, PROFILE_DIR } from "@squadrant/core";
+import { commitKbPaths, gitRun, nativeMemoryRoot, nativeNoteHash, readDropped, DROPPED_FILE, PROFILE_DIR } from "@squadrant/core";
 import { readNewestArchivedHandoff } from "./handoff-archive.js";
 
 /** Absolute old path -> absolute new path. A path mapped to itself is pinned: it stayed (a `skipped` file). */
@@ -256,13 +256,8 @@ function commitKbRewrites(swept: SweptFile[], repos: string[], message: string):
       (head === before ? clean : left).push(rel);
     }
     if (clean.length) {
-      try {
-        gitRun(repo, ["add", "--", ...clean]);
-        gitRun(repo, ["commit", "-q", "--only", "-m", message, "--", ...clean]);
-        notes.push(`committed ${clean.length} file(s) in ${repo}: ${message}`);
-      } catch (err) {
-        notes.push(`commit failed in ${repo} (${String((err as Error).message).split("\n")[0]}); the rewrites are kept: ${clean.join(", ")}`);
-      }
+      const r = commitKbPaths(repo, clean, { message, trailers: { domain: "-", items: [], level: "-", approvedBy: "operator" } });
+      notes.push(r.ok ? `committed ${clean.length} file(s) in ${repo}: ${message}` : `${r.warning}; the rewrites are kept: ${clean.join(", ")}`);
     }
     if (left.length) notes.push(`not committed in ${repo} (untracked, or it had uncommitted edits before the sweep): ${left.join(", ")}`);
   }

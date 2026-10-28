@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -96,7 +96,10 @@ describe("group inheritance + KB config (#936)", () => {
     expect(subscribedKbs(cfg(), "flooros")).toEqual(["saitex", "conv"]);
     expect(subscribedKbs(cfg(), "lone")).toEqual([]);
   });
+  // These assert the real default; test/setup-env.ts points SQUADRANT_KB_ROOT at a temp dir.
+  afterEach(() => vi.unstubAllEnvs());
   it("kbPath defaults to ~/squadrant/kb/<kb>; path overrides; deprecated knowledge alias is read", () => {
+    vi.stubEnv("SQUADRANT_KB_ROOT", "");
     const c = cfg();
     expect(kbPath(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex"));
     c.knowledge = { a: { path: "/old/a", domainCap: 5 } };
@@ -106,6 +109,7 @@ describe("group inheritance + KB config (#936)", () => {
     expect(kbPath(c, "b")).toBe("/new/b");
   });
   it("projectRulesHome: <kb>/projects/<p>/rules, docs/rules for repo:docs, none without a home", () => {
+    vi.stubEnv("SQUADRANT_KB_ROOT", "");
     const c = cfg();
     expect(projectRulesHome(c, "flooros")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex", "projects", "flooros", "rules"));
     expect(projectRulesHome(c, "docs")).toBe(path.join("/d", "docs", "rules"));
