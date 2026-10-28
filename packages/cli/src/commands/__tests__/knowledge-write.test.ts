@@ -29,7 +29,7 @@ function candidates(name: string, list: Record<string, unknown>[], complete = tr
   fs.writeFileSync(f, JSON.stringify({ ...(complete ? { complete: ["raw/p.md"] } : {}), candidates: list.map(cand) }));
   return f;
 }
-const proposalKey = (id: string) => fs.readdirSync(path.join(kbRulesDir(loadConfig(cfgPath), "saitex"), PROPOSED_DIR)).find((n) => n.startsWith(`${id}@`))!.replace(/\.md$/, "");
+const proposalKey = (id: string) => fs.readdirSync(path.join(kbRulesDir(loadConfig(cfgPath), "acme"), PROPOSED_DIR)).find((n) => n.startsWith(`${id}@`))!.replace(/\.md$/, "");
 function decisions(name: string, list: Record<string, unknown>[]): string {
   const f = path.join(dir, name);
   fs.writeFileSync(f, JSON.stringify({ decisions: list }));
@@ -48,20 +48,20 @@ beforeEach(() => {
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
   c.hubVault = path.join(dir, "hub");
-  c.knowledgeBases = { saitex: { path: path.join(dir, "kb", "saitex"), homeProject: "flooros" } };
-  c.projects = { flooros: { path: path.join(dir, "flooros"), captainName: "f", spokeVault: path.join(dir, "v"), host: "local", knowledge: ["saitex"] } };
+  c.knowledgeBases = { acme: { path: path.join(dir, "kb", "acme"), homeProject: "projA" } };
+  c.projects = { projA: { path: path.join(dir, "projA"), captainName: "f", spokeVault: path.join(dir, "v"), host: "local", knowledge: ["acme"] } };
   saveConfig(c, cfgPath);
-  fs.mkdirSync(path.join(dir, "flooros"), { recursive: true });
-  kb = path.join(dir, "kb", "saitex");
+  fs.mkdirSync(path.join(dir, "projA"), { recursive: true });
+  kb = path.join(dir, "kb", "acme");
 });
 afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("each rules write command leaves the KB repo clean (2b-1)", () => {
   it("init, apply, review --apply, resolve, sources --remove, reconcile --finish: expected commits, five trailers, clean status", async () => {
     // init: one commit with .gitignore + sources.yaml; index.json and _proposed/ are ignored.
-    runKnowledgeInit("saitex", cfgPath);
+    runKnowledgeInit("acme", cfgPath);
     expect(count()).toBe(1);
-    expect(lastMsg()).toMatch(/^knowledge: init saitex/);
+    expect(lastMsg()).toMatch(/^knowledge: init acme/);
     expect(lastMsg()).toMatch(TRAILERS);
     expect(git("ls-files").trim().split("\n").sort()).toEqual([".gitignore", "sources.yaml"]);
     expect(status()).toBe("");
@@ -70,42 +70,42 @@ describe("each rules write command leaves the KB repo clean (2b-1)", () => {
     fs.writeFileSync(path.join(kb, "sources.yaml"), "- path: raw/**\n  priority: company\n");
     fs.writeFileSync(path.join(kb, "raw", "p.md"), SOURCE);
     git("commit", "-qam", "sources");
-    await runKnowledgeIngest("saitex", {}, cfgPath);
+    await runKnowledgeIngest("acme", {}, cfgPath);
 
     // apply: one commit per run, Item repeated.
-    expect(runKnowledgeApply("saitex", candidates("c1.json", [A, B]), cfgPath)).toMatchObject({ created: [A.id, B.id], warnings: [] });
+    expect(runKnowledgeApply("acme", candidates("c1.json", [A, B]), cfgPath)).toMatchObject({ created: [A.id, B.id], warnings: [] });
     expect(count()).toBe(3);
-    expect(lastMsg()).toMatch(/^knowledge: apply saitex\n\nDomain: rules\nItem: biz\.invoice\.window\nItem: biz\.refund\.approval\nLevel: shared\nSession: task-1\nApproved-by: auto\n/);
+    expect(lastMsg()).toMatch(/^knowledge: apply acme\n\nDomain: rules\nItem: biz\.invoice\.window\nItem: biz\.refund\.approval\nLevel: shared\nSession: task-1\nApproved-by: auto\n/);
     expect(status()).toBe("");
 
     // A meaning change lands in _proposed/: no commit, still clean.
-    runKnowledgeApply("saitex", candidates("c2.json", [{ ...A, statement: "Issue invoices within 7 days.", meaning: "changed" }, { ...B, statement: "Finance signs off refunds.", meaning: "changed" }]), cfgPath);
+    runKnowledgeApply("acme", candidates("c2.json", [{ ...A, statement: "Issue invoices within 7 days.", meaning: "changed" }, { ...B, statement: "Finance signs off refunds.", meaning: "changed" }]), cfgPath);
     expect(count()).toBe(3);
     expect(status()).toBe("");
 
     // review --apply: the confident approval is applied in one commit; the low-confidence one is escalated (no file change).
     const keyA = proposalKey(A.id), keyB = proposalKey(B.id);
-    const r = runKnowledgeReviewApply("saitex", decisions("d.json", [
+    const r = runKnowledgeReviewApply("acme", decisions("d.json", [
       { item: keyA, decision: "approve", confidence: 0.95, justification: "policy changed" },
       { item: keyB, decision: "approve", confidence: 0.4, justification: "unsure" },
     ]), cfgPath);
     expect(r).toMatchObject({ applied: [keyA], warnings: [] });
     expect(count()).toBe(4);
-    expect(lastMsg()).toMatch(/^knowledge: review --apply saitex\n\nDomain: rules\nItem: biz\.invoice\.window\nLevel: shared\nSession: task-1\nApproved-by: reviewer-agent\n/);
+    expect(lastMsg()).toMatch(/^knowledge: review --apply acme\n\nDomain: rules\nItem: biz\.invoice\.window\nLevel: shared\nSession: task-1\nApproved-by: reviewer-agent\n/);
     expect(status()).toBe("");
 
     // resolve: one commit for the one escalation.
     expect(readEscalations(kb).map((e) => e.key)).toEqual([keyB]);
-    runKnowledgeResolve("saitex", keyB, { kind: "approve" }, "op", "ok", cfgPath);
+    runKnowledgeResolve("acme", keyB, { kind: "approve" }, "op", "ok", cfgPath);
     expect(count()).toBe(5);
     expect(lastMsg()).toMatch(new RegExp(`^knowledge: resolve ${keyB.replace(/[.@]/g, "\\$&")}\\n\\nDomain: rules\\nItem: biz\\.refund\\.approval\\nLevel: shared\\nSession: task-1\\nApproved-by: operator\\n`));
     expect(status()).toBe("");
     // Verdicts went to the state dir, not the KB.
     expect(fs.existsSync(path.join(kb, "verdicts.jsonl"))).toBe(false);
-    expect(readVerdicts("saitex", kb).map((v) => v.outcome ?? (v.resolution as { kind: string }).kind)).toEqual(["applied", "escalated", "approve"]);
+    expect(readVerdicts("acme", kb).map((v) => v.outcome ?? (v.resolution as { kind: string }).kind)).toEqual(["applied", "escalated", "approve"]);
 
     // sources --remove: sources.yaml + the stripped rules in one commit.
-    expect(runKnowledgeSourcesRemove("saitex", "raw/**", {}, cfgPath)).toMatchObject({ stale: [A.id, B.id], warnings: [] });
+    expect(runKnowledgeSourcesRemove("acme", "raw/**", {}, cfgPath)).toMatchObject({ stale: [A.id, B.id], warnings: [] });
     expect(count()).toBe(6);
     expect(git("show", "--name-only", "--format=", "HEAD").trim().split("\n").sort()).toEqual([
       "shared/rules/business/biz.invoice.window.md", "shared/rules/business/biz.refund.approval.md", "sources.yaml",
@@ -114,33 +114,33 @@ describe("each rules write command leaves the KB repo clean (2b-1)", () => {
     expect(status()).toBe("");
 
     // reconcile --finish: REPORT.md committed; scores/escalations ignored.
-    await finishReconcile("saitex", { cfg: loadConfig(cfgPath), stateRoot: path.join(dir, "state"), enqueue: async () => {}, auditDir: path.join(dir, "audit") });
+    await finishReconcile("acme", { cfg: loadConfig(cfgPath), stateRoot: path.join(dir, "state"), enqueue: async () => {}, auditDir: path.join(dir, "audit") });
     expect(count()).toBe(7);
     expect(lastMsg()).toMatch(/^knowledge: \w+ reconcile report/);
     expect(lastMsg()).toMatch(TRAILERS);
     expect(status()).toBe("");
 
     // knowledge doctor agrees.
-    expect(runKnowledgeDoctor("saitex", {}, cfgPath)[0].check).toMatchObject({ notRepo: false, missingIgnores: [], trackedNeverCommitted: [], uncommitted: [] });
+    expect(runKnowledgeDoctor("acme", {}, cfgPath)[0].check).toMatchObject({ notRepo: false, missingIgnores: [], trackedNeverCommitted: [], uncommitted: [] });
   });
 
   it("a failed commit keeps the files, warns, and knowledge doctor lists them; --fix without a yes leaves them", async () => {
-    runKnowledgeInit("saitex", cfgPath);
+    runKnowledgeInit("acme", cfgPath);
     fs.writeFileSync(path.join(kb, "sources.yaml"), "- path: raw/**\n  priority: company\n");
     fs.writeFileSync(path.join(kb, "raw", "p.md"), SOURCE);
     git("commit", "-qam", "sources");
-    await runKnowledgeIngest("saitex", {}, cfgPath);
+    await runKnowledgeIngest("acme", {}, cfgPath);
     // A stale index.lock that outlives the retries makes the commit fail.
     fs.writeFileSync(path.join(kb, ".git", "index.lock"), "");
-    const res = runKnowledgeApply("saitex", candidates("c1.json", [A]), cfgPath);
+    const res = runKnowledgeApply("acme", candidates("c1.json", [A]), cfgPath);
     expect(res.created).toEqual([A.id]);
     expect(res.warnings[0]).toMatch(/commit failed.*knowledge doctor --fix/);
     fs.rmSync(path.join(kb, ".git", "index.lock"));
     const file = "shared/rules/business/biz.invoice.window.md";
     expect(fs.existsSync(path.join(kb, file))).toBe(true);
-    expect(runKnowledgeDoctor("saitex", {}, cfgPath)[0].check.uncommitted).toEqual([file]);
-    expect(runKnowledgeDoctor("saitex", { fix: true }, cfgPath)[0].fix!.uncommitted).toEqual([file]);
-    const fixed = runKnowledgeDoctor("saitex", { fix: true, confirm: () => true }, cfgPath)[0];
+    expect(runKnowledgeDoctor("acme", {}, cfgPath)[0].check.uncommitted).toEqual([file]);
+    expect(runKnowledgeDoctor("acme", { fix: true }, cfgPath)[0].fix!.uncommitted).toEqual([file]);
+    const fixed = runKnowledgeDoctor("acme", { fix: true, confirm: () => true }, cfgPath)[0];
     expect(fixed.fix!.committed).toEqual([file]);
     expect(status()).toBe("");
   });
