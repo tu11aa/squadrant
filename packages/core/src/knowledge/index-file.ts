@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { Rule, RuleAnchors, RuleModality, RuleStatus, RuleTriggers } from "@squadrant/shared";
 
 export interface RuleIndexEntry {
@@ -17,24 +19,40 @@ export function compileIndex(kb: string, rules: Rule[], now: Date = new Date()):
   };
 }
 
-// index.json is a compiled cache for matching/delivery (#899). `rules search` deliberately reads the
-// rule files directly, so a stale or missing index never affects search.
-export function writeIndex(kbRoot: string, index: RuleIndex): string {
-  const file = path.join(kbRoot, "index.json");
+/** K8: the index is a per-machine cache, never part of the KB repo. `SQUADRANT_INDEX_CACHE_DIR` overrides it (tests). */
+export const indexCacheDir = () => process.env.SQUADRANT_INDEX_CACHE_DIR || path.join(os.homedir(), ".cache", "squadrant", "index");
+export const indexCacheFile = (kb: string) => path.join(indexCacheDir(), `${kb}.json`);
+
+// The index is a compiled cache for matching/delivery (#899), rebuilt by `knowledge reindex` and `doctor`.
+// `rules search` deliberately reads the rule files directly, so a stale or missing index never affects search.
+// `kbRoot` is unused since K8; it stays so the write call sites keep their shape.
+export function writeIndex(_kbRoot: string, index: RuleIndex): string {
+  const file = indexCacheFile(index.kb);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(index, null, 2) + "\n");
   fs.renameSync(tmp, file);
   return file;
 }
 
-export function readIndex(kbRoot: string, kb: string): { index: RuleIndex | null; problem?: string } {
-  const file = path.join(kbRoot, "index.json");
-  if (!fs.existsSync(file)) return { index: null, problem: `index.json missing for kb '${kb}'` };
+export function readIndex(kb: string): { index: RuleIndex | null; problem?: string } {
+  const file = indexCacheFile(kb);
+  if (!fs.existsSync(file)) return { index: null, problem: `index cache missing for kb '${kb}'` };
   try {
     const index = JSON.parse(fs.readFileSync(file, "utf8")) as RuleIndex;
-    if (!Array.isArray(index.rules)) return { index: null, problem: `index.json corrupt for kb '${kb}' (no rules array)` };
+    if (!Array.isArray(index.rules)) return { index: null, problem: `index cache corrupt for kb '${kb}' (no rules array)` };
     return { index };
   } catch {
-    return { index: null, problem: `index.json corrupt for kb '${kb}' (invalid JSON)` };
+    return { index: null, problem: `index cache corrupt for kb '${kb}' (invalid JSON)` };
   }
+}
+
+/** The command that retires a pre-K8 `<kb>/index.json` still tracked or on disk. A hint only: never run here (`knowledge doctor --fix` untracks it). */
+export function legacyIndexHint(kbRoot: string, kb: string): string | undefined {
+  let tracked = false;
+  try {
+    tracked = execFileSync("git", ["-C", kbRoot, "ls-files", "--", "index.json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim() !== "";
+  } catch { /* not a git repo */ }
+  if (tracked) return `squadrant knowledge doctor ${kb} --fix`;
+  return fs.existsSync(path.join(kbRoot, "index.json")) ? `rm ${path.join(kbRoot, "index.json")}` : undefined;
 }

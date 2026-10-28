@@ -437,7 +437,7 @@ describe("offset re-anchoring when a source changes", () => {
     await ingest();
     const v1 = cands("candidates-v1.json");
     const target = v1.candidates.find((c) => c.source === ref && c.id === "biz.invoice.issue-window")!;
-    const res = applyCandidates({ candidates: [{ ...target, id: "model.picked.other-id" }] }, { kb: "t", kbRoot: kbRoot(), rulesDir: kbRulesDir(cfg, "t") });
+    const res = applyCandidates({ candidates: [{ ...target, id: "model.picked.other-id" }] }, { kb: "t", kbRoot: kbRoot(), rulesDir: kbRulesDir(cfg, "t"), audit: ctx().audit });
     expect(res.idOverrides).toEqual([{ from: "model.picked.other-id", to: "biz.invoice.issue-window" }]);
   });
 });

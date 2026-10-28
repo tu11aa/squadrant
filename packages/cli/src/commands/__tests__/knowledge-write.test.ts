@@ -9,7 +9,7 @@ import { finishReconcile, kbRulesDir, PROPOSED_DIR, readEscalations, readVerdict
 import {
   runKnowledgeApply, runKnowledgeIngest, runKnowledgeInit, runKnowledgeResolve, runKnowledgeReviewApply, runKnowledgeSourcesRemove,
 } from "../knowledge.js";
-import { runKnowledgeDoctor } from "../knowledge-doctor.js";
+import { runKbRepoDoctor } from "../knowledge-doctor.js";
 
 let dir: string;
 let cfgPath: string;
@@ -121,7 +121,7 @@ describe("each rules write command leaves the KB repo clean (2b-1)", () => {
     expect(status()).toBe("");
 
     // knowledge doctor agrees.
-    expect(runKnowledgeDoctor("acme", {}, cfgPath)[0].check).toMatchObject({ notRepo: false, missingIgnores: [], trackedNeverCommitted: [], uncommitted: [] });
+    expect(runKbRepoDoctor("acme", {}, cfgPath)[0].check).toMatchObject({ notRepo: false, missingIgnores: [], trackedNeverCommitted: [], uncommitted: [] });
   });
 
   it("a failed commit keeps the files, warns, and knowledge doctor lists them; --fix without a yes leaves them", async () => {
@@ -138,9 +138,9 @@ describe("each rules write command leaves the KB repo clean (2b-1)", () => {
     fs.rmSync(path.join(kb, ".git", "index.lock"));
     const file = "shared/rules/business/biz.invoice.window.md";
     expect(fs.existsSync(path.join(kb, file))).toBe(true);
-    expect(runKnowledgeDoctor("acme", {}, cfgPath)[0].check.uncommitted).toEqual([file]);
-    expect(runKnowledgeDoctor("acme", { fix: true }, cfgPath)[0].fix!.uncommitted).toEqual([file]);
-    const fixed = runKnowledgeDoctor("acme", { fix: true, confirm: () => true }, cfgPath)[0];
+    expect(runKbRepoDoctor("acme", {}, cfgPath)[0].check.uncommitted).toEqual([file]);
+    expect(runKbRepoDoctor("acme", { fix: true }, cfgPath)[0].fix!.uncommitted).toEqual([file]);
+    const fixed = runKbRepoDoctor("acme", { fix: true, confirm: () => true }, cfgPath)[0];
     expect(fixed.fix!.committed).toEqual([file]);
     expect(status()).toBe("");
   });

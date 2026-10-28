@@ -126,7 +126,7 @@ describe("rules audit log (#935)", () => {
   });
   it("search logs one attributed item.searched per displayed hit, so stats count it as a pull", () => {
     runRulesSearch("invoice vnd", { project: "flooros" }, cfgPath);
-    expect(read()).toMatchObject([{ event: "item.searched", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group", project: "flooros", query: "invoice vnd" }]);
+    expect(read()).toMatchObject([{ event: "item.searched", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "shared", project: "flooros", query: "invoice vnd" }]);
     const [s] = runKnowledgeStats({ kb: "saitex", auditDir: process.env.SQUADRANT_AUDIT_DIR }, cfgPath);
     expect(s.items.find((x) => x.itemId === "biz.invoice.vnd-rounding")).toMatchObject({ searched: 1, pullRate: 1 });
   });
@@ -136,7 +136,7 @@ describe("rules audit log (#935)", () => {
   });
   it("show logs item.shown", () => {
     runRulesShow("biz.invoice.vnd-rounding", { project: "flooros" }, cfgPath);
-    expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "group" });
+    expect(read()[0]).toMatchObject({ event: "item.shown", itemId: "biz.invoice.vnd-rounding", kb: "saitex", level: "shared" });
   });
 });
 

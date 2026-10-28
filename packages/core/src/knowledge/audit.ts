@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Rule } from "@squadrant/shared";
+import { homeAuditKb, isKbDomain, kbConfigs, USER_KB, type KbLevel, type Rule, type SquadrantConfig } from "@squadrant/shared";
+import type { AuditRecord } from "./fullpass.js";
 
 export type AuditEventName =
   | "item.surfaced" | "item.suppressed" | "item.fallback" | "item.searched" | "item.shown"
@@ -14,7 +15,10 @@ export interface AuditEvent {
   kb: string;
   level: string;
   project: string;
+  /** KB domain (rules|decisions|wiki|profile). Lines written before #979 may hold a rule category here. */
   domain: string;
+  /** Rules: the rule's category (its frontmatter `domain`). */
+  category?: string;
   itemId: string;
   event: AuditEventName;
   trigger?: "session" | "prompt" | "tool" | "fallback";
@@ -79,7 +83,44 @@ export function appendAudit(events: AuditEvent[], sink: AuditSink = {}): void {
   }
 }
 
-/** kb/level of a resolved rule from its layer ("project:<p>" | "kb:<name>"). */
-export function ruleAuditScope(rule: Rule): { kb: string; level: string } {
-  return rule.layer.startsWith("kb:") ? { kb: rule.layer.slice(3), level: "group" } : { kb: "", level: "project" };
+/**
+ * kb/level/category of a resolved rule from its layer ("project:<p>" | "kb:<name>"). A project-level rule carries its
+ * home KB (`repo:<p>` for `repo:docs`), so it is scored with that KB (spec 2026-10-27 §4.5); without `cfg` it is "".
+ */
+export function ruleAuditScope(rule: Rule, cfg?: SquadrantConfig): { kb: string; level: KbLevel; category: string } {
+  if (rule.layer.startsWith("kb:")) return { kb: rule.layer.slice(3), level: "shared", category: rule.domain };
+  const project = rule.layer.slice("project:".length);
+  return { kb: cfg ? homeAuditKb(cfg, project) : "", level: "project", category: rule.domain };
 }
+
+// ── read-side normalization (spec 2026-10-27 §4.6, C4) ──────────────
+
+/** What legacy-line normalization needs from the config: the `kb` values an event may carry, and each project's home label. */
+export interface AuditReadCtx { kbs: ReadonlySet<string>; home: (project: string) => string }
+
+/** Valid `kb` values: configured KBs, `_user`, and every project's home label (a home KB or `repo:<p>`). */
+export function auditReadCtx(cfg: SquadrantConfig): AuditReadCtx {
+  const kbs = new Set([...Object.keys(kbConfigs(cfg)), USER_KB]);
+  for (const p of Object.keys(cfg.projects)) { const h = homeAuditKb(cfg, p); if (h) kbs.add(h); }
+  return { kbs, home: (p) => (cfg.projects[p] ? homeAuditKb(cfg, p) : "") };
+}
+
+/**
+ * One audit line as it reads today; the log itself is never rewritten. A `domain` outside the four KB domains is a
+ * pre-#979 rule category → `domain: "rules"` + `category`; `level: "group"` → `shared`; `kb: ""` takes the project's
+ * home label ("" when it has none: the `(no home)` group). Null when `kb` is a value no config or project has (the
+ * `kb: "t"` test leak): such lines are ignored and counted by `auditHealth`.
+ */
+export function normalizeAuditRecord(r: AuditRecord, ctx: AuditReadCtx): AuditRecord | null {
+  const project = typeof r.project === "string" ? r.project : "";
+  const kb = typeof r.kb === "string" && r.kb ? r.kb : project ? ctx.home(project) : "";
+  if (kb && !ctx.kbs.has(kb)) return null;
+  const domain = typeof r.domain === "string" ? r.domain : "";
+  const legacy = isKbDomain(domain) ? {} : { domain: "rules", ...(domain && r.category === undefined ? { category: domain } : {}) };
+  return { ...r, kb, ...(r.level === "group" ? { level: "shared" } : {}), ...legacy };
+}
+
+export const auditNormalizer = (cfg: SquadrantConfig) => {
+  const ctx = auditReadCtx(cfg);
+  return (r: AuditRecord) => normalizeAuditRecord(r, ctx);
+};

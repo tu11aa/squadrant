@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterAll } from "vitest";
 
 const dirs = {
   SQUADRANT_AUDIT_DIR: "squadrant-test-audit-",
@@ -16,6 +17,8 @@ const dirs = {
   // #982: the operator profile KB and the Claude native-memory root the bridge reads.
   SQUADRANT_USER_KB_DIR: "squadrant-test-user-kb-",
   SQUADRANT_NATIVE_MEMORY_ROOT: "squadrant-test-native-memory-",
+  // #979 K8: the compiled rules index cache (~/.cache/squadrant/index).
+  SQUADRANT_INDEX_CACHE_DIR: "squadrant-test-index-cache-",
   // #979 phase 2: the default KB parent dir (~/squadrant/kb) and the per-machine verdicts dir.
   SQUADRANT_KB_ROOT: "squadrant-test-kb-root-",
   SQUADRANT_VERDICTS_DIR: "squadrant-test-verdicts-",
@@ -27,3 +30,9 @@ for (const [env, prefix] of Object.entries(dirs)) {
   made.push(dir);
 }
 process.on("exit", () => { for (const d of made) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } });
+// #979: a test may point SQUADRANT_AUDIT_DIR at its own tmp dir, but must not leave it unset or outside the tmp dir
+// when its file ends: unset, every audit write lands in the real log (how 181 `kb: "t"` lines got there).
+afterAll(() => {
+  const d = process.env.SQUADRANT_AUDIT_DIR;
+  if (!d || path.relative(os.tmpdir(), path.resolve(d)).startsWith("..")) throw new Error(`SQUADRANT_AUDIT_DIR left at '${d ?? ""}': tests must keep the audit log hermetic`);
+});

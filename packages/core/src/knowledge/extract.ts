@@ -119,7 +119,7 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
   const events: AuditEvent[] = [];
   // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
   const ev = (event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}) =>
-    events.push({ kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
+    events.push({ kb, level: "shared", project: "", domain: "rules", itemId, event, ...extra });
 
   const loaded = loadRulesDir(rulesDir, `kb:${kb}`);
   const work = new Map<string, Work>();

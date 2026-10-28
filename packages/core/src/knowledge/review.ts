@@ -196,7 +196,7 @@ function anchorsFor(c: ReviewContext, fm: RuleFrontmatter): RuleAnchors | undefi
 export interface ApplyEvents { events: AuditEvent[] }
 // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
 const ev = (c: ReviewContext, event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}): AuditEvent =>
-  ({ kb: c.kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
+  ({ kb: c.kb, level: "shared", project: "", domain: "rules", itemId, event, ...extra });
 
 /** Make a proposal live: replaces its live counterpart, retires the rules it conflicts with. */
 export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-agent" | "human", justification: string, events: AuditEvent[]): void {

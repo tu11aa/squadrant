@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import chalk from "chalk";
 import {
-  loadConfig, DEFAULT_CONFIG_PATH, stateRoot, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
+  loadConfig, homeAuditKb, DEFAULT_CONFIG_PATH, stateRoot, RULE_STATUSES, type Rule, type RuleStatus, type SquadrantConfig,
 } from "@squadrant/shared";
 import {
   resolveProjectRules, searchRules, computeRulesInjection, withBudget, INJECT_BUDGET_MS, DEFAULT_SEARCH_STATUSES, appendAudit, ruleAuditScope, type AuditSink, type SearchHit,
@@ -79,12 +79,13 @@ function loadFor(opts: RulesOpts, configPath: string): Rule[] {
 export function runRulesSearch(query: string, opts: RulesOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit[] {
   const rules = loadFor(opts, configPath);
   const hits = searchRules(rules, query, { statuses: opts.all ? [...RULE_STATUSES] : DEFAULT_SEARCH_STATUSES });
-  const project = resolveRulesProject(loadConfig(configPath), opts);
+  const cfg = loadConfig(configPath);
+  const project = resolveRulesProject(cfg, opts);
   // One event per displayed hit, attributed to its KB, so a search counts as a pull of each rule it printed.
   const shown = hits.slice(0, parseLimit(opts.limit));
   appendAudit(shown.length
-    ? shown.map((h) => ({ ...ruleAuditScope(h.rule), project, domain: "rules", itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
-    : [{ kb: "", level: "project", project, domain: "rules", itemId: "", event: "item.searched", query }], { env: opts.env, ...opts.audit });
+    ? shown.map((h) => ({ ...ruleAuditScope(h.rule, cfg), project, domain: "rules", itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
+    : [{ kb: homeAuditKb(cfg, project), level: "project", project, domain: "rules", itemId: "", event: "item.searched", query }], { env: opts.env, ...opts.audit });
   return hits;
 }
 
@@ -98,8 +99,9 @@ export function runRulesShow(id: string, opts: RulesOpts, configPath = DEFAULT_C
   const statuses: readonly RuleStatus[] = opts.all ? RULE_STATUSES : DEFAULT_SEARCH_STATUSES;
   const rule = rules.find((r) => r.id === id && statuses.includes(r.status));
   if (!rule) throw new Error(`No rule '${id}' for this project`);
-  const project = resolveRulesProject(loadConfig(configPath), opts);
-  appendAudit([{ ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], { env: opts.env, ...opts.audit });
+  const cfg = loadConfig(configPath);
+  const project = resolveRulesProject(cfg, opts);
+  appendAudit([{ ...ruleAuditScope(rule, cfg), project, domain: "rules", itemId: rule.id, event: "item.shown", chars: rule.body.length }], { env: opts.env, ...opts.audit });
   return rule;
 }
 

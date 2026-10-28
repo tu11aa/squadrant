@@ -13,20 +13,22 @@ const VND = "All VND amounts shall be rounded half-up to the unit.";
 const INVOICE = "Invoices must be issued within 5 days of delivery.";
 let kb: string;
 let rulesDir: string;
+let audit: { dir: string };  // explicit sink: never the default audit dir (#979 guard)
 
 const preConverted = (dir: string): Converter => async (file) => fs.readFileSync(path.join(dir, `${path.basename(file)}.md`), "utf8");
 const cands = () => JSON.parse(fs.readFileSync(path.join(FIX, "candidates-v1.json"), "utf8")) as CandidateFile;
 const billing = (f: CandidateFile): CandidateFile => ({ candidates: f.candidates.filter((c) => c.source === "raw/billing-policy.md") });
 const erratum = (quote: string, extra: Partial<KnowledgeErratum> = {}): KnowledgeErratum => ({ id: "bill.stale", ref: "raw/billing-policy.md", quote, reason: "out of date", ...extra });
-const apply = (f: CandidateFile, errata?: KnowledgeErratum[]) => applyCandidates(f, { kb: "t", kbRoot: kb, rulesDir, errata });
+const apply = (f: CandidateFile, errata?: KnowledgeErratum[]) => applyCandidates(f, { kb: "t", kbRoot: kb, rulesDir, errata, audit });
 const ingest = () => planIngest(kb, { sources: [{ path: "raw/**", priority: "company" }], converter: preConverted(path.join(FIX, "converted")) });
 
 beforeEach(() => {
   kb = fs.mkdtempSync(path.join(os.tmpdir(), "kb-errata-"));
   rulesDir = path.join(kb, "shared", "rules");
+  audit = { dir: fs.mkdtempSync(path.join(os.tmpdir(), "kb-errata-audit-")) };
   fs.cpSync(path.join(FIX, "raw"), path.join(kb, "raw"), { recursive: true });
 });
-afterEach(() => fs.rmSync(kb, { recursive: true, force: true }));
+afterEach(() => { fs.rmSync(kb, { recursive: true, force: true }); fs.rmSync(audit.dir, { recursive: true, force: true }); });
 
 describe("loadErrata", () => {
   const write = (t: string) => fs.writeFileSync(path.join(kb, "errata.yaml"), t);
@@ -60,7 +62,7 @@ describe("apply with errata (spec 2026-10-13 §4.2)", () => {
   it("an erratum hit on a review: required source is rejected, not sent to _proposed/", async () => {
     await ingest();
     const gated = [{ path: "raw/**", priority: "agent" as const, review: "required" as const }];
-    const r = applyCandidates(billing(cands()), { kb: "t", kbRoot: kb, rulesDir, sources: gated, errata: [erratum(VND)] });
+    const r = applyCandidates(billing(cands()), { kb: "t", kbRoot: kb, rulesDir, sources: gated, errata: [erratum(VND)], audit });
     expect(r.rejected.map((x) => x.reason)).toEqual(["errata:bill.stale"]);
     expect(r.proposed.some((p) => p.startsWith("biz.rounding.vnd-half-up@"))).toBe(false);
     expect(fs.readdirSync(path.join(rulesDir, PROPOSED_DIR)).some((n) => n.startsWith("biz.rounding.vnd-half-up@"))).toBe(false);

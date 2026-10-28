@@ -232,7 +232,7 @@ describe("computeRulesInjection — audit log (#935)", () => {
     const ev = lines();
     expect(ev).toHaveLength(4);
     expect(ev[0]).toEqual({
-      ts: "2026-10-10T01:02:03.000Z", kb: "saitex", level: "group", project: "flooros", domain: "rules",
+      ts: "2026-10-10T01:02:03.000Z", kb: "saitex", level: "shared", project: "flooros", domain: "rules", category: "coding",
       itemId: "git.no-force-push", event: "item.surfaced", trigger: "session", chars: "MUST-NOT git.no-force-push: Force-push to main or develop.".length,
       agent: "claude", session: "s1",
     });

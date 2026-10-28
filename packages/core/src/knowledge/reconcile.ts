@@ -2,8 +2,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveKbConfig } from "@squadrant/shared";
-import { compactAudit, scoreKb, writeScores, type Scores } from "./scores.js";
-import { loadKbRules } from "./layers.js";
+import { compactAudit, knownItems, scoreKb, writeScores, type Scores } from "./scores.js";
+import { auditNormalizer } from "./audit.js";
+import { loadKbItems } from "./items.js";
 import { runFullChecks, type FullPassFindings } from "./fullpass.js";
 import { ensureKbRuntimeIgnores } from "./migrate.js";
 import { kbDir } from "./paths.js";
@@ -21,8 +22,9 @@ export async function finishReconcile(kb: string, d: RequestDeps & { pass?: Pass
   const pass = completePass(kb, { ...d, now: () => now });
   let full: FullPassFindings | undefined;
   if (pass === "full") full = runFullChecks(d.cfg, kb, { now, auditDir: d.auditDir });
-  if (pass === "full") compactAudit({ now, dir: d.auditDir });
-  const scores: Scores = scoreKb({ kb, now, auditDir: d.auditDir, kbRoot: kbDir(d.cfg, kb), known: loadKbRules(d.cfg, kb).rules.map((r) => ({ id: r.id, domain: "rules", status: r.status })) });
+  const normalize = auditNormalizer(d.cfg);
+  if (pass === "full") compactAudit({ now, dir: d.auditDir, normalize });
+  const scores: Scores = scoreKb({ kb, now, auditDir: d.auditDir, kbRoot: kbDir(d.cfg, kb), known: knownItems(loadKbItems(d.cfg, kb).items), normalize });
   writeScores(kbDir(d.cfg, kb), scores);
   const report = writeReport(d.cfg, kb, { pass, now, full, scores });
   commitPassOutput(kbDir(d.cfg, kb), pass, d.log);

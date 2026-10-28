@@ -113,7 +113,7 @@ export function moveLegacyKbs(cfg: SquadrantConfig, opts: { dryRun?: boolean } =
     }
     if (ensureGitRepo(to)) notes.push("git init");
     if (ensureKbGitignore(to)) notes.push("wrote .gitignore (raw/, .converted/)");
-    if (fs.existsSync(path.join(to, "index.json"))) notes.push(`index.json holds old paths: run squadrant knowledge reindex ${kb}`);
+    if (fs.existsSync(path.join(to, "index.json"))) notes.push(`index.json is no longer used (the index is a cache now): run squadrant knowledge reindex ${kb}`);
     if (action === "copied") notes.push("cross-device: original left in place, delete it yourself once verified");
     return { kb, from, to, action, ...(notes.length ? { note: notes.join("; ") } : {}) };
   });

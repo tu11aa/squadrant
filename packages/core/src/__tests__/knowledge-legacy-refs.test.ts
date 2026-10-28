@@ -25,6 +25,8 @@ const rule = (id: string, sources: { ref: string; quote?: string; sha?: string; 
   fs.writeFileSync(path.join(rulesDir, "coding", `${id}.md`), `---\nid: ${id}\ndomain: coding\nmodality: must\nstatus: ${status}\nsources:\n${src}\n---\nS ${id}.\n`);
 };
 const byId = () => Object.fromEntries(loadRulesDir(rulesDir, "kb:t").rules.map((r) => [r.id, r]));
+/** Explicit audit sink inside the tmp HOME: never the default audit dir (#979 guard). */
+const audit = () => ({ dir: path.join(home, "audit") });
 const sources = (): KnowledgeSourceEntry[] => [
   { path: "~/saitex/kb/extracted/**", priority: "project" },
   { path: "~/saitex/flooros/CLAUDE.md", priority: "company" },
@@ -102,7 +104,7 @@ describe("apply with legacy refs", () => {
     const plan = await ingest();
     expect(plan.sources.map((s) => s.ref)).toEqual([flooros]);
     rule("coding.lint", [{ ref: "flooros/CLAUDE.md", quote: LINT, sha: plan.sources[0].sha, offset: findQuote(CLAUDE_MD, LINT)! }]);
-    const r = applyCandidates(cand("coding.model-chose-this"), { kb: "t", kbRoot: kb, rulesDir, sources: sources() });
+    const r = applyCandidates(cand("coding.model-chose-this"), { kb: "t", kbRoot: kb, rulesDir, sources: sources(), audit: audit() });
     expect(r.idOverrides).toEqual([{ from: "coding.model-chose-this", to: "coding.lint" }]);
     expect(r.created).toEqual([]);
     expect(byId()["coding.lint"].sources.map((s) => s.ref)).toEqual([flooros]);
@@ -111,7 +113,7 @@ describe("apply with legacy refs", () => {
   it("an erratum written with the legacy ref rejects a ~ candidate", async () => {
     await ingest();
     const r = applyCandidates(cand("coding.lint"), {
-      kb: "t", kbRoot: kb, rulesDir, sources: sources(),
+      kb: "t", kbRoot: kb, rulesDir, sources: sources(), audit: audit(),
       errata: [{ id: "flooros.lint", ref: "flooros/CLAUDE.md", quote: LINT, reason: "obsolete" }],
     });
     expect(r.rejected).toEqual([{ id: "coding.lint", source: flooros, reason: "errata:flooros.lint" }]);
@@ -121,7 +123,7 @@ describe("apply with legacy refs", () => {
   it("an erratum written with the legacy ref is checked against the ~ ref's converted text (orphan detection)", async () => {
     await ingest();
     const r = applyCandidates(cand("coding.lint"), {
-      kb: "t", kbRoot: kb, rulesDir, sources: sources(),
+      kb: "t", kbRoot: kb, rulesDir, sources: sources(), audit: audit(),
       errata: [{ id: "flooros.gone", ref: "flooros/CLAUDE.md", quote: "a passage no longer in the file", reason: "obsolete" }],
     });
     expect(r.orphanedErrata).toEqual([{ id: "flooros.gone", ref: "flooros/CLAUDE.md" }]);
@@ -130,7 +132,7 @@ describe("apply with legacy refs", () => {
   it("a complete re-sweep of the ~ ref marks an unmatched rule citing the legacy ref stale", async () => {
     await ingest();
     rule("coding.gone", [{ ref: "flooros/CLAUDE.md", quote: "Keep commits small." }]);
-    const r = applyCandidates({ complete: [flooros], candidates: [] }, { kb: "t", kbRoot: kb, rulesDir, sources: sources() });
+    const r = applyCandidates({ complete: [flooros], candidates: [] }, { kb: "t", kbRoot: kb, rulesDir, sources: sources(), audit: audit() });
     expect(r.stale).toEqual(["coding.gone"]);
   });
 });

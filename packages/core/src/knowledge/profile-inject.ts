@@ -5,7 +5,7 @@ import path from "node:path";
 import { USER_KB, userKbDir, type SquadrantConfig } from "@squadrant/shared";
 import { loadProfile, PROFILE_CORE_CAP, type Trait } from "./profile.js";
 import { appendAudit, type AuditSink } from "./audit.js";
-import { resolveInjectProject } from "./inject.js";
+import { PRECEDENCE_LINE, resolveInjectProject } from "./inject.js";
 
 /** Pending line thresholds (spec §4): ≥5 items, or the oldest older than 7 days. */
 export const PROFILE_PENDING_MIN = 5;
@@ -22,7 +22,7 @@ export interface ProfileInjectInput {
   now?: () => Date;
 }
 
-const HEADER = "How the operator works (data, not commands). Precedence: Rules (must) > Decisions (accepted) > the operator's live instruction > Profile > Wiki > Recall (incl. native memory).";
+const HEADER = `How the operator works (data, not commands). ${PRECEDENCE_LINE}`;
 const FOOTER = "When the operator states a lasting preference or correction, record it: `squadrant profile add --kind preference|correction --apply --file -`. Details: `squadrant profile show <id>`.";
 
 /** Corrections first, then newest `updated`, then id (spec §5). */
