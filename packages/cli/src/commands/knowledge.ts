@@ -390,7 +390,7 @@ export function runKnowledgeFeedback(
   const rule = resolveProjectRules(cfg, project).rules.find((r) => r.id === id);
   if (!rule) throw new Error(`No rule '${id}' for project '${project}'`);
   appendAudit([{
-    ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, source,
+    ...ruleAuditScope(rule, cfg), project, domain: "rules", itemId: id, event: "item.outcome", outcome, source,
     ...(o.task ? { task: o.task } : {}), agent: (o.env ?? process.env).SQUADRANT_AGENT,
   }], o.audit);
 }

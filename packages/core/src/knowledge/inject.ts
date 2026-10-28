@@ -302,7 +302,7 @@ function audit(
   items: { rule: Rule; event: "item.surfaced" | "item.suppressed"; score: number | undefined }[],
 ): void {
   appendAudit(items.map(({ rule, event, score }): AuditEvent => ({
-    ...ruleAuditScope(rule), project, domain: "rules", itemId: rule.id, event, trigger,
+    ...ruleAuditScope(rule, i.cfg), project, domain: "rules", itemId: rule.id, event, trigger,
     ...(score === undefined ? {} : { score }), chars: line(rule).length, agent: i.agent ?? "claude", ...(session ? { session } : {}),
   })), { env: i.env, ...i.audit });
 }

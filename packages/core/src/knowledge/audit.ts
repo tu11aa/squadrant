@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Rule } from "@squadrant/shared";
+import { homeAuditKb, type KbLevel, type Rule, type SquadrantConfig } from "@squadrant/shared";
 
 export type AuditEventName =
   | "item.surfaced" | "item.suppressed" | "item.fallback" | "item.searched" | "item.shown"
@@ -14,7 +14,10 @@ export interface AuditEvent {
   kb: string;
   level: string;
   project: string;
+  /** KB domain (rules|decisions|wiki|profile). Lines written before #979 may hold a rule category here. */
   domain: string;
+  /** Rules: the rule's category (its frontmatter `domain`). */
+  category?: string;
   itemId: string;
   event: AuditEventName;
   trigger?: "session" | "prompt" | "tool" | "fallback";
@@ -79,7 +82,12 @@ export function appendAudit(events: AuditEvent[], sink: AuditSink = {}): void {
   }
 }
 
-/** kb/level of a resolved rule from its layer ("project:<p>" | "kb:<name>"). */
-export function ruleAuditScope(rule: Rule): { kb: string; level: string } {
-  return rule.layer.startsWith("kb:") ? { kb: rule.layer.slice(3), level: "group" } : { kb: "", level: "project" };
+/**
+ * kb/level/category of a resolved rule from its layer ("project:<p>" | "kb:<name>"). A project-level rule carries its
+ * home KB (`repo:<p>` for `repo:docs`), so it is scored with that KB (spec 2026-10-27 §4.5); without `cfg` it is "".
+ */
+export function ruleAuditScope(rule: Rule, cfg?: SquadrantConfig): { kb: string; level: KbLevel; category: string } {
+  if (rule.layer.startsWith("kb:")) return { kb: rule.layer.slice(3), level: "shared", category: rule.domain };
+  const project = rule.layer.slice("project:".length);
+  return { kb: cfg ? homeAuditKb(cfg, project) : "", level: "project", category: rule.domain };
 }
