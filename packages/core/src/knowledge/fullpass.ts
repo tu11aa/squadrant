@@ -11,6 +11,7 @@ import { loadKbRules } from "./layers.js";
 import { addEscalation, type Escalation } from "./review.js";
 import { kbDir } from "./paths.js";
 import { loadRulesDir } from "./store.js";
+import { commitKbFiles, kbSession } from "./write.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const NEVER_SURFACED_DAYS = 30;
@@ -99,6 +100,7 @@ export interface OverrideFinding { project: string; ruleId: string; file: string
 export function checkOverrides(cfg: SquadrantConfig, kb: string): OverrideFinding[] {
   const base = new Map(loadKbRules(cfg, kb).rules.map((r) => [r.id, r]));
   const out: OverrideFinding[] = [];
+  const stamped: string[] = [];
   for (const project of Object.keys(cfg.projects)) {
     if (!subscribedKbs(cfg, project).includes(kb)) continue;
     const dir = projectRulesHome(cfg, project);
@@ -110,11 +112,14 @@ export function checkOverrides(cfg: SquadrantConfig, kb: string): OverrideFindin
       if (!o.overridesBase) {
         const m = matter(fs.readFileSync(o.file, "utf8"));
         fs.writeFileSync(o.file, matter.stringify(m.content, { ...m.data, overridesBase: h }));
+        stamped.push(o.file);
         continue;
       }
       out.push({ project, ruleId: o.id, file: o.file, baseHash: h, changed: o.overridesBase !== h });
     }
   }
+  // A KB overlay is committed; a `repo:docs` overlay stays a working-tree diff (D6).
+  for (const w of commitKbFiles(cfg, stamped, { message: "knowledge: stamp override baselines", trailers: { domain: "rules", session: kbSession(), approvedBy: "auto" } })) console.error(w);
   return out;
 }
 

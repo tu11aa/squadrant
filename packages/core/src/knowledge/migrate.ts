@@ -29,11 +29,14 @@ export function ensureGitRepo(dir: string): boolean {
   try { execFileSync("git", ["init", "-q", dir], { stdio: "ignore" }); return true; } catch { return false; }
 }
 
-/** Runtime reconcile state written to the KB root: derived or per-machine, never committed (#1002). */
-export const KB_RUNTIME_IGNORES = ["/scores.json", "/escalations.json"];
+/**
+ * Never committed in any KB (phase 2 D7): proposals in every domain, reconcile runtime state (#1002), and the files
+ * moved out of the repo (`index.json` → cache, `verdicts.jsonl` → state dir) whose old copies may still sit on disk.
+ */
+export const KB_RUNTIME_IGNORES = ["**/_proposed/", "/scores.json", "/escalations.json", "/index.json", "/verdicts.jsonl"];
 
 const KB_GITIGNORE = "# squadrant KB defaults: source documents stay local\nraw/\n.converted/\n"
-  + `# reconcile runtime state\n${KB_RUNTIME_IGNORES.join("\n")}\n`;
+  + `# never committed: proposals, runtime state, moved-out files\n${KB_RUNTIME_IGNORES.join("\n")}\n`;
 
 /** Write the default .gitignore if the KB has none (#951). Never touches an existing one. Returns whether it wrote. */
 export function ensureKbGitignore(dir: string): boolean {

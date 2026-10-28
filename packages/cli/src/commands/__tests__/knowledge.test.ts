@@ -6,7 +6,7 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply, runKnowledgeSourcesRemove, runKnowledgeReviewApply } from "../knowledge.js";
-import { kbRulesDir, readIndex } from "@squadrant/core";
+import { kbRulesDir, kbDir, readIndex, KB_RUNTIME_IGNORES } from "@squadrant/core";
 
 let dir: string;
 let cfgPath: string;
@@ -51,11 +51,11 @@ describe("knowledge init", () => {
     expect(runKnowledgeInit("saitex", cfgPath).created).toEqual([".gitignore"]);
     expect(fs.existsSync(path.join(r.dir, ".gitignore"))).toBe(true);
   });
-  it("never modifies an existing .gitignore", () => {
+  it("keeps an existing .gitignore's lines and appends the missing D7 ignores (#979)", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
     fs.writeFileSync(path.join(r.dir, ".gitignore"), "custom\n");
     runKnowledgeInit("saitex", cfgPath);
-    expect(fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8")).toBe("custom\n");
+    expect(fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8")).toBe(`custom\n${KB_RUNTIME_IGNORES.join("\n")}\n`);
   });
   it("rejects an invalid kb name", () => {
     expect(() => runKnowledgeInit("Bad Name", cfgPath)).toThrow(/Invalid knowledge base name/);
@@ -124,7 +124,7 @@ describe("knowledge reindex", () => {
     expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBeUndefined();
     fs.writeFileSync(path.join(kbRoot, "index.json"), "{}\n");
     execFileSync("git", ["-C", kbRoot, "add", "-f", "index.json"]);
-    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBe(`git -C ${kbRoot} rm --cached index.json`);
+    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBe("squadrant knowledge doctor acme --fix");
     expect(execFileSync("git", ["-C", kbRoot, "ls-files", "index.json"], { encoding: "utf8" }).trim()).toBe("index.json");
   });
 });

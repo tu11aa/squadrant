@@ -19,6 +19,9 @@ const dirs = {
   SQUADRANT_NATIVE_MEMORY_ROOT: "squadrant-test-native-memory-",
   // #979 K8: the compiled rules index cache (~/.cache/squadrant/index).
   SQUADRANT_INDEX_CACHE_DIR: "squadrant-test-index-cache-",
+  // #979 phase 2: the default KB parent dir (~/squadrant/kb) and the per-machine verdicts dir.
+  SQUADRANT_KB_ROOT: "squadrant-test-kb-root-",
+  SQUADRANT_VERDICTS_DIR: "squadrant-test-verdicts-",
 };
 const made: string[] = [];
 for (const [env, prefix] of Object.entries(dirs)) {

@@ -239,7 +239,7 @@ export function knowledgeDoctorLines(
     // K8: the index is a derived cache; a missing or corrupt one is rebuilt, not reported as a failure.
     const { problem } = ensureIndexCache(cfg, kb);
     lines.push({ label: problem ? `KB '${kb}' index cache rebuilt (${problem})` : `KB '${kb}' index cache valid`, ok: true });
-    const legacy = legacyIndexHint(dir);
+    const legacy = legacyIndexHint(dir, kb);
     if (legacy) lines.push({ label: `KB '${kb}' still has index.json (no longer used; the index is a cache now)`, ok: false, warnOnly: true, hint: `run: ${legacy}` });
   }
   return lines;

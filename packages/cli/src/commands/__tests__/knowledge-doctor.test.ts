@@ -44,7 +44,14 @@ afterEach(() => {
 
 describe("knowledge doctor", () => {
   it("is registered on `squadrant knowledge`", () => {
-    expect(knowledgeCommand.commands.map((c) => c.name())).toContain("doctor");
+    expect(knowledgeCommand.commands.filter((c) => c.name() === "doctor")).toHaveLength(1); // one command for 2a checks and 2b-1 --fix
+    expect(knowledgeCommand.commands.find((c) => c.name() === "doctor")!.options.map((x) => x.long)).toEqual(["--fix"]);
+  });
+  it("the repo half skips a configured KB that is not on disk (reported by the item half instead)", async () => {
+    const { runKbRepoDoctor } = await import("../knowledge-doctor.js");
+    fs.rmSync(path.join(dir, "kb", "globex"), { recursive: true });
+    for (const kb of ["acme"]) execFileSync("git", ["init", "-q", path.join(dir, "kb", kb)]);
+    expect(runKbRepoDoctor(undefined, {}, cfgPath).map((e) => e.check.kb)).toEqual(["acme"]);
   });
   it("covers every configured KB plus _user by default and rebuilds missing index caches", () => {
     const r = runKnowledgeDoctor(undefined, cfgPath);
@@ -88,7 +95,7 @@ describe("knowledge doctor", () => {
     execFileSync("git", ["-C", kb, "add", "index.json"]);
     const r = runKnowledgeDoctor("acme", cfgPath);
     expect(r.ok).toBe(true);
-    expect(r.checks).toContainEqual({ level: "warn", message: expect.stringContaining(`run: git -C ${kb} rm --cached index.json`) });
+    expect(r.checks).toContainEqual({ level: "warn", message: expect.stringContaining(`run: squadrant knowledge doctor acme --fix`) });
     expect(execFileSync("git", ["-C", kb, "ls-files", "index.json"], { encoding: "utf8" }).trim()).toBe("index.json");
   });
   it("a missing KB: warn by default, fail when named; rejects a bad name", () => {

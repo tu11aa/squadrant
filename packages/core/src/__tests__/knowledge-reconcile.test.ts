@@ -7,8 +7,8 @@ import matter from "gray-matter";
 import { getDefaultConfig, type KnowledgeSourceEntry, type SquadrantConfig } from "@squadrant/shared";
 import {
   acquirePass, applyCandidates, applyDecisions, buildReviewPacket, changedRefs, checkOverrides, completePass, dedupPairs, domainCapExcess,
-  duePass, ensureGitRepo, ensureKbGitignore, evaluateCodeConflict, finishReconcile, kbDir, kbRulesDir, loadKbRules, planIngest, proposeAgentRule, readEscalations,
-  readSchedule, requestPass, resolveEscalation, tickKnowledgeSchedule, usageReview, writeSchedule, RUNNING_STALE_MS,
+  duePass, ensureGitRepo, KB_RUNTIME_IGNORES, ensureKbGitignore, evaluateCodeConflict, finishReconcile, kbDir, kbRulesDir, loadKbRules, planIngest, proposeAgentRule, readEscalations,
+  readSchedule, readVerdicts, requestPass, resolveEscalation, tickKnowledgeSchedule, usageReview, writeSchedule, RUNNING_STALE_MS,
   type CandidateFile, type Converter, type GitSeam, type ReviewContext,
 } from "../knowledge/index.js";
 
@@ -27,7 +27,7 @@ let clock: Date;
 const kbRoot = () => kbDir(cfg, "t");
 const enqueue = async (project: string, text: string) => { mailbox.push({ project, text }); };
 const deps = () => ({ cfg, stateRoot, enqueue, now: () => clock, auditDir: path.join(root, "audit") });
-const ctx = (extra: Partial<ReviewContext> = {}): ReviewContext => ({ cfg, kb: "t", sources: SOURCES, audit: { dir: path.join(root, "audit"), machineId: "m" }, now: () => clock, ...extra });
+const ctx = (extra: Partial<ReviewContext> = {}): ReviewContext => ({ cfg, kb: "t", sources: SOURCES, audit: { dir: path.join(root, "audit"), machineId: "m" }, verdicts: { dir: path.join(root, "verdicts"), machineId: "m" }, now: () => clock, ...extra });
 const preConverted = (dir: string): Converter => async (file) => fs.readFileSync(path.join(dir, `${path.basename(file)}.md`), "utf8");
 const cands = (name: string) => JSON.parse(fs.readFileSync(path.join(FIX, name), "utf8")) as CandidateFile;
 const ingest = () => planIngest(kbRoot(), { sources: SOURCES, converter: preConverted(path.join(FIX, "converted")) });
@@ -276,7 +276,7 @@ describe("end to end on the #897 golden fixture, through a fake captain mailbox"
     const names = auditEvents().map((e) => e.event);
     expect(names).toEqual(expect.arrayContaining(["item.approved", "item.applied", "item.superseded"]));
     expect(new Set(auditEvents().map((e) => e.domain))).toEqual(new Set(["rules"]));
-    const verdicts = fs.readFileSync(path.join(kbRoot(), "verdicts.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const verdicts = readVerdicts("t", kbRoot(), path.join(root, "verdicts")) as { outcome?: string; resolution?: { kind: string } }[];
     expect(verdicts.map((v) => v.outcome ?? v.resolution?.kind)).toEqual(["escalated", "approve"]);
   });
 
@@ -484,7 +484,7 @@ describe("the KB repo is clean after --finish (#1002)", () => {
     await finishReconcile("t", deps());
     expect(git("status", "--porcelain")).toBe("");
     const gi = fs.readFileSync(path.join(kbRoot(), ".gitignore"), "utf8");
-    expect(gi).toBe(`${operator}\n/scores.json\n/escalations.json\n`);
+    expect(gi).toBe(`${operator}\n${KB_RUNTIME_IGNORES.join("\n")}\n`);
     await finishReconcile("t", deps());
     expect(fs.readFileSync(path.join(kbRoot(), ".gitignore"), "utf8")).toBe(gi);
     expect(git("status", "--porcelain")).toBe("");

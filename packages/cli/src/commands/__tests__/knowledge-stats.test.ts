@@ -58,6 +58,7 @@ describe("knowledge stats (#979)", () => {
     expect(ids("_user", all)).toEqual(["prof.terse"]);
     expect(ids("repo:projR", all)).toEqual(["coding.r"]);
     expect(ids(NO_HOME_LABEL, all)).toEqual(["coding.n"]);
+    expect(all.find((s) => s.kb === NO_HOME_LABEL)!.domains.some((d) => d.deadDomain)).toBe(false); // not a KB: no dead-domain alarm
     expect(all.find((s) => s.kb === "acme")!.items.find((x) => x.itemId === "coding.a")).toMatchObject({ surfaced: 1, category: "coding" });  // kb:"t" not counted
   });
   it("no (no home) group when no event lacks a home", () => {

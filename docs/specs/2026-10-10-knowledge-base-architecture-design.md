@@ -1,6 +1,6 @@
 # Knowledge Base Architecture: Design
 
-- **Status:** brainstormed with the operator 2026-10-10 (research side-session); sections 1–4 approved in chat; **awaiting operator spec review**
+- **Status:** brainstormed with the operator 2026-10-10 (research side-session); sections 1–4 approved in chat; **awaiting operator spec review**. Amended by phase 2 ([`2026-10-27-kb-phase2-shared-core-design.md`](2026-10-27-kb-phase2-shared-core-design.md)): D1 (K9, §5.4), D6 (§3), D7 (§4), D10 (K10, §6); each amendment is marked in place.
 - **Epic:** #893 · **Supersedes parts of:** `docs/specs/2026-10-07-rules-kb-design.md` (D2 storage, §7 file naming; see §10)
 - **Related:** #894 (profile), #885 (learnings), #886 (wiki), #865 (learnings reconcile), #555 (group knowledge), #896–#902 (rules KB), #662 / #717 (projection), #641 / #627 (boot brief), #556 (crew memory guard)
 - **See also:** [`2026-10-13-kb-raw-lifecycle-design.md`](2026-10-13-kb-raw-lifecycle-design.md): rules raw lifecycle (errata, per-source review), uses `shared/decisions/` as a rule source.
@@ -38,8 +38,8 @@ All durable knowledge squadrant keeps for its agents lives in **one Knowledge Ba
 | K6 | **Profile lives only in `_user`.** It is read into every session and never written anywhere else, including in-repo homes of public projects. |
 | K7 | **Storage by lifecycle:** KB repos in `~/squadrant/kb/`; exchange in `~/squadrant/workspace/<project>/` (replaces spokes); state in `~/.local/state/squadrant/`; cache in `~/.cache/squadrant/`. Obsidian is dropped (it was only a viewer). |
 | K8 | **Markdown + YAML frontmatter is the source of truth.** The SQLite/FTS index is derived, lives in cache, and can be rebuilt at any time. |
-| K9 | **The daemon is the single writer** for KB commits and the audit log. The CLI and hooks talk to it over the socket. |
-| K10 | **Write gates per domain:** wiki = captain applies (citations required); decisions = captain records `proposed`, **only the operator sets `accepted`**; rules = rules spec D3/D4; profile = operator confirms in batches, except **explicit corrections ("don't do X"), which apply immediately** and are listed at the next checkpoint for removal. Crews only propose (#556). |
+| K9 | **The daemon is the single writer** for KB commits and the audit log. The CLI and hooks talk to it over the socket. *Amended by phase 2 (D1, 2026-10-27): there is no daemon writer for KB commits. Every KB write commits through one shared function, `commitKbPaths`, called directly by whichever process wrote the files; `git commit --only` plus git's own `index.lock` serialize concurrent writers. There is no daemon socket method and no `write.daemon-bypass` event.* |
+| K10 | **Write gates per domain:** wiki = captain applies (citations required); decisions = captain records `proposed`, **only the operator sets `accepted`**; rules = rules spec D3/D4; profile = operator confirms in batches, except **explicit corrections ("don't do X"), which apply immediately** and are listed at the next checkpoint for removal. Crews only propose (#556). *Amended by phase 2 (D10, 2026-10-27): a gate runs in one of two modes, propose → approve, or apply now and confirm later, with one `confirmed` field in every domain. Decisions move to the second mode: a decision recorded by the captain or the operator is `accepted` at once with `confirmed: false` and waits in the shared unconfirmed queue in `knowledge review` until the operator confirms, edits or drops it. Crews still only propose.* |
 | K11 | **Logging, scoring and reconcile apply to every domain**, with one shared event schema and one shared scheduler. Each domain has its own ground truth for reconcile. |
 | K12 | **Unused-expiry: 60 days** without being surfaced or cited → archive proposal (wiki, profile). Decisions never expire. Rules follow source hash. |
 
@@ -58,6 +58,8 @@ _user  (profile)                    ← every session, every project
 2. Else, if `p` has a `group` mapped to a KB (`groups.<g>.kb`): `<kb>/projects/<p>/`.
 3. Else, if `p` has a `group` with no KB mapping: auto-create a **local** KB named after the group on first write (`git init`, no remote), map it, and log `kb.created`. Isolation holds by default.
 4. Else: `personal/projects/<p>/`.
+
+*Amended by phase 2 (D6, 2026-10-27):* a `repo:docs` home is a code repo with branches, worktrees and PR review. A knowledge write there writes the files only and never commits; the change stays a working-tree diff that goes through the project's PR like any docs change.
 
 **Read set** for a session in `p`, in this order: `_user/profile` → `<groupKB>/shared` → home → each `projects.p.knowledge[]` KB's `shared/`.
 
@@ -96,6 +98,10 @@ _user  (profile)                    ← every session, every project
 ~/.config/squadrant/config.json         # config only
 ```
 
+- *Amended by phase 2 (D7, 2026-10-27): what lives in a KB repo.*
+  - **Committed:** item files, `sources.yaml`, `errata.yaml`, `REPORT.md`, `_archive/`, `_dropped.yaml`.
+  - **Git-ignored in every KB:** `**/_proposed/`, `/scores.json`, `/escalations.json`, `/index.json`, `/verdicts.jsonl` (plus `raw/` and `.converted/` by default). Proposals are never committed in any domain; the audit log keeps `item.proposed`.
+  - **Moved out:** `index.json` → `~/.cache/squadrant/index/<kb>.json` (K8); `verdicts.jsonl` → `~/.local/state/squadrant/verdicts/YYYY-MM.<machine-id>.jsonl`, one append-only file per machine like the audit log, each line carrying its `kb`.
 - **Per-machine log files** and **one file per decision** (no sequence numbers; ids are slugs) avoid git conflicts between two machines.
 - SQLite never sits in a KB repo or a synced folder.
 - **Artifacts are raw sources for wiki and decisions.** A wiki claim or decision cites them (`sources: [artifact:2026-10-10-kb-taxonomy.md, issue:#893, commit:ad2f689]`). This gives the non-rules domains a raw layer to reconcile against.
@@ -148,6 +154,7 @@ Per domain:
    - The daemon applies the change and makes one git commit per item in the KB repo, with trailers `Domain:`, `Item:`, `Level:`, `Session:`, `Approved-by:`.
    - `git log` is the full write history.
    - **If the daemon is down**, the CLI commits directly under git's own `index.lock`, retries 3 times, and logs `write.daemon-bypass`.
+   - *Amended by phase 2 (D1, 2026-10-27):* the daemon commit and the bypass are replaced by one shared function, `commitKbPaths(kbRoot, paths, {message, trailers})`, which every writer calls directly. It runs `git add` + `git commit --only` of exactly the changed paths (so concurrent writers never sweep each other's files), with `-c commit.gpgsign=false`, a bounded timeout and 3 tries on `index.lock`. It refuses any `_proposed/` path, skips paths with no change (no empty commits), and never throws: on failure the files stand and a warning names `squadrant knowledge doctor --fix`. Batch operations (`knowledge apply`, `review --apply`) make one commit per run with a repeated `Item:` trailer. `write.daemon-bypass` is dropped from §7.
 
 5. **Log.** `item.proposed|approved|rejected|applied` goes to the audit log (§7).
 
@@ -169,6 +176,7 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 - **Every injected item carries its id** (`[dec:flooros-redis-cache]`). The block footer asks: "If you apply an item, cite its id in your DONE / handoff."
 - **Profile delivery (amended 2026-10-15):** claude/codex/gemini get the profile on SessionStart through `squadrant hooks <agent> profile-session-start`; opencode on the first `chat.message` of each session. The situational tier (S2) injects at prompt start. See [`2026-10-15-user-profile-design.md`](2026-10-15-user-profile-design.md) §5.
 - **The precedence line is injected with the block:** Rules (must) > Decisions (accepted) > the operator's live instruction > Profile > Wiki > Recall.
+  - *Amended by phase 2 (D10, 2026-10-27):* an unconfirmed decision (`accepted`, `confirmed: false`) is injected with an `(unreviewed)` label and ranks **below** the operator's live instruction. Once confirmed it takes its normal place above it: Rules (must) > Decisions (accepted, confirmed) > the operator's live instruction > Decisions (unreviewed) > Profile > Wiki > Recall.
 - **The merged view** (`knowledge list --project p`) labels each item with its origin (`[saitex/shared]`, `[… → overridden by flooros]`).
 - Non-Claude agents get the same text through their adapters (#900). Until then they get the AGENTS.md pointer to the CLI, which is visible in coverage scores.
 
@@ -183,7 +191,7 @@ Only the injection points shared by all four agents are used (rules spec §6): s
 
 | Stage | Events |
 |---|---|
-| Write | `item.proposed` `item.approved` `item.rejected` `item.applied` `item.promoted` `item.superseded` `item.archived` `kb.created` `write.daemon-bypass` |
+| Write | `item.proposed` `item.approved` `item.rejected` `item.applied` `item.promoted` `item.superseded` `item.archived` `kb.created` ~~`write.daemon-bypass`~~ (dropped by phase 2 D1) |
 | Called | `item.surfaced` (push) · `item.suppressed` (budget/dedup/threshold) · `item.searched` / `item.shown` (pull) |
 | Used | `item.cited`: the id appears in a DONE / handoff / commit message after it was surfaced, shown or returned by a search for that project. Captured automatically at `crew signal done\|review` (the message plus the crew branch's own commits, any agent); `knowledge cite-scan` covers the rest |
 | Outcome | `item.outcome` = followed / violated / noise / wrong, with `source` = operator / review / crew / reconcile / judge / check (absent = operator) and an optional `task`. Written by `squadrant knowledge feedback <id> --followed\|--violated\|--noise\|--wrong [--source <s>] [--task <id>]` (operator or agent), by reconcile's code-violation flag (`source: "reconcile"`), plus the domain signals below (#945) |
@@ -330,7 +338,7 @@ A dry run lists each hit as `file:line old -> new`. A real run backs each file u
 
 | Phase | Scope |
 |---|---|
-| 2. Shared core | generalize from rules: KB registry + home resolution (all four rules of §3, including auto-create local group KB), daemon single-writer git commits with trailers, `knowledge propose/review/accept/promote`, merged `knowledge list/search`, matcher and scoring extended to any `domain` |
+| 2. Shared core | generalize from rules: KB registry + home resolution (all four rules of §3, including auto-create local group KB), daemon single-writer git commits with trailers (amended by phase 2 D1: shared `commitKbPaths`, no daemon writer), `knowledge propose/review/accept/promote`, merged `knowledge list/search`, matcher and scoring extended to any `domain` |
 | 3. Decisions | format, operator-only `accept`, index injection; seeded from the #898 `decision` blocks and spec "Decisions made" tables |
 | 4. Distill trigger + Wiki | `knowledge.distill` at crew DONE / side handoff; wiki redefinition, citations, lint; learnings migration (closes #885, #886, re-scopes #865, resolves #555) |
 | 5. Profile | #894 spec; snapshot injection, correction capture, native-memory bridge |
@@ -348,8 +356,8 @@ A dry run lists each hit as `file:line old -> new`. A real run backs each file u
   - score computation from an audit fixture
   - dead-domain alarm
 - **Integration:**
-  - propose → gate → daemon commit produces a git commit with trailers
-  - daemon-down bypass
+  - propose → gate → daemon commit produces a git commit with trailers (amended by phase 2 D1: commit via `commitKbPaths`)
+  - ~~daemon-down bypass~~ (dropped by phase 2 D1; replaced by: two concurrent writers each commit only their own paths)
   - two-machine simulation (two clones, per-machine logs, no conflicts)
 - **Live:**
   - injected ids are cited in a crew DONE and produce `item.cited`

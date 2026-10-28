@@ -7,7 +7,8 @@ import {
   normalizeSourceRef, validateItemDomain, type SquadrantConfig,
 } from "../index.js";
 
-const kbRoot = (kb: string) => path.join(os.homedir(), "squadrant", "kb", kb);
+// kbPath honours SQUADRANT_KB_ROOT (set to a temp dir by test/setup-env.ts).
+const kbRoot = (kb: string) => path.join(process.env.SQUADRANT_KB_ROOT || path.join(os.homedir(), "squadrant", "kb"), kb);
 const proj = (over: Record<string, unknown> = {}) => ({ path: "/repo/x", captainName: "c", spokeVault: "/v", host: "local", ...over });
 
 function cfg(): SquadrantConfig {

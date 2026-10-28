@@ -1,11 +1,12 @@
 // packages/core/src/knowledge/scores.ts — scores computed by code from the audit log, no LLM (KB spec §7, #901).
 // Also owns audit compaction: months older than the 30-day scoring window fold into per-item stats files.
-// verdicts.jsonl lives in the KB repo and is never touched here.
+// Verdicts (verdicts.ts, per machine under the state dir) are read here, never touched.
 import fs from "node:fs";
 import path from "node:path";
 import { USER_KB, type KbDomain, type KbItem, type SquadrantConfig } from "@squadrant/shared";
 import { auditReadCtx, defaultAuditDir, normalizeAuditRecord, outcomeSource, RATED_SOURCES } from "./audit.js";
 import type { AuditRecord } from "./fullpass.js";
+import { readVerdicts } from "./verdicts.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const SCORE_WINDOW_DAYS = 30;
@@ -189,7 +190,8 @@ export interface Scores {
 }
 
 /** The domains a KB's dead-domain alarm covers, whether or not they have events or items: `_user` holds profile only. */
-export const scoreDomains = (kb: string): readonly KbDomain[] => (kb === USER_KB ? ["profile"] : ["rules", "decisions", "wiki"]);
+/** "" is the (no home) group, not a KB: it has no fixed domains and never raises the dead-domain alarm. */
+export const scoreDomains = (kb: string): readonly KbDomain[] => (kb === USER_KB ? ["profile"] : kb ? ["rules", "decisions", "wiki"] : []);
 /** Statuses that make a known item live (rules/profile `active`, decisions `accepted`). */
 const LIVE_STATUSES = new Set(["active", "accepted"]);
 
@@ -238,7 +240,7 @@ export function computeScores(i: ScoreInput): Scores {
     const chars = Object.values(win.items).filter((x) => x.domain === domain).reduce((a, x) => a + x.chars, 0);
     const cited = rows.reduce((a, x) => a + x.cited, 0);
     return {
-      domain, writesPerMonth: d.writes, readsPerMonth: d.reads, deadDomain: d.writes === 0 && d.reads === 0,
+      domain, writesPerMonth: d.writes, readsPerMonth: d.reads, deadDomain: i.kb !== "" && d.writes === 0 && d.reads === 0,
       charsPerCitation: cited ? Math.round(chars / cited) : null, surfaced: rows.reduce((a, x) => a + x.surfaced, 0), cited,
     };
   });
@@ -262,11 +264,10 @@ function readRawAudit(dir: string): AuditRecord[] {
  * Read everything for one KB (raw logs + compacted months + verdicts) and score it. With `normalize`, legacy lines
  * count under their normalized KB and domain, so a `repo:<p>` label and the "" (no home) group are scorable too.
  */
-export function scoreKb(o: { kb: string; now: Date; auditDir?: string; kbRoot: string; known?: ScoreInput["known"]; normalize?: AuditNormalize }): Scores {
+export function scoreKb(o: { kb: string; now: Date; auditDir?: string; verdictsDir?: string; kbRoot: string; known?: ScoreInput["known"]; normalize?: AuditNormalize }): Scores {
   const dir = o.auditDir ?? defaultAuditDir();
   const records = readRawAudit(dir).map((r) => (o.normalize ? o.normalize(r) : r)).filter((r): r is AuditRecord => !!r && r.kb === o.kb);
-  let verdicts: Record<string, unknown>[] = [];
-  try { verdicts = fs.readFileSync(path.join(o.kbRoot, "verdicts.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none yet */ }
+  const verdicts = readVerdicts(o.kb, o.kbRoot, o.verdictsDir);
   return computeScores({ kb: o.kb, records, now: o.now, known: o.known, compacted: readCompacted(o.kb, dir), verdicts });
 }
 

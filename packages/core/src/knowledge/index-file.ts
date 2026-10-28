@@ -47,12 +47,12 @@ export function readIndex(kb: string): { index: RuleIndex | null; problem?: stri
   }
 }
 
-/** The command that retires a pre-K8 `<kb>/index.json` still tracked or on disk. A hint only: never run here (2b-1 automates it). */
-export function legacyIndexHint(kbRoot: string): string | undefined {
+/** The command that retires a pre-K8 `<kb>/index.json` still tracked or on disk. A hint only: never run here (`knowledge doctor --fix` untracks it). */
+export function legacyIndexHint(kbRoot: string, kb: string): string | undefined {
   let tracked = false;
   try {
     tracked = execFileSync("git", ["-C", kbRoot, "ls-files", "--", "index.json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim() !== "";
   } catch { /* not a git repo */ }
-  if (tracked) return `git -C ${kbRoot} rm --cached index.json`;
+  if (tracked) return `squadrant knowledge doctor ${kb} --fix`;
   return fs.existsSync(path.join(kbRoot, "index.json")) ? `rm ${path.join(kbRoot, "index.json")}` : undefined;
 }

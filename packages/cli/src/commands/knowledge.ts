@@ -13,7 +13,8 @@ import {
 import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, legacyIndexHint, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
-  ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  ensureGitRepo, ensureKbGitignore, ensureKbRuntimeIgnores, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  commitKbPaths, kbSession,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
   resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
   readAuditRecords, DELIVERY_EVENTS, OUTCOME_SOURCES, type OutcomeSource,
@@ -53,7 +54,12 @@ export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): 
   const sourcesFile = path.join(dir, "sources.yaml");
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
   if (ensureGitRepo(dir)) created.push(".git");
-  if (ensureKbGitignore(dir)) created.push(".gitignore");
+  if (ensureKbGitignore(dir) || ensureKbRuntimeIgnores(dir)) created.push(".gitignore");
+  // index.json and _proposed/ are git-ignored (D7); the layout files are committed so the KB starts clean.
+  const c = commitKbPaths(dir, [".gitignore", "sources.yaml"], {
+    message: `knowledge: init ${kb}`, trailers: { domain: "-", items: [], level: "-", session: kbSession(), approvedBy: "operator" },
+  });
+  if (c.warning) console.error(chalk.yellow(c.warning));
   if (!kbConfigs(cfg)[kb]) {
     cfg.knowledgeBases = { ...(cfg.knowledgeBases ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
@@ -91,6 +97,7 @@ export function runKnowledgeSourcesRemove(kb: string, entryPath: string, opts: {
 }
 
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
+knowledgeCommand.addCommand(knowledgeDoctorCommand);
 
 knowledgeCommand
   .command("init <kb>")
@@ -124,6 +131,7 @@ knowledgeCommand
       console.log(`${r.dryRun ? "would remove" : "removed"} ${o.remove}: ${r.stripped.length} rules lose a ref, ${r.stale.length} left with no source (stale), ${stripped} keep another source`);
       for (const id of r.stale) console.log(chalk.yellow(`  stale: ${id}`));
       if (r.dryRun) console.log(chalk.dim("dry run: nothing written"));
+      for (const w of r.warnings) console.error(chalk.yellow(w));
       return;
     }
     const { sources, errors } = runKnowledgeSources(kb);
@@ -147,7 +155,7 @@ export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH
   const pendingDups = allErrors.filter((e) => isPendingProposalDup(e, kbRulesDir(cfg, kb)));
   const errors = allErrors.filter((e) => !pendingDups.includes(e));
   const file = writeIndex(kbDir(cfg, kb), compileIndex(kb, live));
-  const legacyIndex = legacyIndexHint(kbDir(cfg, kb));
+  const legacyIndex = legacyIndexHint(kbDir(cfg, kb), kb);
   return { file, count: live.length, proposed: all.length - live.length + pendingDups.length, errors: errors.length, invalid: errors, ...(legacyIndex ? { legacyIndex } : {}) };
 }
 
@@ -185,8 +193,6 @@ knowledgeCommand
     console.log(ok ? chalk.green("valid") : chalk.red("invalid"));
     if (!ok) process.exitCode = 1;
   });
-
-knowledgeCommand.addCommand(knowledgeDoctorCommand);
 
 export function runKnowledgeMigrate(opts: { dryRun?: boolean } = {}, configPath = DEFAULT_CONFIG_PATH): KbMoveEntry[] {
   const cfg = loadConfig(configPath);
@@ -269,6 +275,7 @@ knowledgeCommand
     for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
     for (const e of r.orphanedErrata) console.log(chalk.yellow(`  errata ${e.id} (${e.ref}): quote no longer found; the raw file changed, re-check it`));
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
+    for (const w of r.warnings) console.error(chalk.yellow(w));
   });
 
 const defaultStateRoot = () => stateRoot();
@@ -309,6 +316,7 @@ knowledgeCommand
       console.log(`applied ${r.applied.length}, escalated ${r.escalated.length}, code violations ${r.violations.length}, skipped ${r.skipped.length}`);
       for (const e of r.escalated) console.log(chalk.yellow(`  ! ${e.key}: ${e.reasons.join(", ")}`));
       for (const x of r.skipped) console.log(chalk.red(`  ✘ ${x.item}: ${x.reason}`));
+      for (const w of r.warnings) console.error(chalk.yellow(w));
       return;
     }
     const by = os.userInfo().username;

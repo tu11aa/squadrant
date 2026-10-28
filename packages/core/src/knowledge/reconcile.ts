@@ -8,10 +8,10 @@ import { loadKbItems } from "./items.js";
 import { runFullChecks, type FullPassFindings } from "./fullpass.js";
 import { ensureKbRuntimeIgnores } from "./migrate.js";
 import { kbDir } from "./paths.js";
-import { gitRun } from "./profile.js";
 import { writeReport } from "./report.js";
 import { needsYouCount } from "./review.js";
 import { completePass, type PassKind, type RequestDeps } from "./schedule.js";
+import { commitKbPaths, kbSession } from "./write.js";
 
 export function finishMessage(kb: string, needsYou: number): string {
   return needsYou ? `${kb} KB: ${needsYou} item${needsYou === 1 ? "" : "s"} need you (squadrant knowledge review ${kb})` : `${kb} KB: reconcile finished, nothing needs you`;
@@ -37,17 +37,15 @@ export async function finishReconcile(kb: string, d: RequestDeps & { pass?: Pass
 const PASS_OUTPUT = [".gitignore", "REPORT.md"];
 
 /**
- * Leave the KB repo clean after a pass (#1002): scores.json/escalations.json are ignored (appended to an
- * existing .gitignore if missing), REPORT.md is committed. Skips a KB that is not its own repo. Never throws.
+ * Leave the KB repo clean after a pass (#1002): the D7 ignores are appended to an existing .gitignore if missing,
+ * REPORT.md is committed through the shared writer. Skips a KB that is not its own repo. Never throws.
  */
 function commitPassOutput(root: string, pass: PassKind, log: (m: string) => void = console.error): void {
   if (!fs.existsSync(path.join(root, ".git"))) return;
   ensureKbRuntimeIgnores(root);
-  try {
-    if (!gitRun(root, ["status", "--porcelain", "--", ...PASS_OUTPUT]).trim()) return;
-    gitRun(root, ["add", "--", ...PASS_OUTPUT]);
-    gitRun(root, ["commit", "-q", "--only", "-m", `knowledge: ${pass} reconcile report`, "--", ...PASS_OUTPUT]);
-  } catch (err) {
-    log(`knowledge reconcile: committing REPORT.md failed (${String((err as { stderr?: string }).stderr || err).trim().split("\n")[0]}); the file is kept`);
-  }
+  const r = commitKbPaths(root, PASS_OUTPUT, {
+    message: `knowledge: ${pass} reconcile report`,
+    trailers: { domain: "rules", items: [], level: "shared", session: kbSession(), approvedBy: "auto" },
+  });
+  if (r.warning) log(`knowledge reconcile: ${r.warning}`);
 }

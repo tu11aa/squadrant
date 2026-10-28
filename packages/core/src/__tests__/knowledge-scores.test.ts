@@ -167,14 +167,14 @@ describe("compaction and citations", () => {
     expect(it.surfaced).toBe(2);           // window is 2026-09-10..: the Sep 25 and Oct 5 events
     expect(it.lastUsed).toBe("2026-07-15T00:00:00.000Z");
   });
-  it("compaction never touches verdicts.jsonl and is idempotent", () => {
-    const kbRoot = path.join(dir, "kb");
-    appendVerdict(kbRoot, { kind: "review", item: "x", outcome: "applied" }, new Date("2026-06-01T00:00:00Z"));
-    const before = fs.readFileSync(path.join(kbRoot, "verdicts.jsonl"), "utf8");
+  it("compaction never touches verdicts and is idempotent", () => {
+    const vdir = path.join(dir, "verdicts");
+    appendVerdict("saitex", { kind: "review", item: "x", outcome: "applied" }, new Date("2026-06-01T00:00:00Z"), { dir: vdir, machineId: "m1" });
+    const before = fs.readFileSync(path.join(vdir, "2026-06.m1.jsonl"), "utf8");
     appendAudit([ev()], sink(new Date("2026-06-01T00:00:00Z")));
     compactAudit({ now: NOW, dir });
     expect(compactAudit({ now: NOW, dir })).toEqual([]);
-    expect(fs.readFileSync(path.join(kbRoot, "verdicts.jsonl"), "utf8")).toBe(before);
+    expect(fs.readFileSync(path.join(vdir, "2026-06.m1.jsonl"), "utf8")).toBe(before);
   });
 
   it("mentionsId matches whole tokens only", () => {

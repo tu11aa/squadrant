@@ -1,13 +1,55 @@
-// packages/cli/src/commands/knowledge-doctor.ts — `squadrant knowledge doctor [kb]` (#979, spec 2026-10-27 §4.1, §4.6).
-// Read-only apart from rebuilding the derived index cache (K8). `--fix` (commit/untrack) belongs to 2b-1.
+// packages/cli/src/commands/knowledge-doctor.ts — `squadrant knowledge doctor [kb] [--fix]` (#979, spec 2026-10-27 §4.1, §4.6, §5, C3).
+// Two halves: is each KB repo clean after squadrant writes (D7; --fix repairs it, outside edits need a y/n), and are its
+// items valid (D3/D4, common fields), its index cache present (K8) and the audit log healthy. Only --fix and the cache rebuild write.
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, userKbDir, DEFAULT_CONFIG_PATH, KB_NAME_RE, USER_KB, type SquadrantConfig } from "@squadrant/shared";
+import { loadConfig, kbConfigs, userKbDir, DEFAULT_CONFIG_PATH, KB_NAME_RE, USER_KB, type SquadrantConfig } from "@squadrant/shared";
 import {
-  allKbNames, auditHealth, compileIndex, kbDir, legacyIndexHint, loadKbItems, loadKbRules, readIndex, validateKbItems, writeIndex, type KbCheck,
+  allKbNames, auditHealth, checkKbRepo, compileIndex, fixKbRepo, kbDir, legacyIndexHint, loadKbItems, loadKbRules, readIndex, validateKbItems, writeIndex,
+  type KbCheck, type KbRepoCheck, type KbRepoFix,
 } from "@squadrant/core";
+
+export interface KbDoctorEntry { check: KbRepoCheck; fix?: KbRepoFix }
+
+/** Phase 2 §5 / C3: is each KB repo clean? --fix runs the mechanical fixes; other changes are committed only on `confirm`.
+ *  Without a name: every configured KB that exists on disk (a missing one is reported by runKnowledgeDoctor). */
+export function runKbRepoDoctor(
+  kb: string | undefined, o: { fix?: boolean; confirm?: (kb: string, files: string[]) => boolean } = {}, configPath = DEFAULT_CONFIG_PATH,
+): KbDoctorEntry[] {
+  const cfg = loadConfig(configPath);
+  const kbs = kb ? [kb] : Object.keys(kbConfigs(cfg)).filter((k) => KB_NAME_RE.test(k) && fs.existsSync(kbDir(cfg, k))); // `_user`: squadrant profile list --check
+  return kbs.map((k) => {
+    if (!KB_NAME_RE.test(k)) throw new Error(`Invalid knowledge base name '${k}' (use lowercase letters, digits, '-')`);
+    const root = kbDir(cfg, k);
+    if (!fs.existsSync(root)) throw new Error(`Knowledge base '${k}' does not exist. Run: squadrant knowledge init ${k}`);
+    if (!o.fix) return { check: checkKbRepo(k, root) };
+    const fix = fixKbRepo(k, root, { confirm: o.confirm && ((files) => o.confirm!(k, files)) });
+    return { check: checkKbRepo(k, root), fix };
+  });
+}
+
+export function renderKbDoctor(entries: KbDoctorEntry[]): { lines: string[]; ok: boolean } {
+  const lines: string[] = [];
+  let ok = true;
+  for (const { check: c, fix } of entries) {
+    for (const f of fix?.fixed ?? []) lines.push(chalk.green(`  fixed ${c.kb}: ${f}`));
+    for (const f of fix?.committed ?? []) lines.push(chalk.green(`  committed ${c.kb}: ${f}`));
+    for (const w of fix?.warnings ?? []) lines.push(chalk.yellow(`  ! ${w}`));
+    const problems = [
+      ...(c.notRepo ? [`${c.root} is not a git repo`] : []),
+      ...(c.missingIgnores.length ? [`.gitignore lacks ${c.missingIgnores.join(", ")}`] : []),
+      ...(c.trackedNeverCommitted.length ? [`tracked but never committed (D7): ${c.trackedNeverCommitted.join(", ")}`] : []),
+      ...(c.uncommitted.length ? [`uncommitted: ${c.uncommitted.join(", ")}`] : []),
+    ];
+    if (problems.length) ok = false;
+    lines.push(problems.length ? chalk.red(`✘ ${c.kb}: ${problems.join("; ")}`) : chalk.green(`✔ ${c.kb}: clean`));
+  }
+  if (!ok) lines.push(chalk.dim("fix: squadrant knowledge doctor [kb] --fix (uncommitted item files are committed only after a y/n on a terminal, never from a crew session)"));
+  return { lines, ok };
+}
 
 /** K8: the index cache is derived, so a missing or corrupt one is rebuilt from the KB's live rules. Returns what was wrong. */
 export function ensureIndexCache(cfg: SquadrantConfig, kb: string): { problem?: string; file?: string } {
@@ -20,7 +62,7 @@ export function ensureIndexCache(cfg: SquadrantConfig, kb: string): { problem?: 
 export function indexChecks(cfg: SquadrantConfig, kb: string): KbCheck[] {
   const { problem, file } = ensureIndexCache(cfg, kb);
   const checks: KbCheck[] = [{ level: "ok", message: problem ? `${kb}: index cache rebuilt (${problem}) → ${file}` : `${kb}: index cache valid` }];
-  const legacy = legacyIndexHint(kbDir(cfg, kb));
+  const legacy = legacyIndexHint(kbDir(cfg, kb), kb);
   if (legacy) checks.push({ level: "warn", message: `${kb}: index.json in the KB repo is no longer used (the index is a cache now) → run: ${legacy}` });
   return checks;
 }
@@ -71,11 +113,33 @@ export function runKnowledgeDoctor(kb?: string, configPath = DEFAULT_CONFIG_PATH
 
 export const knowledgeDoctorCommand = new Command("doctor")
   .argument("[kb]", "one KB (default: every configured KB plus _user)")
-  .description("Check KB items (folder domain D3, reserved id prefixes D4, common fields) and rebuild a missing index cache; exits non-zero on item failures")
-  .action((kb?: string) => {
+  .description("Check each KB: repo clean (D7 .gitignore, nothing tracked that is never committed, no uncommitted files), items valid (D3/D4, common fields), index cache present, audit log healthy; --fix repairs the repo")
+  .option("--fix", "ensure .gitignore and untrack never-committed files (commits that); asks before committing other uncommitted files")
+  .action(async (kb: string | undefined, o: { fix?: boolean }) => {
+    const repoKb = kb === USER_KB ? undefined : kb; // `_user` repo state: squadrant profile list --check
+    const repo = kb !== USER_KB;
+    const interactive = repo && !!o.fix && !!process.stdin.isTTY && !process.env.SQUADRANT_CREW_TASK_ID;
+    let approved: Map<string, Set<string>> | undefined;
+    if (interactive) {
+      // Ask before fixing (fixKbRepo's confirm is synchronous): one y/n per KB; only the files shown are committed.
+      approved = new Map();
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        for (const e of runKbRepoDoctor(repoKb)) {
+          if (!e.check.uncommitted.length) continue;
+          console.log(`${e.check.kb}: changed outside a squadrant write:\n${e.check.uncommitted.map((f) => `  ${f}`).join("\n")}`);
+          if ((await rl.question("commit them, one commit each (Approved-by: operator)? [y/N] ")).trim().toLowerCase() === "y") approved.set(e.check.kb, new Set(e.check.uncommitted));
+        }
+      } finally { rl.close(); }
+    }
+    const repoOut = repo
+      ? renderKbDoctor(runKbRepoDoctor(repoKb, { fix: o.fix, confirm: approved && ((k, files) => files.every((f) => approved!.get(k)?.has(f))) }))
+      : { lines: [], ok: true };
+    for (const l of repoOut.lines) console.log(l);
+    // Item/index/audit checks run after --fix, so the index.json hint reflects the repaired repo.
     const { checks, ok } = runKnowledgeDoctor(kb);
     const mark = { ok: chalk.green("✔"), fail: chalk.red("✘"), warn: chalk.yellow("!"), skip: chalk.dim("-") };
     for (const c of checks) console.log(`${mark[c.level]} ${c.message}`);
-    console.log(ok ? chalk.green("healthy") : chalk.red("problems found"));
-    if (!ok) process.exitCode = 1;
+    console.log(ok && repoOut.ok ? chalk.green("healthy") : chalk.red("problems found"));
+    if (!ok || !repoOut.ok) process.exitCode = 1;
   });
