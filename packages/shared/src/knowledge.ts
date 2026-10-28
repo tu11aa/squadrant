@@ -252,7 +252,7 @@ export interface KbItem {
   anchors?: RuleAnchors;
   /** Absolute path of the item file. */
   path: string;
-  /** Read-set layer label, e.g. `saitex/shared`, `saitex/projects/flooros`, `repo:flooros`, `_user/profile`. */
+  /** Read-set layer label, e.g. `acme/shared`, `acme/projects/projA`, `repo:projA`, `_user/profile`. */
   origin: string;
   /** Rules only: the frontmatter `domain`, which for rules is a category (D3). */
   category?: string;
@@ -372,7 +372,7 @@ export interface ReadLayer {
   level: KbLevel;
   /** The dir that holds `<domain>/` folders. */
   root: string;
-  /** Label shown in the merged view: `saitex/shared`, `saitex/projects/flooros`, `repo:flooros`, `_user/profile`. */
+  /** Label shown in the merged view: `acme/shared`, `acme/projects/projA`, `repo:projA`, `_user/profile`. */
   origin: string;
   /** Project-level layers: the project. */
   project?: string;
