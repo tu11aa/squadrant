@@ -4,12 +4,13 @@ import fs from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import chalk from "chalk";
-import { loadConfig, kbConfigs, workspacePath, stateRoot, legacyStateDir, stateSeedMarkerPath, daemonLogPath, type SquadrantConfig } from "@squadrant/shared";
-import { readIndex, kbDir, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
+import { loadConfig, kbConfigs, workspacePath, stateRoot, legacyStateDir, stateSeedMarkerPath, daemonLogPath, resolveHome, USER_KB, type SquadrantConfig } from "@squadrant/shared";
+import { kbDir, legacyIndexHint, findLegacyKbs, findLegacyOverlays, loadedDaemonLogPath, LABEL } from "@squadrant/core";
 import { compatManifest, type ToolEntry } from "@squadrant/shared";
 import { checkToolCompat } from "@squadrant/shared";
 import { createCmuxDriver, RuntimeRegistry, createCmuxNotifier, NotifierRegistry, createObsidianDriver, WorkspaceRegistry } from "@squadrant/workspaces";
 import { queryHealth, printServiceHealth } from "./health-view.js";
+import { ensureIndexCache } from "./knowledge-doctor.js";
 import { migrateKb } from "../lib/migrate-kb.js";
 import { danglingRefs, refSites, type DanglingRef } from "../lib/ref-sweep.js";
 import {
@@ -229,9 +230,37 @@ export function knowledgeDoctorLines(
       ok: false, warnOnly: true, hint: "run: squadrant knowledge migrate (moves to <kb>/projects/<p>/rules, deletes nothing)",
     });
   }
-  for (const kb of kbs) {
-    const { problem } = readIndex(kbDir(cfg, kb), kb);
-    lines.push({ label: `KB '${kb}' index.json valid`, ok: !problem, hint: problem ? `${problem} — run: squadrant knowledge reindex ${kb}` : undefined });
+  for (const kb of kbs.filter((k) => k !== USER_KB)) {
+    const dir = kbDir(cfg, kb);
+    if (!fs.existsSync(dir)) {
+      lines.push({ label: `KB '${kb}' exists`, ok: false, hint: `knowledge base not found at ${dir} — run: squadrant knowledge init ${kb}` });
+      continue;
+    }
+    // K8: the index is a derived cache; a missing or corrupt one is rebuilt, not reported as a failure.
+    const { problem } = ensureIndexCache(cfg, kb);
+    lines.push({ label: problem ? `KB '${kb}' index cache rebuilt (${problem})` : `KB '${kb}' index cache valid`, ok: true });
+    const legacy = legacyIndexHint(dir);
+    if (legacy) lines.push({ label: `KB '${kb}' still has index.json (no longer used; the index is a cache now)`, ok: false, warnOnly: true, hint: `run: ${legacy}` });
+  }
+  return lines;
+}
+
+/**
+ * D5: a project with no group and no `knowledgeHome` falls to the `personal` KB. One that looks open source (a `docs/`
+ * dir and a LICENSE file) probably wants its knowledge in the repo. Suggests only; never writes config.
+ */
+export function knowledgeHomeDoctorLines(cfg: SquadrantConfig): { label: string; hint: string }[] {
+  const lines: { label: string; hint: string }[] = [];
+  for (const [name, pc] of Object.entries(cfg.projects)) {
+    if (pc.group || pc.knowledgeHome) continue;
+    const repo = resolveHome(pc.path);
+    let entries: string[] = [];
+    try { entries = fs.readdirSync(repo); } catch { continue; }
+    if (!entries.some((f) => /^licen[cs]e/i.test(f)) || !fs.statSync(path.join(repo, "docs"), { throwIfNoEntry: false })?.isDirectory()) continue;
+    lines.push({
+      label: `project '${name}' has no knowledge home and would use the 'personal' KB`,
+      hint: `it looks open source (docs/ + LICENSE); to keep its knowledge in the repo, add to the config: { "projects": { "${name}": { "knowledgeHome": "repo:docs" } } }`,
+    });
   }
   return lines;
 }
@@ -405,6 +434,7 @@ export const doctorCommand = new Command("doctor")
         if (l.warnOnly && !l.ok) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${l.hint ? chalk.dim(` → ${l.hint}`) : ""}`);
         else results.push(check(l.label, l.ok, l.hint));
       }
+      for (const l of knowledgeHomeDoctorLines(cfgForKb)) console.log(`  ${chalk.yellow("! WARN")}  ${l.label}${chalk.dim(` → ${l.hint}`)}`);
     } catch { /* no config yet — the config check below reports it */ }
 
     const stateLines = stateDoctorLines({

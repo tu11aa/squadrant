@@ -5,6 +5,7 @@ import matter from "gray-matter";
 import { validateRuleFrontmatter, type KnowledgeErratum, type KnowledgeSourceEntry, type Rule, type RuleFrontmatter } from "@squadrant/shared";
 import { convertedFile, PASS_THROUGH, readState, refCanon, resolveSourceRef } from "./ingest.js";
 import { PROPOSED_DIR } from "./paths.js";
+import { ARCHIVE_DIR } from "./profile.js";
 import { findQuote, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
 
 // gray-matter evals `---js` front matter by default; rule files are untrusted, so allow YAML only.
@@ -38,7 +39,7 @@ function listMarkdown(dir: string, includeProposed: boolean): string[] {
     for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
       const full = path.join(d, ent.name);
       if (ent.isDirectory()) {
-        if (ent.name === PROPOSED_DIR && !includeProposed) continue;
+        if ((ent.name === PROPOSED_DIR && !includeProposed) || ent.name === ARCHIVE_DIR) continue; // archived items are never live (#979 §4.1)
         walk(full);
       } else if (ent.isFile() && ent.name.endsWith(".md")) {
         out.push(full);

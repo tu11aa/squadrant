@@ -3,15 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import matter from "gray-matter";
-import { loadRulesDir, loadSources, removeSource, SOURCES_TEMPLATE } from "../knowledge/index.js";
+import { indexCacheFile, loadRulesDir, loadSources, removeSource, SOURCES_TEMPLATE } from "../knowledge/index.js";
 
 let hub: string;
 const write = (text: string) => {
   fs.mkdirSync(path.join(hub, "saitex"), { recursive: true });
   fs.writeFileSync(path.join(path.join(hub, "saitex"), "sources.yaml"), text);
 };
-beforeEach(() => { hub = fs.mkdtempSync(path.join(os.tmpdir(), "kb-src-")); });
-afterEach(() => fs.rmSync(hub, { recursive: true, force: true }));
+const savedCache = process.env.SQUADRANT_INDEX_CACHE_DIR;
+beforeEach(() => { hub = fs.mkdtempSync(path.join(os.tmpdir(), "kb-src-")); process.env.SQUADRANT_INDEX_CACHE_DIR = path.join(hub, "cache"); });
+afterEach(() => { process.env.SQUADRANT_INDEX_CACHE_DIR = savedCache; fs.rmSync(hub, { recursive: true, force: true }); });
 
 describe("loadSources", () => {
   it("missing file → empty", () => {
@@ -61,7 +62,7 @@ describe("removeSource (lifecycle spec §6.2 step 3)", () => {
     const r = removeSource(kb(), rulesDir(), "extracted/**", { dryRun: true });
     expect(r).toMatchObject({ dryRun: true, entryRemoved: true, stripped: ["coding.both", "coding.only-extracted"], stale: ["coding.only-extracted"] });
     expect(snapshot()).toEqual(before);
-    expect(fs.existsSync(path.join(kb(), "index.json"))).toBe(false);
+    expect(fs.existsSync(indexCacheFile("saitex"))).toBe(false);
   });
 
   it("strips refs, marks source-less rules stale, leaves multi-source rules active, keeps other entries and comments", () => {
@@ -75,7 +76,8 @@ describe("removeSource (lifecycle spec §6.2 step 3)", () => {
     expect(rules["coding.raw-only"].sources.map((s) => s.ref)).toEqual(["raw/onb.html"]);
     expect(fs.readFileSync(path.join(kb(), "sources.yaml"), "utf8")).toBe("# trusted sources\n- path: raw/**\n  priority: agent # keep\n  review: required\n");
     expect(loadSources(kb()).sources.map((s) => s.path)).toEqual(["raw/**"]);
-    expect(JSON.parse(fs.readFileSync(path.join(kb(), "index.json"), "utf8")).rules.map((x: { id: string }) => x.id).sort()).toEqual(["coding.both", "coding.only-extracted", "coding.raw-only"]);
+    expect(fs.existsSync(path.join(kb(), "index.json"))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(indexCacheFile("saitex"), "utf8")).rules.map((x: { id: string }) => x.id).sort()).toEqual(["coding.both", "coding.only-extracted", "coding.raw-only"]);
     expect(matter(fs.readFileSync(path.join(rulesDir(), "coding", "coding.both.md"), "utf8")).data.id).toBe("coding.both");
   });
 
@@ -89,7 +91,7 @@ describe("removeSource (lifecycle spec §6.2 step 3)", () => {
   it("names the index after the KB, not the directory", () => {
     write("- path: extracted/**\n  priority: project\n");
     removeSource(kb(), rulesDir(), "extracted/**", { kbName: "saitex-kb" });
-    expect(JSON.parse(fs.readFileSync(path.join(kb(), "index.json"), "utf8")).kb).toBe("saitex-kb");
+    expect(JSON.parse(fs.readFileSync(indexCacheFile("saitex-kb"), "utf8")).kb).toBe("saitex-kb");
   });
 
   it("an unknown entry is an error and changes nothing", () => {

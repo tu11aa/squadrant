@@ -3,7 +3,8 @@
 // verdicts.jsonl lives in the KB repo and is never touched here.
 import fs from "node:fs";
 import path from "node:path";
-import { defaultAuditDir, outcomeSource, RATED_SOURCES } from "./audit.js";
+import { USER_KB, type KbDomain, type KbItem, type SquadrantConfig } from "@squadrant/shared";
+import { auditReadCtx, defaultAuditDir, normalizeAuditRecord, outcomeSource, RATED_SOURCES } from "./audit.js";
 import type { AuditRecord } from "./fullpass.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,8 +25,9 @@ export interface ItemCounts {
 const zero = (): ItemCounts => ({ surfaced: 0, suppressed: 0, searched: 0, shown: 0, cited: 0, followed: 0, violated: 0, noise: 0, wrong: 0, codeViolations: 0, chars: 0 });
 const later = (a: string | undefined, b: string | undefined) => (a && b ? (a > b ? a : b) : a ?? b);
 
+/** Rows are keyed `<kbDomain>|<itemId>`; `category` is a rule's category when an event carried one. */
 export interface Tally {
-  items: Record<string, ItemCounts & { domain: string; itemId: string }>;
+  items: Record<string, ItemCounts & { domain: string; itemId: string; category?: string }>;
   domains: Record<string, { writes: number; reads: number }>;
   agents: Record<string, number>;
   tiers: Record<string, number>;
@@ -45,6 +47,7 @@ export function tally(records: AuditRecord[], into: Tally = emptyTally()): Tally
     if (READ_EVENTS.has(e.event ?? "")) d.reads++;
     if (!e.itemId || WRITE_EVENTS.has(e.event ?? "")) continue;
     const c = (into.items[`${domain}|${e.itemId}`] ??= { ...zero(), domain, itemId: e.itemId });
+    if (typeof e.category === "string" && e.category) c.category = e.category;
     switch (e.event) {
       case "item.surfaced": {
         c.surfaced++; c.chars += Number(e.chars) || 0; c.lastSurfaced = later(c.lastSurfaced, e.ts);
@@ -87,8 +90,15 @@ function parseLines(file: string): AuditRecord[] {
   return out;
 }
 
-/** Fold monthly logs that end before the scoring window into `<month>.<machine>.stats.json`, then drop the raw file. Returns the months compacted. */
-export function compactAudit(o: { now: Date; dir?: string }): string[] {
+/** Read-side view of one audit line (`auditNormalizer`); null = not a KB any config knows. */
+export type AuditNormalize = (r: AuditRecord) => AuditRecord | null;
+
+/**
+ * Fold monthly logs that end before the scoring window into `<month>.<machine>.stats.json`, then drop the raw file.
+ * With `normalize`, lines fold under their normalized KB and domain; a line it rejects keeps its raw `kb`, so nothing is lost.
+ * Returns the months compacted.
+ */
+export function compactAudit(o: { now: Date; dir?: string; normalize?: AuditNormalize }): string[] {
   const dir = o.dir ?? defaultAuditDir();
   if (!fs.existsSync(dir)) return [];
   const cutoffMonth = new Date(o.now.getTime() - SCORE_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 7);
@@ -98,7 +108,10 @@ export function compactAudit(o: { now: Date; dir?: string }): string[] {
     if (!m || m[1] >= cutoffMonth) continue;
     const [, month, machine] = m;
     const byKb = new Map<string, AuditRecord[]>();
-    for (const r of parseLines(path.join(dir, f))) byKb.set(r.kb ?? "", [...(byKb.get(r.kb ?? "") ?? []), r]);
+    for (const raw of parseLines(path.join(dir, f))) {
+      const r = o.normalize?.(raw) ?? raw;
+      byKb.set(r.kb ?? "", [...(byKb.get(r.kb ?? "") ?? []), r]);
+    }
     const statsPath = path.join(dir, statsFileName(month, machine));
     const prior: CompactedMonth | null = fs.existsSync(statsPath) ? JSON.parse(fs.readFileSync(statsPath, "utf8")) : null;
     const kbs: Record<string, Tally> = prior?.kbs ?? {};
@@ -124,7 +137,7 @@ function readCompacted(kb: string, dir: string): Tally {
 }
 function mergeTally(into: Tally, from: Tally): void {
   for (const [k, c] of Object.entries(from.items)) {
-    const t = (into.items[k] ??= { ...zero(), domain: c.domain, itemId: c.itemId });
+    const t = (into.items[k] ??= { ...zero(), domain: c.domain, itemId: c.itemId, ...(c.category ? { category: c.category } : {}) });
     t.lastSurfaced = later(t.lastSurfaced, c.lastSurfaced);
     t.lastUsed = later(t.lastUsed, c.lastUsed);
     for (const f of Object.keys(zero()) as (keyof ItemCounts)[]) if (typeof c[f] === "number") (t[f] as number) += c[f] as number;
@@ -146,6 +159,8 @@ export const COMPLIANCE_MIN_EVALUATED = 3;
 
 export interface ItemScore {
   domain: string; itemId: string;
+  /** Rules: the rule's category. */
+  category?: string;
   /** Last-30-day counts. */
   surfaced: number; suppressed: number; searched: number; shown: number; cited: number;
   followed: number; violated: number; noise: number; wrong: number; codeViolations: number;
@@ -173,28 +188,40 @@ export interface Scores {
   bySource: Record<string, Record<string, number>>;
 }
 
+/** The domains a KB's dead-domain alarm covers, whether or not they have events or items: `_user` holds profile only. */
+export const scoreDomains = (kb: string): readonly KbDomain[] => (kb === USER_KB ? ["profile"] : ["rules", "decisions", "wiki"]);
+/** Statuses that make a known item live (rules/profile `active`, decisions `accepted`). */
+const LIVE_STATUSES = new Set(["active", "accepted"]);
+
 export interface ScoreInput {
   kb: string; records: AuditRecord[]; now: Date;
-  /** Known items (active rules): lets never-fired be computed for items with no events at all. */
-  known?: { id: string; domain: string; status: string }[];
+  /** Known items of every domain: lets never-fired be computed for live items with no events at all. */
+  known?: { id: string; domain: string; status: string; category?: string }[];
   /** Pre-window totals from compacted months. */
   compacted?: Tally;
   verdicts?: Record<string, unknown>[];
 }
+
+/** Scoring's `known` set from loaded items of any domain (`loadKbItems`). */
+export const knownItems = (items: KbItem[]): NonNullable<ScoreInput["known"]> =>
+  items.map((x) => ({ id: x.id, domain: x.kbDomain, status: x.status, ...(x.category ? { category: x.category } : {}) }));
 
 /** Pure: same records and clock → same scores. */
 export function computeScores(i: ScoreInput): Scores {
   const since = i.now.getTime() - SCORE_WINDOW_DAYS * DAY_MS;
   const win = tally(i.records.filter((r) => Date.parse(r.ts) >= since));
   const life = tally(i.records, i.compacted ? structuredClone(i.compacted) : undefined);
-  const knownActive = new Set((i.known ?? []).filter((k) => k.status === "active").map((k) => `${k.domain}|${k.id}`));
+  const live = (i.known ?? []).filter((k) => LIVE_STATUSES.has(k.status));
+  const knownActive = new Set(live.map((k) => `${k.domain}|${k.id}`));
+  const categoryOf = new Map(live.filter((k) => k.category).map((k) => [`${k.domain}|${k.id}`, k.category!]));
   const keys = new Set([...Object.keys(win.items), ...Object.keys(life.items), ...knownActive]);
   const items: ItemScore[] = [...keys].sort().map((key) => {
     const [domain, itemId] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
     const w = win.items[key] ?? { ...zero(), domain, itemId };
     const l = life.items[key];
+    const category = categoryOf.get(key) ?? w.category ?? l?.category;
     return {
-      domain, itemId, surfaced: w.surfaced, suppressed: w.suppressed, searched: w.searched, shown: w.shown, cited: w.cited,
+      domain, itemId, ...(category ? { category } : {}), surfaced: w.surfaced, suppressed: w.suppressed, searched: w.searched, shown: w.shown, cited: w.cited,
       followed: w.followed, violated: w.violated, noise: w.noise, wrong: w.wrong, codeViolations: w.codeViolations,
       evaluated: w.followed + w.violated,
       fireRate: w.surfaced, pullRate: w.shown + w.searched,
@@ -204,7 +231,7 @@ export function computeScores(i: ScoreInput): Scores {
       neverFired30d: w.surfaced === 0 && (knownActive.has(key) || (l?.surfaced ?? 0) > 0), lifetimeSurfaced: l?.surfaced ?? 0,
     };
   });
-  const domainNames = new Set([...Object.keys(win.domains), ...items.map((x) => x.domain)]);
+  const domainNames = new Set([...scoreDomains(i.kb), ...Object.keys(win.domains), ...items.map((x) => x.domain)]);
   const domains: DomainScore[] = [...domainNames].sort().map((domain) => {
     const d = win.domains[domain] ?? { writes: 0, reads: 0 };
     const rows = items.filter((x) => x.domain === domain);
@@ -225,18 +252,34 @@ export function computeScores(i: ScoreInput): Scores {
   };
 }
 
-/** Read everything for one KB (raw logs + compacted months + verdicts) and score it. */
-export function scoreKb(o: { kb: string; now: Date; auditDir?: string; kbRoot: string; known?: ScoreInput["known"] }): Scores {
+/** Every raw (not yet compacted) audit line in `dir`, oldest month first. */
+function readRawAudit(dir: string): AuditRecord[] {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((n) => MONTH_FILE_RE.test(n)).sort().flatMap((f) => parseLines(path.join(dir, f)));
+}
+
+/**
+ * Read everything for one KB (raw logs + compacted months + verdicts) and score it. With `normalize`, legacy lines
+ * count under their normalized KB and domain, so a `repo:<p>` label and the "" (no home) group are scorable too.
+ */
+export function scoreKb(o: { kb: string; now: Date; auditDir?: string; kbRoot: string; known?: ScoreInput["known"]; normalize?: AuditNormalize }): Scores {
   const dir = o.auditDir ?? defaultAuditDir();
-  const records: AuditRecord[] = [];
-  if (fs.existsSync(dir)) {
-    for (const f of fs.readdirSync(dir).filter((n) => MONTH_FILE_RE.test(n)).sort()) {
-      records.push(...parseLines(path.join(dir, f)).filter((r) => r.kb === o.kb));
-    }
-  }
+  const records = readRawAudit(dir).map((r) => (o.normalize ? o.normalize(r) : r)).filter((r): r is AuditRecord => !!r && r.kb === o.kb);
   let verdicts: Record<string, unknown>[] = [];
   try { verdicts = fs.readFileSync(path.join(o.kbRoot, "verdicts.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none yet */ }
   return computeScores({ kb: o.kb, records, now: o.now, known: o.known, compacted: readCompacted(o.kb, dir), verdicts });
+}
+
+/** `knowledge doctor` line (spec §4.6, C4): raw lines ignored per unknown `kb`, and lines whose project has no home. */
+export function auditHealth(o: { cfg: SquadrantConfig; dir?: string }): { ignored: Record<string, number>; noHome: number } {
+  const ctx = auditReadCtx(o.cfg);
+  const out = { ignored: {} as Record<string, number>, noHome: 0 };
+  for (const r of readRawAudit(o.dir ?? defaultAuditDir())) {
+    const n = normalizeAuditRecord(r, ctx);
+    if (!n) out.ignored[String(r.kb)] = (out.ignored[String(r.kb)] ?? 0) + 1;
+    else if (!n.kb) out.noHome++;
+  }
+  return out;
 }
 
 export const scoresFile = (kbRoot: string) => path.join(kbRoot, "scores.json");

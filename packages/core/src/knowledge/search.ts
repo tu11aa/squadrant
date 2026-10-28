@@ -1,29 +1,35 @@
-import type { Rule, RuleStatus } from "@squadrant/shared";
+import type { Rule, RuleAnchors, RuleStatus, RuleTriggers } from "@squadrant/shared";
 
-export interface SearchHit { rule: Rule; score: number; matched: number; curated: boolean }
+/** What the matcher needs: a Rule or any KbItem (#979). Its headline is a rule's statement or an item's summary. */
+export interface Matchable { id: string; status: string; body: string; triggers?: RuleTriggers; anchors?: RuleAnchors; statement?: string; summary?: string }
+export const itemHeadline = (x: Matchable): string => x.statement ?? x.summary ?? "";
+
+export interface SearchHit<T extends Matchable = Rule> { rule: T; score: number; matched: number; curated: boolean }
 export const DEFAULT_SEARCH_STATUSES: RuleStatus[] = ["active", "stale"];
+/** Live statuses across domains: rules `active`/`stale`, decisions `accepted`. */
+export const LIVE_ITEM_STATUSES: readonly string[] = ["active", "stale", "accepted"];
 
 const lower = (xs: string[] | undefined) => (xs ?? []).map((x) => x.toLowerCase());
 
 /** Rationale = body minus its first paragraph (the statement). */
-const rationaleOf = (rule: Rule) => rule.body.slice(rule.statement.length).toLowerCase();
+const rationaleOf = (rule: Matchable) => rule.body.slice(itemHeadline(rule).length).toLowerCase();
 
 /**
- * Rank rules for a query. Hits in id / keywords / expanded / statement outweigh body (rationale) hits.
+ * Rank rules (or any KB items) for a query. Hits in id / keywords / expanded / statement outweigh body (rationale) hits.
  * With 2+ query terms a rule must match at least 2 distinct terms (or hit a curated keyword);
  * other single-term hits are only returned when no rule passes that bar.
  */
-export function searchRules(rules: Rule[], query: string, opts: { statuses?: RuleStatus[] } = {}): SearchHit[] {
+export function searchRules<T extends Matchable>(rules: T[], query: string, opts: { statuses?: readonly string[] } = {}): SearchHit<T>[] {
   const terms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
   if (terms.length === 0) return [];
   const statuses = opts.statuses ?? DEFAULT_SEARCH_STATUSES;
-  const hits: SearchHit[] = [];
+  const hits: SearchHit<T>[] = [];
   for (const rule of rules) {
     if (!statuses.includes(rule.status)) continue;
     const keywords = lower(rule.triggers?.keywords);
     const expanded = lower(rule.triggers?.expanded);
     const when = (rule.triggers?.when ?? "").toLowerCase();
-    const statement = rule.statement.toLowerCase();
+    const statement = itemHeadline(rule).toLowerCase();
     const rationale = rationaleOf(rule);
     const id = rule.id.toLowerCase();
     let score = 0;

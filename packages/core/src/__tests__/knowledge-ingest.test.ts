@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import matter from "gray-matter";
 import {
   applyCandidates, planIngest, isPendingProposalDup, loadRulesDir, findQuote, normalizeText, needsDocling, splitSections, computeAnchor,
-  PROPOSED_DIR, type Candidate, type CandidateFile, type Converter,
+  indexCacheFile, PROPOSED_DIR, type Candidate, type CandidateFile, type Converter,
 } from "../knowledge/index.js";
 
 const FIX = path.join(__dirname, "fixtures", "knowledge-golden");
@@ -113,6 +113,7 @@ describe("planIngest", () => {
 describe("golden fixture", () => {
   it("v1 extracts: new, duplicate merged, conflict proposed, ids as expected", async () => {
     await ingest();
+    fs.rmSync(indexCacheFile("t"), { force: true });
     const r = apply(cands("candidates-v1.json"));
     expect(r.rejected).toEqual([]);
     expect(r.created.sort()).toEqual(["biz.invoice.issue-window", "biz.rounding.vnd-half-up", "coding.api.validate-input", "sec.logging.no-passwords"]);
@@ -125,7 +126,8 @@ describe("golden fixture", () => {
     expect(prop).toHaveLength(1);
     const p = matter(fs.readFileSync(path.join(rulesDir, PROPOSED_DIR, prop[0]), "utf8")).data;
     expect(p).toMatchObject({ id: "biz.invoice.issue-window-30d", status: "proposed", conflictsWith: ["biz.invoice.issue-window"] });
-    expect(fs.existsSync(path.join(kb, "index.json"))).toBe(true);
+    expect(fs.existsSync(path.join(kb, "index.json"))).toBe(false);
+    expect(fs.existsSync(indexCacheFile("t"))).toBe(true);
   });
 
   it("write events carry the KB domain 'rules', not the rule's subject domain", async () => {
