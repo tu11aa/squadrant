@@ -201,9 +201,9 @@ export function kbConfigs(cfg: SquadrantConfig): Record<string, KnowledgeKbConfi
   return out;
 }
 
-/** Absolute root of a KB repo. */
+/** Absolute root of a KB repo. `SQUADRANT_KB_ROOT` overrides the default parent dir (tests); a configured `path` wins. */
 export function kbPath(cfg: SquadrantConfig, kb: string): string {
-  return resolveHome(kbConfigs(cfg)[kb]?.path ?? `${DEFAULT_KB_ROOT}/${kb}`);
+  return resolveHome(kbConfigs(cfg)[kb]?.path ?? `${process.env.SQUADRANT_KB_ROOT || DEFAULT_KB_ROOT}/${kb}`);
 }
 
 /** The operator profile KB (#982). Never a rules KB; `KB_NAME_RE` rejects the name on purpose. */

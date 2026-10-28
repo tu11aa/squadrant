@@ -16,6 +16,9 @@ const dirs = {
   // #982: the operator profile KB and the Claude native-memory root the bridge reads.
   SQUADRANT_USER_KB_DIR: "squadrant-test-user-kb-",
   SQUADRANT_NATIVE_MEMORY_ROOT: "squadrant-test-native-memory-",
+  // #979 phase 2: the default KB parent dir (~/squadrant/kb) and the per-machine verdicts dir.
+  SQUADRANT_KB_ROOT: "squadrant-test-kb-root-",
+  SQUADRANT_VERDICTS_DIR: "squadrant-test-verdicts-",
 };
 const made: string[] = [];
 for (const [env, prefix] of Object.entries(dirs)) {

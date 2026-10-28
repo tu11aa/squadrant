@@ -6,6 +6,7 @@ import { validateSourceEntry, type KnowledgeSourceEntry, type RuleFrontmatter } 
 import { compileIndex, writeIndex } from "./index-file.js";
 import { sourceCovers } from "./ingest.js";
 import { loadRulesDir } from "./store.js";
+import { commitKbPaths, kbSession } from "./write.js";
 
 export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec §3). Only these can produce rules.
 # priority: company > project > agent (decides conflicts).
@@ -51,6 +52,8 @@ export interface RemoveSourceResult {
   stripped: string[];
   /** Of those, the ones left with no source (now `stale`, or unchanged if already stale/retired). */
   stale: string[];
+  /** Commit failures: the files stand (`knowledge doctor --fix`). */
+  warnings: string[];
 }
 
 /** Drop the `- path: <entry>` block from sources.yaml text, keeping comments and the other entries. Null if it is not a plain block entry. */
@@ -78,7 +81,7 @@ export function removeSource(kbRoot: string, rulesDir: string, entryPath: string
   const edited = dropEntryBlock(fs.readFileSync(file, "utf8"), entryPath);
   if (edited === null) throw new Error(`could not edit sources.yaml for '${entryPath}' (not a plain block entry); remove it by hand, then rerun to strip the refs`);
 
-  const res: RemoveSourceResult = { dryRun: !!opts.dryRun, entryRemoved: true, stripped: [], stale: [] };
+  const res: RemoveSourceResult = { dryRun: !!opts.dryRun, entryRemoved: true, stripped: [], stale: [], warnings: [] };
   const writes: { file: string; text: string }[] = [];
   for (const rule of loadRulesDir(rulesDir, "kb").rules) {
     const kept = rule.sources.filter((s) => !sourceCovers(kbRoot, sources, entry, s.ref));
@@ -100,5 +103,10 @@ export function removeSource(kbRoot: string, rulesDir: string, entryPath: string
   fs.writeFileSync(file, edited);
   const name = opts.kbName ?? path.basename(kbRoot);
   writeIndex(kbRoot, compileIndex(name, loadRulesDir(rulesDir, `kb:${name}`).rules));
+  const c = commitKbPaths(kbRoot, [file, ...writes.map((w) => w.file)], {
+    message: `knowledge: remove source ${entryPath}`,
+    trailers: { domain: "rules", items: res.stripped, level: "shared", session: kbSession(), approvedBy: "operator" },
+  });
+  if (c.warning) res.warnings.push(c.warning);
   return res;
 }

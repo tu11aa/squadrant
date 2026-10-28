@@ -120,7 +120,7 @@ This is a starting point. The operator decides each item at the first review.
 - **Commit:** every write to a committed path (`profile/*.md`, `_archive/`, `_dropped.yaml`) runs `git add -- <paths>` then `git commit --only -- <paths>`. That way concurrent writers (the CLI from several sessions, the daemon) never sweep each other's files.
   - **Retry:** 3× on `index.lock`.
   - **Message:** `profile: <verb> <id>`.
-  - **Trailers:** `Domain: profile`, `Item: <id>`, `Level: shared`, `Session: <id|->`, `Approved-by: <operator|agent|bridge>`. These are the parent §5 trailers, so in S3 this call site moves to the daemon writer without changing the history format.
+  - **Trailers:** `Domain: profile`, `Item: <id>`, `Level: shared`, `Session: <id|->`, `Approved-by: <operator|agent|bridge>`. These are the parent §5 trailers, so in S3 this call site moves to the daemon writer without changing the history format. *Amended by phase 2 (D1): there is no daemon writer; phase 2 (2b-1) moved this call site to the shared `commitKbPaths`, with the same format.*
   - **On commit failure:** the file write stands (files are the source of truth) and a warning is printed. `profile list --check` reports uncommitted trait files, and `--check --fix` commits them.
 - **Audit:** `item.proposed`, `item.applied`, `item.rejected` and `item.archived`, with `kb: "_user"` and `domain: "profile"`.
 
@@ -224,7 +224,7 @@ The daemon runs it with no captain, and its output goes to `_proposed/` only:
 - **Staleness (K12):** `confirmed: false` older than 60 days → re-ask. Not surfaced or cited for 60 days → archive proposal.
 - **Never** rewrites a contradicted trait without asking (parent §8).
 - **`violated` signal:** when a correction is added whose summary closely matches an existing trait, log `item.outcome violated` against that trait. This needs `"self"` added to `OutcomeSource` (`core/src/knowledge/audit.ts:39`).
-- **Also in S3:** a "similar existing traits" hint on `profile add`, and a diff view for update proposals.
+- **Also in S3:** a "similar existing traits" hint on `profile add`, and a diff view for update proposals. *Amended by phase 2 (D2, 2026-10-27, [`2026-10-27-kb-phase2-shared-core-design.md`](2026-10-27-kb-phase2-shared-core-design.md)): the similar-traits hint moves to phase 2. It is the generic three-way dedup (duplicate / extends / new) built in 2b-2 for every domain, so S3 does not build it.*
 
 ## 8. Slices
 
@@ -232,12 +232,12 @@ The daemon runs it with no captain, and its output goes to `_proposed/` only:
 |---|---|---|
 | **S1** #982 | §3 storage, format, cap, `ensureUserKb` · §4 `squadrant profile add/review/list/show`, crew guard (CLI + #556 path guard), K6 guard, `--only` commits with trailers, `_dropped.yaml`, audit · §5 profile hook for claude/codex/gemini (SessionStart) and opencode (first message), audience, deterministic overflow, fail-open, pending line · §6 bridge (boot + hourly, allowlist, grouping, update proposals) and the first import · docs | nothing; ship now |
 | **S2** #991 | §5 situational tier through the generic matcher · `triggers` validation · profile items in scores (the `known` set) and `knowledge stats --domain profile` | #979 **2a** |
-| **S3** #992 | writes through the daemon single writer · profile gate in the 2b gate registry · `knowledge propose --domain profile` / `knowledge review _user` aliases · §7 reconcile, `violated` signal, similar-traits hint, update diff view | #979 **2b** |
+| **S3** #992 | writes through `commitKbPaths` (amended by phase 2 D1) · profile gate in the 2b gate registry · `knowledge propose --domain profile` / `knowledge review _user` aliases · §7 reconcile, `violated` signal, similar-traits hint (moved to phase 2 2b-2, D2), update diff view | #979 **2b** |
 
 **Why S1 creates no rework:**
 - `_user` resolves through the same `knowledgeBases._user.path` that 2a's registry uses.
 - The item format is parent §4.1 plus extra fields, so 2a's `KbItem` loader maps onto it.
-- The direct `--only` commit is 2b's daemon-down bypass, with the same trailers.
+- The direct `--only` commit is 2b's daemon-down bypass, with the same trailers. (Amended by phase 2 D1: it became the shared `commitKbPaths`; there is no daemon writer or bypass.)
 - The CLI and gate functions are reused by the S3 aliases.
 - The core tier needs no matcher.
 

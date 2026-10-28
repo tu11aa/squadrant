@@ -670,7 +670,7 @@ squadrant migrate path ~/saitex/kb/work ~/squadrant/workspace/flooros/artifacts/
 
 ### Knowledge bases (rules, #893 / #936)
 
-Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squadrant knowledge init <kb>` runs `git init`; a remote is optional; a default `.gitignore` keeps `raw/` and `.converted/` local — edit it to opt in; `init` never touches an existing `.gitignore`. The default also ignores the reconcile runtime files `/scores.json` and `/escalations.json`, and `knowledge reconcile --finish` appends those two lines to an existing `.gitignore` that lacks them, leaving every other line as it is). Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
+Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`SQUADRANT_KB_ROOT` overrides that parent dir, for tests; a configured `knowledgeBases.<kb>.path` wins). `squadrant knowledge init <kb>` runs `git init` (a remote is optional) and commits `.gitignore` and `sources.yaml`, so a new KB starts clean. A new KB gets a default `.gitignore` that keeps `raw/` and `.converted/` local (edit it to opt in) and ignores the files that are never committed: `**/_proposed/`, `/scores.json`, `/escalations.json`, `/index.json`, `/verdicts.jsonl`. When a `.gitignore` already exists, `init`, `knowledge reconcile --finish` and `knowledge doctor --fix` append whichever of those five lines it lacks and leave every other line as it is. Rules live in `<kb>/shared/rules/`; a project's own overlay lives in `<kb>/projects/<project>/rules/`, or in `<repo>/docs/rules/` when `knowledgeHome` is `"repo:docs"`. The audit log is `~/.local/state/squadrant/audit/YYYY-MM.<machine>.jsonl`.
 
 ```json
 {
@@ -686,6 +686,41 @@ Each knowledge base (KB) is its own git repo under `~/squadrant/kb/<kb>/` (`squa
 - A project in a group inherits that group's KB; `projects.<p>.knowledge[]` adds extra KBs. `path` defaults to `~/squadrant/kb/<kb>`.
 - `knowledge.<kb>` (the pre-#936 key) is still read as a deprecated alias; `squadrant doctor` reports it as config drift and the drift fix moves it to `knowledgeBases`.
 - Old spoke overlays (`<spokeVault>/knowledge/rules/`) move to the project's overlay home too; a project with no group KB or `knowledgeHome` is skipped and reported. A KB left at `<hubVault>/knowledge/<kb>/` is flagged by `squadrant doctor`. `squadrant knowledge migrate [--dry-run]` moves it to the new root (re-homing `rules/` to `shared/rules/`), prints a report, and never deletes. If the move crosses devices it copies and leaves the original.
+
+#### KB writes and a clean repo (#979)
+
+A KB repo is never left dirty by a squadrant write: every file in it is either committed by the write that changed it or git-ignored. Spec: [`specs/2026-10-27-kb-phase2-shared-core-design.md`](specs/2026-10-27-kb-phase2-shared-core-design.md) §5.
+
+**What is committed.** Item files, `sources.yaml`, `errata.yaml`, `REPORT.md`, `_archive/` and `_dropped.yaml`. Never committed: `_proposed/` in any domain, `scores.json`, `escalations.json`, `index.json` and `verdicts.jsonl` (see the `.gitignore` above).
+
+**Every write commits.** All KB writes go through one function, `commitKbPaths`: `git add` plus `git commit --only` of exactly the paths that write changed, so two writers running at once never sweep each other's files. It runs with commit signing off, a 10 s git timeout and 3 tries on `index.lock`. There is no daemon writer. Paths with no change are skipped (no empty commits), and a `_proposed/` path or a path outside the KB is refused. Every commit carries five trailers: `Domain:`, `Item:` (one per item, `-` when none), `Level:`, `Session:` (the crew task id, else `CLAUDE_CODE_SESSION_ID`, else `-`) and `Approved-by:`.
+
+| Write | Commit | `Approved-by` |
+|---|---|---|
+| `knowledge init` | `.gitignore` and `sources.yaml` | `operator` |
+| `knowledge apply` | one per run, one `Item:` per written rule | `auto` |
+| `knowledge review --apply` | one per run | `reviewer-agent` |
+| `knowledge review --resolve`, interactive review | one per escalation | `operator` |
+| `knowledge sources --remove` | `sources.yaml` and the stripped rules, one commit | `operator` |
+| `knowledge reconcile --finish` | `REPORT.md` and `.gitignore` | `auto` |
+| full-pass override-baseline stamps | one per KB | `auto` |
+| `profile` writes | one per item, same format as before | `operator`, `agent` or `bridge` |
+| `migrate` reference sweep | one per KB repo | `operator` |
+
+- **A commit that fails never fails the write.** The files stay (files are the source of truth) and a warning names `squadrant knowledge doctor --fix`.
+- **`repo:docs` overlays are never committed.** A project whose `knowledgeHome` is `"repo:docs"` gets the file written in its repo and nothing else; it stays a working-tree diff for the project's PR.
+
+**Verdicts.** Reviewer and operator verdicts no longer live in the KB. They are appended to `~/.local/state/squadrant/verdicts/YYYY-MM.<machine>.jsonl` (`SQUADRANT_VERDICTS_DIR` overrides the directory), one file per machine like the audit log, and each line carries its `kb`. Two machines never conflict on them. Scoring reads every machine's file it can see, plus the old `<kb>/verdicts.jsonl` for one version (read only, never written).
+
+**`squadrant knowledge doctor [kb] [--fix]`** checks that each KB repo is clean (every configured KB, or just `kb`; `_user` is checked by `squadrant profile list --check`). It reports, per KB:
+- the KB dir is not a git repo
+- `.gitignore` lines missing from the list above
+- tracked files that are never committed: `index.json`, `verdicts.jsonl`, `scores.json`, `escalations.json`, any `_proposed/` file
+- uncommitted files: a squadrant commit that failed, or item files edited by hand
+
+`--fix` runs the mechanical fixes without asking: it appends the missing `.gitignore` lines and stops tracking the never-committed files (`git rm --cached`; they stay on disk), all in one commit built on a private index, so nothing another writer staged is swept in. Other uncommitted files are listed and committed only after a y/n on a terminal, one commit per file (`Approved-by: operator`, `Session: -`). That prompt never appears in a crew session or without a TTY. The command exits non-zero while anything is left.
+
+After upgrading, run `squadrant knowledge doctor --fix` once on each existing KB to untrack `index.json` and `verdicts.jsonl` and add the new `.gitignore` lines.
 
 #### Ingest and extraction (#897)
 
@@ -766,7 +801,7 @@ The body (why, how, examples) is read on demand.
 | `profile list [--all] [--check [--fix]]` | active traits and both view sizes. `--check` reports invalid or uncommitted files; `--fix` commits the valid ones |
 | `profile show <id>` | one trait in full |
 
-Body input always comes from `--file` (or `-` for stdin), never argv. `--summary`, `--audience` and `--tier` override the file. Every write prints `applied|proposed prof.<slug>: "<summary>" (captain N/3,000 · crew N/3,000)`, and the agent relays that line so the operator can fix the wording at once. Each committed write uses `git commit --only` with the trailers `Domain: profile`, `Item`, `Level: shared`, `Session`, `Approved-by`. Audit events are `item.proposed|applied|approved|rejected|archived|surfaced`, with `kb: "_user"` and `domain: "profile"`.
+Body input always comes from `--file` (or `-` for stdin), never argv. `--summary`, `--audience` and `--tier` override the file. Every write prints `applied|proposed prof.<slug>: "<summary>" (captain N/3,000 · crew N/3,000)`, and the agent relays that line so the operator can fix the wording at once. Each committed write goes through the shared KB writer (`commitKbPaths`, a `git commit --only`) with the trailers `Domain: profile`, `Item`, `Level: shared`, `Session`, `Approved-by`. Audit events are `item.proposed|applied|approved|rejected|archived|surfaced`, with `kb: "_user"` and `domain: "profile"`.
 
 **Crew guard.**
 - In a crew session (`SQUADRANT_CREW_TASK_ID` set), `profile add --apply` becomes a proposal. `review --keep/--drop/--edit` and `list --check --fix` are refused.
@@ -1169,7 +1204,7 @@ Every rules push and pull is logged, so you can tell whether a rule is ever surf
 - `item.surfaced` / `item.suppressed` come from the SessionStart and UserPromptSubmit injection (`trigger: "session"|"prompt"`). Suppressed = past the session cap, or a prompt hit that was already shown, under the strength bar, or over the 3-rule cap (the top 10 are logged).
 - `item.searched` (`rules search`: one event per printed hit, attributed to that rule's KB and id, query truncated to 200 chars; a search with no hits logs one event with an empty `itemId`) and `item.shown` (`rules show`).
 - Write events (`item.proposed`/`applied`/`rejected`/…) from extraction and review also use `domain:"rules"` (the KB domain, not the rule's subject domain). They count toward domain writes only and never make an id a stats row.
-- Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command. A daemon single-writer is phase 2.
+- Event names follow the generic KB schema (spec §7), so other domains can reuse them. Writes are best-effort: a failure prints one stderr line and never blocks a hook or command. Each process appends directly to its machine's file; phase 2 dropped the planned daemon single writer (D1).
 
 ### Citations, feedback and scores (#901)
 
@@ -1194,13 +1229,13 @@ Per-KB settings (`knowledgeBases.<kb>.reconcile`, all optional): `incrementalAft
 | Command | Purpose |
 |---|---|
 | `knowledge reconcile <kb> [--full] [--now] [--dry-run]` | no flags: show schedule state. `--now`: request a pass from the home captain. `--dry-run`: show what would be requested |
-| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count. When the KB is its own git repo, `--finish` leaves it clean (#1002): it commits `REPORT.md` (and `.gitignore` when it has changes) with `--only`, so nothing else is swept in, and makes sure `scores.json` (derived from the audit log) and `escalations.json` (open review state) are ignored. A failed commit is logged and the file is kept |
+| `knowledge reconcile <kb> [--full] --finish` | close the pass: full-pass checks, `REPORT.md`, schedule update, one-line captain message with the count. When the KB is its own git repo, `--finish` leaves it clean (#1002): it appends any missing never-committed lines to `.gitignore` (including `scores.json`, derived from the audit log, and `escalations.json`, open review state) and commits `REPORT.md` and `.gitignore` through the shared KB writer (`Approved-by: auto`), so nothing else is swept in. A failed commit is logged and the file is kept |
 | `knowledge review <kb> --json` | reviewer packet |
 | `knowledge review <kb> --apply decisions.json` | apply typed reviewer decisions; at or above `autoApproveConfidence` they apply, otherwise they escalate |
 | `knowledge review <kb>` | interactive walk-through of open escalations (approve / reject / edit; keep-doc / supersede-with-code); `--resolve <key> --approve\|--reject\|--keep-doc\|--supersede-with-code --reason …` is the scripted form |
-| `knowledge sources <kb> --remove <path> [--dry-run]` | drop the `sources.yaml` entry whose `path` is exactly `<path>`, strip every rule ref it covers (glob matched, so it works after the files moved; a legacy relative ref like `kb/extracted/x.md` counts as the `~/saitex/kb/extracted/x.md` it names), mark rules left with no source `stale`, recompile `index.json`. Rules with another source stay `active`. Stale rules are still delivered until the reviewer retires them. `--dry-run` lists the effect and writes nothing. Comments and other entries in `sources.yaml` are kept. `_proposed/` files are not touched |
+| `knowledge sources <kb> --remove <path> [--dry-run]` | drop the `sources.yaml` entry whose `path` is exactly `<path>`, strip every rule ref it covers (glob matched, so it works after the files moved; a legacy relative ref like `kb/extracted/x.md` counts as the `~/saitex/kb/extracted/x.md` it names), mark rules left with no source `stale`, recompile `index.json`. Rules with another source stay `active`. Stale rules are still delivered until the reviewer retires them. `--dry-run` lists the effect and writes nothing. Comments and other entries in `sources.yaml` are kept. `_proposed/` files are not touched. `sources.yaml` and the stripped rules are committed together in one commit |
 | `knowledge propose --kb <kb> "<statement>" --evidence "<where>"` | agent learning: writes to `_proposed/` with `agent` priority |
 
 Always escalated, regardless of confidence: a conflict between two `company` sources, retiring a `must`/`must-not` rule, anything the reviewer flags, any proposal from a `review: required` source (reason `review-required`; the reviewer agent can never approve it), and **code-vs-doc** conflicts where the code is newer than the doc (by git dates). Those are never auto-superseded; the operator's answer is stored as a `decision` block on the rule (who, when, `keep-doc | supersede-with-code`, doc and code revisions, reason) and is not asked again unless the doc gets a new revision or the anchored code changes after the decision date. When the doc is newer, the code is flagged as a violation in `REPORT.md`.
 
-The full pass also reports duplicate candidates, usage findings from the audit log (never surfaced, noisy, violated), domains over the cap, and `override.base-changed` for project overrides whose KB rule changed. Open escalations live in `<kb>/escalations.json`, reviewer and operator verdicts in `<kb>/verdicts.jsonl` (append-only). Write-stage events (`item.proposed|approved|rejected|applied|superseded|archived`) go to the audit log.
+The full pass also reports duplicate candidates, usage findings from the audit log (never surfaced, noisy, violated), domains over the cap, and `override.base-changed` for project overrides whose KB rule changed. Open escalations live in `<kb>/escalations.json` (git-ignored); reviewer and operator verdicts are appended to the per-machine files under `~/.local/state/squadrant/verdicts/` (see "KB writes and a clean repo"). Rule changes made by `review --apply`, `--resolve` and the interactive review are committed by the command itself, so the reviewer never commits by hand. Write-stage events (`item.proposed|approved|rejected|applied|superseded|archived`) go to the audit log.

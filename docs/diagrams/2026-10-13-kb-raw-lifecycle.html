@@ -159,10 +159,11 @@
   </div>
 
   <div class="flow">
-    <div class="node op"><div class="t">knowledge review</div><div class="d">you walk the gated items; every answer lands in <code>verdicts.jsonl</code>.</div></div>
+    <div class="node op"><div class="t">knowledge review</div><div class="d">you walk the gated items; every answer lands in the per-machine verdicts file (<code>~/.local/state/squadrant/verdicts/</code>).</div></div>
     <div class="arrow">→</div>
     <div class="node"><div class="t">rules/</div><div class="d">live rules, every one grounded in a listed source.</div></div>
   </div>
+  <div class="note g"><strong>Every write commits (phase 2, #979).</strong> <code>apply</code>, <code>review</code>, <code>sources --remove</code> and <code>reconcile --finish</code> commit the files they changed through one shared writer (<code>commitKbPaths</code>), with <code>Domain</code>/<code>Item</code>/<code>Level</code>/<code>Session</code>/<code>Approved-by</code> trailers. <code>_proposed/</code> and the runtime files (<code>scores.json</code>, <code>escalations.json</code>, <code>index.json</code>) are git-ignored, so the KB repo stays clean. <code>squadrant knowledge doctor --fix</code> repairs a KB that is not.</div>
 </div>
 
 <h2>3. Where your decisions live</h2>
@@ -173,7 +174,7 @@
   <tr><td>"the code is right, raw is wrong"</td><td>RECONCILE-LOG <code>corrected</code> rows (26)</td><td><code>errata.yaml</code> entry on the wrong quote; the rule comes from CLAUDE.md or a decision record</td></tr>
   <tr><td>"we do it this way" (<code>[USER]</code>, developer decision)</td><td>tags in pr-rules.md, log rows (15 mentions)</td><td><code>shared/decisions/&lt;id&gt;.md</code>, accepted, extracted like any source</td></tr>
   <tr><td>"keep the doc even though code differs"</td><td>log text ("kept as team rule")</td><td><code>decision</code> block on the rule (exists, #898), asked once when it comes up</td></tr>
-  <tr><td>approve / reject a proposal</td><td><code>verdicts.jsonl</code></td><td><code>verdicts.jsonl</code>, now including raw extraction</td></tr>
+  <tr><td>approve / reject a proposal</td><td><code>verdicts.jsonl</code></td><td>per-machine verdicts file in the state dir (<code>verdicts/YYYY-MM.&lt;machine&gt;.jsonl</code>), now including raw extraction</td></tr>
 </table>
 </div>
 

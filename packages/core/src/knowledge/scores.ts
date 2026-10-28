@@ -1,10 +1,11 @@
 // packages/core/src/knowledge/scores.ts — scores computed by code from the audit log, no LLM (KB spec §7, #901).
 // Also owns audit compaction: months older than the 30-day scoring window fold into per-item stats files.
-// verdicts.jsonl lives in the KB repo and is never touched here.
+// Verdicts (verdicts.ts, per machine under the state dir) are read here, never touched.
 import fs from "node:fs";
 import path from "node:path";
 import { defaultAuditDir, outcomeSource, RATED_SOURCES } from "./audit.js";
 import type { AuditRecord } from "./fullpass.js";
+import { readVerdicts } from "./verdicts.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const SCORE_WINDOW_DAYS = 30;
@@ -226,7 +227,7 @@ export function computeScores(i: ScoreInput): Scores {
 }
 
 /** Read everything for one KB (raw logs + compacted months + verdicts) and score it. */
-export function scoreKb(o: { kb: string; now: Date; auditDir?: string; kbRoot: string; known?: ScoreInput["known"] }): Scores {
+export function scoreKb(o: { kb: string; now: Date; auditDir?: string; verdictsDir?: string; kbRoot: string; known?: ScoreInput["known"] }): Scores {
   const dir = o.auditDir ?? defaultAuditDir();
   const records: AuditRecord[] = [];
   if (fs.existsSync(dir)) {
@@ -234,8 +235,7 @@ export function scoreKb(o: { kb: string; now: Date; auditDir?: string; kbRoot: s
       records.push(...parseLines(path.join(dir, f)).filter((r) => r.kb === o.kb));
     }
   }
-  let verdicts: Record<string, unknown>[] = [];
-  try { verdicts = fs.readFileSync(path.join(o.kbRoot, "verdicts.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { /* none yet */ }
+  const verdicts = readVerdicts(o.kb, o.kbRoot, o.verdictsDir);
   return computeScores({ kb: o.kb, records, now: o.now, known: o.known, compacted: readCompacted(o.kb, dir), verdicts });
 }
 
