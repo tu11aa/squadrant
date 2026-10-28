@@ -7,7 +7,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import {
   loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH, stateRoot,
-  type KnowledgeSourceEntry,
+  KB_DOMAINS, isKbDomain, type KbDomain, type KnowledgeSourceEntry,
 } from "@squadrant/shared";
 import {
   kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
@@ -23,6 +23,16 @@ import { resolveRulesProject } from "./rules.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
+
+/**
+ * D3: `--domain` names a KB domain (rules|decisions|wiki|profile). For one version, any other value is read as a
+ * rule category, with a deprecation line on stderr; `--category` is the new flag for that.
+ */
+export function parseDomainFlag(o: { domain?: string; category?: string }, warn: (m: string) => void = (m) => console.error(chalk.yellow(m))): { kbDomain?: KbDomain; category?: string } {
+  if (o.domain === undefined || isKbDomain(o.domain)) return { kbDomain: o.domain as KbDomain | undefined, category: o.category };
+  warn(`warning: --domain ${o.domain} is a rule category; use --category ${o.domain} (--domain now means ${KB_DOMAINS.join("|")})`);
+  return { kbDomain: "rules", category: o.category ?? o.domain };
+}
 
 function assertKbName(kb: string): void {
   if (!KB_NAME_RE.test(kb)) throw new Error(`Invalid knowledge base name '${kb}' (use lowercase letters, digits, '-')`);
