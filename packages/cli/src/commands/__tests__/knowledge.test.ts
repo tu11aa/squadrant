@@ -112,19 +112,19 @@ describe("knowledge reindex", () => {
     expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
   });
   it("rebuilds the index after rm -rf of the cache dir", () => {
-    runKnowledgeInit("saitex", cfgPath);
-    runKnowledgeReindex("saitex", cfgPath);
+    runKnowledgeInit("acme", cfgPath);
+    runKnowledgeReindex("acme", cfgPath);
     fs.rmSync(path.join(dir, "cache"), { recursive: true, force: true });
-    expect(readIndex("saitex").problem).toContain("missing");
-    runKnowledgeReindex("saitex", cfgPath);
-    expect(readIndex("saitex").index?.kb).toBe("saitex");
+    expect(readIndex("acme").problem).toContain("missing");
+    runKnowledgeReindex("acme", cfgPath);
+    expect(readIndex("acme").index?.kb).toBe("acme");
   });
   it("hints at untracking a legacy <kb>/index.json, and never runs it", () => {
-    const { dir: kbRoot } = runKnowledgeInit("saitex", cfgPath);
-    expect(runKnowledgeReindex("saitex", cfgPath).legacyIndex).toBeUndefined();
+    const { dir: kbRoot } = runKnowledgeInit("acme", cfgPath);
+    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBeUndefined();
     fs.writeFileSync(path.join(kbRoot, "index.json"), "{}\n");
     execFileSync("git", ["-C", kbRoot, "add", "-f", "index.json"]);
-    expect(runKnowledgeReindex("saitex", cfgPath).legacyIndex).toBe(`git -C ${kbRoot} rm --cached index.json`);
+    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBe(`git -C ${kbRoot} rm --cached index.json`);
     expect(execFileSync("git", ["-C", kbRoot, "ls-files", "index.json"], { encoding: "utf8" }).trim()).toBe("index.json");
   });
 });
