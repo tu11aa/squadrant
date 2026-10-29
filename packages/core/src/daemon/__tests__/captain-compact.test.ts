@@ -1,7 +1,7 @@
 // #1010: captain compact types /compact only into an idle, clear pane, and times out cleanly.
 import { describe, it, expect, vi } from "vitest";
 import { createCaptainCompact, DEFAULT_COMPACT_FOCUS } from "../captain-compact.js";
-import { DeferDelivery } from "../../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../../delivery/defer-delivery.js";
 import type { DaemonSurfaceDriver } from "../../interfaces.js";
 
 const SURFACE = { workspaceId: "w", surfaceId: "s", title: "demo-captain" };
@@ -82,6 +82,18 @@ describe("captain compact", () => {
     await h.c.tick(); await h.c.tick(); // idle x2 again → sent
     expect(calls).toBe(2);
     expect(h.c.pendingCount()).toBe(0);
+  });
+
+  it("#1087: an unconfirmed submit is not reported sent — stays pending, delivery un-held, no resume", async () => {
+    const resume = vi.fn(async () => {});
+    const h = harness({ screens: [IDLE], resume, send: async () => { throw new SubmitUnconfirmed(); } });
+    h.c.request("demo");
+    await h.c.tick(); await h.c.tick();
+    expect(h.c.pendingCount()).toBe(1);
+    expect(h.c.holdsDelivery("demo")).toBe(false);
+    expect(resume).not.toHaveBeenCalled();
+    expect(h.logs.some((l) => l.includes("submit unconfirmed"))).toBe(true);
+    expect(h.logs.some((l) => l.includes("/compact sent"))).toBe(false);
   });
 
   it("times out cleanly without typing, with a log line", async () => {

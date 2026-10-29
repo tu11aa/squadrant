@@ -8,7 +8,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 | Variant | Producers | state-machine.ts | reduce.ts allowlist | telegram formatter |
 |---|---|---|---|---|
 | `task.started` | 10 | ✓ | ✓ | — |
-| `task.progress` | 11 | ✓ | ✓ | — |
+| `task.progress` | 12 | ✓ | ✓ | — |
 | ⚠ `heartbeat` | 0 (known zombie) | ✓ | ✓ | — |
 | `task.blocked` | 10 | ✓ | ✓ | ✓ |
 | `task.review` | 1 | ✓ | ✓ | ✓ |
@@ -16,7 +16,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 | `task.failed` | 8 | ✓ | ✓ | ✓ |
 | `task.session` | 1 | ✓ | ✓ | — |
 | `task.turn.started` | 1 | ✓ | ✓ | — |
-| `task.turn.completed` | 9 | ✓ | ✓ | — |
+| `task.turn.completed` | 10 | ✓ | ✓ | — |
 | `task.turn.failed` | 1 | ✓ | ✓ | — |
 | `task.delta` | 2 | ✓ | ✓ | — |
 | `task.input.requested` | 4 | ✓ | ✓ | ✓ |
@@ -53,7 +53,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/interactive/claude.ts:623
   - packages/agents/src/interactive/claude.ts:650
   - packages/agents/src/interactive/claude.ts:675
-  - packages/cli/src/commands/hooks.ts:49
+  - packages/cli/src/commands/hooks.ts:51
+  - packages/cli/src/commands/hooks.ts:53
   - packages/cli/src/squadrantd.ts:520
   - packages/cli/src/squadrantd.ts:568
   - packages/cli/src/squadrantd.ts:599
@@ -99,6 +100,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:566
   - packages/cli/src/squadrantd.ts:597
   - packages/core/src/daemon/reduce.ts:772
+  - packages/core/src/daemon/start.ts:394
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`
@@ -138,7 +140,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/core/src/crew-spawn.ts:1212
 - `task.first-turn.confirmed`
   - packages/agents/src/interactive/claude.ts:680
-  - packages/cli/src/commands/hooks.ts:53
+  - packages/cli/src/commands/hooks.ts:57
   - packages/core/src/crew-spawn.ts:761
   - packages/core/src/crew-spawn.ts:850
   - packages/core/src/daemon/reduce.ts:492

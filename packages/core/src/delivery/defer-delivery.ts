@@ -21,3 +21,13 @@ export class DeferDelivery extends Error {
     this.name = "DeferDelivery";
   }
 }
+
+/** #1087: thrown by sendToSurface when the paste + Enter retries exhausted without the
+ *  input box emptying — the text may be stranded in the pane. Distinct from DeferDelivery
+ *  (the pane was never touched): the write is NOT reported as sent, and never re-pasted. */
+export class SubmitUnconfirmed extends Error {
+  constructor() {
+    super("submit unconfirmed: input box still holds the text after Enter retries");
+    this.name = "SubmitUnconfirmed";
+  }
+}

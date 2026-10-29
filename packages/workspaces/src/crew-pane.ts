@@ -6,7 +6,7 @@ import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver, ModalOption } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, parseModal, classifyStartupSurface } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, parseModal, classifyStartupSurface, settleInputBox, submitAndConfirm, POST_SEND_CHECK_MS, SUBMIT_RETRY_LIMIT } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, screenHasSplashMarker } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
@@ -24,7 +24,6 @@ const POLL_INTERVAL_MS = 750;
 // well under the daemon's 5min CREW UNDELIVERED watchdog, so a genuine failure is
 // still surfaced.
 const SEND_FIRST_TURN_TIMEOUT_MS = 90000;
-const POST_SEND_CHECK_MS = 750;
 
 // #235 Confirm-on-delivery constants for splash-gated agents (opencode).
 // We poll every POST_SEND_CHECK_MS but only re-send every SPLASH_RESEND_EVERY_N
@@ -32,37 +31,6 @@ const POST_SEND_CHECK_MS = 750;
 // slow to redraw after accepting.
 const SPLASH_MAX_CHECKS = 20;    // 20 × 750ms ≈ 15s confirmation window
 const SPLASH_RESEND_EVERY_N = 4; // re-send every 4 checks ≈ every 3s
-
-// #339 paste-then-submit constants for the claude/codex first-turn path.
-// SETTLE polls the input box after the paste until its content stops changing —
-// i.e. Claude Code's paste-accumulation window has closed — so the submit CR is a
-// separate keystroke that lands AFTER the [Pasted text] placeholder is final and
-// is therefore treated as a submit, not a literal newline inside the paste.
-const SETTLE_POLL_MS = 400;
-const SETTLE_MAX_POLLS = 8;        // up to 3.2s for a very large paste to render
-const SUBMIT_RETRY_LIMIT = 4;      // Enter-only re-issues if the box stays stranded
-
-/** Poll the pane until its input box stops changing across two consecutive reads
- *  (paste fully rendered / accumulation window closed), or the cap is hit.
- *  Returns true if the box was observed with content at any point — the caller
- *  uses this to distinguish "paste rendered then submitted" from "paste never
- *  rendered, empty box is NOT a confirmation of submit" (#455). */
-async function settleInputBox(
-  runtime: Pick<RuntimeDriver, "readPaneScreen">,
-  pane: PaneRef,
-): Promise<boolean> {
-  let prev = (await runtime.readPaneScreen(pane)) ?? "";
-  let sawContent = parseDraftFromScreen(prev) !== "" && parseDraftFromScreen(prev) !== null;
-  for (let i = 0; i < SETTLE_MAX_POLLS; i++) {
-    await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
-    const cur = (await runtime.readPaneScreen(pane)) ?? "";
-    const draft = parseDraftFromScreen(cur);
-    if (draft !== "" && draft !== null) sawContent = true;
-    if (cur === prev) return sawContent;
-    prev = cur;
-  }
-  return sawContent;
-}
 
 /** Reserve an ephemeral TCP port for a crew's embedded HTTP server. Binds :0,
  *  reads the OS-assigned port, then releases it. A small TOCTOU window exists
@@ -188,43 +156,7 @@ export async function confirmedSendToPane(
   if (hasModalOptionList(preSendScreen)) {
     return { delivered: false, blockedByModal: true };
   }
-  await runtime.pasteToPane(pane, message);
-  // #455: track whether the paste ever rendered so we don't treat an empty box
-  // that was NEVER populated as a successful submit (race: paste still in flight
-  // when settle fires, stable-empty → Enter into nothing → false "submitted").
-  let sawDraft = await settleInputBox(runtime, pane);
-  await runtime.sendKeyToPane(pane, "Enter");
-
-  let repasted = false;
-  let screenMoved = false;
-  for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
-    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
-    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
-    // #745: latch whether the pane has moved at all since the pre-send snapshot.
-    if (afterScreen !== preSendScreen) screenMoved = true;
-    const draft = parseDraftFromScreen(afterScreen);
-    if (draft !== "" && draft !== null) sawDraft = true;
-    // Box confirmed empty AND we observed the paste rendered first → submitted.
-    if (draft === "" && sawDraft) return { delivered: true };
-    if (draft === null && afterScreen !== preSendScreen && sawDraft) return { delivered: true };
-    const settled = await settleInputBox(runtime, pane);
-    if (settled) sawDraft = true;
-    // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
-    // #745: …but ONLY while the pane still looks exactly as it did pre-send. Under a
-    // cold CC boot the paste can be accepted AND submitted before settleInputBox ever
-    // observes the draft, leaving sawDraft=false over a legitimately empty box — and
-    // re-pasting there submits the whole turn a SECOND time (live: every claude crew
-    // spawned on 0.19.3 got its first turn twice). A moved screen is proof the
-    // keystrokes landed; only a pane frozen at the pre-send image is evidence of a
-    // lost paste. Failing closed here just yields delivered:false, which the hook
-    // confirmation (crew-spawn) or the daemon's undelivered self-heal resolves safely.
-    if (!sawDraft && !repasted && !screenMoved) {
-      repasted = true;
-      await runtime.pasteToPane(pane, message);
-    }
-    await runtime.sendKeyToPane(pane, "Enter");
-  }
-  return { delivered: false };
+  return submitAndConfirm(runtime, pane, message, preSendScreen);
 }
 
 /**
