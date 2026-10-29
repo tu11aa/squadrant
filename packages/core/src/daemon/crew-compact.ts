@@ -33,6 +33,8 @@ export interface CrewCompactDeps {
   captainTitle?: (project: string) => string;
   /** Fallback crew surfaces when workspace discovery finds nothing (tests). Keyed `project:crew`. */
   injectedSurfaces?: Record<string, PaneRef>;
+  /** #1089: a compact is a turn that never emits `Stop`; close it with a turn-end (liveness, never terminal). */
+  endTurn?: (project: string, taskId: string) => void;
 }
 
 export function createCrewCompact(deps: CrewCompactDeps) {
@@ -43,6 +45,9 @@ export function createCrewCompact(deps: CrewCompactDeps) {
   /** Keyed by task id. */
   const pending = new Map<string, Pending & { project: string; name: string }>();
   const holds = new Map<string, { until: number; project: string; name: string }>();
+  /** #1089: tasks whose PreCompact(manual) fired (typed by the daemon or by hand). Expires after the
+   *  compact timeout, pruned in tick: a compact that errors ("not enough messages") sends no SessionStart, and must not mark a later auto-compact. */
+  const compacting = new Map<string, { project: string; until: number }>();
 
   const titleOf = (project: string): string => {
     if (deps.captainTitle) return deps.captainTitle(project);
@@ -105,10 +110,27 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return { cancelled };
   }
 
+  /** PreCompact(trigger=manual) fired in the crew's session — a `/compact` typed by the daemon or by hand. */
+  function compactBegin(project: string, taskId: string): void {
+    compacting.set(taskId, { project, until: now() + timeoutMs });
+    log(`crew-compact ${project}: manual compact started (task ${taskId.slice(0, 8)})`);
+  }
+
   /** SessionStart(source=compact) arrived for this crew's session — the window is over. */
   function compactDone(taskId: string): void {
     const h = holds.get(taskId);
     if (h && holds.delete(taskId)) log(`crew-compact ${h.project}:${h.name}: compact finished — delivery resumed`);
+    // #1089: a compact never emits `Stop`, yet other lifecycle sources leave the task `working`, so
+    // close the turn here. Only a manual compact we saw start: an auto-compact inside a live turn
+    // has no PreCompact(manual) and must leave the task working.
+    const begun = compacting.get(taskId);
+    if (!begun) return;
+    compacting.delete(taskId);
+    if (now() > begun.until) return;
+    // Only a crew still reading `working` needs closing; an idle one has no turn-end to consume a pending reply.
+    if (deps.tasks(begun.project).find((t) => t.id === taskId)?.state !== "working") return;
+    log(`crew-compact ${begun.project}: compact turn closed (task ${taskId.slice(0, 8)})`);
+    deps.endTurn?.(begun.project, taskId);
   }
 
   /** Say why a queued compact is still waiting, at most once a minute, so a stuck one is diagnosable. */
@@ -186,6 +208,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     if (ticking) return;
     ticking = true;
     try {
+      for (const [id, m] of [...compacting]) if (now() > m.until) compacting.delete(id);
       for (const [taskId, p] of [...pending]) {
         try { await tryOne(taskId, p); }
         catch (e) { log(`crew-compact ${p.project}:${p.name}: ${(e as Error).message}`); }
@@ -193,5 +216,5 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     } finally { ticking = false; }
   }
 
-  return { request, cancel, tick, holdsCrew, compactDone, pendingCount: () => pending.size };
+  return { request, cancel, tick, holdsCrew, compactBegin, compactDone, pendingCount: () => pending.size };
 }

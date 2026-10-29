@@ -72,6 +72,10 @@ export function createServer(
       if (msg.kind === "crew-compact-state") {
         return { holding: ctx.crewCompactHolds?.(msg.project as string, msg.crew as string) ?? false };
       }
+      if (msg.kind === "crew-compact-begin") {
+        ctx.crewCompactBegin?.(msg.project as string, msg.taskId as string);
+        return { ok: true };
+      }
       if (msg.kind === "crew-compact-done") {
         ctx.crewCompactDone?.(msg.taskId as string);
         return { ok: true };

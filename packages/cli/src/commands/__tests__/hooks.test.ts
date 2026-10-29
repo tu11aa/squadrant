@@ -180,6 +180,10 @@ describe("rulesHookOutput (#899)", () => {
     expect(mapHookSub("session-start", {}, "t")).toEqual({ type: "task.progress", id: "t", note: "session-start" });
     expect(mapHookSub("prompt-submit", {}, "t")).toEqual({ type: "task.first-turn.confirmed", id: "t" });
   });
+  it("#1089: SessionStart(compact) is not a liveness ping (it resumed an idle crew to working)", () => {
+    expect(mapHookSub("session-start", { source: "compact" }, "t")).toBeNull();
+    expect(mapHookSub("session-start", { source: "startup" }, "t")).toEqual({ type: "task.progress", id: "t", note: "session-start" });
+  });
 });
 
 // #900: codex / gemini / opencode adapters call the same core; only the sub names, the hookEventName

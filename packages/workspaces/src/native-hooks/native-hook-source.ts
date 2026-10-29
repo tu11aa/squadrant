@@ -38,6 +38,9 @@ const CLAUDE_HOOK_EVENTS: ReadonlyArray<readonly [string, string, string?]> = [
   // #763: the turn died on an API error — today squadrant has no source for
   // this at all; without it the watchdog reports a plain stall (wrong story).
   ["StopFailure", "stop-failure"],
+  // #1089: a /compact starts no UserPromptSubmit; PreCompact (trigger=manual|auto) is the only
+  // signal that tells a typed compact from an auto-compact inside a live turn.
+  ["PreCompact", "pre-compact"],
   // #899: rules whose globs/anchors match the file just read are injected as context.
   ["PostToolUse", "post-tool-use", "Read"],
 ];
