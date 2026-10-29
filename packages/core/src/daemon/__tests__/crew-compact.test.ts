@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { TaskRecord } from "@squadrant/shared";
 import { createCrewCompact } from "../crew-compact.js";
-import { DeferDelivery } from "../../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../../delivery/defer-delivery.js";
 import type { DaemonSurfaceDriver } from "../../interfaces.js";
 
 const SURFACE = { workspaceId: "w", surfaceId: "s", title: "🔧 demo:crew-1" };
@@ -115,6 +115,16 @@ describe("crew compact", () => {
     h.advance(61_000);
     await h.c.tick(); await h.c.tick();
     expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(2);
+  });
+
+  it("#1087: an unconfirmed submit is not reported sent — stays pending, logged", async () => {
+    const h = harness({ send: async () => { throw new SubmitUnconfirmed(); } });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick(); // idle ×2 → typed, Enter never confirmed
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.c.pendingCount()).toBe(1);
+    expect(h.logs.some((l) => l.includes("submit unconfirmed"))).toBe(true);
+    expect(h.logs.some((l) => l.includes("/compact sent"))).toBe(false);
   });
 
   it("cancel drops a queued compact and its send hold, and is a no-op when nothing is queued", async () => {

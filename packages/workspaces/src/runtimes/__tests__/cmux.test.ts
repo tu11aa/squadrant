@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCmuxDriver, cmuxHasInputGuards, resetCmuxInputGuardsCache, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
-import { DeferDelivery } from "@squadrant/core";
+import { DeferDelivery, SubmitUnconfirmed } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 // showPatch (#604) pipes its patch to the child's stdin instead of an argv
 // entry — captured here so tests can assert the patch text was actually
 // written, not just that some args were passed.
 const stdinEndMock = vi.hoisted(() => vi.fn());
+const paneSim = vi.hoisted(() => ({ typed: null as string | null, screen: (_typed: string): string => "" }));
 vi.mock("node:child_process", () => ({
   // Bridge: execFileMock is kept synchronous so assertions on mock.calls stay
   // unchanged; this wrapper adapts it to the callback-based execFile signature.
@@ -16,7 +17,13 @@ vi.mock("node:child_process", () => ({
   // return value is the child process, and showPatch writes to its stdin.
   execFile: (bin: string, args: string[], opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
     try {
-      const result = execFileMock(bin, args, opts);
+      let result = execFileMock(bin, args, opts);
+      // #1087 pane sim: sendToSurface now confirms its submit, so between a `send` and its
+      // Enter the box must show the payload (static mocked screens never do). After the
+      // Enter the test's own read-screen output stands (its "empty box" = submitted).
+      if (args[0] === "send") paneSim.typed = args[args.length - 1];
+      else if (args[0] === "send-key" && args.includes("Enter")) paneSim.typed = null;
+      else if (args[0] === "read-screen" && paneSim.typed !== null) result = paneSim.screen(paneSim.typed);
       cb(null, result ?? "");
     } catch (err) {
       cb(err as Error, "");
@@ -74,6 +81,9 @@ function makeTestScreen(inputLine: string, ...transcriptLines: string[]): string
     "  ⏵⏵ auto mode on",
   ].join("\n");
 }
+
+paneSim.screen = (typed) => makeTestScreen(`\u276F ${typed}`);
+beforeEach(() => { paneSim.typed = null; });
 
 describe("cmux driver", () => {
   const driver = createCmuxDriver();
@@ -804,6 +814,8 @@ describe("sendToSurface draft-preservation", () => {
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) return makeTestScreen(`❯ ${box}`);
       if (args.includes("send-key") && args.includes("backspace")) { box = onBackspace(box); return ""; }
+      // #1087: the delivered message's Enter submits it — the box empties.
+      if (args.includes("send-key") && args.includes("Enter")) box = "";
       return "";
     });
   }
@@ -1033,6 +1045,7 @@ describe("sendToSurface #579 free-form ghost (structural backspace-invariance, n
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
       if (args.includes("read-screen")) return makeTestScreen(`❯ ${box}`);
       if (args.includes("send-key") && args.includes("backspace")) { box = onBackspace(box); return ""; }
+      if (args.includes("send-key") && args.includes("Enter")) box = ""; // #1087: submit empties the box
       return "";
     });
   }
@@ -1123,9 +1136,6 @@ describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () =>
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
     // No send-debug line emitted
     expect(stderrWrites.some((w) => w.includes("send-debug"))).toBe(false);
-    // Exactly the gate's single read-screen — no pre/post read-back added
-    const reads = execFileMock.mock.calls.map(argvOf).filter((a) => a.includes("read-screen"));
-    expect(reads).toHaveLength(1);
   });
 
   it("logs a 'submitted' frame and never re-sends when the box is empty after Enter", async () => {
@@ -1136,10 +1146,6 @@ describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () =>
       return "";
     });
     await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
-
-    // The instrumentation added a pre-send and a post-send read-back (3 reads total).
-    const reads = execFileMock.mock.calls.map(argvOf).filter((a) => a.includes("read-screen"));
-    expect(reads).toHaveLength(3);
 
     // Exactly ONE payload send + ONE Enter — the read-back never re-submits.
     const calls = execFileMock.mock.calls.map(argvOf);
@@ -1154,26 +1160,48 @@ describe("sendToSurface #339 send instrumentation (SQUADRANT_DEBUG_SEND)", () =>
     expect(frame.verdict).toBe("submitted");
   });
 
-  it("logs a 'stuck' frame when the input box still holds the payload after Enter", async () => {
-    process.env.SQUADRANT_DEBUG_SEND = "1";
-    // Empty at the gate read (so we deliver), then the payload is stranded in the
-    // box on the post-send read-back — the #339 fault signature.
-    let reads = 0;
+  // #1087: a stranded submit (Enter landed as a newline) is no longer just logged — the
+  // chokepoint re-issues ONLY the Enter, and reports non-delivery if it never confirms.
+});
+
+describe("sendToSurface confirmed submit (#1087)", () => {
+  const driver = createCmuxDriver();
+  const pane = { workspaceId: "workspace:3", surfaceId: "surface:8" };
+  const PAYLOAD = "/compact keep the plan";
+
+  beforeEach(() => { execFileMock.mockReset(); vi.useFakeTimers(); });
+  afterEach(() => vi.useRealTimers());
+
+  // The first `strandedEnters` Enters land as a newline: the box keeps the payload.
+  function strandedBox(strandedEnters: number) {
+    let box = "";
+    let enters = 0;
     execFileMock.mockImplementation((_bin: string, args: string[]) => {
-      if (args.includes("read-screen")) {
-        reads++;
-        // gate (1) + pre-send (2) see an empty box; post-send (3) shows it stuck.
-        return reads >= 3 ? makeTestScreen("❯ crew done") : makeTestScreen("❯ ▌");
-      }
+      if (args.includes("read-screen")) return makeTestScreen(`\u276F ${box || "\u258C"}`);
+      if (args[0] === "send") box = args[args.length - 1];
+      if (args.includes("send-key") && args.includes("Enter")) box = ++enters > strandedEnters ? "" : box;
       return "";
     });
-    await driver.sendToSurface({ workspaceId: "workspace:3", surfaceId: "surface:8" }, "crew done");
+  }
+  const run = async () => {
+    const outcome = driver.sendToSurface(pane, PAYLOAD, { agent: "claude" }).then(() => null, (e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60_000);
+    return outcome;
+  };
+  const calls = () => execFileMock.mock.calls.map(argvOf);
 
-    const debugLine = stderrWrites.find((w) => w.includes("send-debug"));
-    expect(debugLine).toBeDefined();
-    const frame = JSON.parse(debugLine!.replace(/^\[squadrant\] send-debug /, "").trim());
-    expect(frame.verdict).toBe("stuck");
-    expect(frame.postBox).toContain("crew done");
+  it("Enter stranded in the box → re-issues ONLY the Enter, then confirms", async () => {
+    strandedBox(1);
+    expect(await run()).toBeNull();
+    expect(calls().filter((a) => a[0] === "send")).toHaveLength(1);
+    expect(calls().filter((a) => a.includes("send-key") && a.includes("Enter"))).toHaveLength(2);
+  });
+
+  it("never confirmed → SubmitUnconfirmed (not reported as sent), payload pasted exactly once", async () => {
+    strandedBox(Infinity);
+    expect(await run()).toBeInstanceOf(SubmitUnconfirmed);
+    expect(calls().filter((a) => a[0] === "send")).toHaveLength(1);
+    expect(calls().filter((a) => a.includes("send-key") && a.includes("Enter")).length).toBeGreaterThan(1);
   });
 });
 
