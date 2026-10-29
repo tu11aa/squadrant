@@ -1,5 +1,5 @@
 // packages/core/src/__tests__/knowledge-store.test.ts
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -17,10 +17,11 @@ export function ruleMd(id: string, extra = "", body = "Statement here.\n\nRation
 }
 
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "kb-store-")); });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); vi.unstubAllEnvs(); });
 
 describe("paths", () => {
   it("defaults the KB root to ~/squadrant/kb/<kb>; rules live in shared/rules", () => {
+    vi.stubEnv("SQUADRANT_KB_ROOT", ""); // test/setup-env.ts points it at a temp dir
     const c = getDefaultConfig();
     expect(kbDir(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex"));
     expect(kbRulesDir(c, "saitex")).toBe(path.join(os.homedir(), "squadrant", "kb", "saitex", "shared", "rules"));

@@ -7,22 +7,37 @@ import { Command } from "commander";
 import chalk from "chalk";
 import {
   loadConfig, saveConfig, kbConfigs, resolveKbConfig, subscribedKbs, resolveHome, KB_NAME_RE, DEFAULT_CONFIG_PATH, stateRoot,
-  type KnowledgeSourceEntry,
+  KB_DOMAINS, isKbDomain, homeAuditKb, knowledgeReadSet, resolveKnowledgeHome, userKbDir, USER_KB,
+  type KbDomain, type KbItem, type KnowledgeSourceEntry, type SquadrantConfig,
 } from "@squadrant/shared";
 import {
-  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
+  kbDir, kbRulesDir, PROPOSED_DIR, SOURCES_TEMPLATE, loadSources, loadKbRules, compileIndex, writeIndex, legacyIndexHint, validateKb, isPendingProposalDup, loadErrata, removeSource, type RemoveSourceResult,
   planIngest, applyCandidates, DEFAULT_MAX_SECTIONS_PER_PASS, type IngestPlan, type CandidateFile, type ApplyResult,
-  ensureGitRepo, ensureKbGitignore, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  ensureGitRepo, ensureKbGitignore, ensureKbRuntimeIgnores, moveLegacyKbs, moveLegacyOverlays, type KbMoveEntry,
+  commitKbPaths, kbSession,
   appendCaptainMessage, applyDecisions, buildReviewPacket, finishReconcile, proposeAgentRule, readEscalations, readSchedule, requestPass,
   resolveEscalation, duePass, reconcileConfig, appendAudit, ruleAuditScope, resolveProjectRules, scoreKb, scanAndLogCitations, scanCitations, readGitMessages,
   readAuditRecords, DELIVERY_EVENTS, OUTCOME_SOURCES, type OutcomeSource,
+  allKbNames, auditHealth, auditNormalizer, defaultAuditDir, knownItems, loadKbItems, loadLayerDomain,
+  resolveReadSet, searchRules, itemAuditScope, LIVE_ITEM_STATUSES, type SearchHit,
   type Scores, type AuditSink, loadKbRules as loadRules, type DecisionFile, type Resolution, type ReviewContext,
 } from "@squadrant/core";
 import type { Rule, RuleModality } from "@squadrant/shared";
-import { resolveRulesProject } from "./rules.js";
+import { resolveRulesProject, parseLimit } from "./rules.js";
+import { knowledgeDoctorCommand } from "./knowledge-doctor.js";
 
 export const KNOWLEDGE_PRIVACY_NOTICE =
   "Sources are sent to the extraction crew's model; mark `sensitivity: local-only` to keep a source on local models only.";
+
+/**
+ * D3: `--domain` names a KB domain (rules|decisions|wiki|profile). For one version, any other value is read as a
+ * rule category, with a deprecation line on stderr; `--category` is the new flag for that.
+ */
+export function parseDomainFlag(o: { domain?: string; category?: string }, warn: (m: string) => void = (m) => console.error(chalk.yellow(m))): { kbDomain?: KbDomain; category?: string } {
+  if (o.domain === undefined || isKbDomain(o.domain)) return { kbDomain: o.domain as KbDomain | undefined, category: o.category };
+  warn(`warning: --domain ${o.domain} is a rule category; use --category ${o.domain} (--domain now means ${KB_DOMAINS.join("|")})`);
+  return { kbDomain: "rules", category: o.category ?? o.domain };
+}
 
 function assertKbName(kb: string): void {
   if (!KB_NAME_RE.test(kb)) throw new Error(`Invalid knowledge base name '${kb}' (use lowercase letters, digits, '-')`);
@@ -38,9 +53,13 @@ export function runKnowledgeInit(kb: string, configPath = DEFAULT_CONFIG_PATH): 
   }
   const sourcesFile = path.join(dir, "sources.yaml");
   if (!fs.existsSync(sourcesFile)) { fs.writeFileSync(sourcesFile, SOURCES_TEMPLATE); created.push("sources.yaml"); }
-  if (!fs.existsSync(path.join(dir, "index.json"))) { writeIndex(dir, compileIndex(kb, [])); created.push("index.json"); }
   if (ensureGitRepo(dir)) created.push(".git");
-  if (ensureKbGitignore(dir)) created.push(".gitignore");
+  if (ensureKbGitignore(dir) || ensureKbRuntimeIgnores(dir)) created.push(".gitignore");
+  // index.json and _proposed/ are git-ignored (D7); the layout files are committed so the KB starts clean.
+  const c = commitKbPaths(dir, [".gitignore", "sources.yaml"], {
+    message: `knowledge: init ${kb}`, trailers: { domain: "-", items: [], level: "-", session: kbSession(), approvedBy: "operator" },
+  });
+  if (c.warning) console.error(chalk.yellow(c.warning));
   if (!kbConfigs(cfg)[kb]) {
     cfg.knowledgeBases = { ...(cfg.knowledgeBases ?? {}), [kb]: {} };
     saveConfig(cfg, configPath);
@@ -78,6 +97,7 @@ export function runKnowledgeSourcesRemove(kb: string, entryPath: string, opts: {
 }
 
 export const knowledgeCommand = new Command("knowledge").description("Manage rules knowledge bases (#893)");
+knowledgeCommand.addCommand(knowledgeDoctorCommand);
 
 knowledgeCommand
   .command("init <kb>")
@@ -111,6 +131,7 @@ knowledgeCommand
       console.log(`${r.dryRun ? "would remove" : "removed"} ${o.remove}: ${r.stripped.length} rules lose a ref, ${r.stale.length} left with no source (stale), ${stripped} keep another source`);
       for (const id of r.stale) console.log(chalk.yellow(`  stale: ${id}`));
       if (r.dryRun) console.log(chalk.dim("dry run: nothing written"));
+      for (const w of r.warnings) console.error(chalk.yellow(w));
       return;
     }
     const { sources, errors } = runKnowledgeSources(kb);
@@ -123,7 +144,7 @@ knowledgeCommand
   });
 
 export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH): {
-  file: string; count: number; proposed: number; errors: number; invalid: { file: string; problems: string[] }[];
+  file: string; count: number; proposed: number; errors: number; invalid: { file: string; problems: string[] }[]; legacyIndex?: string;
 } {
   assertKbName(kb);
   const cfg = loadConfig(configPath);
@@ -134,7 +155,8 @@ export function runKnowledgeReindex(kb: string, configPath = DEFAULT_CONFIG_PATH
   const pendingDups = allErrors.filter((e) => isPendingProposalDup(e, kbRulesDir(cfg, kb)));
   const errors = allErrors.filter((e) => !pendingDups.includes(e));
   const file = writeIndex(kbDir(cfg, kb), compileIndex(kb, live));
-  return { file, count: live.length, proposed: all.length - live.length + pendingDups.length, errors: errors.length, invalid: errors };
+  const legacyIndex = legacyIndexHint(kbDir(cfg, kb), kb);
+  return { file, count: live.length, proposed: all.length - live.length + pendingDups.length, errors: errors.length, invalid: errors, ...(legacyIndex ? { legacyIndex } : {}) };
 }
 
 export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PATH): ReturnType<typeof validateKb> {
@@ -153,11 +175,12 @@ export function runKnowledgeValidate(kb: string, configPath = DEFAULT_CONFIG_PAT
 
 knowledgeCommand
   .command("reindex <kb>")
-  .description("Recompile index.json from the KB's rule files")
+  .description("Recompile the KB's index cache (~/.cache/squadrant/index/<kb>.json) from its rule files")
   .action((kb: string) => {
     const r = runKnowledgeReindex(kb);
     console.log(`${r.file}: ${r.count} active${r.proposed ? ` (+${r.proposed} proposed)` : ""}${r.errors ? chalk.red(`, ${r.errors} invalid files skipped`) : ""}`);
     for (const e of r.invalid) console.log(chalk.red(`  ✘ ${e.file}: ${e.problems.join("; ")}`));
+    if (r.legacyIndex) console.log(chalk.yellow(`index.json in the KB repo is no longer used (the index is a cache now): ${r.legacyIndex}`));
   });
 
 knowledgeCommand
@@ -252,6 +275,7 @@ knowledgeCommand
     for (const x of r.idOverrides) console.log(chalk.dim(`  id ${x.from} → ${x.to} (matched by quote offset)`));
     for (const e of r.orphanedErrata) console.log(chalk.yellow(`  errata ${e.id} (${e.ref}): quote no longer found; the raw file changed, re-check it`));
     for (const d of r.doclingFlags) console.log(chalk.yellow(`  ${d.ref}: ${d.dropped}/${d.total} candidates dropped; conversion likely poor, try docling`));
+    for (const w of r.warnings) console.error(chalk.yellow(w));
   });
 
 const defaultStateRoot = () => stateRoot();
@@ -292,6 +316,7 @@ knowledgeCommand
       console.log(`applied ${r.applied.length}, escalated ${r.escalated.length}, code violations ${r.violations.length}, skipped ${r.skipped.length}`);
       for (const e of r.escalated) console.log(chalk.yellow(`  ! ${e.key}: ${e.reasons.join(", ")}`));
       for (const x of r.skipped) console.log(chalk.red(`  ✘ ${x.item}: ${x.reason}`));
+      for (const w of r.warnings) console.error(chalk.yellow(w));
       return;
     }
     const by = os.userInfo().username;
@@ -390,7 +415,7 @@ export function runKnowledgeFeedback(
   const rule = resolveProjectRules(cfg, project).rules.find((r) => r.id === id);
   if (!rule) throw new Error(`No rule '${id}' for project '${project}'`);
   appendAudit([{
-    ...ruleAuditScope(rule), project, domain: "rules", itemId: id, event: "item.outcome", outcome, source,
+    ...ruleAuditScope(rule, cfg), project, domain: "rules", itemId: id, event: "item.outcome", outcome, source,
     ...(o.task ? { task: o.task } : {}), agent: (o.env ?? process.env).SQUADRANT_AGENT,
   }], o.audit);
 }
@@ -447,38 +472,75 @@ knowledgeCommand
     else for (const l of renderSurfaced(items)) console.log(l);
   });
 
-export interface StatsOpts { kb?: string; project?: string; domain?: string; item?: string; json?: boolean; auditDir?: string; now?: Date }
+export interface StatsOpts {
+  kb?: string; project?: string; domain?: string; category?: string; item?: string; json?: boolean; auditDir?: string; now?: Date;
+  /** Resolves the `_user` KB dir (`SQUADRANT_USER_KB_DIR`). */
+  env?: NodeJS.ProcessEnv;
+}
 
-/** Scores per KB (all KBs, or the project's subscriptions, or one --kb), filtered by domain/item. */
+/** Stats label of audit events whose project has no resolvable home (C4). */
+export const NO_HOME_LABEL = "(no home)";
+
+/** Live items of a stats label: a KB (incl. `_user`), a `repo:<p>` home, or none for the (no home) group. */
+function statsKnown(cfg: SquadrantConfig, label: string, env?: NodeJS.ProcessEnv): KbItem[] {
+  if (!label) return [];
+  if (!label.startsWith("repo:")) return loadKbItems(cfg, label, env).items;
+  const layer = knowledgeReadSet(cfg, label.slice(5), env).find((l) => l.kb === label);
+  return layer ? layer.domains.flatMap((d) => loadLayerDomain(layer, d).items) : [];
+}
+
+/**
+ * Scores per KB, grouped by domain (spec §4.6). No --kb/--project: every configured KB, `_user`, each `repo:<p>` home
+ * and the (no home) group when it has events. --project: the KBs of that project's read set. Legacy audit lines are
+ * normalized on read; lines of an unknown `kb` are ignored (`knowledge doctor` counts them).
+ */
 export function runKnowledgeStats(o: StatsOpts, configPath = DEFAULT_CONFIG_PATH): Scores[] {
   const cfg = loadConfig(configPath);
-  let kbs = Object.keys(kbConfigs(cfg));
-  if (o.kb) kbs = [o.kb];
-  else if (o.project) {
+  const { kbDomain, category } = parseDomainFlag(o);
+  const repoLabels = Object.keys(cfg.projects).map((p) => homeAuditKb(cfg, p)).filter((h) => h.startsWith("repo:"));
+  let labels: string[];
+  if (o.kb) {
+    if (o.kb !== USER_KB && !repoLabels.includes(o.kb)) assertKbName(o.kb);
+    labels = [o.kb];
+  } else if (o.project) {
     if (!cfg.projects[o.project]) throw new Error(`Unknown project '${o.project}'`);
-    kbs = subscribedKbs(cfg, o.project);
+    const set = [...new Set(knowledgeReadSet(cfg, o.project, o.env).map((l) => l.kb))];
+    labels = [...set.filter((k) => k !== USER_KB), USER_KB];
+  } else {
+    const noHome = auditHealth({ cfg, dir: o.auditDir }).noHome;
+    labels = [...allKbNames(cfg), ...new Set(repoLabels), ...(noHome ? [""] : [])];
   }
-  return kbs.map((kb) => {
-    assertKbName(kb);
-    const s = scoreKb({ kb, now: o.now ?? new Date(), auditDir: o.auditDir, kbRoot: kbDir(cfg, kb), known: loadRules(cfg, kb).rules.map((r) => ({ id: r.id, domain: "rules", status: r.status })) });
-    return { ...s, items: s.items.filter((x) => (!o.domain || x.domain === o.domain) && (!o.item || x.itemId === o.item)), domains: s.domains.filter((d) => !o.domain || d.domain === o.domain) };
+  const normalize = auditNormalizer(cfg);
+  const all = labels.map((kb) => {
+    const kbRoot = !kb ? o.auditDir ?? defaultAuditDir() : kb === USER_KB ? userKbDir(cfg, o.env) : kb.startsWith("repo:") ? path.dirname(resolveKnowledgeHome(cfg, kb.slice(5))!.dir("rules")) : kbDir(cfg, kb);
+    const s = scoreKb({ kb, now: o.now ?? new Date(), auditDir: o.auditDir, kbRoot, known: knownItems(statsKnown(cfg, kb, o.env)), normalize });
+    return {
+      ...s, kb: kb || NO_HOME_LABEL,
+      items: s.items.filter((x) => (!kbDomain || x.domain === kbDomain) && (!category || x.category === category) && (!o.item || x.itemId === o.item)),
+      domains: s.domains.filter((d) => !kbDomain || d.domain === kbDomain),
+    };
   });
+  return kbDomain && !o.kb ? all.filter((s) => s.domains.length) : all;
 }
 
 export function renderStats(all: Scores[]): string[] {
   const pct = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
   return all.flatMap((s) => [
     `${s.kb} (last ${s.windowDays} days)`,
-    ...s.items.map((x) => `  ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.pullRate}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
-    ...s.domains.map((d) => `  domain ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`),
+    ...s.domains.flatMap((d) => [
+      `  ${d.domain}: writes ${d.writesPerMonth}/mo  reads ${d.readsPerMonth}/mo${d.deadDomain ? "  DEAD DOMAIN" : ""}`,
+      ...s.items.filter((x) => x.domain === d.domain).map((x) => `    ${x.itemId}  surfaced ${x.surfaced}  pulled ${x.pullRate}  cited ${x.cited}  use ${pct(x.useRate)}  noise ${pct(x.noiseRate)}  violated ${pct(x.violationRate)}${x.neverFired30d ? "  NEVER FIRED" : ""}`),
+    ]),
     `  agents: ${Object.entries(s.perAgentCoverage).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ]);
 }
 
 knowledgeCommand
   .command("stats")
-  .description("Scores computed from the audit log: fire/pull/use/noise/violation rates, never-fired, per-domain activity")
-  .option("--kb <kb>").option("--project <name>").option("--domain <slug>").option("--item <id>")
+  .description("Scores computed from the audit log, per KB and domain: fire/pull/use/noise/violation rates, never-fired, dead domains")
+  .option("--kb <kb>", "one KB, _user or repo:<project>").option("--project <name>", "the KBs of this project's read set")
+  .option("--domain <d>", `KB domain: ${KB_DOMAINS.join("|")} (a rule category here is deprecated: use --category)`)
+  .option("--category <c>", "rules of this category").option("--item <id>")
   .option("--json", "print scores.json-shaped output")
   .action((o: StatsOpts) => {
     const all = runKnowledgeStats(o);
@@ -505,4 +567,120 @@ knowledgeCommand
   .action((o: { project: string; text?: string; git?: string; sinceDays?: number; ref?: string }) => {
     const ids = runKnowledgeCiteScan(o);
     console.log(ids.length ? `cited: ${ids.join(", ")}` : "no new citations");
+  });
+
+// ── merged view: list / search / show over the read set (#979 §4.3) ─────
+
+export interface MergedOpts {
+  project?: string; domain?: string; category?: string; level?: string; all?: boolean;
+  limit?: string | number; cwd?: string; env?: NodeJS.ProcessEnv;
+  /** Audit-log destination/clock override (tests). */
+  audit?: AuditSink;
+}
+
+export interface MergedView { cfg: SquadrantConfig; project: string; kbDomain?: KbDomain; items: KbItem[]; overridden: { item: KbItem; by: KbItem }[] }
+
+/** The project's read set, filtered by --domain / --category / --level and, without --all, to live statuses. */
+export function loadMergedView(o: MergedOpts, configPath = DEFAULT_CONFIG_PATH): MergedView {
+  const cfg = loadConfig(configPath);
+  const project = resolveRulesProject(cfg, o);
+  const { kbDomain, category } = parseDomainFlag(o);
+  if (o.level !== undefined && o.level !== "shared" && o.level !== "project") throw new Error(`--level must be shared or project, got '${o.level}'`);
+  const res = resolveReadSet(cfg, project, { domains: kbDomain ? [kbDomain] : undefined, env: o.env });
+  for (const w of res.warnings) console.error(chalk.yellow(`warning: ${w}`));
+  for (const e of res.errors) console.error(chalk.yellow(`skipped ${e.file}: ${e.problems.join("; ")}`));
+  const keep = (x: KbItem) => (o.all || LIVE_ITEM_STATUSES.includes(x.status)) && (!category || x.category === category) && (!o.level || x.level === o.level);
+  return { cfg, project, kbDomain, items: res.items.filter(keep), overridden: res.overridden.filter((x) => keep(x.item)) };
+}
+
+/** `[origin] domain id: summary`, with the status when it is not the domain's live one. */
+const mergedLine = (x: KbItem, label = x.origin) =>
+  `[${label}] ${x.kbDomain} ${x.id}: ${x.summary}${x.status === "active" || x.status === "accepted" ? "" : ` (${x.status})`}`;
+
+export function renderMergedList(v: MergedView): string[] {
+  const rows = [
+    ...v.items.map((x) => ({ id: x.id, l: mergedLine(x) })),
+    ...v.overridden.map(({ item, by }) => ({ id: item.id, l: mergedLine(item, `${item.origin} → overridden by ${by.project ?? by.origin}`) })),
+  ];
+  if (!rows.length) return ["(no items)"];
+  return rows.sort((a, b) => a.id.localeCompare(b.id)).map((r) => r.l);
+}
+
+const searchedDomains = (v: MergedView, env?: NodeJS.ProcessEnv): KbDomain[] =>
+  v.kbDomain ? [v.kbDomain] : [...new Set(knowledgeReadSet(v.cfg, v.project, env).flatMap((l) => l.domains))];
+
+export function runKnowledgeSearch(query: string, o: MergedOpts, configPath = DEFAULT_CONFIG_PATH): SearchHit<KbItem>[] {
+  const v = loadMergedView(o, configPath);
+  // The view is already status-filtered, so every status it kept is searchable.
+  const hits = searchRules(v.items, query, { statuses: [...new Set(v.items.map((x) => x.status))] });
+  const shown = hits.slice(0, parseLimit(o.limit));
+  appendAudit(shown.length
+    ? shown.map((h) => ({ ...itemAuditScope(h.rule), project: v.project, itemId: h.rule.id, event: "item.searched" as const, query, score: h.score }))
+    // No hits: one unattributed read per searched domain, so each domain's reads/month stay honest (profile reads belong to _user).
+    : searchedDomains(v, o.env).map((d) => ({ kb: d === "profile" ? USER_KB : homeAuditKb(v.cfg, v.project), level: d === "profile" ? "shared" : "project", project: v.project, domain: d, itemId: "", event: "item.searched" as const, query })),
+    { env: o.env, ...o.audit });
+  return hits;
+}
+
+export function renderMergedSearch(hits: SearchHit<KbItem>[], o: MergedOpts): string[] {
+  if (!hits.length) return ["(no matching items)"];
+  const shown = hits.slice(0, parseLimit(o.limit));
+  const lines = shown.map((h) => `[${h.score}] ${mergedLine(h.rule)}`);
+  if (hits.length > shown.length) lines.push(`(+${hits.length - shown.length} more; use --limit)`);
+  return lines;
+}
+
+export function runKnowledgeShow(id: string, o: MergedOpts, configPath = DEFAULT_CONFIG_PATH): { item: KbItem; overrides: KbItem[] } {
+  const v = loadMergedView(o, configPath);
+  const item = v.items.find((x) => x.id === id);
+  if (!item) throw new Error(`No item '${id}' for this project`);
+  appendAudit([{ ...itemAuditScope(item), project: v.project, itemId: item.id, event: "item.shown", chars: item.body.length }], { env: o.env, ...o.audit });
+  return { item, overrides: v.overridden.filter((x) => x.by === item).map((x) => x.item) };
+}
+
+export function formatItem(x: KbItem, overrides: KbItem[] = []): string {
+  return [
+    `${x.kbDomain} ${x.id}: ${x.summary}`,
+    `  ${x.status} · ${x.level} · ${x.origin}${x.category ? ` · ${x.category}` : ""}`,
+    ...overrides.map((o) => `  overrides ${o.origin}`),
+    `  source: ${x.sources.join("; ") || "-"}`,
+    `  file: ${x.path}`,
+  ].join("\n");
+}
+
+const DOMAIN_FLAG = `KB domain: ${KB_DOMAINS.join("|")} (a rule category here is deprecated: use --category)`;
+
+knowledgeCommand
+  .command("list")
+  .description("List every item in the project's read set, with its origin (merged view across KBs and domains)")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .option("--domain <d>", DOMAIN_FLAG).option("--category <c>", "rule category")
+  .option("--level <l>", "shared | project")
+  .option("--all", "every status, not only active/stale/accepted")
+  .action((o: MergedOpts) => {
+    for (const l of renderMergedList(loadMergedView(o))) console.log(l);
+  });
+
+knowledgeCommand
+  .command("search <query...>")
+  .description("Search the project's read set across domains (ranked; best match first)")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .option("--domain <d>", DOMAIN_FLAG).option("--category <c>", "rule category")
+  .option("--all", "every status, not only active/stale/accepted")
+  .option("--limit <n>", "max results (default 5)")
+  .action((query: string[], o: MergedOpts) => {
+    for (const l of renderMergedSearch(runKnowledgeSearch(query.join(" "), o), o)) console.log(l);
+  });
+
+knowledgeCommand
+  .command("show <ids...>")
+  .description("Show one or more items in full, with origin and sources")
+  .option("--project <name>", "project (default: from cwd or SQUADRANT_CREW_PROJECT)")
+  .option("--all", "every status, not only active/stale/accepted")
+  .action((ids: string[], o: MergedOpts) => {
+    for (const id of ids) {
+      const { item, overrides } = runKnowledgeShow(id, o);
+      console.log(formatItem(item, overrides));
+      console.log(chalk.dim(item.body) + "\n");
+    }
   });

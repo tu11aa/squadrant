@@ -391,10 +391,12 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       cmux: daemonCmux,
       log,
       tasks: (project) => store.list(project),
+      endTurn: (project, id) => ingest(project)({ type: "task.turn.completed", id, turnId: "compact" }),
     });
     ctx.requestCrewCompact = crewCompact.request;
     ctx.cancelCrewCompact = crewCompact.cancel;
     ctx.crewCompactHolds = crewCompact.holdsCrew;
+    ctx.crewCompactBegin = crewCompact.compactBegin;
     ctx.crewCompactDone = crewCompact.compactDone;
     if (opts.sweepMs && opts.sweepMs > 0) {
       compactTimer = setInterval(() => { void compact.tick(); void crewCompact.tick(); }, 1000);

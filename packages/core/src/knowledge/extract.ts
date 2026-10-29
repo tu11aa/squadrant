@@ -14,6 +14,7 @@ import { convertedFile, isGatedRef, readState, refCanon } from "./ingest.js";
 import { orphanedErrata } from "./errata.js";
 import { PROPOSED_DIR } from "./paths.js";
 import { loadRulesDir } from "./store.js";
+import { commitKbPaths, kbSession } from "./write.js";
 import { findQuote, needsDocling, normalizeText, normalizedViews, spansOverlap, type Normalized } from "./verify.js";
 
 export interface Candidate {
@@ -65,6 +66,8 @@ export interface ApplyResult {
   idOverrides: { from: string; to: string }[];
   /** Errata whose quote is no longer found in a source that had candidates: the raw file changed, re-check them. */
   orphanedErrata: { id: string; ref: string }[];
+  /** Commit failures: the files stand (`knowledge doctor --fix`). */
+  warnings: string[];
 }
 
 type Fm = RuleFrontmatter & Record<string, unknown>;
@@ -112,11 +115,11 @@ function upsertSource(fm: Fm, src: RuleSourceRef, canon: (ref: string) => string
 
 export function applyCandidates(input: CandidateFile, opts: ApplyOptions): ApplyResult {
   const { kb, kbRoot, rulesDir } = opts;
-  const res: ApplyResult = { created: [], merged: [], proposed: [], superseded: [], stale: [], rejected: [], doclingFlags: [], idOverrides: [], orphanedErrata: [] };
+  const res: ApplyResult = { created: [], merged: [], proposed: [], superseded: [], stale: [], rejected: [], doclingFlags: [], idOverrides: [], orphanedErrata: [], warnings: [] };
   const events: AuditEvent[] = [];
   // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
   const ev = (event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}) =>
-    events.push({ kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
+    events.push({ kb, level: "shared", project: "", domain: "rules", itemId, event, ...extra });
 
   const loaded = loadRulesDir(rulesDir, `kb:${kb}`);
   const work = new Map<string, Work>();
@@ -248,11 +251,12 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
     if (Object.keys(anchors).length) w.fm.anchors = anchors;
   }
 
+  const written: Work[] = [];
   for (const w of work.values()) {
     if (!w.dirty) continue;
     fs.mkdirSync(path.dirname(w.file), { recursive: true });
     const text = serialize(w.fm, w.body);
-    if (!fs.existsSync(w.file) || fs.readFileSync(w.file, "utf8") !== text) fs.writeFileSync(w.file, text);
+    if (!fs.existsSync(w.file) || fs.readFileSync(w.file, "utf8") !== text) { fs.writeFileSync(w.file, text); written.push(w); }
   }
 
   res.orphanedErrata = orphanedErrata(kbRoot, opts.sources ?? [], opts.errata ?? [], totals.keys());
@@ -261,6 +265,12 @@ export function applyCandidates(input: CandidateFile, opts: ApplyOptions): Apply
 
   const live = loadRulesDir(rulesDir, `kb:${kb}`).rules;
   writeIndex(kbRoot, compileIndex(kb, live, opts.now?.()));
+  // One commit per run (phase 2 §5); proposals stay uncommitted in _proposed/.
+  const c = commitKbPaths(kbRoot, written.map((w) => w.file), {
+    message: `knowledge: apply ${kb}`,
+    trailers: { domain: "rules", items: written.map((w) => w.fm.id), level: "shared", session: kbSession(), approvedBy: "auto" },
+  });
+  if (c.warning) res.warnings.push(c.warning);
   appendAudit(events, opts.audit);
   return res;
 }

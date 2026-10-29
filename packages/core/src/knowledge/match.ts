@@ -3,13 +3,16 @@
 import path from "node:path";
 import type { Rule } from "@squadrant/shared";
 import { globToRegExp } from "./ingest.js";
+import type { Matchable } from "./search.js";
 
 /** ≈800 tokens of rule lines and at most 5 rules per injection (spec §6). */
 export const INJECT_MAX_RULES = 5;
 export const INJECT_MAX_CHARS = 3200;
 
 export type StructuralVia = "glob" | "anchor";
-export interface StructuralHit { rule: Rule; via: StructuralVia }
+export interface StructuralHit<T extends Matchable = Rule> { rule: T; via: StructuralVia }
+/** Statuses a structural match accepts: rules `active`, decisions `accepted`. */
+const MATCH_STATUSES: ReadonlySet<string> = new Set(["active", "accepted"]);
 
 export function globMatches(glob: string, relPath: string): boolean {
   const g = glob.replace(/^\.\//, "");
@@ -31,11 +34,11 @@ export function repoRelativePaths(file: string, cwd: string, projectRoot: string
   return [...out];
 }
 
-/** Rules whose globs match, or whose anchors for this project name, one of the paths. Glob before anchor. */
-export function matchPaths(rules: Rule[], project: string, relPaths: string[]): StructuralHit[] {
-  const hits: StructuralHit[] = [];
+/** Rules (or KB items) whose globs match, or whose anchors for this project name, one of the paths. Glob before anchor. */
+export function matchPaths<T extends Matchable>(rules: T[], project: string, relPaths: string[]): StructuralHit<T>[] {
+  const hits: StructuralHit<T>[] = [];
   for (const rule of rules) {
-    if (rule.status !== "active") continue;
+    if (!MATCH_STATUSES.has(rule.status)) continue;
     if (rule.triggers?.globs?.some((g) => relPaths.some((p) => globMatches(g, p)))) hits.push({ rule, via: "glob" });
     else if (rule.anchors?.[project]?.paths?.some((a) => relPaths.includes(a))) hits.push({ rule, via: "anchor" });
   }
@@ -43,9 +46,9 @@ export function matchPaths(rules: Rule[], project: string, relPaths: string[]): 
 }
 
 /** Rules whose anchored symbols appear as whole identifiers in the text (e.g. `computeTotal`). */
-export function matchSymbols(rules: Rule[], project: string, text: string): StructuralHit[] {
+export function matchSymbols<T extends Matchable>(rules: T[], project: string, text: string): StructuralHit<T>[] {
   const idents = new Set(text.match(/[A-Za-z_$][\w$]{2,}/g) ?? []);
-  return rules.filter((r) => r.status === "active" && r.anchors?.[project]?.symbols?.some((s) => idents.has(s)))
+  return rules.filter((r) => MATCH_STATUSES.has(r.status) && r.anchors?.[project]?.symbols?.some((s) => idents.has(s)))
     .map((rule) => ({ rule, via: "anchor" as const }));
 }
 
@@ -56,8 +59,8 @@ export function mentionedPaths(text: string): string[] {
 }
 
 /** First `maxRules` rules whose lines fit `maxChars`; the rest are overflow. */
-export function applyBudget<T extends { rule: Rule }>(
-  items: T[], lineLen: (r: Rule) => number, maxRules = INJECT_MAX_RULES, maxChars = INJECT_MAX_CHARS,
+export function applyBudget<T extends { rule: Matchable }>(
+  items: T[], lineLen: (r: T["rule"]) => number, maxRules = INJECT_MAX_RULES, maxChars = INJECT_MAX_CHARS,
 ): { shown: T[]; overflow: T[] } {
   const shown: T[] = [];
   let chars = 0;

@@ -6,11 +6,12 @@ import crypto from "node:crypto";
 import yaml from "js-yaml";
 import { USER_KB, userKbDir, type SquadrantConfig } from "@squadrant/shared";
 import {
-  ARCHIVE_DIR, DROPPED_FILE, gitRun, PROFILE_CORE_CAP, PROFILE_DIR, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
+  ARCHIVE_DIR, DROPPED_FILE, PROFILE_CORE_CAP, PROFILE_DIR, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
   profileWritePath, serializeTrait, splitFrontmatter, validateTrait, viewSizes, type LoadedTrait, type ProfileCommit, type Trait,
   type TraitAudience, type TraitKind, type TraitTier,
 } from "./profile.js";
 import { appendAudit, type AuditEventName, type AuditSink } from "./audit.js";
+import { gitRun } from "./write.js";
 import { resolveInjectProject } from "./inject.js";
 
 export interface ProfileCtx {

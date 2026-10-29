@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { RuntimeDriver, PaneRef } from "../runtimes/types.js";
-import { DeferDelivery } from "@squadrant/core";
+import { DeferDelivery, SubmitUnconfirmed } from "@squadrant/core";
 import { loadConfig } from "@squadrant/shared";
 import type { RuntimeLivenessRecord } from "@squadrant/shared";
 import { readLivenessSnapshot } from "./store-fingerprint.js";
@@ -14,7 +14,7 @@ import { readLivenessSnapshot } from "./store-fingerprint.js";
  *
  * Every method is FAIL-SOFT: a cmux/socket error degrades to a safe sentinel
  * ([] / null / no-op) so a transient failure NEVER false-reaps a live crew.
- * Exceptions: DeferDelivery, which `send` re-throws so the delivery loop can
+ * Exceptions: DeferDelivery and SubmitUnconfirmed (#1087), which `send` re-throws so the delivery loop can
  * defer-while-typing (#258/#302); and `liveness()`, which THROWS when it
  * cannot get a good read of the store (readdir failure, or every store file
  * unreadable/corrupt) instead of returning [] — a locked/mid-write store must
@@ -46,7 +46,7 @@ export class DaemonCmux {
     try {
       await this.driver.sendToSurface(surface, text, opts);
     } catch (e) {
-      if (e instanceof DeferDelivery) throw e;
+      if (e instanceof DeferDelivery || e instanceof SubmitUnconfirmed) throw e;
     }
   }
 

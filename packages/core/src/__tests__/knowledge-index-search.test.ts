@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { Rule } from "@squadrant/shared";
-import { compileIndex, writeIndex, readIndex, searchRules } from "../knowledge/index.js";
+import { compileIndex, writeIndex, readIndex, indexCacheFile, searchRules } from "../knowledge/index.js";
 
 const mk = (id: string, over: Partial<Rule> = {}): Rule => ({
   id, domain: "business", modality: "must", status: "active",
@@ -14,8 +14,12 @@ const mk = (id: string, over: Partial<Rule> = {}): Rule => ({
 
 let hub: string;
 let kbRoot: string;
-beforeEach(() => { hub = fs.mkdtempSync(path.join(os.tmpdir(), "kb-idx-")); kbRoot = path.join(hub, "saitex"); });
-afterEach(() => fs.rmSync(hub, { recursive: true, force: true }));
+const savedCache = process.env.SQUADRANT_INDEX_CACHE_DIR;
+beforeEach(() => {
+  hub = fs.mkdtempSync(path.join(os.tmpdir(), "kb-idx-")); kbRoot = path.join(hub, "saitex");
+  process.env.SQUADRANT_INDEX_CACHE_DIR = path.join(hub, "cache");
+});
+afterEach(() => { process.env.SQUADRANT_INDEX_CACHE_DIR = savedCache; fs.rmSync(hub, { recursive: true, force: true }); });
 
 describe("index", () => {
   it("compiles, writes, reads back", () => {
@@ -24,14 +28,15 @@ describe("index", () => {
     expect(idx.rules[0]).toMatchObject({ id: "biz.a", statement: "VND amounts are rounded half-up." });
     fs.mkdirSync(kbRoot, { recursive: true });
     const file = writeIndex(kbRoot, idx);
-    expect(file).toBe(path.join(kbRoot, "index.json"));
-    expect(readIndex(kbRoot, "saitex")).toEqual({ index: idx });
+    expect(file).toBe(path.join(hub, "cache", "saitex.json"));
+    expect(fs.existsSync(path.join(kbRoot, "index.json"))).toBe(false);
+    expect(readIndex("saitex")).toEqual({ index: idx });
   });
   it("reports missing and corrupt index", () => {
-    expect(readIndex(kbRoot, "saitex").problem).toContain("missing");
-    fs.mkdirSync(kbRoot, { recursive: true });
-    fs.writeFileSync(path.join(kbRoot, "index.json"), "{not json");
-    expect(readIndex(kbRoot, "saitex").problem).toContain("corrupt");
+    expect(readIndex("saitex").problem).toContain("missing");
+    fs.mkdirSync(path.dirname(indexCacheFile("saitex")), { recursive: true });
+    fs.writeFileSync(indexCacheFile("saitex"), "{not json");
+    expect(readIndex("saitex").problem).toContain("corrupt");
   });
 });
 

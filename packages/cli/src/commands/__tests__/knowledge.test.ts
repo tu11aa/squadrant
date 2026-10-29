@@ -3,14 +3,17 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { getDefaultConfig, saveConfig, loadConfig } from "@squadrant/shared";
 import { runKnowledgeInit, runKnowledgeSubscribe, runKnowledgeSources, runKnowledgeReindex, runKnowledgeValidate, runKnowledgeIngest, runKnowledgeApply, runKnowledgeSourcesRemove, runKnowledgeReviewApply } from "../knowledge.js";
-import { kbRulesDir, kbDir, readIndex } from "@squadrant/core";
+import { kbRulesDir, kbDir, readIndex, KB_RUNTIME_IGNORES } from "@squadrant/core";
 
 let dir: string;
 let cfgPath: string;
+const savedCache = process.env.SQUADRANT_INDEX_CACHE_DIR;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "squadrant-knowledge-"));
+  process.env.SQUADRANT_INDEX_CACHE_DIR = path.join(dir, "cache");
   cfgPath = path.join(dir, "config.json");
   const c = getDefaultConfig();
   c.hubVault = path.join(dir, "hub");
@@ -18,7 +21,7 @@ beforeEach(() => {
   c.projects = { flooros: { path: "/f", captainName: "f", spokeVault: "/v", host: "local" } };
   saveConfig(c, cfgPath);
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => { process.env.SQUADRANT_INDEX_CACHE_DIR = savedCache; fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("knowledge init", () => {
   it("creates the layout, sources.yaml template, and a config entry", () => {
@@ -48,11 +51,11 @@ describe("knowledge init", () => {
     expect(runKnowledgeInit("saitex", cfgPath).created).toEqual([".gitignore"]);
     expect(fs.existsSync(path.join(r.dir, ".gitignore"))).toBe(true);
   });
-  it("never modifies an existing .gitignore", () => {
+  it("keeps an existing .gitignore's lines and appends the missing D7 ignores (#979)", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
     fs.writeFileSync(path.join(r.dir, ".gitignore"), "custom\n");
     runKnowledgeInit("saitex", cfgPath);
-    expect(fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8")).toBe("custom\n");
+    expect(fs.readFileSync(path.join(r.dir, ".gitignore"), "utf8")).toBe(`custom\n${KB_RUNTIME_IGNORES.join("\n")}\n`);
   });
   it("rejects an invalid kb name", () => {
     expect(() => runKnowledgeInit("Bad Name", cfgPath)).toThrow(/Invalid knowledge base name/);
@@ -81,15 +84,15 @@ describe("knowledge sources", () => {
 });
 
 describe("knowledge reindex", () => {
-  it("compiles index.json from the KB's rules", () => {
+  it("compiles the index cache from the KB's rules", () => {
     runKnowledgeInit("saitex", cfgPath);
     const hub = loadConfig(cfgPath);
     fs.mkdirSync(path.join(kbRulesDir(hub, "saitex"), "coding"), { recursive: true });
     fs.writeFileSync(path.join(kbRulesDir(hub, "saitex"), "coding", "coding.a.md"),
       "---\nid: coding.a\ndomain: coding\nmodality: must\nstatus: active\nsources:\n  - { ref: r, sha: s, quote: q }\n---\nUse Result.\n");
     const r = runKnowledgeReindex("saitex", cfgPath);
-    expect(r).toMatchObject({ count: 1, errors: 0 });
-    expect(readIndex(kbDir(hub, "saitex"), "saitex").index?.rules[0].id).toBe("coding.a");
+    expect(r).toMatchObject({ count: 1, errors: 0, file: path.join(dir, "cache", "saitex.json") });
+    expect(readIndex("saitex").index?.rules[0].id).toBe("coding.a");
   });
   it("counts proposed separately and names each invalid file", () => {
     runKnowledgeInit("saitex", cfgPath);
@@ -103,10 +106,26 @@ describe("knowledge reindex", () => {
     const r = runKnowledgeReindex("saitex", cfgPath);
     expect(r).toMatchObject({ count: 1, proposed: 1, errors: 1 });
     expect(r.invalid[0].file).toContain("bad.md");
-    expect(readIndex(kbDir(hub, "saitex"), "saitex").index?.rules.map((x) => x.id)).toEqual(["coding.a"]);
+    expect(readIndex("saitex").index?.rules.map((x) => x.id)).toEqual(["coding.a"]);
   });
   it("fails clearly on an uninitialised KB", () => {
     expect(() => runKnowledgeReindex("nope", cfgPath)).toThrow(/does not exist/);
+  });
+  it("rebuilds the index after rm -rf of the cache dir", () => {
+    runKnowledgeInit("acme", cfgPath);
+    runKnowledgeReindex("acme", cfgPath);
+    fs.rmSync(path.join(dir, "cache"), { recursive: true, force: true });
+    expect(readIndex("acme").problem).toContain("missing");
+    runKnowledgeReindex("acme", cfgPath);
+    expect(readIndex("acme").index?.kb).toBe("acme");
+  });
+  it("hints at untracking a legacy <kb>/index.json, and never runs it", () => {
+    const { dir: kbRoot } = runKnowledgeInit("acme", cfgPath);
+    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBeUndefined();
+    fs.writeFileSync(path.join(kbRoot, "index.json"), "{}\n");
+    execFileSync("git", ["-C", kbRoot, "add", "-f", "index.json"]);
+    expect(runKnowledgeReindex("acme", cfgPath).legacyIndex).toBe("squadrant knowledge doctor acme --fix");
+    expect(execFileSync("git", ["-C", kbRoot, "ls-files", "index.json"], { encoding: "utf8" }).trim()).toBe("index.json");
   });
 });
 
@@ -119,14 +138,10 @@ describe("kb name validation on every command", () => {
 });
 
 describe("knowledge init index", () => {
-  it("writes an empty index once and never overwrites it", () => {
+  it("no longer writes <kb>/index.json (K8: the index is a cache)", () => {
     const r = runKnowledgeInit("saitex", cfgPath);
-    const idx = path.join(r.dir, "index.json");
-    expect(fs.existsSync(idx)).toBe(true);
-    fs.writeFileSync(idx, fs.readFileSync(idx, "utf8") + " ");
-    const before = fs.readFileSync(idx, "utf8");
-    expect(runKnowledgeInit("saitex", cfgPath).created).toEqual([]);
-    expect(fs.readFileSync(idx, "utf8")).toBe(before);
+    expect(r.created).not.toContain("index.json");
+    expect(fs.existsSync(path.join(r.dir, "index.json"))).toBe(false);
   });
   it("leaves doctor with no failing index line", async () => {
     runKnowledgeInit("saitex", cfgPath);
@@ -175,7 +190,7 @@ describe("knowledge ingest / apply", () => {
       expect(runKnowledgeApply("saitex", cand, cfgPath).created).toEqual(["biz.invoice.window"]);
       expect(runKnowledgeApply("saitex", cand, cfgPath)).toMatchObject({ created: [], merged: [] });
     } finally { if (prevAuditDir === undefined) delete process.env.SQUADRANT_AUDIT_DIR; else process.env.SQUADRANT_AUDIT_DIR = prevAuditDir; }
-    expect(readIndex(kbRoot, "saitex").index?.rules.map((r) => r.id)).toEqual(["biz.invoice.window"]);
+    expect(readIndex("saitex").index?.rules.map((r) => r.id)).toEqual(["biz.invoice.window"]);
     expect((await runKnowledgeIngest("saitex", {}, cfgPath)).sources).toEqual([]);
   });
 });

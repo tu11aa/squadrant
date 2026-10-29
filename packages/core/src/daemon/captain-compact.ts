@@ -6,7 +6,7 @@
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef } from "@squadrant/shared";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
-import { DeferDelivery } from "../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../delivery/defer-delivery.js";
 import { discoverCaptainSurface } from "./delivery-loop.js";
 
 /** A live Claude Code turn shows a working spinner (token counter, "esc to interrupt",
@@ -127,6 +127,13 @@ export function createCaptainCompact(deps: CaptainCompactDeps) {
       await cmux.send(surface, `/compact ${p.focus}`, { agent: "claude" });
     } catch (e) {
       holds.delete(project);
+      // #1087: Enter never confirmed — not "sent"; stay pending (the draft guard holds retries off).
+      if (e instanceof SubmitUnconfirmed) {
+        log(`captain-compact ${project}: /compact submit unconfirmed — still pending`);
+        p.idlePolls = 0;
+        p.lastReason = "submit-unconfirmed";
+        return;
+      }
       if (!(e instanceof DeferDelivery)) throw e;
       p.idlePolls = 0;
       p.lastReason = e.reason;

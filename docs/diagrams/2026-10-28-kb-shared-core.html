@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KB Shared Core · squadrant</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#161d2b; --line:#222c3d;
+    --fg:#e6edf7; --dim:#8b9bb4; --dimmer:#5d6b83;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --acc2:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding:48px 16px 96px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:20px;margin:52px 0 6px;letter-spacing:-.01em;padding-left:12px;border-left:3px solid var(--acc)}
+  .meta{color:var(--dimmer);font-size:13px;font-family:var(--mono);margin-bottom:36px}
+  .lead{font-size:16px;color:var(--dim);margin:8px 0 0}
+  p{margin:12px 0}
+  code{font-family:var(--mono);font-size:.9em;background:var(--panel2);padding:2px 6px;border-radius:4px;color:var(--acc2)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:16px} .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:860px){.g2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.07em}
+  tr:last-child td{border-bottom:none}
+  .tablewrap{overflow-x:auto}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .acc{color:var(--acc)} .dim{color:var(--dim)}
+  .note{border-left:3px solid var(--warn);background:#1a1608;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0}
+  .note.g{border-color:var(--ok);background:#0c1a10}
+  .opts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+  button{font:13px var(--mono);background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+  button:hover{border-color:var(--acc)} button.on{border-color:var(--acc);color:var(--acc);background:#0f1a2b}
+  .out{font-family:var(--mono);font-size:13px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px;white-space:pre-wrap;margin-top:10px}
+  .stack{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+  .layer{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;transition:border-color .15s,opacity .15s}
+  .layer .t{font-family:var(--mono);font-size:13px;color:var(--acc)}
+  .layer .d{font-size:13px;color:var(--dim)}
+  .layer.hot{border-color:var(--ok)} .layer.cold{opacity:.4}
+  .layer.user .t{color:var(--acc2)} .layer.home .t{color:var(--ok)}
+  .step{display:flex;gap:10px;align-items:center;margin:8px 0}
+  .bar{height:6px;background:var(--line);border-radius:3px;flex:1;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--acc);transition:width .2s}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>KB shared core</h1>
+  <div class="meta">#979 · spec docs/specs/2026-10-27-kb-phase2-shared-core-design.md · phase 2a: read side + observability</div>
+  <p class="lead">Phase 1 built the knowledge base for rules only. Phase 2a gives all four domains (rules, decisions, wiki, profile) one item model, one home rule, one merged read, one matcher, and one set of scores. Click through the three panels below.</p>
+
+  <h2>1 · Where does a project's own knowledge live? (home resolution)</h2>
+  <div class="card">
+    <p class="dim">Pick a project config. The first rule that applies wins. Reads never create a KB; a pending home is created by the first write (phase 2b-2).</p>
+    <div class="opts" id="homeOpts"></div>
+    <div class="out" id="homeOut"></div>
+  </div>
+
+  <h2>2 · What does a session read? (read set)</h2>
+  <div class="card">
+    <p class="dim">Hover a layer to see what it contributes. Shared layers: first one wins. The project home overrides a shared item with the same id; <code>knowledge list</code> still shows the hidden one as <code>[acme/shared → overridden by projA]</code>. Toggle the home to see a pending home drop out.</p>
+    <div class="opts"><button id="homeToggle" class="on">home: acme/projects/projA</button></div>
+    <div class="stack" id="stack"></div>
+    <div class="out" id="layerOut">Hover a layer.</div>
+  </div>
+  <div class="grid g2">
+    <div class="card">
+      <strong>The folder decides the domain (D3)</strong>
+      <p class="dim"><code>…/rules/</code> = rule, <code>…/decisions/</code> = decision. A rule's frontmatter <code>domain:</code> stays its category (<code>coding</code>, <code>pr</code>); in other domains it must equal the folder. CLI: <code>--domain</code> = KB domain, <code>--category</code> = rule category.</p>
+    </div>
+    <div class="card">
+      <strong>Reserved id prefixes (D4)</strong>
+      <p class="dim"><code>dec.</code> decisions · <code>wiki.</code> wiki · <code>prof.</code> profile · rules keep <code>&lt;category&gt;.&lt;slug&gt;</code>. Ids are unique across domains, so the session seen set and citations key on the bare id. <code>knowledge doctor</code> checks both rules.</p>
+    </div>
+  </div>
+
+  <h2>3 · Is each item useful? (audit lines → scores)</h2>
+  <div class="card">
+    <p class="dim">The audit log is append-only and never rewritten. Older lines are normalized when read. Step through one legacy line of each kind.</p>
+    <div class="step"><button id="prev">◀</button><div class="bar"><i id="barFill"></i></div><button id="next">▶</button></div>
+    <div class="out" id="normOut"></div>
+  </div>
+  <div class="tablewrap"><table>
+    <tr><th>Piece</th><th>What 2a does</th><th>Where</th></tr>
+    <tr><td>Scores</td><td>Every domain; <code>known</code> set from every loader incl. <code>_user</code>; dead-domain alarm over a fixed list (<code>_user</code>: profile; other KBs: rules, decisions, wiki)</td><td><code>core/knowledge/scores.ts</code></td></tr>
+    <tr><td><code>knowledge stats</code></td><td>No args: every KB, then <code>_user</code>, <code>repo:&lt;p&gt;</code>, <code>(no home)</code>; grouped by KB then domain</td><td><code>cli/commands/knowledge.ts</code></td></tr>
+    <tr><td>Citations</td><td>Any delivered id, incl. <code>prof.*</code> from the profile hook</td><td><code>core/knowledge/cite.ts</code></td></tr>
+    <tr><td>Index</td><td>A derived cache at <code>~/.cache/squadrant/index/&lt;kb&gt;.json</code> (<code>SQUADRANT_INDEX_CACHE_DIR</code>); no longer written into the KB repo</td><td><code>core/knowledge/index-file.ts</code></td></tr>
+    <tr><td><code>knowledge doctor</code></td><td>D3/D4 + common fields per item file, index cache rebuild, audit-log health</td><td><code>cli/commands/knowledge-doctor.ts</code></td></tr>
+    <tr><td>Test guard</td><td>Every vitest file must keep <code>SQUADRANT_AUDIT_DIR</code> in a temp dir (closes the <code>kb: "t"</code> leak)</td><td><code>test/setup-env.ts</code></td></tr>
+  </table></div>
+  <div class="note g"><strong>Injection in 2a.</strong> Session start adds the precedence line (Rules (must) &gt; Decisions (accepted) &gt; the operator's live instruction &gt; Profile &gt; Wiki &gt; Recall) and a one-line index of opted-in domains. Only rules are opted in for now; decisions join in phase 3, wiki in phase 4. The profile keeps its own hook.</div>
+</div>
+<script>
+const HOMES = [
+  { k: 'knowledgeHome: "kb:globex"', cfg: '{ "knowledgeHome": "kb:globex" }', rule: 1, kind: "kb", dir: "~/squadrant/kb/globex/projects/projA/<domain>/" },
+  { k: 'knowledgeHome: "repo:docs"', cfg: '{ "knowledgeHome": "repo:docs" }', rule: 1, kind: "repo", dir: "<projA repo>/docs/<domain>/  (files only; reviewed in a PR)" },
+  { k: "group → KB acme", cfg: '{ "group": "acme" }  +  groups.acme.kb = "acme"', rule: 2, kind: "kb", dir: "~/squadrant/kb/acme/projects/projA/<domain>/" },
+  { k: "group, no KB", cfg: '{ "group": "lab" }  (groups.lab has no kb)', rule: 3, kind: "pending-create", dir: "~/squadrant/kb/lab/projects/projA/<domain>/  (git init on first write)" },
+  { k: "no group", cfg: "{ }  (knowledgeBases.personal not configured)", rule: 4, kind: "pending-create", dir: "~/squadrant/kb/personal/projects/projA/<domain>/  (created on first write)" },
+  { k: "no group, personal exists", cfg: "{ }  +  knowledgeBases.personal configured", rule: 4, kind: "kb", dir: "~/squadrant/kb/personal/projects/projA/<domain>/" },
+];
+const homeOpts = document.getElementById("homeOpts"), homeOut = document.getElementById("homeOut");
+HOMES.forEach((h, i) => {
+  const b = document.createElement("button"); b.textContent = h.k;
+  b.onclick = () => { [...homeOpts.children].forEach((c) => c.classList.remove("on")); b.classList.add("on");
+    homeOut.textContent = `projects.projA = ${h.cfg}\n\nrule ${h.rule} applies → kind: ${h.kind}\nhome dir: ${h.dir}\n\n` +
+      (h.kind === "pending-create" ? "reads: the home contributes nothing yet; homeKb() and projectRulesHome() return undefined" : "reads: the home is a layer of the read set"); };
+  homeOpts.appendChild(b); if (i === 2) b.click();
+});
+
+const LAYERS = [
+  { t: "_user/profile", cls: "user", d: "operator profile, every session", info: "prof.* traits. Delivered by its own SessionStart hook (#982), never in the rules block or the session index. Always first; ids never collide (D4)." },
+  { t: "acme/shared", cls: "", d: "group KB", info: "Rules, decisions, wiki shared by every project in the group. First shared layer: it wins over later shared layers with the same id." },
+  { t: "acme/projects/projA", cls: "home", d: "project home", home: true, info: "The project's own items. A project item with the same id overrides the shared one; the shared one is listed as overridden." },
+  { t: "conventions/shared", cls: "", d: "projects.projA.knowledge[]", info: "Extra subscribed KBs, read-only. Shadowed by earlier layers with the same id (warning)." },
+];
+const stack = document.getElementById("stack"), layerOut = document.getElementById("layerOut");
+let homeOn = true;
+function drawStack() {
+  stack.innerHTML = "";
+  for (const l of LAYERS) {
+    const el = document.createElement("div"); el.className = `layer ${l.cls}${l.home && !homeOn ? " cold" : ""}`;
+    el.innerHTML = `<span class="t">${l.home && !homeOn ? l.t + " (pending-create)" : l.t}</span><span class="d">${l.d}</span>`;
+    el.onmouseenter = () => { el.classList.add("hot"); layerOut.textContent = l.home && !homeOn ? "A pending-create home contributes nothing to reads." : l.info; };
+    el.onmouseleave = () => el.classList.remove("hot");
+    stack.appendChild(el);
+  }
+}
+document.getElementById("homeToggle").onclick = (e) => { homeOn = !homeOn; e.target.classList.toggle("on", homeOn);
+  e.target.textContent = homeOn ? "home: acme/projects/projA" : "home: pending (group without KB)"; drawStack(); };
+drawStack();
+
+const NORM = [
+  { raw: '{"kb":"acme","level":"group","domain":"coding","itemId":"coding.small-prs","event":"item.surfaced"}', out: '{"kb":"acme","level":"shared","domain":"rules","category":"coding",…}', why: "A rule category in domain → domain: rules + category. level group → shared." },
+  { raw: '{"kb":"","level":"project","project":"projA","domain":"rules","itemId":"coding.x","event":"item.shown"}', out: '{"kb":"acme","level":"project","project":"projA",…}', why: 'kb "" on a project-level line → that project\'s home KB, so the event is scored with acme.' },
+  { raw: '{"kb":"","level":"project","project":"lone","domain":"rules","event":"item.searched"}', out: 'kb "" kept → shown under "(no home)" in knowledge stats', why: "The project has no home yet: shown, never dropped, and counted by knowledge doctor (C4)." },
+  { raw: '{"kb":"_user","level":"shared","domain":"profile","itemId":"prof.terse","event":"item.surfaced"}', out: "unchanged → scored under _user / profile", why: "Profile events were always logged but no report showed them. knowledge stats now covers _user." },
+  { raw: '{"kb":"t","level":"group","domain":"rules","itemId":"coding.commitlint","event":"item.applied"}', out: "ignored by scoring; counted: audit log: 1 lines ignored, kb unknown to config: \"t\" 1", why: "kb \"t\" is no KB, _user or project home in the config: a test run that wrote the real log before the test env was hermetic. Counted by knowledge doctor, never silently dropped." },
+];
+let ni = 0;
+const normOut = document.getElementById("normOut"), barFill = document.getElementById("barFill");
+function drawNorm() { const n = NORM[ni]; barFill.style.width = `${((ni + 1) / NORM.length) * 100}%`;
+  normOut.textContent = `line ${ni + 1}/${NORM.length}\n\nread:  ${n.raw}\nscore: ${n.out}\n\nwhy:   ${n.why}`; }
+document.getElementById("prev").onclick = () => { ni = (ni + NORM.length - 1) % NORM.length; drawNorm(); };
+document.getElementById("next").onclick = () => { ni = (ni + 1) % NORM.length; drawNorm(); };
+drawNorm();
+</script>
+</body>
+</html>

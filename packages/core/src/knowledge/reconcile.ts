@@ -2,15 +2,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveKbConfig } from "@squadrant/shared";
-import { compactAudit, scoreKb, writeScores, type Scores } from "./scores.js";
-import { loadKbRules } from "./layers.js";
+import { compactAudit, knownItems, scoreKb, writeScores, type Scores } from "./scores.js";
+import { auditNormalizer } from "./audit.js";
+import { loadKbItems } from "./items.js";
 import { runFullChecks, type FullPassFindings } from "./fullpass.js";
 import { ensureKbRuntimeIgnores } from "./migrate.js";
 import { kbDir } from "./paths.js";
-import { gitRun } from "./profile.js";
 import { writeReport } from "./report.js";
 import { needsYouCount } from "./review.js";
 import { completePass, type PassKind, type RequestDeps } from "./schedule.js";
+import { commitKbPaths, kbSession } from "./write.js";
 
 export function finishMessage(kb: string, needsYou: number): string {
   return needsYou ? `${kb} KB: ${needsYou} item${needsYou === 1 ? "" : "s"} need you (squadrant knowledge review ${kb})` : `${kb} KB: reconcile finished, nothing needs you`;
@@ -21,8 +22,9 @@ export async function finishReconcile(kb: string, d: RequestDeps & { pass?: Pass
   const pass = completePass(kb, { ...d, now: () => now });
   let full: FullPassFindings | undefined;
   if (pass === "full") full = runFullChecks(d.cfg, kb, { now, auditDir: d.auditDir });
-  if (pass === "full") compactAudit({ now, dir: d.auditDir });
-  const scores: Scores = scoreKb({ kb, now, auditDir: d.auditDir, kbRoot: kbDir(d.cfg, kb), known: loadKbRules(d.cfg, kb).rules.map((r) => ({ id: r.id, domain: "rules", status: r.status })) });
+  const normalize = auditNormalizer(d.cfg);
+  if (pass === "full") compactAudit({ now, dir: d.auditDir, normalize });
+  const scores: Scores = scoreKb({ kb, now, auditDir: d.auditDir, kbRoot: kbDir(d.cfg, kb), known: knownItems(loadKbItems(d.cfg, kb).items), normalize });
   writeScores(kbDir(d.cfg, kb), scores);
   const report = writeReport(d.cfg, kb, { pass, now, full, scores });
   commitPassOutput(kbDir(d.cfg, kb), pass, d.log);
@@ -35,17 +37,15 @@ export async function finishReconcile(kb: string, d: RequestDeps & { pass?: Pass
 const PASS_OUTPUT = [".gitignore", "REPORT.md"];
 
 /**
- * Leave the KB repo clean after a pass (#1002): scores.json/escalations.json are ignored (appended to an
- * existing .gitignore if missing), REPORT.md is committed. Skips a KB that is not its own repo. Never throws.
+ * Leave the KB repo clean after a pass (#1002): the D7 ignores are appended to an existing .gitignore if missing,
+ * REPORT.md is committed through the shared writer. Skips a KB that is not its own repo. Never throws.
  */
 function commitPassOutput(root: string, pass: PassKind, log: (m: string) => void = console.error): void {
   if (!fs.existsSync(path.join(root, ".git"))) return;
   ensureKbRuntimeIgnores(root);
-  try {
-    if (!gitRun(root, ["status", "--porcelain", "--", ...PASS_OUTPUT]).trim()) return;
-    gitRun(root, ["add", "--", ...PASS_OUTPUT]);
-    gitRun(root, ["commit", "-q", "--only", "-m", `knowledge: ${pass} reconcile report`, "--", ...PASS_OUTPUT]);
-  } catch (err) {
-    log(`knowledge reconcile: committing REPORT.md failed (${String((err as { stderr?: string }).stderr || err).trim().split("\n")[0]}); the file is kept`);
-  }
+  const r = commitKbPaths(root, PASS_OUTPUT, {
+    message: `knowledge: ${pass} reconcile report`,
+    trailers: { domain: "rules", items: [], level: "shared", session: kbSession(), approvedBy: "auto" },
+  });
+  if (r.warning) log(`knowledge reconcile: ${r.warning}`);
 }

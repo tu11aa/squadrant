@@ -86,6 +86,7 @@ async function up(opts: { from?: string; project: string; root?: string; build?:
     host: "local",
   };
   writeFileSync(join(root, "config.json"), JSON.stringify(config, null, 2) + "\n");
+  try { ensureClaudeTrust(trustSpellings(projectDir)); } catch (e) { err(`dev up: could not pre-trust ${projectDir}: ${(e as Error).message}`); }
 
   // `squadrant` on the dev shell's PATH, and on every dev session's PATH
   // (isolatedSessionEnvPrefix picks this file up).
@@ -119,7 +120,41 @@ async function up(opts: { from?: string; project: string; root?: string; build?:
   return 0;
 }
 
-/** Drops the `projects` entries of `~/.claude.json` that live under `roots` (the trust prompt `up` made Claude record for the dev project). Every other key is left alone; the file is rewritten atomically, and only when something changed. */
+/**
+ * Pre-trusts `paths` in `~/.claude.json` (`projects[<path>].hasTrustDialogAccepted: true` — the documented
+ * key Claude Code's own error text points at), so the dev captain never opens on the folder-trust dialog.
+ * Claude keys trust by the resolved path (/private/var/… on macOS) and walks up from cwd, so callers pass
+ * both spellings. The file is shared and rewritten by every running Claude Code session, so this is a
+ * single read-modify-write of just these keys (atomic rename), re-checked after the write. Returns how many
+ * entries it added or flipped; `dev down` prunes them with `pruneClaudeProjects`.
+ */
+export function ensureClaudeTrust(paths: string[], claudeJson: string = join(homedir(), ".claude.json")): number {
+  const want = [...new Set(paths)];
+  let added = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let data: { projects?: Record<string, { hasTrustDialogAccepted?: boolean }> };
+    try { data = JSON.parse(readFileSync(claudeJson, "utf8")); } catch { return added; }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return added;
+    if (data.projects !== undefined && (typeof data.projects !== "object" || data.projects === null || Array.isArray(data.projects))) return added;
+    const projects = (data.projects ??= {});
+    const missing = want.filter((k) => projects[k]?.hasTrustDialogAccepted !== true);
+    if (missing.length === 0) return added;
+    for (const k of missing) projects[k] = { ...(typeof projects[k] === "object" ? projects[k] : {}), hasTrustDialogAccepted: true };
+    const target = realpathSync(claudeJson); // keep a symlinked ~/.claude.json a symlink
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: statSync(target).mode & 0o777 });
+    renameSync(tmp, target);
+    added = Math.max(added, missing.length);
+  }
+  return added;
+}
+
+/** Both spellings of `dir` (it must exist) — see ensureClaudeTrust. */
+export function trustSpellings(dir: string): string[] {
+  return [...new Set([dir, realpathSync(dir)])];
+}
+
+/** Drops the `projects` entries of `~/.claude.json` that live under `roots` (the trust `up` seeded, plus anything Claude recorded for the dev project). Every other key is left alone; the file is rewritten atomically, and only when something changed. */
 export function pruneClaudeProjects(roots: string[], claudeJson: string = join(homedir(), ".claude.json")): number {
   let data: { projects?: Record<string, unknown> };
   try { data = JSON.parse(readFileSync(claudeJson, "utf8")); } catch { return 0; }

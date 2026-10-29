@@ -17,6 +17,8 @@ import { isGatedRef, refCanon, refPath, sourceCovers } from "./ingest.js";
 import { kbDir, kbRulesDir, PROPOSED_DIR } from "./paths.js";
 import { reconcileConfig } from "./schedule.js";
 import { loadRulesDir } from "./store.js";
+import { appendVerdict } from "./verdicts.js";
+import { commitKbFiles, kbSession } from "./write.js";
 
 export type Priority = "company" | "project" | "agent";
 const PRIORITY_RANK: Record<Priority, number> = { company: 3, project: 2, agent: 1 };
@@ -70,7 +72,6 @@ export interface Escalation {
   evidence?: { docRev: string; codeRev: string; files: string[]; project: string };
 }
 export const escalationsFile = (kbRoot: string) => path.join(kbRoot, "escalations.json");
-export const verdictsFile = (kbRoot: string) => path.join(kbRoot, "verdicts.jsonl");
 
 export function readEscalations(kbRoot: string): Escalation[] {
   try { return (JSON.parse(fs.readFileSync(escalationsFile(kbRoot), "utf8")) as { items: Escalation[] }).items; } catch { return []; }
@@ -87,12 +88,6 @@ export function addEscalation(kbRoot: string, e: Escalation): boolean {
   return true;
 }
 export const needsYouCount = (kbRoot: string) => readEscalations(kbRoot).filter((e) => e.needsYou).length;
-
-/** Verdicts are the future eval set: append-only, never compacted. */
-export function appendVerdict(kbRoot: string, v: Record<string, unknown>, now: Date): void {
-  fs.mkdirSync(kbRoot, { recursive: true });
-  fs.appendFileSync(verdictsFile(kbRoot), JSON.stringify({ ts: now.toISOString(), ...v }) + "\n");
-}
 
 // ---------- git / source-date seam ----------
 
@@ -135,6 +130,10 @@ export interface ReviewContext {
   projects?: { name: string; root: string }[];
   /** Repo scans shared across one review pass; set by applyDecisions, never persisted. */
   anchorCache?: AnchorCache;
+  /** Where verdicts go (default: the state dir, verdicts.ts). */
+  verdicts?: Pick<AuditSink, "dir" | "machineId">;
+  /** Committed item files this operation wrote; set by applyDecisions/resolveEscalation, never persisted. */
+  touched?: Set<string>;
 }
 const nowOf = (c: ReviewContext) => c.now?.() ?? new Date();
 
@@ -173,6 +172,15 @@ function walkDirs(dir: string, out: string[] = []): string[] {
 
 const fileText = (fm: RuleFrontmatter, body: string) => matter.stringify(body.trim() + "\n", JSON.parse(JSON.stringify(fm)) as object);
 const readFm = (file: string) => { const m = matter(fs.readFileSync(file, "utf8")); return { fm: m.data as RuleFrontmatter & Record<string, unknown>, body: m.content }; };
+/** Write (or, with null, remove) an item file and record it for this operation's commit. Proposals never go through here. */
+function putItem(c: ReviewContext, file: string, text: string | null): void {
+  if (text === null) fs.rmSync(file); else fs.writeFileSync(file, text);
+  c.touched?.add(file);
+}
+
+/** One commit (per KB) for every item file the operation touched; `repo:docs` overlays stay a working-tree diff (D6). */
+const commitTouched = (c: ReviewContext, message: string, approvedBy: string): string[] =>
+  commitKbFiles(c.cfg, c.touched ?? [], { message, trailers: { domain: "rules", session: kbSession(), approvedBy } }, [kbDir(c.cfg, c.kb)]);
 
 function reindex(c: ReviewContext): void {
   const live = loadRulesDir(kbRulesDir(c.cfg, c.kb), `kb:${c.kb}`).rules;
@@ -188,7 +196,7 @@ function anchorsFor(c: ReviewContext, fm: RuleFrontmatter): RuleAnchors | undefi
 export interface ApplyEvents { events: AuditEvent[] }
 // `domain` in the audit log is the KB domain (spec §7), not the rule's subject domain.
 const ev = (c: ReviewContext, event: AuditEvent["event"], itemId: string, extra: Partial<AuditEvent> = {}): AuditEvent =>
-  ({ kb: c.kb, level: "group", project: "", domain: "rules", itemId, event, ...extra });
+  ({ kb: c.kb, level: "shared", project: "", domain: "rules", itemId, event, ...extra });
 
 /** Make a proposal live: replaces its live counterpart, retires the rules it conflicts with. */
 export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-agent" | "human", justification: string, events: AuditEvent[]): void {
@@ -200,7 +208,7 @@ export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-age
     if (!other || other.id === fm.id) continue;
     const o = readFm(other.file);
     o.fm.status = "retired";
-    fs.writeFileSync(other.file, fileText(o.fm, o.body));
+    putItem(c, other.file, fileText(o.fm, o.body));
     retired.push(id);
     events.push(ev(c, "item.superseded", id));
   }
@@ -210,7 +218,7 @@ export function promoteProposal(c: ReviewContext, p: Proposal, by: "reviewer-age
   if (anchors) next.anchors = anchors;
   const target = p.live?.file ?? path.join(dir, next.domain, `${next.id}.md`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, fileText(next, body));
+  putItem(c, target, fileText(next, body));
   fs.rmSync(p.rule.file);
   events.push(ev(c, "item.approved", next.id), ev(c, "item.applied", next.id));
   if (p.live) events.push(ev(c, "item.superseded", next.id));
@@ -227,7 +235,7 @@ function mergeInto(c: ReviewContext, p: Proposal, targetId: string, live: Rule[]
   const tf = readFm(t.file);
   const canon = refCanon(kbDir(c.cfg, c.kb), c.sources);
   for (const s of p.rule.sources) if (!tf.fm.sources.some((x) => canon(x.ref) === canon(s.ref))) tf.fm.sources.push(s);
-  fs.writeFileSync(t.file, fileText(tf.fm, tf.body));
+  putItem(c, t.file, fileText(tf.fm, tf.body));
   fs.rmSync(p.rule.file);
   events.push(ev(c, "item.superseded", p.rule.id), ev(c, "item.applied", targetId));
   return true;
@@ -277,14 +285,16 @@ export interface ReviewResult {
   escalated: { key: string; reasons: string[] }[];
   violations: string[];
   skipped: { item: string; reason: string }[];
+  /** Commit failures: the files stand (`knowledge doctor --fix`). */
+  warnings: string[];
 }
 
 export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResult {
-  c = { ...c, anchorCache: new Map() };
+  c = { ...c, anchorCache: new Map(), touched: new Set() };
   const now = nowOf(c);
   const kbRoot = kbDir(c.cfg, c.kb);
   const threshold = reconcileConfig(c.cfg, c.kb).autoApproveConfidence;
-  const res: ReviewResult = { applied: [], escalated: [], violations: [], skipped: [] };
+  const res: ReviewResult = { applied: [], escalated: [], violations: [], skipped: [], warnings: [] };
   const events: AuditEvent[] = [];
   let { proposals, live } = loadProposals(c);
 
@@ -293,7 +303,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
     res.escalated.push({ key: e.key, reasons: e.reasons });
   };
   const verdict = (d: { item: string }, outcome: string, extra: Record<string, unknown> = {}) =>
-    appendVerdict(kbRoot, { kb: c.kb, kind: "review", item: d.item, outcome, ...extra }, now);
+    appendVerdict(c.kb, { kind: "review", item: d.item, outcome, ...extra }, now, c.verdicts);
 
   for (const d of file.decisions ?? []) {
     const conf = Number.isFinite(d.confidence) ? d.confidence : 0;
@@ -325,7 +335,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
         f.fm.status = "active";
         if (d.loc && f.fm.sources[0]) f.fm.sources[0].loc = d.loc;
         const noSource = !rule.sources.length; // keeping it active would leave an invalid, silently dropped rule
-        if (conf >= threshold && !d.flag && !reasons.length && !noSource) { fs.writeFileSync(rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id)); verdict(d, "applied", { confidence: conf }); continue; }
+        if (conf >= threshold && !d.flag && !reasons.length && !noSource) { putItem(c, rule.file, fileText(f.fm, f.body)); res.applied.push(d.item); events.push(ev(c, "item.applied", rule.id)); verdict(d, "applied", { confidence: conf }); continue; }
         reasons.push(noSource ? "no-source" : conf < threshold ? "low-confidence" : "reviewer-flagged");
       } else if (d.decision === "approve") {
         if (strong(rule.modality)) reasons.push("retiring must/must-not");
@@ -334,7 +344,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
         if (!reasons.length) {
           const f = readFm(rule.file);
           f.fm.status = "retired";
-          fs.writeFileSync(rule.file, fileText(f.fm, f.body));
+          putItem(c, rule.file, fileText(f.fm, f.body));
           res.applied.push(d.item); events.push(ev(c, "item.archived", rule.id)); verdict(d, "applied", { confidence: conf });
           continue;
         }
@@ -374,6 +384,7 @@ export function applyDecisions(file: DecisionFile, c: ReviewContext): ReviewResu
   for (const pd of file.pairs ?? []) applyPair(pd, c, res, threshold, events, kbRoot, now);
 
   reindex(c);
+  res.warnings = commitTouched(c, `knowledge: review --apply ${c.kb}`, "reviewer-agent");
   appendAudit(events, c.audit);
   return res;
 }
@@ -387,13 +398,13 @@ function applyPair(pd: PairDecision, c: ReviewContext, res: ReviewResult, thresh
     addEscalation(kbRoot, { key, kind: "pair", reasons, explanation: `${a.id} ("${a.statement}") vs ${b.id} ("${b.statement}"): ${pd.relation}. ${pd.justification}`, confidence: pd.confidence, createdAt: now.toISOString(), needsYou: true });
     res.escalated.push({ key, reasons });
   };
-  appendVerdict(kbRoot, { kb: c.kb, kind: "pair", item: key, relation: pd.relation, confidence: pd.confidence }, now);
+  appendVerdict(c.kb, { kind: "pair", item: key, relation: pd.relation, confidence: pd.confidence }, now, c.verdicts);
   if (pd.relation === "unrelated" || pd.relation === "refines") return;
   if (pd.relation === "conflicts") {
     const reasons = priorityOfRule(c, a) === "company" && priorityOfRule(c, b) === "company" ? ["company-vs-company conflict"] : pd.confidence < threshold ? ["low-confidence"] : [];
     if (reasons.length) { esc(reasons); return; }
     // Different priorities: record the conflict on both; the higher-priority rule wins at delivery.
-    for (const [x, y] of [[a, b], [b, a]] as const) { const f = readFm(x.file); f.fm.conflictsWith = [...new Set([...(f.fm.conflictsWith ?? []), y.id])]; fs.writeFileSync(x.file, fileText(f.fm, f.body)); }
+    for (const [x, y] of [[a, b], [b, a]] as const) { const f = readFm(x.file); f.fm.conflictsWith = [...new Set([...(f.fm.conflictsWith ?? []), y.id])]; putItem(c, x.file, fileText(f.fm, f.body)); }
     return;
   }
   const keep = pd.keep === b.id ? b : a, drop = keep === a ? b : a;
@@ -403,10 +414,10 @@ function applyPair(pd: PairDecision, c: ReviewContext, res: ReviewResult, thresh
   const canon = refCanon(kbRoot, c.sources);
   for (const s of drop.sources) if (!kf.fm.sources.some((x) => canon(x.ref) === canon(s.ref))) kf.fm.sources.push(s);
   kf.fm.supersedes = [...new Set([...(kf.fm.supersedes ?? []), drop.id])];
-  fs.writeFileSync(keep.file, fileText(kf.fm, kf.body));
+  putItem(c, keep.file, fileText(kf.fm, kf.body));
   const df = readFm(drop.file);
   df.fm.status = "retired";
-  fs.writeFileSync(drop.file, fileText(df.fm, df.body));
+  putItem(c, drop.file, fileText(df.fm, df.body));
   events.push(ev(c, "item.superseded", drop.id), ev(c, "item.applied", keep.id));
   res.applied.push(key);
 }
@@ -419,6 +430,7 @@ export type Resolution =
 
 /** Apply the operator's answer to one open escalation, then close it. */
 export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, by: string, reason: string): string {
+  c = { ...c, touched: new Set() };
   const now = nowOf(c);
   const kbRoot = kbDir(c.cfg, c.kb);
   const items = readEscalations(kbRoot);
@@ -428,8 +440,9 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
   const { proposals, live } = loadProposals(c);
   const done = (msg: string) => {
     writeEscalations(kbRoot, items.filter((e) => e.key !== key));
-    appendVerdict(kbRoot, { kb: c.kb, kind: "operator", item: key, resolution: r, by, reason }, now);
+    appendVerdict(c.kb, { kind: "operator", item: key, resolution: r, by, reason }, now, c.verdicts);
     reindex(c);
+    for (const w of commitTouched(c, `knowledge: resolve ${key}`, "operator")) console.error(w);
     appendAudit(events, c.audit);
     return msg;
   };
@@ -442,7 +455,7 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
     const decision: RuleDecision = { by, at: now.toISOString(), verdict: r.verdict, docRev: esc.evidence.docRev, codeRev: esc.evidence.codeRev, files: esc.evidence.files, reason };
     f.fm.decision = decision;
     if (r.verdict === "supersede-with-code") { f.fm.status = "retired"; events.push(ev(c, "item.superseded", rule.id)); }
-    fs.writeFileSync(rule.file, fileText(f.fm, f.body));
+    putItem(c, rule.file, fileText(f.fm, f.body));
     return done(`${rule.id}: ${r.verdict}`);
   }
   if (esc.kind === "proposal") {
@@ -458,14 +471,14 @@ export function resolveEscalation(c: ReviewContext, key: string, r: Resolution, 
     if (rule && r.kind !== "approve" && !rule.sources.length) {
       throw new Error(`Rule ${rule.id} has no source, so it cannot be kept active. Add a source to the rule (or re-extract it), or retire it with --approve.`);
     }
-    if (rule) { const f = readFm(rule.file); f.fm.status = r.kind === "approve" ? "retired" : "active"; fs.writeFileSync(rule.file, fileText(f.fm, f.body)); events.push(ev(c, r.kind === "approve" ? "item.archived" : "item.applied", rule.id)); }
+    if (rule) { const f = readFm(rule.file); f.fm.status = r.kind === "approve" ? "retired" : "active"; putItem(c, rule.file, fileText(f.fm, f.body)); events.push(ev(c, r.kind === "approve" ? "item.archived" : "item.applied", rule.id)); }
     return done(`${esc.ruleId}: ${r.kind === "approve" ? "retired" : "kept"}`);
   }
   if (esc.kind === "override-base-changed") {
     const ov = esc.item && fs.existsSync(esc.item) ? esc.item : undefined;
     if (ov) {
-      if (r.kind === "reject") fs.rmSync(ov); // drop the override: the KB rule applies again
-      else { const f = readFm(ov); f.fm.overridesBase = esc.evidence?.docRev; fs.writeFileSync(ov, fileText(f.fm, f.body)); }
+      if (r.kind === "reject") putItem(c, ov, null); // drop the override: the KB rule applies again
+      else { const f = readFm(ov); f.fm.overridesBase = esc.evidence?.docRev; putItem(c, ov, fileText(f.fm, f.body)); }
     }
     return done(`${esc.ruleId}: override ${r.kind === "reject" ? "dropped" : "kept"}`);
   }
