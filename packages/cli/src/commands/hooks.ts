@@ -377,11 +377,13 @@ export function hooksCommand(): Command {
         }
       }
 
-      // #1089: a `/compact` prompt starts a turn that never ends in `Stop`; tell the daemon so the
-      // SessionStart(compact) that follows can close it.
-      const prompt = (payload as { prompt?: unknown } | null)?.prompt;
-      if (sub === "prompt-submit" && typeof prompt === "string" && /^\s*\/compact(\s|$)/.test(prompt)) {
-        await sendToSock({ kind: "crew-compact-begin", project, taskId }).catch(() => {});
+      // #1089: a manual /compact fires no UserPromptSubmit and no Stop; PreCompact marks it for the
+      // daemon so the SessionStart(compact) that follows can close the turn. Auto-compacts are skipped.
+      if (sub === "pre-compact") {
+        if ((payload as { trigger?: unknown } | null)?.trigger === "manual") {
+          await sendToSock({ kind: "crew-compact-begin", project, taskId }).catch(() => {});
+        }
+        process.exit(0);
       }
 
       const ev = mapHookSub(sub, payload, taskId);

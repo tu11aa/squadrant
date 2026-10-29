@@ -45,8 +45,9 @@ export function createCrewCompact(deps: CrewCompactDeps) {
   /** Keyed by task id. */
   const pending = new Map<string, Pending & { project: string; name: string }>();
   const holds = new Map<string, { until: number; project: string; name: string }>();
-  /** #1089: tasks whose session ran a `/compact` prompt (typed by the daemon or by hand); value is the project. */
-  const compacting = new Map<string, string>();
+  /** #1089: tasks whose PreCompact(manual) fired (typed by the daemon or by hand). Expires like a hold: a
+   *  compact that errors ("not enough messages") sends no SessionStart, and must not mark a later auto-compact. */
+  const compacting = new Map<string, { project: string; until: number }>();
 
   const titleOf = (project: string): string => {
     if (deps.captainTitle) return deps.captainTitle(project);
@@ -109,22 +110,25 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return { cancelled };
   }
 
-  /** The crew's session submitted a `/compact` prompt (UserPromptSubmit) — daemon-typed or by hand. */
+  /** PreCompact(trigger=manual) fired in the crew's session — a `/compact` typed by the daemon or by hand. */
   function compactBegin(project: string, taskId: string): void {
-    compacting.set(taskId, project);
+    compacting.set(taskId, { project, until: now() + holdMs });
+    log(`crew-compact ${project}: manual compact started (task ${taskId.slice(0, 8)})`);
   }
 
   /** SessionStart(source=compact) arrived for this crew's session — the window is over. */
   function compactDone(taskId: string): void {
     const h = holds.get(taskId);
     if (h && holds.delete(taskId)) log(`crew-compact ${h.project}:${h.name}: compact finished — delivery resumed`);
-    // #1089: the `/compact` prompt marked the task working and no `Stop` follows a compact, so close
-    // the turn here. Only a compact we saw submitted: an auto-compact inside a live turn has no
-    // `/compact` prompt and must leave the task working.
-    const project = compacting.get(taskId);
-    if (project === undefined) return;
+    // #1089: a compact never emits `Stop`, yet other lifecycle sources leave the task `working`, so
+    // close the turn here. Only a manual compact we saw start: an auto-compact inside a live turn
+    // has no PreCompact(manual) and must leave the task working.
+    const begun = compacting.get(taskId);
+    if (!begun) return;
     compacting.delete(taskId);
-    deps.endTurn?.(project, taskId);
+    if (now() > begun.until) return;
+    log(`crew-compact ${begun.project}: compact turn closed (task ${taskId.slice(0, 8)})`);
+    deps.endTurn?.(begun.project, taskId);
   }
 
   /** Say why a queued compact is still waiting, at most once a minute, so a stuck one is diagnosable. */

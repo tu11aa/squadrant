@@ -192,7 +192,7 @@ describe("crew compact", () => {
     expect(h.logs.some((l) => l.includes("timed out"))).toBe(true);
   });
 
-  // #1089: /compact fires UserPromptSubmit (→ working) and no Stop follows, so SessionStart(compact) closes the turn.
+  // #1089: no Stop follows a compact, so SessionStart(compact) closes the turn (after a PreCompact(manual)).
   it("a compact returns the crew to idle, and a second compact types again", async () => {
     const h = harness();
     for (let round = 0; round < 2; round++) {
@@ -200,8 +200,8 @@ describe("crew compact", () => {
       await h.c.tick();
       await h.c.tick();
       expect(h.send).toHaveBeenCalledTimes(round + 1);
-      h.c.compactBegin("demo", "t1");        // UserPromptSubmit("/compact")
-      h.task.state = "working";               // what the cmux sources do on that prompt
+      h.c.compactBegin("demo", "t1");        // PreCompact(manual)
+      h.task.state = "working";               // the other lifecycle sources leave it working
       h.c.compactDone("t1");                  // SessionStart(compact)
       expect(h.task.state).toBe("awaiting-input");
     }
@@ -216,6 +216,14 @@ describe("crew compact", () => {
 
   it("a compact with no /compact prompt (auto-compact in a live turn) leaves the task working", () => {
     const h = harness({ task: { state: "working" } });
+    h.c.compactDone("t1");
+    expect(h.task.state).toBe("working");
+  });
+
+  it("a compact that never reaches SessionStart does not mark a later auto-compact", () => {
+    const h = harness({ task: { state: "working" } });
+    h.c.compactBegin("demo", "t1");
+    h.advance(4 * 60_000);
     h.c.compactDone("t1");
     expect(h.task.state).toBe("working");
   });
