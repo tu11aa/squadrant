@@ -72,6 +72,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 import * as nodefs from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { INIT_PROMPT_INLINE_MAX_BYTES } from "../first-turn-init.js";
 import {
   runCrewSpawn,
@@ -276,6 +277,26 @@ describe("runCrewSpawn", () => {
         expect.stringContaining("squadrant crew signal done"),
         expect.any(String),
       );
+    });
+
+    // #1090: the typed launch line must never depend on fitting in the pty's
+    // 1024-byte canonical buffer, however long the cwd / flags are.
+    it("types a short line when the crew launch command is longer than the tty limit", async () => {
+      const config = makeConfig();
+      const runtime = makeRuntime();
+      const agent = makeAgent("claude");
+      (agent.buildCommand as ReturnType<typeof vi.fn>).mockReturnValue(`claude --mcp-config '${"x".repeat(1500)}'`);
+      const deps = makeSpawnDeps(runtime, agent);
+      const prev = process.env.SQUADRANT_STATE_DIR;
+      process.env.SQUADRANT_STATE_DIR = path.join(tmpdir(), `sq-launch-${process.pid}`);
+      try {
+        await runCrewSpawn({ project: PROJECT, task: "fix the bug" }, config, deps);
+      } finally {
+        if (prev === undefined) delete process.env.SQUADRANT_STATE_DIR; else process.env.SQUADRANT_STATE_DIR = prev;
+      }
+      const typed = (runtime.sendToPane as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(Buffer.byteLength(typed)).toBeLessThan(1024);
+      expect(typed).toMatch(/^eval "\$\(cat '.*\.sh' && rm -f '.*\.sh'\)"$/);
     });
 
     // #730: a first-turn task above FIRST_TURN_INLINE_MAX_BYTES is spilled to a

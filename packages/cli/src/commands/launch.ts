@@ -9,8 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import chalk from "chalk";
-import { loadConfig, stateRoot as defaultStateRoot, sessionsPath, legacySessionsPath, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
+import { loadConfig, isolatedConfigDir, stateRoot as defaultStateRoot, sessionsPath, legacySessionsPath, resolveHome, ensureWorkspace, resolveCaptainChannelMode, captainSessionName, parseThinkingLevel, isBackendMode, THINKING_LEVELS } from "@squadrant/shared";
 import type { BackendMode, ModelRoutingConfig, ThinkingLevel } from "@squadrant/shared";
+import { ensureClaudeTrust, trustSpellings } from "./dev.js";
 import {
   createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver,
   CapabilityRegistry, buildAgentCmd, hasClaudeSession,
@@ -328,6 +329,13 @@ export const launchCommand = new Command("launch")
       // developer's sessions too), and it is persisted verbatim so the record
       // reports when the captain was launched, not when it was resolved.
       const launchedAt = new Date().toISOString();
+
+      // #1090: a dev daemon's throwaway project (under its root, never a real path) is pre-trusted right before the captain
+      // boots (not only at `dev up` — ~/.claude.json is rewritten by every session).
+      const devRoot = isolatedConfigDir();
+      if (devRoot && (cwd === devRoot || cwd.startsWith(devRoot + "/"))) {
+        try { ensureClaudeTrust(trustSpellings(cwd)); } catch (e) { console.error(chalk.yellow(`  ⚠ could not pre-trust ${cwd}: ${(e as Error).message}`)); }
+      }
 
       try {
         await launchOneWorkspace({

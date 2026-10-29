@@ -5,6 +5,7 @@
 import type { RuntimeDriver } from "@squadrant/shared";
 import { isolatedSessionEnvPrefix } from "@squadrant/shared";
 import { shouldStartFresh, recordSession } from "./session-freshness.js";
+import { boundedLaunchLine } from "./launch-line.js";
 
 // ─── deliverStartupPrompt ────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ export async function bootWorkspace(opts: BootWorkspaceOpts): Promise<void> {
   const ref = await runtime.spawn({
     name: workspaceName,
     workdir: cwd ?? process.cwd(),
-    command: agentCmd,
+    command: boundedLaunchLine(agentCmd),
     pinToTop,
   });
 

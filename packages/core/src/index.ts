@@ -41,6 +41,7 @@ export * from "./launch-workspace.js";
 export * from "./side-session.js";
 export * from "./threads.js";
 export * from "./crew-spawn.js";
+export { boundedLaunchLine, MAX_INLINE_LAUNCH_BYTES } from "./launch-line.js";
 export * from "./crew-answer.js";
 export * from "./crew-signal.js";
 export * from "./crew-signal-tools.js";
