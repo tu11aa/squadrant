@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-29
+
+Knowledge base phase 2, part one, and reliable typing into panes. Every KB write now commits, so a KB repo is no longer left dirty, and one `knowledge stats` covers every KB, domain and the `_user` profile with correct numbers. Daemon-typed text such as `/compact` is now confirmed after submit, a compact returns the crew to idle, and `dev up` live checks work on the first try. PRs #1085, #1086, #1088, #1091, #1092.
+
+**Upgrade:** after installing, run `squadrant heal daemon` (it installs the new `PreCompact` hook). Then run `squadrant knowledge doctor <kb> --fix` in a terminal once per KB: it adds the KB `.gitignore`, stops tracking `index.json` and `verdicts.jsonl` in one commit, and asks y/n before committing item files that changed outside squadrant. After that, the old `<kb>/index.json` can be deleted. Relaunch running captains and crews.
+
+### Added
+
+- **`squadrant knowledge doctor [kb] [--fix]`.** One command checks each KB repo (missing `.gitignore` lines, files tracked but never meant to be committed, uncommitted item files), item validity for every domain, the index cache and audit-log health. `--fix` does the mechanical repairs on its own; item files changed outside a squadrant write are only committed after a y/n on a terminal, never from a crew session (#979, #1085, #1086).
+- **Merged knowledge view.** `knowledge list|search|show` read the whole read set (`_user/profile` → group shared → home → `knowledge[]` shared) with an origin label on each item. `--domain` now means the KB domain (`rules|decisions|wiki|profile`) and `--category` the rule category; `--domain <category>` still works for one version with a deprecation line (#979, #1086).
+
+### Changed
+
+- **Every KB write commits.** `knowledge apply`, `review --apply`, escalation resolve, `sources --remove`, `knowledge init` and `reconcile --finish` commit exactly the files they changed, with `Domain:` `Item:` `Level:` `Session:` `Approved-by:` trailers. If the commit fails, the files stay and a warning points at `knowledge doctor --fix`. A `repo:docs` home is written but never committed (#979, #1085).
+- **KB layout.** `_proposed/`, `scores.json`, `escalations.json`, `index.json` and `verdicts.jsonl` are git-ignored in every KB. The index is a cache at `~/.cache/squadrant/index/<kb>.json` (`SQUADRANT_INDEX_CACHE_DIR`) and `<kb>/index.json` is no longer written. Verdicts move to `~/.local/state/squadrant/verdicts/YYYY-MM.<machine>.jsonl` (`SQUADRANT_VERDICTS_DIR`); the old `<kb>/verdicts.jsonl` is still read for one version. `SQUADRANT_KB_ROOT` overrides the KB parent dir (#979, #1085, #1086).
+- **`knowledge stats` covers everything.** No `--kb` means every configured KB plus `_user`, grouped by KB then domain, with `repo:<project>` and `(no home)` groups; `--domain profile` works. Legacy audit lines are normalized on read (category in `domain`, `level: group`, `kb: ""`), unknown kbs such as test leaks are ignored and counted, and a domain with no events in 30 days raises the dead-domain alarm. New audit events carry the KB domain, the rule category, `shared|project` and the home KB (#979, #1086).
+- **Every pane write confirms its submit.** Text the daemon types into a claude or codex pane (compacts, mailbox delivery, ping, runtime send, notifier) now goes through the same paste → settle → Enter → read-back sequence as `crew send`, re-issuing only the Enter if the text is still in the box. A submit that stays unconfirmed is not reported as sent: a compact stays pending and a mailbox entry is not acked. opencode keeps its current path (#1087, #1088).
+- **Long launch lines.** A captain, crew or side-session launch line over 700 bytes is written to a 0600 file under `<state>/launch/` and run with a short `eval` that deletes the file as it reads it, so it can no longer be cut by the 1024-byte tty line limit (#1090, #1091).
+
+### Fixed
+
+- **`/compact` stranded in the input box.** A long `crew compact --keep` (or `captain compact`) could land its Enter as a newline, leaving the command unsubmitted until someone pressed Enter (#1087, #1088).
+- **A crew stayed `working` after a compact.** A second `crew compact` then waited until its timeout. A new managed `PreCompact` hook marks a typed compact, and the following `SessionStart(compact)` ends the turn; an automatic mid-turn compact still counts as working (#1089, #1092).
+- **`dev up` opened the dev captain on the trust dialog.** `dev up` now pre-trusts the dev project (both `/var` and `/private/var` spellings), and `launch` re-checks it for dev-root projects (#1090, #1091).
+- **An archived rule could shadow the live rule with the same id** (#1086).
+- **Test runs wrote `kb: "t"` events into the real audit log.** Every test now uses a temp audit dir, and a guard fails the run if one writes to the real one (#1086).
+
 ## [0.33.0] - 2026-10-27
 
 Honest signals and messages. A crew signal or message that is not applied or delivered now reports failure instead of a success line, and a refused signal's message still reaches the captain. Agent-tool subagents can no longer change their crew's task state, and a crew's review survives a daemon restart. Captains get clearer rules for when to open a discussion thread. PRs #1066, #1070, #1071, #1074, #1076.
