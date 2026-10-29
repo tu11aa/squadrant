@@ -8,7 +8,7 @@ import { loadConfig } from "@squadrant/shared";
 import { TERMINAL_STATES } from "@squadrant/shared";
 import type { PaneRef, TaskRecord } from "@squadrant/shared";
 import type { DaemonSurfaceDriver } from "../interfaces.js";
-import { DeferDelivery } from "../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../delivery/defer-delivery.js";
 import { titleFor } from "../crew-protocol.js";
 import { CC_WORKING_RE, COMPACT_HOLD_MS, COMPACT_TIMEOUT_MS } from "./captain-compact.js";
 
@@ -159,6 +159,15 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     try {
       await cmux.send(surface, p.keep ? `/compact ${p.keep}` : "/compact", { agent: p.agent });
     } catch (e) {
+      // #1087: Enter never confirmed — /compact may sit in the box. Not "sent": stay pending;
+      // the draft guard defers further retries until the box clears, then the deadline applies.
+      if (e instanceof SubmitUnconfirmed) {
+        log(`crew-compact ${label}: /compact submit unconfirmed — still pending`);
+        p.idlePolls = 0;
+        p.lastReason = "submit-unconfirmed";
+        noteWaiting(p);
+        return;
+      }
       if (!(e instanceof DeferDelivery)) throw e;
       p.idlePolls = 0;
       p.lastReason = e.reason;
