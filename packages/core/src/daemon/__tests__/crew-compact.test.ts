@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { TaskRecord } from "@squadrant/shared";
 import { createCrewCompact } from "../crew-compact.js";
 import { reduce } from "../../state-machine.js";
-import { DeferDelivery } from "../../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../../delivery/defer-delivery.js";
 import type { DaemonSurfaceDriver } from "../../interfaces.js";
 
 const SURFACE = { workspaceId: "w", surfaceId: "s", title: "🔧 demo:crew-1" };
@@ -120,6 +120,16 @@ describe("crew compact", () => {
     expect(h.logs.filter((l) => l.includes("still waiting (no-box)"))).toHaveLength(2);
   });
 
+  it("#1087: an unconfirmed submit is not reported sent — stays pending, logged", async () => {
+    const h = harness({ send: async () => { throw new SubmitUnconfirmed(); } });
+    await h.c.request("demo", "crew-1");
+    await h.c.tick(); await h.c.tick(); // idle ×2 → typed, Enter never confirmed
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.c.pendingCount()).toBe(1);
+    expect(h.logs.some((l) => l.includes("submit unconfirmed"))).toBe(true);
+    expect(h.logs.some((l) => l.includes("/compact sent"))).toBe(false);
+  });
+
   it("cancel drops a queued compact and its send hold, and is a no-op when nothing is queued", async () => {
     const h = harness({ task: { state: "working" } });
     expect(h.c.cancel("demo", "crew-1")).toEqual({ cancelled: false });
@@ -223,9 +233,16 @@ describe("crew compact", () => {
   it("a compact that never reaches SessionStart does not mark a later auto-compact", () => {
     const h = harness({ task: { state: "working" } });
     h.c.compactBegin("demo", "t1");
-    h.advance(4 * 60_000);
+    h.advance(11 * 60_000);
     h.c.compactDone("t1");
     expect(h.task.state).toBe("working");
+  });
+
+  it("a crew already idle is left alone (no synthetic turn-end to consume a pending reply)", () => {
+    const h = harness();
+    h.c.compactBegin("demo", "t1");
+    h.c.compactDone("t1");
+    expect(h.task.state).toBe("awaiting-input");
   });
 
   it("a blocked crew stays blocked through a compact", () => {

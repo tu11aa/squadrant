@@ -2,7 +2,7 @@
 // Mailbox notification + daemon-direct captain delivery loop (#332).
 import { appendToMailbox, appendCaptainMessage, readCursor, writeCursor, readFromCursor, type MailboxEntry } from "../mailbox.js";
 import { CaptainDelivery, deliverable, type CaptainDeliveryStats, type DeliverDeferReason } from "../delivery/captain-delivery.js";
-import { DeferDelivery } from "../delivery/defer-delivery.js";
+import { DeferDelivery, SubmitUnconfirmed } from "../delivery/defer-delivery.js";
 import { loadConfig, TERMINAL_STATES, loadProjectOverride, resolveCaptainCrewTier, type CrewTier } from "@squadrant/shared";
 import { captainPaneAllows, isAddressedTurnEnd, isInformational, InformationalDigest } from "./captain-noise.js";
 import { crewTag } from "./reduce.js";
@@ -595,6 +595,7 @@ export function createDelivery(
               // is alive and the pane is merely busy — re-resolving those would
               // churn. Guarded against looping: no new surface (none found, or
               // the SAME one that just failed) defers normally.
+              if (e instanceof SubmitUnconfirmed) log(`delivery project=${project}: submit unconfirmed — entry not acked, retries next poll`);
               if (!(e instanceof DeferDelivery) || e.reason !== "probe-failed") throw e;
               const next = await resolveCaptainSurface();
               const same = next !== null
