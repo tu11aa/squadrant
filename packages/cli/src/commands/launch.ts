@@ -330,9 +330,10 @@ export const launchCommand = new Command("launch")
       // reports when the captain was launched, not when it was resolved.
       const launchedAt = new Date().toISOString();
 
-      // #1090: a dev daemon's throwaway project is pre-trusted right before the captain
+      // #1090: a dev daemon's throwaway project (under its root, never a real path) is pre-trusted right before the captain
       // boots (not only at `dev up` — ~/.claude.json is rewritten by every session).
-      if (isolatedConfigDir()) {
+      const devRoot = isolatedConfigDir();
+      if (devRoot && (cwd === devRoot || cwd.startsWith(devRoot + "/"))) {
         try { ensureClaudeTrust(trustSpellings(cwd)); } catch (e) { console.error(chalk.yellow(`  ⚠ could not pre-trust ${cwd}: ${(e as Error).message}`)); }
       }
 

@@ -8,7 +8,7 @@
 // line is written to a 0600 file and a short `eval` of that file is typed
 // instead: the shell evaluates the identical text (same cd, env, process tree),
 // and the file is deleted as it is read so env values never linger on disk.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { stateRoot } from "@squadrant/shared";
@@ -19,9 +19,22 @@ export const MAX_INLINE_LAUNCH_BYTES = 700;
 
 export function boundedLaunchLine(line: string, dir: string = join(stateRoot(), "launch")): string {
   if (Buffer.byteLength(line) <= MAX_INLINE_LAUNCH_BYTES) return line;
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = join(dir, `${randomBytes(6).toString("hex")}.sh`);
-  writeFileSync(file, `${line}\n`, { mode: 0o600 });
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    sweepStale(dir);
+    writeFileSync(file, `${line}\n`, { mode: 0o600 });
+  } catch {
+    return line; // unwritable state dir: type the line as before rather than fail the spawn
+  }
   const q = shellQuote(file);
   return `eval "$(cat ${q} && rm -f ${q})"`;
+}
+
+/** A pane that died before running its line leaves its file behind; drop anything older than an hour. */
+function sweepStale(dir: string): void {
+  const cutoff = Date.now() - 3_600_000;
+  for (const f of readdirSync(dir)) {
+    try { if (statSync(join(dir, f)).mtimeMs < cutoff) rmSync(join(dir, f), { force: true }); } catch { /* raced */ }
+  }
 }

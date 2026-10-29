@@ -134,14 +134,16 @@ export function ensureClaudeTrust(paths: string[], claudeJson: string = join(hom
   for (let attempt = 0; attempt < 3; attempt++) {
     let data: { projects?: Record<string, { hasTrustDialogAccepted?: boolean }> };
     try { data = JSON.parse(readFileSync(claudeJson, "utf8")); } catch { return added; }
-    if (!data || typeof data !== "object") return added;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return added;
+    if (data.projects !== undefined && (typeof data.projects !== "object" || data.projects === null || Array.isArray(data.projects))) return added;
     const projects = (data.projects ??= {});
     const missing = want.filter((k) => projects[k]?.hasTrustDialogAccepted !== true);
     if (missing.length === 0) return added;
-    for (const k of missing) projects[k] = { ...projects[k], hasTrustDialogAccepted: true };
-    const tmp = `${claudeJson}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: statSync(claudeJson).mode & 0o777 });
-    renameSync(tmp, claudeJson);
+    for (const k of missing) projects[k] = { ...(typeof projects[k] === "object" ? projects[k] : {}), hasTrustDialogAccepted: true };
+    const target = realpathSync(claudeJson); // keep a symlinked ~/.claude.json a symlink
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: statSync(target).mode & 0o777 });
+    renameSync(tmp, target);
     added = Math.max(added, missing.length);
   }
   return added;
