@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { TaskRecord } from "@squadrant/shared";
 import { createCrewCompact } from "../crew-compact.js";
+import { reduce } from "../../state-machine.js";
 import { DeferDelivery } from "../../delivery/defer-delivery.js";
 import type { DaemonSurfaceDriver } from "../../interfaces.js";
 
@@ -15,7 +16,7 @@ const rec = (o: Partial<TaskRecord> = {}): TaskRecord =>
 function harness(o: { task?: Partial<TaskRecord>; screens?: string[]; send?: () => Promise<void>; holdMs?: number; surface?: boolean } = {}) {
   let t = 1000;
   const logs: string[] = [];
-  const task = rec(o.task);
+  const task = rec({ attempts: [], ...o.task });
   const screens = [...(o.screens ?? [IDLE])];
   const send = vi.fn(async () => { await (o.send ?? (async () => {}))(); });
   const cmux = {
@@ -24,8 +25,10 @@ function harness(o: { task?: Partial<TaskRecord>; screens?: string[]; send?: () 
     readPaneScreen: async () => (screens.length > 1 ? screens.shift()! : screens[0]),
     send,
   } as unknown as DaemonSurfaceDriver;
+  // #1089: endTurn runs the real reducer over the shared record, as the daemon's ingest does.
   const c = createCrewCompact({
     cmux, log: (l) => logs.push(l), now: () => t, holdMs: o.holdMs,
+    endTurn: (_p, id) => { Object.assign(task, reduce(task, { type: "task.turn.completed", id, turnId: "compact" }, t)); },
     tasks: () => [task], captainTitle: () => "demo-captain",
     injectedSurfaces: o.surface === false ? {} : { "demo:crew-1": SURFACE },
   });
@@ -187,5 +190,40 @@ describe("crew compact", () => {
     expect(h.c.pendingCount()).toBe(0);
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
     expect(h.logs.some((l) => l.includes("timed out"))).toBe(true);
+  });
+
+  // #1089: /compact fires UserPromptSubmit (→ working) and no Stop follows, so SessionStart(compact) closes the turn.
+  it("a compact returns the crew to idle, and a second compact types again", async () => {
+    const h = harness();
+    for (let round = 0; round < 2; round++) {
+      await h.c.request("demo", "crew-1");
+      await h.c.tick();
+      await h.c.tick();
+      expect(h.send).toHaveBeenCalledTimes(round + 1);
+      h.c.compactBegin("demo", "t1");        // UserPromptSubmit("/compact")
+      h.task.state = "working";               // what the cmux sources do on that prompt
+      h.c.compactDone("t1");                  // SessionStart(compact)
+      expect(h.task.state).toBe("awaiting-input");
+    }
+  });
+
+  it("a hand-typed compact (no daemon request) also returns the crew to idle", () => {
+    const h = harness({ task: { state: "working" } });
+    h.c.compactBegin("demo", "t1");
+    h.c.compactDone("t1");
+    expect(h.task.state).toBe("awaiting-input");
+  });
+
+  it("a compact with no /compact prompt (auto-compact in a live turn) leaves the task working", () => {
+    const h = harness({ task: { state: "working" } });
+    h.c.compactDone("t1");
+    expect(h.task.state).toBe("working");
+  });
+
+  it("a blocked crew stays blocked through a compact", () => {
+    const h = harness({ task: { state: "blocked" } });
+    h.c.compactBegin("demo", "t1");
+    h.c.compactDone("t1");
+    expect(h.task.state).toBe("blocked");
   });
 });

@@ -191,6 +191,7 @@ export interface DaemonContext {
   /** #1051: true while a crew compact is queued or running — `crew send` waits for it to clear. */
   crewCompactHolds?: (project: string, crew: string) => boolean;
   /** #1051: SessionStart(source=compact) reached this crew's session — end the hold. */
+  crewCompactBegin?: (project: string, taskId: string) => void;
   crewCompactDone?: (taskId: string) => void;
   /** #1051: drop a queued crew compact and its send hold. */
   cancelCrewCompact?: (project: string, crew: string) => { cancelled: boolean };

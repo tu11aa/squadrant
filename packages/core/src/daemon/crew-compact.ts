@@ -33,6 +33,8 @@ export interface CrewCompactDeps {
   captainTitle?: (project: string) => string;
   /** Fallback crew surfaces when workspace discovery finds nothing (tests). Keyed `project:crew`. */
   injectedSurfaces?: Record<string, PaneRef>;
+  /** #1089: a compact is a turn that never emits `Stop`; close it with a turn-end (liveness, never terminal). */
+  endTurn?: (project: string, taskId: string) => void;
 }
 
 export function createCrewCompact(deps: CrewCompactDeps) {
@@ -43,6 +45,8 @@ export function createCrewCompact(deps: CrewCompactDeps) {
   /** Keyed by task id. */
   const pending = new Map<string, Pending & { project: string; name: string }>();
   const holds = new Map<string, { until: number; project: string; name: string }>();
+  /** #1089: tasks whose session ran a `/compact` prompt (typed by the daemon or by hand); value is the project. */
+  const compacting = new Map<string, string>();
 
   const titleOf = (project: string): string => {
     if (deps.captainTitle) return deps.captainTitle(project);
@@ -105,10 +109,22 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return { cancelled };
   }
 
+  /** The crew's session submitted a `/compact` prompt (UserPromptSubmit) — daemon-typed or by hand. */
+  function compactBegin(project: string, taskId: string): void {
+    compacting.set(taskId, project);
+  }
+
   /** SessionStart(source=compact) arrived for this crew's session — the window is over. */
   function compactDone(taskId: string): void {
     const h = holds.get(taskId);
     if (h && holds.delete(taskId)) log(`crew-compact ${h.project}:${h.name}: compact finished — delivery resumed`);
+    // #1089: the `/compact` prompt marked the task working and no `Stop` follows a compact, so close
+    // the turn here. Only a compact we saw submitted: an auto-compact inside a live turn has no
+    // `/compact` prompt and must leave the task working.
+    const project = compacting.get(taskId);
+    if (project === undefined) return;
+    compacting.delete(taskId);
+    deps.endTurn?.(project, taskId);
   }
 
   /** Say why a queued compact is still waiting, at most once a minute, so a stuck one is diagnosable. */
@@ -184,5 +200,5 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     } finally { ticking = false; }
   }
 
-  return { request, cancel, tick, holdsCrew, compactDone, pendingCount: () => pending.size };
+  return { request, cancel, tick, holdsCrew, compactBegin, compactDone, pendingCount: () => pending.size };
 }

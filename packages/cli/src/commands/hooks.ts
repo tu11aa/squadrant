@@ -45,6 +45,10 @@ async function sendToSock(req: unknown): Promise<void> {
 export function mapHookSub(sub: string, payload: unknown, taskId: string): ControlEvent | null {
   switch (sub) {
     case "session-start":
+      // #1089: SessionStart(compact) is not activity — its `task.progress` resumed an idle crew to
+      // 'working'. The daemon closes the compact via `crew-compact-done` instead.
+      if ((payload as { source?: unknown } | null)?.source === "compact") return null;
+      return { type: "task.progress", id: taskId, note: sub };
     case "pre-tool-use":
       return { type: "task.progress", id: taskId, note: sub };
     case "prompt-submit":
@@ -371,6 +375,13 @@ export function hooksCommand(): Command {
           }));
           process.exit(0);
         }
+      }
+
+      // #1089: a `/compact` prompt starts a turn that never ends in `Stop`; tell the daemon so the
+      // SessionStart(compact) that follows can close it.
+      const prompt = (payload as { prompt?: unknown } | null)?.prompt;
+      if (sub === "prompt-submit" && typeof prompt === "string" && /^\s*\/compact(\s|$)/.test(prompt)) {
+        await sendToSock({ kind: "crew-compact-begin", project, taskId }).catch(() => {});
       }
 
       const ev = mapHookSub(sub, payload, taskId);
