@@ -86,6 +86,7 @@ import {
   type TurnAcceptanceConfig,
 } from "./crew-protocol.js";
 import { reapCrewChildren } from "./crew-lifecycle.js";
+import { boundedLaunchLine } from "./launch-line.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
@@ -709,7 +710,7 @@ export async function runCrewSpawn(
     // spawn's command line is byte-for-byte unchanged.
     const routerPrefix =
       Object.keys(routerEnv).length > 0 ? ` ${renderEnvAssignments(routerEnv)}` : "";
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix}${routerPrefix} ${niceCrewCommand(cliCommand)}`);
+    await deps.runtime.sendToPane(pane, boundedLaunchLine(`cd ${shellQuote(spawnCwd)} && ${envPrefix}${routerPrefix} ${niceCrewCommand(cliCommand)}`));
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     let sendPromise: Promise<{ delivered: boolean; agentNotStarted?: boolean }>;
     if (initPrompt) {
@@ -827,7 +828,7 @@ export async function runCrewSpawn(
     const title = titleFor(input.project, name);
     const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
     const envPrefix = `${isolatedSessionEnvPrefix()}SQUADRANT_CREW_TASK_ID=${rec.id} SQUADRANT_CREW_PROJECT=${input.project}`;
-    await deps.runtime.sendToPane(pane, `cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`);
+    await deps.runtime.sendToPane(pane, boundedLaunchLine(`cd ${shellQuote(spawnCwd)} && ${envPrefix} OPENCODE_CONFIG=${opencodeConfigPath} ${niceCrewCommand(cliCommand)}`));
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const opencodeResult = await deps.sendFirstTurn(pane, frameFirstTurn(`${firstTurnTask}\n\n${buildCompletionProtocol(rec.id, input.project, "opencode")}`, { project: input.project, taskId: rec.id }), preLaunchScreen, {
       // #235: confirm-on-delivery — sendFirstTurnWhenReady polls until the idle
@@ -863,7 +864,7 @@ export async function runCrewSpawn(
   const direction: PanePlacement = input.direction ?? "tab";
   const title = titleFor(input.project, name);
   const pane = await deps.runtime.newPane({ workspaceId: captain.id, direction, title });
-  await deps.runtime.sendToPane(pane, niceCrewCommand(cliCommand));
+  await deps.runtime.sendToPane(pane, boundedLaunchLine(niceCrewCommand(cliCommand)));
   if (interactive) {
     const preLaunchScreen = (await deps.runtime.readPaneScreen(pane)) ?? "";
     const genericResult = await deps.sendFirstTurn(pane, frameFirstTurn(firstTurnTask, { project: input.project }), preLaunchScreen);
