@@ -653,6 +653,10 @@ export async function submitAndConfirm(
     // Box confirmed empty AND we observed the paste rendered first → submitted.
     if (draft === "" && sawDraft) return { delivered: true };
     if (draft === null && afterScreen !== preSendScreen && sawDraft) return { delivered: true };
+    // #1087/#745: a short message can be pasted AND submitted before settle ever sees the draft.
+    // Empty box + a screen that moved since pre-send = the keystrokes landed. Reporting that as
+    // unconfirmed would make callers re-send (duplicate mailbox message / second /compact).
+    if (draft === "" && screenMoved) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCmuxDriver, cmuxHasInputGuards, resetCmuxInputGuardsCache, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen } from "../cmux.js";
+import { createCmuxDriver, cmuxHasInputGuards, resetCmuxInputGuardsCache, sanitizeForCmuxSend, parseDraftFromScreen, hasModalOptionList, parseModalOptions, parseModal, parseOpencodePermissionOptions, classifyStartupSurface, classifySendOutcome, classifyDraftLiveness, classifyOpencodeStartupSurface, parseOpencodeDraftFromScreen, submitAndConfirm } from "../cmux.js";
 import { DeferDelivery, SubmitUnconfirmed } from "@squadrant/core";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -1195,6 +1195,40 @@ describe("sendToSurface confirmed submit (#1087)", () => {
     expect(await run()).toBeNull();
     expect(calls().filter((a) => a[0] === "send")).toHaveLength(1);
     expect(calls().filter((a) => a.includes("send-key") && a.includes("Enter"))).toHaveLength(2);
+  });
+
+  // The #745 race: a short message is pasted AND submitted before settle ever sees the draft.
+  // The box is empty, the screen moved — that is a delivery, never "unconfirmed" (which would
+  // make the mailbox re-send, or the compact type /compact a second time).
+  const AFTER = makeTestScreen("\u276F \u258C", "\u23FA ok");
+
+  it("submitted before settle saw the draft (empty box, screen moved) → delivered, one paste, no SubmitUnconfirmed", async () => {
+    const paste = vi.fn(async () => {});
+    const key = vi.fn(async () => {});
+    let reads = 0;
+    const runtime = {
+      readPaneScreen: async () => (reads++ === 0 ? makeTestScreen("\u276F \u258C") : AFTER),
+      pasteToPane: paste,
+      sendKeyToPane: key,
+    };
+    const out = submitAndConfirm(runtime, pane, PAYLOAD, makeTestScreen("\u276F \u258C"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await out).toEqual({ delivered: true });
+    expect(paste).toHaveBeenCalledTimes(1);
+  });
+
+  it("sendToSurface (mailbox + compact path) resolves, exactly one paste, when the submit landed before settle", async () => {
+    const saved = paneSim.screen;
+    paneSim.screen = () => AFTER; // the draft never renders; the box is already empty and the screen moved
+    try {
+      let entered = false;
+      execFileMock.mockImplementation((_bin: string, args: string[]) => {
+        if (args.includes("send-key") && args.includes("Enter")) entered = true;
+        return args.includes("read-screen") ? (entered ? AFTER : makeTestScreen("\u276F \u258C")) : "";
+      });
+      expect(await run()).toBeNull();
+      expect(calls().filter((a) => a[0] === "send")).toHaveLength(1);
+    } finally { paneSim.screen = saved; }
   });
 
   it("never confirmed → SubmitUnconfirmed (not reported as sent), payload pasted exactly once", async () => {
