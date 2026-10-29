@@ -1217,6 +1217,33 @@ describe("sendToSurface confirmed submit (#1087)", () => {
     expect(paste).toHaveBeenCalledTimes(1);
   });
 
+  it("the LAST Enter is verified: it may be the one that submits → delivered", async () => {
+    const STUCK = makeTestScreen(`\u276F ${PAYLOAD}`);
+    const enters = { n: 0 };
+    const runtime = {
+      // box holds the text until the 5th Enter (1 initial + 4 retries) lands
+      readPaneScreen: async () => (enters.n >= 5 ? AFTER : STUCK),
+      pasteToPane: async () => {},
+      sendKeyToPane: async () => { enters.n++; },
+    };
+    const out = submitAndConfirm(runtime, pane, PAYLOAD, makeTestScreen("\u276F \u258C"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await out).toEqual({ delivered: true });
+  });
+
+  it("a lost paste is NOT a delivery just because the status line ticked (transcript unchanged)", async () => {
+    const mk = (tick: string) => makeTestScreen("\u276F \u258C").replace("52.0%", tick);
+    let n = 0;
+    const runtime = {
+      readPaneScreen: async () => mk(`${53 + n++}.0%`),
+      pasteToPane: async () => {},
+      sendKeyToPane: async () => {},
+    };
+    const out = submitAndConfirm(runtime, pane, PAYLOAD, mk("52.0%"));
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(await out).toEqual({ delivered: false });
+  });
+
   it("sendToSurface (mailbox + compact path) resolves, exactly one paste, when the submit landed before settle", async () => {
     const saved = paneSim.screen;
     paneSim.screen = () => AFTER; // the draft never renders; the box is already empty and the screen moved

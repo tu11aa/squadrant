@@ -643,20 +643,27 @@ export async function submitAndConfirm(
 
   let repasted = false;
   let screenMoved = false;
-  for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
-    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
-    const afterScreen = (await runtime.readPaneScreen(pane)) ?? "";
+  // #1087/#745: a short message can be pasted AND submitted before settle ever sees the draft.
+  // The transcript ABOVE the input box changing (not the clock/status line below it) proves the
+  // keystrokes landed; with the box then confirmed empty, that is a delivery. (A hidden box without a seen
+  // draft stays unconfirmed: #466-single defect 3.)
+  // Reporting it unconfirmed would make callers re-send (duplicate mailbox message / second /compact).
+  const preTranscript = transcriptAboveBox(preSendScreen);
+  let landed = false;
+  const confirmed = (afterScreen: string): boolean => {
     // #745: latch whether the pane has moved at all since the pre-send snapshot.
     if (afterScreen !== preSendScreen) screenMoved = true;
+    if (transcriptAboveBox(afterScreen) !== preTranscript) landed = true;
     const draft = parseDraftFromScreen(afterScreen);
     if (draft !== "" && draft !== null) sawDraft = true;
     // Box confirmed empty AND we observed the paste rendered first → submitted.
-    if (draft === "" && sawDraft) return { delivered: true };
-    if (draft === null && afterScreen !== preSendScreen && sawDraft) return { delivered: true };
-    // #1087/#745: a short message can be pasted AND submitted before settle ever sees the draft.
-    // Empty box + a screen that moved since pre-send = the keystrokes landed. Reporting that as
-    // unconfirmed would make callers re-send (duplicate mailbox message / second /compact).
-    if (draft === "" && screenMoved) return { delivered: true };
+    if (draft === "" && sawDraft) return true;
+    if (draft === null && afterScreen !== preSendScreen && sawDraft) return true;
+    return draft === "" && landed;
+  };
+  for (let attempt = 0; attempt < SUBMIT_RETRY_LIMIT; attempt++) {
+    await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+    if (confirmed((await runtime.readPaneScreen(pane)) ?? "")) return { delivered: true };
     const settled = await settleInputBox(runtime, pane);
     if (settled) sawDraft = true;
     // #455: paste never rendered — re-paste once rather than issuing Enter into emptiness.
@@ -674,9 +681,18 @@ export async function submitAndConfirm(
     }
     await runtime.sendKeyToPane(pane, "Enter");
   }
-  return { delivered: false };
+  // The last Enter is verified too: it may be the one that finally submitted.
+  await new Promise((r) => setTimeout(r, POST_SEND_CHECK_MS));
+  return { delivered: confirmed((await runtime.readPaneScreen(pane)) ?? "") };
 }
 
+/** The screen above the input box's top rule (the transcript); the whole screen when no box is visible. */
+function transcriptAboveBox(screen: string): string {
+  const lines = screen.split("\n");
+  const rules: number[] = [];
+  for (let i = 0; i < lines.length; i++) if (HR_RE.test(lines[i])) rules.push(i);
+  return rules.length >= 2 ? lines.slice(0, rules[rules.length - 2]).join("\n") : screen;
+}
 
 // #339 instrumentation gate. The DONE→captain submit is a text burst then a
 // SEPARATE send-key Enter (two distinct socket writes); intermittently the Enter
@@ -988,7 +1004,7 @@ export function createCmuxDriver(): RuntimeDriver {
     async sendToSurface(surface: PaneRef, text: string, opts?: { probe?: boolean; agent?: string }): Promise<void> {
       const ws = surface.workspaceId;
       const sf = surface.surfaceId;
-      const deliver = async () => {
+      const deliver = async (knownScreen?: string) => {
         // #339 debug-gated instrumentation. When OFF this is the exact two-write
         // submit it always was (no extra reads, no latency). When ON we capture
         // one real frame: the input box BEFORE the send, the payload, and the box
@@ -1008,7 +1024,7 @@ export function createCmuxDriver(): RuntimeDriver {
         } else {
           // #1087: claude/codex confirm the submit at the chokepoint (#339/#447) —
           // every daemon pane write (compact, mailbox, ping) gets it, not just `crew send`.
-          const preSendScreen = await this.readPaneScreen(surface);
+          const preSendScreen = knownScreen ?? (await this.readPaneScreen(surface));
           const r = await submitAndConfirm(this, surface, text, preSendScreen);
           if (!r.delivered) throw new SubmitUnconfirmed();
         }
@@ -1072,7 +1088,7 @@ export function createCmuxDriver(): RuntimeDriver {
       if (hasModalOptionList(screen)) throw new DeferDelivery(null, "modal");
 
       // Empty input — nothing to protect, deliver directly.
-      if (draft === "") { await deliver(); return; }
+      if (draft === "") { await deliver(screen); return; }
 
       // A draft is present. On the hot path (no probe) we NEVER keystroke — we
       // defer and carry the content so the relay can track stability (#302).
