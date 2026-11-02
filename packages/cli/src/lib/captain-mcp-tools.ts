@@ -205,8 +205,8 @@ export function createCaptainTools(): CaptainTool[] {
       description: "Send a follow-up message to a side session. Same as `squadrant side send`.",
       fields: { project: PROJECT, name: NAME("Side session"), message: { type: "string", description: "Message to send." } },
       async run(a, p, d) {
-        await d.runSideSend(p, need(a, "name"), need(a, "message"));
-        return `✔ Sent to ${p}:${a.name} (pasted into its pane; receipt not confirmed)`;
+        const r = await d.runSideSend(p, need(a, "name"), need(a, "message"));
+        return `✔ Sent to ${p}:${a.name} (${r.detail})`;
       },
     },
     {

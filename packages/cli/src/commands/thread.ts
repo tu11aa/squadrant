@@ -23,6 +23,7 @@ import {
 import { captainSession } from "../lib/captain-context.js";
 import { resolveLaunchAgent } from "../lib/launch-agent-resolve.js";
 import { resolveCaptainAgent } from "../lib/captain-channel-factory.js";
+import { withSessionDelivery } from "../lib/session-delivery-factory.js";
 import { compactLedgerContext } from "./hooks.js";
 
 const TEMPLATES_DIR = path.join(os.homedir(), ".config", "squadrant", "templates");
@@ -56,13 +57,14 @@ export function threadAgentCommand(
   reg: CapabilityRegistry = registry(),
   templatesDir: string = TEMPLATES_DIR,
   sessionName?: string,
+  messagingSocketPath?: string,
 ): string {
   const roleConfig = config.defaults.roles?.captain;
   const { model, thinking } = resolveLaunchAgent({}, roleConfig, config.defaults.models?.captain);
   const permissionMode = config.defaults.permissions?.captain || "auto";
   if (agentName === "claude") {
     let cmd = buildAgentCmd("claude", reg, "captain", true, permissionMode, model, templatesDir,
-      undefined, sessionName, thinking);
+      messagingSocketPath, sessionName, thinking);
     const promptFile = cmd.match(/--append-system-prompt-file (\S+)/)?.[1];
     if (promptFile) {
       const copy = path.join(promptDir, "thread.claude.md");
@@ -113,8 +115,8 @@ async function threadDeps(project: string): Promise<ThreadDeps> {
     agent,
     captainSessionId: sessionId,
     maxThreads: config.defaults.maxThreads ?? DEFAULT_MAX_THREADS,
-    agentCommand: (launch, id) =>
-      threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg, TEMPLATES_DIR, threadSessionName(project, id)),
+    agentCommand: (launch, id, socketPath) =>
+      threadAgentCommand(launch, agent, config, cwd, threadsDir(root, project), reg, TEMPLATES_DIR, threadSessionName(project, id), socketPath),
     sendFirstTurn: (pane, text, pre) => sendFirstTurnWhenReady(runtime, pane, text, pre),
     ledger: () => compactLedgerContext(project),
     newSessionId: randomUUID,
@@ -149,8 +151,8 @@ export async function runThreadPark(project: string, id: string, decisionRaw?: s
   const root = stateRoot();
   if (decisionRaw === undefined) {
     const ws = await resolveCaptainWorkspace(project);
-    await requestPark(project, id, { stateRoot: root, runtime: ws.runtime, workspaceId: ws.workspaceId });
-    return `✔ Asked thread '${id}' to write its decision record and park (pasted into its pane; receipt not confirmed).`;
+    const delivery = await withSessionDelivery(ws.runtime, (d) => requestPark(project, id, { stateRoot: root, workspaceId: ws.workspaceId, delivery: d }));
+    return `✔ Asked thread '${id}' to write its decision record and park (${delivery.detail}).`;
   }
   const now = new Date();
   const decision = parseDecisionRecord(decisionRaw, now.toISOString());

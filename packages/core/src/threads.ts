@@ -15,6 +15,7 @@ import { shellQuote } from "./crew-protocol.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { appendCaptainMessage } from "./mailbox.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
+import { deliverToSession, prepareSessionSocket, threadSocketPath, type SessionDelivery, type SessionDeliveryDeps } from "./session-delivery.js";
 
 export type ThreadState = "open" | "parked" | "closed";
 
@@ -329,7 +330,7 @@ export interface ThreadDeps {
   captainSessionId: string | null;
   maxThreads: number;
   /** Agent launch command for this thread (no env prefix, no cd). */
-  agentCommand: (launch: ThreadLaunch, threadId: string) => string;
+  agentCommand: (launch: ThreadLaunch, threadId: string, messagingSocketPath: string) => string;
   sendFirstTurn: (pane: PaneRef, text: string, preLaunchScreen: string) => Promise<{ delivered: boolean }>;
   /** Live crew ledger text ("" when none). */
   ledger: () => Promise<string>;
@@ -361,7 +362,9 @@ async function spawnThreadTab(rec: ThreadRecord, launch: ThreadLaunch, firstTurn
   });
   const preLaunchScreen = await deps.runtime.readPaneScreen(pane).catch(() => "");
   const env = `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=${rec.id}`;
-  await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch, rec.id)}`);
+  const socketPath = threadSocketPath(rec.project, rec.id);
+  prepareSessionSocket(socketPath);
+  await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch, rec.id, socketPath)}`);
   await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `thread-${rec.id}`), { project: rec.project, kind: launch.kind === "resume" ? "thread.resume" : "thread.open" }), preLaunchScreen);
   return pane;
 }
@@ -403,18 +406,23 @@ export async function openThread(
 }
 
 /** Ask the open thread to write its decision record (it then runs park with --decision-file). */
-export async function requestPark(project: string, id: string, deps: Pick<ThreadDeps, "stateRoot" | "runtime" | "workspaceId">): Promise<ThreadRecord> {
+export async function requestPark(
+  project: string,
+  id: string,
+  deps: Pick<ThreadDeps, "stateRoot" | "workspaceId"> & { delivery: SessionDeliveryDeps },
+): Promise<SessionDelivery> {
   const rec = requireThread(deps.stateRoot, project, id);
   assertTransition(rec, "parked");
   if (!rec.surfaceId) throw new Error(`Thread '${id}' has no live tab to ask.`);
-  await deps.runtime.sendToPane(
+  return deliverToSession(
     { workspaceId: deps.workspaceId, surfaceId: rec.surfaceId },
+    threadSocketPath(project, id),
     frameMessage(
       { from: `captain:${project}`, project, kind: "thread.park" },
       `Park this thread now: write the decision record and run 'squadrant thread park ${project} ${id} --decision-file -' as your instructions say. If nothing is settled yet, record the open question as the decision ("not decided: …").`,
     ),
+    deps.delivery,
   );
-  return rec;
 }
 
 /**

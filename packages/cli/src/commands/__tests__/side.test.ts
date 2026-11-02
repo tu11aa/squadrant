@@ -12,6 +12,12 @@ const status = vi.hoisted(() => vi.fn());
 const buildCommand = vi.hoisted(() => vi.fn());
 
 vi.mock("../doctor.js", () => ({ commandExists: () => true }));
+// #1096: no real receipt listener / peer socket in unit tests; the pane path is exercised here,
+// the peer path in core's session-delivery.test.ts.
+vi.mock("../../lib/session-delivery-factory.js", () => ({
+  withSessionDelivery: async (_rt: unknown, run: (d: unknown) => Promise<unknown>) =>
+    run({ sendToPane: async (pane: unknown, msg: string) => { await sendToPane(pane, msg); return { delivered: true }; } }),
+}));
 vi.mock("@squadrant/workspaces", () => ({
   createCmuxDriver: () => ({
     name: "cmux",

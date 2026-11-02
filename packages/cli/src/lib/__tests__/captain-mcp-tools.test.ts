@@ -160,10 +160,10 @@ describe("tools call the shared function", () => {
   });
 
   it("side_spawn and side_send", async () => {
-    const d = fakes({ runSideSpawn: vi.fn().mockResolvedValue({ title: "side-1", surfaceId: "s2" }) });
+    const d = fakes({ runSideSpawn: vi.fn().mockResolvedValue({ title: "side-1", surfaceId: "s2" }), runSideSend: vi.fn().mockResolvedValue({ via: "peer", detail: "peer channel, accepted" }) });
     expect((await call("side_spawn", { project: "p", topic: "t", role: "research" }, d)).text).toBe("✔ Side session 'side-1' spawned (s2)");
     expect(d.runSideSpawn).toHaveBeenCalledWith({ project: "p", topic: "t", role: "research", name: undefined, direction: "tab", agent: "claude" });
-    expect((await call("side_send", { project: "p", name: "side-1", message: "m" }, d)).text).toBe("✔ Sent to p:side-1 (pasted into its pane; receipt not confirmed)");
+    expect((await call("side_send", { project: "p", name: "side-1", message: "m" }, d)).text).toBe("✔ Sent to p:side-1 (peer channel, accepted)");
     expect(d.runSideSend).toHaveBeenCalledWith("p", "side-1", "m");
   });
 
