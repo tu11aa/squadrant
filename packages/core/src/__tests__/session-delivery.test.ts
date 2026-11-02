@@ -68,6 +68,11 @@ describe("deliverToSession (#1096)", () => {
     await expect(deliverToSession(pane, "/s", false, "hi", deps(undefined, { delivered: false, blockedByModal: true }).d)).rejects.toThrow(/open dialog/);
   });
 
+  it("unpinned: a pane with no agent reports that, not a draft (#1098)", async () => {
+    const d = deps(undefined, { delivered: false, reason: "no-agent" } as never).d;
+    await expect(deliverToSession(pane, "/s", false, "hi", d)).rejects.toThrow(/no agent input box is visible/);
+  });
+
   it("reports an unconfirmed accept and a held message honestly", async () => {
     expect((await deliverToSession(pane, "/s", true, "hi", deps({ status: "accepted", via: "claude-peer", confirmed: false }).d)).detail).toMatch(/no turn observed/);
     expect((await deliverToSession(pane, "/s", true, "hi", deps({ status: "held", via: "claude-peer", reason: "approval" }).d)).detail).toMatch(/held: approval/);

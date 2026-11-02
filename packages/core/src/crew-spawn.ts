@@ -902,7 +902,7 @@ export async function runCrewSend(
     // runtime.sendToPane so the caller can inject paste-settle-Enter hardening.
     // Falls back to runtime.sendToPane when absent (preserves existing behaviour
     // for callers that don't inject it, e.g. unit tests).
-    sendToPane?: (pane: PaneRef, message: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }>;
+    sendToPane?: (pane: PaneRef, message: string) => Promise<{ delivered: boolean; blockedByModal?: boolean; reason?: "no-agent" }>;
     // #516: optional side-effect-free precheck for an open AskUserQuestion/
     // permission modal. Checked BEFORE the daemon-state emit block below so a
     // modal-blocked send is a true no-op on daemon state, not just on the pane.
@@ -932,6 +932,9 @@ export async function runCrewSend(
   // blocks. Point at the deliberate escape hatch instead.
   const blockedByModalMessage = () =>
     `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. To answer it deliberately: squadrant crew read ${project} ${name} to see the options, then squadrant crew answer ${project} ${name} <n>.`;
+  // #1098: the pane holds no agent (it exited), so nothing was typed; relaunching is the fix.
+  const noAgentMessage = () =>
+    `Message to crew '${name}' NOT delivered: no agent input box is visible in that pane (nothing was typed). Check 'squadrant crew read ${project} ${name}'; if the agent exited, close and respawn it.`;
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }
@@ -1008,7 +1011,7 @@ export async function runCrewSend(
     { from: `captain:${project}`, project, kind: "crew.send", task: task?.id.slice(0, 8) },
     message,
   );
-  const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }> =
+  const deliver: (pane: PaneRef, msg: string) => Promise<{ delivered: boolean; blockedByModal?: boolean; reason?: "no-agent" }> =
     deps.sendToPane ?? ((pane, msg) => runtime.sendToPane(pane, msg).then(() => ({ delivered: true })));
 
   // ── #667 slice 2: control channel ────────────────────────────────────────
@@ -1060,7 +1063,7 @@ export async function runCrewSend(
       channelLog(`crew send ${name}: threw, falling back to pane — ${(e as Error).message}`);
       probe = { status: "gone" as const };
     }
-    const { delivered: paneOk, blockedByModal: paneModal } = await deliver(crew, framed);
+    const { delivered: paneOk, blockedByModal: paneModal, reason: paneReason } = await deliver(crew, framed);
     const channelWouldSay = probe.status === "reachable" ? "deliverable" : probe.status;
     if (paneOk !== (probe.status === "reachable")) {
       // The measurement this mode exists for: countable evidence for #514/#657.
@@ -1072,18 +1075,20 @@ export async function runCrewSend(
       channelLog(`crew send ${name}: agree (pane=${paneOk}, channel=${channelWouldSay})`);
     }
     if (paneModal) throw new Error(blockedByModalMessage());
+    if (paneReason === "no-agent") throw new Error(noAgentMessage());
     if (!paneOk) {
       throw new Error(`Message not delivered to crew '${name}' — the paste/submit could not be confirmed. Re-send with 'squadrant crew send ${project} ${name}'.`);
     }
     return { reopened, ...(stateWarning ? { stateWarning } : {}) };
   }
 
-  const { delivered, blockedByModal } = await deliver(crew, framed);
+  const { delivered, blockedByModal, reason } = await deliver(crew, framed);
   // #516 backstop: covers the TOCTOU window between the precheck above and this
   // delivery attempt, and callers that don't inject isBlockedByModal at all.
   if (blockedByModal) {
     throw new Error(blockedByModalMessage());
   }
+  if (reason === "no-agent") throw new Error(noAgentMessage());
   if (!delivered) {
     // #566: a follow-up send has no self-heal sweep behind it — a stderr-only
     // warning let the CLI print "✔ Sent" and exit 0 for a message that was never

@@ -137,21 +137,33 @@ describe("runPing", () => {
     await expect(runPing("projA", "x", 'a" from="captain:x')).rejects.toThrow(/Invalid --from/);
   });
 
-  it("errors clearly when the target captain is not running (no auto-boot)", async () => {
+  it("#1098/R1: queues to the mailbox when the target captain is not running (no auto-boot, no pane write)", async () => {
     status.mockResolvedValue(null);
 
-    await expect(runPing("projA", "hello")).rejects.toThrow(/not running/i);
+    expect(await runPing("projA", "hello")).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
-    expect(appendCaptainMessage).not.toHaveBeenCalled();
+    expect(deliverToCaptain).not.toHaveBeenCalled();
+    expect(appendCaptainMessage).toHaveBeenCalledWith(expect.objectContaining({ project: "projA", text: "hello", source: "cli" }));
   });
 
-  it("enqueues nothing if the daemon is not running", async () => {
-    requireDaemon.mockRejectedValue(new Error("daemon not running"));
+  it("#1098/R1: queues to the mailbox when the daemon is not running, never touches the pane", async () => {
+    requireDaemon.mockRejectedValue(new Error("daemon not running — message NOT delivered. Start it."));
 
-    await expect(runPing("projA", "hello")).rejects.toThrow(/daemon not running/i);
-    
+    const outcome = await runPing("projA", "hello", "side:s1");
+
+    expect(outcome).toBeUndefined();
+    expect(formatPingResult("projA", outcome)).toMatch(/Queued .*mailbox/);
     expect(send).not.toHaveBeenCalled();
     expect(sendKey).not.toHaveBeenCalled();
+    expect(deliverToCaptain).not.toHaveBeenCalled();
+    expect(appendCaptainMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ project: "projA", text: "hello", source: "cli", from: "side:s1" }),
+    );
+  });
+
+  it("#1098/R1: an unknown project is still an error with the daemon down (nothing queued)", async () => {
+    requireDaemon.mockRejectedValue(new Error("daemon not running"));
+    await expect(runPing("nope", "hello")).rejects.toThrow(/not found/i);
     expect(appendCaptainMessage).not.toHaveBeenCalled();
   });
 

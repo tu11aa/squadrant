@@ -306,6 +306,19 @@ export function hasCCInputBox(screen: string): boolean {
 }
 
 /**
+ * #1098: true when the screen shows ANY recognised agent input box: the claude
+ * shape (HR-bounded, ❯ prompt) or the opencode shape (┃ sides over a ╹▀▀▀ rule).
+ * A bare shell, a closed pane or an unfamiliar composer is false, so the pane
+ * writers refuse instead of typing a message into something that is not an agent.
+ */
+export function hasAgentInputBox(screen: string): boolean {
+  if (hasCCInputBox(screen)) return true;
+  const lines = screen.split(/\r?\n/);
+  const bottom = lines.map((l) => OC_BOX_BOTTOM_RE.test(l)).lastIndexOf(true);
+  return bottom > 0 && OC_BOX_SIDE_RE.test(lines[bottom - 1]);
+}
+
+/**
  * True when the HR-bounded region is an AskUserQuestion / permission-approval
  * SELECTION MODAL rather than the genuine CC input box (#484). Both draw their
  * own pair of ── borders and highlight the selected option with the same ❯
@@ -1025,6 +1038,8 @@ export function createCmuxDriver(): RuntimeDriver {
           // #1087: claude/codex confirm the submit at the chokepoint (#339/#447) —
           // every daemon pane write (compact, mailbox, ping) gets it, not just `crew send`.
           const preSendScreen = knownScreen ?? (await this.readPaneScreen(surface));
+          // #1098: a native "empty" verdict can still be a bare shell; never paste there.
+          if (!hasAgentInputBox(preSendScreen)) throw new DeferDelivery(null, "no-box");
           const r = await submitAndConfirm(this, surface, text, preSendScreen);
           if (!r.delivered) throw new SubmitUnconfirmed();
         }
