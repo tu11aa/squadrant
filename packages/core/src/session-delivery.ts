@@ -9,6 +9,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { PaneRef } from "@squadrant/shared";
 import { CC_SOCKS_DIR, ensureSocksDir } from "./crew-spawn.js";
 import { describeOutcome, fallsBackToPane, type ControlChannel, type DeliveryOutcome } from "./control-channel.js";
@@ -32,14 +33,22 @@ export function prepareSessionSocket(socketPath: string): void {
   fs.rmSync(socketPath, { force: true });
 }
 
+const PINNED_MARKER = "socket";
+
+/** Side sessions: record next to init.md that a socket was pinned at launch. */
+export function markSidePinned(sideDir: string, socketPath: string): void {
+  fs.mkdirSync(sideDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(sideDir, PINNED_MARKER), socketPath, { mode: 0o600 });
+}
+
+export const isSidePinned = (sideDir: string): boolean => fs.existsSync(path.join(sideDir, PINNED_MARKER));
+
 export interface SessionDeliveryDeps {
   /** Claude peer channel keyed by socket path. Absent ⇒ pane only. */
   channel?: ControlChannel;
   /** The #1087 confirmed-submit chokepoint. */
   sendToPane: (pane: PaneRef, text: string) => Promise<{ delivered: boolean; blockedByModal?: boolean }>;
   log?: (m: string) => void;
-  /** Test seam: does the pinned socket file exist? Defaults to the filesystem. */
-  socketExists?: (socketPath: string) => boolean;
 }
 
 export interface SessionDelivery {
@@ -57,25 +66,27 @@ function peerDetail(o: DeliveryOutcome): string {
   }
 }
 
+/**
+ * `pinned`: a socket was pinned when this session launched (recorded at spawn).
+ * A pinned session is only ever reached over its socket: when claude exits it
+ * removes the socket and the pane is a bare shell, so a pane paste would run the
+ * message as shell commands. Only unpinned sessions (non-claude, or launched
+ * before #1096) use the pane.
+ */
 export async function deliverToSession(
   pane: PaneRef,
   socketPath: string,
+  pinned: boolean,
   text: string,
   deps: SessionDeliveryDeps,
 ): Promise<SessionDelivery> {
-  if (deps.channel) {
+  if (pinned) {
+    if (!deps.channel) throw new Error("not delivered: the peer channel is unavailable (receipt listener could not start); the session was not touched.");
     const outcome: DeliveryOutcome = await deps.channel.send(socketPath, text);
-    deps.log?.(`session-delivery ${pane.surfaceId}: ${describeOutcome(outcome)}`);
-    // accepted / queued / held all reached the session (or a human gate in front of it):
-    // touching the pane as well would double-send.
+    deps.log?.(`session-delivery ${pane.surfaceId}: ${fallsBackToPane(outcome) ? outcome.status : describeOutcome(outcome)}`);
+    // accepted / queued / held all reached the session (or a human gate in front of it).
     if (!fallsBackToPane(outcome)) return { via: "peer", detail: peerDetail(outcome) };
-    // The socket file is there but nothing took the message: claude exited, or the operator
-    // denied it / it expired. The pane may now be a bare shell, and a refusal must not be
-    // re-delivered as an ordinary user turn. Fall back only when no socket was ever pinned
-    // (non-claude agent, or a session launched before #1096).
-    if ((deps.socketExists ?? fs.existsSync)(socketPath)) {
-      throw new Error("not delivered: the session's peer socket did not accept the message (the session exited, or the message was denied or expired).");
-    }
+    throw new Error("not delivered: the session is no longer running (its claude exited, or the message was denied or expired). Relaunch it (`thread resume`, or `side spawn`).");
   }
   const r = await deps.sendToPane(pane, text);
   if (r.delivered) return { via: "pane", detail: "pane, submit confirmed" };

@@ -43,6 +43,8 @@ export interface ThreadRecord {
   forkedAt: string;
   lastActiveAt: string;
   parkedAt?: string;
+  /** A messaging socket was pinned at the last launch (claude only, #1096): sends go over it, never the pane. */
+  socketPinned?: boolean;
   /** cmux surface of the live tab while open. */
   surfaceId?: string;
   decisions: DecisionRecord[];
@@ -364,6 +366,7 @@ async function spawnThreadTab(rec: ThreadRecord, launch: ThreadLaunch, firstTurn
   const env = `SQUADRANT_ROLE=thread SQUADRANT_THREAD_ID=${rec.id}`;
   const socketPath = threadSocketPath(rec.project, rec.id);
   prepareSessionSocket(socketPath);
+  rec.socketPinned = rec.agent === "claude";
   await deps.runtime.sendToPane(pane, `cd ${shellQuote(deps.cwd)} && ${env} ${deps.agentCommand(launch, rec.id, socketPath)}`);
   await deps.sendFirstTurn(pane, frameFirstTurn(spillOversizedFirstTurn(firstTurn, `thread-${rec.id}`), { project: rec.project, kind: launch.kind === "resume" ? "thread.resume" : "thread.open" }), preLaunchScreen);
   return pane;
@@ -417,6 +420,7 @@ export async function requestPark(
   return deliverToSession(
     { workspaceId: deps.workspaceId, surfaceId: rec.surfaceId },
     threadSocketPath(project, id),
+    rec.socketPinned === true,
     frameMessage(
       { from: `captain:${project}`, project, kind: "thread.park" },
       `Park this thread now: write the decision record and run 'squadrant thread park ${project} ${id} --decision-file -' as your instructions say. If nothing is settled yet, record the open question as the decision ("not decided: …").`,

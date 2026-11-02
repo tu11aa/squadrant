@@ -208,14 +208,23 @@ describe("open/park/resume/close state machine", () => {
     expect(readThread(root, "app", "auth-cache")?.state).toBe("open");
   });
 
-  it("park request with no socket falls back to the chokepoint on the thread's tab; a failed fallback throws (#1096)", async () => {
+  it("pinned thread whose socket is gone: park request throws and the pane is never touched (#1096)", async () => {
     const { deps } = makeDeps();
     await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    const sendToPane = vi.fn(async (_pane: PaneRef, _text: string) => ({ delivered: true }));
+    const send = vi.fn(async (_to: string, _text: string) => ({ status: "gone" }) as const);
+    await expect(requestPark("app", "auth-cache", { ...deps, delivery: { channel: { name: "claude-peer", agent: "claude", send, probe: vi.fn() }, sendToPane } })).rejects.toThrow(/no longer running/);
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  it("unpinned thread (non-claude / pre-#1096): park request falls back to the chokepoint; a failed fallback throws (#1096)", async () => {
+    const { deps } = makeDeps({ agent: "opencode" });
+    await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    expect(readThread(root, "app", "auth-cache")?.socketPinned).toBe(false);
     const sendToPane = vi.fn(async (_pane: PaneRef, _text: string) => ({ delivered: true }));
     const delivery = await requestPark("app", "auth-cache", { ...deps, delivery: { sendToPane } });
     expect(delivery.via).toBe("pane");
     expect(sendToPane.mock.calls[0][0].surfaceId).toBe("surface:1");
-    expect(sendToPane.mock.calls[0][1]).toContain("squadrant thread park app auth-cache --decision-file -");
     await expect(requestPark("app", "auth-cache", { ...deps, delivery: { sendToPane: async () => ({ delivered: false }) } })).rejects.toThrow(/not delivered/);
   });
 

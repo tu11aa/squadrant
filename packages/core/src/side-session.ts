@@ -23,7 +23,7 @@ import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 import { sideStateDir, writeSideInitPrompt } from "./first-turn-init.js";
-import { deliverToSession, prepareSessionSocket, sideSocketPath, type SessionDelivery, type SessionDeliveryDeps } from "./session-delivery.js";
+import { deliverToSession, isSidePinned, markSidePinned, prepareSessionSocket, sideSocketPath, type SessionDelivery, type SessionDeliveryDeps } from "./session-delivery.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -187,8 +187,20 @@ export async function runSideSpawn(
       process.stderr.write(`(side init prompt not written, falling back to a first-turn send: ${(e as Error).message})\n`);
     }
   }
-  const socketPath = sideSocketPath(input.project, name);
-  prepareSessionSocket(socketPath);
+  // Only claude (the agent with a boot watcher) honours a pinned socket. The pin is recorded next to
+  // init.md so a later send never falls back to the pane once claude has exited (#1096); if it cannot
+  // be recorded, launch unpinned rather than pinned-but-unrecorded.
+  let socketPath: string | undefined;
+  if (deps.watchBoot) {
+    try {
+      socketPath = sideSocketPath(input.project, name);
+      prepareSessionSocket(socketPath);
+      markSidePinned(sideStateDir(stateRoot(), input.project, name), socketPath);
+    } catch (e) {
+      socketPath = undefined;
+      process.stderr.write(`(side socket not pinned, sends will use the pane: ${(e as Error).message})\n`);
+    }
+  }
   const agentCmd = deps.agentCmdFactory(spawnCwd, initPath ? { initPromptFile: initPath } : undefined, socketPath);
 
   const direction: PanePlacement = input.direction ?? "tab";
@@ -232,7 +244,7 @@ export async function runSideSend(
       `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
-  return deliverToSession(pane, sideSocketPath(project, name), frameMessage({ from: `captain:${project}`, project, kind: "side.send" }, message), delivery);
+  return deliverToSession(pane, sideSocketPath(project, name), isSidePinned(sideStateDir(stateRoot(), project, name)), frameMessage({ from: `captain:${project}`, project, kind: "side.send" }, message), delivery);
 }
 
 export async function runSideList(
