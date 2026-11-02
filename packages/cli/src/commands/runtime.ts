@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { queueIfCaptainUnreachable } from "../lib/queue-if-unreachable.js";
 import { loadConfig } from "@squadrant/shared";
 import { currentSenderLabel } from "../lib/sender-label.js";
 import { createCmuxDriver, RuntimeRegistry } from "@squadrant/workspaces";
@@ -89,7 +90,7 @@ export async function runRuntimeSend(
   arg2: string | undefined,
   opts: { command?: boolean; from?: string },
   confirmOpts?: { timeoutMs?: number; pollMs?: number },
-) {
+): Promise<"delivered" | "queued"> {
   const config = loadConfig();
   const registry = buildRegistry();
 
@@ -112,17 +113,11 @@ export async function runRuntimeSend(
   const { stateRoot: defaultStateRoot } = await import("@squadrant/shared");
   const stateRoot = defaultStateRoot();
 
-  // R1 (#1098 audit): a down daemon or a captain that is not running must not lose the
-  // message. The target resolved (an unknown one threw above), so queue it; the delivery
-  // loop hands it over when the captain is back.
-  try {
-    await requireDaemon();
-    await needRef(resolved);
-  } catch (e) {
-    console.error(chalk.yellow(`${(e as Error).message.split(" — ")[0]} — queued in the mailbox; it is delivered when the captain is back.`));
-    await appendCaptainMessage({ stateRoot, project: finalProject, text: message, source: "cli", ...(from ? { from } : {}) });
-    return;
-  }
+  // R1 (#1098): queue instead of losing the message when the daemon or the captain is down.
+  if (await queueIfCaptainUnreachable(
+    async () => { await requireDaemon(); await needRef(resolved); },
+    () => appendCaptainMessage({ stateRoot, project: finalProject, text: message, source: "cli", ...(from ? { from } : {}) }),
+  )) return "queued";
 
   // #566: never gate the send attempt itself on a liveness verdict — always
   // append, then confirm. Keeps the #529 draft-clobber protection (still
@@ -150,6 +145,7 @@ export async function runRuntimeSend(
       `It may still be pending — check with 'squadrant runtime read-screen ${finalProject}${opts.command ? " --command" : ""}'.`,
     );
   }
+  return "delivered";
 }
 
 runtimeCommand
@@ -161,8 +157,8 @@ runtimeCommand
   .option("--from <sender>", "Sender label shown to the captain, e.g. side:research-1 (default: from the session's role — crew:<project>/<name>, captain:<project>, … — else cli)")
   .action(async (arg1: string, arg2: string | undefined, opts: { command?: boolean; from?: string }) => {
     try {
-      await runRuntimeSend(arg1, arg2, opts);
-      console.log(chalk.green("✔ Delivered (confirmed)"));
+      const r = await runRuntimeSend(arg1, arg2, opts);
+      console.log(r === "queued" ? chalk.yellow("✔ Queued (mailbox — not yet delivered)") : chalk.green("✔ Delivered (confirmed)"));
     } catch (err) {
       console.error(chalk.red((err as Error).message));
       process.exit(1);

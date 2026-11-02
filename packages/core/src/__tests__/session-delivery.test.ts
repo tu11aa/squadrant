@@ -70,7 +70,7 @@ describe("deliverToSession (#1096)", () => {
 
   it("unpinned: a pane with no agent reports that, not a draft (#1098)", async () => {
     const d = deps(undefined, { delivered: false, reason: "no-agent" } as never).d;
-    await expect(deliverToSession(pane, "/s", false, "hi", d)).rejects.toThrow(/agent in that pane is not running/);
+    await expect(deliverToSession(pane, "/s", false, "hi", d)).rejects.toThrow(/no agent input box is visible/);
   });
 
   it("reports an unconfirmed accept and a held message honestly", async () => {

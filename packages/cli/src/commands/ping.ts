@@ -10,6 +10,7 @@ import { loadConfig, resolveCaptainChannelMode, stateRoot as defaultStateRoot } 
 import { currentSenderLabel } from "../lib/sender-label.js";
 import { appendCaptainMessage, deliverToCaptain, frameMessage, isValidSender, type DeliveryOutcome, describeOutcome, type ControlChannel } from "@squadrant/core";
 import { buildRegistry, resolveTarget, needRef } from "./runtime.js";
+import { queueIfCaptainUnreachable } from "../lib/queue-if-unreachable.js";
 import { requireDaemon } from "../lib/require-daemon.js";
 import { buildCaptainChannels } from "../lib/captain-channel-factory.js";
 
@@ -39,20 +40,12 @@ export async function runPing(project: string, message: string, fromOpt?: string
   const registry = buildRegistry();
   const resolved = resolveTarget(registry, config, project, false);
   
-  // R1 (#1098 audit): a down daemon must not lose the message. The project is already
-  // validated (an unknown one threw above), so queue it for the mailbox; the daemon
-  // drains it to the captain when it next starts.
+  // R1 (#1098): queue instead of losing the message when the daemon or the captain is down.
   const stateRoot = defaultStateRoot();
-  // The same holds when the daemon is up but the captain workspace is not running.
-  try {
-    await requireDaemon();
-    await needRef(resolved);
-  } catch (e) {
-    const why = (e as Error).message.split(" — ")[0];
-    console.error(chalk.yellow(`${why} — queued in the mailbox; it is delivered when the captain is back.`));
-    await appendCaptainMessage({ stateRoot, project, text: message, source: "cli", from });
-    return undefined;
-  }
+  if (await queueIfCaptainUnreachable(
+    async () => { await requireDaemon(); await needRef(resolved); },
+    () => appendCaptainMessage({ stateRoot, project, text: message, source: "cli", from }),
+  )) return undefined;
 
   const mode = resolveCaptainChannelMode(config.defaults);
   // #786: route by the captain's agent (launch record, else config) so an

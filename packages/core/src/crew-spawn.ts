@@ -934,7 +934,7 @@ export async function runCrewSend(
     `Crew '${name}' has an interactive prompt open (AskUserQuestion/permission) — message NOT delivered, to avoid confirming its default option. To answer it deliberately: squadrant crew read ${project} ${name} to see the options, then squadrant crew answer ${project} ${name} <n>.`;
   // #1098: the pane holds no agent (it exited), so nothing was typed; relaunching is the fix.
   const noAgentMessage = () =>
-    `Message to crew '${name}' NOT delivered: the agent in that pane is not running (nothing was typed). Close it with 'squadrant crew close ${project} ${name}' and respawn.`;
+    `Message to crew '${name}' NOT delivered: no agent input box is visible in that pane (nothing was typed). Check 'squadrant crew read ${project} ${name}'; if the agent exited, close and respawn it.`;
   if (deps.isBlockedByModal && (await deps.isBlockedByModal(crew))) {
     throw new Error(blockedByModalMessage());
   }

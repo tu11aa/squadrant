@@ -134,11 +134,17 @@ describe("runtime send", () => {
   it("#1098/R1: queues to the mailbox when the daemon is not running, never touches the pane", async () => {
     requireDaemon.mockRejectedValue(new Error("daemon not running — message NOT delivered."));
 
-    await runRuntimeSend("projA", "hello from runtime send", {});
+    expect(await runRuntimeSend("projA", "hello from runtime send", {})).toBe("queued");
 
     expect(send).not.toHaveBeenCalled();
     expect(sendKey).not.toHaveBeenCalled();
     expect(appendCaptainMessage).toHaveBeenCalledWith(expect.objectContaining({ project: "projA", text: "hello from runtime send", source: "cli" }));
+  });
+
+  it("#1098: a runtime fault (not a 'not running' error) is rethrown, never reported as queued", async () => {
+    requireDaemon.mockRejectedValue(new Error("EACCES: socket"));
+    await expect(runRuntimeSend("projA", "x", {})).rejects.toThrow(/EACCES/);
+    expect(appendCaptainMessage).not.toHaveBeenCalled();
   });
 
   it("#1098/R1: an unknown project is still an error and queues nothing", async () => {

@@ -134,7 +134,7 @@ describe("runCrewSend — mode: on", () => {
       paneDelivered: false,
       paneReason: "no-agent",
     });
-    await expect(runCrewSend(PROJECT, NAME, "x $(touch /tmp/PWNED)", runtime, "ws", deps)).rejects.toThrow(/agent in that pane is not running/);
+    await expect(runCrewSend(PROJECT, NAME, "x $(touch /tmp/PWNED)", runtime, "ws", deps)).rejects.toThrow(/no agent input box is visible/);
     expect(sendToPane).toHaveBeenCalledOnce();
   });
 

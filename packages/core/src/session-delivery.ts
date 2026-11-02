@@ -90,7 +90,7 @@ export async function deliverToSession(
   }
   const r = await deps.sendToPane(pane, text);
   if (r.delivered) return { via: "pane", detail: "pane, submit confirmed" };
-  if (r.reason === "no-agent") throw new Error("not delivered: the agent in that pane is not running (nothing was typed).");
+  if (r.reason === "no-agent") throw new Error("not delivered: no agent input box is visible in that pane — the agent has exited or is showing a screen squadrant does not recognise (nothing was typed).");
   throw new Error(
     r.blockedByModal
       ? "not delivered: an open dialog in the session's pane is waiting for an answer."
