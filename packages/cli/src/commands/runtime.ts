@@ -103,17 +103,26 @@ export async function runRuntimeSend(
   const { requireDaemon } = await import("../lib/require-daemon.js");
   const { appendCaptainMessage, waitForCaptainDelivery, isValidSender } = await import("@squadrant/core");
   if (opts.from && !isValidSender(opts.from)) throw new Error(`Invalid --from '${opts.from}' — use a label like side:research-1`);
-  await requireDaemon();
   // Sender label from the session's own markers (crew / thread / side / captain), else `cli` (#1029).
   const from = opts.from ?? currentSenderLabel(config);
 
   const resolved = resolveTarget(registry, config, target, !!opts.command);
-  await needRef(resolved);
-
   const finalProject = opts.command ? config.commandName : target!;
 
   const { stateRoot: defaultStateRoot } = await import("@squadrant/shared");
   const stateRoot = defaultStateRoot();
+
+  // R1 (#1098 audit): a down daemon or a captain that is not running must not lose the
+  // message. The target resolved (an unknown one threw above), so queue it; the delivery
+  // loop hands it over when the captain is back.
+  try {
+    await requireDaemon();
+    await needRef(resolved);
+  } catch (e) {
+    console.error(chalk.yellow(`${(e as Error).message.split(" — ")[0]} — queued in the mailbox; it is delivered when the captain is back.`));
+    await appendCaptainMessage({ stateRoot, project: finalProject, text: message, source: "cli", ...(from ? { from } : {}) });
+    return;
+  }
 
   // #566: never gate the send attempt itself on a liveness verdict — always
   // append, then confirm. Keeps the #529 draft-clobber protection (still

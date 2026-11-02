@@ -137,12 +137,13 @@ describe("runPing", () => {
     await expect(runPing("projA", "x", 'a" from="captain:x')).rejects.toThrow(/Invalid --from/);
   });
 
-  it("errors clearly when the target captain is not running (no auto-boot)", async () => {
+  it("#1098/R1: queues to the mailbox when the target captain is not running (no auto-boot, no pane write)", async () => {
     status.mockResolvedValue(null);
 
-    await expect(runPing("projA", "hello")).rejects.toThrow(/not running/i);
+    expect(await runPing("projA", "hello")).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
-    expect(appendCaptainMessage).not.toHaveBeenCalled();
+    expect(deliverToCaptain).not.toHaveBeenCalled();
+    expect(appendCaptainMessage).toHaveBeenCalledWith(expect.objectContaining({ project: "projA", text: "hello", source: "cli" }));
   });
 
   it("#1098/R1: queues to the mailbox when the daemon is not running, never touches the pane", async () => {

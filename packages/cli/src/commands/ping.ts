@@ -43,14 +43,16 @@ export async function runPing(project: string, message: string, fromOpt?: string
   // validated (an unknown one threw above), so queue it for the mailbox; the daemon
   // drains it to the captain when it next starts.
   const stateRoot = defaultStateRoot();
+  // The same holds when the daemon is up but the captain workspace is not running.
   try {
     await requireDaemon();
+    await needRef(resolved);
   } catch (e) {
-    console.error(chalk.yellow(`${(e as Error).message.split(" — ")[0]} — queued in the mailbox; it is delivered when the daemon starts.`));
+    const why = (e as Error).message.split(" — ")[0];
+    console.error(chalk.yellow(`${why} — queued in the mailbox; it is delivered when the captain is back.`));
     await appendCaptainMessage({ stateRoot, project, text: message, source: "cli", from });
     return undefined;
   }
-  await needRef(resolved);
 
   const mode = resolveCaptainChannelMode(config.defaults);
   // #786: route by the captain's agent (launch record, else config) so an

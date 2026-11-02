@@ -218,9 +218,8 @@ async function forwardRefusedSignal(
   const marker = reviewNoticeMarker(taskId);
   const hash = createHash("sha256").update(`${signal}\0${message ?? ""}`).digest("hex");
   if (existsSync(marker) && readFileSync(marker, "utf8") === hash) return;
-  mkdirSync(join(marker, ".."), { recursive: true });
-  writeFileSync(marker, hash);
   const who = name ?? taskId.slice(0, 8);
+  // The marker is written only after the append succeeds, so a failed forward can be retried (R4).
   await appendCaptainMessage({
     stateRoot: stateRoot(),
     project,
@@ -228,6 +227,8 @@ async function forwardRefusedSignal(
     source: "cli",
     from: `crew:${who}`,
   });
+  mkdirSync(join(marker, ".."), { recursive: true });
+  writeFileSync(marker, hash);
 }
 
 /** #1039: one-line success confirmation for `crew signal`, so a crew can tell the signal landed. */
