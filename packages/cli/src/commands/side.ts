@@ -16,6 +16,7 @@ import {
 import { resolveCaptainWorkspace, sendFirstTurnWhenReady } from "@squadrant/workspaces";
 import { resolveTextInput } from "@squadrant/shared";
 import { watchClaudeSideBoot } from "../lib/first-turn-peer.js";
+import { withSessionDelivery } from "../lib/session-delivery-factory.js";
 import {
   buildSideFirstTurn,
   runSideSpawn as coreRunSideSpawn,
@@ -23,6 +24,7 @@ import {
   runSideList as coreRunSideList,
   runSideClose as coreRunSideClose,
   type SideSpawnInput,
+  type SessionDelivery,
 } from "@squadrant/core";
 
 export { buildSideFirstTurn, type SideSpawnInput };
@@ -61,7 +63,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
     `side.${input.role}.${agent.templateSuffix}.md`,
   );
 
-  const agentCmdFactory = (spawnCwd: string, init?: { initPromptFile: string }) =>
+  const agentCmdFactory = (spawnCwd: string, init?: { initPromptFile: string }, messagingSocketPath?: string) =>
     agent.buildCommand({
       prompt: input.topic,
       workdir: spawnCwd,
@@ -69,6 +71,7 @@ export async function runSideSpawn(input: SideSpawnInput): Promise<PaneRef> {
       promptFile: fs.existsSync(promptFile) ? promptFile : undefined,
       interactive: true,
       ...(init ? { initPromptFile: init.initPromptFile } : {}),
+      ...(messagingSocketPath ? { messagingSocketPath } : {}),
       permissionMode: config.defaults.permissions?.crew ?? "auto",
       ...(sideModel ? { model: sideModel } : {}),
       ...(sideThinking ? { thinking: sideThinking } : {}),
@@ -87,9 +90,9 @@ export async function runSideSend(
   project: string,
   name: string,
   message: string,
-): Promise<void> {
+): Promise<SessionDelivery> {
   const { runtime, workspaceId } = await resolveCaptainWorkspace(project);
-  await coreRunSideSend(runtime, workspaceId, project, name, message);
+  return withSessionDelivery(runtime, (delivery) => coreRunSideSend(runtime, workspaceId, project, name, message, delivery));
 }
 
 export async function runSideList(
@@ -201,8 +204,8 @@ sideCommand
           filePath: opts.messageFile,
           label: "message",
         });
-        await runSideSend(project, name, resolvedMessage);
-        console.log(chalk.green(`✔ Sent to ${project}:${name} (pasted into its pane; receipt not confirmed)`));
+        const r = await runSideSend(project, name, resolvedMessage);
+        console.log(chalk.green(`✔ Sent to ${project}:${name} (${r.detail})`));
       } catch (err) {
         console.error(chalk.red((err as Error).message));
         process.exit(1);

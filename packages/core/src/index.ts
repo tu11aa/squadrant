@@ -38,6 +38,7 @@ export * from "./restart-daemon.js";
 export * from "./restart-trigger.js";
 export * from "./group-dispatch.js";
 export * from "./launch-workspace.js";
+export * from "./session-delivery.js";
 export * from "./side-session.js";
 export * from "./threads.js";
 export * from "./crew-spawn.js";
