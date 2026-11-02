@@ -39,13 +39,22 @@ export async function runPing(project: string, message: string, fromOpt?: string
   const registry = buildRegistry();
   const resolved = resolveTarget(registry, config, project, false);
   
-  await requireDaemon();
+  // R1 (#1098 audit): a down daemon must not lose the message. The project is already
+  // validated (an unknown one threw above), so queue it for the mailbox; the daemon
+  // drains it to the captain when it next starts.
+  const stateRoot = defaultStateRoot();
+  try {
+    await requireDaemon();
+  } catch (e) {
+    console.error(chalk.yellow(`${(e as Error).message.split(" — ")[0]} — queued in the mailbox; it is delivered when the daemon starts.`));
+    await appendCaptainMessage({ stateRoot, project, text: message, source: "cli", from });
+    return undefined;
+  }
   await needRef(resolved);
-  
+
   const mode = resolveCaptainChannelMode(config.defaults);
   // #786: route by the captain's agent (launch record, else config) so an
   // opencode captain is reached over its HTTP channel, not the claude socket.
-  const stateRoot = defaultStateRoot();
   const { channels, agentFor } = mode === "off"
     ? { channels: {} as Record<string, ControlChannel>, agentFor: () => undefined }
     : await buildCaptainChannels({ stateRoot, configAgent: config.defaults.roles?.captain?.agent });

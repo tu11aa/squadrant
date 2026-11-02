@@ -1288,3 +1288,53 @@ describe("sendFirstTurnWhenReady — agent never started (#892)", () => {
     });
   }
 });
+
+// ─── #1098: never type into a pane whose agent is not running ────────────────
+
+describe("confirmedSendToPane — no agent in the pane (#1098)", () => {
+  const pane: PaneRef = { workspaceId: "w:1", surfaceId: "s:1" };
+  const rule = "─".repeat(40);
+  const shapes: Record<string, string> = {
+    "bare zsh prompt": "tu@mac squadrant % ",
+    "bare zsh after a message ran as a command": "zsh: command not found: 📨\ntu@mac squadrant % ",
+    "bare bash prompt": "bash-5.2$ ",
+    "blank pane": "",
+    // codex draws a bare "›" composer with no rules; the box can't be recognised, so refuse.
+    "codex composer (unrecognised)": "  › Ask Codex to do something\n\n  ? for shortcuts",
+  };
+  const sends = (screen: string) => {
+    const readPaneScreen = vi.fn(async () => screen);
+    const pasteToPane = vi.fn();
+    const sendKeyToPane = vi.fn();
+    return { readPaneScreen, pasteToPane, sendKeyToPane };
+  };
+
+  it.each(Object.entries(shapes))("%s: refuses with no-agent and types nothing", async (_n, screen) => {
+    const rt = sends(screen);
+    const r = await confirmedSendToPane(rt, pane, "x $(touch /tmp/PWNED)");
+    expect(r).toEqual({ delivered: false, reason: "no-agent" });
+    expect(rt.pasteToPane).not.toHaveBeenCalled();
+    expect(rt.sendKeyToPane).not.toHaveBeenCalled();
+  });
+
+  it("refuses a bare shell even when the native input state says empty", async () => {
+    const rt = { ...sends("tu@mac squadrant % "), inputState: vi.fn(async () => "empty" as const) };
+    expect(await confirmedSendToPane(rt as never, pane, "hi")).toEqual({ delivered: false, reason: "no-agent" });
+    expect(rt.pasteToPane).not.toHaveBeenCalled();
+  });
+
+  describe("a live agent box is not refused", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    const claudeBox = `${rule}\n❯ \n${rule}\n  ⏵⏵ bypass permissions on`;
+    const opencodeBox = "  ┃\n  ┃  Ask anything…\n  ┃  Build · Model · high\n  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n";
+    it.each([["claude", claudeBox], ["opencode", opencodeBox]])("%s box: reaches the paste", async (_n, screen) => {
+      const rt = sends(screen);
+      const p = confirmedSendToPane(rt, pane, "hi");
+      await vi.advanceTimersByTimeAsync(20000);
+      await p;
+      expect(rt.pasteToPane).toHaveBeenCalledWith(pane, "hi");
+    });
+  });
+});

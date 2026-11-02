@@ -21,9 +21,10 @@ function harness(opts: {
   mode?: "off" | "shadow" | "on";
   channel?: ControlChannel;
   paneDelivered?: boolean;
+  paneReason?: "no-agent";
 } = {}) {
   const logs: string[] = [];
-  const sendToPane = vi.fn(async () => ({ delivered: opts.paneDelivered ?? true }));
+  const sendToPane = vi.fn(async () => ({ delivered: opts.paneDelivered ?? true, ...(opts.paneReason ? { reason: opts.paneReason } : {}) }));
   const runtime = {
     listPanes: async () => [{ paneId: "p1", title: `🔧 ${PROJECT}:${NAME}` }],
     listSurfaces: async () => [{ id: "p1", title: `🔧 ${PROJECT}:${NAME}`, command: "" }],
@@ -124,6 +125,17 @@ describe("runCrewSend — mode: on", () => {
     await runCrewSend(PROJECT, NAME, "hi", runtime, "ws", deps);
     expect(sendToPane).toHaveBeenCalledOnce();
     expect(logs.join("\n")).toContain("gone");
+  });
+
+  it("#1098: gone + a pane with no agent throws the not-running error, not the submit-unconfirmed one", async () => {
+    const { runtime, deps, sendToPane } = harness({
+      mode: "on",
+      channel: makeChannel({ send: async () => ({ status: "gone" }) }),
+      paneDelivered: false,
+      paneReason: "no-agent",
+    });
+    await expect(runCrewSend(PROJECT, NAME, "x $(touch /tmp/PWNED)", runtime, "ws", deps)).rejects.toThrow(/agent in that pane is not running/);
+    expect(sendToPane).toHaveBeenCalledOnce();
   });
 
   it("falls back on unsupported and logs why — a silent fallback is forbidden", async () => {
