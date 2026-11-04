@@ -6,6 +6,7 @@ import type { RuntimeDriver } from "@squadrant/shared";
 import { isolatedSessionEnvPrefix } from "@squadrant/shared";
 import { shouldStartFresh, recordSession } from "./session-freshness.js";
 import { boundedLaunchLine } from "./launch-line.js";
+import { isDaemonSocketLive } from "./protocol.js";
 
 // ─── deliverStartupPrompt ────────────────────────────────────────────────────
 
@@ -131,6 +132,29 @@ export interface BootWorkspaceOpts {
   onStoppingStale?: (name: string) => void;
   onAlreadyExists?: (name: string) => void;
   onCreated?: (name: string) => void;
+  /**
+   * #1104: the agent's `--messaging-socket-path`. Stopping a stale workspace
+   * only signals its agent; the old process keeps listening here for a few
+   * seconds, and Claude Code refuses to start on a live socket path (the
+   * startup prompt then lands in the bare shell). When set, spawn waits until
+   * nothing listens here.
+   */
+  messagingSocketPath?: string;
+  /** Bound for that wait (default 10s); on timeout the boot throws without spawning. */
+  staleExitTimeoutMs?: number;
+}
+
+async function waitForSocketRelease(sockPath: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (await isDaemonSocketLive(sockPath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the old agent is still listening on ${sockPath} ${Math.round(timeoutMs / 1000)}s after its workspace was closed — ` +
+          `stop that process, then re-run launch`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
 }
 
 /**
@@ -151,6 +175,9 @@ export async function bootWorkspace(opts: BootWorkspaceOpts): Promise<void> {
       await runtime.stop(existing.id);
     } catch (e) {
       process.stderr.write(`(stale workspace '${workspaceName}' close failed: ${(e as Error).message})\n`);
+    }
+    if (opts.messagingSocketPath) {
+      await waitForSocketRelease(opts.messagingSocketPath, opts.staleExitTimeoutMs ?? 10_000);
     }
   } else if (existing) {
     opts.onAlreadyExists?.(workspaceName);
@@ -227,6 +254,8 @@ export interface LaunchOneOpts {
   onStoppingStale?: (name: string) => void;
   onAlreadyExists?: (name: string) => void;
   onCreated?: (name: string) => void;
+  /** #1104: see BootWorkspaceOpts.messagingSocketPath. */
+  messagingSocketPath?: string;
 }
 
 /**
@@ -281,5 +310,6 @@ export async function launchOneWorkspace(opts: LaunchOneOpts): Promise<void> {
     onStoppingStale: opts.onStoppingStale,
     onAlreadyExists: opts.onAlreadyExists,
     onCreated: opts.onCreated,
+    messagingSocketPath: opts.messagingSocketPath,
   });
 }
