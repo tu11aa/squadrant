@@ -13,8 +13,8 @@ import type { ArchivedHandoff } from "./handoff-facts.js";
  *  The live `handoff.json` counts because `handoff facts` runs BEFORE `read-handoff.sh` archives it:
  *  looking only in handoffs/ made facts bound the gap by an older archive and print a stale copy,
  *  while the captain read the real one separately. When the live file wins, its content is not
- *  repeated (`live: true`, `content: null`) — the captain reads it via read-handoff.sh. */
-export function readNewestArchivedHandoff(spokeVault: string, now: number): ArchivedHandoff | null {
+ *  repeated (`live: true`, `content: null`) — the captain reads it via read-handoff.sh. `includeLive: false` restricts to handoffs/ (callers that sweep the live file separately). */
+export function readNewestArchivedHandoff(spokeVault: string, now: number, includeLive = true): ArchivedHandoff | null {
   const dir = path.join(spokeVault, "handoffs");
   const archived = fs.existsSync(dir)
     ? fs
@@ -26,7 +26,7 @@ export function readNewestArchivedHandoff(spokeVault: string, now: number): Arch
         })
     : [];
   const liveFile = path.join(spokeVault, "handoff.json");
-  const live = fs.existsSync(liveFile) ? [{ name: "handoff.json", full: liveFile, mtime: fs.statSync(liveFile).mtime, live: true }] : [];
+  const live = includeLive && fs.existsSync(liveFile) ? [{ name: "handoff.json", full: liveFile, mtime: fs.statSync(liveFile).mtime, live: true }] : [];
 
   const candidates = [...archived, ...live].sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
