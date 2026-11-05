@@ -176,7 +176,10 @@ export interface ArchivedHandoff {
   filename: string;
   path: string;
   ageMs: number;
+  /** Null when `live` — the captain reads that file via read-handoff.sh, so it is not repeated here. */
   content: unknown;
+  /** True when this is the not-yet-archived `handoff.json` (the checkpoint only bounds the gap). */
+  live?: true;
 }
 
 /** Past this age, a local-git-sourced aheadOfBase gets an explicit staleness warning. */

@@ -14,7 +14,9 @@ import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
-export const CLAUDE_MEM_RECENCY_LIMIT = 20;
+export const CLAUDE_MEM_RECENCY_LIMIT = 5;
+/** Per-decision text cap — old crew briefs run to several KB and the handoff already records them. */
+export const CLAUDE_MEM_DECISION_TEXT_MAX = 600;
 
 interface SummaryRow {
   request: string | null;
@@ -40,6 +42,10 @@ function decisionText(row: DecisionRow): string {
     }
   }
   return row.narrative ?? "";
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
 /** Read-only claude-mem query. Returns null only when the db itself can't be consulted. */
@@ -70,7 +76,7 @@ export function queryClaudeMem(dbPath: string, project: string): ClaudeMemSummar
 
     const recentDecisions = decisionRows.map((r) => ({
       title: r.title,
-      text: decisionText(r),
+      text: truncate(decisionText(r), CLAUDE_MEM_DECISION_TEXT_MAX),
       createdAt: r.created_at,
     }));
 

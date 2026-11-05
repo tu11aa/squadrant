@@ -463,6 +463,13 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
+**End-of-day handoff.** When the operator asks for the end-of-day handoff, do not append to the existing one: rewrite it as a consolidated summary. Read the current `handoff.json`, then:
+- Drop items that are done. Verify each against git, PRs and issues (`git log`, `gh pr view`, `gh issue view`); never guess. When you cannot verify an item, keep it.
+- Merge duplicates and restate overlapping items once.
+- Keep EVERY still-open item (`openBranches`, `nextSteps`, `blockedItems`) and EVERY decision in `decisions`, including all `[thread <id>] …` lines.
+
+Then write it with `write-handoff.sh`. A rollover during the day keeps its current behavior (carry over and append, no consolidation).
+
 ### Rollover (context getting full, Claude captains)
 
 `/squadrant:rollover` (alias `/squadrant:roll`) does the three manual steps in one go: handoff + daily log → `squadrant captain compact {project}` (the daemon types `/compact` once your turn ends and the input box is clear) → after the compact, the SessionStart hook injects your latest handoff and you continue from `nextSteps`. The same re-injection happens for a `/compact` the operator types by hand.
