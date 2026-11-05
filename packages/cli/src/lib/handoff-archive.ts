@@ -8,19 +8,27 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ArchivedHandoff } from "./handoff-facts.js";
 
-/** The newest `<spokeVault>/handoffs/*.json` by mtime, skipping a corrupt file in favor of the next-newest valid one. Null if none exist / all are corrupt. */
-export function readNewestArchivedHandoff(spokeVault: string, now: number): ArchivedHandoff | null {
+/** The newest of `<spokeVault>/handoffs/*.json` and the not-yet-archived `<spokeVault>/handoff.json`, by mtime, skipping a corrupt file in favor of the next-newest valid one. Null if none exist / all are corrupt.
+ *
+ *  The live `handoff.json` counts because `handoff facts` runs BEFORE `read-handoff.sh` archives it:
+ *  looking only in handoffs/ made facts bound the gap by an older archive and print a stale copy,
+ *  while the captain read the real one separately. When the live file wins, its content is not
+ *  repeated (`live: true`, `content: null`) — the captain reads it via read-handoff.sh. `includeLive: false` restricts to handoffs/ (callers that sweep the live file separately). */
+export function readNewestArchivedHandoff(spokeVault: string, now: number, includeLive = true): ArchivedHandoff | null {
   const dir = path.join(spokeVault, "handoffs");
-  if (!fs.existsSync(dir)) return null;
+  const archived = fs.existsSync(dir)
+    ? fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isFile() && e.name.endsWith(".json"))
+        .map((e) => {
+          const full = path.join(dir, e.name);
+          return { name: e.name, full, mtime: fs.statSync(full).mtime, live: false };
+        })
+    : [];
+  const liveFile = path.join(spokeVault, "handoff.json");
+  const live = includeLive && fs.existsSync(liveFile) ? [{ name: "handoff.json", full: liveFile, mtime: fs.statSync(liveFile).mtime, live: true }] : [];
 
-  const candidates = fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".json"))
-    .map((e) => {
-      const full = path.join(dir, e.name);
-      return { name: e.name, full, mtime: fs.statSync(full).mtime };
-    })
-    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+  const candidates = [...archived, ...live].sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
   for (const candidate of candidates) {
     let content: unknown;
@@ -29,7 +37,7 @@ export function readNewestArchivedHandoff(spokeVault: string, now: number): Arch
     } catch {
       continue; // corrupt — try the next-newest
     }
-    return { filename: candidate.name, path: candidate.full, ageMs: now - candidate.mtime.getTime(), content };
+    return { filename: candidate.name, path: candidate.full, ageMs: now - candidate.mtime.getTime(), content: candidate.live ? null : content, ...(candidate.live ? { live: true } : {}) };
   }
   return null;
 }

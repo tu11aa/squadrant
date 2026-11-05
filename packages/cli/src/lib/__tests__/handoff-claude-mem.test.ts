@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { queryClaudeMem, CLAUDE_MEM_RECENCY_LIMIT } from "../handoff-claude-mem.js";
+import { queryClaudeMem, CLAUDE_MEM_RECENCY_LIMIT, CLAUDE_MEM_DECISION_TEXT_MAX } from "../handoff-claude-mem.js";
 
 function makeFixtureDb(dbPath: string): DatabaseSync {
   const db = new DatabaseSync(dbPath);
@@ -129,6 +129,15 @@ describe("queryClaudeMem", () => {
 
     expect(result?.recentDecisions).toHaveLength(CLAUDE_MEM_RECENCY_LIMIT);
     expect(result?.recentDecisions[0].title).toBe(`D${CLAUDE_MEM_RECENCY_LIMIT + 4}`);
+  });
+
+  it("truncates a long decision text to CLAUDE_MEM_DECISION_TEXT_MAX", () => {
+    const db = makeFixtureDb(dbPath);
+    insertObservation(db, { project: "squadrant", type: "decision", title: "Long", narrative: "x".repeat(CLAUDE_MEM_DECISION_TEXT_MAX + 500), createdAt: "2026-08-02T00:00:00.000Z", epoch: 1 });
+    db.close();
+    const text = queryClaudeMem(dbPath, "squadrant")?.recentDecisions[0].text ?? "";
+    expect(text.length).toBe(CLAUDE_MEM_DECISION_TEXT_MAX + 1);
+    expect(text.endsWith("…")).toBe(true);
   });
 
   it("computes oldestCreatedAt across the summary and considered decisions", () => {

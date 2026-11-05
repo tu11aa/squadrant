@@ -31,7 +31,7 @@ export function compactHandoffContext(
   try {
     handoff = fs.readFileSync(path.join(dir, "handoff.json"), "utf-8");
   } catch {
-    const archived = readNewestArchivedHandoff(dir, Date.now());
+    const archived = readNewestArchivedHandoff(dir, Date.now(), false);
     if (archived) handoff = JSON.stringify(archived.content, null, 2);
   }
   if (!handoff) return "";

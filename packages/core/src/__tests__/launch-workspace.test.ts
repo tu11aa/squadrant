@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import net from "node:net";
 import type { RuntimeDriver } from "@squadrant/shared";
 import { bootWorkspace, launchOneWorkspace } from "../launch-workspace.js";
 import { saveSessions, computeTemplateHash } from "../session-freshness.js";
@@ -150,5 +151,65 @@ describe("bootWorkspace stale-workspace stop (B3)", () => {
     } finally {
       stderrSpy.mockRestore();
     }
+  });
+});
+
+describe("bootWorkspace waits for the stale agent's messaging socket (#1104)", () => {
+  function staleRuntime(): RuntimeDriver {
+    return {
+      ...makeRuntime(),
+      status: vi.fn().mockResolvedValue({ id: "workspace:9", name: "cap", status: "running" }),
+      stop: vi.fn().mockResolvedValue(undefined),
+      spawn: vi.fn().mockResolvedValue({ id: "workspace:10", name: "cap", status: "running" }),
+    } as unknown as RuntimeDriver;
+  }
+
+  function listen(sockPath: string): Promise<net.Server> {
+    return new Promise((resolve) => {
+      const server = net.createServer((c) => c.destroy());
+      server.listen(sockPath, () => resolve(server));
+    });
+  }
+
+  it("spawns only after the old listener is gone", async () => {
+    const sock = path.join(tmpDir, "cap.sock");
+    const server = await listen(sock);
+    let closedAt = 0;
+    setTimeout(() => server.close(() => { closedAt = Date.now(); }), 300);
+    const runtime = staleRuntime();
+    let spawnedAt = 0;
+    (runtime.spawn as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      spawnedAt = Date.now();
+      return { id: "workspace:10", name: "cap", status: "running" };
+    });
+
+    await bootWorkspace({ runtime, workspaceName: "cap", agentCmd: "claude", forceFresh: true, messagingSocketPath: sock });
+
+    expect(closedAt).toBeGreaterThan(0);
+    expect(spawnedAt).toBeGreaterThanOrEqual(closedAt);
+  });
+
+  it("fails loudly and does not spawn when the socket stays live", async () => {
+    const sock = path.join(tmpDir, "cap.sock");
+    const server = await listen(sock);
+    const runtime = staleRuntime();
+    try {
+      await expect(bootWorkspace({
+        runtime, workspaceName: "cap", agentCmd: "claude", forceFresh: true,
+        messagingSocketPath: sock, staleExitTimeoutMs: 300,
+      })).rejects.toThrow(/still listening/);
+      expect(runtime.spawn).not.toHaveBeenCalled();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("spawns at once when nothing listens (stale file or no file)", async () => {
+    const runtime = staleRuntime();
+    await bootWorkspace({
+      runtime, workspaceName: "cap", agentCmd: "claude", forceFresh: true,
+      messagingSocketPath: path.join(tmpDir, "missing.sock"), staleExitTimeoutMs: 300,
+    });
+    expect(runtime.spawn).toHaveBeenCalled();
   });
 });

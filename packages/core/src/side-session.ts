@@ -23,6 +23,7 @@ import { SIDE_SESSION_ENV } from "./permission-gate.js";
 import { spillOversizedFirstTurn } from "./first-turn-spill.js";
 import { frameMessage, frameFirstTurn } from "./squadrant-message.js";
 import { sideStateDir, writeSideInitPrompt } from "./first-turn-init.js";
+import { deliverToSession, isSidePinned, markSidePinned, prepareSessionSocket, sideSocketPath, type SessionDelivery, type SessionDeliveryDeps } from "./session-delivery.js";
 
 // ─── naming primitives ────────────────────────────────────────────────────────
 // These parallel the crew naming helpers in crew-protocol.ts but use the 🗒
@@ -99,8 +100,9 @@ export interface SideSpawnDeps {
   /**
    * CLI-edge factory: called with the resolved spawn CWD (proj.path for research,
    * scratch worktree path for debug) so @squadrant/agents can set workdir correctly.
+   * `messagingSocketPath` (#1096) pins the claude peer socket so `side send` can find it.
    */
-  agentCmdFactory: (spawnCwd: string, init?: { initPromptFile: string }) => string;
+  agentCmdFactory: (spawnCwd: string, init?: { initPromptFile: string }, messagingSocketPath?: string) => string;
   /** CLI-edge: deliver the first turn when the agent pane is ready. */
   sendFirstTurn: (pane: PaneRef, firstTurn: string, preLaunchScreen: string) => Promise<{ delivered: boolean }>;
   /**
@@ -185,7 +187,21 @@ export async function runSideSpawn(
       process.stderr.write(`(side init prompt not written, falling back to a first-turn send: ${(e as Error).message})\n`);
     }
   }
-  const agentCmd = deps.agentCmdFactory(spawnCwd, initPath ? { initPromptFile: initPath } : undefined);
+  // Only claude (the agent with a boot watcher) honours a pinned socket. The pin is recorded next to
+  // init.md so a later send never falls back to the pane once claude has exited (#1096); if it cannot
+  // be recorded, launch unpinned rather than pinned-but-unrecorded.
+  let socketPath: string | undefined;
+  if (deps.watchBoot) {
+    try {
+      socketPath = sideSocketPath(input.project, name);
+      prepareSessionSocket(socketPath);
+      markSidePinned(sideStateDir(stateRoot(), input.project, name), socketPath);
+    } catch (e) {
+      socketPath = undefined;
+      process.stderr.write(`(side socket not pinned, sends will use the pane: ${(e as Error).message})\n`);
+    }
+  }
+  const agentCmd = deps.agentCmdFactory(spawnCwd, initPath ? { initPromptFile: initPath } : undefined, socketPath);
 
   const direction: PanePlacement = input.direction ?? "tab";
   const title = sideTitleFor(input.project, name);
@@ -218,7 +234,8 @@ export async function runSideSend(
   project: string,
   name: string,
   message: string,
-): Promise<void> {
+  delivery: SessionDeliveryDeps,
+): Promise<SessionDelivery> {
   const want = sideTitleFor(project, name);
   const surfaces = await runtime.listSurfaces(workspaceId);
   const pane = surfaces.find((s) => s.title === want) ?? null;
@@ -227,7 +244,7 @@ export async function runSideSend(
       `Side session '${name}' not found for ${project}. Run 'squadrant side list ${project}'.`,
     );
   }
-  await runtime.sendToPane(pane, frameMessage({ from: `captain:${project}`, project, kind: "side.send" }, message));
+  return deliverToSession(pane, sideSocketPath(project, name), isSidePinned(sideStateDir(stateRoot(), project, name)), frameMessage({ from: `captain:${project}`, project, kind: "side.send" }, message), delivery);
 }
 
 export async function runSideList(

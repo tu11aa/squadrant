@@ -338,6 +338,8 @@ export const launchCommand = new Command("launch")
       }
 
       try {
+        const captainChannelEnabled = shouldWireCaptainChannel(agentName, config);
+        const captainSock = resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName);
         await launchOneWorkspace({
           workspaceName,
           role,
@@ -347,8 +349,9 @@ export const launchCommand = new Command("launch")
           sessionsPath: sessionsPath(),
           legacySessionsPath: legacySessionsPath(),
           templatesDir: TEMPLATES_DIR,
+          // #1104: a fresh start waits for the old captain to release this socket before spawning.
+          messagingSocketPath: captainSock,
           agentCmdFactory: (forceFresh) => {
-            const captainChannelEnabled = shouldWireCaptainChannel(agentName, config);
             if (captainChannelEnabled) {
               ensureSocksDir();
             }
@@ -366,7 +369,7 @@ export const launchCommand = new Command("launch")
               route?.permissionMode ?? permissionMode,
               route?.model ?? model,
               TEMPLATES_DIR,
-              resolveCaptainSocketPath(captainChannelEnabled, projectName, workspaceName),
+              captainSock,
               resolveCaptainSessionName(agentName, projectName),
               thinking,
               captainBoot,

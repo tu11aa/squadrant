@@ -6,7 +6,7 @@ import net from "node:net";
 import { loadConfig } from "@squadrant/shared";
 import type { PaneRef, RuntimeDriver, ModalOption } from "@squadrant/shared";
 import { RuntimeRegistry } from "./runtimes/registry.js";
-import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasModalOptionList, parseModal, classifyStartupSurface, settleInputBox, submitAndConfirm, POST_SEND_CHECK_MS, SUBMIT_RETRY_LIMIT } from "./runtimes/cmux.js";
+import { createCmuxDriver, parseDraftFromScreen, hasCCInputBox, hasAgentInputBox, hasModalOptionList, parseModal, classifyStartupSurface, settleInputBox, submitAndConfirm, POST_SEND_CHECK_MS, SUBMIT_RETRY_LIMIT } from "./runtimes/cmux.js";
 import { titleFor, isCrewTitle, screenHasSplashMarker } from "@squadrant/core";
 import type { TurnAcceptanceConfig } from "@squadrant/core";
 
@@ -134,12 +134,14 @@ export async function readModalOptions(
  * exhausts without confirmation (#466: callers surface non-delivery explicitly).
  * Returns `{ delivered: false, blockedByModal: true }` without touching the
  * pane at all when an AskUserQuestion/permission SELECTION MODAL is open (#516).
+ * Returns `{ delivered: false, reason: "no-agent" }` without typing when no agent
+ * input box is on screen (#1098: the agent exited, or its box isn't recognised).
  */
 export async function confirmedSendToPane(
   runtime: Pick<RuntimeDriver, "readPaneScreen" | "pasteToPane" | "sendKeyToPane" | "inputState">,
   pane: PaneRef,
   message: string,
-): Promise<{ delivered: boolean; blockedByModal?: boolean }> {
+): Promise<{ delivered: boolean; blockedByModal?: boolean; reason?: "no-agent" }> {
   // #916: the runtime's native input state, when it has one, is authoritative
   // for dialog/draft — decided before any pane mutation. empty/unknown/undefined/
   // a throw all fall through to the screen-scrape path below, unchanged.
@@ -156,6 +158,9 @@ export async function confirmedSendToPane(
   if (hasModalOptionList(preSendScreen)) {
     return { delivered: false, blockedByModal: true };
   }
+  // #1098: no recognised agent input box means the agent has exited (a bare shell
+  // would run the message as commands) or its composer is unfamiliar. Refuse; type nothing.
+  if (!hasAgentInputBox(preSendScreen)) return { delivered: false, reason: "no-agent" };
   return submitAndConfirm(runtime, pane, message, preSendScreen);
 }
 

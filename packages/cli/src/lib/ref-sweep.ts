@@ -86,7 +86,7 @@ const kbRepos = (cfg: SquadrantConfig, home: string) =>
 export function refSites(cfg: SquadrantConfig, home = os.homedir()): RefSite[] {
   const projects = subdirs(workspaceRoot());
   // the newest archived handoff is the live checkpoint `handoff facts` reads; older ones are history
-  const checkpoints = projects.flatMap((p) => readNewestArchivedHandoff(p, Date.now())?.path ?? []);
+  const checkpoints = projects.flatMap((p) => readNewestArchivedHandoff(p, Date.now(), false)?.path ?? []);
   const sites: RefSite[] = [
     ...Object.entries(AGENT_MEMORY_DIRS).map(([agent, dirs]) => ({ site: `memory:${agent}`, files: dirs().flatMap(textFiles) })),
     { site: "workspace", files: projects.flatMap((p) => [path.join(p, "handoff.json"), ...textFiles(path.join(p, "side-handoffs"))]).filter(isFile) },

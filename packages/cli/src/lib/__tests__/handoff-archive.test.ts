@@ -91,4 +91,33 @@ describe("readNewestArchivedHandoff", () => {
     fs.writeFileSync(path.join(dir, ".DS_Store"), "junk");
     expect(readNewestArchivedHandoff(vault, NOW)).toBeNull();
   });
+
+  // The facts-before-archive ordering: read-handoff.sh has not yet moved handoff.json into handoffs/.
+  it("prefers the newer live handoff.json over an older archive, without repeating its content", () => {
+    const dir = path.join(vault, "handoffs");
+    fs.mkdirSync(dir);
+    const old = path.join(dir, "2026-07-30.json");
+    const live = path.join(vault, "handoff.json");
+    fs.writeFileSync(old, JSON.stringify({ session: { currentState: "old" } }));
+    fs.writeFileSync(live, JSON.stringify({ session: { currentState: "live" } }));
+    fs.utimesSync(old, new Date(NOW - 4 * 86_400_000), new Date(NOW - 4 * 86_400_000));
+    fs.utimesSync(live, new Date(NOW - 3_600_000), new Date(NOW - 3_600_000));
+
+    const out = readNewestArchivedHandoff(vault, NOW);
+
+    expect(out).toMatchObject({ filename: "handoff.json", live: true, content: null, ageMs: 3_600_000 });
+  });
+
+  it("keeps the archive when it is newer than a leftover live handoff.json", () => {
+    const dir = path.join(vault, "handoffs");
+    fs.mkdirSync(dir);
+    const arch = path.join(dir, "2026-08-03.json");
+    const live = path.join(vault, "handoff.json");
+    fs.writeFileSync(arch, JSON.stringify({ a: 1 }));
+    fs.writeFileSync(live, JSON.stringify({ b: 1 }));
+    fs.utimesSync(live, new Date(NOW - 2 * 86_400_000), new Date(NOW - 2 * 86_400_000));
+    fs.utimesSync(arch, new Date(NOW - 3_600_000), new Date(NOW - 3_600_000));
+
+    expect(readNewestArchivedHandoff(vault, NOW)).toMatchObject({ filename: "2026-08-03.json", content: { a: 1 } });
+  });
 });

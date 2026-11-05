@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PaneRef, RuntimeDriver } from "@squadrant/shared";
+import { threadSocketPath } from "../session-delivery.js";
 import {
   openThread, requestPark, parkThread, resumeThread, closeThread,
   listThreads, readThread, writeThread, threadIdFor, planResume, assertThreadCap,
@@ -192,14 +193,46 @@ describe("open/park/resume/close state machine", () => {
     expect(() => assertThreadCap([], 0)).toThrow(/cap/);
   });
 
-  it("park without a record asks the thread to write it; state unchanged", async () => {
+  it("park without a record asks the thread over the peer channel; state unchanged (#1096)", async () => {
     const { deps, rt } = makeDeps();
     await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
-    await requestPark("app", "auth-cache", deps);
-    expect(rt.sent.at(-1)!.pane.surfaceId).toBe("surface:1");
-    expect(rt.sent.at(-1)!.text).toContain("squadrant thread park app auth-cache --decision-file -");
-    expect(rt.sent.at(-1)!.text.split("\n")[0]).toBe("📨 captain:app → thread.park");
+    const send = vi.fn(async (_to: string, _text: string) => ({ status: "accepted", via: "claude-peer", confirmed: true }) as const);
+    const sendToPane = vi.fn(async (_pane: PaneRef, _text: string) => ({ delivered: true }));
+    const before = rt.sent.length;
+    const delivery = await requestPark("app", "auth-cache", { ...deps, delivery: { channel: { name: "claude-peer", agent: "claude", send, probe: vi.fn() }, sendToPane } });
+    expect(delivery.via).toBe("peer");
+    expect(send).toHaveBeenCalledWith(threadSocketPath("app", "auth-cache"), expect.stringContaining("squadrant thread park app auth-cache --decision-file -"));
+    expect(send.mock.calls[0][1].split("\n")[0]).toBe("📨 captain:app → thread.park");
+    expect(sendToPane).not.toHaveBeenCalled();
+    expect(rt.sent).toHaveLength(before);
     expect(readThread(root, "app", "auth-cache")?.state).toBe("open");
+  });
+
+  it("pinned thread whose socket is gone: park request throws and the pane is never touched (#1096)", async () => {
+    const { deps } = makeDeps();
+    await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    const sendToPane = vi.fn(async (_pane: PaneRef, _text: string) => ({ delivered: true }));
+    const send = vi.fn(async (_to: string, _text: string) => ({ status: "gone" }) as const);
+    await expect(requestPark("app", "auth-cache", { ...deps, delivery: { channel: { name: "claude-peer", agent: "claude", send, probe: vi.fn() }, sendToPane } })).rejects.toThrow(/no longer running/);
+    expect(sendToPane).not.toHaveBeenCalled();
+  });
+
+  it("unpinned thread (non-claude / pre-#1096): park request falls back to the chokepoint; a failed fallback throws (#1096)", async () => {
+    const { deps } = makeDeps({ agent: "opencode" });
+    await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    expect(readThread(root, "app", "auth-cache")?.socketPinned).toBe(false);
+    const sendToPane = vi.fn(async (_pane: PaneRef, _text: string) => ({ delivered: true }));
+    const delivery = await requestPark("app", "auth-cache", { ...deps, delivery: { sendToPane } });
+    expect(delivery.via).toBe("pane");
+    expect(sendToPane.mock.calls[0][0].surfaceId).toBe("surface:1");
+    await expect(requestPark("app", "auth-cache", { ...deps, delivery: { sendToPane: async () => ({ delivered: false }) } })).rejects.toThrow(/not delivered/);
+  });
+
+  it("a thread is launched with its own pinned socket (#1096)", async () => {
+    const seen: string[] = [];
+    const { deps } = makeDeps({ agentCommand: (_l, _id, socketPath) => { seen.push(socketPath); return "claude"; } });
+    await openThread({ project: "app", topic: "Auth cache", crews: [] }, deps);
+    expect(seen).toEqual([threadSocketPath("app", "auth-cache")]);
   });
 
   it("park delivers exactly one captain.message, one handoff line, closes the tab, keeps the session id", async () => {

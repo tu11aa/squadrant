@@ -221,13 +221,18 @@ async function forwardRefusedSignal(
   mkdirSync(join(marker, ".."), { recursive: true });
   writeFileSync(marker, hash);
   const who = name ?? taskId.slice(0, 8);
-  await appendCaptainMessage({
-    stateRoot: stateRoot(),
-    project,
-    text: `crew ${who} → ${signal} (not applied: ${why})${message ? `: ${message}` : ""}`,
-    source: "cli",
-    from: `crew:${who}`,
-  });
+  try {
+    await appendCaptainMessage({
+      stateRoot: stateRoot(),
+      project,
+      text: `crew ${who} → ${signal} (not applied: ${why})${message ? `: ${message}` : ""}`,
+      source: "cli",
+      from: `crew:${who}`,
+    });
+  } catch (e) {
+    rmSync(marker, { force: true }); // a failed forward must not suppress the retry (R4)
+    throw e;
+  }
 }
 
 /** #1039: one-line success confirmation for `crew signal`, so a crew can tell the signal landed. */
