@@ -19,6 +19,29 @@ if ! echo "$CONTENT" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev
   exit 1
 fi
 
+# Safety net: warn (never fail) when a "[thread <id>] ..." decision of the previous
+# handoff is missing verbatim from the new content. The previous handoff is handoff.json,
+# or (mid-session it is usually archived) the newest readable handoffs/*.json by mtime.
+python3 -c "
+import glob, json, os, sys
+live, arch, new = sys.argv[1], sys.argv[2], sys.argv[3]
+cands = [live] if os.path.isfile(live) else sorted(glob.glob(os.path.join(arch, '*.json')), key=os.path.getmtime, reverse=True)
+old = None
+for c in cands:
+    try:
+        old = json.load(open(c)).get('session', {}).get('decisions', [])
+        break
+    except Exception:
+        continue
+if not old:
+    sys.exit(0)
+lost = [d for d in old if isinstance(d, str) and d.startswith('[thread ') and json.dumps(d)[1:-1] not in new and d not in new]
+if lost:
+    print('WARNING: handoff rewrite drops %d [thread ...] decision(s) from the previous handoff:' % len(lost), file=sys.stderr)
+    for d in lost:
+        print('  - ' + d, file=sys.stderr)
+" "$HANDOFF_FILE" "$VAULT/handoffs" "$CONTENT" || true
+
 # Write with timestamp wrapper
 python3 -c "
 import json, sys

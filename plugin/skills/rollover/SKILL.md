@@ -9,7 +9,7 @@ Run once; the operator walks away. Claude Code cannot compact itself, so the dae
 
 ## Steps (in order)
 
-1. **Write a specific handoff** with `~/.config/squadrant/scripts/write-handoff.sh "{project}" '{…}'` (fields in `captain-ops` → Session Shutdown). Be concrete: `currentState` says what is in flight and where; `nextSteps` is the first actions to take, with PR/issue/crew ids; `decisions` lists what must not be revisited. Do not run `read-handoff.sh` — it would archive the file.
+1. **Write a specific handoff** with `~/.config/squadrant/scripts/write-handoff.sh "{project}" '{…}'` (fields and the consolidation rule — read the current handoff, drop verified-done, merge duplicates, keep all open items and decisions — in `captain-ops` → Session Shutdown). Be concrete: `currentState` says what is in flight and where; `nextSteps` is the first actions to take, with PR/issue/crew ids; `decisions` lists what must not be revisited. Do not run `read-handoff.sh` — it would archive the file.
 2. **Write today's daily log** with the `squadrant:daily-log` skill.
 3. **Queue the compact as your LAST action:**
    ```bash
