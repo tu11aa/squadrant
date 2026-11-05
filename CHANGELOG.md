@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-05
+
+Safe delivery. squadrant never types into a pane whose agent has exited, so message text can no longer run as a shell command. Side sessions and threads get their messages over the Claude peer channel instead of a pasted user turn, and `ping` / `runtime send` queue instead of dropping when the daemon or captain is down. A fresh relaunch no longer races the old captain's socket, and captain startup reads less: `handoff facts` drops a stale handoff copy and most claude-mem text. PRs #1097, #1099, #1105, #1106.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. Side sessions and threads started before this version keep the pane path until they are relaunched (`side spawn`, `thread resume`).
+
+### Changed
+
+- **Side send and thread park over the peer channel.** Claude side sessions and threads launch with a pinned messaging socket, and `side send` (CLI and MCP `side_send`) and the `thread park` request arrive as a `<cross-session-message>`, not a user turn. Sessions without a pinned socket (opencode, codex, older sessions) go through the confirmed-submit pane path; a pinned socket that refuses is an error and never falls back to the pane. The success line names the path (`peer channel, accepted` / `pane, submit confirmed`) (#1096, #1097).
+- **`ping` and `runtime send` queue when the target is unreachable.** When the daemon is down or the captain workspace is not running, the message is written to the mailbox and delivered later (`runtime send` prints `Queued`). An unknown project is still an error (#1098, #1099).
+- **Handoff writes consolidate.** Every handoff write (rollover and end of day) reads the previous handoff (`handoff.json`, or the newest `handoffs/*.json`), drops verified-done items, merges duplicates, and keeps every open item and decision. `write-handoff.sh` warns on stderr when a `[thread <id>]` decision of the previous handoff is missing from the new one; it still writes (#1106).
+- **Smaller `handoff facts`.** The claude-mem section keeps the 5 newest decisions, each capped at 600 characters (was 20, uncapped) (#1106).
+
+### Fixed
+
+- **Message text could run as a shell command (security).** After an agent exited, its tab is a bare shell, and a `crew send` / `side send` / daemon delivery could paste into it, so text such as `$(…)` ran. Every pane write now requires a recognised agent input box; with none, nothing is typed and the sender is told "no agent input box is visible in that pane" (#1098, #1099).
+- **`handoff facts` printed a stale handoff.** It ran before `read-handoff.sh` archives `handoff.json`, so an older archive became the checkpoint and was printed in full. The live `handoff.json` now counts, and is not repeated in the output when it wins (#1106).
+- **A fresh relaunch could fail to start the captain.** The new captain refused to start while the old one still held its messaging socket, and the startup prompt landed in the shell. The launch now waits for the socket to be released (up to 10s) and fails clearly instead of typing into a shell (#1104, #1105).
+- **A refused crew signal could leave its forward marker behind** when the mailbox append failed, so the message was never forwarded (#1099).
+
 ## [0.34.0] - 2026-10-29
 
 Knowledge base phase 2, part one, and reliable typing into panes. Every KB write now commits, so a KB repo is no longer left dirty, and one `knowledge stats` covers every KB, domain and the `_user` profile with correct numbers. Daemon-typed text such as `/compact` is now confirmed after submit, a compact returns the crew to idle, and `dev up` live checks work on the first try. PRs #1085, #1086, #1088, #1091, #1092.
