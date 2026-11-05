@@ -459,11 +459,11 @@ End-of-session writes are **opt-in**, not on a schedule. Only write what is mean
 }'
 ```
 
-`write-handoff.sh` warns on stderr when a `[thread <id>] …` decision from the existing file is missing from the new content (it still writes).
+`write-handoff.sh` warns on stderr when a `[thread <id>] …` decision from the previous handoff is missing from the new content (it still writes).
 
 If everything is shipped and there is no in-flight work, you do not need to write a handoff.
 
-**Every handoff write consolidates (rollover and end of day alike).** `write-handoff.sh` replaces the whole file, so never just append. First read the current `handoff.json` directly (`cat` or Read; never `read-handoff.sh`, it archives the file), then:
+**Every handoff write consolidates (rollover and end of day alike).** `write-handoff.sh` replaces the whole file, so never just append. First read `handoff.json` if it exists, otherwise the newest file in `handoffs/` by mtime (`cat` or Read; never `read-handoff.sh`, it archives the file), then:
 - Drop items that are done. Verify each against git, PRs and issues (`git log`, `gh pr view`, `gh issue view`); never guess. Keep anything you cannot verify.
 - Merge duplicates and restate overlapping items once.
 - Keep EVERY still-open item (`openBranches`, `nextSteps`, `blockedItems`) and EVERY decision in `decisions`, including all `[thread <id>] …` lines verbatim.

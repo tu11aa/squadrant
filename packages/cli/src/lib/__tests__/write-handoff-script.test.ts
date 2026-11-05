@@ -36,4 +36,24 @@ describe("write-handoff.sh thread-decision safety net", () => {
   it("is silent on the first write", () => {
     expect(run({ decisions: ["[thread t1] a"] }).stderr).toBe("");
   });
+
+  it("falls back to the newest readable archive when handoff.json is absent", () => {
+    const dir = path.join(ws, "proj", "handoffs");
+    fs.mkdirSync(dir, { recursive: true });
+    const old = path.join(dir, "2026-01-01.json");
+    const newer = path.join(dir, "2026-01-02.json");
+    const corrupt = path.join(dir, "2026-01-03.json");
+    fs.writeFileSync(old, JSON.stringify({ session: { decisions: ["[thread old] x"] } }));
+    fs.writeFileSync(newer, JSON.stringify({ session: { decisions: ["[thread t9] from archive"] } }));
+    fs.writeFileSync(corrupt, "{not json");
+    fs.utimesSync(old, 1000, 1000);
+    fs.utimesSync(newer, 2000, 2000);
+    fs.utimesSync(corrupt, 3000, 3000);
+
+    const r = run({ decisions: ["plain"] });
+
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain("[thread t9] from archive");
+    expect(r.stderr).not.toContain("[thread old]");
+  });
 });
