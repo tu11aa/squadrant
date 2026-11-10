@@ -11,6 +11,8 @@ describe("isDaemonCachedKey", () => {
       "defaults.router",
       "defaults.router.baseUrl",
       "projects.brove",
+      "status.enabled",
+      "status.stableAwakeMs",
     ]) {
       expect(isDaemonCachedKey(k), k).toBe(true);
     }

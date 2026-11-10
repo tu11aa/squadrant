@@ -66,14 +66,20 @@ export interface SuspensionClockOpts {
   readOs?: () => SleepWake | null;
 }
 
+/** What one tick found. `stall` = a gap the OS did not confirm (event-loop stall, SIGSTOP, App Nap). */
+export type TickResult =
+  | { kind: "none" }
+  | { kind: "suspension"; from: number; to: number }
+  | { kind: "stall"; from: number; to: number };
+
 export interface SuspensionClock {
   /** Run gap detection. Cheap; call from every timer that drives timed actions. */
-  tick(): void;
+  tick(): TickResult;
   awakeElapsed(from: number, to: number): number;
   /** True during the post-wake grace window after a suspension. */
   paused(at?: number): boolean;
   /** Record the daemon's own downtime/sleep between a previous heartbeat and this boot. */
-  recordBootGap(from: number, to: number): void;
+  recordBootGap(from: number, to: number): Suspension | null;
   list(): Suspension[];
 }
 
@@ -128,14 +134,15 @@ export function createSuspensionClock(opts: SuspensionClockOpts = {}): Suspensio
       const gap = t - lastTick;
       const from = lastTick;
       lastTick = t;
-      if (gap < 0) return; // clock set backwards
-      if (gap <= intervalMs + tickGapMs) return;
+      if (gap < 0) return { kind: "none" }; // clock set backwards
+      if (gap <= intervalMs + tickGapMs) return { kind: "none" };
       if (!confirmed(from, t)) {
         log(`event-loop stall ${Math.round(gap / 1000)}s (no OS sleep in window) — timers not paused`);
-        return;
+        return { kind: "stall", from, to: t };
       }
       add({ from, to: t, kind: "sleep" });
       log(`suspension ${new Date(from).toISOString()} -> ${new Date(t).toISOString()} (${Math.round(gap / 1000)}s)`);
+      return { kind: "suspension", from, to: t };
     },
     awakeElapsed: (from, to) => awakeElapsedMs(list, from, to),
     paused(at = now()) {
@@ -143,10 +150,12 @@ export function createSuspensionClock(opts: SuspensionClockOpts = {}): Suspensio
       return !!last && at >= last.to && at - last.to < graceMs;
     },
     recordBootGap(from, to) {
-      if (to - from <= intervalMs + tickGapMs) return;
+      if (to - from <= intervalMs + tickGapMs) return null;
       const os = readOs();
-      add({ from, to, kind: os && os.sleepMs >= from - 5_000 && os.sleepMs <= to ? "sleep" : "daemon-down" });
+      const s: Suspension = { from, to, kind: os && os.sleepMs >= from - 5_000 && os.sleepMs <= to ? "sleep" : "daemon-down" };
+      add(s);
       lastTick = now();
+      return s;
     },
     list: () => [...list],
   };

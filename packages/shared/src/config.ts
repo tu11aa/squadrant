@@ -230,6 +230,18 @@ export function resolveCaptainChannelMode(
 /** #667 per-agent control-channel rollout position. Unset ⇒ "off". */
 export type ControlChannelMode = "off" | "shadow" | "on";
 
+/** #1112: machine/session status observer (see docs/specs/2026-11-10-status-observer-design.md). */
+export interface StatusConfig {
+  /** false turns off the observer, awake-time budgets and the post-wake pause (the CREW TIMEOUT delivery fix stays on). Default true. */
+  enabled?: boolean;
+  /** A tick gap larger than the tick interval plus this is a suspension candidate. Default 30000. */
+  tickGapMs?: number;
+  /** Timer-based actions stay paused this long after a suspension ends. Default 120000. */
+  postWakeGraceMs?: number;
+  /** The machine incident closes after this long with no new suspension. Default 300000. */
+  stableAwakeMs?: number;
+}
+
 export interface SquadrantConfig {
   /** Package version that last reconciled this config. Absent on legacy/fresh configs. */
   _squadrantVersion?: string;
@@ -244,6 +256,8 @@ export interface SquadrantConfig {
   /** Optional Telegram bridge config. Absent ⇒ the bridge is never constructed
    *  (zero behavior change). See docs/superpowers/specs/2026-06-22-telegram-integration-v1-design.md. */
   telegram?: TelegramConfig;
+  /** #1112 status observer. Absent ⇒ enabled with the defaults below. */
+  status?: StatusConfig;
   projection?: {
     targets?: string[];
   };

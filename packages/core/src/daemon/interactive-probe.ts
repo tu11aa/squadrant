@@ -149,6 +149,8 @@ interface InteractiveProbeDeps {
   // firePush would never fire for it; the pipeline requires calling notify
   // directly, same as every other notify-only synthetic event).
   notify?: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
+  // #1112: every pane-detected error observation (before the warn dedup), for the status file.
+  onError?: (rec: TaskRecord, cls: ProbeErrorClass, text: string) => void;
 }
 
 export function createInteractiveProbe(deps: InteractiveProbeDeps): {
@@ -198,6 +200,7 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
         const alive = deps.checkAlive ? await deps.checkAlive(rec) : "unknown";
         if (alive !== "gone") {
           const cls = verdict.errorClass ?? "other";
+          try { deps.onError?.(rec, cls, verdict.text); } catch { /* observer is best-effort */ }
           let w = warned.get(rec.id);
           if (!w || w.hb !== rec.lastHeartbeat) {
             w = { hb: rec.lastHeartbeat, classes: new Set() };

@@ -3,13 +3,14 @@
 // wake. Assert: the captain gets at most one alert per crew per error class, and no
 // live crew is cancelled by the wall-clock ceiling.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "../store.js";
 import { createDaemon } from "../daemon/reduce.js";
 import { createInteractiveProbe } from "../daemon/interactive-probe.js";
 import { createSuspensionClock } from "../daemon/suspensions.js";
+import { createStatusObserver, feedEvent } from "../daemon/status-observer.js";
 import type { ControlEvent, TaskRecord } from "@squadrant/shared";
 
 const MIN = 60_000;
@@ -48,17 +49,19 @@ async function replayNight(withSuspensionClock: boolean) {
       ...(withSuspensionClock ? { awakeElapsed: clock.awakeElapsed, timersPaused: clock.paused } : {}),
       isSurfaceAlive: async () => "alive",
     });
+    const obs = createStatusObserver({ dir: join(dir, "status"), suspensions: clock.list, now: () => t, tickIntervalMs: 10_000 });
     let tail = "";
     const probe = createInteractiveProbe({
       project: "p", listTasks: async () => store.list("p"), readPaneTail: async () => tail,
       sendEvent: async () => {}, now: () => t, log: () => {}, checkAlive: async () => "alive", notify,
+      onError: withSuspensionClock ? (rec, cls, text) => obs.sessionError(rec.project, rec.id, cls, "probe", text) : undefined,
     });
 
     let spin = 0;
     for (let wake = 0; wake < 61; wake++) {
       t += 15 * MIN; // asleep
       for (let s = 0; s < 12; s++) { // awake ~2 min, ticking every 10s
-        if (withSuspensionClock) clock.tick();
+        if (withSuspensionClock) { obs.tick(clock.tick()); obs.syncSessions(store.list("p")); }
         spin++;
         tail = [wake % 2 ? DNS : SLEEP, RETRY(spin % 9), `✻ Thinking… (${spin}s)`, ...BOX].join("\n");
         await probe.tick();
@@ -67,8 +70,16 @@ async function replayNight(withSuspensionClock: boolean) {
         t += 10_000;
       }
     }
+    // The morning after: the machine stays awake past stableAwakeMs and both crews heartbeat again.
+    if (withSuspensionClock) {
+      for (let s = 0; s < 40; s++) { t += 10_000; obs.tick(clock.tick()); }
+      for (const id of ["a", "b"]) feedEvent(obs, store.get("p", id)!, { type: "heartbeat", id } as ControlEvent);
+      obs.flush(true);
+    }
+    const statusFile = withSuspensionClock ? JSON.parse(readFileSync(join(dir, "status", "current.json"), "utf8")) : null;
+    const incidentLog = withSuspensionClock ? readFileSync(join(dir, "status", "incidents.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
     const states = { a: store.get("p", "a")?.state, b: store.get("p", "b")?.state };
-    return { alerts, states, t };
+    return { alerts, states, t, statusFile, incidentLog };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -88,6 +99,19 @@ describe("sleep-night replay (#1112)", () => {
     expect(warns.some((w) => /Retrying/.test(w.message))).toBe(false);
     expect(alerts.filter((a) => a.type === "task.timeout")).toEqual([]);
     expect(states).toEqual({ a: "working", b: "working" });
+  });
+
+  it("status file after the night: machine awake, sessions healthy, exactly one machine open + close", async () => {
+    const { statusFile, incidentLog } = await replayNight(true);
+    const c = (subject: string, type: string) => statusFile.conditions.find((x: any) => x.subject === subject && x.type === type);
+    expect(c("machine", "Awake").status).toBe("True");
+    expect(c("network", "Reachable").status).toBe("True");
+    expect(c("session:p/a", "Reachable").status).toBe("True");
+    expect(c("session:p/b", "Reachable").status).toBe("True");
+    const machine = incidentLog.filter((r: any) => r.incident.key === "machine:asleep");
+    expect(machine.map((r: any) => r.event)).toEqual(["open", "close"]);
+    expect(statusFile.incidents.filter((i: any) => !i.closedAt)).toEqual([]);
+    expect(statusFile.suspensions.length).toBeGreaterThan(0);
   });
 
   it("control: without the suspension clock the same night cancels the live crews", async () => {

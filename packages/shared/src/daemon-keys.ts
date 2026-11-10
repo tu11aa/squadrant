@@ -4,6 +4,7 @@ const DAEMON_CACHED_PREFIXES = [
   "defaults.cmuxEventsBridge",
   "defaults.router",
   "projects.",
+  "status.", // #1112: observer + clock are built once at boot
 ];
 
 export function isDaemonCachedKey(dottedKey: string): boolean {

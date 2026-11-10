@@ -108,6 +108,8 @@ export interface DaemonDeps {
    * takeover nudge) are skipped while it holds; evidence-based reaps are not.
    */
   timersPaused?: (at: number) => boolean;
+  /** #1112: observer hook, called after every applied event. Best-effort: errors are swallowed. */
+  onEvent?: (record: TaskRecord, event: ControlEvent) => void;
 }
 
 // #466: dedicated, tight budget for detecting an undelivered first turn —
@@ -569,7 +571,9 @@ export function createDaemon(deps: DaemonDeps) {
           if (!KNOWN_EVENT_TYPES.has((req.event as any).type)) {
             throw new Error(`unknown event type '${(req.event as any).type}' — not a valid ControlEvent`);
           }
-          return applyEvent(req.project, req.event);
+          const applied = await applyEvent(req.project, req.event);
+          try { deps.onEvent?.(applied, req.event); } catch { /* observer must never break event handling */ }
+          return applied;
         }
         case "status": {
           const r = store.get(req.project, req.id);

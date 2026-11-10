@@ -541,7 +541,33 @@ A laptop with the lid shut used to flood the captain and cancel live crews: ever
 - **Budgets count awake time.** The daemon detects a machine suspension on a 5 s heartbeat (and at the start of every sweep): a gap between ticks larger than the interval + 30 s, **confirmed by the OS** (macOS: `sysctl kern.sleeptime kern.waketime` must show a sleep inside the gap, dark wakes included; bounded to 1 s). Where the OS cannot answer (non-macOS, or the call fails) the tick gap alone counts. A gap the OS does not confirm is an event-loop stall and is not a suspension. The last 48 h of suspensions are persisted in `<stateRoot>/status/suspensions.json`; a daemon boot after a gap records the gap too (`sleep` if the OS saw one, else `daemon-down`), so a restart after an overnight sleep cannot fire the ceiling at once. `awakeElapsed(from, to)` (wall time minus the overlap with suspensions) now drives: the task ceiling, `evaluateStall` (tool / Monitor budgets and the headless heartbeat), the stall escalation, `CREW QUIET`, the blocked re-nudge, the first-turn recovery and resend, and the takeover nudge.
 - **Pause.** For `120 s` after a suspension ends (post-wake grace) those timer-based actions are skipped, because the crew's own heartbeats have not caught up yet. Evidence-based reaps are never paused: `sweep.surface-gone`, `task.session.ended`, and the probe's error + gone → `task.failed`.
 
-Not in P0 (later phases of the design): the status file and incident log, cross-crew inhibition of a shared cause, `CREW OVERTIME` instead of cancelling a live crew past the ceiling, the Telegram outbox, the `status` config block (thresholds are constants for now), the `squadrant status` view. Wall-clock budgets of crews on a machine that never sleeps are unchanged.
+#### Status files and `status` config (#1112, P1: status file)
+
+The daemon writes what it observed under `<stateRoot>/status/` (one directory per daemon, so a dev daemon never touches production). It only **records**: no alert is sent, held or changed because of it. Names used below: a *condition* is one yes/no fact about one subject (shaped like a Kubernetes condition); an *incident* is the open→close span of a bad condition.
+
+| File | What it holds |
+|---|---|
+| `current.json` | Atomic snapshot (tmp + rename): `{ schema, updatedAt, daemon:{pid,lastTickWall,tickIntervalMs}, suspensions[], conditions[], incidents[] }`. Rewritten on change and at least every 30 s. `suspensions[]` mirrors `suspensions.json`; that file keeps its own persistence (the clock owns it), and the snapshot just copies it, which avoids a migration. `incidents[]` = open ones plus the last 20 closed. |
+| `incidents.jsonl` | Append-only `open` / `close` records, the decision log. A bad line is skipped, never fatal. Rotated at 1 MB to `incidents.jsonl.1` (one previous file kept); open incidents are re-stated at the top of the new file. Loaded on boot. A missing or corrupt `current.json` is rebuilt from the open incidents in the log. |
+| `suspensions.json` | The last 48 h of suspensions (see above). |
+
+Conditions (`status` is `True`, `False` or `Unknown`; `lastTransitionTime` moves only when `status` changes; each carries `reason`, `message`, `lastProbeAt`, `evidence[]` and, when something else explains it, `inhibitedBy`):
+
+- **`machine.Awake`** goes `False` on a confirmed suspension and back to `True` only when the machine has been **stably awake** (`stableAwakeMs`, default 5 min, longer than the 180 s dark-wake cap) since the end of the last gap. Gap detection runs before the close check each tick, so a night of dark wakes is **one** incident (`machine:asleep`), not one per wake. A boot gap the OS confirms as sleep opens it too; plain daemon downtime does not.
+- **`network.Reachable`** is built from existing signals only (no DNS/TCP probe yet). It opens when `network`-class errors (probe pane error or `task.turn.failed`) come from at least 2 sessions within 10 minutes, and closes when the sessions that failed send a healthy event, or end.
+- **`session:<project>/<taskId>.Reachable`** exists for every live crew session. It is `Unknown` until the first signal, `False` on a probe error (`probe:<class>`) or `task.turn.failed` (`turn.failed:<class>`), and `True` again on the next healthy event (`heartbeat`, `task.progress`, turn started/completed, `task.delta`). It is recorded even when the machine or network condition explains it: `inhibitedBy` is then `machine:asleep` or `network:unreachable`. It is only a field; nothing acts on it yet. Its incident key is `crew:<taskId>:<class>`. The captain has no error signal to feed this yet, so it has no condition.
+- **`squadrant:daemon.Healthy`** goes `False` with reason `EventLoopStall` when a tick gap is **not** confirmed as sleep (SIGSTOP, sync work, App Nap), and back to `True` on the next normal tick. It is a fact, not an incident.
+
+`status` config block (`~/.config/squadrant/config.json`; boot-time keys, so `squadrant config set status.…` restarts the daemon, see `daemon-keys.ts`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `status.enabled` | `true` | `false` turns off the observer, awake time and the post-wake pause: budgets go back to wall time and no `status/` files are written. The `CREW TIMEOUT` delivery fix is not behind this switch. |
+| `status.tickGapMs` | `30000` | A tick gap above the tick interval (5 s) plus this is a suspension candidate. |
+| `status.postWakeGraceMs` | `120000` | Timer-based actions stay paused this long after a suspension ends. |
+| `status.stableAwakeMs` | `300000` | The `machine.Awake` incident closes after this long with no new suspension. |
+
+Not built yet (later phases of the design): inhibition of a shared cause and the notifier, `CREW OVERTIME` instead of cancelling a live crew past the ceiling, open/recovery messages and reminders, the Telegram outbox, the active network probe, provider/account conditions, the `squadrant status` view. Wall-clock budgets of crews on a machine that never sleeps are unchanged.
 
 Multi-agent: Claude supplies the turn-end text. Codex (app-server) and OpenCode (control channel) turn-end events currently carry no final-message text, so their idle events keep today's generic `CREW IDLE` behaviour; when their payloads gain the text they only need to set `lastMessage` on `task.turn.completed`, and self-resume turn-ends then become silent too.
 
