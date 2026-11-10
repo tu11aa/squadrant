@@ -97,6 +97,17 @@ export interface DaemonDeps {
    * Defaults to DEFAULT_BLOCKED_RENUDGE_MS (30min).
    */
   blockedRenudgeMs?: number;
+  /**
+   * #1112: awake time between two instants (wall time minus machine suspensions).
+   * Every timer-based budget in sweep() uses it. Defaults to wall time.
+   */
+  awakeElapsed?: (from: number, to: number) => number;
+  /**
+   * #1112: true during the post-wake grace window after a suspension. Timer-based
+   * actions (ceiling, stall, escalation, quiet, re-nudge, first-turn resend,
+   * takeover nudge) are skipped while it holds; evidence-based reaps are not.
+   */
+  timersPaused?: (at: number) => boolean;
 }
 
 // #466: dedicated, tight budget for detecting an undelivered first turn —
@@ -455,9 +466,11 @@ export function createDaemon(deps: DaemonDeps) {
   // Debounced per-task via resendAttemptedAt. Re-fetches the record from the
   // store right before acting so a confirmation that lands concurrently (e.g.
   // the UserPromptSubmit hook) is never double-delivered — CRITICAL SAFETY.
+  const elapsed = (from: number, to: number): number => (deps.awakeElapsed ? deps.awakeElapsed(from, to) : to - from);
+
   async function attemptFirstTurnRecovery(r: TaskRecord, undeliveredMs: number): Promise<void> {
     const lastAttempt = resendAttemptedAt.get(r.id);
-    if (lastAttempt != null && now() - lastAttempt < firstTurnResendCooldownMs) return;
+    if (lastAttempt != null && elapsed(lastAttempt, now()) < firstTurnResendCooldownMs) return;
     resendAttemptedAt.set(r.id, now());
 
     const fresh = store.get(r.project, r.id);
@@ -605,6 +618,8 @@ export function createDaemon(deps: DaemonDeps) {
     async sweep(): Promise<void> {
       const t = now();
       const surfaceAlive = deps.isSurfaceAlive ?? (async () => "unknown" as const);
+      // #1112: post-wake grace — timer-based actions below are skipped, evidence-based reaps are not.
+      const paused = deps.timersPaused?.(t) ?? false;
 
       // #457: Per-project overflow prune — keep only the most-recent K terminal
       // records. Bounds accumulation for short-lived sessions where many tasks
@@ -635,11 +650,11 @@ export function createDaemon(deps: DaemonDeps) {
         }
 
         // #649: CREW HELD-LONG nudge. Never auto-releases.
-        if (r.operatorHold) {
+        if (r.operatorHold && !paused) {
           const threshold = (deps.takeoverNudgeHours ?? 6) * 3600000;
-          const holdAge = t - r.operatorHold.since;
+          const holdAge = elapsed(r.operatorHold.since, t);
           if (holdAge > threshold) {
-            const timeSinceLastNudge = t - (r.operatorHold.lastNudgeAt ?? 0);
+            const timeSinceLastNudge = elapsed(r.operatorHold.lastNudgeAt ?? 0, t);
             if (timeSinceLastNudge > threshold) {
               const hrs = Math.round(holdAge / 3600000);
               const tag = crewTag(r);
@@ -676,7 +691,7 @@ export function createDaemon(deps: DaemonDeps) {
         if (!TERMINAL_STATES.has(r.state) && !isStickyAttention(r.state) && r.state !== "awaiting-input") {
           const ceiling = deps.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
           const refTime = r.workingStretchStartedAt ?? r.createdAt;
-          if (t - refTime > ceiling) {
+          if (!paused && elapsed(refTime, t) > ceiling) {
             const prevState = r.state; // capture BEFORE terminalization (shown in message)
             const tag = crewTag(r);
             const hrs = Math.round(ceiling / 3_600_000);
@@ -728,9 +743,9 @@ export function createDaemon(deps: DaemonDeps) {
         // rest of the episode. Placed after the surface-gone reap so a dead
         // surface is terminalized silently instead of nudged. Skipped while the
         // operator holds the crew (#649 owns every push for a held crew).
-        if (r.state === "blocked" && !r.operatorHold) {
+        if (r.state === "blocked" && !r.operatorHold && !paused) {
           const threshold = deps.blockedRenudgeMs ?? DEFAULT_BLOCKED_RENUDGE_MS;
-          const blockedFor = t - r.lastHeartbeat;
+          const blockedFor = elapsed(r.lastHeartbeat, t);
           const episodeKey = r.question ?? "";
           if (blockedFor > threshold && blockedRenudgedFor.get(r.id) !== episodeKey) {
             blockedRenudgedFor.set(r.id, episodeKey);
@@ -751,8 +766,8 @@ export function createDaemon(deps: DaemonDeps) {
         // undelivered check below is unreachable. Recover it here too, keyed
         // off createdAt (not lastHeartbeat/heartbeatBudgetMs — see #466 self-heal
         // below) so a silently-dropped first turn is caught regardless of state.
-        if (r.mode === "interactive" && r.state === "submitted" && !r.firstTurnConfirmedAt) {
-          const undeliveredMs = t - r.createdAt;
+        if (r.mode === "interactive" && r.state === "submitted" && !r.firstTurnConfirmedAt && !paused) {
+          const undeliveredMs = elapsed(r.createdAt, t);
           if (undeliveredMs > firstTurnUndeliveredBudgetMs) {
             recoveryPromises.push(attemptFirstTurnRecovery(r, undeliveredMs));
             continue;
@@ -762,7 +777,7 @@ export function createDaemon(deps: DaemonDeps) {
         // hung INTERACTIVE tool call (PreToolUse with no PostToolUse past the
         // tool-stall budget). A quiet interactive thinking turn no longer stalls
         // here — it is surfaced as CREW QUIET below, keeping the crew `working`.
-        const idle = evaluateStall(r, t);
+        const idle = paused ? null : evaluateStall(r, t, undefined, undefined, elapsed);
         if (idle) {
           store.put(idle);
           if (idle.state === "awaiting-input") {
@@ -780,9 +795,9 @@ export function createDaemon(deps: DaemonDeps) {
           // the accurate message (#594a: idle.pendingTool is already cleared by
           // the time a Monitor-only stall fires, so the two branches don't overlap).
           const synthEvent: ControlEvent = idle.pendingTool
-            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: idle.pendingTool.name, elapsedMs: t - idle.pendingTool.since }
+            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: idle.pendingTool.name, elapsedMs: elapsed(idle.pendingTool.since, t) }
             : idle.pendingMonitor
-            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: "Monitor", elapsedMs: t - idle.pendingMonitor.since }
+            ? { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool: "Monitor", elapsedMs: elapsed(idle.pendingMonitor.since, t) }
             : { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs };
           const episodeKey = synthEvent.type === "task.stalled" ? synthEvent.tool ?? "heartbeat" : "heartbeat";
           if (stallEpisode.get(r.id) !== episodeKey) {
@@ -794,13 +809,13 @@ export function createDaemon(deps: DaemonDeps) {
         // #1017 hard escalation: a crew still stalled with no tool result past the
         // hard budget surfaces exactly once (per episode) so a truly hung crew is
         // never invisible even though the first stall is informational.
-        if (r.state === "stalled" && deps.notify && !stallEscalated.has(r.id) && t - r.lastHeartbeat > r.heartbeatBudgetMs) {
+        if (r.state === "stalled" && deps.notify && !stallEscalated.has(r.id) && !paused && elapsed(r.lastHeartbeat, t) > r.heartbeatBudgetMs) {
           const since = r.pendingTool?.since ?? r.pendingMonitor?.since ?? r.lastHeartbeat;
-          const elapsed = t - since;
-          if (elapsed >= (deps.stallEscalationMs ?? DEFAULT_STALL_ESCALATION_MS)) {
+          const stalledMs = elapsed(since, t);
+          if (stalledMs >= (deps.stallEscalationMs ?? DEFAULT_STALL_ESCALATION_MS)) {
             stallEscalated.add(r.id);
             const tool = r.pendingTool?.name ?? (r.pendingMonitor ? "Monitor" : undefined);
-            const synthEvent: ControlEvent = { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool, elapsedMs: elapsed, escalated: true };
+            const synthEvent: ControlEvent = { type: "task.stalled", id: r.id, heartbeatBudgetMs: r.heartbeatBudgetMs, tool, elapsedMs: stalledMs, escalated: true };
             const message = formatMessage(r, synthEvent);
             if (message) {
               try {
@@ -817,8 +832,8 @@ export function createDaemon(deps: DaemonDeps) {
         // on heartbeat liveness — the frozen-frame root cause showed heartbeats
         // can keep flowing on a crew whose first turn never landed, which would
         // otherwise mask the drop indefinitely.
-        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool && !r.firstTurnConfirmedAt) {
-          const undeliveredMs = t - r.createdAt;
+        if (r.mode === "interactive" && r.state === "working" && !r.pendingTool && !r.firstTurnConfirmedAt && !paused) {
+          const undeliveredMs = elapsed(r.createdAt, t);
           if (undeliveredMs > firstTurnUndeliveredBudgetMs) {
             recoveryPromises.push(attemptFirstTurnRecovery(r, undeliveredMs));
             continue;
@@ -833,9 +848,9 @@ export function createDaemon(deps: DaemonDeps) {
         // check above owns the !firstTurnConfirmedAt case.
         if (r.mode === "interactive" && r.state === "working" && !r.pendingTool && r.firstTurnConfirmedAt) {
           const liveness = r.attempts.at(-1)?.lastHeartbeatAt ?? r.lastHeartbeat;
-          const quiet = t - liveness;
+          const quiet = elapsed(liveness, t);
           if (quiet > r.heartbeatBudgetMs) {
-            if (deps.notify && quietNotifiedAt.get(r.id) !== liveness) {
+            if (deps.notify && !paused && quietNotifiedAt.get(r.id) !== liveness) {
               quietNotifiedAt.set(r.id, liveness);
               const tag = crewTag(r);
               const synthEvent: ControlEvent = { type: "task.quiet", id: r.id, quietMs: quiet };

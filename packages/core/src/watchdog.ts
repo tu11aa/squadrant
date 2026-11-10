@@ -58,12 +58,15 @@ export function evaluateStall(
   now: number,
   toolStallMs: number = TOOL_STALL_BUDGET_MS,
   monitorStallMs: number = MONITOR_STALL_BUDGET_MS,
+  // #1112: awake time between two instants (wall time minus machine suspensions).
+  // Defaults to plain wall time so existing callers and pure tests are unchanged.
+  elapsed: (from: number, to: number) => number = (from, to) => to - from,
 ): TaskRecord | null {
   if (rec.state !== "working") return null;
   if (rec.mode === "interactive") {
     // A hung tool call takes priority over a registered Monitor watch.
     if (rec.pendingTool) {
-      if (now - rec.pendingTool.since <= toolStallMs) return null;
+      if (elapsed(rec.pendingTool.since, now) <= toolStallMs) return null;
       // #542: a Stop already arrived and was vetoed for looking premature —
       // now that the window has outlived the stall budget, trust it.
       if (rec.lastEvent === "task.turn.completed") {
@@ -78,7 +81,7 @@ export function evaluateStall(
       return { ...rec, state: "stalled", lastEvent: "watchdog.tool-stall" };
     }
     if (rec.pendingMonitor) {
-      if (now - rec.pendingMonitor.since <= monitorStallMs) return null;
+      if (elapsed(rec.pendingMonitor.since, now) <= monitorStallMs) return null;
       return { ...rec, state: "stalled", lastEvent: "watchdog.monitor-stall" };
     }
     // Neither a hung tool nor a Monitor watch — a quiet thinking turn is alive
@@ -88,7 +91,7 @@ export function evaluateStall(
   // headless: key off the latest attempt's lastHeartbeatAt so a stale event from
   // a dead prior attempt cannot refresh the liveness clock of the new dispatch (#89).
   const liveness = rec.attempts.at(-1)?.lastHeartbeatAt ?? rec.lastHeartbeat;
-  if (now - liveness <= rec.heartbeatBudgetMs) return null;
+  if (elapsed(liveness, now) <= rec.heartbeatBudgetMs) return null;
   return { ...rec, state: "stalled", lastEvent: "watchdog.stall" };
 }
 
