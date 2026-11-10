@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-10
+
+Quiet nights. A sleeping or offline machine no longer floods captains with alerts, and no longer gets a live crew cancelled: timers count awake time only, a pane-scraped crew error is reported once per error class, and CREW TIMEOUT is no longer silently dropped. The daemon now records machine, network and session status in `status/current.json`. The rules KB gets `sources.yaml` `exclude` globs, and the SessionStart rule block is ordered by measured use instead of by id. PRs #1111, #1113, #1117.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. The new `status` config block is optional (defaults on).
+
+### Added
+
+- **Status file.** The daemon writes `<stateRoot>/status/current.json` (machine `Awake`, network `Reachable`, `squadrant:daemon` health and one `Reachable` condition per live crew session, plus open incidents) and appends open/close records to `status/incidents.jsonl` (rotated at 1 MB, rebuilt from the log if the snapshot is corrupt). It records only; alerts are unchanged. New config block `status.{enabled, tickGapMs, postWakeGraceMs, stableAwakeMs}`; `status.enabled: false` turns the observer and the awake-time clock off (#1112, #1113).
+- **`sources.yaml` `exclude`.** A KB source entry takes `exclude: [<glob>, ...]` (same syntax and base as `path`). Glob sources also always skip dotfiles (`.DS_Store`) and font files. Rules already extracted from an excluded file stay active (#1111).
+- **`session: false` rule frontmatter** keeps a rule out of the SessionStart block; it still fires on its path/prompt triggers (#1114, #1117).
+
+### Changed
+
+- **SessionStart rule block ordered by use.** Rules are ranked by a smoothed use rate `(cited + 5) / (surfaced + 20)` from `scores.json`, after the project layer; `must-not` before `must` is now only a tie-breaker. A rule with no data sits mid-pack; a missing `scores.json` keeps the old order (#1114, #1117).
+- **Sleep-aware timers.** The task-timeout ceiling, stall detection and escalation, CREW QUIET, the blocked re-nudge, the first-turn resend and the takeover nudge count awake time only, and pause for 2 minutes after a wake. A machine suspension is detected from a daemon tick gap confirmed by macOS (`kern.sleeptime`/`kern.waketime`); an unconfirmed gap is logged as an event-loop stall and pauses nothing (#1112, #1113).
+
+### Fixed
+
+- **CREW TIMEOUT was never delivered.** The timeout path notified with the pre-cancel record, so delivery dropped it and a crew could be cancelled with no notice. It now reaches the captain at every tier except `none` (#1112, #1113).
+- **Repeated CREW WARN for one outage.** The pane probe deduplicated on the whole pane tail, which always changes (retry countdown, status line), so the same network error re-fired every probe. Claude's own `Retrying …` lines are no longer treated as errors, and a crew gets one warning per error class until it heartbeats again (#1112, #1113).
+
 ## [0.35.0] - 2026-11-05
 
 Safe delivery. squadrant never types into a pane whose agent has exited, so message text can no longer run as a shell command. Side sessions and threads get their messages over the Claude peer channel instead of a pasted user turn, and `ping` / `runtime send` queue instead of dropping when the daemon or captain is down. A fresh relaunch no longer races the old captain's socket, and captain startup reads less: `handoff facts` drops a stale handoff copy and most claude-mem text. PRs #1097, #1099, #1105, #1106.
