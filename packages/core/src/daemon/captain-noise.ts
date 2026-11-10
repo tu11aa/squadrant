@@ -56,6 +56,8 @@ export function isInformational(ev: ControlEvent): boolean {
 export function captainPaneAllows(tier: CrewTier, ev: ControlEvent): boolean {
   if (tier === "none") return false;
   if (tier === "all") return true;
+  // #1112: a timer-based cancel must always be announced, at every tier but `none`.
+  if (ev.type === "task.timeout") return true;
   if (isInformational(ev)) return false;
   return tier === "alert_only" ? true : tierIncludes(tier, ev.type);
 }

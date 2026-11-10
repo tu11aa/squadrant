@@ -684,7 +684,8 @@ export function createDaemon(deps: DaemonDeps) {
             const synthEvent: ControlEvent = { type: "task.timeout", id: r.id, taskTimeoutMs: ceiling };
             // Terminalize first — persisted to store so any future daemon instance
             // sees a terminal record and skips it (flood-proof across restarts).
-            store.put({ ...r, state: "cancelled", lastEvent: "sweep.task-timeout" });
+            const cancelled: TaskRecord = { ...r, state: "cancelled", lastEvent: "sweep.task-timeout" };
+            store.put(cancelled);
             // #457: suppress ghost CREW TIMEOUT for interactive tasks whose surface
             // is provably gone — they were already abandoned; terminalize silently.
             // Headless tasks have no cmux surface so always notify.
@@ -696,7 +697,7 @@ export function createDaemon(deps: DaemonDeps) {
             }
             if (deps.notify && shouldNotify) {
               try {
-                const p = deps.notify({ project: r.project, message: msg, record: r, event: synthEvent });
+                const p = deps.notify({ project: r.project, message: msg, record: cancelled, event: synthEvent });
                 if (p && typeof (p as Promise<void>).catch === "function") {
                   (p as Promise<void>).catch(() => {});
                 }
