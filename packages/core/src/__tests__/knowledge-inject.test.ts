@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDefaultConfig, type SquadrantConfig } from "@squadrant/shared";
 import {
-  appendAudit, computeRulesInjection, cleanPromptQuery, isSystemPrompt, formatSessionContext, injectStateDir, kbRulesDir,
+  appendAudit, computeRulesInjection, cleanPromptQuery, isSystemPrompt, formatSessionContext, readSessionScores, injectStateDir, kbRulesDir,
   pruneSeenRules, recordSeenRules, readSeenRules, resolveInjectProject, withBudget, type RulesInjectInput,
 } from "../knowledge/index.js";
 
@@ -81,6 +81,44 @@ describe("computeRulesInjection — SessionStart", () => {
     ] as never, 2);
     expect(ids).toEqual(["a.three", "a.one"]);
     expect(text).toContain("+1 more: squadrant rules list --brief");
+  });
+  describe("score ordering (#1114)", () => {
+    const r = (id: string, modality = "must", extra = {}) => ({ id, modality, status: "active", statement: `${id}.`, layer: "kb:saitex", ...extra });
+    const sc = (o: Record<string, [number, number]>) => new Map(Object.entries(o).map(([k, [surfaced, cited]]) => [k, { surfaced, cited }]));
+    const order = (rules: unknown[], scores?: Map<string, { surfaced: number; cited: number }>) =>
+      formatSessionContext(["saitex"], rules as never, 20, [], scores).ids;
+    it("a high-use rule beats a never-cited rule with an earlier id", () => {
+      expect(order([r("a.noisy"), r("z.useful")], sc({ "a.noisy": [400, 0], "z.useful": [50, 30] }))).toEqual(["z.useful", "a.noisy"]);
+    });
+    it("a rule with no data is not starved by a heavily surfaced uncited one", () => {
+      expect(order([r("a.noisy"), r("z.new")], sc({ "a.noisy": [400, 0] }))).toEqual(["z.new", "a.noisy"]);
+    });
+    it("ties are deterministic: must-not before must, then id", () => {
+      const rules = [r("b.two"), r("a.one"), r("c.three", "must-not")];
+      expect(order(rules, sc({}))).toEqual(["c.three", "a.one", "b.two"]);
+      expect(order([...rules].reverse(), sc({}))).toEqual(["c.three", "a.one", "b.two"]);
+    });
+    it("project layer still comes first", () => {
+      expect(order([r("a.kb"), r("z.proj", "must", { layer: "project:flooros" })], sc({ "a.kb": [10, 10] }))).toEqual(["z.proj", "a.kb"]);
+    });
+    it("no scores at all gives today's order", () => {
+      expect(order([r("b.x"), r("a.y"), r("c.z", "must-not")])).toEqual(["c.z", "a.y", "b.x"]);
+    });
+    it("session: false keeps a rule out of the block and out of the suppressed list", () => {
+      const out = formatSessionContext(["saitex"], [r("a.area", "must", { session: false }), r("b.keep")] as never);
+      expect(out.ids).toEqual(["b.keep"]);
+      expect(out.hiddenIds).toEqual([]);
+    });
+    it("readSessionScores reads scores.json and falls back on missing or corrupt files", () => {
+      const kbRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sess-scores-"));
+      const c = { knowledgeBases: { saitex: { path: kbRoot } } } as never;
+      expect(readSessionScores(c, ["saitex"]).size).toBe(0);
+      fs.writeFileSync(path.join(kbRoot, "scores.json"), "{not json");
+      expect(readSessionScores(c, ["saitex"]).size).toBe(0);
+      fs.writeFileSync(path.join(kbRoot, "scores.json"), JSON.stringify({ items: [
+        { domain: "rules", itemId: "a.x", surfaced: 9, cited: 3 }, { domain: "wiki", itemId: "w.y", surfaced: 1, cited: 1 }, { domain: "rules", itemId: "bad" }] }));
+      expect([...readSessionScores(c, ["saitex"])]).toEqual([["a.x", { surfaced: 9, cited: 3 }]]);
+    });
   });
   it("resolves a crew worktree under the project path, and SQUADRANT_CREW_PROJECT", () => {
     const wt = path.join(root, "flooros", ".worktrees", "crew-x");
