@@ -54,6 +54,16 @@ describe("validateSourceEntry review gate", () => {
   });
 });
 
+describe("validateSourceEntry exclude", () => {
+  it("accepts a list of globs and rejects anything else", () => {
+    expect(validateSourceEntry({ path: "raw/**", priority: "agent", exclude: ["raw/**/_archive/**"] })).toEqual([]);
+    expect(validateSourceEntry({ path: "raw/**", priority: "agent", exclude: [] })).toEqual([]);
+    for (const bad of ["raw/**/_archive/**", [""], [1]]) {
+      expect(validateSourceEntry({ path: "raw/**", priority: "agent", exclude: bad })).toEqual([expect.stringContaining("exclude")]);
+    }
+  });
+});
+
 describe("subscription + kb config", () => {
   function cfg(): SquadrantConfig {
     const c = getDefaultConfig();

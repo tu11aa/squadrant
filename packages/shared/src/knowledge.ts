@@ -83,6 +83,8 @@ export interface KnowledgeSourceEntry {
   sensitivity?: "local-only";
   /** `required`: new rules from this source wait in `_proposed/` for the operator (spec 2026-10-13 §5). Absent = auto-live (D4). */
   review?: "required";
+  /** Globs (same syntax and base as `path`) of files this entry never ingests. Rules already extracted from them stay as they are. */
+  exclude?: string[];
 }
 
 /** One stale passage of a source, recorded in `<kb>/errata.yaml`. `apply` rejects candidates that overlap it (spec 2026-10-13 §4). */
@@ -179,6 +181,7 @@ export function validateSourceEntry(e: unknown): string[] {
   if (e.domain !== undefined && typeof e.domain !== "string") p.push("domain must be a string");
   if (e.sensitivity !== undefined && e.sensitivity !== "local-only") p.push("sensitivity must be 'local-only' when set");
   if (e.review !== undefined && e.review !== "required") p.push("review must be 'required' when set");
+  if (e.exclude !== undefined && !(isStrArr(e.exclude) && (e.exclude as string[]).every((g) => g !== ""))) p.push("exclude must be a list of non-empty globs");
   return p;
 }
 

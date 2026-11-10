@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import matter from "gray-matter";
 import {
-  applyCandidates, planIngest, isPendingProposalDup, loadRulesDir, findQuote, normalizeText, needsDocling, splitSections, computeAnchor,
+  applyCandidates, planIngest, isPendingProposalDup, changedRefs, sourceCovers, loadRulesDir, findQuote, normalizeText, needsDocling, splitSections, computeAnchor,
   indexCacheFile, PROPOSED_DIR, type Candidate, type CandidateFile, type Converter,
 } from "../knowledge/index.js";
 
@@ -107,6 +107,61 @@ describe("planIngest", () => {
     const p = await planIngest(kb, { sources: SOURCES, converter: bad });
     expect(p.failed).toEqual([{ ref: "raw/security.pdf", error: "boom" }]);
     expect(p.sources).toHaveLength(2);
+  });
+});
+
+describe("sources.yaml exclude + built-in junk skip", () => {
+  const put = (rel: string, text = "# Old\n\nStale prototype rule.\n") => {
+    fs.mkdirSync(path.dirname(path.join(kb, rel)), { recursive: true });
+    fs.writeFileSync(path.join(kb, rel), text);
+  };
+  const GOLDEN = ["raw/billing-policy.md", "raw/handbook.docx", "raw/security.pdf"];
+  beforeEach(() => {
+    put("raw/_archive/proto-v1.md");
+    put("raw/flows/_archive/old/proto.md");
+    put("raw/flows/current.md", "# Flow\n\nCurrent flow.\n");
+    put("raw/.DS_Store", "\0\0junk");
+    put("raw/fonts/Inter.ttf", "\0font");
+    put("raw/fonts/Inter.WOFF2", "\0font");
+  });
+
+  it("drops files matching an exclude glob; the rest still ingest (dry run)", async () => {
+    const src = [{ path: "raw/**", priority: "agent" as const, exclude: ["raw/**/_archive/**"] }];
+    const p = await planIngest(kb, { sources: src, converter: preConverted(path.join(FIX, "converted")), dryRun: true });
+    expect(p.sources.map((s) => s.ref).sort()).toEqual([...GOLDEN, "raw/flows/current.md"].sort());
+    expect(p.failed).toEqual([]);
+    expect(fs.existsSync(path.join(kb, ".converted"))).toBe(false);
+    expect(changedRefs(kb, src).sort()).toEqual([...GOLDEN, "raw/flows/current.md"].sort());
+  });
+
+  it("dotfiles and font files are skipped without any config; _archive is only dropped when configured", async () => {
+    const p = await planIngest(kb, { sources: SOURCES, converter: preConverted(path.join(FIX, "converted")), dryRun: true });
+    expect(p.sources.map((s) => s.ref).sort()).toEqual([...GOLDEN, "raw/_archive/proto-v1.md", "raw/flows/_archive/old/proto.md", "raw/flows/current.md"].sort());
+    expect(p.failed).toEqual([]);
+  });
+
+  it("an exclude also applies to a plain (non-glob) path, and uses the same KB-relative base", async () => {
+    const src = [{ path: "raw/flows/current.md", priority: "agent" as const, exclude: ["raw/flows/*.md"] }];
+    expect((await planIngest(kb, { sources: src, dryRun: true })).sources).toEqual([]);
+  });
+
+  it("a live rule whose source becomes excluded stays active: not staled, still covered by its entry (priority, gate)", async () => {
+    await ingest();
+    apply(cands("candidates-v1.json"));
+    expect(rules().find((r) => r.id === "biz.rounding.vnd-half-up")!.sources.map((s) => s.ref)).toEqual(["raw/billing-policy.md"]);
+
+    const excluded = [{ path: "raw/**", priority: "company" as const, exclude: ["raw/billing-policy.md"] }];
+    // The file changes after it is excluded: ingest no longer plans it, so the next sweep never lists it as complete.
+    fs.copyFileSync(path.join(FIX, "v2", "raw", "billing-policy.md"), path.join(kb, "raw", "billing-policy.md"));
+    const plan = await planIngest(kb, { sources: excluded, converter: preConverted(path.join(FIX, "v2", "converted")) });
+    expect(plan.sources.map((s) => s.ref)).not.toContain("raw/billing-policy.md");
+
+    // A full sweep of every remaining source, with no candidate from the excluded file.
+    const v1 = cands("candidates-v1.json");
+    const r = apply({ complete: GOLDEN.filter((g) => g !== "raw/billing-policy.md"), candidates: v1.candidates.filter((c) => c.source !== "raw/billing-policy.md") }, { sources: excluded });
+    expect(r.stale).not.toContain("biz.rounding.vnd-half-up");
+    expect(rules().find((x) => x.id === "biz.rounding.vnd-half-up")!.status).toBe("active");
+    expect(sourceCovers(kb, excluded, excluded[0], "raw/billing-policy.md")).toBe(true);
   });
 });
 

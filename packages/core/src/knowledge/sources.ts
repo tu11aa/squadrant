@@ -12,6 +12,7 @@ export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec
 # priority: company > project > agent (decides conflicts).
 # sensitivity: local-only  → never sent to a hosted model (D12).
 # review: required         → new rules from this source wait in rules/_proposed/ for the operator; they never go live on their own.
+# exclude: [<glob>, ...]   → files under this entry that are never ingested (same globs as path). Dotfiles and fonts are always skipped.
 #
 # - path: raw/finance/**
 #   priority: company
@@ -21,6 +22,7 @@ export const SOURCES_TEMPLATE = `# Trusted sources for this knowledge base (spec
 # - path: raw/**
 #   priority: agent
 #   review: required
+#   exclude: ["raw/**/_archive/**"]
 []
 `;
 
