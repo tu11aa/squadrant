@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createInteractiveProbe, PROBE_QUIET_MS } from "../daemon/interactive-probe.js";
+import { createInteractiveProbe, PROBE_QUIET_MS, classifyProbeError } from "../daemon/interactive-probe.js";
 import type { TaskRecord, ControlEvent } from "@squadrant/shared";
 
 function makeRec(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -114,5 +114,71 @@ describe("interactive-probe #704", () => {
     const { probe, sent } = setup({ tail });
     await probe.tick();
     expect(sent).toEqual([]);
+  });
+});
+
+describe("interactive-probe #1112 retry noise + class dedup", () => {
+  const DNS = "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)";
+  const SLEEP = "API Error: Your computer went to sleep mid-response. The response above may be incomplete.";
+  const RETRY = "✻ API error · Retrying in 0s · attempt 1/10";
+  const box = ["╭────────────╮", "│ >          │", "╰────────────╯"];
+  const tailOf = (...lines: string[]) => [...lines, ...box].join("\n");
+
+  it("classifies the real incident strings", () => {
+    expect(classifyProbeError(DNS)).toBe("network");
+    expect(classifyProbeError(SLEEP)).toBe("sleep");
+    expect(classifyProbeError(RETRY)).toBe("retrying");
+    expect(classifyProbeError("API Error: Your computer went offline")).toBe("network");
+    expect(classifyProbeError("API Error: 529 Overloaded")).toBe("other");
+  });
+
+  it("never alerts on a Retrying line", async () => {
+    const { probe, notified, sent } = setup({ tail: tailOf(RETRY), checkAlive: async () => "alive", withNotify: true });
+    await probe.tick();
+    expect(notified).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it("a Retrying line under a real error does not replace the error line", async () => {
+    const { probe, notified } = setup({ tail: tailOf(DNS, RETRY), checkAlive: async () => "alive", withNotify: true });
+    await probe.tick();
+    expect(notified).toHaveLength(1);
+    expect(notified[0].message).toContain("ENOTFOUND");
+  });
+
+  it("warns once per (task, class) while the pane tail keeps changing; a new class warns again", async () => {
+    const rec = makeRec();
+    let tail = tailOf(DNS);
+    const notified: string[] = [];
+    const probe = createInteractiveProbe({
+      project: "_all_", listTasks: async () => [rec], readPaneTail: async () => tail,
+      sendEvent: async () => {}, now: () => PROBE_QUIET_MS + 1, log: () => {},
+      checkAlive: async () => "alive", notify: async (a) => { notified.push(a.message); },
+    });
+    await probe.tick();
+    tail = tailOf(DNS, RETRY, "✻ Thinking… (4s)"); // tail changed, same class
+    await probe.tick();
+    tail = tailOf(DNS, "✻ Thinking… (9s)");
+    await probe.tick();
+    expect(notified).toHaveLength(1);
+    tail = tailOf(SLEEP); // different class
+    await probe.tick();
+    expect(notified).toHaveLength(2);
+  });
+
+  it("resets the dedup when the crew heartbeats again", async () => {
+    const rec = makeRec();
+    let tail = tailOf(DNS);
+    const notified: string[] = [];
+    const probe = createInteractiveProbe({
+      project: "_all_", listTasks: async () => [rec], readPaneTail: async () => tail,
+      sendEvent: async () => {}, now: () => 10 * PROBE_QUIET_MS, log: () => {},
+      checkAlive: async () => "alive", notify: async (a) => { notified.push(a.message); },
+    });
+    await probe.tick();
+    rec.lastHeartbeat = 5; // crew recovered, then failed again
+    tail = tailOf(DNS, "✻ again");
+    await probe.tick();
+    expect(notified).toHaveLength(2);
   });
 });

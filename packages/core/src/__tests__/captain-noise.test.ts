@@ -60,6 +60,7 @@ describe("captainPaneAllows (#1017)", () => {
     ["turn failed", { type: "task.turn.failed", id: "t", turnId: "1", error: "529" }, { none: false, done_only: false, alert_only: true, all: true }],
     ["done", { type: "task.done", id: "t" } as ControlEvent, { none: false, done_only: true, alert_only: true, all: true }],
     ["blocked", { type: "task.blocked", id: "t", reason: "r", question: "q" } as ControlEvent, { none: false, done_only: false, alert_only: true, all: true }],
+    ["timeout (#1112, must-deliver at every tier but none)", { type: "task.timeout", id: "t", taskTimeoutMs: 1 } as ControlEvent, { none: false, done_only: true, alert_only: true, all: true }],
     ["review", { type: "task.review", id: "t" } as ControlEvent, { none: false, done_only: false, alert_only: true, all: true }],
     ["warn (undelivered/probe)", { type: "task.warn", id: "t", message: "m" }, { none: false, done_only: false, alert_only: true, all: true }],
     ["notify-only progress (held-long nudge)", { type: "task.progress", id: "t" } as ControlEvent, { none: false, done_only: false, alert_only: true, all: true }],
