@@ -43,10 +43,10 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/opencode/sse-bridge.ts:146
   - packages/agents/src/opencode/sse-bridge.ts:298
   - packages/core/src/crew-spawn.ts:1000
-  - packages/core/src/daemon/reduce.ts:519
-  - packages/core/src/daemon/reduce.ts:574
-  - packages/core/src/daemon/start.ts:97
-  - packages/core/src/daemon/start.ts:101
+  - packages/core/src/daemon/reduce.ts:532
+  - packages/core/src/daemon/reduce.ts:587
+  - packages/core/src/daemon/start.ts:102
+  - packages/core/src/daemon/start.ts:106
   - packages/core/src/events/to-control-event.ts:48
 - `task.progress`
   - packages/agents/src/headless-launcher.ts:56
@@ -58,7 +58,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:520
   - packages/cli/src/squadrantd.ts:568
   - packages/cli/src/squadrantd.ts:599
-  - packages/core/src/daemon/reduce.ts:650
+  - packages/core/src/daemon/reduce.ts:665
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:224
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:259
 - `task.blocked`
@@ -70,8 +70,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:602
   - packages/core/src/auto-gate.ts:100
   - packages/core/src/crew-signal.ts:65
-  - packages/core/src/daemon/interactive-probe.ts:202
-  - packages/core/src/daemon/reduce.ts:740
+  - packages/core/src/daemon/interactive-probe.ts:233
+  - packages/core/src/daemon/reduce.ts:756
 - `task.review`
   - packages/core/src/crew-signal.ts:69
 - `task.done`
@@ -86,8 +86,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/agents/src/headless-launcher.ts:89
   - packages/core/src/crew-signal.ts:71
   - packages/core/src/crew-spawn.ts:415
-  - packages/core/src/daemon/interactive-probe.ts:197
-  - packages/core/src/daemon/reduce.ts:877
+  - packages/core/src/daemon/interactive-probe.ts:228
+  - packages/core/src/daemon/reduce.ts:893
 - `task.session`
   - packages/agents/src/codex/driver.ts:118
 - `task.turn.started`
@@ -99,8 +99,8 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:518
   - packages/cli/src/squadrantd.ts:566
   - packages/cli/src/squadrantd.ts:597
-  - packages/core/src/daemon/reduce.ts:772
-  - packages/core/src/daemon/start.ts:394
+  - packages/core/src/daemon/reduce.ts:788
+  - packages/core/src/daemon/start.ts:407
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`
@@ -122,18 +122,18 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
 - `task.reopened`
   - packages/core/src/crew-spawn.ts:993
 - `task.stalled`
-  - packages/core/src/daemon/reduce.ts:782
-  - packages/core/src/daemon/reduce.ts:784
-  - packages/core/src/daemon/reduce.ts:785
-  - packages/core/src/daemon/reduce.ts:802
+  - packages/core/src/daemon/reduce.ts:798
+  - packages/core/src/daemon/reduce.ts:800
+  - packages/core/src/daemon/reduce.ts:801
+  - packages/core/src/daemon/reduce.ts:818
 - `task.quiet`
-  - packages/core/src/daemon/delivery-loop.ts:298
-  - packages/core/src/daemon/reduce.ts:840
+  - packages/core/src/daemon/delivery-loop.ts:299
+  - packages/core/src/daemon/reduce.ts:856
 - `task.warn`
-  - packages/core/src/daemon/interactive-probe.ts:183
-  - packages/core/src/daemon/reduce.ts:470
+  - packages/core/src/daemon/interactive-probe.ts:214
+  - packages/core/src/daemon/reduce.ts:483
 - `task.timeout`
-  - packages/core/src/daemon/reduce.ts:684
+  - packages/core/src/daemon/reduce.ts:699
 - `task.cancelled`
   - packages/cli/src/commands/shutdown.ts:83
   - packages/cli/src/commands/shutdown.ts:121
@@ -143,7 +143,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/commands/hooks.ts:57
   - packages/core/src/crew-spawn.ts:761
   - packages/core/src/crew-spawn.ts:850
-  - packages/core/src/daemon/reduce.ts:492
+  - packages/core/src/daemon/reduce.ts:505
   - packages/core/src/events/to-control-event.ts:55
 - `task.session.ended`
   - packages/agents/src/interactive/claude.ts:670
