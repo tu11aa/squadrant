@@ -1,7 +1,7 @@
 # Status Observer: one status system for squadrant, the machine and every session
 
 Status: design agreed with the operator 2026-11-10 (side session `machine-status`), revised after one spec
-review pass. Not yet planned.
+review pass. P0 built in #1112's first PR (timeout fix, probe class dedup, suspension detector); P1 and P2 not yet planned.
 
 ## Why
 
@@ -399,7 +399,7 @@ Each phase only uses things built in the same or an earlier phase.
 
 | Phase | Content |
 |---|---|
-| P0 (small, independent) | (a) **Timeout bug fix:** notify with the cancelled record; `task.timeout` must-deliver and allowed at every tier except `none`. (b) **Probe:** stop alerting on `Retrying …` lines; dedup by `(taskId, coarseClass)`, a minimal regex-level class (`retrying` / `network` / `sleep` / `other`) that P1's adapter mapping replaces. (c) **Suspension detector:** tick gap + OS confirmation, persisted `suspensions`, awake time for the ceiling and `evaluateStall`/escalation, and a pause of timer-based actions **during a suspension and post-wake grace only** (incidents do not exist yet). (a)+(b)+(c) would have removed nearly all of that night's 63 alerts and kept the cancelled crew alive. |
+| P0 (small, independent) — **done** (#1112) | (a) **Timeout bug fix:** notify with the cancelled record; `task.timeout` must-deliver and allowed at every tier except `none`. (b) **Probe:** stop alerting on `Retrying …` lines; dedup by `(taskId, coarseClass)`, a minimal regex-level class (`retrying` / `network` / `sleep` / `other`) that P1's adapter mapping replaces. (c) **Suspension detector:** tick gap + OS confirmation, persisted `suspensions`, awake time for the ceiling and `evaluateStall`/escalation, and a pause of timer-based actions **during a suspension and post-wake grace only** (incidents do not exist yet). (a)+(b)+(c) would have removed nearly all of that night's 63 alerts and kept the cancelled crew alive. |
 | P1 | Status file, incident log and Telegram outbox; `machine` / `network` conditions; absorbable-kind inhibition in the notifier; Telegram through the same gate; open and recovery lines; must-deliver kinds; reminders (D13); `CREW OVERTIME` (D11); Claude adapter using all `StopFailure` fields and quota notifications; pane scrape demoted to evidence for Claude; daemon-down alert through the notifier. |
 | P2 | `squadrant:*` self subjects (daemon, runtime, delivery, telegram, lifecycle sources, hooks); provider / account conditions; the one-line `squadrant status` view + `--detailed`; dashboard; captain liveness folded in; captain hook path. |
 | Later | codex (`willRetry`), opencode (`session.error`), gemini adapters; optional provider status pages; optional phi-accrual stall detection. |
