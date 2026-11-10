@@ -63,6 +63,8 @@ export interface RuleFrontmatter {
   decision?: RuleDecision;
   /** Project overlay rules only: hash of the KB rule this one overrides, taken when the override was last confirmed. */
   overridesBase?: string;
+  /** `false` keeps the rule out of the SessionStart block; it still fires on its path/prompt triggers. */
+  session?: boolean;
 }
 
 export interface Rule extends RuleFrontmatter {
@@ -149,6 +151,7 @@ export function validateRuleFrontmatter(fm: unknown): string[] {
     p.push(`approvedBy must be one of ${RULE_APPROVERS.join("|")}`);
   }
   p.push(...triggerProblems(fm.triggers));
+  if (fm.session !== undefined && typeof fm.session !== "boolean") p.push("session must be a boolean");
   for (const k of ["supersedes", "conflictsWith"] as const) {
     if (fm[k] !== undefined && !isStrArr(fm[k])) p.push(`${k} must be a string array`);
   }
