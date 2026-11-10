@@ -35,7 +35,23 @@ const ERROR_BANNER_RE: RegExp[] = [
   /\b(?:429|500|502|503|504|529)\b[^?]*\b(?:overloaded|unavailable|internal server error|bad gateway|gateway timeout|too many requests|service unavailable)\b/i,
   /\bretr(?:y|ies)\s+(?:exhausted|limit\s+(?:reached|exceeded))\b/i,
   /\bmaximum\s+retries\b/i,
+  /\bYour computer went (?:offline|to sleep)\b/i,
 ];
+
+// #1112: Claude's own progress line (`✻ API error · Retrying in 0s · attempt 1/10`)
+// is the agent recovering, not an error. It must never become the error line.
+const RETRYING_RE = /\bRetrying\b/i;
+
+// #1112: coarse, regex-level class used ONLY to dedup pane-scraped warnings per
+// (taskId, class). P1's adapter mapping (StopFailure fields) replaces this.
+// `retrying` is never alerted (see RETRYING_RE); it exists so the class is total.
+export type ProbeErrorClass = "retrying" | "network" | "sleep" | "other";
+export function classifyProbeError(text: string): ProbeErrorClass {
+  if (RETRYING_RE.test(text)) return "retrying";
+  if (/went to sleep/i.test(text)) return "sleep";
+  if (/\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH)\b|went offline|can'?t reach the API server|check your internet|\bDNS\b|connection (?:failed|error|refused)/i.test(text)) return "network";
+  return "other";
+}
 const OPTION_RE = /^[❯>›]?\s*(\d+)\.\s+(.*\S)\s*$/;
 const PICKER_FOOTER_RE = /↑↓\s*select|enter\s+submit|esc\s+dismiss/i;
 const PURE_CHROME_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▁▂▃▄▅▆▇█▔▏▕]+$/;
@@ -66,7 +82,7 @@ function stripChrome(raw: string): string | null {
 
 function classifyPaneTail(
   tail: string,
-): { kind: "approval" | "question" | "error"; text: string } | null {
+): { kind: "approval" | "question" | "error"; text: string; errorClass?: ProbeErrorClass } | null {
   if (!tail) return null;
   const raw = tail.split(/\r?\n/);
   const cleaned = raw.map(stripChrome);
@@ -104,10 +120,10 @@ function classifyPaneTail(
   let errLine: string | null = null;
   for (let i = 0; i < cleaned.length; i++) {
     const c = cleaned[i];
-    if (c == null || isQuotedLine(raw[i])) continue;
+    if (c == null || isQuotedLine(raw[i]) || RETRYING_RE.test(c)) continue;
     if (ERROR_BANNER_RE.some((re) => re.test(c))) errLine = c;
   }
-  if (errLine) return { kind: "error", text: errLine.slice(0, 200) };
+  if (errLine) return { kind: "error", text: errLine.slice(0, 200), errorClass: classifyProbeError(errLine) };
   return null;
 }
 
@@ -133,6 +149,8 @@ interface InteractiveProbeDeps {
   // firePush would never fire for it; the pipeline requires calling notify
   // directly, same as every other notify-only synthetic event).
   notify?: (args: { project: string; message: string; record: TaskRecord; event: ControlEvent }) => Promise<void> | void;
+  // #1112: every pane-detected error observation (before the warn dedup), for the status file.
+  onError?: (rec: TaskRecord, cls: ProbeErrorClass, text: string) => void;
 }
 
 export function createInteractiveProbe(deps: InteractiveProbeDeps): {
@@ -140,6 +158,10 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
 } {
   const quietMs = deps.quietMs ?? PROBE_QUIET_MS;
   const lastTail = new Map<string, string>();
+  // #1112: error classes already warned about per task, reset when the crew
+  // heartbeats again (lastHeartbeat moves) — so one outage is one alert per
+  // class, not one per changed pane tail.
+  const warned = new Map<string, { hb: number; classes: Set<string> }>();
 
   async function tick(): Promise<void> {
     let tasks: TaskRecord[];
@@ -177,6 +199,18 @@ export function createInteractiveProbe(deps: InteractiveProbeDeps): {
       if (verdict.kind === "error") {
         const alive = deps.checkAlive ? await deps.checkAlive(rec) : "unknown";
         if (alive !== "gone") {
+          const cls = verdict.errorClass ?? "other";
+          try { deps.onError?.(rec, cls, verdict.text); } catch { /* observer is best-effort */ }
+          let w = warned.get(rec.id);
+          if (!w || w.hb !== rec.lastHeartbeat) {
+            w = { hb: rec.lastHeartbeat, classes: new Set() };
+            warned.set(rec.id, w);
+          }
+          if (w.classes.has(cls)) {
+            deps.log(`probe suppressed repeat CREW WARN ${rec.name} class=${cls}`);
+            continue;
+          }
+          w.classes.add(cls);
           const message = `CREW WARN ${rec.name}: pane shows an error string — crew still ${alive}, not terminalized (pane-detected): ${verdict.text}`;
           deps.log(`probe -> ${message}`);
           if (deps.notify) {

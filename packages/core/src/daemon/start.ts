@@ -27,6 +27,8 @@ import {
 } from "@squadrant/shared";
 import { distBuiltAt, gatherLogStats, gatherStoreStats, gatherResults } from "./snapshot-gather.js";
 import type { SquadrantdOpts, DaemonContext } from "./context.js";
+import { SUSPENSION_TICK_MS } from "./suspensions.js";
+import { createStatusRuntime, feedEvent } from "./status-observer.js";
 
 const CURSOR_SUBSCRIBER = "captain";
 const SNAPSHOT_LOG_WINDOW_MS = 60 * 60 * 1000;
@@ -81,8 +83,19 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   const ingest = (project: string) => (e: import("@squadrant/shared").ControlEvent) =>
     void ctx.d.handle({ kind: "event", project, event: e });
 
+  // #1112: awake-time clock. Budgets exclude time the machine was suspended and pause
+  // for a post-wake grace window.
+  // status.enabled=false turns the clock and observer off (budgets go back to wall time).
+  // #1112 P1: the observer records conditions + incidents under <stateRoot>/status/; it never changes alerts.
+  const status = createStatusRuntime(loadConfig().status, stateRoot, log);
+  const suspensions = status?.clock;
+  const observer = status?.observer;
+  observer?.flush(true);
+  const tickClock = (): void => status?.tick();
   const d = createDaemon({
     store, now: () => Date.now(), isPidAlive, notify, taskTimeoutMs, takeoverNudgeHours: ctx.takeoverNudgeHours,
+    awakeElapsed: suspensions?.awakeElapsed, timersPaused: suspensions?.paused,
+    onEvent: observer ? (rec, ev) => feedEvent(observer, rec, ev) : undefined,
     isSurfaceAlive: surfaceProbe,
     resendFirstTurn: ctx.resendFirstTurn,
     recordDispatch: (rec) => appendDispatchEntry({ stateRoot: ctx.stateRoot, project: rec.project, taskRecord: rec }),
@@ -326,6 +339,17 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     const { marker, gapMs } = consumeExitMarker(stateRoot);
     // Read BEFORE writing this boot's own fresh running marker below.
     const prevRunning = readRunningMarker(stateRoot);
+    // #1112: the downtime/sleep between the previous daemon's last sign of life and
+    // this boot must not count against awake-time budgets (a restart after an
+    // overnight sleep would otherwise fire the task ceiling at once).
+    {
+      const prevTs = marker?.ts ?? prevRunning?.lastHeartbeatTs;
+      const prevMs = prevTs ? new Date(prevTs).getTime() : NaN;
+      if (Number.isFinite(prevMs) && suspensions) {
+        const gap = suspensions.recordBootGap(prevMs, Date.now());
+        if (gap) observer?.noteSuspension(gap);
+      }
+    }
     if (marker) {
       log(`previous exit ts=${marker.ts} reason=${marker.reason} gap=${((gapMs ?? 0) / 1000).toFixed(1)}s`);
       if ((gapMs ?? 0) > 60_000) sendDownAlert(marker.ts, bootTs, Math.round((gapMs ?? 0) / 60_000), marker.reason);
@@ -356,7 +380,10 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
   let probeTick: (() => Promise<void>) | undefined;
 
   if (daemonCmux) {
-    probeTick = probes.buildInteractiveProbe({ cmux: daemonCmux });
+    probeTick = probes.buildInteractiveProbe({
+      cmux: daemonCmux,
+      onError: observer ? (rec, cls, text) => observer.sessionError(rec.project, rec.id, cls, "probe", text) : undefined,
+    });
   }
 
   let deliveryTimer: NodeJS.Timeout | undefined;
@@ -412,6 +439,13 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
     probeTimer.unref?.();
   }
 
+  // #1112: own heartbeat so a wake is recorded even when nothing else is due.
+  let suspensionTimer: NodeJS.Timeout | undefined;
+  if (suspensions && opts.sweepMs && opts.sweepMs > 0) {
+    suspensionTimer = setInterval(tickClock, SUSPENSION_TICK_MS);
+    suspensionTimer.unref?.();
+  }
+
   let timer: NodeJS.Timeout | undefined;
   if (opts.sweepMs && opts.sweepMs > 0) {
     let sweeping = false;
@@ -419,6 +453,8 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       if (sweeping) return;
       sweeping = true;
       ctx.lastSweepAt.value = Date.now();
+      tickClock(); // detect a wake BEFORE the sweep reads awake time
+      observer?.syncSessions(store.listAll().filter((r) => !TERMINAL_STATES.has(r.state)).map((r) => ({ project: r.project, id: r.id })));
       void d.sweep()
         .catch((e: unknown) => log(`sweep failed: ${(e as Error).message}`))
         .finally(() => { sweeping = false; });
@@ -492,6 +528,8 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       if (probeTimer) clearInterval(probeTimer);
       if (contextTimer) clearInterval(contextTimer);
       if (timer) clearInterval(timer);
+      if (suspensionTimer) clearInterval(suspensionTimer);
+      observer?.flush(true);
       if (rotationTimer) clearInterval(rotationTimer);
       try { ctx.cmuxEventsBridge.stop(); } catch { /* best-effort */ }
       try { ctx.telegramBridge?.stop(); } catch { /* best-effort */ }

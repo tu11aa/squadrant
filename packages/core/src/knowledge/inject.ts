@@ -2,11 +2,12 @@
 // Pure formatting / query cleaning / strength bar, plus a tiny per-session dedup store.
 import fs from "node:fs";
 import path from "node:path";
-import { resolveHome, subscribedKbs, type KbDomain, type KbItem, type Rule, type SquadrantConfig } from "@squadrant/shared";
+import { kbPath, resolveHome, subscribedKbs, type KbDomain, type KbItem, type Rule, type SquadrantConfig } from "@squadrant/shared";
 import { itemHeadline, searchRules, LIVE_ITEM_STATUSES, type Matchable, type SearchHit } from "./search.js";
 import { resolveProjectRules } from "./layers.js";
 import { resolveReadSet } from "./items.js";
 import { applyBudget, matchPaths, matchSymbols, mentionedPaths, repoRelativePaths, INJECT_MAX_CHARS } from "./match.js";
+import { scoresFile } from "./scores.js";
 import { appendAudit, ruleAuditScope, type AuditEvent, type AuditSink } from "./audit.js";
 
 export const SESSION_RULE_CAP = 20;
@@ -55,11 +56,38 @@ export function itemAuditScope(x: KbItem): { kb: string; level: KbItem["level"];
 /** Citing the ids an agent applied is what makes "used" measurable (item.cited, #901). */
 export const CITE_NOTE = "List the rule ids you apply as `Rules: <id>, <id>` at the end of your signal done message (commit messages count too).";
 
-/** Project layer before KB, must-not before must, then id. */
-function sessionOrder(a: Rule, b: Rule): number {
+/** Use rate a rule is assumed to have with no data, and how many surfacings that assumption is worth (Bayesian smoothing). */
+export const SESSION_PRIOR_RATE = 0.25;
+export const SESSION_PRIOR_WEIGHT = 20;
+
+/** Rule id → last-30-day `surfaced`/`cited` from each subscribed KB's `scores.json`. Missing or corrupt file → no entries. */
+export function readSessionScores(cfg: SquadrantConfig, kbs: string[]): Map<string, { surfaced: number; cited: number }> {
+  const out = new Map<string, { surfaced: number; cited: number }>();
+  for (const kb of kbs) {
+    try {
+      const s = JSON.parse(fs.readFileSync(scoresFile(kbPath(cfg, kb)), "utf8")) as { items?: { domain?: string; itemId?: string; surfaced?: number; cited?: number }[] };
+      for (const x of s.items ?? []) {
+        if (x.domain === "rules" && typeof x.itemId === "string" && Number.isFinite(x.surfaced) && Number.isFinite(x.cited)) {
+          out.set(x.itemId, { surfaced: x.surfaced!, cited: x.cited! });
+        }
+      }
+    } catch { /* no scores yet: today's order */ }
+  }
+  return out;
+}
+
+/** Cited ÷ surfaced pulled toward SESSION_PRIOR_RATE: a rule with no data sits mid-pack, a 400-surfaced 0-cited rule sinks, a proven one rises. */
+const sessionScore = (id: string, scores: Map<string, { surfaced: number; cited: number }>) => {
+  const c = scores.get(id);
+  return ((c?.cited ?? 0) + SESSION_PRIOR_RATE * SESSION_PRIOR_WEIGHT) / ((c?.surfaced ?? 0) + SESSION_PRIOR_WEIGHT);
+};
+
+/** Project layer first, then higher smoothed use rate, then must-not before must, then id. With no scores every rule ties on score, which is the old order. */
+function sessionOrder(scores: Map<string, { surfaced: number; cited: number }>) {
   const proj = (r: Rule) => (r.layer.startsWith("project:") ? 0 : 1);
   const mod = (r: Rule) => (r.modality === "must-not" ? 0 : 1);
-  return proj(a) - proj(b) || mod(a) - mod(b) || a.id.localeCompare(b.id);
+  return (a: Rule, b: Rule): number =>
+    proj(a) - proj(b) || sessionScore(b.id, scores) - sessionScore(a.id, scores) || mod(a) - mod(b) || a.id.localeCompare(b.id);
 }
 
 /**
@@ -68,9 +96,10 @@ function sessionOrder(a: Rule, b: Rule): number {
  */
 export function formatSessionContext(
   kbs: string[], rules: Rule[], cap = SESSION_RULE_CAP, index: KbItem[] = [],
+  scores: Map<string, { surfaced: number; cited: number }> = new Map(),
 ): { text: string; ids: string[]; hiddenIds: string[] } {
-  const hard = rules.filter((r) => r.status === "active" && (r.modality === "must" || r.modality === "must-not"))
-    .sort(sessionOrder);
+  const hard = rules.filter((r) => r.status === "active" && (r.modality === "must" || r.modality === "must-not") && r.session !== false)
+    .sort(sessionOrder(scores));
   // Rule lines also obey the ≈800-token budget (spec §6), not just the count cap.
   const shown = applyBudget(hard.map((rule) => ({ rule })), (r) => line(r).length, cap, INJECT_MAX_CHARS).shown.map((x) => x.rule);
   const left = INJECT_MAX_CHARS - shown.reduce((n, r) => n + line(r).length, 0);
@@ -356,7 +385,7 @@ export function computeRulesInjection(i: RulesInjectInput): string | null {
   if (i.event === "session-start") {
     const rules = resolveProjectRules(i.cfg, project).rules;
     const index = liveItems(i, project, (i.domains?.index ?? []).filter((d) => d !== "rules" && d !== "profile"));
-    const { text, ids, hiddenIds } = formatSessionContext(kbs, rules, SESSION_RULE_CAP, index);
+    const { text, ids, hiddenIds } = formatSessionContext(kbs, rules, SESSION_RULE_CAP, index, readSessionScores(i.cfg, kbs));
     const byId = new Map<string, Injectable>([...rules, ...index].map((r) => [r.id, r]));
     audit(i, project, sessionId, "session", [
       ...ids.map((id) => ({ id, event: "item.surfaced" as const })),

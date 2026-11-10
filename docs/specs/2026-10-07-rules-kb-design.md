@@ -75,6 +75,7 @@ Operators onboard companies (e.g. **Saitex**) and projects (e.g. **Flooros**, **
 - path: raw/**
   priority: agent
   review: required                           # new rules wait in _proposed/ for the operator (2026-10-13 lifecycle spec §5)
+  exclude: ["raw/**/_archive/**"]            # never ingested; same globs as path. Dotfiles and fonts are always skipped
 ```
 
 **KB config** goes in `config.json` under `knowledgeBases.<kb>` (`path` defaults to `~/squadrant/kb/<kb>`). The old `knowledge.<kb>` key is still read as a deprecated alias; `squadrant doctor` reports it as config drift.

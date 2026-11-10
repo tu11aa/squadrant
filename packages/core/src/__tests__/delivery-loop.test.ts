@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDelivery } from "../daemon/delivery-loop.js";
 import { createStore } from "../store.js";
+import { createDaemon } from "../daemon/reduce.js";
 import { LivenessRegistry } from "../daemon/liveness-registry.js";
 import { appendCaptainMessage, appendToMailbox, readCursor, mailboxStats } from "../mailbox.js";
 import { STALE_THRESHOLD_MS } from "../daemon/interactive-probe.js";
@@ -445,4 +446,35 @@ describe("defaultNotify staleness guard (#594b)", () => {
     const stats = await mailboxStats(stateRoot, "demo");
     expect(stats.maxSeq).toBe(1);
   });
+});
+
+// ── #1112 (a): CREW TIMEOUT must reach the captain ───────────────────────────
+// The sweep cancels the task, then notifies. It used to notify with the
+// pre-cancel record, so defaultNotify's #594b staleness guard saw a terminal
+// store state different from the announced one and silently dropped it.
+describe("CREW TIMEOUT delivery (#1112)", () => {
+  for (const tier of ["done_only", "alert_only", "all"] as const) {
+    it(`reaches the captain mailbox at tier ${tier}`, async () => {
+      const stateRoot = freshState();
+      const store = createStore(stateRoot);
+      store.put({
+        id: "t1", project: "demo", provider: "claude", mode: "headless",
+        state: "working", task: "t", createdAt: 0, lastHeartbeat: 1990,
+        lastEvent: "task.progress", heartbeatBudgetMs: 86_400_000, attempts: [],
+      } as TaskRecord);
+      const { defaultNotify } = createDelivery(
+        { stateRoot, store, log: () => {}, isPidAlive: () => true, opts: { captainCrewTier: () => tier } } as any,
+        undefined,
+      );
+      const inFlight: Array<Promise<void>> = [];
+      const d = createDaemon({
+        store, now: () => 2000, taskTimeoutMs: 1_000,
+        notify: (a) => { const p = Promise.resolve(defaultNotify(a)); inFlight.push(p); return p; },
+      });
+      await d.sweep();
+      await Promise.all(inFlight);
+      expect(store.get("demo", "t1")?.state).toBe("cancelled");
+      expect((await mailboxStats(stateRoot, "demo")).maxSeq).toBe(1);
+    });
+  }
 });

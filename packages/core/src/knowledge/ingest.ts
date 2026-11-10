@@ -110,14 +110,22 @@ function walkFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Expand one sources.yaml entry to concrete files (a glob becomes one tracked entry per file). */
+/** Never a rule source, so a glob never expands to them: dotfiles (`.DS_Store`) and font files. */
+const JUNK_EXTS = new Set([".ttf", ".otf", ".woff", ".woff2"]);
+const isJunkSource = (file: string): boolean =>
+  path.basename(file).startsWith(".") || JUNK_EXTS.has(path.extname(file).toLowerCase());
+
+/** Expand one sources.yaml entry to concrete files (a glob becomes one tracked entry per file), minus its `exclude` globs. */
 export function expandSource(kbRoot: string, entry: KnowledgeSourceEntry): string[] {
+  const posix = (f: string) => f.split(path.sep).join("/");
+  const excludes = (entry.exclude ?? []).map((g) => globToRegExp(posix(path.resolve(kbRoot, expandHome(g)))));
+  const kept = (f: string) => !excludes.some((re) => re.test(posix(f)));
   const abs = path.resolve(kbRoot, expandHome(entry.path));
-  if (!/[*?]/.test(entry.path)) return fs.existsSync(abs) && fs.statSync(abs).isFile() ? [abs] : [];
+  if (!/[*?]/.test(entry.path)) return fs.existsSync(abs) && fs.statSync(abs).isFile() && kept(abs) ? [abs] : [];
   const base = abs.split(/[*?]/)[0];
   const root = base.endsWith(path.sep) ? base : path.dirname(base);
-  const re = globToRegExp(abs.split(path.sep).join("/"));
-  return walkFiles(root).filter((f) => re.test(f.split(path.sep).join("/"))).sort();
+  const re = globToRegExp(posix(abs));
+  return walkFiles(root).filter((f) => re.test(posix(f)) && !isJunkSource(f) && kept(f)).sort();
 }
 
 /** Files a rule ref may name, in lookup order: as written (`~/`, absolute, else KB-relative), then a relative ref under

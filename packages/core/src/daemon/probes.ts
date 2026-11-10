@@ -1,6 +1,6 @@
 // src/control/daemon/probes.ts
 // Surface-liveness probe logic for the daemon-direct delivery path.
-import { createInteractiveProbe } from "./interactive-probe.js";
+import { createInteractiveProbe, type ProbeErrorClass } from "./interactive-probe.js";
 import { createDirectCrewPaneReader, createDirectSurfaceLivenessProbe } from "../crew-pane-reader.js";
 import { loadConfig } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
@@ -10,7 +10,7 @@ import type { DaemonContext } from "./context.js";
 export interface ProbeHandlers {
   /** Build the probe-tick function for the daemon-direct delivery loop.
    *  Call once after the surface driver is resolved; returns a guarded tick. */
-  buildInteractiveProbe: (deps: { cmux: DaemonSurfaceDriver }) => () => Promise<void>;
+  buildInteractiveProbe: (deps: { cmux: DaemonSurfaceDriver; onError?: (rec: TaskRecord, cls: ProbeErrorClass, text: string) => void }) => () => Promise<void>;
   /** Direct-cmux surface liveness probe for interactive task reaping. */
   directSurfaceProbe: (rec: TaskRecord) => Promise<"alive" | "gone" | "unknown">;
 }
@@ -33,7 +33,7 @@ export function createProbes(ctx: DaemonContext): ProbeHandlers {
   // Reuses createInteractiveProbe with a direct cmux pane reader injected as
   // the readPaneTail dep. The returned tick must be called from the delivery
   // loop's interval.
-  function buildInteractiveProbe(deps: { cmux: DaemonSurfaceDriver }): () => Promise<void> {
+  function buildInteractiveProbe(deps: { cmux: DaemonSurfaceDriver; onError?: (rec: TaskRecord, cls: ProbeErrorClass, text: string) => void }): () => Promise<void> {
     const directPaneReader = createDirectCrewPaneReader(deps.cmux, captainNameForProject);
     // #704: ground truth for a pane-detected "error" verdict — same surface
     // liveness check buildSurfaceProbe already uses for reaping (reduce.ts's
@@ -54,6 +54,7 @@ export function createProbes(ctx: DaemonContext): ProbeHandlers {
       log,
       checkAlive,
       notify: ctx.notify,
+      onError: deps.onError,
     });
     let probing = false;
     return async () => {
