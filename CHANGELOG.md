@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-11
+
+Hotfix. `squadrant crew spawn` no longer aborts when a target repo's committed lockfile is out of date, and a failed worktree install no longer leaves an orphan worktree and branch behind. PR #1121.
+
+### Fixed
+
+- **Stale lockfile aborted every crew spawn.** When the worktree's frozen install (`pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`, `npm ci`, `bun install --frozen-lockfile`) fails with an outdated-lockfile error, it is retried once unfrozen, the committed lockfile is restored so the crew cannot commit a regenerated one, and a warning is printed on stderr. Any other install error does not fall back (#1121).
+- **Failed install left an orphan worktree and branch.** When the install still fails, the worktree is removed and the just-created `crew/<name>` branch is deleted (kept if it has commits beyond base). The error now carries the package manager's own output instead of a bare `Command failed` (#1121).
+
 ## [0.36.0] - 2026-11-10
 
 Quiet nights. A sleeping or offline machine no longer floods captains with alerts, and no longer gets a live crew cancelled: timers count awake time only, a pane-scraped crew error is reported once per error class, and CREW TIMEOUT is no longer silently dropped. The daemon now records machine, network and session status in `status/current.json`. The rules KB gets `sources.yaml` `exclude` globs, and the SessionStart rule block is ordered by measured use instead of by id. PRs #1111, #1113, #1117.
