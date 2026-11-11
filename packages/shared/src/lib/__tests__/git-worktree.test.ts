@@ -194,6 +194,66 @@ describe("addWorktree", () => {
 
 // ── #387: addWorktree() serves every registered project, not just pnpm ones ─
 
+describe("addWorktree — stale lockfile fallback and failed-install cleanup", () => {
+  const spec = { repoRoot: "/tmp/brove", worktreeDir: ".worktrees", project: "brove", name: "crew-1", base: "develop" };
+  const wt = path.resolve("/tmp/brove", ".worktrees", "brove-crew-1");
+  const installErr = (stderr: string) => Object.assign(new Error("Command failed: pnpm"), { stderr: Buffer.from(stderr) });
+  let stderrSpy: { mock: { calls: unknown[][] }; mockRestore(): void };
+
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    mockProjectFiles("pnpm");
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+  afterEach(() => stderrSpy.mockRestore());
+
+  /** Script execFileSync by command: git show-ref misses; pnpm calls handled by `pnpm`. */
+  function script(pnpm: (args: string[]) => Buffer, branchLog = "") {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "pnpm") return pnpm(args);
+      if (args.includes("show-ref")) throw new Error("not found");
+      if (args.includes("log")) return Buffer.from(branchLog);
+      return Buffer.from("");
+    });
+  }
+  const gitCalls = () => execFileSyncMock.mock.calls.filter((c) => c[0] === "git").map((c) => c[1] as string[]);
+
+  it("retries with --no-frozen-lockfile on ERR_PNPM_OUTDATED_LOCKFILE, warns, and returns the worktree", () => {
+    script((args) => {
+      if (args.includes("--frozen-lockfile")) throw installErr("ERR_PNPM_OUTDATED_LOCKFILE  pnpm-lock.yaml is not up to date");
+      return Buffer.from("");
+    });
+    expect(addWorktree(spec)).toBe(wt);
+    expect(execFileSyncMock).toHaveBeenCalledWith("pnpm", ["-C", wt, "install", "--no-frozen-lockfile"], expect.anything());
+    expect(String(stderrSpy.mock.calls[0][0])).toMatch(/lockfile in the repo is stale.*Do NOT commit/);
+    expect(gitCalls().some((a) => a.includes("remove"))).toBe(false);
+  });
+
+  it("when the fallback also fails: removes worktree + branch and surfaces the real stderr", () => {
+    script((args) => {
+      throw installErr(args.includes("--frozen-lockfile") ? "ERR_PNPM_OUTDATED_LOCKFILE" : "ERR_PNPM_FETCH_404 registry unreachable");
+    });
+    expect(() => addWorktree(spec)).toThrow(/ERR_PNPM_FETCH_404 registry unreachable/);
+    const git = gitCalls();
+    expect(git).toContainEqual(["-C", "/tmp/brove", "worktree", "remove", "--force", wt]);
+    expect(git).toContainEqual(["-C", "/tmp/brove", "branch", "-D", "crew/crew-1"]);
+  });
+
+  it("a non-lockfile install error does not fall back; cleans up and includes stderr", () => {
+    script(() => { throw installErr("ERR_PNPM_NO_MATCHING_VERSION nothing matches"); });
+    expect(() => addWorktree(spec)).toThrow(/ERR_PNPM_NO_MATCHING_VERSION nothing matches/);
+    expect(execFileSyncMock.mock.calls.filter((c) => c[0] === "pnpm")).toHaveLength(1);
+    expect(gitCalls()).toContainEqual(["-C", "/tmp/brove", "worktree", "remove", "--force", wt]);
+    expect(gitCalls()).toContainEqual(["-C", "/tmp/brove", "branch", "-D", "crew/crew-1"]);
+  });
+
+  it("keeps the branch when it somehow holds commits beyond base", () => {
+    script(() => { throw installErr("boom"); }, "abc123 a commit");
+    expect(() => addWorktree(spec)).toThrow(/boom/);
+    expect(gitCalls().some((a) => a.includes("-D"))).toBe(false);
+  });
+});
+
 describe("addWorktree — package manager detection (#387)", () => {
   beforeEach(() => {
     execFileSyncMock.mockReset();

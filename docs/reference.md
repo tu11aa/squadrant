@@ -453,6 +453,13 @@ Design: [`#669`](https://github.com/tu11aa/squadrant/issues/669).
 
 Crew is the captain's equivalent of an Agent Team subagent — but runtime-agnostic. The captain spawns a crew via `squadrant crew spawn <project> "<task>" [--name <n>]`, which opens a new tab in the captain's cmux workspace, boots an interactive Claude session (no `-p`), and sends the task as the first turn. The crew works on it and **stays idle** waiting for follow-ups. The captain drives the session with `squadrant crew send/read/close/list`, addressing each crew by its tab title (`🔧 <project>:<name>`).
 
+#### Worktree dependency install: stale lockfile and cleanup
+
+A worktree crew's `git worktree add` is followed by a frozen dependency install (`pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`, `npm ci`, `bun install --frozen-lockfile`) so the worktree has its own `node_modules` (#387).
+
+- **Stale lockfile → fallback.** If the frozen install fails with an *outdated-lockfile* error (pnpm `ERR_PNPM_OUTDATED_LOCKFILE`, npm `ci` "in sync", yarn "lockfile needs to be updated", bun "lockfile is frozen"), it is retried once unfrozen (`pnpm install --no-frozen-lockfile`, `yarn install`, `npm install`, `bun install`). The spawn continues and prints a stderr warning: the repo's lockfile is stale, the worktree regenerated it, and the crew must **not** commit the regenerated lockfile. Any other install error never falls back.
+- **Failure → cleanup.** If the install still fails (or failed for another reason), the worktree is removed (`git worktree remove --force`) and the just-created `crew/<name>` branch is deleted (skipped if it has commits beyond base). The thrown error contains the package manager's own output (last 20 lines), not just `Command failed`.
+
 #### Claude first turn: launch-time init prompt
 
 A claude crew's first turn is **not sent** after boot: it is claude's positional prompt at launch, so it arrives as a real user turn (transcript `origin.kind: "human"`), not as "Another Claude session sent a message". Spec: [`docs/specs/2026-10-26-first-turn-init-prompt.md`](specs/2026-10-26-first-turn-init-prompt.md).

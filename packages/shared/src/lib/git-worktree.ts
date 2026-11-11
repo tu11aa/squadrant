@@ -160,8 +160,72 @@ export function addWorktree(spec: WorktreeSpec): string {
     ["-C", spec.repoRoot, "worktree", "add", wt, "-b", targetBranch, spec.base],
     { stdio: "pipe" },
   );
-  installWorktreeDependencies(wt);
+  try {
+    installWorktreeDependencies(wt);
+  } catch (err) {
+    // The worktree + branch were created a moment ago for a crew that will now
+    // never start; leave neither behind (they would collide with the next spawn).
+    cleanupFailedWorktree(spec, wt, targetBranch);
+    throw err;
+  }
   return wt;
+}
+
+/** Undo `git worktree add` after a failed install. Best-effort: the original install error is what the caller needs. */
+function cleanupFailedWorktree(spec: WorktreeSpec, wt: string, branch: string): void {
+  try {
+    removeWorktree(spec.repoRoot, wt, { force: true });
+  } catch {
+    // Already gone or never fully created — nothing more to remove.
+  }
+  try {
+    // Only delete the branch if it holds nothing beyond base (it was just created, so it shouldn't).
+    const log = execFileSync("git", ["-C", spec.repoRoot, "log", "--oneline", `${spec.base}..${branch}`],
+      { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (!log) execFileSync("git", ["-C", spec.repoRoot, "branch", "-D", branch], { stdio: "pipe" });
+  } catch {
+    // Branch missing or unreadable — leave it rather than risk deleting commits.
+  }
+}
+
+const OUTDATED_LOCKFILE = [
+  /ERR_PNPM_OUTDATED_LOCKFILE/,                          // pnpm
+  /npm ci.*\bin sync\b|not in sync/i,                    // npm ci
+  /lockfile needs to be updated/i,                       // yarn
+  /lockfile had changes, but lockfile is frozen/i,       // bun
+];
+
+/** Text a failed execFileSync carries: message + captured stdout/stderr. */
+function installFailureText(err: unknown): string {
+  const e = err as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+  return [e.message, e.stdout, e.stderr].map((x) => (x ? String(x) : "")).filter(Boolean).join("\n");
+}
+
+/**
+ * Run a frozen install; if it fails ONLY because the repo's lockfile is stale,
+ * retry once unfrozen. Any other failure (or a failed retry) throws an Error
+ * carrying the package manager's real output, not just "Command failed".
+ */
+function runInstall(wt: string, cmd: string, frozenArgs: string[], fallbackArgs: string[], opts: { cwd?: string }): void {
+  const run = (args: string[]) => execFileSync(cmd, args, { ...opts, stdio: "pipe" });
+  const fail = (args: string[], err: unknown): never => {
+    const tail = installFailureText(err).trim().split("\n").slice(-20).join("\n");
+    throw new Error(`dependency install failed in worktree ${wt} (${cmd} ${args.join(" ")}):\n${tail}`);
+  };
+  try {
+    run(frozenArgs);
+    return;
+  } catch (err) {
+    if (!OUTDATED_LOCKFILE.some((re) => re.test(installFailureText(err)))) return fail(frozenArgs, err);
+  }
+  process.stderr.write(
+    `worktree ${wt}: the lockfile in the repo is stale (out of date with package.json); the frozen install failed, so this worktree regenerated it. Do NOT commit the regenerated lockfile.\n`,
+  );
+  try {
+    run(fallbackArgs);
+  } catch (err) {
+    fail(fallbackArgs, err);
+  }
 }
 
 /**
@@ -188,18 +252,25 @@ export function addWorktree(spec: WorktreeSpec): string {
  * without its own node_modules, i.e. still exposed to the exact silent
  * cross-checkout resolution this function exists to close. Warn on stderr so
  * that exposure is visible instead of silent.
+ *
+ * A frozen install fails when the repo's committed lockfile is stale. That is
+ * the repo's problem, not the crew's, so it must not block the spawn: if (and
+ * only if) the failure is an outdated-lockfile error, retry once unfrozen and
+ * warn on stderr that the regenerated lockfile must not be committed. Any other
+ * failure aborts the spawn; addWorktree() then removes the worktree and branch
+ * it just created, and the thrown error carries the package manager's output.
  */
 function installWorktreeDependencies(wt: string): void {
   if (!fs.existsSync(path.join(wt, "package.json"))) return;
 
   if (fs.existsSync(path.join(wt, "pnpm-lock.yaml"))) {
-    execFileSync("pnpm", ["-C", wt, "install", "--frozen-lockfile"], { stdio: "pipe" });
+    runInstall(wt, "pnpm", ["-C", wt, "install", "--frozen-lockfile"], ["-C", wt, "install", "--no-frozen-lockfile"], {});
   } else if (fs.existsSync(path.join(wt, "yarn.lock"))) {
-    execFileSync("yarn", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+    runInstall(wt, "yarn", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
   } else if (fs.existsSync(path.join(wt, "package-lock.json"))) {
-    execFileSync("npm", ["ci"], { cwd: wt, stdio: "pipe" });
+    runInstall(wt, "npm", ["ci"], ["install"], { cwd: wt });
   } else if (fs.existsSync(path.join(wt, "bun.lockb"))) {
-    execFileSync("bun", ["install", "--frozen-lockfile"], { cwd: wt, stdio: "pipe" });
+    runInstall(wt, "bun", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
   } else {
     process.stderr.write(
       `worktree ${wt}: package.json present but no lockfile — dependencies not installed; local typechecks/tests may resolve against the main checkout instead of this worktree.\n`,
