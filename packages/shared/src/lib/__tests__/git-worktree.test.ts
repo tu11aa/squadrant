@@ -225,8 +225,20 @@ describe("addWorktree — stale lockfile fallback and failed-install cleanup", (
     });
     expect(addWorktree(spec)).toBe(wt);
     expect(execFileSyncMock).toHaveBeenCalledWith("pnpm", ["-C", wt, "install", "--no-frozen-lockfile"], expect.anything());
-    expect(String(stderrSpy.mock.calls[0][0])).toMatch(/lockfile in the repo is stale.*Do NOT commit/);
+    expect(execFileSyncMock).toHaveBeenCalledWith("git", ["-C", wt, "checkout", "--", "pnpm-lock.yaml"], expect.anything());
+    expect(String(stderrSpy.mock.calls[0][0])).toMatch(/lockfile is stale.*committed pnpm-lock\.yaml was restored/);
     expect(gitCalls().some((a) => a.includes("remove"))).toBe(false);
+  });
+
+  it("warns but does not abort when restoring the committed lockfile fails", () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "pnpm" && args.includes("--frozen-lockfile")) throw installErr("ERR_PNPM_OUTDATED_LOCKFILE");
+      if (args.includes("show-ref")) throw new Error("not found");
+      if (args.includes("checkout")) throw new Error("pathspec");
+      return Buffer.from("");
+    });
+    expect(addWorktree(spec)).toBe(wt);
+    expect(String(stderrSpy.mock.calls[0][0])).toMatch(/restoring the committed pnpm-lock\.yaml failed/);
   });
 
   it("when the fallback also fails: removes worktree + branch and surfaces the real stderr", () => {

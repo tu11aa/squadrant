@@ -206,7 +206,7 @@ function installFailureText(err: unknown): string {
  * retry once unfrozen. Any other failure (or a failed retry) throws an Error
  * carrying the package manager's real output, not just "Command failed".
  */
-function runInstall(wt: string, cmd: string, frozenArgs: string[], fallbackArgs: string[], opts: { cwd?: string }): void {
+function runInstall(wt: string, cmd: string, lockfile: string, frozenArgs: string[], fallbackArgs: string[], opts: { cwd?: string }): void {
   const run = (args: string[]) => execFileSync(cmd, args, { ...opts, stdio: "pipe" });
   const fail = (args: string[], err: unknown): never => {
     const tail = installFailureText(err).trim().split("\n").slice(-20).join("\n");
@@ -218,14 +218,25 @@ function runInstall(wt: string, cmd: string, frozenArgs: string[], fallbackArgs:
   } catch (err) {
     if (!OUTDATED_LOCKFILE.some((re) => re.test(installFailureText(err)))) return fail(frozenArgs, err);
   }
-  process.stderr.write(
-    `worktree ${wt}: the lockfile in the repo is stale (out of date with package.json); the frozen install failed, so this worktree regenerated it. Do NOT commit the regenerated lockfile.\n`,
-  );
   try {
     run(fallbackArgs);
   } catch (err) {
     fail(fallbackArgs, err);
   }
+  // Restore the committed lockfile so the regenerated one never shows as a diff
+  // the crew could commit. node_modules stays installed.
+  let restored = true;
+  try {
+    execFileSync("git", ["-C", wt, "checkout", "--", lockfile], { stdio: "pipe" });
+  } catch {
+    restored = false;
+  }
+  process.stderr.write(
+    `worktree ${wt}: the repo's lockfile is stale; deps were installed from a regenerated lockfile, ` +
+    (restored
+      ? `the committed ${lockfile} was restored, and the repo should fix its lockfile separately.\n`
+      : `but restoring the committed ${lockfile} failed — do NOT commit the regenerated ${lockfile}; the repo should fix its lockfile separately.\n`),
+  );
 }
 
 /**
@@ -264,13 +275,13 @@ function installWorktreeDependencies(wt: string): void {
   if (!fs.existsSync(path.join(wt, "package.json"))) return;
 
   if (fs.existsSync(path.join(wt, "pnpm-lock.yaml"))) {
-    runInstall(wt, "pnpm", ["-C", wt, "install", "--frozen-lockfile"], ["-C", wt, "install", "--no-frozen-lockfile"], {});
+    runInstall(wt, "pnpm", "pnpm-lock.yaml", ["-C", wt, "install", "--frozen-lockfile"], ["-C", wt, "install", "--no-frozen-lockfile"], {});
   } else if (fs.existsSync(path.join(wt, "yarn.lock"))) {
-    runInstall(wt, "yarn", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
+    runInstall(wt, "yarn", "yarn.lock", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
   } else if (fs.existsSync(path.join(wt, "package-lock.json"))) {
-    runInstall(wt, "npm", ["ci"], ["install"], { cwd: wt });
+    runInstall(wt, "npm", "package-lock.json", ["ci"], ["install"], { cwd: wt });
   } else if (fs.existsSync(path.join(wt, "bun.lockb"))) {
-    runInstall(wt, "bun", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
+    runInstall(wt, "bun", "bun.lockb", ["install", "--frozen-lockfile"], ["install"], { cwd: wt });
   } else {
     process.stderr.write(
       `worktree ${wt}: package.json present but no lockfile — dependencies not installed; local typechecks/tests may resolve against the main checkout instead of this worktree.\n`,
