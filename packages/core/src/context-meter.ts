@@ -98,12 +98,26 @@ export type ContextMeter = ContextReading | "unknown";
 const TAIL_START_BYTES = 128 * 1024;
 const TAIL_MAX_BYTES = 4 * 1024 * 1024;
 
-/** Pure. Latest usable assistant call in `lines` (oldest→newest). Lines sharing
+/** Pure. postTokens of a `/compact` boundary entry (0 when the entry omits it), or null when the line is not one. */
+function compactBoundaryTokens(line: string): number | null {
+  if (!line.includes("compact_boundary")) return null;
+  try {
+    const e = JSON.parse(line) as { type?: string; subtype?: string; compactMetadata?: { postTokens?: unknown } };
+    if (e.type !== "system" || e.subtype !== "compact_boundary") return null;
+    const post = e.compactMetadata?.postTokens;
+    return typeof post === "number" && post > 0 ? post : 0;
+  } catch { return null; }
+}
+
+/** Pure. Latest usable assistant call in `lines` (oldest→newest). A `/compact` boundary newer than the last call
+ *  means the context is the compacted size (its postTokens) until the next turn writes usage. Lines sharing
  *  a message id are one call (mirror/streamed block lines), and an all-zero
  *  usage (synthetic entries) carries no information — both are skipped. */
 export function latestContextFromLines(lines: readonly string[]): { tokens: number; model: string | null } | null {
   const seen = new Set<string>();
   for (let i = lines.length - 1; i >= 0; i--) {
+    const post = compactBoundaryTokens(lines[i]);
+    if (post !== null) return { tokens: post, model: null };
     const { usage, messageId, model } = parseTranscriptLine(lines[i]);
     if (!usage) continue;
     if (messageId) {
