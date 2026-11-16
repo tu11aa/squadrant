@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ThinkingLevel } from "@squadrant/shared";
+import { styledPromptFile } from "@squadrant/core";
 import { isolatedClaudeFlags } from "@squadrant/shared";
 import type { Role } from "./types.js";
 import type { CapabilityRegistry } from "./registry.js";
@@ -122,7 +123,8 @@ export function buildAgentCmd(
         ? roleFile
         : fs.existsSync(legacyRoleFile) ? legacyRoleFile : null;
       if (actualRoleFile) {
-        cmd += ` --append-system-prompt-file ${actualRoleFile}`;
+        // #1129: the operator style section, when set, is appended via a generated copy; else the same path.
+        cmd += ` --append-system-prompt-file ${styledPromptFile(actualRoleFile, role)}`;
       }
 
       const pluginDir = path.join(templatesDir, "..", "plugin");

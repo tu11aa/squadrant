@@ -306,6 +306,16 @@ Unit tests use fixture dirs only (`SQUADRANT_USER_KB_DIR`, `SQUADRANT_NATIVE_MEM
 - **Native and profile drift** after an edit on one side. The profile wins by precedence, and a native change raises an update proposal that keeps the operator's summary.
 - **Hook limits on codex/gemini are undocumented, and #900 is not live-verified.** The block stays at about 3.5k characters or less (3,000 plus header and footer). The live check covers codex.
 
+## 10b. Style section (#1129)
+
+Decision (thread record, 2026-11-16): option C, opt-in, launch-time only, no writes outside squadrant.
+- **Model.** `kind: style` (a fourth kind). Own cap `PROFILE_STYLE_CAP` = 1,500 chars per audience view of `summary + body`; `viewSizes` (core cap) skips style traits; `computeProfileInjection` never shows them. Per role through `audience` (crew view = `all`+`crew`; captain, command, side = `all`+`captain`).
+- **Rendering.** `styledPromptFile(roleFile, role)` (`profile-style.ts`) returns the role file unchanged when no style applies; otherwise it writes role text + a `<squadrant-operator-style>` block to `<config dir>/styled-prompts/<basename>` and returns that path. Two call sites, both the existing `--append-system-prompt-file` emitters: `buildAgentCmd` (captain, command) and the claude driver `buildCommand` (crew, side).
+- **Why it survives `/output-style`.** Appended system-prompt text is a separate layer from the output style, which replaces only the style part of the prompt. The flag is passed at launch, so no settings file or output-style file is involved.
+- **Visibility.** `squadrant doctor` "Operator Style" (`styleReport`).
+- **Out of scope.** codex/opencode/gemini delivery (follow-up issue), any write to agent config or AGENTS.md.
+- **Migration of `prof.output-language`.** No automatic move; a documented `profile review --edit … --file -` with `kind: style` in the frontmatter (reference.md).
+
 ## 11. Changes to the parent KB spec and related issues
 
 Apply these in the S1 PR:

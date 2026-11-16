@@ -6,8 +6,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, userKbDir } from "@squadrant/shared";
 import {
-  addTrait, reviewQueue, keepItems, dropItems, editItem, checkProfile, loadProfile, viewSizes, coveredNativeFiles,
-  PROFILE_CORE_CAP, type ProfileCtx, type ProfileWriteResult, type QueueItem, type TraitKind, type TraitAudience, type TraitTier,
+  addTrait, reviewQueue, keepItems, dropItems, editItem, checkProfile, loadProfile, viewSizes, styleViewSizes, coveredNativeFiles,
+  PROFILE_CORE_CAP, PROFILE_STYLE_CAP, type ProfileCtx, type ProfileWriteResult, type QueueItem, type TraitKind, type TraitAudience, type TraitTier,
 } from "@squadrant/core";
 
 const readInput = (file?: string) => (file === undefined ? undefined : fs.readFileSync(file === "-" ? 0 : file, "utf8"));
@@ -54,6 +54,7 @@ export function formatList(ctx: ProfileCtx, all: boolean): string {
   const line = (t: { id: string; summary: string; kind: string; audience: string; tier: string; confirmed: boolean }) =>
     `  [${t.id}] ${t.summary} (${t.kind}, ${t.audience}, ${t.tier}${t.confirmed ? "" : ", unconfirmed"})`;
   const out = [`Core profile: captain ${s.captain.toLocaleString("en-US")}/${PROFILE_CORE_CAP.toLocaleString("en-US")} · crew ${s.crew.toLocaleString("en-US")}/${PROFILE_CORE_CAP.toLocaleString("en-US")} chars`,
+    `Style (own cap, not in core): captain ${styleViewSizes(p.active).captain.toLocaleString("en-US")}/${PROFILE_STYLE_CAP.toLocaleString("en-US")} · crew ${styleViewSizes(p.active).crew.toLocaleString("en-US")}/${PROFILE_STYLE_CAP.toLocaleString("en-US")} chars`,
     `Active (${p.active.length}):`, ...p.active.map(line)];
   if (all) out.push(`Proposed (${p.proposed.length}):`, ...p.proposed.map(line), `Archived (${p.archived.length}):`, ...p.archived.map(line));
   if (p.errors.length) out.push(chalk.yellow(`${p.errors.length} invalid file(s) skipped: squadrant profile list --check`));
@@ -89,10 +90,10 @@ export const profileCommand = new Command("profile")
 profileCommand
   .command("add")
   .description("Record a trait. --apply = live (correction: unconfirmed, always applies); without it = a proposal for review")
-  .requiredOption("--kind <kind>", "preference | correction | procedure")
+  .requiredOption("--kind <kind>", "preference | correction | procedure | style")
   .option("--apply", "go live now (refused in crew sessions: lands in _proposed/)")
   .option("--file <path>", "frontmatter + body from a file, '-' = stdin")
-  .option("--summary <text>", "the one-line instruction that is injected (≤140 chars)")
+  .option("--summary <text>", "the one-line instruction that is injected (≤140 chars); a style trait's longer text goes in the body")
   .option("--audience <a>", "all | captain | crew")
   .option("--tier <t>", "core | situational")
   .option("--id <slug>", "trait slug (default: from the summary)")
