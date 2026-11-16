@@ -12,6 +12,17 @@ import { DeferDelivery, SubmitUnconfirmed } from "../delivery/defer-delivery.js"
 import { titleFor } from "../crew-protocol.js";
 import { CC_WORKING_RE, COMPACT_HOLD_MS, COMPACT_TIMEOUT_MS } from "./captain-compact.js";
 
+/** #1125: how long a queued crew compact may wait for the crew's turn to end before it is dropped
+ *  (with a captain notice). Generous on purpose: a crew's turn can run for hours, and the compact
+ *  is promised to run "once the turn ends". Distinct from COMPACT_TIMEOUT_MS, which bounds a
+ *  compact already typed (the PreCompact window). */
+export const CREW_COMPACT_QUEUE_MAX_MS = 6 * 3_600_000;
+/** #1087/#1125: unconfirmed submits (Enter never confirmed) before the compact is dropped and reported. */
+const MAX_UNCONFIRMED = 3;
+/** #1125: ack budget for the pane check in `request` — a slow cmux must not make the caller time out
+ *  (the protocol client gives up at 5s) on a request the daemon has already queued. */
+const SURFACE_CHECK_MS = 3000;
+
 const IDLE_POLLS = 2;
 /** Agents whose pane takes a typed `/compact`. codex crews render an app-server thread (typed text
  *  becomes a turn, not a slash command); gemini crews are one-shot headless (#81). */
@@ -19,7 +30,7 @@ const COMPACTABLE = new Set(["claude", "opencode"]);
 /** Task states in which the crew is mid-turn or waiting on something — never type over them. */
 const BUSY_STATES = new Set(["submitted", "working", "blocked", "stalled"]);
 
-interface Pending { taskId: string; agent: string; keep: string | undefined; deadline: number; idlePolls: number; lastReason?: string; lastNoteAt?: number }
+interface Pending { taskId: string; agent: string; keep: string | undefined; deadline: number; idlePolls: number; unconfirmed: number; lastReason?: string; lastNoteAt?: number }
 
 export interface CrewCompactDeps {
   cmux: DaemonSurfaceDriver;
@@ -28,7 +39,11 @@ export interface CrewCompactDeps {
   tasks: (project: string) => TaskRecord[];
   now?: () => number;
   timeoutMs?: number;
+  /** Max wait for an idle crew before a queued compact is dropped. */
+  queueMaxMs?: number;
   holdMs?: number;
+  /** #1125: tell the captain a queued compact was dropped (mailbox in production). Absent ⇒ log only. */
+  notify?: (project: string, text: string) => void | Promise<unknown>;
   /** Override for tests; defaults to the loaded config's captain title (the crew's workspace). */
   captainTitle?: (project: string) => string;
   /** Fallback crew surfaces when workspace discovery finds nothing (tests). Keyed `project:crew`. */
@@ -42,6 +57,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
   const now = deps.now ?? Date.now;
   const timeoutMs = deps.timeoutMs ?? COMPACT_TIMEOUT_MS;
   const holdMs = deps.holdMs ?? COMPACT_HOLD_MS;
+  const queueMaxMs = deps.queueMaxMs ?? CREW_COMPACT_QUEUE_MAX_MS;
   /** Keyed by task id. */
   const pending = new Map<string, Pending & { project: string; name: string }>();
   const holds = new Map<string, { until: number; project: string; name: string }>();
@@ -71,8 +87,15 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     return deps.injectedSurfaces?.[`${project}:${name}`] ?? null;
   }
 
-  /** Validate and queue; returns once queued (the daemon owns the wait and the typing). */
-  async function request(project: string, name: string, keep?: string): Promise<{ queued: true; agent: string }> {
+  /** #1125: one captain notice when a queued compact is dropped — it never ran, so the captain must not assume it did. */
+  function dropped(label: string, project: string, why: string): void {
+    log(`crew-compact ${label}: ${why} — not compacted`);
+    void Promise.resolve(deps.notify?.(project, `CREW COMPACT DROPPED [${label}] — ${why}. The crew was NOT compacted; re-run 'squadrant crew compact ${project} ${label.split(":")[1]}' when you want it.`)).catch(() => {});
+  }
+
+  /** Validate and queue; returns once queued (the daemon owns the wait and the typing).
+   *  `joined`: a compact was already pending for this crew — this request merged into it. */
+  async function request(project: string, name: string, keep?: string): Promise<{ queued: true; agent: string; joined: boolean }> {
     const task = taskFor(project, name);
     if (!task) throw new Error(`Crew '${name}' not found for ${project}. Run 'squadrant crew list ${project}'.`);
     if (task.operatorHold) {
@@ -82,10 +105,26 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     if (!COMPACTABLE.has(task.provider)) {
       throw new Error(`Crew '${name}' runs ${task.provider}, which squadrant cannot compact from outside — spawn a fresh crew with a brief instead.`);
     }
-    if (!(await resolveSurface(project, name))) throw new Error(`Crew '${name}' has no live pane to compact. Run 'squadrant crew list ${project}'.`);
-    pending.set(task.id, { project, name, taskId: task.id, agent: task.provider, keep: keep?.trim() || undefined, deadline: now() + timeoutMs, idlePolls: 0 });
-    log(`crew-compact ${project}:${name}: queued, waiting for idle crew`);
-    return { queued: true, agent: task.provider };
+    const kept = keep?.trim() || undefined;
+    // #1125: at most one queued compact per crew — a repeat request joins it (a new --keep replaces the old one).
+    const existing = pending.get(task.id);
+    if (existing) {
+      if (kept) existing.keep = kept;
+      log(`crew-compact ${project}:${name}: already queued — request joined it${kept ? " (--keep updated)" : ""}`);
+      return { queued: true, agent: task.provider, joined: true };
+    }
+    // A slow pane lookup must not outlast the caller's timeout: only a definite "no pane" refuses.
+    const surface = await Promise.race([resolveSurface(project, name), new Promise<undefined>((r) => setTimeout(r, SURFACE_CHECK_MS, undefined))]);
+    if (surface === null) throw new Error(`Crew '${name}' has no live pane to compact. Run 'squadrant crew list ${project}'.`);
+    // A concurrent request may have queued while the pane check awaited.
+    const raced = pending.get(task.id);
+    if (raced) {
+      if (kept) raced.keep = kept;
+      return { queued: true, agent: task.provider, joined: true };
+    }
+    pending.set(task.id, { project, name, taskId: task.id, agent: task.provider, keep: kept, deadline: now() + queueMaxMs, idlePolls: 0, unconfirmed: 0 });
+    log(`crew-compact ${project}:${name}: queued, waiting for idle crew (gives up after ${Math.round(queueMaxMs / 3_600_000)}h)`);
+    return { queued: true, agent: task.provider, joined: false };
   }
 
   /** True while a compact is queued or running for this crew — `crew send` waits. */
@@ -144,7 +183,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
     const label = `${p.project}:${p.name}`;
     if (now() > p.deadline) {
       pending.delete(taskId);
-      log(`crew-compact ${label}: timed out after ${Math.round(timeoutMs / 1000)}s waiting for an idle crew (last: ${p.lastReason ?? "busy"}) — not compacted`);
+      dropped(label, p.project, `timed out after ${Math.round(queueMaxMs / 60_000)}min waiting for an idle crew (last: ${p.lastReason ?? "busy"})`);
       return;
     }
     const task = deps.tasks(p.project).find((t) => t.id === taskId);
@@ -184,6 +223,11 @@ export function createCrewCompact(deps: CrewCompactDeps) {
       // #1087: Enter never confirmed — /compact may sit in the box. Not "sent": stay pending;
       // the draft guard defers further retries until the box clears, then the deadline applies.
       if (e instanceof SubmitUnconfirmed) {
+        if (++p.unconfirmed >= MAX_UNCONFIRMED) {
+          pending.delete(taskId);
+          dropped(label, p.project, `/compact was typed but Enter never confirmed ${MAX_UNCONFIRMED} times (it may be sitting in the crew's input box — check the pane)`);
+          return;
+        }
         log(`crew-compact ${label}: /compact submit unconfirmed — still pending`);
         p.idlePolls = 0;
         p.lastReason = "submit-unconfirmed";

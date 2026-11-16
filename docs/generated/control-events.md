@@ -100,7 +100,7 @@ Every `ControlEvent` variant (`packages/shared/src/types/control.ts`) against it
   - packages/cli/src/squadrantd.ts:566
   - packages/cli/src/squadrantd.ts:597
   - packages/core/src/daemon/reduce.ts:792
-  - packages/core/src/daemon/start.ts:421
+  - packages/core/src/daemon/start.ts:422
   - packages/core/src/events/to-control-event.ts:24
   - packages/workspaces/src/cmux-daemon/events-bridge.ts:245
 - `task.turn.failed`

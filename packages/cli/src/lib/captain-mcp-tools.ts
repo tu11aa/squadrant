@@ -139,8 +139,8 @@ export function createCaptainTools(): CaptainTool[] {
       fields: { project: PROJECT, name: NAME("Crew"), keep: { type: "string", description: "What the summary should keep, passed to /compact." } },
       async run(a, p, d) {
         const name = need(a, "name");
-        const { agent } = await d.requestCrewCompact(p, name, str(a, "keep"), squadrantdCall);
-        return crewCompactQueuedLine(p, name, agent);
+        const { agent, joined } = await d.requestCrewCompact(p, name, str(a, "keep"), squadrantdCall);
+        return crewCompactQueuedLine(p, name, agent, joined);
       },
     },
     {

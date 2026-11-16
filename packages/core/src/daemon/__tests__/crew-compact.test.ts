@@ -13,21 +13,21 @@ const IDLE = "╭──╮\n│ > │\n╰──╯\n  ⏵⏵ accept edits on";
 const rec = (o: Partial<TaskRecord> = {}): TaskRecord =>
   ({ id: "t1", project: "demo", name: "crew-1", provider: "claude", state: "awaiting-input", createdAt: 1, ...o }) as TaskRecord;
 
-function harness(o: { task?: Partial<TaskRecord>; screens?: string[]; send?: () => Promise<void>; holdMs?: number; surface?: boolean } = {}) {
+function harness(o: { task?: Partial<TaskRecord>; screens?: string[]; send?: () => Promise<void>; holdMs?: number; surface?: boolean; hangSurface?: boolean; notify?: (p: string, t: string) => void } = {}) {
   let t = 1000;
   const logs: string[] = [];
   const task = rec({ attempts: [], ...o.task });
   const screens = [...(o.screens ?? [IDLE])];
   const send = vi.fn(async () => { await (o.send ?? (async () => {}))(); });
   const cmux = {
-    findWorkspaceId: async () => null,
+    findWorkspaceId: o.hangSurface ? () => new Promise<null>(() => {}) : async () => null,
     listSurfaces: async () => [],
     readPaneScreen: async () => (screens.length > 1 ? screens.shift()! : screens[0]),
     send,
   } as unknown as DaemonSurfaceDriver;
   // #1089: endTurn runs the real reducer over the shared record, as the daemon's ingest does.
   const c = createCrewCompact({
-    cmux, log: (l) => logs.push(l), now: () => t, holdMs: o.holdMs,
+    cmux, log: (l) => logs.push(l), now: () => t, holdMs: o.holdMs, notify: o.notify,
     endTurn: (_p, id) => { Object.assign(task, reduce(task, { type: "task.turn.completed", id, turnId: "compact" }, t)); },
     tasks: () => [task], captainTitle: () => "demo-captain",
     injectedSurfaces: o.surface === false ? {} : { "demo:crew-1": SURFACE },
@@ -39,7 +39,7 @@ describe("crew compact", () => {
   it("queues, waits while the crew is mid-turn, types once idle, then holds until SessionStart(compact)", async () => {
     const h = harness({ screens: [BUSY, IDLE] });
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
-    await expect(h.c.request("demo", "crew-1", "  keep PR 7 ")).resolves.toEqual({ queued: true, agent: "claude" });
+    await expect(h.c.request("demo", "crew-1", "  keep PR 7 ")).resolves.toEqual({ queued: true, agent: "claude", joined: false });
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(true); // queued ⇒ sends already wait
     await h.c.tick();
     expect(h.send).not.toHaveBeenCalled();
@@ -192,14 +192,69 @@ describe("crew compact", () => {
     await expect(harness({ surface: false }).c.request("demo", "crew-1")).rejects.toThrow(/no live pane/);
   });
 
-  it("times out cleanly when the crew never goes idle, releasing the hold", async () => {
+  // #1125: the old 600s cap silently dropped a compact queued for a crew still mid-turn.
+  it("keeps waiting past the old 10-minute cap for a working crew, then types once idle", async () => {
     const h = harness({ task: { state: "working" } });
     await h.c.request("demo", "crew-1");
-    h.advance(11 * 60_000);
+    h.advance(60 * 60_000);
+    await h.c.tick();
+    expect(h.c.pendingCount()).toBe(1);
+    expect(h.logs.some((l) => l.includes("timed out"))).toBe(false);
+    h.task.state = "awaiting-input";
+    await h.c.tick();
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops after the queue cap, releases the hold and tells the captain once", async () => {
+    const notices: string[] = [];
+    const h = harness({ task: { state: "working" }, notify: (_p, t) => { notices.push(t); } });
+    await h.c.request("demo", "crew-1");
+    h.advance(7 * 3_600_000);
+    await h.c.tick();
     await h.c.tick();
     expect(h.c.pendingCount()).toBe(0);
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
     expect(h.logs.some((l) => l.includes("timed out"))).toBe(true);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatch(/CREW COMPACT DROPPED \[demo:crew-1\].*NOT compacted/);
+  });
+
+  it("collapses a repeat request into the pending one and lets a new --keep replace the old", async () => {
+    const h = harness({ screens: [IDLE] });
+    await expect(h.c.request("demo", "crew-1", "old")).resolves.toMatchObject({ joined: false });
+    await expect(h.c.request("demo", "crew-1")).resolves.toMatchObject({ joined: true });
+    await expect(h.c.request("demo", "crew-1", "new")).resolves.toMatchObject({ joined: true });
+    expect(h.c.pendingCount()).toBe(1);
+    expect(h.logs.filter((l) => l.endsWith("waiting for idle crew") || l.includes("queued, waiting"))).toHaveLength(1);
+    await h.c.tick();
+    await h.c.tick();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.send).toHaveBeenCalledWith(SURFACE, "/compact new", { agent: "claude" });
+  });
+
+  it("acks a request even when the pane lookup hangs (the caller must not time out)", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ hangSurface: true });
+      const p = h.c.request("demo", "crew-1");
+      await vi.advanceTimersByTimeAsync(3100);
+      await expect(p).resolves.toMatchObject({ queued: true });
+      expect(h.c.pendingCount()).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  // #1087: an Enter that never confirms is retried, then reported — never logged as sent.
+  it("drops with a captain notice after repeated unconfirmed submits, never logging 'sent'", async () => {
+    const notices: string[] = [];
+    const h = harness({ send: async () => { throw new SubmitUnconfirmed(); }, notify: (_p, t) => { notices.push(t); } });
+    await h.c.request("demo", "crew-1");
+    for (let i = 0; i < 12; i++) await h.c.tick();
+    expect(h.c.pendingCount()).toBe(0);
+    expect(h.send).toHaveBeenCalledTimes(3);
+    expect(h.logs.some((l) => l.endsWith("/compact sent"))).toBe(false);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatch(/Enter never confirmed/);
   });
 
   // #1089: no Stop follows a compact, so SessionStart(compact) closes the turn (after a PreCompact(manual)).
