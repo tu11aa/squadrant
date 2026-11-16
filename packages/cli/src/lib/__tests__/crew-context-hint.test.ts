@@ -4,27 +4,56 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONTEXT_BUDGET } from "@squadrant/shared";
 import type { TaskRecord } from "@squadrant/shared";
-import { crewSendHint, hintForCrewSend } from "../crew-context-hint.js";
+import { checkCrewSend, crewTokens } from "../crew-context-hint.js";
 import { formatTaskLine, formatCompactTasks } from "../../commands/crew-output.js";
 
-const meter = (tokens: number) => ({ tokens, measuredAt: 1 });
 const budget = DEFAULT_CONTEXT_BUDGET;
+const rec = (state: string) => ({ id: "t1", provider: "claude", state } as TaskRecord);
+const chk = (state: string, tokens: number | null, o: { noCompact?: boolean; alreadyWarned?: boolean; b?: typeof budget } = {}) =>
+  checkCrewSend("p", "noise", rec(state), tokens, o.b ?? budget, { noCompact: o.noCompact, alreadyWarned: o.alreadyWarned ?? false });
 
-describe("crewSendHint", () => {
-  it("hints at/above the crew soft floor", () => {
-    expect(crewSendHint("noise", meter(210_000), budget)).toBe("crew noise at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is");
-    expect(crewSendHint("noise", meter(150_000), budget)).not.toBeNull();
+describe("checkCrewSend (#1126)", () => {
+  it("is silent below the soft floor, when unmeasurable, or when disabled", () => {
+    expect(chk("done", 149_999)).toEqual({});
+    expect(chk("done", null)).toEqual({});
+    expect(chk("done", 900_000, { b: { ...budget, enabled: false } })).toEqual({});
   });
-  it("is silent below the floor, when unknown, or when disabled", () => {
-    expect(crewSendHint("noise", meter(149_999), budget)).toBeNull();
-    expect(crewSendHint("noise", "unknown", budget)).toBeNull();
-    expect(crewSendHint("noise", meter(900_000), { ...budget, enabled: false })).toBeNull();
+  it("warns once per task between the soft floor and the gate, then stays silent", () => {
+    const first = chk("done", 210_000);
+    expect(first.hint).toContain("crew noise at 210k");
+    expect(first.hint).toContain("squadrant crew compact p noise --keep");
+    expect(first.warned).toBe("t1");
+    expect(first.refuse).toBeUndefined();
+    expect(chk("done", 210_000, { alreadyWarned: true })).toEqual({});
+    expect(chk("working", 400_000, { alreadyWarned: true })).toEqual({});
   });
-  it("hintForCrewSend tolerates a missing task and a non-claude crew", () => {
-    expect(hintForCrewSend("x", undefined, budget)).toBeNull();
-    expect(hintForCrewSend("x", null, budget)).toBeNull();
-    const t = { provider: "opencode", cwd: "/w" } as TaskRecord;
-    expect(hintForCrewSend("x", t, budget)).toBeNull();
+  it("refuses a send that reopens a finished crew at/above the gate", () => {
+    for (const state of ["done", "failed", "cancelled"]) {
+      const r = chk(state, 250_000);
+      expect(r.refuse).toContain("crew noise is at 250k ctx; compact first: squadrant crew compact p noise --keep");
+      expect(r.refuse).toContain("--no-compact");
+    }
+    expect(chk("done", 249_999).refuse).toBeUndefined();
+    // refusal repeats: it is a gate, not a one-time warning
+    expect(chk("done", 300_000, { alreadyWarned: true }).refuse).toBeDefined();
+  });
+  it("the override passes (and still warns once)", () => {
+    const r = chk("done", 300_000, { noCompact: true });
+    expect(r.refuse).toBeUndefined();
+    expect(r.hint).toBeDefined();
+  });
+  it("never gates a live crew", () => {
+    for (const state of ["working", "awaiting-input", "review", "blocked", "stalled"]) expect(chk(state, 600_000).refuse).toBeUndefined();
+  });
+  it("honours a configured gate", () => {
+    expect(chk("done", 120_000, { b: { ...budget, crewSoft: 50_000, crewGate: 100_000 } }).refuse).toBeDefined();
+  });
+});
+
+describe("crewTokens", () => {
+  it("is null for a non-claude crew and never throws", () => {
+    expect(crewTokens({ provider: "opencode", cwd: "/w" } as TaskRecord)).toBeNull();
+    expect(crewTokens({} as TaskRecord)).toBeNull();
   });
 });
 

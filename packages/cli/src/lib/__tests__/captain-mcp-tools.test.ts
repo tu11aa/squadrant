@@ -85,10 +85,23 @@ describe("tools call the shared function", () => {
   });
 
   it("crew_send sends without force and reports hint and reopen", async () => {
-    const d = fakes({ crewSendHint: vi.fn().mockResolvedValue("ctx high"), runCrewSend: vi.fn().mockResolvedValue({ reopened: true }) });
+    const d = fakes({ crewSendGuard: vi.fn().mockResolvedValue("ctx high"), runCrewSend: vi.fn().mockResolvedValue({ reopened: true }) });
     const r = await call("crew_send", { project: "p", name: "crew-1", message: "hi" }, d);
     expect(d.runCrewSend).toHaveBeenCalledWith("p", "crew-1", "hi");
+    expect(d.crewSendGuard).toHaveBeenCalledWith("p", "crew-1", { noCompact: false });
     expect(r.text).toBe("⚠ ctx high\n↻ Task was terminal — reopened to working\n✔ Sent to p:crew-1");
+  });
+
+  it("crew_send is refused by the context gate and no_compact overrides it (#1126)", async () => {
+    const guard = vi.fn().mockRejectedValueOnce(new Error("crew crew-1 is at 300k ctx; compact first")).mockResolvedValueOnce(undefined);
+    const d = fakes({ crewSendGuard: guard, runCrewSend: vi.fn().mockResolvedValue({ reopened: true }) });
+    const refused = await call("crew_send", { project: "p", name: "crew-1", message: "hi" }, d);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("compact first");
+    expect(d.runCrewSend).not.toHaveBeenCalled();
+    const ok = await call("crew_send", { project: "p", name: "crew-1", message: "hi", no_compact: true }, d);
+    expect(guard).toHaveBeenLastCalledWith("p", "crew-1", { noCompact: true });
+    expect(ok.text).toContain("✔ Sent to p:crew-1");
   });
 
   it("crew_send is an error when the task state could not be updated (#1069)", async () => {

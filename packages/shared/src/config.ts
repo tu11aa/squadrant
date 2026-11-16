@@ -353,6 +353,8 @@ export interface ContextBudget {
   captainHard: number;
   /** Crew context at/above which `crew send` hints at a fresh crew. */
   crewSoft: number;
+  /** #1126: a `crew send` that reopens a finished crew at/above this context is refused until compacted (or --no-compact). */
+  crewGate: number;
   /** #1126 warm-compact nudge: one captain line when an idle crew's prompt cache is about to expire. */
   warmNudge: boolean;
   /** Minutes idle before the nudge (cache TTL assumed 60). */
@@ -366,6 +368,7 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   captainSoft: 150_000,
   captainHard: 350_000,
   crewSoft: 150_000,
+  crewGate: 250_000,
   warmNudge: true,
   warmNudgeIdleMin: 50,
   warmNudgeCtx: 100_000,
