@@ -131,7 +131,9 @@ export function createCrewCompact(deps: CrewCompactDeps) {
   function holdsCrew(project: string, name: string): boolean {
     const task = taskFor(project, name);
     if (!task) return false;
-    if (pending.has(task.id)) return true;
+    // #1133: a queued compact holds sends only once it is about to run (crew idle). While the crew is
+    // busy — incl. blocked on a question the captain must answer — it waits without blocking sends.
+    if (pending.has(task.id) && !BUSY_STATES.has(task.state)) return true;
     const h = holds.get(task.id);
     if (!h) return false;
     if (now() <= h.until) return true;

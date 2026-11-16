@@ -131,7 +131,7 @@ describe("crew compact", () => {
   });
 
   it("cancel drops a queued compact and its send hold, and is a no-op when nothing is queued", async () => {
-    const h = harness({ task: { state: "working" } });
+    const h = harness({ task: { state: "awaiting-input" }, screens: [BUSY] });
     expect(h.c.cancel("demo", "crew-1")).toEqual({ cancelled: false });
     await h.c.request("demo", "crew-1");
     expect(h.c.holdsCrew("demo", "crew-1")).toBe(true);
@@ -204,6 +204,21 @@ describe("crew compact", () => {
     await h.c.tick();
     await h.c.tick();
     expect(h.send).toHaveBeenCalledTimes(1);
+  });
+
+  // #1133: a queued compact must never deadlock a blocked crew's answer.
+  it("does not hold sends while the crew is busy (blocked/working), holds once it is idle", async () => {
+    const h = harness({ task: { state: "blocked" } });
+    await h.c.request("demo", "crew-1");
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
+    h.task.state = "working";
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(false);
+    h.task.state = "awaiting-input";
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(true);
+    await h.c.tick();
+    await h.c.tick(); // typed
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.c.holdsCrew("demo", "crew-1")).toBe(true); // typed ⇒ the hold map keeps it
   });
 
   it("drops after the queue cap, releases the hold and tells the captain once", async () => {

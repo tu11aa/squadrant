@@ -47,7 +47,7 @@ guided first run — come back here when you need the details.
 | `squadrant launch --all` | Launch all captain workspaces |
 | `squadrant command [--task <briefing\|learnings-review\|wiki-aggregate>] [--agent <a>]` | Spawn a one-shot Command session in a split pane (no persistent Command). |
 | `squadrant captain compact <project> [--focus <text>]` | Queue a `/compact` for the project's Claude captain and return immediately. See [Captain rollover](#captain-rollover-1010). |
-| `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done. See [Crew compact](#crew-compact-1051). |
+| `squadrant crew compact <project> <crew> [--keep <text>] [--cancel]` | Queue a `/compact` for a claude/opencode crew and return immediately; a `crew send` to it waits until the compact is done, from the moment the crew is idle (a busy or blocked crew's sends go through). See [Crew compact](#crew-compact-1051). |
 | `squadrant dev up [--from <dir>] [--project <name>] [--build]` / `dev down` / `dev env` | Live-test a branch build on a throwaway daemon, off launchd. See [Dev daemon](#dev-daemon-squadrant-dev-1046). |
 | `squadrant status` | Show all project status (no Claude needed) |
 | `squadrant standup` | Daily standup summary (zero LLM tokens) |

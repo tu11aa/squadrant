@@ -437,7 +437,7 @@ crewCommand
   });
 
 export const crewCompactQueuedLine = (project: string, name: string, agent: string, joined = false): string =>
-  `✔ Compact ${joined ? "already queued (this request joined it)" : "queued"} for ${project}:${name} (${agent}) — it runs once the crew's turn ends (the daemon gives up after 6h and then tells the captain); a send to it waits until the compact is done. Drop it with 'squadrant crew compact ${project} ${name} --cancel'.`;
+  `✔ Compact ${joined ? "already queued (this request joined it)" : "queued"} for ${project}:${name} (${agent}) — it runs once the crew's turn ends (the daemon gives up after 6h and then tells the captain); a send to it waits once the compact is about to run (crew idle) until it is done; while the crew is busy, sends go through and the compact stays queued. Drop it with 'squadrant crew compact ${project} ${name} --cancel'.`;
 
 crewCommand
   .command("compact")
