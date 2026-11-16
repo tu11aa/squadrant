@@ -3,9 +3,9 @@
 // sent while a compact is queued or running arrives after it, never inside its summary.
 export type DaemonCall = (req: unknown) => Promise<unknown>;
 
-export async function requestCrewCompact(project: string, crew: string, keep: string | undefined, call: DaemonCall): Promise<{ agent: string }> {
-  const r = (await call({ kind: "crew-compact", project, crew, ...(keep ? { keep } : {}) })) as { agent?: string } | undefined;
-  return { agent: r?.agent ?? "agent" };
+export async function requestCrewCompact(project: string, crew: string, keep: string | undefined, call: DaemonCall): Promise<{ agent: string; joined: boolean }> {
+  const r = (await call({ kind: "crew-compact", project, crew, ...(keep ? { keep } : {}) })) as { agent?: string; joined?: boolean } | undefined;
+  return { agent: r?.agent ?? "agent", joined: r?.joined === true };
 }
 
 /** Drop a queued compact (and the hold it puts on `crew send`); `cancelled: false` when none was queued. */

@@ -144,6 +144,13 @@ describe("tools call the shared function", () => {
     expect(r.text).toContain("Compact queued for p:crew-1 (claude)");
   });
 
+  it("crew_compact says so when the request joined an already-queued compact (#1125)", async () => {
+    const d = fakes({ requestCrewCompact: vi.fn().mockResolvedValue({ agent: "claude", joined: true }) });
+    const r = await call("crew_compact", { project: "p", name: "crew-1" }, d);
+    expect(r.text).toContain("already queued (this request joined it)");
+    expect(r.text).toContain("gives up after 10 min and tells the captain");
+  });
+
   it("crew_close closes without force", async () => {
     const d = fakes();
     expect((await call("crew_close", { project: "p", name: "crew-1" }, d)).text).toBe("✔ Closed p:crew-1");

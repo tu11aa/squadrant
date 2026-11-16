@@ -453,8 +453,8 @@ crewCommand
     }
   });
 
-export const crewCompactQueuedLine = (project: string, name: string, agent: string): string =>
-  `✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`;
+export const crewCompactQueuedLine = (project: string, name: string, agent: string, joined = false): string =>
+  `✔ Compact ${joined ? "already queued (this request joined it)" : "queued"} for ${project}:${name} (${agent}) — it runs once the crew's turn ends (the daemon gives up after 10 min and tells the captain); a send to it waits once the compact is about to run (crew idle) until it is done; while the crew is busy, sends go through and the compact stays queued. Drop it with 'squadrant crew compact ${project} ${name} --cancel'.`;
 
 crewCommand
   .command("compact")
@@ -470,8 +470,8 @@ crewCommand
         console.log(cancelled ? chalk.green(`✔ Compact cancelled for ${project}:${name} — sends to it are no longer held.`) : chalk.dim(`No compact queued for ${project}:${name}.`));
         return;
       }
-      const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
-      console.log(chalk.green(crewCompactQueuedLine(project, name, agent)));
+      const { agent, joined } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
+      console.log(chalk.green(crewCompactQueuedLine(project, name, agent, joined)));
     } catch (e) {
       console.error(chalk.red(`✖ ${(e as Error).message}`));
       process.exit(1);

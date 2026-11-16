@@ -432,6 +432,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       cmux: daemonCmux,
       log,
       tasks: (project) => store.list(project),
+      notify: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
       endTurn: (project, id) => ingest(project)({ type: "task.turn.completed", id, turnId: "compact" }),
     });
     crewHasPane = crewCompact.hasPane;
