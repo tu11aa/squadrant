@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-16
+
+Token budget. Large idle crews get compacted while their prompt cache is still warm instead of being reused at full size, a crew compact you asked for either runs or you are told it did not, and the operator's output style reaches every Claude session squadrant launches. PRs #1131, #1132, #1133.
+
+**Upgrade:** after installing, run `squadrant heal daemon`. Relaunch captains and crews to pick up an operator style.
+
+### Added
+
+- **Operator style section.** Profile traits of `kind: style` have their own cap (1,500 chars per audience view) outside the 3,000-char core cap and are no longer injected at SessionStart. At launch they are rendered after the role prompt into `<config dir>/styled-prompts/<role file>`, which is passed through the existing `--append-system-prompt-file`, so the style stacks with any `/output-style`. Claude only for now (codex, opencode and gemini: #1130). With no style traits the launch command is unchanged. `squadrant doctor` has an "Operator Style" section per role and agent; `profile list` shows the style size. squadrant writes no agent instruction or settings file for this (#1129, #1131).
+- **Warm-compact nudge.** When a live crew has been idle for 50 minutes (prompt cache TTL assumed 60) at 100k context or more, the captain gets one line per idle period: compact it now with `crew compact --keep …`, or let it go cold. It never compacts. Config: `contextBudget.warmNudge`, `warmNudgeIdleMin`, `warmNudgeCtx`, per-project override like the other budget fields (#1126, #1132).
+- **Crew reuse gate.** A `crew send` (CLI and MCP `crew_send`) that would reopen a finished crew at or above `contextBudget.crewGate` (default 250k) is refused until the crew is compacted; `--no-compact` (MCP `no_compact`) sends anyway. Sends to a working crew are never gated (#1126, #1132).
+
+### Changed
+
+- **One context warning per task.** The `crew send` hint from `crewSoft` is shown once per task instead of on every send, and names the compact command (#1126, #1132).
+- **Crew compact queue.** A request is acknowledged as soon as the daemon queues it, so MCP `crew_compact` no longer reports "unavailable" for a queued compact. One queued compact per crew: a repeat request joins it and a new `--keep` replaces the old one. A queued compact holds `crew send` only when the crew is idle and the compact is about to run (or once `/compact` is typed); sends to a busy or blocked crew go through and the compact stays queued (#1125, #1133).
+
+### Fixed
+
+- **Silently dropped crew compacts.** A compact that does not run within 10 minutes, or whose `/compact` Enter is not confirmed three times, is dropped with one `CREW COMPACT DROPPED` captain notice instead of only a log line (#1125, #1087, #1133).
+- **Context meter after `/compact`.** The meter now reads the compact boundary's post-compact size until the next turn writes usage, so crew and captain meters no longer report the pre-compact size right after a compact (#1132).
+
 ## [0.36.1] - 2026-11-11
 
 Hotfix. `squadrant crew spawn` no longer aborts when a target repo's committed lockfile is out of date, and a failed worktree install no longer leaves an orphan worktree and branch behind. PR #1121.
