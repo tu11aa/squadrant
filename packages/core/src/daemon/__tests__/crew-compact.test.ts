@@ -193,10 +193,10 @@ describe("crew compact", () => {
   });
 
   // #1125: the old 600s cap silently dropped a compact queued for a crew still mid-turn.
-  it("keeps waiting past the old 10-minute cap for a working crew, then types once idle", async () => {
+  it("keeps waiting for a working crew within the 10-minute cap, then types once idle", async () => {
     const h = harness({ task: { state: "working" } });
     await h.c.request("demo", "crew-1");
-    h.advance(60 * 60_000);
+    h.advance(9 * 60_000);
     await h.c.tick();
     expect(h.c.pendingCount()).toBe(1);
     expect(h.logs.some((l) => l.includes("timed out"))).toBe(false);
@@ -225,7 +225,7 @@ describe("crew compact", () => {
     const notices: string[] = [];
     const h = harness({ task: { state: "working" }, notify: (_p, t) => { notices.push(t); } });
     await h.c.request("demo", "crew-1");
-    h.advance(7 * 3_600_000);
+    h.advance(11 * 60_000);
     await h.c.tick();
     await h.c.tick();
     expect(h.c.pendingCount()).toBe(0);

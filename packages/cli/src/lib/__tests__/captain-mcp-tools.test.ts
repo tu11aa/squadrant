@@ -148,7 +148,7 @@ describe("tools call the shared function", () => {
     const d = fakes({ requestCrewCompact: vi.fn().mockResolvedValue({ agent: "claude", joined: true }) });
     const r = await call("crew_compact", { project: "p", name: "crew-1" }, d);
     expect(r.text).toContain("already queued (this request joined it)");
-    expect(r.text).toContain("gives up after 6h");
+    expect(r.text).toContain("gives up after 10 min and tells the captain");
   });
 
   it("crew_close closes without force", async () => {

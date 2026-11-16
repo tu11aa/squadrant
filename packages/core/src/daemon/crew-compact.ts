@@ -12,11 +12,9 @@ import { DeferDelivery, SubmitUnconfirmed } from "../delivery/defer-delivery.js"
 import { titleFor } from "../crew-protocol.js";
 import { CC_WORKING_RE, COMPACT_HOLD_MS, COMPACT_TIMEOUT_MS } from "./captain-compact.js";
 
-/** #1125: how long a queued crew compact may wait for the crew's turn to end before it is dropped
- *  (with a captain notice). Generous on purpose: a crew's turn can run for hours, and the compact
- *  is promised to run "once the turn ends". Distinct from COMPACT_TIMEOUT_MS, which bounds a
- *  compact already typed (the PreCompact window). */
-export const CREW_COMPACT_QUEUE_MAX_MS = 6 * 3_600_000;
+/** #1125: how long a queued crew compact may wait to run before it counts as failed and is dropped
+ *  (with a captain notice), so the captain and operator can react. Same 10 min as the captain compact. */
+export const CREW_COMPACT_QUEUE_MAX_MS = COMPACT_TIMEOUT_MS;
 /** #1087/#1125: unconfirmed submits (Enter never confirmed) before the compact is dropped and reported. */
 const MAX_UNCONFIRMED = 3;
 /** #1125: ack budget for the pane check in `request` — a slow cmux must not make the caller time out
@@ -128,7 +126,7 @@ export function createCrewCompact(deps: CrewCompactDeps) {
       return { queued: true, agent: task.provider, joined: true };
     }
     pending.set(task.id, { project, name, taskId: task.id, agent: task.provider, keep: kept, deadline: now() + queueMaxMs, idlePolls: 0, unconfirmed: 0 });
-    log(`crew-compact ${project}:${name}: queued, waiting for idle crew (gives up after ${Math.round(queueMaxMs / 3_600_000)}h)`);
+    log(`crew-compact ${project}:${name}: queued, waiting for idle crew (gives up after ${Math.round(queueMaxMs / 60_000)}min)`);
     return { queued: true, agent: task.provider, joined: false };
   }
 
