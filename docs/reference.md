@@ -1028,13 +1028,22 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 
 **Crew hint.** `squadrant crew send` prints `⚠ crew X at 210k; consider 'squadrant crew compact' or a fresh crew with a brief instead of reusing it as is` when the target crew's context ≥ `crewSoft`. Hint only; the send always happens.
 
+**Warm-compact nudge (#1126).** An idle crew's prompt cache expires after ~60 min; the next send then rewrites the whole context. Compacting *before* that reads a warm cache and leaves a small context for the later restart. When a crew has been idle ≥ `warmNudgeIdleMin` (default 50) and its context is ≥ `warmNudgeCtx` (default 100k), the captain gets one daemon line through the same mailbox path as the rollover suggestions:
+
+`crew alpha idle 50m at 180k ctx; its cache expires in ~10m. More work on its track? `squadrant crew compact <project> alpha --keep '…'` now. Otherwise let it go cold, or close it once pushed.`
+
+- Idle = the crew's turn ended and it waits on the captain (`awaiting-input`, `review` or `done`). Not for `working`/`blocked`/`stalled`, `cancelled`/`failed` (closed), a crew under operator takeover, or an agent `crew compact` refuses (codex, gemini). Context is metered for claude crews only, so opencode crews get no nudge until they have a meter.
+- Once per idle period, only inside the window `[warmNudgeIdleMin, 60)` minutes (past 60 the cache is already cold). Any activity or a compact moves the crew's heartbeat and re-arms it.
+- **Never compacts**: it only tells the captain the command. Evaluated on the same 15 s daemon tick as the other suggestions.
+
 **Config** (`~/.config/squadrant/config.json`, per-project override in `projects/<name>.json`, built-in → global → project per key):
 
 ```json
-{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000 } } }
+{ "defaults": { "contextBudget": { "enabled": true, "captainSoft": 150000, "captainHard": 350000, "crewSoft": 150000,
+  "warmNudge": true, "warmNudgeIdleMin": 50, "warmNudgeCtx": 100000 } } }
 ```
 
-Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; the meter columns still show.
+Non-numeric or non-positive values are ignored. `enabled: false` silences suggestions, warnings and the crew hint; `warmNudge: false` silences only the warm-compact nudge. The meter columns still show.
 
 ### Crew compact (#1051)
 

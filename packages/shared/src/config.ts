@@ -353,6 +353,12 @@ export interface ContextBudget {
   captainHard: number;
   /** Crew context at/above which `crew send` hints at a fresh crew. */
   crewSoft: number;
+  /** #1126 warm-compact nudge: one captain line when an idle crew's prompt cache is about to expire. */
+  warmNudge: boolean;
+  /** Minutes idle before the nudge (cache TTL assumed 60). */
+  warmNudgeIdleMin: number;
+  /** Crew context tokens at/above which the nudge fires. */
+  warmNudgeCtx: number;
 }
 
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
@@ -360,6 +366,9 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   captainSoft: 150_000,
   captainHard: 350_000,
   crewSoft: 150_000,
+  warmNudge: true,
+  warmNudgeIdleMin: 50,
+  warmNudgeCtx: 100_000,
 };
 
 export const DEFAULT_CONFIG_PATH = process.env.SQUADRANT_CONFIG || path.join(os.homedir(), ".config", "squadrant", "config.json");
