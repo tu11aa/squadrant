@@ -167,11 +167,13 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
 
   // #1126: warm-compact nudge — one captain line per idle period for an idle, large-context crew
   // whose prompt cache is about to expire. Nudge only; never compacts.
+  let crewHasPane: ((project: string, name: string) => Promise<boolean>) | undefined;
   const warmNudger = createWarmNudger({
     now: () => Date.now(),
     budgetFor: (project) => resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project)),
     tasks: (project) => store.list(project),
     crewTokens: (t) => contextTokens(meterTask(t)),
+    hasLiveSurface: async (project, name) => (crewHasPane ? crewHasPane(project, name) : false),
     enqueue: (project, text) => appendCaptainMessage({ stateRoot, project, text, source: "daemon" }),
     log,
   });
@@ -432,6 +434,7 @@ export function startDaemon(ctx: DaemonContext, opts: SquadrantdOpts, pkgVersion
       tasks: (project) => store.list(project),
       endTurn: (project, id) => ingest(project)({ type: "task.turn.completed", id, turnId: "compact" }),
     });
+    crewHasPane = crewCompact.hasPane;
     ctx.requestCrewCompact = crewCompact.request;
     ctx.cancelCrewCompact = crewCompact.cancel;
     ctx.crewCompactHolds = crewCompact.holdsCrew;

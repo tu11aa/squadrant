@@ -39,6 +39,8 @@ export interface WarmNudgerDeps {
   tasks: (project: string) => TaskRecord[];
   /** Live context tokens of a crew, or null when unmeasurable (non-claude agents). */
   crewTokens: (t: TaskRecord) => number | null;
+  /** The crew still has a live pane. A closed crew keeps its `done` record, so state alone cannot tell. */
+  hasLiveSurface: (project: string, name: string) => Promise<boolean>;
   /** Append one line to the captain mailbox. */
   enqueue: (project: string, text: string) => Promise<unknown>;
   log?: (m: string) => void;
@@ -70,6 +72,7 @@ export function createWarmNudger(deps: WarmNudgerDeps): WarmNudger {
             if (idleMin === null) continue;
             const tokens = deps.crewTokens(t);
             if (tokens === null || tokens < budget.warmNudgeCtx) continue;
+            if (!t.name || !(await deps.hasLiveSurface(project, t.name))) continue;
             nudged.set(t.id, t.lastHeartbeat);
             await deps.enqueue(project, warmNudgeMessage(project, t.name ?? t.id, idleMin, tokens));
           }

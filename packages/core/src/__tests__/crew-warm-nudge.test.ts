@@ -12,11 +12,11 @@ const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
   ...over,
 } as TaskRecord);
 
-function harness(tokens: number | null = 180_000, b = budget) {
+function harness(tokens: number | null = 180_000, b = budget, live = true) {
   let t = task();
   let now = NOW;
   const enqueue = vi.fn(async () => undefined);
-  const n = createWarmNudger({ now: () => now, budgetFor: () => b, tasks: () => [t], crewTokens: () => tokens, enqueue });
+  const n = createWarmNudger({ now: () => now, budgetFor: () => b, tasks: () => [t], crewTokens: () => tokens, hasLiveSurface: async () => live, enqueue });
   return { n, enqueue, set: (o: Partial<TaskRecord>) => { t = task({ ...t, ...o }); }, advance: (ms: number) => { now += ms; } };
 }
 
@@ -64,6 +64,12 @@ describe("createWarmNudger", () => {
       expect(h.enqueue).not.toHaveBeenCalled();
     }
   });
+  it("does not nudge a done crew that was closed (no live pane)", async () => {
+    const h = harness(180_000, budget, false);
+    h.set({ state: "done" });
+    await h.n.tick(["p"]);
+    expect(h.enqueue).not.toHaveBeenCalled();
+  });
   it("fires once the ctx reaches the threshold", async () => {
     const h = harness(100_000);
     await h.n.tick(["p"]);
@@ -81,7 +87,7 @@ describe("createWarmNudger", () => {
     const enqueue = vi.fn(async () => undefined);
     const old = task({ id: "old", createdAt: 1, state: "done" });
     const live = task({ id: "live", createdAt: 2, state: "working" });
-    await createWarmNudger({ now: () => NOW, budgetFor: () => budget, tasks: () => [old, live], crewTokens: () => 200_000, enqueue }).tick(["p"]);
+    await createWarmNudger({ now: () => NOW, budgetFor: () => budget, tasks: () => [old, live], crewTokens: () => 200_000, hasLiveSurface: async () => true, enqueue }).tick(["p"]);
     expect(enqueue).not.toHaveBeenCalled();
   });
   it("is silent when disabled and survives an enqueue error", async () => {
@@ -89,7 +95,7 @@ describe("createWarmNudger", () => {
     await off.n.tick(["p"]);
     expect(off.enqueue).not.toHaveBeenCalled();
     const log = vi.fn();
-    await createWarmNudger({ now: () => NOW, budgetFor: () => budget, tasks: () => [task()], crewTokens: () => 200_000, enqueue: async () => { throw new Error("boom"); }, log }).tick(["p"]);
+    await createWarmNudger({ now: () => NOW, budgetFor: () => budget, tasks: () => [task()], crewTokens: () => 200_000, hasLiveSurface: async () => true, enqueue: async () => { throw new Error("boom"); }, log }).tick(["p"]);
     expect(log).toHaveBeenCalledWith("warm nudge p: boom");
   });
 });

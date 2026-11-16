@@ -1032,7 +1032,7 @@ Squadrant measures live context for captains and crews and **suggests** a rollov
 
 `crew alpha idle 50m at 180k ctx; its cache expires in ~10m. More work on its track? `squadrant crew compact <project> alpha --keep '…'` now. Otherwise let it go cold, or close it once pushed.`
 
-- Idle = the crew's turn ended and it waits on the captain (`awaiting-input`, `review` or `done`). Not for `working`/`blocked`/`stalled`, `cancelled`/`failed` (closed), a crew under operator takeover, or an agent `crew compact` refuses (codex, gemini). Context is metered for claude crews only, so opencode crews get no nudge until they have a meter.
+- Idle = the crew's turn ended and it waits on the captain (`awaiting-input`, `review` or `done`). Not for `working`/`blocked`/`stalled`, `cancelled`/`failed` (closed), a crew under operator takeover, or an agent `crew compact` refuses (codex, gemini). The crew must still have a live pane (the lookup `crew compact` uses): `crew close` leaves a `done` record behind, so state alone cannot tell a closed crew from a live idle one. Context is metered for claude crews only, so opencode crews get no nudge until they have a meter.
 - Once per idle period, only inside the window `[warmNudgeIdleMin, 60)` minutes (past 60 the cache is already cold). Any activity or a compact moves the crew's heartbeat and re-arms it.
 - **Never compacts**: it only tells the captain the command. Evaluated on the same 15 s daemon tick as the other suggestions.
 
