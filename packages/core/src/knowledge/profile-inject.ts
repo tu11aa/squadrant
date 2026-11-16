@@ -39,7 +39,7 @@ export function computeProfileInjection(i: ProfileInjectInput): string | null {
   for (const e of p.errors) console.error(`squadrant profile: skipped ${path.relative(root, e.file)}: ${e.problems.join("; ")}`);
   const crew = !!i.env.SQUADRANT_CREW_TASK_ID;
   const hidden = crew ? "captain" : "crew";
-  const traits = p.active.filter((t) => t.tier === "core" && t.audience !== hidden).sort(order);
+  const traits = p.active.filter((t) => t.tier === "core" && t.kind !== "style" && t.audience !== hidden).sort(order);
 
   const shown: Trait[] = [];
   let used = 0;

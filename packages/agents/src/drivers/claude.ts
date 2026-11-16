@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import type { AgentDriver, AgentProbeResult, AgentSession, SpawnOptions, AgentResult } from "./types.js";
 import { listClaudeSessions } from "../sessions/claude-sessions.js";
 import { isolatedClaudeFlags } from "@squadrant/shared";
+import { styledPromptFile } from "@squadrant/core";
 
 export function createClaudeDriver(): AgentDriver {
   return {
@@ -57,7 +58,8 @@ export function createClaudeDriver(): AgentDriver {
       }
 
       if (opts.promptFile) {
-        cmd += ` --append-system-prompt-file ${opts.promptFile}`;
+        // #1129: operator style add-on; unchanged path when no style section applies.
+        cmd += ` --append-system-prompt-file ${styledPromptFile(opts.promptFile, opts.role)}`;
       }
 
       // #1046: under an isolated config the session loads that daemon's settings

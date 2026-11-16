@@ -104,7 +104,25 @@
     </table></div>
     <div class="caption" id="bcap">Dedup is derived from files (<code>sources:</code> + <code>_dropped.yaml</code>), so deleting <code>profile-bridge.json</code> never re-proposes anything.</div>
   </div>
+
+  <h2>4 · Style add-on (#1129, Claude launch)</h2>
+  <div class="card">
+    <div class="controls" id="styleSw"><button class="sel" data-v="off">no style section</button><button data-v="on">style section set</button><button data-v="crew">style audience: captain (crew launch)</button></div>
+    <pre id="styleOut"></pre>
+    <div class="caption">Opt-in. <code>kind: style</code> traits have their own 1,500-char cap per view and are not injected at SessionStart. At launch squadrant renders role prompt + style into <code>&lt;config dir&gt;/styled-prompts/</code> and passes that file through the existing <code>--append-system-prompt-file</code>, so it stacks with any <code>/output-style</code>. Nothing is written under <code>~/.claude</code>, no settings file, no AGENTS.md.</div>
+  </div>
 </div>
+<script>
+const styleViews = {
+  off: "claude … --append-system-prompt-file ~/.config/squadrant/templates/captain.claude.md\n(unchanged: no generated file)",
+  on: "claude … --append-system-prompt-file ~/.config/squadrant/styled-prompts/captain.claude.md\n\n# captain role …\n\n<squadrant-operator-style>\nOperator communication style. This adds to your default style …\nChat in English; Vietnamese for complex logic\n…\n</squadrant-operator-style>",
+  crew: "claude … --append-system-prompt-file ~/.config/squadrant/templates/crew.claude.md\n(unchanged: the only style is audience: captain, so a crew gets none)"
+};
+const styleOut = document.getElementById("styleOut");
+function showStyle(v){ styleOut.textContent = styleViews[v]; document.querySelectorAll("#styleSw button").forEach((b) => b.classList.toggle("sel", b.dataset.v === v)); }
+document.querySelectorAll("#styleSw button").forEach((b) => b.onclick = () => showStyle(b.dataset.v));
+showStyle("off");
+</script>
 <script>
 const steps = [
   "The operator says \"save to my profile\" (→ live, confirmed), corrects you (→ live, unconfirmed), or an agent infers / the bridge imports a native memory (→ proposal only).",

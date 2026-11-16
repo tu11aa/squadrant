@@ -6,8 +6,8 @@ import crypto from "node:crypto";
 import yaml from "js-yaml";
 import { USER_KB, userKbDir, type SquadrantConfig } from "@squadrant/shared";
 import {
-  ARCHIVE_DIR, DROPPED_FILE, PROFILE_CORE_CAP, PROFILE_DIR, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
-  profileWritePath, serializeTrait, splitFrontmatter, validateTrait, viewSizes, type LoadedTrait, type ProfileCommit, type Trait,
+  ARCHIVE_DIR, DROPPED_FILE, PROFILE_CORE_CAP, PROFILE_DIR, PROFILE_STYLE_CAP, PROPOSED_PROFILE_DIR, commitProfilePaths, ensureUserKb, loadProfile,
+  profileWritePath, serializeTrait, splitFrontmatter, validateTrait, viewSizes, styleViewSizes, type LoadedTrait, type ProfileCommit, type Trait,
   type TraitAudience, type TraitKind, type TraitTier,
 } from "./profile.js";
 import { appendAudit, type AuditEventName, type AuditSink } from "./audit.js";
@@ -58,6 +58,12 @@ function auditEvent(ctx: ProfileCtx, event: AuditEventName, id: string, extra: {
 
 /** The refusal for an apply that would push a view past the cap, or null. Shrinking edits are always allowed. */
 function capRefusal(active: Trait[], next: Trait): string | null {
+  if (next.kind === "style") {
+    const before = styleViewSizes(active);
+    const after = styleViewSizes([...active.filter((t) => t.id !== next.id), next]);
+    const grows = (["captain", "crew"] as const).some((v) => after[v] > PROFILE_STYLE_CAP && after[v] > before[v]);
+    return grows ? `style section is ${fmt(Math.max(before.captain, before.crew))}/${fmt(PROFILE_STYLE_CAP)} chars: ${MERGE_HINT}` : null;
+  }
   const before = viewSizes(active);
   const after = viewSizes([...active.filter((t) => t.id !== next.id), next]);
   const grows = (["captain", "crew"] as const).some((v) => after[v] > PROFILE_CORE_CAP && after[v] > before[v]);

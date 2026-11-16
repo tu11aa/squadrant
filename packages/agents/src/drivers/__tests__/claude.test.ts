@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createClaudeDriver } from "../claude.js";
 
-vi.mock("node:child_process", () => ({
+// Importing @squadrant/core (styled role prompts, #1129) loads modules that need the real child_process exports.
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
   execSync: vi.fn((cmd: string) => {
     if (cmd === "claude --version") return "claude 2.3.0\n";
     return "";

@@ -6,7 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import { loadConfig, stateRoot } from "@squadrant/shared";
 import { resolveCurrentProject, readUndelivered, crewSignalToolList, callCrewSignalTool, type CrewSignalToolResult } from "@squadrant/core";
 import {
-  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, runCrewRead, readCrewMsg, runCrewClose, crewCompactQueuedLine,
+  buildCrewSpawnInput, runCrewSpawn, crewSendGuard, runCrewSend, crewListLines, runCrewRead, readCrewMsg, runCrewClose, crewCompactQueuedLine,
 } from "../commands/crew.js";
 import { renderCrewTasks, squadrantdCall } from "../commands/crew-control.js";
 import { requestCrewCompact } from "./crew-compact.js";
@@ -30,7 +30,7 @@ export function mcpRole(env: NodeJS.ProcessEnv = process.env): McpRole {
 
 /** The real functions behind the tools; tests pass fakes. */
 export const realDeps = {
-  buildCrewSpawnInput, runCrewSpawn, crewSendHint, runCrewSend, crewListLines, renderCrewTasks, runCrewRead, readCrewMsg, runCrewClose, requestCrewCompact,
+  buildCrewSpawnInput, runCrewSpawn, crewSendGuard, runCrewSend, crewListLines, renderCrewTasks, runCrewRead, readCrewMsg, runCrewClose, requestCrewCompact,
   runThreadOpen, runThreadPark, runThreadResume, threadListLines,
   runSideSpawn, runSideSend, runPing, runDispatch, runCaptainCompact,
   runRulesSearch, readUndelivered,
@@ -90,11 +90,11 @@ export function createCaptainTools(): CaptainTool[] {
     },
     {
       name: "crew_send", project: "default", required: ["name", "message"],
-      description: "Send a follow-up message to an existing crew session. Same as `squadrant crew send` (no --force).",
-      fields: { project: PROJECT, name: NAME("Crew"), message: { type: "string", description: "Message to send." } },
+      description: "Send a follow-up message to an existing crew session. Same as `squadrant crew send` (no --force). A send that reopens a finished crew above the context gate is refused until you compact it; no_compact overrides.",
+      fields: { project: PROJECT, name: NAME("Crew"), message: { type: "string", description: "Message to send." }, no_compact: { type: "boolean", description: "Send even though this reopens a finished crew above the context gate (default: refused until compacted)." } },
       async run(a, p, d) {
         const name = need(a, "name");
-        const hint = await d.crewSendHint(p, name);
+        const hint = await d.crewSendGuard(p, name, { noCompact: bool(a, "no_compact") });
         const { reopened, stateWarning } = await d.runCrewSend(p, name, need(a, "message"));
         if (stateWarning) throw new Error(`Sent to ${p}:${name}, but ${stateWarning}`);
         return [hint ? `⚠ ${hint}` : "", reopened ? "↻ Task was terminal — reopened to working" : "", `✔ Sent to ${p}:${name}`].filter(Boolean).join("\n");
@@ -139,8 +139,8 @@ export function createCaptainTools(): CaptainTool[] {
       fields: { project: PROJECT, name: NAME("Crew"), keep: { type: "string", description: "What the summary should keep, passed to /compact." } },
       async run(a, p, d) {
         const name = need(a, "name");
-        const { agent } = await d.requestCrewCompact(p, name, str(a, "keep"), squadrantdCall);
-        return crewCompactQueuedLine(p, name, agent);
+        const { agent, joined } = await d.requestCrewCompact(p, name, str(a, "keep"), squadrantdCall);
+        return crewCompactQueuedLine(p, name, agent, joined);
       },
     },
     {

@@ -6,6 +6,8 @@ import { createCmuxDriver, RuntimeRegistry, resolveCaptainWorkspace, sendFirstTu
 import { CapabilityRegistry, createClaudeDriver, createCodexDriver, createGeminiDriver, createOpencodeDriver, OpencodeHttpChannel, ClaudePeerChannel, readClaudeStatus, writeLine, ensureClaudeApiKeyApproved, type EnsureApprovedResult } from "@squadrant/agents";
 import { connect as netConnect } from "node:net";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   runCrewSpawn as coreRunCrewSpawn,
   runCrewSend as coreRunCrewSend,
@@ -28,7 +30,7 @@ import { buildDispatchRequest, buildStatusRequest, squadrantdCall, sendCodexFirs
 import { sendClaudeFirstTurnViaPeer, watchClaudeCrewBoot } from "../lib/first-turn-peer.js";
 import { createCliReceiptListener } from "../lib/captain-channel-factory.js";
 import { tailLines } from "./crew-output.js";
-import { hintForCrewSend } from "../lib/crew-context-hint.js";
+import { checkCrewSend, crewTokens } from "../lib/crew-context-hint.js";
 import { requestCrewCompact, cancelCrewCompact, waitForCrewCompact } from "../lib/crew-compact.js";
 import { writePerCrewSettingsLocal, writePerCrewOpencodeConfig, writeRouterSettings, readGlobalOpencodeModel } from "../lib/per-crew-settings.js";
 import { isBlockedFallback, anthropicFallbackMessage } from "../lib/model-guard.js";
@@ -327,15 +329,29 @@ export async function crewListLines(project: string): Promise<string[]> {
   return out;
 }
 
-/** #1015: the context hint shown before a `crew send` — advice only, never blocks or alters the send; undefined when there is none. */
-export async function crewSendHint(project: string, name: string): Promise<string | undefined> {
+/** #1126: tasks whose one-time context warning was already shown (a marker file per task id; `crew send` is a fresh process each time). */
+const warnedMarker = (taskId: string): string => path.join(stateRoot(), "ctx-warned", taskId);
+
+/**
+ * #1015/#1126: runs before a `crew send`. Returns the one-time context warning (undefined when none) and THROWS to
+ * refuse a send that would reopen a finished crew above the gate, unless `noCompact`. Never compacts. A failed
+ * lookup is best-effort silence, never a refusal.
+ */
+export async function crewSendGuard(project: string, name: string, opts?: { noCompact?: boolean }): Promise<string | undefined> {
+  let check: ReturnType<typeof checkCrewSend>;
   try {
     const budget = resolveContextBudget(loadConfig().defaults.contextBudget, loadProjectOverride(project));
-    const tasks = (await squadrantdCall({ kind: "list", project })) as TaskRecord[];
-    return hintForCrewSend(name, resolveApproveTarget(tasks, name), budget) ?? undefined;
+    const task = resolveApproveTarget((await squadrantdCall({ kind: "list", project })) as TaskRecord[], name);
+    if (!task) return undefined;
+    check = checkCrewSend(project, name, task, crewTokens(task), budget, { noCompact: opts?.noCompact, alreadyWarned: fs.existsSync(warnedMarker(task.id)) });
   } catch {
-    return undefined; // best-effort
+    return undefined;
   }
+  if (check.refuse) throw new Error(check.refuse);
+  if (check.warned) {
+    try { fs.mkdirSync(path.dirname(warnedMarker(check.warned)), { recursive: true }); fs.writeFileSync(warnedMarker(check.warned), ""); } catch { /* best-effort */ }
+  }
+  return check.hint;
 }
 
 /** `crew msg`: one mailbox entry in full. `agentNote` is the provenance line the CLI prints to stderr (the agent stays out of the delivery header, #1029). */
@@ -416,10 +432,11 @@ crewCommand
   .argument("[message]", "Message to send (omit with --message-file)")
   .option("--message-file <path>", "Read message from file instead of positional arg ('-' for stdin)")
   .option("--force", "override an operator takeover (only when the operator told you to)", false)
-  .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean }) => {
+  .option("--no-compact", "send even when the crew is over the context gate and this reopens a finished task (default: refused until compacted)")
+  .action(async (project: string, name: string, message: string | undefined, opts: { messageFile?: string; force?: boolean; compact?: boolean }) => {
     try {
       const resolvedMessage = await resolveTextInput({ positional: message, filePath: opts.messageFile, label: "message" });
-      const hint = await crewSendHint(project, name);
+      const hint = await crewSendGuard(project, name, { noCompact: opts.compact === false });
       if (hint) console.log(chalk.yellow(`⚠ ${hint}`));
       const { reopened, stateWarning } = await runCrewSend(project, name, resolvedMessage, opts);
       // #595: make the reopen outcome visible instead of a bare "✔ Sent" that
@@ -436,8 +453,8 @@ crewCommand
     }
   });
 
-export const crewCompactQueuedLine = (project: string, name: string, agent: string): string =>
-  `✔ Compact queued for ${project}:${name} (${agent}) — it runs once the crew's turn ends; a send to it waits until the compact is done.`;
+export const crewCompactQueuedLine = (project: string, name: string, agent: string, joined = false): string =>
+  `✔ Compact ${joined ? "already queued (this request joined it)" : "queued"} for ${project}:${name} (${agent}) — it runs once the crew's turn ends (the daemon gives up after 10 min and tells the captain); a send to it waits once the compact is about to run (crew idle) until it is done; while the crew is busy, sends go through and the compact stays queued. Drop it with 'squadrant crew compact ${project} ${name} --cancel'.`;
 
 crewCommand
   .command("compact")
@@ -453,8 +470,8 @@ crewCommand
         console.log(cancelled ? chalk.green(`✔ Compact cancelled for ${project}:${name} — sends to it are no longer held.`) : chalk.dim(`No compact queued for ${project}:${name}.`));
         return;
       }
-      const { agent } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
-      console.log(chalk.green(crewCompactQueuedLine(project, name, agent)));
+      const { agent, joined } = await requestCrewCompact(project, name, opts.keep, squadrantdCall);
+      console.log(chalk.green(crewCompactQueuedLine(project, name, agent, joined)));
     } catch (e) {
       console.error(chalk.red(`✖ ${(e as Error).message}`));
       process.exit(1);

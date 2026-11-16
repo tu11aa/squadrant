@@ -105,7 +105,8 @@ export function resolveContextBudget(
   for (const layer of [globalBudget, override.contextBudget]) {
     if (!layer) continue;
     if (typeof layer.enabled === "boolean") out.enabled = layer.enabled;
-    for (const k of ["captainSoft", "captainHard", "crewSoft"] as const) {
+    if (typeof layer.warmNudge === "boolean") out.warmNudge = layer.warmNudge;
+    for (const k of ["captainSoft", "captainHard", "crewSoft", "crewGate", "warmNudgeIdleMin", "warmNudgeCtx"] as const) {
       const v = layer[k];
       if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
     }
